@@ -1,0 +1,371 @@
+# IMP-0200
+
+# Hypervisor Service Interfaces
+
+Status: Draft
+
+Version: 0.1
+
+Depends on:
+
+* RFC-0020 Hypervisor Architecture
+* RFC-0021 Hypervisor Scheduling Engine
+* RFC-0022 Provider Interface
+* IMP-0003 Internal Event Bus
+* IMP-0100 Persistence Model
+
+---
+
+# 1. Purpose
+
+This document defines the primary service interfaces of the AiDN Hypervisor.
+
+Business logic SHALL depend exclusively on these interfaces.
+
+Concrete implementations remain interchangeable.
+
+---
+
+# 2. Design Principles
+
+### IF-1
+
+Every service exposes exactly one primary interface.
+
+---
+
+### IF-2
+
+Services communicate only through interfaces or immutable events.
+
+---
+
+### IF-3
+
+Implementations SHALL NOT depend on other implementations.
+
+Only interfaces.
+
+---
+
+### IF-4
+
+Every interface SHALL support mocking for unit testing.
+
+---
+
+# 3. Endpoint Service
+
+Responsible for Endpoint lifecycle.
+
+```go id="xyn9v6"
+type EndpointService interface {
+
+    CreateEndpoint(ctx context.Context, cmd CreateEndpointCommand) (CreateEndpointResult, error)
+
+    UpdateEndpoint(ctx context.Context, cmd UpdateEndpointCommand) (UpdateEndpointResult, error)
+
+    DeleteEndpoint(ctx context.Context, cmd DeleteEndpointCommand) (DeleteEndpointResult, error)
+
+    StartEndpoint(ctx context.Context, cmd StartEndpointCommand) (StartEndpointResult, error)
+
+    StopEndpoint(ctx context.Context, cmd StopEndpointCommand) (StopEndpointResult, error)
+
+    SuspendEndpoint(ctx context.Context, cmd SuspendEndpointCommand) (SuspendEndpointResult, error)
+
+    ResumeEndpoint(ctx context.Context, cmd ResumeEndpointCommand) (ResumeEndpointResult, error)
+
+    GetEndpoint(ctx context.Context, cmd GetEndpointCommand) (GetEndpointResult, error)
+
+    ListEndpoints(ctx context.Context, cmd ListEndpointsCommand) (ListEndpointsResult, error)
+}
+```
+
+---
+
+# 4. Bundle Service
+
+Responsible for Bundle lifecycle.
+
+```go id="g8u0f8"
+type BundleService interface {
+
+    InstallBundle(ctx context.Context, cmd InstallBundleCommand) (InstallBundleResult, error)
+
+    RemoveBundle(ctx context.Context, cmd RemoveBundleCommand) (RemoveBundleResult, error)
+
+    VerifyBundle(ctx context.Context, cmd VerifyBundleCommand) (VerifyBundleResult, error)
+
+    ListBundles(ctx context.Context, cmd ListBundlesCommand) (ListBundlesResult, error)
+
+    GetBundle(ctx context.Context, cmd GetBundleCommand) (GetBundleResult, error)
+}
+```
+
+Bundles remain immutable.
+
+---
+
+# 5. Scheduler Service
+
+Responsible for execution decisions.
+
+```go id="sbb0rb"
+type Scheduler interface {
+
+    SubmitTask(ctx context.Context, cmd SubmitTaskCommand) (SubmitTaskResult, error)
+
+    DispatchTask(ctx context.Context, cmd DispatchTaskCommand) (DispatchTaskResult, error)
+
+    ReserveResources(ctx context.Context, cmd ReserveResourcesCommand) (ReserveResourcesResult, error)
+
+    ReleaseResources(ctx context.Context, cmd ReleaseResourcesCommand) (ReleaseResourcesResult, error)
+
+    ListQueue(ctx context.Context, cmd ListQueueCommand) (ListQueueResult, error)
+}
+```
+
+The Scheduler owns execution.
+
+---
+
+# 6. Runtime Service
+
+Responsible for execution environments.
+
+```go id="ew7m2f"
+type RuntimeService interface {
+
+    StartRuntime(ctx context.Context, cmd StartRuntimeCommand) (StartRuntimeResult, error)
+
+    StopRuntime(ctx context.Context, cmd StopRuntimeCommand) (StopRuntimeResult, error)
+
+    RestartRuntime(ctx context.Context, cmd RestartRuntimeCommand) (RestartRuntimeResult, error)
+
+    RuntimeHealth(ctx context.Context, cmd RuntimeHealthCommand) (RuntimeHealthResult, error)
+}
+```
+
+---
+
+# 7. Resource Service
+
+Responsible for local resources.
+
+```go id="7zgxej"
+type ResourceService interface {
+
+    Reserve(ctx context.Context, cmd ReserveCommand) (ReserveResult, error)
+
+    Release(ctx context.Context, cmd ReleaseCommand) (ReleaseResult, error)
+
+    Available(ctx context.Context, cmd AvailableCommand) (AvailableResult, error)
+
+    Usage(ctx context.Context, cmd UsageCommand) (UsageResult, error)
+}
+```
+
+---
+
+# 8. Wallet Service
+
+Responsible for accounting.
+
+```go id="7pn63s"
+type WalletService interface {
+
+    RecordUsage(ctx context.Context, cmd RecordUsageCommand) (RecordUsageResult, error)
+
+    Quote(ctx context.Context, cmd QuoteCommand) (QuoteResult, error)
+
+    Settlement(ctx context.Context, cmd SettlementCommand) (SettlementResult, error)
+}
+```
+
+Wallet never executes workloads.
+
+---
+
+# 9. Validator Service
+
+Responsible for validation.
+
+```go id="72p9pb"
+type ValidatorService interface {
+
+    Validate(ctx context.Context, cmd ValidateCommand) (ValidateResult, error)
+
+    Publish(ctx context.Context, cmd PublishAttestationCommand) (PublishAttestationResult, error)
+
+    Certificate(ctx context.Context, cmd CertificateCommand) (CertificateResult, error)
+}
+```
+
+---
+
+# 10. Registry Service
+
+Responsible for discovery.
+
+```go id="jlwm3b"
+type RegistryService interface {
+
+    Publish(ctx context.Context, cmd PublishAdvertisementCommand) (PublishAdvertisementResult, error)
+
+    Withdraw(ctx context.Context, cmd WithdrawAdvertisementCommand) (WithdrawAdvertisementResult, error)
+
+    Heartbeat(ctx context.Context, cmd HeartbeatCommand) (HeartbeatResult, error)
+}
+```
+
+---
+
+# 11. Metrics Service
+
+Responsible for metrics.
+
+```go id="5ymw2g"
+type MetricsService interface {
+
+    Record(ctx context.Context, cmd RecordMetricCommand) (RecordMetricResult, error)
+
+    Query(ctx context.Context, cmd QueryMetricCommand) (QueryMetricResult, error)
+}
+```
+
+---
+
+# 12. Event Bus
+
+Responsible for asynchronous communication.
+
+```go id="szx7ae"
+type EventBus interface {
+
+    Publish(ctx context.Context, event Event) error
+
+    Subscribe(eventType EventType, handler EventHandler) error
+}
+```
+
+---
+
+# 13. Configuration Service
+
+Responsible for configuration.
+
+```go id="o6w5vx"
+type ConfigService interface {
+
+    Load(ctx context.Context, cmd LoadConfigurationCommand) (LoadConfigurationResult, error)
+
+    Save(ctx context.Context, cmd SaveConfigurationCommand) (SaveConfigurationResult, error)
+
+    Validate(ctx context.Context, cmd ValidateConfigurationCommand) (ValidateConfigurationResult, error)
+}
+```
+
+---
+
+# 14. Common Rules
+
+Every service SHALL:
+
+* own its own persistence;
+* own its own events;
+* expose only one primary interface;
+* remain independently testable.
+
+---
+
+# 15. Dependency Graph
+
+```text id="sln4os"
+API
+
+↓
+
+Endpoint
+
+↓
+
+Scheduler
+
+↓
+
+Runtime
+
+↓
+
+Provider
+
+↓
+
+Hardware
+```
+
+Dependencies MAY point only downward.
+
+Circular dependencies are prohibited.
+
+---
+
+# 16. Construction
+
+Every service SHALL be instantiated through dependency injection.
+
+Services SHALL NOT create other services directly.
+
+Construction SHALL occur only during Hypervisor bootstrap.
+
+---
+
+# 17. Testing
+
+Every service SHALL provide:
+
+* unit tests;
+* mock implementation;
+* integration tests.
+
+Mock implementations SHALL satisfy the same interfaces as production implementations.
+
+---
+
+# 18. Design Invariants
+
+Invariant 1
+
+Interfaces define architecture.
+
+Implementations define behavior.
+
+---
+
+Invariant 2
+
+Services depend only on interfaces.
+
+---
+
+Invariant 3
+
+Dependency injection is mandatory.
+
+---
+
+Invariant 4
+
+Every operation SHALL use exactly one Command object and exactly one Result object.
+
+---
+
+Invariant 5
+
+Primitive parameter lists are prohibited.
+
+---
+
+Invariant 6
+
+Every dependency SHALL be explicit.
