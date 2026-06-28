@@ -1,0 +1,366 @@
+# RFC-0015
+
+# Model Class Registry (MCR)
+
+Status: Draft
+
+Version: 0.1
+
+Depends on:
+
+* RFC-0000 Core Object Model
+* RFC-0008 Distributed Attestation Network
+* RFC-0010 Distributed Verification Protocol
+* RFC-0013 Capability Validation Specification
+* RFC-0014 Validator Competency Framework
+
+---
+
+# 1. Purpose
+
+The Model Class Registry (MCR) defines how AI model classes are declared, published, standardized and verified within the AiDN ecosystem.
+
+AiDN verifies Model Classes rather than specific model implementations.
+
+A Model Class represents a set of expected observable characteristics.
+
+It does not prescribe a specific provider, implementation or execution strategy.
+
+---
+
+# 2. Design Principles
+
+### MCR-1
+
+Model Classes describe externally observable behavior.
+
+They do not identify implementation details.
+
+---
+
+### MCR-2
+
+Execution implementation remains private.
+
+A Hypervisor is never required to disclose the underlying provider, execution topology or model source.
+
+---
+
+### MCR-3
+
+Model Classes are public.
+
+Validation Specifications are public.
+
+Execution strategies remain private.
+
+---
+
+### MCR-4
+
+Any participant MAY propose a new Model Class.
+
+Support by the network determines whether the class becomes verifiable.
+
+---
+
+# 3. Model Class
+
+Every Model Class SHALL contain:
+
+```yaml
+class_id:
+
+display_name:
+
+capability:
+
+validation_specification:
+
+competency_profile:
+
+description:
+
+status:
+```
+
+Example:
+
+```yaml
+class_id: opus-class
+
+display_name: Opus4.x-class
+
+capability:
+
+- llm.chat
+
+validation_specification:
+
+cvs-llm-opus-v1
+
+competency_profile:
+
+vcf-opus-v1
+```
+
+---
+
+# 4. Endpoint Declaration
+
+Every public Endpoint SHALL declare exactly one Model Class.
+
+Example:
+
+```yaml
+identity:
+
+display_name:
+
+Opus4.6-class
+
+model_class:
+
+opus-class
+```
+
+The display name is controlled by the operator.
+
+The Model Class references the public validation definition.
+
+---
+
+# 5. Private Model Classes
+
+Operators MAY create arbitrary private Model Classes.
+
+Example:
+
+```yaml
+display_name:
+
+Alex Internal Coding
+
+model_class:
+
+alex-coding-v2
+```
+
+Private classes are valid Endpoint metadata.
+
+However,
+
+Private Model Classes SHALL NOT participate in distributed validation until a Validation Specification exists.
+
+---
+
+# 6. Validation Eligibility
+
+An Endpoint participates in distributed validation only if:
+
+* its declared Model Class exists;
+* the Model Class references an approved Validation Specification;
+* Validators supporting that Capability exist.
+
+Otherwise:
+
+```text
+Verification Status
+
+Unsupported
+```
+
+The Endpoint remains usable.
+
+The Endpoint simply cannot accumulate validation-based reputation.
+
+---
+
+# 7. Model Class Proposal
+
+Any participant MAY publish a new Model Class Proposal.
+
+A proposal SHALL include:
+
+* proposed Model Class identifier;
+* Capability;
+* Validation Specification;
+* Competency Profile;
+* human-readable description;
+* reference evaluation methodology.
+
+The proposal becomes publicly visible immediately.
+
+---
+
+# 8. Community Adoption
+
+Support for a proposed Model Class is voluntary.
+
+Hypervisors MAY independently choose to support a proposal.
+
+Network support gradually increases as additional Hypervisors:
+
+* recognize the Model Class;
+* implement the Validation Specification;
+* certify Validators.
+
+No central authority approves Model Classes.
+
+---
+
+# 9. Model Class Lifecycle
+
+```mermaid
+stateDiagram-v2
+
+[*] --> Private
+
+Private --> Proposed
+
+Proposed --> Supported
+
+Supported --> Verifiable
+
+Verifiable --> Standard
+
+Standard --> Deprecated
+
+Deprecated --> Archived
+
+Archived --> [*]
+```
+
+### Private
+
+Known only to the operator.
+
+No network validation.
+
+### Proposed
+
+Published to the network.
+
+Validation Specification is available.
+
+Community review begins.
+
+### Supported
+
+Recognized by one or more Hypervisors.
+
+Validators MAY begin implementation.
+
+### Verifiable
+
+Validation Specification is implemented.
+
+Certified Validators exist.
+
+Endpoints MAY participate in DAN.
+
+### Standard
+
+The Model Class has broad network support.
+
+Validation is considered stable.
+
+### Deprecated
+
+The Model Class remains usable.
+
+New deployments are discouraged.
+
+### Archived
+
+Historical support only.
+
+No further validation development.
+
+---
+
+# 10. Observed Behavior
+
+Validation does not determine implementation.
+
+Validation determines observable behavior.
+
+Observed behavior includes:
+
+* instruction following;
+* reasoning quality;
+* latency characteristics;
+* protocol compliance;
+* Validation Confidence;
+* Competency compatibility.
+
+Execution implementation remains intentionally unknown.
+
+---
+
+# 11. Execution Privacy
+
+The following information SHALL remain private:
+
+* provider implementation;
+* local versus remote execution;
+* provider chain;
+* orchestration logic;
+* internal routing;
+* execution topology.
+
+Validators SHALL evaluate only observable behavior.
+
+---
+
+# 12. Bundle Identity
+
+Bundle Identity consists of two independent elements.
+
+Operator Declaration:
+
+```yaml
+display_name:
+
+Opus4.6-class
+```
+
+Protocol Declaration:
+
+```yaml
+model_class:
+
+opus-class
+```
+
+The display name may change.
+
+The Model Class determines validation compatibility.
+
+---
+
+# 13. Endpoint Profile
+
+Operators MAY publish additional descriptive metadata.
+
+Examples include:
+
+* strengths;
+* limitations;
+* recommended tasks;
+* supported languages;
+* usage examples.
+
+Endpoint Profiles improve discovery and routing.
+
+Profiles SHALL NOT influence validation results.
+
+---
+
+# 14. Architectural Principle
+
+The network verifies capabilities, not brands.
+
+The network verifies observable behavior, not implementation.
+
+Model Classes standardize expected behavior while preserving complete execution privacy.
