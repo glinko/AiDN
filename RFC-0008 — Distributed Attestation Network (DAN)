@@ -1,0 +1,365 @@
+# RFC-0008
+
+# Distributed Attestation Network (DAN)
+
+Status: Draft
+
+Version: 0.1
+
+Depends on:
+
+* RFC-0000 Core Object Model
+
+---
+
+# 1. Purpose
+
+The Distributed Attestation Network (DAN) defines how the AiDN network objectively evaluates publicly available Endpoints.
+
+Validation SHALL be decentralized.
+
+No central authority determines trust.
+
+Trust emerges from publicly verifiable attestations.
+
+---
+
+# 2. Objectives
+
+The DAN SHALL:
+
+* continuously evaluate public Endpoints;
+* reward independent Validators;
+* prevent self-certification;
+* produce publicly verifiable observations;
+* enable every participant to calculate their own trust scores.
+
+---
+
+# 3. Core Principles
+
+### DAN-1
+
+Validators never certify themselves.
+
+---
+
+### DAN-2
+
+Validators never choose which Endpoint they validate.
+
+---
+
+### DAN-3
+
+Validation results are public.
+
+---
+
+### DAN-4
+
+Every participant independently computes trust from published attestations.
+
+---
+
+# 4. Hypervisor Reputation
+
+Hypervisor reputation consists of two independent components.
+
+```text
+Hypervisor Reputation
+
+=
+
+Infrastructure Reputation (50%)
+
++
+
+Endpoint Reputation (50%)
+```
+
+---
+
+## 4.1 Infrastructure Reputation (50%)
+
+Infrastructure Reputation reflects the quality of Hypervisor operation.
+
+Examples include:
+
+* uptime;
+* availability;
+* protocol compliance;
+* successful request execution;
+* network participation;
+* advertisement consistency;
+* heartbeat stability.
+
+Changes affecting Hypervisor configuration SHALL reduce Infrastructure Reputation proportionally.
+
+The reduction SHALL be temporary and recover through subsequent successful observations.
+
+---
+
+## 4.2 Endpoint Reputation (50%)
+
+The remaining reputation is distributed equally across all validated Endpoints published by the Hypervisor.
+
+Example:
+
+```text
+50%
+
+↓
+
+4 Endpoints
+
+↓
+
+12.5% each
+```
+
+Adding, removing or modifying an Endpoint SHALL proportionally redistribute the Endpoint Reputation.
+
+Only the affected Endpoint(s) require re-validation.
+
+Existing validated Endpoints retain their accumulated reputation.
+
+---
+
+# 5. Validator Pool
+
+Validators form an ordered Validator Pool.
+
+Validators MAY join the pool after satisfying network requirements.
+
+Example requirements:
+
+* minimum Hypervisor Reputation;
+* validated Validator Endpoint;
+* stable operational history;
+* protocol compliance.
+
+New Validators SHALL be appended to the end of the pool.
+
+The Validator Pool SHALL operate using FIFO rotation.
+
+---
+
+# 6. Validation Pool
+
+The network maintains a Validation Pool containing all public Endpoints eligible for validation.
+
+Private Endpoints SHALL NOT appear in the Validation Pool.
+
+Endpoints MAY opt out of validation while remaining publicly accessible.
+
+Opt-out Endpoints SHALL NOT receive validation-based reputation.
+
+---
+
+# 7. Epoch
+
+Validation operates in discrete Epochs.
+
+At the beginning of each Epoch:
+
+1. The first N Validators are selected from the Validator Pool.
+2. Each selected Validator receives responsibility for another Validator's assignment.
+3. No Validator selects its own validation targets.
+4. Validator assignments SHALL be deterministic and verifiable.
+
+---
+
+# 8. Endpoint Selection
+
+Assigned Validators select Endpoints probabilistically.
+
+Selection probability SHOULD increase according to factors including:
+
+* newly published Endpoint;
+* recently modified ConfigurationHash;
+* low observation count;
+* low confidence score;
+* time since previous validation.
+
+Endpoint operators SHALL NOT know in advance which Epoch will validate their Endpoint.
+
+---
+
+# 9. Validation Execution
+
+Validators SHALL submit normal execution requests.
+
+Validation traffic SHALL be indistinguishable from ordinary client traffic.
+
+The validated Endpoint SHALL receive normal compensation for every validation request.
+
+Validators SHALL receive Epoch rewards rather than payments from Endpoint operators.
+
+---
+
+# 10. Validator Rewards
+
+Validator rewards originate from Epoch emission.
+
+Rewards SHALL NOT depend on the number of validation requests submitted.
+
+This prevents Validators from generating excessive validation traffic for profit.
+
+---
+
+# 11. Published Attestation
+
+Every validation SHALL produce a signed Attestation.
+
+The Attestation SHALL include at minimum:
+
+* Validator ID;
+* Endpoint ID;
+* BundleHash;
+* ConfigurationHash;
+* Model Class;
+* Capability;
+* Validation Specification;
+* timestamp;
+* test identifier;
+* measured observations;
+* Validator signature.
+
+Attestations SHALL be immutable.
+
+---
+
+# 12. ConfigurationHash
+
+Every execution-relevant Endpoint modification SHALL generate a new ConfigurationHash.
+
+ConfigurationHash SHALL be included in every Attestation.
+
+Changing ConfigurationHash invalidates future trust accumulation until new attestations are collected.
+
+Historical attestations remain valid for their associated ConfigurationHash.
+
+---
+
+# 13. Endpoint Scope
+
+Validation applies to Endpoints, not entire Hypervisors.
+
+Hypervisors MAY publish multiple independent Endpoints.
+
+Each Endpoint accumulates validation independently.
+
+---
+
+# 14. Validator Competency
+
+A Validator SHALL possess an Endpoint capable of evaluating the Capability being validated.
+
+Examples:
+
+* LLM Validators validate LLM Endpoints.
+* TTS Validators generate text prompts and evaluate synthesized audio.
+* STT Validators generate audio samples and evaluate transcribed text.
+* Image Validators generate prompts and evaluate produced images.
+
+Validators SHALL perform approximate quality assessment using observable characteristics.
+
+---
+
+# 15. Validator Qualification
+
+A Validator Endpoint SHALL itself be successfully validated before participating in the Validator Pool.
+
+Validators SHALL continuously maintain sufficient competence.
+
+Validators whose competence falls below required thresholds SHALL be suspended from the Validator Pool.
+
+---
+
+# 16. Model Class Compatibility
+
+Validators SHALL validate only Model Classes for which they possess sufficient capability.
+
+A Validator Endpoint SHALL be approximately equivalent to or stronger than the validated Model Class.
+
+Validator Competency Profiles define acceptable validation relationships.
+
+---
+
+# 17. Reference Test Suites
+
+Validation SHALL primarily rely on publicly available benchmark suites.
+
+Examples include:
+
+* MMLU;
+* HumanEval;
+* MBPP;
+* GSM8K;
+* LiveCodeBench;
+* MMMU;
+* domain-specific capability benchmarks.
+
+Validation Specifications determine which benchmark subsets are applicable to each Model Class.
+
+---
+
+# 18. Trust Computation
+
+The network publishes observations.
+
+The network does not publish trust.
+
+Every participant computes trust independently using:
+
+* published Attestations;
+* Validator history;
+* ConfigurationHash history;
+* personal trust policies.
+
+---
+
+# 19. Design Invariants
+
+Invariant 1
+
+Validators never validate themselves.
+
+---
+
+Invariant 2
+
+Validators never choose their own validation targets.
+
+---
+
+Invariant 3
+
+Validation traffic is indistinguishable from production traffic.
+
+---
+
+Invariant 4
+
+Attestations are public and immutable.
+
+---
+
+Invariant 5
+
+Trust is locally computed.
+
+---
+
+Invariant 6
+
+Configuration changes reduce reputation proportionally and require renewed validation.
+
+---
+
+Invariant 7
+
+Validation applies to Endpoints.
+
+Infrastructure reputation applies to Hypervisors.
