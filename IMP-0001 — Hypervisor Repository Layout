@@ -1,0 +1,205 @@
+# IMP-0001
+
+# Hypervisor Repository Layout
+
+Status: Draft
+
+Version: 0.1
+
+Depends on:
+
+* RFC-0020 Hypervisor Architecture
+* RFC-0021 Hypervisor Scheduling Engine
+* RFC-0022 Provider Interface
+
+---
+
+# 1. Repository Layout
+
+```text
+aidn/
+
+├── cmd/
+│
+│   ├── hypervisor/
+│   ├── registry/
+│   ├── wallet/
+│   ├── validator/
+│   └── cli/
+│
+├── internal/
+│
+│   ├── api/
+│   ├── scheduler/
+│   ├── resource/
+│   ├── runtime/
+│   ├── endpoint/
+│   ├── bundle/
+│   ├── provider/
+│   ├── registry/
+│   ├── wallet/
+│   ├── validation/
+│   ├── reputation/
+│   ├── metrics/
+│   ├── storage/
+│   ├── events/
+│   ├── config/
+│   ├── auth/
+│   └── util/
+│
+├── providers/
+│
+│   ├── llamacpp/
+│   ├── vllm/
+│   ├── whisper/
+│   ├── comfyui/
+│   ├── ollama/
+│   └── openai/
+│
+├── sdk/
+│
+├── proto/
+│
+├── docs/
+│
+├── configs/
+│
+├── migrations/
+│
+├── scripts/
+│
+├── testdata/
+│
+├── web/
+│
+└── Makefile
+```
+
+---
+
+# 2. cmd/
+
+Contains executable applications.
+
+Every executable has exactly one entry point.
+
+Examples:
+
+* Hypervisor
+* Registry
+* Wallet daemon
+* Validator daemon
+* CLI
+
+---
+
+# 3. internal/
+
+Contains implementation.
+
+Packages inside internal SHALL NOT be imported by external applications.
+
+---
+
+# 4. providers/
+
+Contains Provider implementations.
+
+Every Provider implements RFC-0022.
+
+Provider packages SHALL NOT communicate directly with each other.
+
+---
+
+# 5. sdk/
+
+Public Go SDK.
+
+Third-party developers implement custom Providers using this SDK.
+
+---
+
+# 6. proto/
+
+Protocol definitions.
+
+Contains:
+
+* gRPC
+* protobuf
+* OpenAPI
+
+---
+
+# 7. docs/
+
+Contains:
+
+* RFC documents
+* IMP documents
+* ADR documents
+* Developer Guides
+* Architecture documentation
+
+---
+
+# 8. configs/
+
+Contains example configuration files.
+
+Production secrets SHALL NOT be committed.
+
+---
+
+# 9. migrations/
+
+Contains database schema migrations.
+
+All schema evolution SHALL be version controlled.
+
+---
+
+# 10. scripts/
+
+Contains:
+
+* build scripts;
+* packaging scripts;
+* development helpers;
+* testing utilities;
+* release automation.
+
+---
+
+# 11. testdata/
+
+Contains:
+
+* reference Bundles;
+* sample Endpoint Manifests;
+* validation fixtures;
+* synthetic workloads.
+
+---
+
+# 12. web/
+
+Contains the Operator Dashboard.
+
+The dashboard SHALL remain a client of the public Hypervisor API.
+
+Business logic SHALL NOT exist in the frontend.
+
+---
+
+# 13. Design Rules
+
+Every package SHALL have one clearly defined responsibility.
+
+Cross-package communication SHALL occur only through interfaces.
+
+No package SHALL import another package solely for convenience.
+
+Circular dependencies are prohibited.
+
+The repository SHALL remain navigable without project-specific knowledge.
