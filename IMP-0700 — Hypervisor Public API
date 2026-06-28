@@ -1,0 +1,307 @@
+# IMP-0700
+
+# Hypervisor Public API
+
+Status: Draft
+
+Version: 0.1
+
+Depends on:
+
+All previous IMP documents.
+
+---
+
+# 1. Purpose
+
+This document defines the public API exposed by the AiDN Hypervisor.
+
+The API provides external control of the Hypervisor.
+
+Internal services SHALL NOT communicate through this API.
+
+The API exists exclusively for external clients.
+
+---
+
+# 2. Design Principles
+
+### API-1
+
+The API SHALL be stateless.
+
+---
+
+### API-2
+
+Every operation SHALL map to exactly one Command.
+
+---
+
+### API-3
+
+The API SHALL NOT expose implementation details.
+
+---
+
+### API-4
+
+Every response SHALL be deterministic.
+
+---
+
+# 3. API Groups
+
+The API consists of the following groups.
+
+```text id="api1"
+System
+
+Providers
+
+Bundles
+
+Endpoints
+
+Tasks
+
+Wallet
+
+Validation
+
+Registry
+
+Metrics
+
+Configuration
+```
+
+---
+
+# 4. System
+
+```text id="api2"
+GET
+
+/system/info
+
+/system/health
+
+/system/version
+```
+
+---
+
+# 5. Providers
+
+```text id="api3"
+GET
+
+/providers
+
+/providers/{id}
+```
+
+---
+
+# 6. Bundles
+
+```text id="api4"
+GET
+
+/bundles
+
+POST
+
+/bundles/install
+
+DELETE
+
+/bundles/{id}
+```
+
+---
+
+# 7. Endpoints
+
+```text id="api5"
+GET
+
+/endpoints
+
+GET
+
+/endpoints/{id}
+
+POST
+
+/endpoints
+
+PATCH
+
+/endpoints/{id}
+
+DELETE
+
+/endpoints/{id}
+
+POST
+
+/endpoints/{id}/start
+
+POST
+
+/endpoints/{id}/stop
+```
+
+---
+
+# 8. Tasks
+
+```text id="api6"
+POST
+
+/tasks
+
+GET
+
+/tasks/{id}
+
+GET
+
+/tasks
+```
+
+---
+
+# 9. Wallet
+
+```text id="api7"
+GET
+
+/wallet
+
+GET
+
+/wallet/usage
+
+GET
+
+/wallet/settlements
+```
+
+---
+
+# 10. Validation
+
+```text id="api8"
+GET
+
+/validation
+
+POST
+
+/validation/run
+```
+
+---
+
+# 11. Registry
+
+```text id="api9"
+GET
+
+/registry
+
+POST
+
+/registry/publish
+```
+
+---
+
+# 12. Metrics
+
+```text id="api10"
+GET
+
+/metrics
+
+GET
+
+/metrics/live
+```
+
+---
+
+# 13. Configuration
+
+```text id="api11"
+GET
+
+/config
+
+PATCH
+
+/config
+```
+
+Configuration updates SHALL create a Configuration Snapshot.
+
+---
+
+# 14. Authentication
+
+Every request SHALL be authenticated.
+
+Authentication mechanisms are implementation-specific.
+
+Authorization SHALL be policy-based.
+
+---
+
+# 15. Error Responses
+
+Every response SHALL contain:
+
+* code
+* message
+* correlation_id
+
+Internal stack traces SHALL NEVER be returned.
+
+---
+
+# 16. Versioning
+
+The API SHALL be versioned.
+
+Example:
+
+```text id="api12"
+/api/v1/...
+```
+
+Breaking changes require a new API version.
+
+---
+
+# 17. Design Invariants
+
+Invariant 1
+
+Every endpoint maps to one Command.
+
+---
+
+Invariant 2
+
+The API never exposes internal services.
+
+---
+
+Invariant 3
+
+The API remains transport-independent.
+
+REST is the reference implementation.
