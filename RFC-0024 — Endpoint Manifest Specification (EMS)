@@ -1,0 +1,423 @@
+# RFC-0024
+
+# Endpoint Manifest Specification (EMS)
+
+Status: Draft
+
+Version: 0.1
+
+Depends on:
+
+* RFC-0000 Core Object Model
+* RFC-0015 Model Class Registry
+* RFC-0020 Hypervisor Architecture
+* RFC-0023 Bundle Specification
+
+---
+
+# 1. Purpose
+
+The Endpoint Manifest defines a concrete executable AI service published by a Hypervisor.
+
+Unlike Bundles, Endpoint Manifests are mutable.
+
+Multiple Endpoint Manifests MAY reference the same Bundle.
+
+An Endpoint Manifest represents the externally visible contract between a Hypervisor and the AiDN network.
+
+---
+
+# 2. Design Principles
+
+### EMS-1
+
+Bundles are immutable.
+
+Endpoint Manifests are mutable.
+
+---
+
+### EMS-2
+
+An Endpoint represents a service.
+
+It does not represent a specific implementation.
+
+---
+
+### EMS-3
+
+Implementation details remain private.
+
+Only observable properties are published.
+
+---
+
+### EMS-4
+
+Every Endpoint owns its own reputation.
+
+Changing implementation affects trust but does not change Endpoint identity.
+
+---
+
+# 3. Endpoint Identity
+
+Every Endpoint SHALL contain:
+
+```yaml
+endpoint:
+
+  endpoint_id:
+
+  owner_wallet:
+
+  created_at:
+
+  bundle_id:
+
+  bundle_hash:
+
+  configuration_hash:
+```
+
+`endpoint_id` remains stable throughout the lifetime of the Endpoint.
+
+---
+
+# 4. Model Declaration
+
+Every public Endpoint SHALL declare its Model Class.
+
+```yaml
+identity:
+
+  display_name: Opus4.6-class
+
+  model_class: opus-class
+```
+
+`display_name` is controlled by the operator.
+
+`model_class` SHALL reference an entry in the Model Class Registry.
+
+---
+
+# 5. Endpoint Profile
+
+The operator MAY publish descriptive metadata.
+
+```yaml
+profile:
+
+  summary:
+
+  strengths:
+
+  limitations:
+
+  recommended_tasks:
+
+  supported_languages:
+
+  preferred_formats:
+
+  examples:
+```
+
+The Profile is informational only.
+
+---
+
+# 6. Runtime Configuration
+
+Runtime configuration defines Endpoint behavior.
+
+```yaml
+runtime:
+
+  context_length:
+
+  temperature:
+
+  top_p:
+
+  top_k:
+
+  max_tokens:
+
+  streaming:
+
+  timeout:
+```
+
+Changing any runtime parameter SHALL generate a new Configuration Snapshot.
+
+---
+
+# 7. Publication Policy
+
+Each Endpoint defines its publication policy.
+
+```yaml
+publication:
+
+  visibility:
+
+    public | private
+
+  discoverable:
+
+    true | false
+
+  validation:
+
+    enabled | disabled
+
+  accepts_external_requests:
+
+    true | false
+```
+
+Each property is independent.
+
+---
+
+# 8. Pricing
+
+Every Endpoint SHALL publish pricing using Billing Units.
+
+```yaml
+pricing:
+
+  billing_unit:
+
+  input_price:
+
+  output_price:
+
+  fixed_price:
+```
+
+Supported Billing Units include:
+
+* token
+* second
+* image
+* page
+* request
+* custom
+
+Examples:
+
+LLM
+
+```yaml
+pricing:
+
+  billing_unit: token
+
+  input_price: 2.5
+
+  output_price: 7.0
+```
+
+Speech-to-Text
+
+```yaml
+pricing:
+
+  billing_unit: second
+
+  input_price: 0.4
+
+  output_price: 0
+```
+
+Image Generation
+
+```yaml
+pricing:
+
+  billing_unit: image
+
+  fixed_price: 4.5
+```
+
+The Hypervisor reports usage.
+
+Wallet services compute settlements.
+
+---
+
+# 9. Validation Status
+
+```yaml
+validation:
+
+  enabled:
+
+  model_class_supported:
+
+  verification_status:
+
+  validation_profile:
+```
+
+Verification status SHALL be one of:
+
+* unsupported
+* pending
+* active
+* suspended
+
+---
+
+# 10. Configuration Snapshot
+
+Every execution-relevant modification SHALL generate a new Configuration Snapshot.
+
+Configuration Snapshot includes:
+
+* BundleHash
+* Runtime configuration
+* Scheduler configuration
+* Publication policy
+* Provider-independent execution configuration
+
+Each Snapshot SHALL produce a unique ConfigurationHash.
+
+---
+
+# 11. Reputation Continuity
+
+Endpoint identity remains stable across Configuration Snapshot changes.
+
+However,
+
+every Configuration Snapshot change contributes to Reputation recalculation according to RFC-0009.
+
+Large implementation changes SHALL temporarily reduce confidence until sufficient new observations have been collected.
+
+---
+
+# 12. Privacy
+
+The Endpoint Manifest SHALL NOT expose:
+
+* provider implementation;
+* execution topology;
+* local or remote execution;
+* orchestration strategy;
+* internal routing;
+* provider chain.
+
+Execution remains private to the Hypervisor.
+
+---
+
+# 13. Provider Independence
+
+An Endpoint MAY change its Provider implementation without changing Endpoint identity.
+
+Example:
+
+```text
+Endpoint
+
+↓
+
+Bundle
+
+↓
+
+Provider A
+
+↓
+
+Provider B
+```
+
+Such changes SHALL produce a new Configuration Snapshot.
+
+---
+
+# 14. Lifecycle
+
+```mermaid
+stateDiagram-v2
+
+[*] --> Created
+
+Created --> Published
+
+Published --> Active
+
+Active --> Updating
+
+Updating --> Active
+
+Active --> Suspended
+
+Suspended --> Active
+
+Active --> Removed
+
+Removed --> [*]
+```
+
+---
+
+# 15. Discovery Contract
+
+Discovery APIs SHALL expose only:
+
+* Endpoint Identity
+* Model Class
+* Capability
+* Pricing
+* Reputation
+* Validation Status
+* ConfigurationHash
+
+No implementation details SHALL be published.
+
+---
+
+# 16. Design Invariants
+
+Invariant 1
+
+Endpoint identity is permanent.
+
+---
+
+Invariant 2
+
+BundleHash is immutable.
+
+---
+
+Invariant 3
+
+ConfigurationHash changes whenever execution behavior changes.
+
+---
+
+Invariant 4
+
+Model Class is mandatory for public verifiable Endpoints.
+
+---
+
+Invariant 5
+
+Provider implementation is private.
+
+---
+
+Invariant 6
+
+Observable behavior determines reputation.
+
+Declared implementation does not.
