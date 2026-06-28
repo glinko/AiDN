@@ -1,0 +1,373 @@
+# IMP-0400
+
+# Package Organization and Coding Standards
+
+Status: Draft
+
+Version: 0.1
+
+Depends on:
+
+* ARCHITECTURE.md
+* ADR-0001 Service Ownership Principle
+* IMP-0200 Hypervisor Service Interfaces
+* IMP-0301 Dependency Injection and Object Lifetime
+
+---
+
+# 1. Purpose
+
+This document defines mandatory coding standards and package organization for the AiDN Hypervisor.
+
+The objective is to maintain a predictable, maintainable and scalable codebase.
+
+Code consistency is considered an architectural requirement.
+
+---
+
+# 2. Design Principles
+
+### CODE-1
+
+Every package has one responsibility.
+
+---
+
+### CODE-2
+
+Every package has one owner.
+
+---
+
+### CODE-3
+
+Interfaces define contracts.
+
+Implementations define behavior.
+
+---
+
+### CODE-4
+
+Reading unfamiliar code should require minimal navigation.
+
+---
+
+# 3. Package Layout
+
+Every service SHALL follow the same directory structure.
+
+Example:
+
+```text id="s0f5d7"
+endpoint/
+
+    service.go
+
+    service_impl.go
+
+    repository.go
+
+    repository_pg.go
+
+    commands.go
+
+    results.go
+
+    events.go
+
+    models.go
+
+    validation.go
+
+    errors.go
+
+    metrics.go
+
+    types.go
+
+    doc.go
+```
+
+Files SHALL be grouped by responsibility.
+
+---
+
+# 4. Public Surface
+
+Each package SHOULD expose:
+
+* one primary interface;
+* public types required by that interface.
+
+Implementation details SHALL remain unexported.
+
+---
+
+# 5. Naming Rules
+
+Interfaces:
+
+```text id="yj2yvm"
+EndpointService
+
+BundleService
+
+WalletService
+```
+
+Commands:
+
+```text id="dbivkr"
+CreateEndpointCommand
+
+StartEndpointCommand
+
+PublishAdvertisementCommand
+```
+
+Results:
+
+```text id="kqetma"
+CreateEndpointResult
+
+InstallBundleResult
+```
+
+Events:
+
+```text id="0azm7o"
+EndpointCreated
+
+TaskCompleted
+
+ValidationFinished
+```
+
+Repositories:
+
+```text id="i53vjlwm"
+EndpointRepository
+```
+
+Implementations:
+
+```text id="fjlwm5q"
+endpointService
+
+endpointRepository
+```
+
+---
+
+# 6. Constructors
+
+Every package SHALL expose one constructor.
+
+Example:
+
+```go id="5khgsc"
+NewEndpointService(...)
+```
+
+Constructors SHALL:
+
+* validate dependencies;
+* never start goroutines;
+* never perform network I/O;
+* never execute database migrations.
+
+---
+
+# 7. Global State
+
+Mutable global variables are prohibited.
+
+Package-level state is prohibited.
+
+Allowed exceptions:
+
+* compile-time constants;
+* immutable lookup tables.
+
+---
+
+# 8. init()
+
+The use of `init()` is prohibited.
+
+Initialization SHALL occur explicitly during bootstrap.
+
+---
+
+# 9. Logging
+
+Every package SHALL use the shared logging interface.
+
+Packages SHALL NOT instantiate loggers.
+
+Every log entry SHOULD include:
+
+* component;
+* operation;
+* correlation_id (when available);
+* severity.
+
+---
+
+# 10. Error Handling
+
+Errors SHALL use structured types.
+
+Every error SHALL include:
+
+* code;
+* message;
+* recoverable;
+* optional cause.
+
+Panic SHALL NOT be used for business logic.
+
+---
+
+# 11. Context
+
+Every operation that may block SHALL receive:
+
+```go id="ztjlwm"
+context.Context
+```
+
+Contexts SHALL NOT be stored inside structs.
+
+Contexts SHALL NOT be reused after request completion.
+
+---
+
+# 12. Concurrency
+
+Every goroutine SHALL have:
+
+* an owner;
+* a cancellation path;
+* a documented purpose.
+
+Fire-and-forget goroutines are prohibited.
+
+---
+
+# 13. Events
+
+Events SHALL be immutable.
+
+Events SHALL NOT contain mutable pointers.
+
+Events SHALL describe completed actions.
+
+Commands and Events SHALL remain separate concepts.
+
+---
+
+# 14. Persistence
+
+Repositories own persistence.
+
+Services own business logic.
+
+Repositories SHALL NOT contain business rules.
+
+---
+
+# 15. Configuration
+
+Configuration SHALL be immutable after successful startup.
+
+Runtime configuration changes SHALL occur through Configuration Snapshots.
+
+Configuration files SHALL NOT be modified directly while the Hypervisor is running.
+
+---
+
+# 16. Testing
+
+Every package SHALL include:
+
+* unit tests;
+* mock implementations;
+* integration tests where applicable.
+
+Public interfaces SHALL be fully testable without external services.
+
+---
+
+# 17. Documentation
+
+Every exported type SHALL include GoDoc.
+
+Every package SHALL contain `doc.go`.
+
+Complex algorithms SHALL reference the corresponding RFC or IMP document.
+
+---
+
+# 18. Dependency Rules
+
+Packages MAY depend only on:
+
+* lower architectural layers;
+* public interfaces.
+
+Circular dependencies are prohibited.
+
+Cross-service implementation dependencies are prohibited.
+
+---
+
+# 19. Code Review Checklist
+
+Every pull request SHALL verify:
+
+* architecture principles preserved;
+* no ownership violations;
+* no hidden dependencies;
+* interfaces unchanged or versioned;
+* tests added or updated;
+* documentation updated where necessary.
+
+---
+
+# 20. Design Invariants
+
+Invariant 1
+
+One package.
+
+One responsibility.
+
+---
+
+Invariant 2
+
+Interfaces are stable.
+
+Implementations evolve.
+
+---
+
+Invariant 3
+
+Explicit dependencies only.
+
+---
+
+Invariant 4
+
+Bootstrap owns initialization.
+
+Packages own behavior.
+
+---
+
+Invariant 5
+
+Predictability is preferred over cleverness.
