@@ -1,0 +1,336 @@
+# IMP-0500
+
+# Provider SDK Specification
+
+Status: Draft
+
+Version: 0.1
+
+Depends on:
+
+* RFC-0022 Provider Interface Specification
+* IMP-0200 Hypervisor Service Interfaces
+* IMP-0400 Package Organization and Coding Standards
+
+---
+
+# 1. Purpose
+
+This document defines the official Provider SDK.
+
+The SDK enables third-party developers to implement execution providers compatible with the AiDN Hypervisor.
+
+The SDK SHALL abstract provider-specific implementation details behind a stable interface.
+
+---
+
+# 2. Design Goals
+
+The Provider SDK SHALL:
+
+* be implementation-independent;
+* minimize boilerplate;
+* support local and remote execution backends;
+* expose deterministic lifecycle hooks;
+* remain backward compatible across minor releases.
+
+The SDK SHALL NOT expose Hypervisor internals.
+
+---
+
+# 3. Provider Responsibilities
+
+A Provider is responsible only for execution.
+
+A Provider SHALL NOT:
+
+* participate in scheduling;
+* publish Advertisements;
+* access Wallet state;
+* modify Endpoint metadata;
+* communicate with the Registry;
+* implement validation logic.
+
+---
+
+# 4. Provider Lifecycle
+
+Every Provider SHALL implement:
+
+```go id="zkt9m1"
+type Provider interface {
+
+    Initialize(ctx context.Context) error
+
+    Start(ctx context.Context) error
+
+    Stop(ctx context.Context) error
+
+    Health(ctx context.Context) (HealthResult, error)
+
+    Capabilities(ctx context.Context) (CapabilitiesResult, error)
+
+    Bundles(ctx context.Context) (BundlesResult, error)
+
+    LoadBundle(ctx context.Context, cmd LoadBundleCommand) (LoadBundleResult, error)
+
+    UnloadBundle(ctx context.Context, cmd UnloadBundleCommand) (UnloadBundleResult, error)
+
+    Execute(ctx context.Context, cmd ExecuteCommand) (ExecuteResult, error)
+
+    Usage(ctx context.Context, cmd UsageCommand) (UsageResult, error)
+
+    Warmup(ctx context.Context, cmd WarmupCommand) (WarmupResult, error)
+
+    Shutdown(ctx context.Context) error
+}
+```
+
+Every method SHALL be synchronous.
+
+Long-running operations SHALL respect context cancellation.
+
+---
+
+# 5. Command and Result Objects
+
+Every SDK operation SHALL use explicit Command and Result types.
+
+Example:
+
+```go id="jlwmn1"
+type ExecuteCommand struct {
+    EndpointID string
+    RequestID  string
+    Input      any
+    Parameters map[string]any
+}
+```
+
+```go id="jlwmn2"
+type ExecuteResult struct {
+    Output          any
+    Usage           UsageReport
+    ExecutionTimeMS int64
+    Metadata        map[string]string
+}
+```
+
+Primitive argument lists are prohibited.
+
+---
+
+# 6. Usage Reporting
+
+Providers SHALL report usage using Billing Units.
+
+Example:
+
+```go id="jlwmn3"
+type UsageReport struct {
+
+    BillingUnit string
+
+    InputUnits float64
+
+    OutputUnits float64
+
+    MeasurementKind string
+
+    MeasurementSource string
+}
+```
+
+Examples of Billing Units include:
+
+* token
+* second
+* image
+* page
+* request
+
+Custom Billing Units MAY be introduced by future Capabilities.
+
+---
+
+# 7. Health Reporting
+
+Health SHALL include:
+
+```go id="jlwmn4"
+type HealthResult struct {
+
+    Status
+
+    ActiveRequests
+
+    LoadedBundles
+
+    LastError
+
+    Uptime
+}
+```
+
+Health SHALL describe observable runtime state only.
+
+---
+
+# 8. Bundle Support
+
+Providers SHALL expose the Bundles they currently support.
+
+Bundle loading SHALL be idempotent.
+
+Attempting to load an already loaded Bundle SHALL succeed without side effects.
+
+---
+
+# 9. Error Model
+
+SDK errors SHALL use structured error types.
+
+Every error SHALL include:
+
+* Code
+* Message
+* Recoverable
+* Cause (optional)
+
+Providers SHALL NOT panic for recoverable execution failures.
+
+---
+
+# 10. Thread Safety
+
+Providers SHALL support concurrent Execute operations unless explicitly documented otherwise.
+
+Thread safety guarantees SHALL be published through Provider metadata.
+
+---
+
+# 11. Configuration
+
+Providers SHALL receive immutable configuration during initialization.
+
+Runtime configuration changes SHALL occur only through Hypervisor-managed Configuration Snapshots.
+
+Providers SHALL NOT reload configuration autonomously.
+
+---
+
+# 12. Resource Reporting
+
+Providers MAY publish resource hints.
+
+Example:
+
+```go id="jlwmn5"
+type ResourceEstimate struct {
+
+    EstimatedRAM
+
+    EstimatedVRAM
+
+    EstimatedCPU
+
+    EstimatedGPU
+}
+```
+
+The Hypervisor MAY use these hints during scheduling.
+
+Resource hints are advisory.
+
+---
+
+# 13. Logging
+
+Providers SHALL use the logging interface supplied by the Hypervisor.
+
+Providers SHALL NOT create independent logging systems.
+
+---
+
+# 14. Metrics
+
+Providers MAY emit execution metrics.
+
+Metrics SHALL be observational only.
+
+Providers SHALL NOT modify Hypervisor metrics directly.
+
+---
+
+# 15. Testing Requirements
+
+Every Provider implementation SHALL include:
+
+* lifecycle tests;
+* execution tests;
+* cancellation tests;
+* concurrent execution tests;
+* usage reporting tests;
+* health reporting tests.
+
+Reference test suites SHALL be supplied by the Hypervisor project.
+
+---
+
+# 16. Compatibility
+
+Providers SHALL declare:
+
+* SDK Version
+* Provider Version
+* Supported Capabilities
+* Supported Model Classes
+* Supported Bundle Formats
+
+The Hypervisor SHALL reject incompatible SDK versions.
+
+---
+
+# 17. Extension Rules
+
+New SDK methods SHALL be added only through interface versioning.
+
+Existing methods SHALL remain backward compatible throughout the major SDK version.
+
+---
+
+# 18. Design Invariants
+
+Invariant 1
+
+Providers execute workloads.
+
+Nothing more.
+
+---
+
+Invariant 2
+
+Providers never participate in network protocols.
+
+---
+
+Invariant 3
+
+Billing is reported, never calculated.
+
+---
+
+Invariant 4
+
+The Hypervisor owns orchestration.
+
+Providers own execution.
+
+---
+
+Invariant 5
+
+The SDK remains transport-independent.
+
+Local processes, remote APIs and future execution engines SHALL implement the same contract.
