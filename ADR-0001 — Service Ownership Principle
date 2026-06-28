@@ -1,0 +1,226 @@
+# ADR-0001
+
+# Service Ownership Principle
+
+Status: Accepted
+
+Version: 1.0
+
+Applies to:
+
+Entire AiDN Hypervisor codebase.
+
+---
+
+# 1. Decision
+
+Every service exclusively owns its internal state.
+
+No other service may directly modify that state.
+
+All cross-service communication SHALL occur through:
+
+* public service interfaces;
+* immutable events.
+
+---
+
+# 2. Motivation
+
+Direct state sharing creates:
+
+* tight coupling;
+* circular dependencies;
+* fragile implementations;
+* difficult testing;
+* difficult future service extraction.
+
+Service ownership preserves clear architectural boundaries.
+
+---
+
+# 3. Service Ownership
+
+Every service owns:
+
+* its database tables;
+* in-memory state;
+* caches;
+* internal algorithms;
+* persistence logic.
+
+No other service SHALL directly access these resources.
+
+---
+
+# 4. Communication
+
+Services communicate through two mechanisms only.
+
+## Public Interfaces
+
+Used for synchronous request/response operations.
+
+Example:
+
+```text
+Scheduler
+
+↓
+
+ResourceManager.Reserve()
+```
+
+---
+
+## Internal Events
+
+Used for notifications.
+
+Example:
+
+```text
+TaskCompleted
+
+↓
+
+Wallet
+
+↓
+
+UsageRecorded
+```
+
+The publisher does not know who receives the event.
+
+---
+
+# 5. Forbidden Patterns
+
+The following patterns are prohibited.
+
+* Scheduler writing directly into Wallet storage.
+* Registry updating Endpoint Manager state.
+* Validator modifying Scheduler queues.
+* Wallet modifying Registry metadata.
+* Direct database access between services.
+* Shared mutable structures spanning multiple services.
+
+---
+
+# 6. Event Ownership
+
+Every Event has:
+
+* one Publisher;
+* zero or more Subscribers.
+
+Subscribers SHALL treat Events as immutable observations.
+
+Events SHALL NEVER become commands.
+
+---
+
+# 7. State Ownership
+
+Example.
+
+```text
+Scheduler
+
+owns
+
+↓
+
+Task Queue
+```
+
+Only Scheduler modifies the Task Queue.
+
+---
+
+```text
+Wallet
+
+owns
+
+↓
+
+Usage Ledger
+```
+
+Only Wallet modifies the Usage Ledger.
+
+---
+
+```text
+Registry
+
+owns
+
+↓
+
+Advertisement Cache
+```
+
+Only Registry modifies the Advertisement Cache.
+
+---
+
+# 8. Failure Isolation
+
+Failure of one service SHALL NOT corrupt another service's state.
+
+Service recovery SHALL depend only on:
+
+* owned persistent state;
+* immutable Events.
+
+---
+
+# 9. Future Extraction
+
+Any service SHALL be extractable into an independent process.
+
+Extraction SHALL require replacing only the communication transport.
+
+Business logic SHALL remain unchanged.
+
+---
+
+# 10. Architectural Consequences
+
+This decision results in:
+
+* minimal coupling;
+* simpler testing;
+* simpler refactoring;
+* independent evolution of services;
+* predictable ownership boundaries;
+* straightforward future distributed deployment.
+
+These benefits outweigh the additional complexity introduced by asynchronous event handling.
+
+---
+
+# 11. Design Rule
+
+If two services need the same information,
+
+the owner service publishes an Event.
+
+Consumers maintain their own derived state.
+
+No service reads another service's private storage directly.
+
+---
+
+# 12. Summary
+
+Own your state.
+
+Publish immutable events.
+
+Consume observations.
+
+Never modify another service's data.
