@@ -1,0 +1,3332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AiDN Operator Dashboard</title>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap");
+
+    :root {
+      --bg: #06131f;
+      --bg-deep: #040d16;
+      --panel: rgba(12, 28, 44, 0.92);
+      --panel-strong: rgba(15, 35, 53, 0.98);
+      --panel-soft: rgba(10, 24, 38, 0.88);
+      --ink: #edf5ff;
+      --muted: #8fa9c4;
+      --line: rgba(142, 176, 214, 0.18);
+      --line-strong: rgba(255, 174, 87, 0.34);
+      --accent: #ffae57;
+      --accent-soft: rgba(255, 174, 87, 0.16);
+      --good: #49d17d;
+      --good-soft: rgba(73, 209, 125, 0.14);
+      --bad: #ff6b6b;
+      --bad-soft: rgba(255, 107, 107, 0.12);
+      --blue: #62b6ff;
+      --shadow: 0 24px 72px rgba(0, 0, 0, 0.34);
+      --radius: 22px;
+      --radius-sm: 16px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-height: 100%;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(255, 174, 87, 0.14), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(98, 182, 255, 0.12), transparent 30%),
+        linear-gradient(180deg, var(--bg-deep) 0%, var(--bg) 100%);
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      min-height: 100vh;
+      gap: 14px;
+      padding: 14px;
+    }
+
+    .panel {
+      background:
+        linear-gradient(180deg, rgba(18, 39, 59, 0.94) 0%, rgba(9, 22, 36, 0.98) 100%);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-heading,
+    .kicker {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--muted);
+    }
+
+    .command-rail {
+      position: sticky;
+      top: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-self: start;
+      min-height: calc(100vh - 28px);
+      padding: 16px 14px;
+    }
+
+    .brand-block {
+      padding: 8px 4px 2px;
+    }
+
+    .brand-mark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 50px;
+      height: 50px;
+      border-radius: 16px;
+      border: 1px solid var(--line-strong);
+      background: linear-gradient(180deg, rgba(255, 174, 87, 0.18), rgba(255, 174, 87, 0.06));
+      color: var(--accent);
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+    }
+
+    .brand-title {
+      margin: 14px 0 6px;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 26px;
+      line-height: 1;
+      letter-spacing: 0.02em;
+    }
+
+    .brand-subtitle {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .operator-card,
+    .status-card,
+    .settlement-card {
+      padding: 14px;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(12, 31, 49, 0.96), rgba(7, 19, 31, 0.96));
+      border: 1px solid var(--line);
+    }
+
+    .operator-name {
+      margin-top: 8px;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .operator-meta,
+    .status-subline,
+    .settlement-subline {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .rail-nav,
+    .rail-secondary {
+      display: grid;
+      gap: 8px;
+    }
+
+    .rail-button {
+      display: grid;
+      gap: 4px;
+      width: 100%;
+      padding: 12px 14px;
+      text-align: left;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      color: var(--ink);
+      background: rgba(8, 18, 30, 0.78);
+      cursor: pointer;
+      transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+    }
+
+    .rail-button:hover,
+    .rail-button:focus-visible {
+      outline: none;
+      border-color: var(--line-strong);
+      background: rgba(14, 31, 47, 0.96);
+      transform: translateY(-1px);
+    }
+
+    .rail-button.active {
+      border-color: var(--line-strong);
+      background: linear-gradient(180deg, rgba(255, 174, 87, 0.2), rgba(255, 174, 87, 0.06));
+      box-shadow: inset 0 0 0 1px rgba(255, 174, 87, 0.16);
+    }
+
+    .rail-button-title {
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .rail-button-copy {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .rail-secondary .rail-button {
+      cursor: default;
+      opacity: 0.82;
+    }
+
+    .rail-secondary .rail-button[data-wallet-open] {
+      cursor: pointer;
+      opacity: 1;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 28px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(7, 18, 28, 0.82);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .chip.good {
+      color: var(--good);
+      border-color: rgba(73, 209, 125, 0.28);
+      background: var(--good-soft);
+    }
+
+    .chip.bad {
+      color: var(--bad);
+      border-color: rgba(255, 107, 107, 0.24);
+      background: var(--bad-soft);
+    }
+
+    .dashboard-stage {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .metrics-strip {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .metric-tile {
+      padding: 14px 16px 12px;
+      overflow: hidden;
+    }
+
+    .metric-value {
+      margin-top: 10px;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 30px;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .metric-subline,
+    .metric-delta {
+      margin-top: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .metric-delta.up {
+      color: var(--good);
+    }
+
+    .metric-delta.down {
+      color: var(--bad);
+    }
+
+    .sparkline {
+      display: grid;
+      grid-auto-flow: column;
+      align-items: end;
+      gap: 4px;
+      height: 34px;
+      margin-top: 12px;
+    }
+
+    .sparkline span {
+      display: block;
+      min-width: 6px;
+      border-radius: 999px 999px 2px 2px;
+      background: linear-gradient(180deg, rgba(255, 174, 87, 0.88), rgba(255, 174, 87, 0.28));
+    }
+
+    .stage-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 310px;
+      gap: 14px;
+      min-height: 0;
+    }
+
+    .workspace,
+    .inspector,
+    .operations-band {
+      min-width: 0;
+    }
+
+    .workspace {
+      padding: 16px;
+    }
+
+    .workspace-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 18px;
+      margin-bottom: 14px;
+    }
+
+    .workspace-title {
+      margin: 8px 0 4px;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 30px;
+      line-height: 1.04;
+      letter-spacing: -0.04em;
+    }
+
+    .workspace-copy {
+      max-width: 62ch;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .toolbar button,
+    .toolbar select {
+      min-height: 38px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(7, 18, 28, 0.88);
+      color: var(--ink);
+    }
+
+    .toolbar button.active {
+      border-color: var(--line-strong);
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .workspace-body {
+      display: grid;
+      gap: 16px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .summary-card,
+    .subpanel {
+      padding: 16px;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(11, 27, 42, 0.92), rgba(7, 19, 31, 0.96));
+      border: 1px solid var(--line);
+    }
+
+    .summary-card .summary-value,
+    .inspector-metric {
+      margin-top: 10px;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 28px;
+      letter-spacing: -0.04em;
+    }
+
+    .summary-copy,
+    .subpanel-copy {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .table-shell {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      overflow: hidden;
+      background: rgba(7, 19, 30, 0.86);
+    }
+
+    .table-row,
+    .table-head {
+      display: grid;
+      grid-template-columns: 1.5fr 0.92fr 0.84fr 0.88fr 0.78fr 0.84fr 0.8fr;
+      gap: 12px;
+      align-items: center;
+      padding: 14px 16px;
+    }
+
+    .table-head {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      border-bottom: 1px solid var(--line);
+      background: rgba(11, 25, 40, 0.98);
+    }
+
+    .table-row {
+      border-bottom: 1px solid rgba(142, 176, 214, 0.08);
+      cursor: pointer;
+      transition: background 140ms ease, border-color 140ms ease;
+    }
+
+    .table-row:last-child {
+      border-bottom: none;
+    }
+
+    .table-row:hover,
+    .table-row.active {
+      background: rgba(255, 174, 87, 0.08);
+      box-shadow: inset 0 0 0 1px rgba(255, 174, 87, 0.18);
+    }
+
+    .row-title {
+      font-weight: 600;
+      font-size: 15px;
+      line-height: 1.4;
+    }
+
+    .row-copy {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .row-number {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 22px;
+      letter-spacing: -0.04em;
+    }
+
+    .row-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .row-action {
+      justify-self: end;
+      min-width: 110px;
+      min-height: 36px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      background: rgba(7, 18, 28, 0.86);
+    }
+
+    .row-action.selected {
+      border-color: var(--line-strong);
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .home-columns,
+    .fleet-columns {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+      gap: 12px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .list {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .list-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(7, 19, 30, 0.76);
+    }
+
+    .list-row strong {
+      display: block;
+      font-size: 14px;
+    }
+
+    .list-row span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .bar-track {
+      position: relative;
+      width: 100%;
+      height: 9px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(142, 176, 214, 0.12);
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, rgba(73, 209, 125, 0.92), rgba(255, 174, 87, 0.92));
+    }
+
+    .inspector {
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+      align-self: start;
+      position: sticky;
+      top: 14px;
+    }
+
+    .inspector-title {
+      margin: 8px 0 0;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 30px;
+      line-height: 1.04;
+      letter-spacing: -0.04em;
+    }
+
+    .inspector-copy {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .inspector-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .inspector-card {
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(7, 19, 30, 0.78);
+    }
+
+    .inspector-card strong,
+    .inspector-stat strong {
+      display: block;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+    }
+
+    .inspector-stat {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(142, 176, 214, 0.08);
+      font-size: 14px;
+    }
+
+    .inspector-stat:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .inspector-stat:first-child {
+      padding-top: 0;
+    }
+
+    .inspector-actions {
+      display: grid;
+      gap: 10px;
+    }
+
+    .primary-button,
+    .secondary-button {
+      width: 100%;
+      min-height: 42px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      cursor: pointer;
+    }
+
+    .primary-button {
+      color: #211303;
+      background: linear-gradient(180deg, #ffc279 0%, #ffab4a 100%);
+      border-color: rgba(255, 194, 121, 0.56);
+      font-weight: 700;
+    }
+
+    .secondary-button {
+      color: var(--ink);
+      background: rgba(7, 18, 28, 0.86);
+    }
+
+    .operations-band {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .ops-card {
+      padding: 16px;
+    }
+
+    .ops-grid {
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .ops-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      font-size: 14px;
+    }
+
+    .ops-row strong {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .toggle {
+      position: relative;
+      width: 48px;
+      height: 28px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(7, 18, 28, 0.88);
+      cursor: pointer;
+    }
+
+    .toggle::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 4px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #dce8f6;
+      transition: transform 140ms ease, background 140ms ease;
+    }
+
+    .toggle.on {
+      border-color: rgba(73, 209, 125, 0.34);
+      background: rgba(73, 209, 125, 0.16);
+    }
+
+    .toggle.on::after {
+      transform: translateX(19px);
+      background: var(--good);
+    }
+
+    .wallet-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 8, 14, 0.56);
+      backdrop-filter: blur(10px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
+      z-index: 40;
+    }
+
+    .wallet-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .wallet-drawer {
+      position: fixed;
+      top: 14px;
+      right: 14px;
+      bottom: 14px;
+      width: min(640px, calc(100vw - 28px));
+      padding: 16px;
+      display: grid;
+      grid-template-rows: auto auto auto minmax(0, 1fr);
+      gap: 14px;
+      transform: translateX(calc(100% + 28px));
+      opacity: 0;
+      pointer-events: none;
+      transition: transform 220ms ease, opacity 220ms ease;
+      z-index: 50;
+      overflow: hidden;
+    }
+
+    .wallet-drawer.open {
+      transform: translateX(0);
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .drawer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+
+    .drawer-title {
+      margin: 8px 0 4px;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 28px;
+      line-height: 1.04;
+      letter-spacing: -0.04em;
+    }
+
+    .icon-button {
+      min-width: 42px;
+      min-height: 42px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      background: rgba(7, 18, 28, 0.86);
+      cursor: pointer;
+    }
+
+    .wallet-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .wallet-summary-card {
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(7, 19, 30, 0.82);
+    }
+
+    .wallet-summary-value {
+      margin-top: 10px;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 24px;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .wallet-toolbar,
+    .wallet-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .wallet-tabs button,
+    .wallet-toolbar button,
+    .wallet-toolbar select,
+    .wallet-toolbar input,
+    .wallet-form input,
+    .wallet-form select,
+    .wallet-form textarea {
+      min-height: 38px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(7, 18, 28, 0.88);
+      color: var(--ink);
+      font: inherit;
+    }
+
+    .wallet-toolbar button.active,
+    .wallet-tabs button.active {
+      border-color: var(--line-strong);
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .wallet-tabs button,
+    .wallet-toolbar button {
+      cursor: pointer;
+    }
+
+    .wallet-body {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr);
+      gap: 14px;
+      overflow: hidden;
+    }
+
+    .wallet-ledger,
+    .wallet-detail,
+    .wallet-form {
+      min-height: 0;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(7, 19, 30, 0.82);
+    }
+
+    .wallet-list {
+      display: grid;
+      gap: 10px;
+      max-height: 100%;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .wallet-entry {
+      width: 100%;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(9, 24, 37, 0.92);
+      color: var(--ink);
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+    }
+
+    .wallet-entry:hover,
+    .wallet-entry:focus-visible {
+      outline: none;
+      border-color: var(--line-strong);
+      transform: translateY(-1px);
+      background: rgba(13, 30, 46, 0.98);
+    }
+
+    .wallet-entry.active {
+      border-color: var(--line-strong);
+      background: linear-gradient(180deg, rgba(255, 174, 87, 0.18), rgba(255, 174, 87, 0.06));
+      box-shadow: inset 0 0 0 1px rgba(255, 174, 87, 0.14);
+    }
+
+    .wallet-entry-top,
+    .wallet-entry-bottom {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .wallet-entry-bottom {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .wallet-entry-title {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .wallet-entry-copy {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .wallet-detail {
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      gap: 12px;
+      overflow: auto;
+    }
+
+    .wallet-detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .wallet-detail-card {
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(5, 15, 24, 0.72);
+    }
+
+    .wallet-detail-card strong {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+    }
+
+    .wallet-detail-card span {
+      display: block;
+      margin-top: 8px;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 22px;
+      letter-spacing: -0.03em;
+    }
+
+    .wallet-stat-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .wallet-stat {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(142, 176, 214, 0.08);
+      font-size: 13px;
+    }
+
+    .wallet-stat:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .wallet-stat strong {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    .wallet-form {
+      display: grid;
+      gap: 10px;
+    }
+
+    .wallet-form textarea {
+      min-height: 90px;
+      resize: vertical;
+    }
+
+    .wallet-form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .wallet-inline-actions {
+      display: grid;
+      gap: 10px;
+    }
+
+    .wallet-message {
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(7, 18, 28, 0.88);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .wallet-message.good {
+      color: var(--good);
+      border-color: rgba(73, 209, 125, 0.28);
+      background: var(--good-soft);
+    }
+
+    .wallet-message.bad {
+      color: var(--bad);
+      border-color: rgba(255, 107, 107, 0.24);
+      background: var(--bad-soft);
+    }
+
+    .requests-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+      gap: 14px;
+    }
+
+    .request-surface,
+    .request-sidebar {
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(11, 27, 42, 0.92), rgba(7, 19, 31, 0.96));
+      min-width: 0;
+    }
+
+    .request-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+      margin-bottom: 14px;
+    }
+
+    .request-tabs button {
+      min-height: 38px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(7, 18, 28, 0.88);
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    .request-tabs button.active {
+      border-color: var(--line-strong);
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .request-list {
+      display: grid;
+      gap: 10px;
+      max-height: 720px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .request-row {
+      width: 100%;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(9, 24, 37, 0.92);
+      color: var(--ink);
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+    }
+
+    .request-row:hover,
+    .request-row:focus-visible {
+      outline: none;
+      border-color: var(--line-strong);
+      transform: translateY(-1px);
+      background: rgba(13, 30, 46, 0.98);
+    }
+
+    .request-row.active {
+      border-color: var(--line-strong);
+      background: linear-gradient(180deg, rgba(255, 174, 87, 0.18), rgba(255, 174, 87, 0.06));
+      box-shadow: inset 0 0 0 1px rgba(255, 174, 87, 0.14);
+    }
+
+    .request-row-top,
+    .request-row-bottom {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .request-row-bottom {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .request-policy-block {
+      display: grid;
+      gap: 12px;
+    }
+
+    .request-policy-note {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .request-preview-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .request-preview-item {
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(5, 15, 24, 0.72);
+    }
+
+    .request-history {
+      display: grid;
+      gap: 10px;
+      max-height: 260px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .request-history-item {
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(142, 176, 214, 0.12);
+      background: rgba(5, 15, 24, 0.64);
+    }
+
+    .empty-state {
+      padding: 24px;
+      border-radius: 18px;
+      border: 1px dashed var(--line);
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .notice {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 1380px) {
+      .metrics-strip {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .operations-band {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 1200px) {
+      .app-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .command-rail {
+        position: static;
+        min-height: auto;
+      }
+
+      .stage-main {
+        grid-template-columns: 1fr;
+      }
+
+      .inspector {
+        position: static;
+      }
+    }
+
+    @media (max-width: 960px) {
+      .metrics-strip,
+      .operations-band,
+      .summary-grid,
+      .home-columns,
+      .fleet-columns,
+      .wallet-summary-grid,
+      .wallet-body,
+      .wallet-form-grid,
+      .requests-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .workspace-header {
+        flex-direction: column;
+      }
+
+      .toolbar {
+        justify-content: flex-start;
+      }
+
+      .wallet-drawer {
+        top: 8px;
+        right: 8px;
+        bottom: 8px;
+        width: calc(100vw - 16px);
+      }
+
+      .table-head {
+        display: none;
+      }
+
+      .table-row {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .row-action {
+        justify-self: stretch;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="command-rail panel" data-role="command-rail">
+      <div class="brand-block">
+        <div class="brand-mark">A</div>
+        <div class="brand-title">AiDN</div>
+        <div class="brand-subtitle">Hypervisor market terminal for fleet orchestration, provider selection, and operator policy control.</div>
+      </div>
+
+      <section class="operator-card">
+        <div class="kicker">Operator</div>
+        <div class="operator-name" id="operator-name">ORION-7</div>
+        <div class="operator-meta" id="operator-meta">Local node group awaiting live state.</div>
+      </section>
+
+      <nav class="rail-nav">
+        <button class="rail-button active" data-screen="home" type="button">
+          <span class="rail-button-title">Home</span>
+          <span class="rail-button-copy">Overview and publish priorities</span>
+        </button>
+        <button class="rail-button" data-screen="fleet" type="button">
+          <span class="rail-button-title">Fleet</span>
+          <span class="rail-button-copy">Bundles, installs, and resource health</span>
+        </button>
+        <button class="rail-button" data-screen="market" type="button">
+          <span class="rail-button-title">Market</span>
+          <span class="rail-button-copy">Execution Market and attach-ready offers</span>
+        </button>
+      </nav>
+
+      <section class="rail-secondary">
+        <button class="rail-button" type="button" data-screen="requests">
+          <span class="rail-button-title">Requests</span>
+          <span class="rail-button-copy">Workload queue and spillover policy</span>
+        </button>
+        <button class="rail-button" type="button" aria-disabled="true">
+          <span class="rail-button-title">Models</span>
+          <span class="rail-button-copy">Bundles, installs, and onboarding</span>
+        </button>
+        <button class="rail-button" type="button" aria-disabled="true">
+          <span class="rail-button-title">Policies</span>
+          <span class="rail-button-copy">Accounting, queue, and custom hosting</span>
+        </button>
+        <button class="rail-button" type="button" data-wallet-open="rail">
+          <span class="rail-button-title">Wallet</span>
+          <span class="rail-button-copy">Spend, reserves, and settlement</span>
+        </button>
+        <button class="rail-button" type="button" aria-disabled="true">
+          <span class="rail-button-title">Settings</span>
+          <span class="rail-button-copy">System access and future modules</span>
+        </button>
+      </section>
+
+      <section class="status-card">
+        <div class="kicker">Network Status</div>
+        <div class="operator-name" id="network-status">Initializing</div>
+        <div class="status-subline" id="network-meta">Waiting for registry and local node data.</div>
+        <div class="chip-row" style="margin-top: 12px;">
+          <span class="chip good" id="status-chip-health">Healthy</span>
+          <span class="chip" id="status-chip-count">0 nodes</span>
+        </div>
+      </section>
+
+      <section class="settlement-card">
+        <div class="kicker">Settlement</div>
+        <div class="operator-name" id="settlement-mode">Q Ledger</div>
+        <div class="settlement-subline">Pricing and wallet telemetry stay visible while the distributed market layer is still evolving.</div>
+      </section>
+    </aside>
+
+    <main class="dashboard-stage">
+      <section class="metrics-strip" data-role="metrics-strip" id="metrics-strip"></section>
+
+      <div class="stage-main">
+        <section class="workspace panel" data-role="workspace">
+          <div id="workspace-root"></div>
+        </section>
+
+        <aside class="inspector panel" data-role="inspector">
+          <div id="inspector-root">
+            <div class="panel-heading">Selected Offer</div>
+            <div class="inspector-title">Loading</div>
+            <div class="inspector-copy">Selected node and bundle detail will appear here once dashboard data is loaded.</div>
+          </div>
+        </aside>
+      </div>
+
+      <section class="operations-band" data-role="operations-band" id="operations-band"></section>
+    </main>
+  </div>
+
+  <div class="wallet-overlay" id="wallet-overlay" hidden></div>
+  <aside class="wallet-drawer panel" id="wallet-drawer" aria-hidden="true">
+    <div id="wallet-drawer-root"></div>
+  </aside>
+
+  <script>
+    const endpoints = {
+      home: "/operators/dashboard/home",
+      fleet: "/operators/dashboard/fleet",
+      market: "/operators/dashboard/market",
+      requests: "/operators/dashboard/requests",
+    };
+
+    const walletEndpoints = {
+      usage: "/operators/wallet/usage",
+      allocations: "/operators/wallet/allocations",
+      disputes: "/operators/wallet/allocations/disputes",
+      quote: "/operators/wallet/quote",
+    };
+
+    const state = {
+      screen: "home",
+      payloads: {},
+      selectedMarketCandidateId: null,
+      selectedFleetBundleId: null,
+      selectedRequestTaskId: null,
+      requestsTab: "queue",
+      requestDetailCache: {},
+      requestDetailLoading: null,
+      requestMessage: null,
+      requestPolicyPending: false,
+      marketOriginFilter: "all",
+      requireReadyEndpoint: false,
+      policyStrictAccounting: true,
+      policyQueueSpillover: true,
+      policyCustomModelHosting: true,
+      walletDrawerOpen: false,
+      walletDrawerSource: null,
+      walletTab: "usage",
+      walletLoading: false,
+      walletLoaded: false,
+      walletError: null,
+      walletUsageEvents: [],
+      walletAllocationEvents: [],
+      walletDisputeEvents: [],
+      walletSelectedUsageId: null,
+      walletSelectedAllocationId: null,
+      walletSelectedDisputeId: null,
+      walletQuoteDraft: {
+        input_tokens: 250000,
+        output_tokens: 120000,
+        fixed_request_count: 1,
+      },
+      walletQuoteResult: null,
+      walletActionDrafts: {
+        reopenReason: "",
+        disputeReason: "",
+        disputeResolution: "accepted",
+        disputeResolutionReason: "",
+      },
+      walletMessage: null,
+      walletActionPending: null,
+    };
+
+    function formatCount(value) {
+      return Number(value || 0).toLocaleString("en-US");
+    }
+
+    function formatMaybe(value, fallback = "-") {
+      return value === null || value === undefined || value === "" ? fallback : value;
+    }
+
+    function normalizeQ(value) {
+      const numeric = Number(value || 0);
+      return numeric >= 1 ? numeric / 1000 : numeric;
+    }
+
+    function formatQ(value) {
+      return `${normalizeQ(value).toFixed(3)} q`;
+    }
+
+    function formatPercent(value) {
+      return `${Math.round(Number(value || 0) * 100)}%`;
+    }
+
+    function formatRating(value) {
+      const numeric = Number(value || 0);
+      const normalized = numeric <= 1 ? numeric * 5 : numeric;
+      return normalized.toFixed(2);
+    }
+
+    function formatUtcTime() {
+      return new Date().toLocaleTimeString("en-US", {
+        hour12: false,
+        timeZone: "UTC",
+      }) + " UTC";
+    }
+
+    function formatTimestamp(value) {
+      if (!value) {
+        return "-";
+      }
+      return new Date(value).toLocaleString("en-US", {
+        hour12: false,
+        timeZone: "UTC",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }) + " UTC";
+    }
+
+    function median(values) {
+      if (!values.length) {
+        return 0;
+      }
+      const sorted = [...values].sort((left, right) => left - right);
+      const middle = Math.floor(sorted.length / 2);
+      if (sorted.length % 2 === 1) {
+        return sorted[middle];
+      }
+      return (sorted[middle - 1] + sorted[middle]) / 2;
+    }
+
+    function sum(values) {
+      return values.reduce((total, value) => total + Number(value || 0), 0);
+    }
+
+    function sparkline(points) {
+      return `
+        <div class="sparkline" aria-hidden="true">
+          ${points
+            .map((value) => `<span style="height:${Math.max(18, Math.min(100, value))}%"></span>`)
+            .join("")}
+        </div>
+      `;
+    }
+
+    function candidateRating(candidate) {
+      return Number(candidate?.rating?.score || 0);
+    }
+
+    function candidateFreeResource(candidate, key) {
+      const direct = candidate?.resources?.[key];
+      if (typeof direct === "number") {
+        return direct;
+      }
+      const nested = candidate?.resources?.free?.[key];
+      if (typeof nested === "number") {
+        return nested;
+      }
+      return 0;
+    }
+
+    function marketCandidates() {
+      const payload = state.payloads.market || { candidates: [] };
+      return (payload.candidates || []).filter((candidate) => {
+        const originMatches =
+          state.marketOriginFilter === "all" ||
+          candidate.origin === state.marketOriginFilter;
+        const readinessMatches =
+          !state.requireReadyEndpoint || Boolean(candidate.endpoint_ready);
+        return originMatches && readinessMatches;
+      });
+    }
+
+    function selectedMarketCandidate() {
+      const candidates = marketCandidates();
+      if (!candidates.length) {
+        state.selectedMarketCandidateId = null;
+        return null;
+      }
+      const selected =
+        candidates.find((candidate) => candidate.bundle_id === state.selectedMarketCandidateId) ||
+        candidates[0];
+      state.selectedMarketCandidateId = selected.bundle_id;
+      return selected;
+    }
+
+    function selectedFleetBundle() {
+      const payload = state.payloads.fleet || { bundles: [] };
+      const bundles = payload.bundles || [];
+      if (!bundles.length) {
+        state.selectedFleetBundleId = null;
+        return null;
+      }
+      const selected =
+        bundles.find((bundle) => bundle.bundle_id === state.selectedFleetBundleId) || bundles[0];
+      state.selectedFleetBundleId = selected.bundle_id;
+      return selected;
+    }
+
+    function requestsPayload() {
+      return (
+        state.payloads.requests || {
+          summary: {},
+          queue: [],
+          active: [],
+          recent: [],
+          admission: [],
+          policy: {
+            allow_spillover: false,
+            dispatch_strategy: "local_first",
+            ready_endpoint_only: true,
+          },
+          market_spillover_preview: [],
+        }
+      );
+    }
+
+    function requestRowsForTab(tab = state.requestsTab) {
+      const payload = requestsPayload();
+      if (tab === "active") {
+        return payload.active || [];
+      }
+      if (tab === "recent") {
+        return payload.recent || [];
+      }
+      if (tab === "admission") {
+        return payload.admission || [];
+      }
+      return payload.queue || [];
+    }
+
+    function syncRequestSelection() {
+      const rows = requestRowsForTab();
+      const selected = rows.find((item) => item.task_id === state.selectedRequestTaskId) || rows[0] || null;
+      state.selectedRequestTaskId = selected?.task_id || null;
+      return selected;
+    }
+
+    function selectedRequestRow() {
+      return syncRequestSelection();
+    }
+
+    function selectedRequestTaskDetail() {
+      if (!state.selectedRequestTaskId) {
+        return null;
+      }
+      return state.requestDetailCache[state.selectedRequestTaskId] || null;
+    }
+
+    function walletUsageEvents() {
+      return [...state.walletUsageEvents].reverse();
+    }
+
+    function walletAllocationEvents() {
+      return [...state.walletAllocationEvents].reverse();
+    }
+
+    function walletDisputeEvents() {
+      return [...state.walletDisputeEvents].reverse();
+    }
+
+    function syncWalletSelections() {
+      const usage = walletUsageEvents();
+      const allocations = walletAllocationEvents();
+      const disputes = walletDisputeEvents();
+      state.walletSelectedUsageId = usage.find((item) => item.event_id === state.walletSelectedUsageId)?.event_id || usage[0]?.event_id || null;
+      state.walletSelectedAllocationId =
+        allocations.find((item) => item.event_id === state.walletSelectedAllocationId)?.event_id ||
+        allocations[0]?.event_id ||
+        null;
+      state.walletSelectedDisputeId =
+        disputes.find((item) => item.event_id === state.walletSelectedDisputeId)?.event_id ||
+        disputes[0]?.event_id ||
+        null;
+    }
+
+    function selectedWalletUsageEvent() {
+      syncWalletSelections();
+      return walletUsageEvents().find((item) => item.event_id === state.walletSelectedUsageId) || null;
+    }
+
+    function selectedWalletAllocationEvent() {
+      syncWalletSelections();
+      return walletAllocationEvents().find((item) => item.event_id === state.walletSelectedAllocationId) || null;
+    }
+
+    function selectedWalletDisputeEvent() {
+      syncWalletSelections();
+      return walletDisputeEvents().find((item) => item.event_id === state.walletSelectedDisputeId) || null;
+    }
+
+    function selectedWalletDisputeAllocationEvent() {
+      const dispute = selectedWalletDisputeEvent();
+      if (!dispute) {
+        return null;
+      }
+      return (
+        state.walletAllocationEvents.find((item) => item.event_id === dispute.allocation_event_id) ||
+        null
+      );
+    }
+
+    function walletTotals() {
+      return {
+        usageQ: sum(state.walletUsageEvents.map((item) => Number(item.quote?.charges?.total_q || 0))),
+        usageCount: state.walletUsageEvents.length,
+        settlementQ: sum(state.walletAllocationEvents.map((item) => Number(item.usage_total_q || 0))),
+        openSettlements: state.walletAllocationEvents.filter((item) => item.settlement_status === "grace").length,
+        closedSettlements: state.walletAllocationEvents.filter((item) => item.settlement_status === "closed").length,
+        openDisputes: state.walletAllocationEvents.filter((item) => item.dispute_status === "open").length,
+      };
+    }
+
+    function extractErrorMessage(body) {
+      if (typeof body === "string") {
+        return body;
+      }
+      if (Array.isArray(body?.detail)) {
+        return body.detail.map((item) => item.msg || JSON.stringify(item)).join("; ");
+      }
+      if (typeof body?.detail === "string") {
+        return body.detail;
+      }
+      return "wallet request failed";
+    }
+
+    function nodeCount() {
+      const payload = state.payloads.market || { nodes: [] };
+      return (payload.nodes || []).length || 1;
+    }
+
+    function renderMetricsStrip() {
+      const home = state.payloads.home || {};
+      const fleet = state.payloads.fleet || {};
+      const candidates = (state.payloads.market || {}).candidates || [];
+      const queued = Number(fleet.queue?.queued || 0);
+      const active = Number(fleet.queue?.active || 0);
+      const prices = candidates.map((candidate) => Number(candidate.pricing?.input || 0));
+      const totalVram = sum(candidates.map((candidate) => candidateFreeResource(candidate, "vram_mb")));
+      const liveOffers = Number(home.publish?.live_offer_count || 0);
+      const metricTiles = [
+        {
+          label: "Market Depth",
+          value: formatCount(candidates.length),
+          copy: `Across ${formatCount(nodeCount())} visible nodes`,
+          delta: `${liveOffers} live local offers`,
+          deltaClass: "up",
+          chart: sparkline([26, 30, 28, 38, 42, 36, 58, 52]),
+        },
+        {
+          label: "Clearing Price",
+          value: formatQ(median(prices)),
+          copy: "Median input price / 1kk tokens",
+                          delta: prices.length > 1 ? `${formatQ(Math.max(...prices) - Math.min(...prices))} spread` : "Single market quote",
+          deltaClass: prices.length > 1 ? "down" : "up",
+          chart: sparkline([18, 22, 20, 24, 32, 30, 38, 44]),
+        },
+        {
+          label: "Queue Pressure",
+          value: formatCount(queued + active),
+          copy: `${queued} queued / ${active} active`,
+          delta: queued > 0 ? "Spillover may trigger" : "Queue within local headroom",
+          deltaClass: queued > 0 ? "down" : "up",
+          chart: sparkline([14, 18, 24, 28, 24, 20, 18, 22]),
+        },
+        {
+          label: "Allocatable VRAM",
+          value: `${(totalVram / 1024).toFixed(1)} GB`,
+          copy: "Summed free accelerator memory",
+          delta: `${formatCount(candidates.filter((item) => item.can_host_custom_model).length)} custom-host nodes`,
+          deltaClass: "up",
+          chart: sparkline([22, 28, 34, 32, 40, 48, 54, 60]),
+        },
+        {
+          label: "Network Time",
+          value: formatUtcTime(),
+          copy: `${formatCount(nodeCount())} nodes seen by registry`,
+          delta: "Heartbeat view is fresh",
+          deltaClass: "up",
+          chart: sparkline([24, 24, 24, 24, 24, 24, 24, 24]),
+        },
+      ];
+
+      document.getElementById("metrics-strip").innerHTML = metricTiles
+        .map(
+          (tile) => `
+            <section class="metric-tile panel">
+              <div class="panel-heading">${tile.label}</div>
+              <div class="metric-value">${tile.value}</div>
+              <div class="metric-subline">${tile.copy}</div>
+              <div class="metric-delta ${tile.deltaClass}">${tile.delta}</div>
+              ${tile.chart}
+            </section>
+          `
+        )
+        .join("");
+    }
+
+    function renderHomeWorkspace() {
+      const home = state.payloads.home || {};
+      const fleet = state.payloads.fleet || {};
+      const candidate = selectedMarketCandidate();
+      const queueSummary = fleet.queue || { queued: 0, active: 0, completed: 0, failed: 0 };
+      const actions = (home.operator_controls?.actions || []).map((action) => `<span class="chip">${action}</span>`).join("");
+
+      return `
+        <div class="workspace-header">
+          <div>
+            <div class="panel-heading">Operator Overview</div>
+            <h1 class="workspace-title">Home</h1>
+            <p class="workspace-copy">Publish, compare, and attach flows stay in one terminal so the operator can triage capacity and market options without leaving the main surface.</p>
+          </div>
+          <div class="toolbar">
+            <button type="button" class="${state.policyStrictAccounting ? "active" : ""}" data-policy-toggle="strict">Strict Accounting</button>
+            <button type="button" class="${state.policyQueueSpillover ? "active" : ""}" data-policy-toggle="spillover">Queue Spillover</button>
+            <button type="button" class="${state.policyCustomModelHosting ? "active" : ""}" data-policy-toggle="custom">Custom Hosting</button>
+          </div>
+        </div>
+        <div class="workspace-body">
+          <div class="summary-grid">
+            <section class="summary-card">
+              <div class="panel-heading">Publish And Onboard</div>
+              <div class="summary-value">${formatCount(home.publish?.live_offer_count)}</div>
+              <div class="summary-copy">${formatCount(home.publish?.install_pending_count)} pending installs and ${formatCount(home.publish?.draft_offer_count)} configured bundles ready for publishing.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Market Visibility</div>
+              <div class="summary-value">${formatCount(home.market_preview?.candidate_count)}</div>
+              <div class="summary-copy">${formatCount(home.market_visibility?.local_offer_count)} local offers currently visible through the market layer.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Queue Readiness</div>
+              <div class="summary-value">${formatCount(queueSummary.queued + queueSummary.active)}</div>
+              <div class="summary-copy">${formatCount(queueSummary.queued)} queued, ${formatCount(queueSummary.active)} active, ${formatCount(queueSummary.completed)} completed tasks on this node.</div>
+            </section>
+          </div>
+          <div class="home-columns">
+            <section class="subpanel">
+              <div class="panel-heading">Execution Market</div>
+              <div class="list">
+                ${
+                  candidate
+                    ? `
+                      <div class="list-row">
+                        <div>
+                          <strong>${candidate.bundle_id}</strong>
+                          <span>${candidate.model_id} on ${candidate.node_id} / ${candidate.origin}</span>
+                        </div>
+                        <div class="row-number">${formatQ(candidate.pricing?.input)}</div>
+                      </div>
+                    `
+                    : `<div class="empty-state">No market candidates available yet.</div>`
+                }
+                <div class="list-row">
+                  <div>
+                    <strong>Attach-ready endpoints</strong>
+                    <span>Offers that can be leased or attached without a local bundle start.</span>
+                  </div>
+                  <div class="row-number">${formatCount(((state.payloads.market || {}).candidates || []).filter((item) => item.endpoint_ready).length)}</div>
+                </div>
+                <div class="list-row">
+                  <div>
+                    <strong>Queue-capable offers</strong>
+                    <span>Visible nodes able to absorb queued work when local capacity runs tight.</span>
+                  </div>
+                  <div class="row-number">${formatCount(((state.payloads.market || {}).candidates || []).filter((item) => item.supports_queue).length)}</div>
+                </div>
+              </div>
+            </section>
+            <section class="subpanel">
+              <div class="panel-heading">Operator Controls</div>
+              <div class="chip-row" style="margin-top: 14px;">${actions}</div>
+              <div class="notice">Quick actions stay visible here while deeper publish and compare flows live in Fleet and Market.</div>
+            </section>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderFleetWorkspace() {
+      const fleet = state.payloads.fleet || {};
+      const bundles = fleet.bundles || [];
+      const resources = fleet.resources?.free || {};
+      const installs = fleet.installs || [];
+
+      return `
+        <div class="workspace-header">
+          <div>
+            <div class="panel-heading">Node Inventory</div>
+            <h1 class="workspace-title">Fleet</h1>
+            <p class="workspace-copy">Bundle readiness, install pressure, and local headroom stay visible together so the operator can decide whether to keep work local, publish, or route outward.</p>
+          </div>
+          <div class="toolbar">
+            <button type="button" class="active">Local Node</button>
+            <button type="button">Remote Nodes Soon</button>
+          </div>
+        </div>
+        <div class="workspace-body">
+          <div class="summary-grid">
+            <section class="summary-card">
+              <div class="panel-heading">CPU Free</div>
+              <div class="summary-value">${Number(resources.cpu || 0).toFixed(1)}</div>
+              <div class="summary-copy">Free compute cores currently available after runtime reservations.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">RAM Free</div>
+              <div class="summary-value">${formatCount(resources.ram_mb)}</div>
+              <div class="summary-copy">Free host memory in MB.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">VRAM Free</div>
+              <div class="summary-value">${formatCount(resources.vram_mb)}</div>
+              <div class="summary-copy">Free accelerator memory in MB.</div>
+            </section>
+          </div>
+          <div class="fleet-columns">
+            <section class="subpanel">
+              <div class="panel-heading">Bundles</div>
+              <div class="table-shell" style="margin-top: 14px;">
+                <div class="table-head">
+                  <div>Bundle</div>
+                  <div>Model</div>
+                  <div>Status</div>
+                  <div>Runtime</div>
+                  <div>Provider</div>
+                  <div>Endpoint</div>
+                  <div>Action</div>
+                </div>
+                ${
+                  bundles.length
+                    ? bundles
+                        .map((bundle) => {
+                          const active = bundle.bundle_id === state.selectedFleetBundleId;
+                          return `
+                            <div class="table-row ${active ? "active" : ""}" data-fleet-bundle="${bundle.bundle_id}">
+                              <div>
+                                <div class="row-title">${bundle.bundle_id}</div>
+                                <span class="row-copy">${bundle.workload_type}</span>
+                              </div>
+                              <div class="row-meta">${bundle.model_id}</div>
+                              <div><span class="chip ${bundle.enabled ? "good" : "bad"}">${bundle.publish_status}</span></div>
+                              <div class="row-meta">${formatMaybe(bundle.runtime_status)}</div>
+                              <div class="row-meta">${bundle.provider_type}</div>
+                              <div class="row-meta">${bundle.endpoint ? "attached" : "local"}</div>
+                              <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Inspect"}</button>
+                            </div>
+                          `;
+                        })
+                        .join("")
+                    : `<div class="empty-state">No bundles are registered on this node.</div>`
+                }
+              </div>
+            </section>
+            <div class="stack">
+              <section class="subpanel">
+                <div class="panel-heading">Install Queue</div>
+                <div class="list">
+                  ${
+                    installs.length
+                      ? installs
+                          .map(
+                            (install) => `
+                              <div class="list-row">
+                                <div>
+                                  <strong>${install.model_id}</strong>
+                                  <span>${install.provider_type} / ${install.install_status}</span>
+                                </div>
+                                <span class="chip">${install.install_status}</span>
+                              </div>
+                            `
+                          )
+                          .join("")
+                      : `<div class="empty-state">No install jobs are active right now.</div>`
+                  }
+                </div>
+              </section>
+              <section class="subpanel">
+                <div class="panel-heading">Request Queue</div>
+                <div class="list">
+                  <div class="list-row">
+                    <div>
+                      <strong>Queued</strong>
+                      <span>Requests waiting on resources or admission.</span>
+                    </div>
+                    <div class="row-number">${formatCount(fleet.queue?.queued)}</div>
+                  </div>
+                  <div class="list-row">
+                    <div>
+                      <strong>Active</strong>
+                      <span>Currently admitted or executing workloads.</span>
+                    </div>
+                    <div class="row-number">${formatCount(fleet.queue?.active)}</div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderMarketWorkspace() {
+      const candidates = marketCandidates();
+
+      return `
+        <div class="workspace-header">
+          <div>
+            <div class="panel-heading">Execution Exchange</div>
+            <h1 class="workspace-title">Execution Market</h1>
+            <p class="workspace-copy">Compare visible offers, filter for attach-ready endpoints, and keep the selected offer in view while choosing between local and external execution.</p>
+          </div>
+          <div class="toolbar">
+            <button type="button" data-market-origin="all" class="${state.marketOriginFilter === "all" ? "active" : ""}">All Offers</button>
+            <button type="button" data-market-origin="own" class="${state.marketOriginFilter === "own" ? "active" : ""}">Own</button>
+            <button type="button" data-market-origin="external" class="${state.marketOriginFilter === "external" ? "active" : ""}">External</button>
+            <button type="button" data-market-ready="${state.requireReadyEndpoint ? "off" : "on"}" class="${state.requireReadyEndpoint ? "active" : ""}">Ready Endpoints</button>
+          </div>
+        </div>
+        <div class="workspace-body">
+          <div class="summary-grid">
+            <section class="summary-card">
+              <div class="panel-heading">Candidates</div>
+              <div class="summary-value">${formatCount(candidates.length)}</div>
+              <div class="summary-copy">Offers currently visible after active market filters.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Median Rating</div>
+              <div class="summary-value">${formatRating(median(candidates.map(candidateRating)))}</div>
+              <div class="summary-copy">Price selection should stay balanced with trust and readiness, not cost alone.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Attach Ready</div>
+              <div class="summary-value">${formatCount(candidates.filter((candidate) => candidate.endpoint_ready).length)}</div>
+              <div class="summary-copy">Offers already exposing a ready endpoint.</div>
+            </section>
+          </div>
+          <section class="subpanel">
+            <div class="panel-heading">Execution Market</div>
+            <div class="table-shell" style="margin-top: 14px;">
+              <div class="table-head">
+                <div>Node / Bundle</div>
+                <div>Rating</div>
+                <div>Price</div>
+                <div>Capacity</div>
+                <div>Queue</div>
+                <div>Policy</div>
+                <div>Action</div>
+              </div>
+              ${
+                candidates.length
+                  ? candidates
+                      .map((candidate) => {
+                        const active = candidate.bundle_id === state.selectedMarketCandidateId;
+                        return `
+                          <div class="table-row ${active ? "active" : ""}" data-market-bundle="${candidate.bundle_id}">
+                            <div>
+                              <div class="row-title">${candidate.bundle_id}</div>
+                              <span class="row-copy">${candidate.node_id} / ${candidate.model_id} / ${candidate.origin}</span>
+                            </div>
+                            <div>
+                              <div class="row-number">${formatRating(candidateRating(candidate))}</div>
+                              <div class="row-meta">${formatMaybe(candidate.rating?.tier, "unrated")}</div>
+                            </div>
+                            <div>
+                              <div class="row-number">${formatQ(candidate.pricing?.input || 0)}</div>
+                              <div class="row-meta">input / 1kk</div>
+                            </div>
+                            <div class="row-meta">${candidateFreeResource(candidate, "cpu").toFixed(1)} CPU / ${formatCount(candidateFreeResource(candidate, "vram_mb"))} MB VRAM</div>
+                            <div><span class="chip ${candidate.supports_queue ? "good" : "bad"}">${candidate.supports_queue ? "queued" : "direct only"}</span></div>
+                            <div><span class="chip ${candidate.can_host_custom_model ? "good" : "bad"}">${candidate.can_host_custom_model ? "custom allowed" : "restricted"}</span></div>
+                            <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Select"}</button>
+                          </div>
+                        `;
+                      })
+                      .join("")
+                  : `<div class="empty-state">No candidates match the active market filters.</div>`
+              }
+            </div>
+          </section>
+        </div>
+      `;
+    }
+
+    function renderRequestsRows() {
+      const rows = requestRowsForTab();
+      if (!rows.length) {
+        return `<div class="empty-state">No tasks are visible in the current requests view.</div>`;
+      }
+      return `
+        <div class="request-list">
+          ${rows
+            .map((item) => {
+              const active = item.task_id === state.selectedRequestTaskId;
+              if (state.requestsTab === "admission") {
+                return `
+                  <button class="request-row ${active ? "active" : ""}" type="button" data-request-task="${item.task_id}">
+                    <div class="request-row-top">
+                      <div>
+                        <div class="request-row-title">${item.task_id}</div>
+                        <div class="wallet-entry-copy">${item.bundle_id || "-"} / ${item.selection_reason || "admission"}</div>
+                      </div>
+                      <span class="chip">${formatCount(item.effective_priority)}</span>
+                    </div>
+                    <div class="request-row-bottom">
+                      <span>rank ${formatCount(item.admission_rank)}</span>
+                      <strong>aging ${formatCount(item.aging_bonus)}</strong>
+                    </div>
+                  </button>
+                `;
+              }
+              return `
+                <button class="request-row ${active ? "active" : ""}" type="button" data-request-task="${item.task_id}">
+                  <div class="request-row-top">
+                    <div>
+                      <div class="request-row-title">${item.task_type}</div>
+                      <div class="wallet-entry-copy">${item.bundle_id || "-"} / ${item.task_id}</div>
+                    </div>
+                    <span class="chip ${item.status === "failed" ? "bad" : item.status === "completed" ? "good" : ""}">${item.status}</span>
+                  </div>
+                  <div class="chip-row" style="margin-top: 10px;">
+                    <span class="chip">p${formatCount(item.priority)}</span>
+                    <span class="chip">${formatCount(item.age_seconds || 0)}s</span>
+                  </div>
+                  <div class="request-row-bottom">
+                    <span>${formatTimestamp(item.created_at)}</span>
+                    <strong>${item.recovery_reason || "steady"}</strong>
+                  </div>
+                </button>
+              `;
+            })
+            .join("")}
+        </div>
+      `;
+    }
+
+    function renderRequestsWorkspace() {
+      const payload = requestsPayload();
+      const summary = payload.summary || {};
+      const policy = payload.policy || {};
+      const preview = payload.market_spillover_preview || [];
+      return `
+        <div class="workspace-header">
+          <div>
+            <div class="panel-heading">Workload Triage</div>
+            <h1 class="workspace-title">Requests</h1>
+            <p class="workspace-copy">Queue triage, active task inspection, and future-facing spillover policy stay in one operator surface.</p>
+          </div>
+          <div class="toolbar">
+            <button type="button" data-requests-policy="spillover" class="${policy.allow_spillover ? "active" : ""}">${policy.allow_spillover ? "Spillover On" : "Spillover Off"}</button>
+            <button type="button" data-requests-policy="ready" class="${policy.ready_endpoint_only ? "active" : ""}">${policy.ready_endpoint_only ? "Ready Endpoints" : "Any Endpoint"}</button>
+            <select data-requests-policy="strategy">
+              <option value="local_first" ${policy.dispatch_strategy === "local_first" ? "selected" : ""}>Local First</option>
+              <option value="balanced" ${policy.dispatch_strategy === "balanced" ? "selected" : ""}>Balanced</option>
+              <option value="market_first" ${policy.dispatch_strategy === "market_first" ? "selected" : ""}>Market First</option>
+            </select>
+          </div>
+        </div>
+        <div class="workspace-body">
+          <div class="summary-grid">
+            <section class="summary-card">
+              <div class="panel-heading">Queued</div>
+              <div class="summary-value">${formatCount(summary.queued)}</div>
+              <div class="summary-copy">Queued, admitted, or starting tasks waiting to clear local execution pressure.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Active</div>
+              <div class="summary-value">${formatCount(summary.active)}</div>
+              <div class="summary-copy">Tasks currently executing or holding the active execution lane.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Failed (Recent)</div>
+              <div class="summary-value">${formatCount(summary.failed_recent)}</div>
+              <div class="summary-copy">Recently failed tasks that may need operator attention or rerun policy changes.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Spillover Ready</div>
+              <div class="summary-value">${formatCount(summary.spillover_ready)}</div>
+              <div class="summary-copy">Visible market candidates matching the current spillover policy.</div>
+            </section>
+          </div>
+          ${state.requestMessage ? `<div class="wallet-message ${state.requestMessage.kind}">${state.requestMessage.text}</div>` : ""}
+          <div class="requests-shell">
+            <section class="request-surface">
+              <div class="panel-heading">Requests Workspace</div>
+              <div class="request-tabs">
+                <button type="button" data-request-tab="queue" class="${state.requestsTab === "queue" ? "active" : ""}">Queue</button>
+                <button type="button" data-request-tab="active" class="${state.requestsTab === "active" ? "active" : ""}">Active</button>
+                <button type="button" data-request-tab="recent" class="${state.requestsTab === "recent" ? "active" : ""}">Recent</button>
+                <button type="button" data-request-tab="admission" class="${state.requestsTab === "admission" ? "active" : ""}">Admission</button>
+              </div>
+              ${renderRequestsRows()}
+            </section>
+            <aside class="request-sidebar">
+              <section class="request-policy-block">
+                <div class="panel-heading">Spillover Preview</div>
+                <div class="request-policy-note">Affects future routing and spillover recommendations.</div>
+                ${
+                  preview.length
+                    ? `
+                      <div class="request-preview-list">
+                        ${preview
+                          .map(
+                            (candidate) => `
+                              <div class="request-preview-item">
+                                <div class="ops-row"><strong>${candidate.bundle_id}</strong><span>${formatQ(candidate.pricing?.input || 0)}</span></div>
+                                <div class="wallet-entry-copy">${candidate.node_id} / ${candidate.origin}</div>
+                                <div class="chip-row" style="margin-top: 10px;">
+                                  <span class="chip ${candidate.endpoint_ready ? "good" : "bad"}">${candidate.endpoint_ready ? "ready" : "pending"}</span>
+                                  <span class="chip ${candidate.supports_queue ? "good" : "bad"}">${candidate.supports_queue ? "queue" : "direct"}</span>
+                                </div>
+                              </div>
+                            `
+                          )
+                          .join("")}
+                      </div>
+                    `
+                    : `<div class="empty-state">No external candidates satisfy the active spillover policy.</div>`
+                }
+              </section>
+            </aside>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderWalletSummaryCards() {
+      const totals = walletTotals();
+      return `
+        <div class="wallet-summary-grid">
+          <section class="wallet-summary-card">
+            <div class="panel-heading">Usage Ledger</div>
+            <div class="wallet-summary-value">${formatQ(totals.usageQ)}</div>
+            <div class="summary-copy">${formatCount(totals.usageCount)} metered usage events recorded.</div>
+          </section>
+          <section class="wallet-summary-card">
+            <div class="panel-heading">Settlements</div>
+            <div class="wallet-summary-value">${formatCount(state.walletAllocationEvents.length)}</div>
+            <div class="summary-copy">${formatCount(totals.openSettlements)} in grace and ${formatCount(totals.closedSettlements)} closed.</div>
+          </section>
+          <section class="wallet-summary-card">
+            <div class="panel-heading">Disputes</div>
+            <div class="wallet-summary-value">${formatCount(totals.openDisputes)}</div>
+            <div class="summary-copy">${formatCount(state.walletDisputeEvents.length)} dispute journal entries retained.</div>
+          </section>
+          <section class="wallet-summary-card">
+            <div class="panel-heading">Settlement Volume</div>
+            <div class="wallet-summary-value">${formatQ(totals.settlementQ)}</div>
+            <div class="summary-copy">q represented by allocation finalizations on this node.</div>
+          </section>
+        </div>
+      `;
+    }
+
+    function renderWalletUsageLedger() {
+      const events = walletUsageEvents();
+      if (!events.length) {
+        return `<div class="empty-state">No wallet usage has been recorded yet. The quote tool is ready, but the ledger is still empty.</div>`;
+      }
+      return `
+        <div class="wallet-list">
+          ${events
+            .map((event) => {
+              const active = event.event_id === state.walletSelectedUsageId;
+              return `
+                <button class="wallet-entry ${active ? "active" : ""}" type="button" data-wallet-select="usage" data-wallet-id="${event.event_id}">
+                  <div class="wallet-entry-top">
+                    <div>
+                      <div class="wallet-entry-title">${event.owner_id}</div>
+                      <div class="wallet-entry-copy">${event.bundle_id} / ${event.workload_type}</div>
+                    </div>
+                    <span class="chip ${event.measurement_kind === "exact" ? "good" : ""}">${event.measurement_kind}</span>
+                  </div>
+                  <div class="wallet-entry-bottom">
+                    <span>${formatTimestamp(event.occurred_at)}</span>
+                    <strong>${formatQ(event.quote?.charges?.total_q || 0)}</strong>
+                  </div>
+                </button>
+              `;
+            })
+            .join("")}
+        </div>
+      `;
+    }
+
+    function renderWalletAllocationLedger() {
+      const events = walletAllocationEvents();
+      if (!events.length) {
+        return `<div class="empty-state">No settlement events are available yet. Release or expire an allocation to start the settlement ledger.</div>`;
+      }
+      return `
+        <div class="wallet-list">
+          ${events
+            .map((event) => {
+              const active = event.event_id === state.walletSelectedAllocationId;
+              const disputeChipClass = event.dispute_status === "open" ? "bad" : event.dispute_status === "resolved" ? "good" : "";
+              return `
+                <button class="wallet-entry ${active ? "active" : ""}" type="button" data-wallet-select="allocation" data-wallet-id="${event.event_id}">
+                  <div class="wallet-entry-top">
+                    <div>
+                      <div class="wallet-entry-title">${event.bundle_id}</div>
+                      <div class="wallet-entry-copy">${event.owner_id} / ${event.status} / ${event.allocation_id}</div>
+                    </div>
+                    <span class="chip ${event.settlement_status === "closed" ? "" : "good"}">${event.settlement_status}</span>
+                  </div>
+                  <div class="chip-row" style="margin-top: 10px;">
+                    <span class="chip ${disputeChipClass}">${event.dispute_status}</span>
+                    <span class="chip">${formatCount(event.usage_event_count)} usage events</span>
+                  </div>
+                  <div class="wallet-entry-bottom">
+                    <span>${formatTimestamp(event.occurred_at)}</span>
+                    <strong>${formatQ(event.usage_total_q || 0)}</strong>
+                  </div>
+                </button>
+              `;
+            })
+            .join("")}
+        </div>
+      `;
+    }
+
+    function renderWalletDisputeLedger() {
+      const events = walletDisputeEvents();
+      if (!events.length) {
+        return `<div class="empty-state">No dispute activity has been recorded. Open a dispute from the settlement tab when reconciliation needs operator review.</div>`;
+      }
+      return `
+        <div class="wallet-list">
+          ${events
+            .map((event) => {
+              const active = event.event_id === state.walletSelectedDisputeId;
+              return `
+                <button class="wallet-entry ${active ? "active" : ""}" type="button" data-wallet-select="dispute" data-wallet-id="${event.event_id}">
+                  <div class="wallet-entry-top">
+                    <div>
+                      <div class="wallet-entry-title">${event.bundle_id}</div>
+                      <div class="wallet-entry-copy">${event.owner_id} / ${event.allocation_id}</div>
+                    </div>
+                    <span class="chip ${event.event_type === "resolved" ? "good" : "bad"}">${event.event_type}</span>
+                  </div>
+                  <div class="wallet-entry-copy">${event.reason || event.resolution_reason || "No operator note attached."}</div>
+                  <div class="wallet-entry-bottom">
+                    <span>${formatTimestamp(event.occurred_at)}</span>
+                    <strong>${event.resolution || "pending"}</strong>
+                  </div>
+                </button>
+              `;
+            })
+            .join("")}
+        </div>
+      `;
+    }
+
+    function renderWalletQuotePanel() {
+      const quote = state.walletQuoteResult;
+      return `
+        <section class="wallet-form">
+          <div class="panel-heading">Quote Spend</div>
+          <div class="wallet-form-grid">
+            <input type="number" min="0" step="1000" data-wallet-field="input_tokens" value="${state.walletQuoteDraft.input_tokens}">
+            <input type="number" min="0" step="1000" data-wallet-field="output_tokens" value="${state.walletQuoteDraft.output_tokens}">
+          </div>
+          <div class="wallet-form-grid">
+            <input type="number" min="0" step="1" data-wallet-field="fixed_request_count" value="${state.walletQuoteDraft.fixed_request_count}">
+            <button class="primary-button" type="button" data-wallet-action="quote">${state.walletActionPending === "quote" ? "Computing..." : "Compute Quote"}</button>
+          </div>
+          ${
+            quote
+              ? `
+                <div class="wallet-detail-grid">
+                  <div class="wallet-detail-card">
+                    <strong>Input Charge</strong>
+                    <span>${formatQ(quote.charges?.input_q || 0)}</span>
+                  </div>
+                  <div class="wallet-detail-card">
+                    <strong>Output Charge</strong>
+                    <span>${formatQ(quote.charges?.output_q || 0)}</span>
+                  </div>
+                  <div class="wallet-detail-card">
+                    <strong>Fixed Charge</strong>
+                    <span>${formatQ(quote.charges?.fixed_q || 0)}</span>
+                  </div>
+                  <div class="wallet-detail-card">
+                    <strong>Total</strong>
+                    <span>${formatQ(quote.charges?.total_q || 0)}</span>
+                  </div>
+                </div>
+              `
+              : `<div class="notice">Use the current node pricing to estimate q burn before the workload reaches the queue.</div>`
+          }
+        </section>
+      `;
+    }
+
+    function renderWalletUsageDetail() {
+      const event = selectedWalletUsageEvent();
+      if (!event) {
+        return `
+          <section class="wallet-detail">
+            <div class="panel-heading">Usage Detail</div>
+            <div class="empty-state">Select a usage event to inspect its owner, bundle, and q charge breakdown.</div>
+          </section>
+        `;
+      }
+      return `
+        <section class="wallet-detail">
+          <div>
+            <div class="panel-heading">Usage Detail</div>
+            <div class="drawer-title" style="font-size:22px;">${event.bundle_id}</div>
+            <div class="inspector-copy">${event.owner_id} on ${event.node_id}. Measured by ${event.measurement_source} as ${event.measurement_kind} usage.</div>
+          </div>
+          <div class="wallet-detail-grid">
+            <div class="wallet-detail-card">
+              <strong>Total Charge</strong>
+              <span>${formatQ(event.quote?.charges?.total_q || 0)}</span>
+            </div>
+            <div class="wallet-detail-card">
+              <strong>Requests</strong>
+              <span>${formatCount(event.quote?.fixed_request_count || 0)}</span>
+            </div>
+          </div>
+          <div class="wallet-stat-list">
+            <div class="wallet-stat"><strong>Occurred</strong><span>${formatTimestamp(event.occurred_at)}</span></div>
+            <div class="wallet-stat"><strong>Allocation</strong><span>${formatMaybe(event.allocation_id)}</span></div>
+            <div class="wallet-stat"><strong>Input Tokens</strong><span>${formatCount(event.quote?.input_tokens || 0)}</span></div>
+            <div class="wallet-stat"><strong>Output Tokens</strong><span>${formatCount(event.quote?.output_tokens || 0)}</span></div>
+            <div class="wallet-stat"><strong>Task Id</strong><span>${formatMaybe(event.task_id)}</span></div>
+          </div>
+          ${renderWalletQuotePanel()}
+        </section>
+      `;
+    }
+
+    function renderWalletAllocationDetail() {
+      const event = selectedWalletAllocationEvent();
+      if (!event) {
+        return `
+          <section class="wallet-detail">
+            <div class="panel-heading">Settlement Detail</div>
+            <div class="empty-state">Select a settlement to reopen it or escalate it into dispute.</div>
+          </section>
+        `;
+      }
+      const canReopen = event.settlement_status === "closed" && event.dispute_status !== "open";
+      const canDispute = event.dispute_status !== "open" && Boolean(state.walletActionDrafts.disputeReason.trim());
+      return `
+        <section class="wallet-detail">
+          <div>
+            <div class="panel-heading">Settlement Detail</div>
+            <div class="drawer-title" style="font-size:22px;">${event.bundle_id}</div>
+            <div class="inspector-copy">${event.owner_id} / ${event.allocation_id}. Reopen to grant another grace window or open a dispute when metering needs review.</div>
+          </div>
+          <div class="wallet-detail-grid">
+            <div class="wallet-detail-card">
+              <strong>Settlement</strong>
+              <span>${event.settlement_status}</span>
+            </div>
+            <div class="wallet-detail-card">
+              <strong>Total q</strong>
+              <span>${formatQ(event.usage_total_q || 0)}</span>
+            </div>
+          </div>
+          <div class="wallet-stat-list">
+            <div class="wallet-stat"><strong>Status</strong><span>${event.status}</span></div>
+            <div class="wallet-stat"><strong>Dispute</strong><span>${event.dispute_status}</span></div>
+            <div class="wallet-stat"><strong>Occurred</strong><span>${formatTimestamp(event.occurred_at)}</span></div>
+            <div class="wallet-stat"><strong>Grace Until</strong><span>${formatTimestamp(event.grace_expires_at)}</span></div>
+            <div class="wallet-stat"><strong>Closed At</strong><span>${formatTimestamp(event.closed_at)}</span></div>
+            <div class="wallet-stat"><strong>Reopen Count</strong><span>${formatCount(event.reopen_count)}</span></div>
+          </div>
+          <section class="wallet-form">
+            <div class="panel-heading">Settlement Actions</div>
+            <textarea data-wallet-textarea="reopenReason" placeholder="Reason for reopening or audit note">${state.walletActionDrafts.reopenReason}</textarea>
+            <div class="wallet-inline-actions">
+              <button class="primary-button" type="button" data-wallet-action="reopen" ${canReopen ? "" : "disabled"}>${state.walletActionPending === "reopen" ? "Reopening..." : "Reopen Settlement"}</button>
+              <textarea data-wallet-textarea="disputeReason" placeholder="Reason for dispute">${state.walletActionDrafts.disputeReason}</textarea>
+              <button class="secondary-button" type="button" data-wallet-action="dispute" ${canDispute ? "" : "disabled"}>${state.walletActionPending === "dispute" ? "Opening..." : "Open Dispute"}</button>
+            </div>
+          </section>
+        </section>
+      `;
+    }
+
+    function renderWalletDisputeDetail() {
+      const event = selectedWalletDisputeEvent();
+      const allocation = selectedWalletDisputeAllocationEvent();
+      if (!event) {
+        return `
+          <section class="wallet-detail">
+            <div class="panel-heading">Dispute Detail</div>
+            <div class="empty-state">Select a dispute journal entry to inspect or resolve the attached settlement.</div>
+          </section>
+        `;
+      }
+      const canResolve = event.event_type === "opened" && allocation?.dispute_status === "open";
+      return `
+        <section class="wallet-detail">
+          <div>
+            <div class="panel-heading">Dispute Detail</div>
+            <div class="drawer-title" style="font-size:22px;">${event.bundle_id}</div>
+            <div class="inspector-copy">${event.owner_id} / ${event.allocation_id}. The resolution action targets the underlying settlement event, not the journal row itself.</div>
+          </div>
+          <div class="wallet-detail-grid">
+            <div class="wallet-detail-card">
+              <strong>Journal Event</strong>
+              <span>${event.event_type}</span>
+            </div>
+            <div class="wallet-detail-card">
+              <strong>Resolution</strong>
+              <span>${event.resolution || "pending"}</span>
+            </div>
+          </div>
+          <div class="wallet-stat-list">
+            <div class="wallet-stat"><strong>Occurred</strong><span>${formatTimestamp(event.occurred_at)}</span></div>
+            <div class="wallet-stat"><strong>Dispute Id</strong><span>${event.dispute_id}</span></div>
+            <div class="wallet-stat"><strong>Settlement Event</strong><span>${event.allocation_event_id}</span></div>
+            <div class="wallet-stat"><strong>Reason</strong><span>${event.reason || event.resolution_reason || "-"}</span></div>
+          </div>
+          <section class="wallet-form">
+            <div class="panel-heading">Resolve Dispute</div>
+            <select data-wallet-select-field="disputeResolution">
+              <option value="accepted" ${state.walletActionDrafts.disputeResolution === "accepted" ? "selected" : ""}>Accept and reopen grace</option>
+              <option value="rejected" ${state.walletActionDrafts.disputeResolution === "rejected" ? "selected" : ""}>Reject and close</option>
+              <option value="withdrawn" ${state.walletActionDrafts.disputeResolution === "withdrawn" ? "selected" : ""}>Withdraw and close</option>
+            </select>
+            <textarea data-wallet-textarea="disputeResolutionReason" placeholder="Resolution note">${state.walletActionDrafts.disputeResolutionReason}</textarea>
+            <button class="primary-button" type="button" data-wallet-action="resolve" ${canResolve ? "" : "disabled"}>${state.walletActionPending === "resolve" ? "Resolving..." : "Resolve Dispute"}</button>
+          </section>
+        </section>
+      `;
+    }
+
+    function renderWalletDrawerBody() {
+      if (state.walletLoading && !state.walletLoaded) {
+        return `<div class="empty-state">Loading wallet ledger and settlement streams...</div>`;
+      }
+      if (state.walletError && !state.walletLoaded) {
+        return `<div class="empty-state">Wallet data failed to load.<div class="notice">${state.walletError}</div></div>`;
+      }
+      if (state.walletTab === "usage") {
+        return `
+          <div class="wallet-body">
+            <section class="wallet-ledger">
+              <div class="panel-heading">Usage Ledger</div>
+              <div class="notice">Metered usage events from local or attached execution flow into the q ledger here.</div>
+              <div style="margin-top: 14px;">${renderWalletUsageLedger()}</div>
+            </section>
+            ${renderWalletUsageDetail()}
+          </div>
+        `;
+      }
+      if (state.walletTab === "settlements") {
+        return `
+          <div class="wallet-body">
+            <section class="wallet-ledger">
+              <div class="panel-heading">Settlement Ledger</div>
+              <div class="notice">Allocation release and expiry events remain actionable during grace and dispute windows.</div>
+              <div style="margin-top: 14px;">${renderWalletAllocationLedger()}</div>
+            </section>
+            ${renderWalletAllocationDetail()}
+          </div>
+        `;
+      }
+      if (state.walletTab === "disputes") {
+        return `
+          <div class="wallet-body">
+            <section class="wallet-ledger">
+              <div class="panel-heading">Dispute Journal</div>
+              <div class="notice">Every dispute opening and resolution is preserved as an append-only operator journal row.</div>
+              <div style="margin-top: 14px;">${renderWalletDisputeLedger()}</div>
+            </section>
+            ${renderWalletDisputeDetail()}
+          </div>
+        `;
+      }
+      return `
+        <div class="wallet-body">
+          <section class="wallet-ledger">
+            ${renderWalletQuotePanel()}
+          </section>
+          <section class="wallet-detail">
+            <div class="panel-heading">Quote Guidance</div>
+            <div class="drawer-title" style="font-size:22px;">Estimate Before Queue</div>
+            <div class="inspector-copy">Use this panel to approximate q spend before a request is published, leased, or spilled into an external node. The calculation uses the local node pricing contract.</div>
+            <div class="wallet-stat-list">
+              <div class="wallet-stat"><strong>Input Pricing</strong><span>${formatQ((state.walletQuoteResult?.pricing?.input || 0) / 1000)}</span></div>
+              <div class="wallet-stat"><strong>Output Pricing</strong><span>${formatQ((state.walletQuoteResult?.pricing?.output || 0) / 1000)}</span></div>
+              <div class="wallet-stat"><strong>Fixed Request</strong><span>${formatQ(state.walletQuoteResult?.pricing?.fixed_request || 0)}</span></div>
+            </div>
+          </section>
+        </div>
+      `;
+    }
+
+    function renderWalletDrawer() {
+      const overlay = document.getElementById("wallet-overlay");
+      const drawer = document.getElementById("wallet-drawer");
+      const root = document.getElementById("wallet-drawer-root");
+      overlay.hidden = !state.walletDrawerOpen;
+      overlay.classList.toggle("open", state.walletDrawerOpen);
+      drawer.classList.toggle("open", state.walletDrawerOpen);
+      drawer.setAttribute("aria-hidden", String(!state.walletDrawerOpen));
+
+      if (!state.walletDrawerOpen) {
+        root.innerHTML = "";
+        return;
+      }
+
+      root.innerHTML = `
+        <div class="drawer-header">
+          <div>
+            <div class="panel-heading">Wallet Settlement Console</div>
+            <div class="drawer-title">Q Wallet</div>
+            <div class="inspector-copy">Spend, settlements, and disputes stay near the operator controls instead of becoming a separate screen.</div>
+          </div>
+          <div class="wallet-toolbar">
+            <button type="button" data-wallet-action="refresh">${state.walletLoading ? "Refreshing..." : "Refresh"}</button>
+            <button type="button" class="icon-button" data-wallet-close="true" aria-label="Close wallet drawer">×</button>
+          </div>
+        </div>
+        ${renderWalletSummaryCards()}
+        <div class="wallet-tabs">
+          <button type="button" data-wallet-tab="usage" class="${state.walletTab === "usage" ? "active" : ""}">Usage</button>
+          <button type="button" data-wallet-tab="settlements" class="${state.walletTab === "settlements" ? "active" : ""}">Settlements</button>
+          <button type="button" data-wallet-tab="disputes" class="${state.walletTab === "disputes" ? "active" : ""}">Disputes</button>
+          <button type="button" data-wallet-tab="quote" class="${state.walletTab === "quote" ? "active" : ""}">Quote</button>
+        </div>
+        ${state.walletMessage ? `<div class="wallet-message ${state.walletMessage.kind}">${state.walletMessage.text}</div>` : ""}
+        ${renderWalletDrawerBody()}
+      `;
+    }
+
+    function renderWorkspace() {
+      const root = document.getElementById("workspace-root");
+      if (state.screen === "requests") {
+        root.innerHTML = renderRequestsWorkspace();
+      } else if (state.screen === "fleet") {
+        root.innerHTML = renderFleetWorkspace();
+      } else if (state.screen === "market") {
+        root.innerHTML = renderMarketWorkspace();
+      } else {
+        root.innerHTML = renderHomeWorkspace();
+      }
+    }
+
+    function renderHomeInspector() {
+      const home = state.payloads.home || {};
+      const candidate = selectedMarketCandidate();
+      const queue = (state.payloads.fleet || {}).queue || {};
+      if (!candidate) {
+        return `
+          <div class="panel-heading">Selected Offer</div>
+          <div class="inspector-title">No Offer Visible</div>
+          <div class="inspector-copy">Registry discovery has not returned any attach-ready or publishable offers yet.</div>
+        `;
+      }
+
+      return `
+        <div class="panel-heading">Selected Offer</div>
+        <div class="inspector-title">${candidate.bundle_id}</div>
+        <div class="chip-row">
+          <span class="chip ${candidate.origin === "own" ? "good" : ""}">${candidate.origin}</span>
+          <span class="chip ${candidate.endpoint_ready ? "good" : "bad"}">${candidate.endpoint_ready ? "ready endpoint" : "boot required"}</span>
+        </div>
+        <div class="inspector-copy">${candidate.model_id} on ${candidate.node_id}. This is the currently highlighted execution target for quick publish, attach, or compare decisions.</div>
+        <div class="inspector-grid">
+          <div class="inspector-card">
+            <strong>Price</strong>
+            <div class="inspector-metric">${formatQ(candidate.pricing?.input || 0)}</div>
+          </div>
+          <div class="inspector-card">
+            <strong>Rating</strong>
+            <div class="inspector-metric">${formatRating(candidateRating(candidate))}</div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="inspector-stat">
+            <strong>Publish Actions</strong>
+            <span>${formatCount(home.publish?.live_offer_count)} live / ${formatCount(home.publish?.draft_offer_count)} configured</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Queue Pressure</strong>
+            <span>${formatCount(queue.queued)} queued / ${formatCount(queue.active)} active</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Custom Hosting</strong>
+            <span>${candidate.can_host_custom_model ? "Allowed" : "Restricted"}</span>
+          </div>
+        </div>
+        <div class="inspector-actions">
+          <button class="primary-button" type="button" data-screen-jump="market">Open Market Compare</button>
+          <button class="secondary-button" type="button" data-screen-jump="fleet">Inspect Local Fleet</button>
+        </div>
+      `;
+    }
+
+    function renderFleetInspector() {
+      const fleet = state.payloads.fleet || {};
+      const bundle = selectedFleetBundle();
+      if (!bundle) {
+        return `
+          <div class="panel-heading">Selected Bundle</div>
+          <div class="inspector-title">No Bundles</div>
+          <div class="inspector-copy">No local bundle data is available for inspection.</div>
+        `;
+      }
+
+      const resourceTotals = fleet.resources?.total || {};
+      const resourceFree = fleet.resources?.free || {};
+      const ramUsage = resourceTotals.ram_mb
+        ? 1 - Number(resourceFree.ram_mb || 0) / Number(resourceTotals.ram_mb || 1)
+        : 0;
+      const vramUsage = resourceTotals.vram_mb
+        ? 1 - Number(resourceFree.vram_mb || 0) / Number(resourceTotals.vram_mb || 1)
+        : 0;
+
+      return `
+        <div class="panel-heading">Selected Bundle</div>
+        <div class="inspector-title">${bundle.bundle_id}</div>
+        <div class="chip-row">
+          <span class="chip ${bundle.enabled ? "good" : "bad"}">${bundle.publish_status}</span>
+          <span class="chip">${bundle.provider_type}</span>
+        </div>
+        <div class="inspector-copy">${bundle.model_id} for ${bundle.workload_type}. Use this panel to decide whether the bundle should remain local-only, be attached to a runtime, or be published to the market layer.</div>
+        <div class="inspector-grid">
+          <div class="inspector-card">
+            <strong>Runtime</strong>
+            <div class="inspector-metric">${formatMaybe(bundle.runtime_status)}</div>
+          </div>
+          <div class="inspector-card">
+            <strong>Endpoint</strong>
+            <div class="inspector-metric">${bundle.endpoint ? "Attached" : "Local"}</div>
+          </div>
+        </div>
+        <div class="stack">
+          <div>
+            <div class="panel-heading">RAM Utilization</div>
+            <div class="bar-track" style="margin-top: 10px;"><div class="bar-fill" style="width:${Math.round(ramUsage * 100)}%"></div></div>
+          </div>
+          <div>
+            <div class="panel-heading">VRAM Utilization</div>
+            <div class="bar-track" style="margin-top: 10px;"><div class="bar-fill" style="width:${Math.round(vramUsage * 100)}%"></div></div>
+          </div>
+          <div class="inspector-stat">
+            <strong>Custom Hosting</strong>
+            <span>${fleet.node?.can_host_custom_model ? "Enabled on node" : "Not allowed"}</span>
+          </div>
+        </div>
+        <div class="inspector-actions">
+          <button class="primary-button" type="button" data-screen-jump="market">Compare Against Market</button>
+          <button class="secondary-button" type="button">Publish Controls Soon</button>
+        </div>
+      `;
+    }
+
+    function renderMarketInspector() {
+      const candidate = selectedMarketCandidate();
+      if (!candidate) {
+        return `
+          <div class="panel-heading">Selected Offer</div>
+          <div class="inspector-title">No Matches</div>
+          <div class="inspector-copy">Adjust the active filters or wait for registry discovery to publish more offers.</div>
+        `;
+      }
+
+      return `
+        <div class="panel-heading">Selected Offer</div>
+        <div class="inspector-title">${candidate.bundle_id}</div>
+        <div class="chip-row">
+          <span class="chip ${candidate.origin === "own" ? "good" : ""}">${candidate.origin}</span>
+          <span class="chip ${candidate.endpoint_ready ? "good" : "bad"}">${candidate.endpoint_ready ? "endpoint ready" : "endpoint pending"}</span>
+        </div>
+        <div class="inspector-copy">${candidate.model_id} advertised by ${candidate.node_id}. Keep the offer visible while you compare price, trust, queue support, and custom model policy.</div>
+        <div class="inspector-grid">
+          <div class="inspector-card">
+            <strong>Price</strong>
+            <div class="inspector-metric">${formatQ(candidate.pricing?.input || 0)}</div>
+          </div>
+          <div class="inspector-card">
+            <strong>Rating</strong>
+            <div class="inspector-metric">${formatRating(candidateRating(candidate))}</div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="inspector-stat">
+            <strong>Node</strong>
+            <span>${candidate.node_id}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Queue Support</strong>
+            <span>${candidate.supports_queue ? "Yes" : "No"}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Allocation Support</strong>
+            <span>${candidate.supports_allocation ? "Yes" : "No"}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Custom Model Policy</strong>
+            <span>${candidate.can_host_custom_model ? "Allowed" : "Restricted"}</span>
+          </div>
+        </div>
+        <div class="inspector-actions">
+          <button class="primary-button" type="button">Select Offer And Configure</button>
+          <button class="secondary-button" type="button" data-screen-jump="fleet">Check Local Capacity</button>
+        </div>
+      `;
+    }
+
+    function renderRequestsInspector() {
+      const selected = selectedRequestRow();
+      const detail = selectedRequestTaskDetail();
+      if (!selected) {
+        return `
+          <div class="panel-heading">Selected Task</div>
+          <div class="inspector-title">No Task Selected</div>
+          <div class="inspector-copy">Choose a row from Queue, Active, Recent, or Admission to inspect its task trace and operator actions.</div>
+        `;
+      }
+      const history = detail?.history || [];
+      const cancellable = ["queued", "admitted", "starting"].includes(selected.status || detail?.status || "");
+      return `
+        <div class="panel-heading">Selected Task</div>
+        <div class="inspector-title">${selected.task_type || detail?.task_type || selected.task_id}</div>
+        <div class="chip-row">
+          <span class="chip ${selected.status === "failed" ? "bad" : selected.status === "completed" ? "good" : ""}">${selected.status || detail?.status || "unknown"}</span>
+          <span class="chip">${selected.bundle_id || detail?.bundle_id || "-"}</span>
+        </div>
+        <div class="inspector-copy">${selected.task_id}. Use this panel to review task history, cancellation state, and spillover context without leaving the requests workspace.</div>
+        <div class="inspector-grid">
+          <div class="inspector-card">
+            <strong>Priority</strong>
+            <div class="inspector-metric">${formatCount(selected.priority || detail?.priority || 0)}</div>
+          </div>
+          <div class="inspector-card">
+            <strong>Age</strong>
+            <div class="inspector-metric">${formatCount(selected.age_seconds || 0)}s</div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="inspector-stat">
+            <strong>Recovery</strong>
+            <span>${selected.recovery_reason || detail?.recovery_reason || "steady"}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Result</strong>
+            <span>${detail?.result ? "available" : "pending"}</span>
+          </div>
+          <div class="panel-heading" style="margin-top: 6px;">Task History</div>
+          ${
+            state.requestDetailLoading === selected.task_id
+              ? `<div class="notice">Loading task history...</div>`
+              : history.length
+                ? `
+                  <div class="request-history">
+                    ${history
+                      .slice(-6)
+                      .reverse()
+                      .map(
+                        (event) => `
+                          <div class="request-history-item">
+                            <strong>${event.event_type}</strong>
+                            <div class="wallet-entry-copy">${event.message}</div>
+                          </div>
+                        `
+                      )
+                      .join("")}
+                  </div>
+                `
+                : `<div class="notice">No task history loaded yet.</div>`
+          }
+        </div>
+        <div class="inspector-actions">
+          <button class="primary-button" type="button" data-request-action="cancel" ${cancellable ? "" : "disabled"}>${cancellable ? "Cancel Task" : "Cancellation Unavailable"}</button>
+          <button class="secondary-button" type="button" data-screen-jump="market">Open Market Compare</button>
+        </div>
+      `;
+    }
+
+    function renderInspector() {
+      const root = document.getElementById("inspector-root");
+      if (state.screen === "requests") {
+        root.innerHTML = renderRequestsInspector();
+      } else if (state.screen === "fleet") {
+        root.innerHTML = renderFleetInspector();
+      } else if (state.screen === "market") {
+        root.innerHTML = renderMarketInspector();
+      } else {
+        root.innerHTML = renderHomeInspector();
+      }
+    }
+
+    function renderOperationsBand() {
+      const fleet = state.payloads.fleet || {};
+      const home = state.payloads.home || {};
+      const market = state.payloads.market || {};
+      const queue = fleet.queue || {};
+      const resources = fleet.resources || { total: {}, free: {} };
+      const spendEstimate = median((market.candidates || []).map((candidate) => Number(candidate.pricing?.input || 0))) * Math.max(1, Number(queue.active || 0));
+      const cpuUsage = resources.total.cpu
+        ? 1 - Number(resources.free.cpu || 0) / Number(resources.total.cpu || 1)
+        : 0;
+      const ramUsage = resources.total.ram_mb
+        ? 1 - Number(resources.free.ram_mb || 0) / Number(resources.total.ram_mb || 1)
+        : 0;
+
+      document.getElementById("operations-band").innerHTML = `
+        <section class="ops-card panel">
+          <div class="panel-heading">Request Queue</div>
+          <div class="ops-grid">
+            <div class="ops-row"><strong>Queued</strong><span>${formatCount(queue.queued)}</span></div>
+            <div class="ops-row"><strong>Active</strong><span>${formatCount(queue.active)}</span></div>
+            <div class="ops-row"><strong>Completed</strong><span>${formatCount(queue.completed)}</span></div>
+            <div class="ops-row"><strong>Failed</strong><span>${formatCount(queue.failed)}</span></div>
+          </div>
+        </section>
+        <section class="ops-card panel">
+          <div class="panel-heading">Local Provider Health</div>
+          <div class="ops-grid">
+            <div>
+              <div class="ops-row"><strong>CPU Load</strong><span>${formatPercent(cpuUsage)}</span></div>
+              <div class="bar-track" style="margin-top: 8px;"><div class="bar-fill" style="width:${Math.round(cpuUsage * 100)}%"></div></div>
+            </div>
+            <div>
+              <div class="ops-row"><strong>RAM Load</strong><span>${formatPercent(ramUsage)}</span></div>
+              <div class="bar-track" style="margin-top: 8px;"><div class="bar-fill" style="width:${Math.round(ramUsage * 100)}%"></div></div>
+            </div>
+            <div class="ops-row"><strong>Bundles</strong><span>${formatCount((fleet.bundles || []).length)}</span></div>
+          </div>
+        </section>
+        <section class="ops-card panel">
+          <div class="panel-heading">Wallet</div>
+          <div class="ops-grid">
+            <div class="ops-row"><strong>Estimated Market Rate</strong><span>${formatQ(spendEstimate)}</span></div>
+            <div class="ops-row"><strong>Local Offer Count</strong><span>${formatCount(home.market_visibility?.local_offer_count)}</span></div>
+            <div class="ops-row"><strong>Visible Nodes</strong><span>${formatCount(nodeCount())}</span></div>
+            <div class="notice">Usage metering, settlement grace, and dispute controls now live in the inline wallet console.</div>
+            <button class="secondary-button" type="button" data-wallet-open="ops">Open Wallet Console</button>
+          </div>
+        </section>
+        <section class="ops-card panel">
+          <div class="panel-heading">Policy Controls</div>
+          <div class="toggle-row">
+            <span>Strict accounting required</span>
+            <button class="toggle ${state.policyStrictAccounting ? "on" : ""}" type="button" data-policy-toggle="strict" aria-pressed="${state.policyStrictAccounting}"></button>
+          </div>
+          <div class="toggle-row">
+            <span>Allow queue spillover</span>
+            <button class="toggle ${state.policyQueueSpillover ? "on" : ""}" type="button" data-policy-toggle="spillover" aria-pressed="${state.policyQueueSpillover}"></button>
+          </div>
+          <div class="toggle-row">
+            <span>Allow custom model hosting</span>
+            <button class="toggle ${state.policyCustomModelHosting ? "on" : ""}" type="button" data-policy-toggle="custom" aria-pressed="${state.policyCustomModelHosting}"></button>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderRailStatus() {
+      const fleet = state.payloads.fleet || {};
+      const market = state.payloads.market || {};
+      const operatorName = fleet.node?.operator_id || "operator-local";
+      const nodeId = fleet.node?.node_id || "node-local";
+      document.getElementById("operator-name").textContent = operatorName.toUpperCase();
+      document.getElementById("operator-meta").textContent = `${nodeId} / ${formatCount((fleet.bundles || []).length)} bundles / ${fleet.node?.can_host_custom_model ? "custom hosting on" : "custom hosting off"}`;
+      document.getElementById("network-status").textContent = (market.nodes || []).length > 1 ? "Connected" : "Local Only";
+      document.getElementById("network-meta").textContent = `${formatCount((market.nodes || []).length || 1)} visible nodes and ${formatCount((market.candidates || []).length)} candidate offers.`;
+      document.getElementById("status-chip-count").textContent = `${formatCount((market.nodes || []).length || 1)} nodes`;
+      document.getElementById("status-chip-health").textContent = Number(fleet.queue?.failed || 0) > 0 ? "Attention" : "Healthy";
+      document.getElementById("status-chip-health").className = `chip ${Number(fleet.queue?.failed || 0) > 0 ? "bad" : "good"}`;
+    }
+
+    function render() {
+      document.querySelectorAll("[data-screen]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.screen === state.screen);
+      });
+      renderRailStatus();
+      renderMetricsStrip();
+      renderWorkspace();
+      renderInspector();
+      renderOperationsBand();
+      renderWalletDrawer();
+      bindInteractiveElements();
+    }
+
+    async function loadScreen(name) {
+      const response = await fetch(endpoints[name], { cache: "no-store" });
+      state.payloads[name] = await response.json();
+    }
+
+    async function loadSelectedRequestTaskDetail(taskId) {
+      if (!taskId) {
+        return null;
+      }
+      if (state.requestDetailCache[taskId]) {
+        return state.requestDetailCache[taskId];
+      }
+      state.requestDetailLoading = taskId;
+      renderInspector();
+      try {
+        const response = await fetch(`/tasks/${taskId}`, { cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(extractErrorMessage(payload));
+        }
+        state.requestDetailCache[taskId] = payload;
+        return payload;
+      } catch (error) {
+        state.requestMessage = { kind: "bad", text: String(error) };
+        return null;
+      } finally {
+        state.requestDetailLoading = null;
+        renderInspector();
+        bindInteractiveElements();
+      }
+    }
+
+    async function refreshRequestsPayload() {
+      await loadScreen("requests");
+      syncRequestSelection();
+      render();
+      if (state.selectedRequestTaskId) {
+        await loadSelectedRequestTaskDetail(state.selectedRequestTaskId);
+      }
+    }
+
+    async function loadWalletData() {
+      state.walletLoading = true;
+      state.walletError = null;
+      renderWalletDrawer();
+      try {
+        const [usageResponse, allocationResponse, disputeResponse] = await Promise.all([
+          fetch(`${walletEndpoints.usage}?limit=100`, { cache: "no-store" }),
+          fetch(`${walletEndpoints.allocations}?limit=100`, { cache: "no-store" }),
+          fetch(`${walletEndpoints.disputes}?limit=100`, { cache: "no-store" }),
+        ]);
+        if (!usageResponse.ok || !allocationResponse.ok || !disputeResponse.ok) {
+          throw new Error("wallet endpoints returned a non-200 status");
+        }
+        state.walletUsageEvents = await usageResponse.json();
+        state.walletAllocationEvents = await allocationResponse.json();
+        state.walletDisputeEvents = await disputeResponse.json();
+        state.walletLoaded = true;
+        syncWalletSelections();
+      } catch (error) {
+        state.walletError = String(error);
+      } finally {
+        state.walletLoading = false;
+        renderWalletDrawer();
+        bindInteractiveElements();
+      }
+    }
+
+    async function bootstrap() {
+      await Promise.all(Object.keys(endpoints).map((name) => loadScreen(name)));
+      render();
+    }
+
+    function togglePolicy(key) {
+      if (key === "strict") {
+        state.policyStrictAccounting = !state.policyStrictAccounting;
+      } else if (key === "spillover") {
+        state.policyQueueSpillover = !state.policyQueueSpillover;
+      } else if (key === "custom") {
+        state.policyCustomModelHosting = !state.policyCustomModelHosting;
+      }
+      render();
+    }
+
+    function openWalletDrawer(source) {
+      state.walletDrawerOpen = true;
+      state.walletDrawerSource = source;
+      renderWalletDrawer();
+      bindInteractiveElements();
+      if (!state.walletLoaded && !state.walletLoading) {
+        void loadWalletData();
+      }
+    }
+
+    function closeWalletDrawer() {
+      state.walletDrawerOpen = false;
+      state.walletMessage = null;
+      renderWalletDrawer();
+      bindInteractiveElements();
+    }
+
+    async function postJson(url, payload) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const contentType = response.headers.get("content-type") || "";
+      const body = contentType.includes("application/json") ? await response.json() : await response.text();
+      if (!response.ok) {
+        throw new Error(extractErrorMessage(body));
+      }
+      return body;
+    }
+
+    async function runWalletQuote() {
+      state.walletActionPending = "quote";
+      renderWalletDrawer();
+      bindInteractiveElements();
+      try {
+        state.walletQuoteResult = await postJson(walletEndpoints.quote, state.walletQuoteDraft);
+        state.walletMessage = {
+          kind: "good",
+          text: "Quote recalculated against the current node pricing contract.",
+        };
+      } catch (error) {
+        state.walletMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.walletActionPending = null;
+        renderWalletDrawer();
+        bindInteractiveElements();
+      }
+    }
+
+    async function reopenSelectedWalletAllocation() {
+      const event = selectedWalletAllocationEvent();
+      if (!event) {
+        return;
+      }
+      state.walletActionPending = "reopen";
+      renderWalletDrawer();
+      bindInteractiveElements();
+      try {
+        await postJson(
+          `/operators/wallet/allocations/${event.event_id}/reopen`,
+          { reason: state.walletActionDrafts.reopenReason || null }
+        );
+        state.walletMessage = {
+          kind: "good",
+          text: `Settlement ${event.event_id} reopened and returned to grace.`,
+        };
+        await loadWalletData();
+      } catch (error) {
+        state.walletActionPending = null;
+        state.walletMessage = { kind: "bad", text: String(error) };
+        renderWalletDrawer();
+        bindInteractiveElements();
+      }
+    }
+
+    async function disputeSelectedWalletAllocation() {
+      const event = selectedWalletAllocationEvent();
+      if (!event) {
+        return;
+      }
+      state.walletActionPending = "dispute";
+      renderWalletDrawer();
+      bindInteractiveElements();
+      try {
+        await postJson(
+          `/operators/wallet/allocations/${event.event_id}/dispute`,
+          { reason: state.walletActionDrafts.disputeReason }
+        );
+        state.walletMessage = {
+          kind: "good",
+          text: `Settlement ${event.event_id} moved into operator dispute flow.`,
+        };
+        await loadWalletData();
+      } catch (error) {
+        state.walletActionPending = null;
+        state.walletMessage = { kind: "bad", text: String(error) };
+        renderWalletDrawer();
+        bindInteractiveElements();
+      }
+    }
+
+    async function resolveSelectedWalletDispute() {
+      const dispute = selectedWalletDisputeEvent();
+      const allocation = selectedWalletDisputeAllocationEvent();
+      if (!dispute || !allocation) {
+        return;
+      }
+      state.walletActionPending = "resolve";
+      renderWalletDrawer();
+      bindInteractiveElements();
+      try {
+        await postJson(
+          `/operators/wallet/allocations/${allocation.event_id}/dispute/resolve`,
+          {
+            resolution: state.walletActionDrafts.disputeResolution,
+            reason: state.walletActionDrafts.disputeResolutionReason || null,
+          }
+        );
+        state.walletMessage = {
+          kind: "good",
+          text: `Dispute ${dispute.dispute_id} resolved as ${state.walletActionDrafts.disputeResolution}.`,
+        };
+        await loadWalletData();
+      } catch (error) {
+        state.walletActionPending = null;
+        state.walletMessage = { kind: "bad", text: String(error) };
+        renderWalletDrawer();
+        bindInteractiveElements();
+      }
+    }
+
+    async function updateRequestsPolicy(patch) {
+      const payload = requestsPayload();
+      const current = payload.policy || {};
+      state.requestPolicyPending = true;
+      try {
+        const next = {
+          allow_spillover: patch.allow_spillover ?? current.allow_spillover ?? false,
+          dispatch_strategy: patch.dispatch_strategy ?? current.dispatch_strategy ?? "local_first",
+          ready_endpoint_only: patch.ready_endpoint_only ?? current.ready_endpoint_only ?? true,
+        };
+        await postJson("/operators/dashboard/requests/policy", next);
+        state.requestMessage = {
+          kind: "good",
+          text: "Spillover policy updated for future routing and preview calculations.",
+        };
+        await refreshRequestsPayload();
+      } catch (error) {
+        state.requestMessage = { kind: "bad", text: String(error) };
+        render();
+      } finally {
+        state.requestPolicyPending = false;
+      }
+    }
+
+    async function cancelSelectedRequestTask() {
+      const selected = selectedRequestRow();
+      if (!selected) {
+        return;
+      }
+      try {
+        await postJson(`/tasks/${selected.task_id}/cancel`, {});
+        state.requestMessage = {
+          kind: "good",
+          text: `Task ${selected.task_id} cancelled.`,
+        };
+        delete state.requestDetailCache[selected.task_id];
+        await refreshRequestsPayload();
+      } catch (error) {
+        state.requestMessage = { kind: "bad", text: String(error) };
+        render();
+      }
+    }
+
+    function bindInteractiveElements() {
+      document.querySelectorAll("[data-fleet-bundle]").forEach((row) => {
+        row.addEventListener("click", () => {
+          state.selectedFleetBundleId = row.dataset.fleetBundle;
+          renderInspector();
+          renderWorkspace();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-market-bundle]").forEach((row) => {
+        row.addEventListener("click", () => {
+          state.selectedMarketCandidateId = row.dataset.marketBundle;
+          renderInspector();
+          renderWorkspace();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-market-origin]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.marketOriginFilter = button.dataset.marketOrigin;
+          state.selectedMarketCandidateId = null;
+          render();
+        });
+      });
+
+      document.querySelectorAll("[data-market-ready]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.requireReadyEndpoint = !state.requireReadyEndpoint;
+          state.selectedMarketCandidateId = null;
+          render();
+        });
+      });
+
+      document.querySelectorAll("[data-policy-toggle]").forEach((button) => {
+        button.addEventListener("click", () => togglePolicy(button.dataset.policyToggle));
+      });
+
+      document.querySelectorAll("[data-screen-jump]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.screen = button.dataset.screenJump;
+          render();
+        });
+      });
+
+      document.querySelectorAll("[data-request-tab]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.requestsTab = button.dataset.requestTab;
+          state.requestMessage = null;
+          state.selectedRequestTaskId = null;
+          render();
+          if (state.selectedRequestTaskId) {
+            void loadSelectedRequestTaskDetail(state.selectedRequestTaskId);
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-request-task]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.selectedRequestTaskId = button.dataset.requestTask;
+          renderInspector();
+          renderWorkspace();
+          bindInteractiveElements();
+          void loadSelectedRequestTaskDetail(state.selectedRequestTaskId);
+        });
+      });
+
+      document.querySelectorAll("[data-requests-policy]").forEach((control) => {
+        const key = control.dataset.requestsPolicy;
+        if (key === "strategy") {
+          control.addEventListener("change", () => {
+            void updateRequestsPolicy({ dispatch_strategy: control.value });
+          });
+          return;
+        }
+        control.addEventListener("click", () => {
+          const policy = requestsPayload().policy || {};
+          if (key === "spillover") {
+            void updateRequestsPolicy({ allow_spillover: !policy.allow_spillover });
+          } else if (key === "ready") {
+            void updateRequestsPolicy({ ready_endpoint_only: !policy.ready_endpoint_only });
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-request-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.requestAction === "cancel") {
+            void cancelSelectedRequestTask();
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-wallet-open]").forEach((button) => {
+        button.addEventListener("click", () => openWalletDrawer(button.dataset.walletOpen));
+      });
+
+      document.querySelectorAll("[data-wallet-close]").forEach((button) => {
+        button.addEventListener("click", () => closeWalletDrawer());
+      });
+
+      const walletOverlay = document.getElementById("wallet-overlay");
+      if (walletOverlay) {
+        walletOverlay.onclick = () => closeWalletDrawer();
+      }
+
+      document.querySelectorAll("[data-wallet-tab]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.walletTab = button.dataset.walletTab;
+          state.walletMessage = null;
+          renderWalletDrawer();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-wallet-select]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.walletSelect === "usage") {
+            state.walletSelectedUsageId = button.dataset.walletId;
+          } else if (button.dataset.walletSelect === "allocation") {
+            state.walletSelectedAllocationId = button.dataset.walletId;
+          } else if (button.dataset.walletSelect === "dispute") {
+            state.walletSelectedDisputeId = button.dataset.walletId;
+          }
+          renderWalletDrawer();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-wallet-field]").forEach((input) => {
+        input.addEventListener("input", () => {
+          const key = input.dataset.walletField;
+          state.walletQuoteDraft[key] = Math.max(0, Number(input.value || 0));
+        });
+      });
+
+      document.querySelectorAll("[data-wallet-textarea]").forEach((input) => {
+        input.addEventListener("input", () => {
+          state.walletActionDrafts[input.dataset.walletTextarea] = input.value;
+        });
+      });
+
+      document.querySelectorAll("[data-wallet-select-field]").forEach((select) => {
+        select.addEventListener("change", () => {
+          state.walletActionDrafts[select.dataset.walletSelectField] = select.value;
+        });
+      });
+
+      document.querySelectorAll("[data-wallet-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.walletAction === "refresh") {
+            void loadWalletData();
+          } else if (button.dataset.walletAction === "quote") {
+            void runWalletQuote();
+          } else if (button.dataset.walletAction === "reopen") {
+            void reopenSelectedWalletAllocation();
+          } else if (button.dataset.walletAction === "dispute") {
+            void disputeSelectedWalletAllocation();
+          } else if (button.dataset.walletAction === "resolve") {
+            void resolveSelectedWalletDispute();
+          }
+        });
+      });
+    }
+
+    document.querySelectorAll("[data-screen]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.screen = button.dataset.screen;
+        render();
+        if (state.screen === "requests") {
+          const selected = selectedRequestRow();
+          if (selected?.task_id) {
+            void loadSelectedRequestTaskDetail(selected.task_id);
+          }
+        }
+      });
+    });
+
+    bootstrap().catch((error) => {
+      document.getElementById("workspace-root").innerHTML = `
+        <div class="empty-state">
+          Failed to load dashboard data.
+          <div class="notice">${String(error)}</div>
+        </div>
+      `;
+    });
+  </script>
+</body>
+</html>
