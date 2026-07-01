@@ -1552,6 +1552,11 @@ def test_operator_dashboard_shell_route_exposes_sessions_workspace_controls() ->
     assert 'data-session-open-field="clientWallet"' in response.text
     assert 'data-session-open-field="depositQ"' in response.text
     assert 'data-session-open-field="confirm"' in response.text
+    assert "Launch Session Request" in response.text
+    assert 'data-session-request-field="taskType"' in response.text
+    assert 'data-session-request-field="inputValue"' in response.text
+    assert 'data-session-request-action="submit"' in response.text
+    assert "Submit Session Task" in response.text
     assert "Session Console" in response.text
     assert "Idle Timeout Watch" in response.text
     assert "Sweep Idle Sessions" in response.text

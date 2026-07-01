@@ -1456,10 +1456,16 @@
         depositQ: "",
         confirm: false,
       },
+      sessionRequestDraft: {
+        sessionId: null,
+        taskType: "",
+        inputValue: "",
+      },
       bootstrapPending: null,
       bootstrapMessage: null,
       walletMessage: null,
       walletActionPending: null,
+      sessionRequestPending: false,
     };
 
     function formatCount(value) {
@@ -1614,6 +1620,10 @@
         drafts.find((draft) => draft.endpoint_id === state.selectedEndpointDraftId) || drafts[0];
       state.selectedEndpointDraftId = selected.endpoint_id;
       return selected;
+    }
+
+    function endpointDraftById(endpointId) {
+      return endpointDrafts().find((item) => item.endpoint_id === endpointId) || null;
     }
 
     function sessionOpenableEndpoints() {
@@ -1933,6 +1943,46 @@
 
     function selectedSessionRow() {
       return syncSessionSelection();
+    }
+
+    function defaultTaskTypeForSession(selected) {
+      const endpoint = endpointDraftById(selected?.session?.endpoint_id);
+      const modelClass = endpoint?.model_class || "";
+      if (modelClass === "speech.stt") {
+        return "audio.transcribe";
+      }
+      if (modelClass.includes("llm") || modelClass.includes("text")) {
+        return "llm_text.generate";
+      }
+      return "llm_text.generate";
+    }
+
+    function sessionRequestInputLabel(taskType) {
+      return taskType === "audio.transcribe" ? "Audio Ref" : "Prompt";
+    }
+
+    function sessionRequestInputPlaceholder(taskType) {
+      return taskType === "audio.transcribe" ? "clip.wav" : "Describe the task or prompt";
+    }
+
+    function syncSessionRequestDraft() {
+      const selected = selectedSessionRow();
+      if (!selected || selected.session.status !== "active") {
+        state.sessionRequestDraft = {
+          sessionId: null,
+          taskType: "",
+          inputValue: "",
+        };
+        return state.sessionRequestDraft;
+      }
+      if (state.sessionRequestDraft.sessionId !== selected.session.session_id) {
+        state.sessionRequestDraft = {
+          sessionId: selected.session.session_id,
+          taskType: defaultTaskTypeForSession(selected),
+          inputValue: "",
+        };
+      }
+      return state.sessionRequestDraft;
     }
 
     function mergeSessionResultIntoPayload(result) {
@@ -2688,6 +2738,7 @@
       const reservationEndpoint = selectedSessionOpenEndpoint();
       const reservationDraft = syncSessionOpenDraft();
       const reservationPolicy = reservationEndpoint?.session || {};
+      const requestDraft = syncSessionRequestDraft();
       const selectedDepositQ = Number(reservationDraft.depositQ || 0);
       const canClose = Boolean(
         selected && selected.session && selected.session.status !== "closed"
@@ -2825,6 +2876,51 @@
                 ${state.sessionActionPending === "close" ? "Closing..." : "Close Session"}
               </button>
             </div>
+          </section>
+          <section class="subpanel" style="margin-bottom: 18px;">
+            <div class="panel-heading">Launch Session Request</div>
+            ${
+              selected && selected.session.status === "active"
+                ? `
+                  <div class="wallet-form-grid" style="margin-top: 14px;">
+                    <select data-session-request-field="taskType">
+                      <option value="llm_text.generate" ${requestDraft.taskType === "llm_text.generate" ? "selected" : ""}>llm_text.generate</option>
+                      <option value="audio.transcribe" ${requestDraft.taskType === "audio.transcribe" ? "selected" : ""}>audio.transcribe</option>
+                    </select>
+                    <input type="text" data-session-request-field="inputValue" value="${escapeHtml(requestDraft.inputValue)}" placeholder="${sessionRequestInputPlaceholder(requestDraft.taskType)}">
+                  </div>
+                  <div class="list" style="margin-top: 12px;">
+                    <div class="list-row">
+                      <div>
+                        <strong>Reserved Session</strong>
+                        <span>${selected.session.session_id} / ${selected.display_name}</span>
+                      </div>
+                      <span class="chip good">${selected.session.status}</span>
+                    </div>
+                    <div class="list-row">
+                      <div>
+                        <strong>${sessionRequestInputLabel(requestDraft.taskType)}</strong>
+                        <span>${requestDraft.inputValue ? escapeHtml(requestDraft.inputValue) : "Provide request input before submit"}</span>
+                      </div>
+                      <span class="chip">${requestDraft.taskType}</span>
+                    </div>
+                    <div class="list-row">
+                      <div>
+                        <strong>Live Usage Burn</strong>
+                        <span>${formatQ(selected.deposit.consumed_q)} consumed / ${formatQ(selected.remaining_q)} refundable</span>
+                      </div>
+                      <span class="chip">${formatCount(selected.session.request_count || 0)} req</span>
+                    </div>
+                  </div>
+                  <div class="wallet-inline-actions" style="margin-top: 14px;">
+                    <button class="primary-button" type="button" data-session-request-action="submit" ${requestDraft.inputValue && !state.sessionRequestPending ? "" : "disabled"}>
+                      ${state.sessionRequestPending ? "Submitting..." : "Submit Session Task"}
+                    </button>
+                    <button class="secondary-button" type="button" data-screen-jump="requests">Open Requests Queue</button>
+                  </div>
+                `
+                : `<div class="empty-state">Select an active session to submit a session-bound task and watch request count plus deposit burn update from the same workspace.</div>`
+            }
           </section>
           <div class="fleet-columns">
             <section class="subpanel">
@@ -4857,6 +4953,43 @@
       }
     }
 
+    async function submitSessionBoundTask() {
+      const selected = selectedSessionRow();
+      const draft = syncSessionRequestDraft();
+      if (!selected?.session?.session_id || selected.session.status !== "active") {
+        return;
+      }
+      state.sessionRequestPending = true;
+      state.sessionMessage = null;
+      render();
+      try {
+        const payload =
+          draft.taskType === "audio.transcribe"
+            ? { audio_ref: draft.inputValue }
+            : { prompt: draft.inputValue };
+        const result = await postJson("/tasks", {
+          task_type: draft.taskType,
+          payload,
+          constraints: {
+            endpoint_id: selected.session.endpoint_id,
+            session_id: selected.session.session_id,
+          },
+        });
+        state.selectedRequestTaskId = result.task_id;
+        state.sessionMessage = {
+          kind: "good",
+          text: `Task ${result.task_id} submitted through session ${selected.session.session_id}.`,
+        };
+        await Promise.all([refreshRequestsPayload(), refreshSessionsPayload()]);
+      } catch (error) {
+        state.sessionMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.sessionRequestPending = false;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     function viewSignedEndpointPublication() {
       const draft = selectedEndpointDraft();
       const publication = draft?.current_publication;
@@ -5079,6 +5212,24 @@
         button.addEventListener("click", () => {
           if (button.dataset.sessionOpenAction === "open") {
             void openReservedSession();
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-session-request-field]").forEach((control) => {
+        const key = control.dataset.sessionRequestField;
+        const eventName = control.tagName === "SELECT" ? "change" : "input";
+        control.addEventListener(eventName, () => {
+          state.sessionRequestDraft[key] = control.value;
+          renderWorkspace();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-session-request-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.sessionRequestAction === "submit") {
+            void submitSessionBoundTask();
           }
         });
       });
