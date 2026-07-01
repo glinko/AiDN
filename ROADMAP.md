@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-07-01`
+Last updated: `2026-07-02`
 
 This is the main public roadmap for the repository.
 
@@ -33,12 +33,12 @@ The distributed registry is a target architecture, not the first milestone.
 
 ## Current Stage
 
-Status: `M2 complete, M3 started`
+Status: `M2 complete, M3 complete, M4 in progress`
 
 Product alignment summary:
 - the repo now has a strong local hypervisor and operator-dashboard foundation;
 - the next product-critical gap is the operator bootstrap loop from install -> wallet -> provider -> model -> first endpoint;
-- endpoint publication is now a first trust layer, but paid consumption still lacks a first-class Session contract;
+- endpoint publication is now a first trust layer, and paid consumption now has a working first Session contract;
 - validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
 
 We already have a working local hypervisor foundation:
@@ -79,6 +79,8 @@ We already have a working local hypervisor foundation:
 - invalid provider usage payloads skipped safely without failing completed tasks.
 - provider contracts can now opt into `missing_usage_behavior=strict_accounting`, which keeps the task completed but marks the result `unbillable` and settlement-blocked when usage is missing or invalid;
 - settlement export now exposes monotonic `sequence_id` cursors, retention window metadata, and stale-cursor detection.
+- paid endpoint sessions now support explicit create/close lifecycle, deposit lock/release, queue-vs-busy admission, no-request minimum fee, idle timeout auto-close, and usage-linked refund settlement;
+- the operator dashboard now includes a dedicated `Sessions` workspace with reservation composer, session control actions, session-bound task launch, activity timeline, and settlement preview telemetry;
 
 What is still missing in the current stage:
 - decision on whether adapter-declared `usage_contract` becomes an enforced runtime gate, plus a first non-token pricing unit for `whisper`-class workloads;
@@ -88,8 +90,8 @@ What is still missing in the current stage:
 - full endpoint-first persistence and API beyond the current bootstrap/dashboard slice, so privacy, sharing, publication, and validation remain distinct all the way through the service contract;
 - complete dashboard migration of `Home` bootstrap and remaining bundle-centric endpoint affordances onto the new endpoint service and `/api/v1/endpoints` contract;
 - remote endpoint and proxy endpoint workflows framed as operator routing tools, not only discovery data.
-- a first-class `Endpoint Session` primitive with deposit lock, queue/busy policy, idle timeout, and refund semantics.
-- client-facing payment confirmation UX for paid endpoint reservation.
+- session settlement export stitched into the wallet ledger as a replay-safe stream, so session economics and future on-chain settlement can share one source of truth.
+- full client-facing payment confirmation and paid-session workflow polish across bootstrap, remote/proxy, and future marketplace paths.
 
 ## Milestones
 
@@ -144,7 +146,7 @@ Exit criteria:
 
 Goal: introduce `q` as the network compute unit and define how work is priced.
 
-Status: `In progress`
+Status: `Complete`
 
 Checkpoints:
 - [x] Initial `q per 1kk tokens` pricing contract
@@ -187,13 +189,17 @@ Checkpoints:
 - [x] Busy vs queue policy for saturated endpoints
 - [x] No-request minimum fee rule
 - [x] Idle timeout auto-close and idle-fee settlement
-- [ ] Operator and client-facing confirmation UX for opening paid Sessions
+- [x] Operator and client-facing confirmation UX for opening paid Sessions
+- [x] Operator-facing Sessions workspace with reservation, task launch, and telemetry
+- [ ] Session settlement export stitched into the wallet ledger
+- [ ] Remote/proxy-aware paid session propagation
 
 Exit criteria:
 - clients must create a Session before using a paid Endpoint;
 - the system can reserve endpoint capacity through explicit concurrent-session slots;
 - locked funds are settled against actual usage and refunded automatically when unused;
-- idle reservation behavior is operator-controlled and visible before the client commits funds.
+- idle reservation behavior is operator-controlled and visible before the client commits funds;
+- session economics can be exported through the same replay-safe ledger model used by the wallet layer.
 
 ### M5: Rating And Reputation
 
@@ -257,9 +263,9 @@ Order of work right now:
 1. Close the operator bootstrap loop from `install -> wallet ownership -> provider attach -> model/bundle setup -> first endpoint publish`
 2. Make endpoint management the primary operator object, including privacy mode, publication mode, and validation as separate actions
 3. Finish migrating the operator shell onto the endpoint-first trust layer, so publish/proof/sync state are first-class controls across `Home`, `Endpoints`, and later marketplace flows
-4. Define the `M4` Session contract for paid Endpoints, so reservation, deposit lock, idle billing, and refunds are explicit before rating or broader market automation
+4. Stitch `M4` session settlement events into the wallet/export layer, so paid endpoint economics and future on-chain settlement share one replay-safe ledger
 5. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
-6. Finish `M3` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
+6. Finish the remaining `M3/M4` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
 7. Define `M5` rating and `M6` custom model onboarding contracts around the endpoint-centric operator experience
 
 ## Source Documents

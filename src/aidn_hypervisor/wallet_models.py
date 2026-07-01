@@ -136,3 +136,27 @@ class WalletAllocationEvent(BaseModel):
     dispute_resolution_reason: str | None = None
     usage_event_count: int = Field(ge=0)
     usage_total_q: float = Field(ge=0.0)
+
+
+class WalletSessionEvent(BaseModel):
+    sequence_id: int = Field(ge=1)
+    event_id: str
+    session_id: str
+    endpoint_id: str
+    owner_id: str
+    provider_wallet: str
+    node_id: str
+    operator_id: str
+    event_type: Literal["deposit_locked", "usage_charged", "settled"]
+    occurred_at: str
+    task_id: str | None = None
+    status: str
+    settlement_status: Literal["open", "closed"] = "open"
+    locked_q: float = Field(ge=0.0)
+    charged_q: float = Field(ge=0.0)
+    refunded_q: float = Field(ge=0.0)
+    remaining_q: float = Field(ge=0.0)
+    usage_charged_q: float = Field(ge=0.0)
+    idle_fee_charged_q: float = Field(ge=0.0)
+    minimum_session_fee_q: float = Field(ge=0.0)
+    close_reason: str | None = None

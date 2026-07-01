@@ -318,6 +318,149 @@ def test_service_charges_paid_session_from_completed_task_usage() -> None:
     assert closed.settlement.usage_charged_q == 16.0
 
 
+def test_service_records_wallet_session_events_from_paid_session_lifecycle() -> None:
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={"plugin_id": "fake-usage-metering"}
+        ),
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    service.endpoint_service = endpoint_service
+    service.session_service = session_service
+    session_service.event_recorder = service.record_event
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="phi4-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=25.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={
+                "endpoint_id": created.endpoint.endpoint_id,
+                "session_id": opened.session.session_id,
+                "wallet_owner_id": "agent-a",
+            },
+        )
+    )
+    session_service.close_session(opened.session.session_id)
+
+    events = service.list_wallet_session_events()
+
+    assert [event["event_type"] for event in events] == [
+        "deposit_locked",
+        "usage_charged",
+        "settled",
+    ]
+    assert events[0]["locked_q"] == 25.0
+    assert events[1]["charged_q"] == 16.0
+    assert events[2]["refunded_q"] == 9.0
+    assert events[2]["settlement_status"] == "closed"
+    assert events[2]["session_id"] == opened.session.session_id
+
+
+def test_operator_wallet_session_export_reports_economic_events() -> None:
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={"plugin_id": "fake-usage-metering"}
+        ),
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    service.endpoint_service = endpoint_service
+    service.session_service = session_service
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="phi4-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=25.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={
+                "endpoint_id": created.endpoint.endpoint_id,
+                "session_id": opened.session.session_id,
+                "wallet_owner_id": "agent-a",
+            },
+        )
+    )
+    session_service.close_session(opened.session.session_id)
+
+    response = client.get("/operators/wallet/sessions/export", params={"limit": 10})
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert [item["event_type"] for item in items] == [
+        "deposit_locked",
+        "usage_charged",
+        "settled",
+    ]
+    assert response.json()["next_after_event_id"] == items[-1]["event_id"]
+    assert response.json()["next_after_sequence"] == items[-1]["sequence_id"]
+    assert response.json()["retained_from_sequence"] == items[0]["sequence_id"]
+    assert response.json()["retained_through_sequence"] == items[-1]["sequence_id"]
+    assert response.json()["watermark_sequence"] == items[-1]["sequence_id"]
+    assert response.json()["cursor_status"] == "ok"
+
+
 def test_service_automatically_records_allocation_id_from_completed_task() -> None:
     service = _service(
         plugin=UsageMeteringPlugin(),

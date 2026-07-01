@@ -30,6 +30,7 @@ from aidn_hypervisor.state import (
     WalletAllocationActivationSnapshot,
     WalletAllocationDisputeSnapshot,
     WalletAllocationSnapshot,
+    WalletSessionSnapshot,
     WalletUsageSnapshot,
 )
 from aidn_hypervisor.wallet import quote_usage_q
@@ -37,6 +38,7 @@ from aidn_hypervisor.wallet_models import (
     WalletAllocationActivationEvent,
     WalletAllocationDisputeEvent,
     WalletAllocationEvent,
+    WalletSessionEvent,
     WalletUsageEvent,
     WalletUsageMeasurement,
 )
@@ -168,6 +170,8 @@ class HypervisorService:
         self._bundle_states: dict[str, dict] = {}
         self._wallet_usage_events: list[dict] = []
         self._next_wallet_usage_sequence = 1
+        self._wallet_session_events: list[dict] = []
+        self._next_wallet_session_sequence = 1
         self._wallet_allocation_activation_events: list[dict] = []
         self._next_wallet_allocation_activation_sequence = 1
         self._wallet_allocation_dispute_events: list[dict] = []
@@ -279,6 +283,12 @@ class HypervisorService:
             return events
         return events[-limit:]
 
+    def list_wallet_session_events(self, *, limit: int | None = None) -> list[dict]:
+        events = list(self._wallet_session_events)
+        if limit is None or limit >= len(events):
+            return events
+        return events[-limit:]
+
     def list_wallet_allocation_events(self, *, limit: int | None = None) -> list[dict]:
         self._reconcile_wallet_allocation_events()
         events = list(self._wallet_allocation_events)
@@ -311,6 +321,20 @@ class HypervisorService:
     ) -> dict:
         return self._export_wallet_event_stream(
             self._wallet_usage_events,
+            after_event_id=after_event_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
+    def export_wallet_session_events(
+        self,
+        *,
+        after_event_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return self._export_wallet_event_stream(
+            self._wallet_session_events,
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -1477,7 +1501,112 @@ class HypervisorService:
             details=dict(details or {}),
         )
         self._events.append(event)
+        if self._record_wallet_session_event_from_journal(event):
+            self._persist_state()
         return event
+
+    def _record_wallet_session_event_from_journal(self, event: JournalEvent) -> bool:
+        event_type_map = {
+            "session.deposit_locked": "deposit_locked",
+            "session.usage_charged": "usage_charged",
+            "session.settled": "settled",
+        }
+        normalized_type = event_type_map.get(event.event_type)
+        if normalized_type is None:
+            return False
+        session_id = event.details.get("session_id")
+        endpoint_id = event.details.get("endpoint_id")
+        if session_id is None or endpoint_id is None:
+            return False
+        session_result = None
+        session_service = getattr(self, "session_service", None)
+        if session_service is not None:
+            try:
+                session_result = session_service.get_session(str(session_id))
+            except KeyError:
+                session_result = None
+        session = session_result.session if session_result is not None else None
+        deposit = session_result.deposit if session_result is not None else None
+        locked_q = float(
+            event.details.get(
+                "locked_q",
+                deposit.locked_q if deposit is not None else 0.0,
+            )
+        )
+        usage_charged_q = float(
+            event.details.get(
+                "usage_charged_q",
+                deposit.consumed_q if deposit is not None else 0.0,
+            )
+        )
+        charged_q = float(
+            event.details.get(
+                "charged_q",
+                event.details.get(
+                    "amount_q",
+                    deposit.consumed_q if deposit is not None else 0.0,
+                ),
+            )
+        )
+        refunded_q = float(
+            event.details.get(
+                "refunded_q",
+                deposit.refunded_q if deposit is not None else 0.0,
+            )
+        )
+        remaining_q = float(
+            event.details.get(
+                "remaining_q",
+                max(0.0, locked_q - (deposit.consumed_q if deposit is not None else charged_q)),
+            )
+        )
+        session_event = WalletSessionEvent(
+            sequence_id=self._next_wallet_session_sequence,
+            event_id=str(uuid4()),
+            session_id=str(session_id),
+            endpoint_id=str(endpoint_id),
+            owner_id=str(
+                event.details.get(
+                    "client_wallet",
+                    session.client_wallet if session is not None else "",
+                )
+            ),
+            provider_wallet=str(
+                event.details.get(
+                    "provider_wallet",
+                    session.provider_wallet if session is not None else "",
+                )
+            ),
+            node_id=self.node_id,
+            operator_id=self.operator_id,
+            event_type=normalized_type,
+            occurred_at=event.timestamp,
+            task_id=event.task_id,
+            status=str(
+                event.details.get(
+                    "status",
+                    session.status if session is not None else "unknown",
+                )
+            ),
+            settlement_status="closed" if normalized_type == "settled" else "open",
+            locked_q=locked_q,
+            charged_q=charged_q,
+            refunded_q=refunded_q,
+            remaining_q=remaining_q,
+            usage_charged_q=usage_charged_q,
+            idle_fee_charged_q=float(event.details.get("idle_fee_charged_q", 0.0)),
+            minimum_session_fee_q=float(
+                event.details.get("minimum_session_fee_q", 0.0)
+            ),
+            close_reason=(
+                str(event.details["close_reason"])
+                if event.details.get("close_reason") is not None
+                else None
+            ),
+        ).model_dump(mode="json")
+        self._wallet_session_events.append(session_event)
+        self._next_wallet_session_sequence += 1
+        return True
 
     def snapshot_state(self) -> HypervisorStateSnapshot:
         return HypervisorStateSnapshot(
@@ -1541,6 +1670,10 @@ class HypervisorService:
                 WalletUsageSnapshot(**event)
                 for event in self._wallet_usage_events
             ],
+            wallet_session_events=[
+                WalletSessionSnapshot(**event)
+                for event in self._wallet_session_events
+            ],
             wallet_allocation_activation_events=[
                 WalletAllocationActivationSnapshot(**event)
                 for event in self._wallet_allocation_activation_events
@@ -1569,6 +1702,7 @@ class HypervisorService:
             else None
         )
         self._wallet_usage_events = []
+        self._wallet_session_events = []
         self._wallet_allocation_activation_events = []
         self._wallet_allocation_dispute_events = []
         self._wallet_allocation_events = []
@@ -1598,6 +1732,16 @@ class HypervisorService:
         ]
         self._next_wallet_usage_sequence = (
             max((event["sequence_id"] for event in self._wallet_usage_events), default=0)
+            + 1
+        )
+        self._wallet_session_events = [
+            event.model_dump(mode="json") for event in snapshot.wallet_session_events
+        ]
+        self._next_wallet_session_sequence = (
+            max(
+                (event["sequence_id"] for event in self._wallet_session_events),
+                default=0,
+            )
             + 1
         )
         self._wallet_allocation_activation_events = [

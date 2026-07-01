@@ -202,6 +202,7 @@ class SessionService:
                 "endpoint_id": current.endpoint_id,
                 "amount_q": amount_q,
                 "consumed_q": next_consumed_q,
+                "usage_charged_q": next_consumed_q,
                 "remaining_q": max(0.0, deposit.locked_q - next_consumed_q),
             },
         )
@@ -315,6 +316,9 @@ class SessionService:
                 "charged_q": settlement.charged_q,
                 "refunded_q": settlement.refunded_q,
                 "payout_q": settlement.payout_q,
+                "usage_charged_q": settlement.usage_charged_q,
+                "idle_fee_charged_q": settlement.idle_fee_charged_q,
+                "minimum_session_fee_q": settlement.minimum_session_fee_q,
                 "no_request": settlement.no_request,
                 "close_reason": close_reason,
             },

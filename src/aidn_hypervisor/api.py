@@ -1225,6 +1225,10 @@ def build_api_router(
     async def wallet_usage_events(limit: int = 100) -> list[dict]:
         return service.list_wallet_usage_events(limit=limit)
 
+    @router.get("/operators/wallet/sessions")
+    async def wallet_session_events(limit: int = 100) -> list[dict]:
+        return service.list_wallet_session_events(limit=limit)
+
     @router.get("/operators/wallet/endpoints/publications")
     async def wallet_endpoint_publications(endpoint_id: str | None = None) -> dict:
         if endpoint_publication_service is None:
@@ -1262,6 +1266,18 @@ def build_api_router(
         limit: int = 100,
     ) -> dict:
         return service.export_wallet_usage_events(
+            after_event_id=after_event_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
+    @router.get("/operators/wallet/sessions/export")
+    async def export_wallet_session_events(
+        after_event_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return service.export_wallet_session_events(
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
