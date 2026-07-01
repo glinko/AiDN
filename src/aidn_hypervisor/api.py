@@ -240,6 +240,85 @@ def _operator_dashboard_sessions_payload(
     endpoint_service=None,
     session_service=None,
 ) -> dict:
+    session_tasks: dict[str, list[dict]] = {}
+    session_activity: dict[str, list[dict]] = {}
+
+    def _task_input_preview(task_request: TaskRequest) -> str | None:
+        payload = task_request.payload if isinstance(task_request.payload, dict) else {}
+        if "prompt" in payload:
+            return str(payload["prompt"])
+        if "audio_ref" in payload:
+            return str(payload["audio_ref"])
+        if payload:
+            first_key = next(iter(payload))
+            return str(payload[first_key])
+        return None
+
+    for task in service.queue.snapshot():
+        session_id = task.request.constraints.get("session_id")
+        if session_id is None:
+            continue
+        task_id = str(task.task_id)
+        serialized = {
+            "task_id": task_id,
+            "created_at": task.created_at,
+            "status": task.status,
+            "task_type": task.request.task_type,
+            "bundle_id": service.selected_bundle_id(task_id),
+            "session_id": str(session_id),
+            "endpoint_id": task.request.constraints.get("endpoint_id"),
+            "input_preview": _task_input_preview(task.request),
+            "usage": (
+                service.task_result(task_id).get("usage")
+                if isinstance(service.task_result(task_id), dict)
+                else None
+            ),
+            "session_accounting": (
+                service.task_result(task_id).get("session_accounting")
+                if isinstance(service.task_result(task_id), dict)
+                else None
+            ),
+        }
+        session_tasks.setdefault(str(session_id), []).append(serialized)
+        history = [
+            {
+                "timestamp": event.timestamp,
+                "event_type": event.event_type,
+                "message": event.message,
+                "task_id": event.task_id,
+                "details": dict(event.details or {}),
+            }
+            for event in service.task_history(task_id)
+        ]
+        session_activity.setdefault(str(session_id), []).extend(history)
+
+    for event in service.event_journal():
+        event_session_id = event.details.get("session_id")
+        if event_session_id is None:
+            continue
+        session_activity.setdefault(str(event_session_id), []).append(
+            {
+                "timestamp": event.timestamp,
+                "event_type": event.event_type,
+                "message": event.message,
+                "task_id": event.task_id,
+                "details": dict(event.details or {}),
+            }
+        )
+
+    for session_id in session_tasks:
+        session_tasks[session_id] = sorted(
+            session_tasks[session_id],
+            key=lambda item: item["created_at"],
+            reverse=True,
+        )[:8]
+    for session_id in session_activity:
+        session_activity[session_id] = sorted(
+            session_activity[session_id],
+            key=lambda item: item["timestamp"],
+            reverse=True,
+        )[:12]
+
     if session_service is None:
         return {
             "owner_wallet": service.owner_wallet_state(),
@@ -270,6 +349,8 @@ def _operator_dashboard_sessions_payload(
                 "remaining_q": max(
                     0.0, result.deposit.locked_q - result.deposit.consumed_q
                 ),
+                "related_tasks": session_tasks.get(session.session_id, []),
+                "activity": session_activity.get(session.session_id, []),
             }
         )
     return {

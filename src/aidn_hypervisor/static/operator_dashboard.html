@@ -3005,6 +3005,55 @@
                 }
               </section>
               <section class="subpanel">
+                <div class="panel-heading">Session Activity</div>
+                ${
+                  selected
+                    ? selected.related_tasks?.length
+                      ? `
+                        <div class="request-history">
+                          ${selected.related_tasks
+                            .map(
+                              (task) => `
+                                <div class="request-history-item">
+                                  <strong>${task.task_type}</strong>
+                                  <div class="notice">${task.task_id} / ${task.status}</div>
+                                  <div class="notice">${formatMaybe(task.input_preview, "No input preview")}</div>
+                                  <div class="notice">${formatTimestamp(task.created_at)}</div>
+                                </div>
+                              `
+                            )
+                            .join("")}
+                        </div>
+                      `
+                      : `<div class="empty-state">No task trace has been recorded for this session yet.</div>`
+                    : `<div class="empty-state">Select a session to inspect related task traces.</div>`
+                }
+              </section>
+              <section class="subpanel">
+                <div class="panel-heading">Usage Timeline</div>
+                ${
+                  selected
+                    ? selected.activity?.length
+                      ? `
+                        <div class="request-history">
+                          ${selected.activity
+                            .map(
+                              (event) => `
+                                <div class="request-history-item">
+                                  <strong>${event.event_type}</strong>
+                                  <div class="notice">${event.message}</div>
+                                  <div class="notice">${formatMaybe(event.task_id, "session event")} / ${formatTimestamp(event.timestamp)}</div>
+                                </div>
+                              `
+                            )
+                            .join("")}
+                        </div>
+                      `
+                      : `<div class="empty-state">No session telemetry events have been recorded yet.</div>`
+                    : `<div class="empty-state">Select a session to inspect usage and lifecycle events.</div>`
+                }
+              </section>
+              <section class="subpanel">
                 <div class="panel-heading">Operator Policy</div>
                 <div class="notice">Idle timeout and deposit settlement now live inside the session control plane so paid endpoint behavior stays explicit before wallet-network execution moves on-chain.</div>
               </section>

@@ -1557,6 +1557,8 @@ def test_operator_dashboard_shell_route_exposes_sessions_workspace_controls() ->
     assert 'data-session-request-field="inputValue"' in response.text
     assert 'data-session-request-action="submit"' in response.text
     assert "Submit Session Task" in response.text
+    assert "Session Activity" in response.text
+    assert "Usage Timeline" in response.text
     assert "Session Console" in response.text
     assert "Idle Timeout Watch" in response.text
     assert "Sweep Idle Sessions" in response.text
@@ -1939,6 +1941,71 @@ def test_operator_dashboard_sessions_endpoint_returns_operator_session_summary()
     assert response.json()["items"][0]["display_name"] == "Paid STT"
     assert response.json()["items"][0]["deposit"]["locked_q"] == 10.0
     assert response.json()["items"][0]["session"]["endpoint_id"] == created.endpoint.endpoint_id
+
+
+def test_operator_dashboard_sessions_endpoint_includes_related_task_telemetry() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="whisper-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    session = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    ).session
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+    submitted = client.post(
+        "/tasks",
+        json={
+            "task_type": "audio.transcribe",
+            "payload": {"audio_ref": "clip.wav"},
+            "constraints": {
+                "endpoint_id": created.endpoint.endpoint_id,
+                "session_id": session.session_id,
+            },
+        },
+    ).json()
+
+    response = client.get("/operators/dashboard/sessions")
+
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["items"][0]["related_tasks"][0]["task_id"] == submitted["task_id"]
+    assert body["items"][0]["related_tasks"][0]["session_id"] == session.session_id
+    assert body["items"][0]["activity"][0]["event_type"]
+    assert (
+        body["items"][0]["activity"][0]["task_id"] == submitted["task_id"]
+        or body["items"][0]["activity"][0]["details"].get("session_id") == session.session_id
+    )
 
 
 def test_operator_dashboard_session_close_action_closes_selected_session() -> None:
