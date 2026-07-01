@@ -1545,6 +1545,13 @@ def test_operator_dashboard_shell_route_exposes_sessions_workspace_controls() ->
     assert "/operators/dashboard/sessions" in response.text
     assert "/operators/dashboard/sessions/actions/close" in response.text
     assert "/operators/dashboard/sessions/actions/sweep-idle" in response.text
+    assert "Reserve Paid Session" in response.text
+    assert "Deposit Confirmation" in response.text
+    assert "Confirm Deposit &amp; Open Session" in response.text
+    assert 'data-session-open-field="endpointId"' in response.text
+    assert 'data-session-open-field="clientWallet"' in response.text
+    assert 'data-session-open-field="depositQ"' in response.text
+    assert 'data-session-open-field="confirm"' in response.text
     assert "Session Console" in response.text
     assert "Idle Timeout Watch" in response.text
     assert "Sweep Idle Sessions" in response.text

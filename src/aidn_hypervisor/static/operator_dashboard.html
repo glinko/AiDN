@@ -1450,6 +1450,12 @@
         endpointId: null,
         remoteEndpointId: "",
       },
+      sessionOpenDraft: {
+        endpointId: null,
+        clientWallet: "",
+        depositQ: "",
+        confirm: false,
+      },
       bootstrapPending: null,
       bootstrapMessage: null,
       walletMessage: null,
@@ -1608,6 +1614,60 @@
         drafts.find((draft) => draft.endpoint_id === state.selectedEndpointDraftId) || drafts[0];
       state.selectedEndpointDraftId = selected.endpoint_id;
       return selected;
+    }
+
+    function sessionOpenableEndpoints() {
+      return endpointDrafts().filter(
+        (item) => Number(item?.session?.minimum_deposit || 0) > 0
+      );
+    }
+
+    function selectedSessionOpenEndpoint() {
+      const endpoints = sessionOpenableEndpoints();
+      if (!endpoints.length) {
+        state.sessionOpenDraft.endpointId = null;
+        return null;
+      }
+      const selected =
+        endpoints.find((item) => item.endpoint_id === state.sessionOpenDraft.endpointId) ||
+        endpoints[0];
+      state.sessionOpenDraft.endpointId = selected.endpoint_id;
+      return selected;
+    }
+
+    function syncSessionOpenDraft() {
+      const selected = selectedSessionOpenEndpoint();
+      const ownerWalletId =
+        state.payloads.sessions?.owner_wallet?.wallet_id ||
+        state.payloads.home?.bootstrap?.owner_wallet?.wallet_id ||
+        "";
+      const recommendedDeposit = selected?.session?.recommended_deposit;
+      const minimumDeposit = selected?.session?.minimum_deposit;
+      if (!selected) {
+        state.sessionOpenDraft = {
+          endpointId: null,
+          clientWallet: ownerWalletId,
+          depositQ: "",
+          confirm: false,
+        };
+        return state.sessionOpenDraft;
+      }
+      if (state.sessionOpenDraft.endpointId !== selected.endpoint_id) {
+        state.sessionOpenDraft = {
+          endpointId: selected.endpoint_id,
+          clientWallet: ownerWalletId,
+          depositQ:
+            recommendedDeposit !== null && recommendedDeposit !== undefined
+              ? String(recommendedDeposit)
+              : minimumDeposit !== null && minimumDeposit !== undefined
+              ? String(minimumDeposit)
+              : "",
+          confirm: false,
+        };
+      } else if (!state.sessionOpenDraft.clientWallet && ownerWalletId) {
+        state.sessionOpenDraft.clientWallet = ownerWalletId;
+      }
+      return state.sessionOpenDraft;
     }
 
     function endpointVisibility(item) {
@@ -2624,6 +2684,11 @@
       const summary = payload.summary || {};
       const items = payload.items || [];
       const selected = selectedSessionRow();
+      const sessionCandidates = sessionOpenableEndpoints();
+      const reservationEndpoint = selectedSessionOpenEndpoint();
+      const reservationDraft = syncSessionOpenDraft();
+      const reservationPolicy = reservationEndpoint?.session || {};
+      const selectedDepositQ = Number(reservationDraft.depositQ || 0);
       const canClose = Boolean(
         selected && selected.session && selected.session.status !== "closed"
       );
@@ -2669,6 +2734,87 @@
               <div class="summary-copy">Unused deposit still recoverable before or after settlement closes the session.</div>
             </section>
           </div>
+          <section class="subpanel" style="margin-bottom: 18px;">
+            <div class="panel-heading">Reserve Paid Session</div>
+            ${
+              sessionCandidates.length
+                ? `
+                  <div class="wallet-form-grid" style="margin-top: 14px;">
+                    <select data-session-open-field="endpointId">
+                      ${sessionCandidates
+                        .map(
+                          (item) => `
+                            <option value="${item.endpoint_id}" ${reservationDraft.endpointId === item.endpoint_id ? "selected" : ""}>
+                              ${item.display_name} / ${item.model_class || item.bundle_id}
+                            </option>
+                          `
+                        )
+                        .join("")}
+                    </select>
+                    <input type="text" data-session-open-field="clientWallet" value="${escapeHtml(reservationDraft.clientWallet)}" placeholder="Client wallet id">
+                  </div>
+                  <div class="wallet-form-grid" style="margin-top: 10px;">
+                    <input type="number" min="${Number(reservationPolicy.minimum_deposit || 0)}" step="0.1" data-session-open-field="depositQ" value="${escapeHtml(reservationDraft.depositQ)}" placeholder="Selected deposit">
+                    <div class="notice">Queue policy: ${formatMaybe(reservationPolicy.queue_policy, "busy")} / max concurrent ${formatCount(reservationPolicy.max_concurrent_sessions)}</div>
+                  </div>
+                  <div class="panel-heading" style="margin-top: 16px;">Deposit Confirmation</div>
+                  <div class="list" style="margin-top: 12px;">
+                    <div class="list-row">
+                      <div>
+                        <strong>Endpoint</strong>
+                        <span>${reservationEndpoint.display_name} / ${reservationEndpoint.endpoint_id}</span>
+                      </div>
+                      <span class="chip">${reservationEndpoint.model_class || reservationEndpoint.bundle_id || "-"}</span>
+                    </div>
+                    <div class="list-row">
+                      <div>
+                        <strong>Minimum Deposit</strong>
+                        <span>${formatQ(reservationPolicy.minimum_deposit || 0)}</span>
+                      </div>
+                      <span class="chip">floor</span>
+                    </div>
+                    <div class="list-row">
+                      <div>
+                        <strong>Recommended Deposit</strong>
+                        <span>${formatQ(reservationPolicy.recommended_deposit || reservationPolicy.minimum_deposit || 0)}</span>
+                      </div>
+                      <span class="chip">target</span>
+                    </div>
+                    <div class="list-row">
+                      <div>
+                        <strong>Selected Deposit</strong>
+                        <span>${formatQ(selectedDepositQ)}</span>
+                      </div>
+                      <span class="chip ${selectedDepositQ >= Number(reservationPolicy.minimum_deposit || 0) ? "good" : "bad"}">${selectedDepositQ >= Number(reservationPolicy.minimum_deposit || 0) ? "valid" : "below minimum"}</span>
+                    </div>
+                    <div class="list-row">
+                      <div>
+                        <strong>Idle Fee / Minute</strong>
+                        <span>${formatQ(reservationPolicy.idle_fee_per_minute || 0)}</span>
+                      </div>
+                      <span class="chip">reservation</span>
+                    </div>
+                    <div class="list-row">
+                      <div>
+                        <strong>Idle Timeout</strong>
+                        <span>${formatCount(reservationPolicy.idle_timeout_seconds || 0)} s / max ${formatCount(reservationPolicy.maximum_session_duration_seconds || 0)} s</span>
+                      </div>
+                      <span class="chip">runtime</span>
+                    </div>
+                  </div>
+                  <label class="wallet-inline-actions" style="margin-top: 12px; justify-content: flex-start; gap: 10px;">
+                    <input type="checkbox" data-session-open-field="confirm" ${reservationDraft.confirm ? "checked" : ""}>
+                    <span>Confirm deposit lock and reserve slot</span>
+                  </label>
+                  <div class="wallet-inline-actions" style="margin-top: 14px;">
+                    <button class="primary-button" type="button" data-session-open-action="open" ${reservationDraft.confirm && selectedDepositQ >= Number(reservationPolicy.minimum_deposit || 0) && state.sessionActionPending !== "open" ? "" : "disabled"}>
+                      ${state.sessionActionPending === "open" ? "Opening..." : "Confirm Deposit &amp; Open Session"}
+                    </button>
+                  </div>
+                `
+                : `<div class="empty-state">No paid endpoints are configured yet. Add session policy to an endpoint before reserving paid execution.</div>`
+            }
+          </section>
           <section class="subpanel" style="margin-bottom: 18px;">
             <div class="panel-heading">Session Actions</div>
             <div class="chip-row" style="margin-top: 14px;">
@@ -4669,6 +4815,48 @@
       }
     }
 
+    async function openReservedSession() {
+      const selectedEndpoint = selectedSessionOpenEndpoint();
+      const draft = syncSessionOpenDraft();
+      if (!selectedEndpoint?.endpoint_id) {
+        return;
+      }
+      if (!draft.confirm) {
+        state.sessionMessage = {
+          kind: "bad",
+          text: "Confirm the deposit lock before opening a paid session.",
+        };
+        render();
+        bindInteractiveElements();
+        return;
+      }
+      state.sessionActionPending = "open";
+      state.sessionMessage = null;
+      render();
+      try {
+        const result = await postJson(
+          `${endpointApiBase}/${selectedEndpoint.endpoint_id}/sessions`,
+          {
+            client_wallet: draft.clientWallet,
+            deposit_q: Number(draft.depositQ || 0),
+          }
+        );
+        state.selectedSessionId = result.data.session.session_id;
+        state.sessionOpenDraft.confirm = false;
+        state.sessionMessage = {
+          kind: "good",
+          text: `Session ${result.data.session.session_id} reserved on ${selectedEndpoint.display_name}.`,
+        };
+        await refreshSessionsPayload();
+      } catch (error) {
+        state.sessionMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.sessionActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     function viewSignedEndpointPublication() {
       const draft = selectedEndpointDraft();
       const publication = draft?.current_publication;
@@ -4868,6 +5056,29 @@
             void closeSelectedSession();
           } else if (button.dataset.sessionAction === "sweep-idle") {
             void sweepIdleSessions();
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-session-open-field]").forEach((control) => {
+        const key = control.dataset.sessionOpenField;
+        const eventName =
+          control.type === "checkbox" || control.tagName === "SELECT" ? "change" : "input";
+        control.addEventListener(eventName, () => {
+          state.sessionOpenDraft[key] =
+            control.type === "checkbox" ? control.checked : control.value;
+          if (key === "endpointId") {
+            state.sessionOpenDraft.confirm = false;
+          }
+          renderWorkspace();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-session-open-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.sessionOpenAction === "open") {
+            void openReservedSession();
           }
         });
       });
