@@ -240,6 +240,7 @@ def _operator_dashboard_sessions_payload(
     endpoint_service=None,
     session_service=None,
 ) -> dict:
+    current_time = datetime.now().astimezone()
     session_tasks: dict[str, list[dict]] = {}
     session_activity: dict[str, list[dict]] = {}
 
@@ -253,6 +254,67 @@ def _operator_dashboard_sessions_payload(
             first_key = next(iter(payload))
             return str(payload[first_key])
         return None
+
+    def _settlement_preview(session, deposit) -> dict:
+        minimum_session_fee = float(
+            session.session_policy_snapshot.get("minimum_session_fee", 0.0) or 0.0
+        )
+        idle_fee_per_minute = float(
+            session.session_policy_snapshot.get("idle_fee_per_minute", 0.0) or 0.0
+        )
+        usage_charged_q = float(deposit.consumed_q)
+        minimum_session_fee_q = (
+            min(float(deposit.locked_q), minimum_session_fee)
+            if int(session.request_count or 0) == 0
+            else 0.0
+        )
+        idle_elapsed_seconds = 0
+        idle_exposure_q = 0.0
+        if (
+            session.status == "active"
+            and int(session.request_count or 0) > 0
+            and idle_fee_per_minute > 0.0
+            and session.last_activity_at
+        ):
+            try:
+                last_activity_at = datetime.fromisoformat(session.last_activity_at)
+                idle_elapsed_seconds = max(
+                    0,
+                    int((current_time - last_activity_at).total_seconds()),
+                )
+            except ValueError:
+                idle_elapsed_seconds = 0
+            idle_exposure_q = min(
+                max(0.0, float(deposit.locked_q) - usage_charged_q),
+                (idle_elapsed_seconds / 60.0) * idle_fee_per_minute,
+            )
+        projected_charged_q = min(
+            float(deposit.locked_q),
+            max(minimum_session_fee_q, usage_charged_q + idle_exposure_q),
+        )
+        projected_refundable_q = max(
+            0.0,
+            float(deposit.locked_q) - projected_charged_q,
+        )
+        seconds_until_idle_timeout = 0
+        if session.idle_deadline_at:
+            try:
+                idle_deadline_at = datetime.fromisoformat(session.idle_deadline_at)
+                seconds_until_idle_timeout = max(
+                    0,
+                    int((idle_deadline_at - current_time).total_seconds()),
+                )
+            except ValueError:
+                seconds_until_idle_timeout = 0
+        return {
+            "usage_charged_q": usage_charged_q,
+            "minimum_session_fee_q": minimum_session_fee_q,
+            "idle_exposure_q": idle_exposure_q,
+            "projected_charged_q": projected_charged_q,
+            "projected_refundable_q": projected_refundable_q,
+            "idle_elapsed_seconds": idle_elapsed_seconds,
+            "seconds_until_idle_timeout": seconds_until_idle_timeout,
+        }
 
     for task in service.queue.snapshot():
         session_id = task.request.constraints.get("session_id")
@@ -348,6 +410,10 @@ def _operator_dashboard_sessions_payload(
                 "display_name": endpoint_names.get(session.endpoint_id, session.endpoint_id),
                 "remaining_q": max(
                     0.0, result.deposit.locked_q - result.deposit.consumed_q
+                ),
+                "settlement_preview": _settlement_preview(
+                    result.session,
+                    result.deposit,
                 ),
                 "related_tasks": session_tasks.get(session.session_id, []),
                 "activity": session_activity.get(session.session_id, []),

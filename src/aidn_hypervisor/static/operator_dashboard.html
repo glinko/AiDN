@@ -2740,6 +2740,7 @@
       const reservationPolicy = reservationEndpoint?.session || {};
       const requestDraft = syncSessionRequestDraft();
       const selectedDepositQ = Number(reservationDraft.depositQ || 0);
+      const preview = selected?.settlement_preview || null;
       const canClose = Boolean(
         selected && selected.session && selected.session.status !== "closed"
       );
@@ -3002,6 +3003,45 @@
                       </div>
                     `
                     : `<div class="empty-state">Select a session row to inspect deposit lock, idle deadline, and settlement outcome.</div>`
+                }
+              </section>
+              <section class="subpanel">
+                <div class="panel-heading">Settlement Preview</div>
+                ${
+                  selected && preview
+                    ? `
+                      <div class="list">
+                        <div class="list-row">
+                          <div>
+                            <strong>Usage Charge</strong>
+                            <span>${formatQ(preview.usage_charged_q)}</span>
+                          </div>
+                          <span class="chip">metered</span>
+                        </div>
+                        <div class="list-row">
+                          <div>
+                            <strong>Idle Exposure</strong>
+                            <span>${formatQ(preview.idle_exposure_q)} after ${formatCount(preview.idle_elapsed_seconds)} s idle</span>
+                          </div>
+                          <span class="chip">${formatCount(preview.seconds_until_idle_timeout)} s left</span>
+                        </div>
+                        <div class="list-row">
+                          <div>
+                            <strong>Minimum Session Fee</strong>
+                            <span>${formatQ(preview.minimum_session_fee_q)}</span>
+                          </div>
+                          <span class="chip">${selected.session.request_count ? "inactive" : "armed"}</span>
+                        </div>
+                        <div class="list-row">
+                          <div>
+                            <strong>Projected Settlement</strong>
+                            <span>${formatQ(preview.projected_charged_q)} charged / ${formatQ(preview.projected_refundable_q)} refundable</span>
+                          </div>
+                          <span class="chip">${selected.session.status}</span>
+                        </div>
+                      </div>
+                    `
+                    : `<div class="empty-state">Select a session to preview current usage, idle exposure, and refundable balance.</div>`
                 }
               </section>
               <section class="subpanel">

@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -1559,6 +1559,8 @@ def test_operator_dashboard_shell_route_exposes_sessions_workspace_controls() ->
     assert "Submit Session Task" in response.text
     assert "Session Activity" in response.text
     assert "Usage Timeline" in response.text
+    assert "Settlement Preview" in response.text
+    assert "Idle Exposure" in response.text
     assert "Session Console" in response.text
     assert "Idle Timeout Watch" in response.text
     assert "Sweep Idle Sessions" in response.text
@@ -2006,6 +2008,72 @@ def test_operator_dashboard_sessions_endpoint_includes_related_task_telemetry() 
         body["items"][0]["activity"][0]["task_id"] == submitted["task_id"]
         or body["items"][0]["activity"][0]["details"].get("session_id") == session.session_id
     )
+
+
+def test_operator_dashboard_sessions_endpoint_includes_settlement_preview() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="whisper-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    session_service.record_usage_charge(opened.session.session_id, amount_q=3.0)
+    session_service.store.save_session(
+        session_service.get_session(opened.session.session_id).session.model_copy(
+            update={
+                "last_activity_at": (
+                    datetime.now(timezone.utc) - timedelta(minutes=4)
+                ).isoformat(),
+                "idle_deadline_at": (
+                    datetime.now(timezone.utc) + timedelta(minutes=6)
+                ).isoformat(),
+            }
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.get("/operators/dashboard/sessions")
+
+    body = response.json()
+    preview = body["items"][0]["settlement_preview"]
+
+    assert response.status_code == 200
+    assert preview["usage_charged_q"] == 3.0
+    assert preview["idle_exposure_q"] > 0.0
+    assert preview["projected_charged_q"] >= preview["usage_charged_q"]
+    assert preview["projected_refundable_q"] < 7.0
+    assert preview["seconds_until_idle_timeout"] > 0
 
 
 def test_operator_dashboard_session_close_action_closes_selected_session() -> None:
