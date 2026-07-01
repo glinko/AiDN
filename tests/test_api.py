@@ -1471,6 +1471,7 @@ def test_operator_dashboard_shell_route_returns_terminal_layout_markup() -> None
     assert "AiDN Operator Dashboard" in response.text
     assert 'data-screen="home"' in response.text
     assert 'data-screen="fleet"' in response.text
+    assert 'data-screen="sessions"' in response.text
     assert 'data-screen="market"' in response.text
     assert 'data-role="command-rail"' in response.text
     assert 'data-role="metrics-strip"' in response.text
@@ -1532,6 +1533,18 @@ def test_operator_dashboard_shell_route_exposes_requests_workspace_controls() ->
     assert "/operators/dashboard/requests" in response.text
     assert 'data-requests-policy="strategy"' in response.text
     assert "Spillover Preview" in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_sessions_workspace_controls() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'data-screen="sessions"' in response.text
+    assert "/operators/dashboard/sessions" in response.text
+    assert "Session Console" in response.text
+    assert "Idle Timeout Watch" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -> None:

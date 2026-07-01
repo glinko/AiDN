@@ -1256,6 +1256,10 @@
           <span class="rail-button-title">Endpoints</span>
           <span class="rail-button-copy">Visibility, publication, and validation control</span>
         </button>
+        <button class="rail-button" data-screen="sessions" type="button">
+          <span class="rail-button-title">Sessions</span>
+          <span class="rail-button-copy">Deposits, idle timeout, and paid execution state</span>
+        </button>
         <button class="rail-button" data-screen="market" type="button">
           <span class="rail-button-title">Market</span>
           <span class="rail-button-copy">Execution Market and attach-ready offers</span>
@@ -1341,6 +1345,7 @@
       home: "/operators/dashboard/home",
       fleet: "/operators/dashboard/fleet",
       endpoints: "/operators/dashboard/endpoints",
+      sessions: "/operators/dashboard/sessions",
       market: "/operators/dashboard/market",
       remote: "/operators/dashboard/remote-endpoints",
       requests: "/operators/dashboard/requests",
@@ -1372,6 +1377,7 @@
       selectedMarketCandidateId: null,
       selectedFleetBundleId: null,
       selectedEndpointDraftId: null,
+      selectedSessionId: null,
       selectedRemoteEndpointKey: null,
       endpointInspectorView: "overview",
       selectedRequestTaskId: null,
@@ -1768,6 +1774,20 @@
       );
     }
 
+    function sessionsPayload() {
+      return (
+        state.payloads.sessions || {
+          summary: {
+            total: 0,
+            active: 0,
+            queued: 0,
+            closed: 0,
+          },
+          items: [],
+        }
+      );
+    }
+
     function remotePayload() {
       return (
         state.payloads.remote || {
@@ -1833,6 +1853,20 @@
       const selected = rows.find((item) => item.task_id === state.selectedRequestTaskId) || rows[0] || null;
       state.selectedRequestTaskId = selected?.task_id || null;
       return selected;
+    }
+
+    function syncSessionSelection() {
+      const rows = sessionsPayload().items || [];
+      const selected =
+        rows.find((item) => item.session?.session_id === state.selectedSessionId) ||
+        rows[0] ||
+        null;
+      state.selectedSessionId = selected?.session?.session_id || null;
+      return selected;
+    }
+
+    function selectedSessionRow() {
+      return syncSessionSelection();
     }
 
     function selectedRequestRow() {
@@ -2556,6 +2590,140 @@
       `;
     }
 
+    function renderSessionsWorkspace() {
+      const payload = sessionsPayload();
+      const summary = payload.summary || {};
+      const items = payload.items || [];
+      const selected = selectedSessionRow();
+
+      return `
+        <div class="workspace-header">
+          <div>
+            <div class="panel-heading">Paid Execution Runtime</div>
+            <h1 class="workspace-title">Session Console</h1>
+            <p class="workspace-copy">Track locked deposits, idle timeout exposure, and closed-session settlement without leaving the main operator surface.</p>
+          </div>
+          <div class="chip-row">
+            <span class="chip good">Active ${formatCount(summary.active)}</span>
+            <span class="chip">Queued ${formatCount(summary.queued)}</span>
+            <span class="chip">Closed ${formatCount(summary.closed)}</span>
+          </div>
+        </div>
+        <div class="workspace-body">
+          <div class="summary-grid">
+            <section class="summary-card">
+              <div class="panel-heading">Tracked Sessions</div>
+              <div class="summary-value">${formatCount(summary.total)}</div>
+              <div class="summary-copy">All paid endpoint reservations currently tracked by this hypervisor.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Idle Timeout Watch</div>
+              <div class="summary-value">${formatCount(summary.active)}</div>
+              <div class="summary-copy">Active sessions remain exposed to automatic close if they cross the idle deadline.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Locked Deposits</div>
+              <div class="summary-value">${formatQ(sum(items.map((item) => Number(item.deposit?.locked_q || 0))))}</div>
+              <div class="summary-copy">Q reserved across active, queued, and recently settled rows.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Refundable Balance</div>
+              <div class="summary-value">${formatQ(sum(items.map((item) => Number(item.remaining_q || 0))))}</div>
+              <div class="summary-copy">Unused deposit still recoverable before or after settlement closes the session.</div>
+            </section>
+          </div>
+          <div class="fleet-columns">
+            <section class="subpanel">
+              <div class="panel-heading">Reserved Sessions</div>
+              <div class="table-shell" style="margin-top: 14px;">
+                <div class="table-head">
+                  <div>Endpoint / Session</div>
+                  <div>Status</div>
+                  <div>Deposit</div>
+                  <div>Consumed</div>
+                  <div>Refundable</div>
+                  <div>Idle Deadline</div>
+                  <div>Action</div>
+                </div>
+                ${
+                  items.length
+                    ? items
+                        .map((item) => {
+                          const active = selected && item.session.session_id === selected.session.session_id;
+                          return `
+                            <div class="table-row ${active ? "active" : ""}" data-session-row="${item.session.session_id}">
+                              <div>
+                                <div class="row-title">${item.display_name}</div>
+                                <span class="row-copy">${item.session.session_id}</span>
+                              </div>
+                              <div><span class="chip ${item.session.status === "active" ? "good" : item.session.status === "queued" ? "" : "bad"}">${item.session.status}</span></div>
+                              <div class="row-number">${formatQ(item.deposit.locked_q)}</div>
+                              <div class="row-number">${formatQ(item.deposit.consumed_q)}</div>
+                              <div class="row-number">${formatQ(item.remaining_q)}</div>
+                              <div class="row-meta">${formatTimestamp(item.session.idle_deadline_at)}</div>
+                              <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Inspect"}</button>
+                            </div>
+                          `;
+                        })
+                        .join("")
+                    : `<div class="empty-state">No paid endpoint sessions are currently tracked. Open a session to begin reserving endpoint capacity.</div>`
+                }
+              </div>
+            </section>
+            <div class="stack">
+              <section class="subpanel">
+                <div class="panel-heading">Session Detail</div>
+                ${
+                  selected
+                    ? `
+                      <div class="list">
+                        <div class="list-row">
+                          <div>
+                            <strong>${selected.display_name}</strong>
+                            <span>${selected.session.endpoint_id} / ${selected.session.client_wallet}</span>
+                          </div>
+                          <span class="chip ${selected.session.status === "active" ? "good" : selected.session.status === "queued" ? "" : "bad"}">${selected.session.status}</span>
+                        </div>
+                        <div class="list-row">
+                          <div>
+                            <strong>Deposit State</strong>
+                            <span>Locked ${formatQ(selected.deposit.locked_q)} / consumed ${formatQ(selected.deposit.consumed_q)} / refundable ${formatQ(selected.remaining_q)}</span>
+                          </div>
+                          <span class="chip">${selected.deposit.status}</span>
+                        </div>
+                        <div class="list-row">
+                          <div>
+                            <strong>Idle Window</strong>
+                            <span>Last activity ${formatTimestamp(selected.session.last_activity_at)} / deadline ${formatTimestamp(selected.session.idle_deadline_at)}</span>
+                          </div>
+                          <span class="chip">${formatCount(selected.session.request_count || 0)} req</span>
+                        </div>
+                        <div class="list-row">
+                          <div>
+                            <strong>Settlement</strong>
+                            <span>${
+                              selected.settlement
+                                ? `charged ${formatQ(selected.settlement.charged_q)} / refunded ${formatQ(selected.settlement.refunded_q)}`
+                                : "Open session, settlement not finalized yet"
+                            }</span>
+                          </div>
+                          <span class="chip">${selected.settlement?.no_request ? "min fee" : selected.settlement ? "usage settled" : "pending"}</span>
+                        </div>
+                      </div>
+                    `
+                    : `<div class="empty-state">Select a session row to inspect deposit lock, idle deadline, and settlement outcome.</div>`
+                }
+              </section>
+              <section class="subpanel">
+                <div class="panel-heading">Operator Policy</div>
+                <div class="notice">Idle timeout and deposit settlement now live inside the session control plane so paid endpoint behavior stays explicit before wallet-network execution moves on-chain.</div>
+              </section>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     function renderRemoteWorkspace() {
       const payload = remotePayload();
       const summary = payload.summary || {};
@@ -3224,6 +3392,8 @@
       const root = document.getElementById("workspace-root");
       if (state.screen === "requests") {
         root.innerHTML = renderRequestsWorkspace();
+      } else if (state.screen === "sessions") {
+        root.innerHTML = renderSessionsWorkspace();
       } else if (state.screen === "remote") {
         root.innerHTML = renderRemoteWorkspace();
       } else if (state.screen === "endpoints") {
@@ -3493,6 +3663,55 @@
       `;
     }
 
+    function renderSessionsInspector() {
+      const selected = selectedSessionRow();
+      if (!selected) {
+        return `
+          <div class="panel-heading">Selected Session</div>
+          <div class="inspector-title">No Reserved Session</div>
+          <div class="inspector-copy">Open or restore a paid endpoint session to inspect deposit lock, idle deadline, and final settlement here.</div>
+        `;
+      }
+
+      return `
+        <div class="panel-heading">Selected Session</div>
+        <div class="inspector-title">${selected.display_name}</div>
+        <div class="chip-row">
+          <span class="chip ${selected.session.status === "active" ? "good" : selected.session.status === "queued" ? "" : "bad"}">${selected.session.status}</span>
+          <span class="chip">${formatQ(selected.deposit.locked_q)} locked</span>
+        </div>
+        <div class="inspector-copy">${selected.session.session_id}. Use this panel to verify whether the session is still reserving compute, waiting in queue, or already settled and refundable.</div>
+        <div class="inspector-grid">
+          <div class="inspector-card">
+            <strong>Idle Deadline</strong>
+            <div class="inspector-metric">${formatTimestamp(selected.session.idle_deadline_at)}</div>
+          </div>
+          <div class="inspector-card">
+            <strong>Refundable</strong>
+            <div class="inspector-metric">${formatQ(selected.remaining_q)}</div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="inspector-stat">
+            <strong>Request Count</strong>
+            <span>${formatCount(selected.session.request_count || 0)}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Close Reason</strong>
+            <span>${formatMaybe(selected.session.close_reason, "open")}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Settlement</strong>
+            <span>${selected.settlement ? `${formatQ(selected.settlement.charged_q)} charged / ${formatQ(selected.settlement.refunded_q)} refunded` : "still open"}</span>
+          </div>
+        </div>
+        <div class="inspector-actions">
+          <button class="secondary-button" type="button" data-screen-jump="endpoints">Open Endpoint Policy</button>
+          <button class="secondary-button" type="button" data-screen-jump="requests">Inspect Request Flow</button>
+        </div>
+      `;
+    }
+
     function renderMarketInspector() {
       const candidate = selectedMarketCandidate();
       if (!candidate) {
@@ -3722,6 +3941,8 @@
       const root = document.getElementById("inspector-root");
       if (state.screen === "requests") {
         root.innerHTML = renderRequestsInspector();
+      } else if (state.screen === "sessions") {
+        root.innerHTML = renderSessionsInspector();
       } else if (state.screen === "remote") {
         root.innerHTML = renderRemoteInspector();
       } else if (state.screen === "endpoints") {
@@ -4520,6 +4741,15 @@
         row.addEventListener("click", () => {
           state.selectedEndpointDraftId = row.dataset.endpointDraft;
           state.endpointInspectorView = "overview";
+          renderInspector();
+          renderWorkspace();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-session-row]").forEach((row) => {
+        row.addEventListener("click", () => {
+          state.selectedSessionId = row.dataset.sessionRow;
           renderInspector();
           renderWorkspace();
           bindInteractiveElements();
