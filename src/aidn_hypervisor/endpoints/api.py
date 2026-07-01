@@ -11,7 +11,16 @@ class AttachProxyTargetRequest(BaseModel):
     remote_endpoint_id: str
 
 
-def build_endpoint_router(service, remote_endpoint_service=None) -> APIRouter:
+class OpenSessionRequest(BaseModel):
+    client_wallet: str
+    deposit_q: float
+
+
+def build_endpoint_router(
+    service,
+    remote_endpoint_service=None,
+    session_service=None,
+) -> APIRouter:
     router = APIRouter(prefix="/api/v1/endpoints")
 
     def _ok(data: dict, *, status_code: int = 200) -> JSONResponse:
@@ -114,6 +123,40 @@ def build_endpoint_router(service, remote_endpoint_service=None) -> APIRouter:
                     else None
                 ),
             }
+        )
+
+    @router.post("/{endpoint_id}/sessions", status_code=201)
+    async def open_session(
+        endpoint_id: str,
+        request: OpenSessionRequest,
+    ) -> JSONResponse:
+        if session_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            endpoint = service.get_endpoint(endpoint_id).endpoint
+        except KeyError:
+            return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        try:
+            result = session_service.open_session(
+                endpoint_id=endpoint_id,
+                client_wallet=request.client_wallet,
+                provider_wallet=endpoint.owner_wallet,
+                node_id="node-local",
+                deposit_q=request.deposit_q,
+                session_policy=endpoint.session.model_dump(mode="json"),
+            )
+        except ValueError as error:
+            return _error(409, "session_open_rejected", str(error))
+        return _ok(
+            {
+                "session": result.session.model_dump(mode="json"),
+                "deposit": result.deposit.model_dump(mode="json"),
+            },
+            status_code=201,
         )
 
     return router

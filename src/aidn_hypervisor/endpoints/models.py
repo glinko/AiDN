@@ -7,6 +7,7 @@ EndpointVisibility = Literal["public", "private", "shared"]
 EndpointValidationMode = Literal["enabled", "disabled"]
 EndpointVerificationStatus = Literal["unsupported", "pending", "active", "suspended"]
 EndpointExecutionStrategy = Literal["local", "proxy"]
+EndpointSessionQueuePolicy = Literal["busy", "queue"]
 
 
 class EndpointProfile(BaseModel):
@@ -64,6 +65,26 @@ class EndpointPricing(BaseModel):
     fixed_price: float | None = Field(default=None, ge=0.0)
 
 
+class EndpointSessionPolicy(BaseModel):
+    minimum_deposit: float = Field(default=0.0, ge=0.0)
+    recommended_deposit: float | None = Field(default=None, ge=0.0)
+    idle_fee_per_minute: float = Field(default=0.0, ge=0.0)
+    idle_timeout_seconds: int = Field(default=600, ge=1)
+    max_concurrent_sessions: int = Field(default=1, ge=1)
+    maximum_session_duration_seconds: int = Field(default=3600, ge=1)
+    queue_policy: EndpointSessionQueuePolicy = "busy"
+    minimum_session_fee: float = Field(default=0.0, ge=0.0)
+
+    @model_validator(mode="after")
+    def _validate_deposit_policy(self):
+        if (
+            self.recommended_deposit is not None
+            and self.recommended_deposit < self.minimum_deposit
+        ):
+            raise ValueError("recommended deposit cannot be below minimum deposit")
+        return self
+
+
 class EndpointValidationState(BaseModel):
     enabled: bool = False
     model_class_supported: bool = False
@@ -98,6 +119,7 @@ class EndpointManifest(BaseModel):
     runtime: EndpointRuntimeConfig = Field(default_factory=EndpointRuntimeConfig)
     publication: EndpointPublicationPolicy = Field(default_factory=EndpointPublicationPolicy)
     pricing: EndpointPricing = Field(default_factory=EndpointPricing)
+    session: EndpointSessionPolicy = Field(default_factory=EndpointSessionPolicy)
     validation: EndpointValidationState = Field(default_factory=EndpointValidationState)
     execution_strategy: EndpointExecutionStrategy = "local"
     proxy_target: EndpointProxyTarget | None = None
@@ -111,6 +133,7 @@ class EndpointConfigurationSnapshot(BaseModel):
     created_at: str
     runtime: EndpointRuntimeConfig
     publication: EndpointPublicationPolicy
+    session: EndpointSessionPolicy = Field(default_factory=EndpointSessionPolicy)
     proxy_target: EndpointProxyTarget | None = None
     execution_config: dict[str, bool | int | str | None] = Field(default_factory=dict)
 
@@ -126,6 +149,7 @@ class CreateEndpointCommand(BaseModel):
     runtime: EndpointRuntimeConfig = Field(default_factory=EndpointRuntimeConfig)
     publication: EndpointPublicationPolicy = Field(default_factory=EndpointPublicationPolicy)
     pricing: EndpointPricing = Field(default_factory=EndpointPricing)
+    session: EndpointSessionPolicy = Field(default_factory=EndpointSessionPolicy)
     validation: EndpointValidationState = Field(default_factory=EndpointValidationState)
 
 
@@ -136,6 +160,7 @@ class UpdateEndpointCommand(BaseModel):
     runtime: EndpointRuntimeConfig | None = None
     publication: EndpointPublicationPolicy | None = None
     pricing: EndpointPricing | None = None
+    session: EndpointSessionPolicy | None = None
     validation: EndpointValidationState | None = None
     execution_strategy: EndpointExecutionStrategy | None = None
     proxy_target: EndpointProxyTarget | None = None

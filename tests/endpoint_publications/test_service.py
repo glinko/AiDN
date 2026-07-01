@@ -53,6 +53,7 @@ def _published_record_for_endpoint(
             runtime=endpoint.runtime.model_dump(mode="json"),
             publication=endpoint.publication.model_dump(mode="json"),
             pricing=endpoint.pricing.model_dump(mode="json"),
+            session=endpoint.session.model_dump(mode="json"),
             execution={"strategy": endpoint.execution_strategy},
         )
     )
@@ -71,6 +72,7 @@ def _published_record_for_endpoint(
         runtime=endpoint.runtime.model_dump(mode="json"),
         publication=endpoint.publication.model_dump(mode="json"),
         pricing=endpoint.pricing.model_dump(mode="json"),
+        session=endpoint.session.model_dump(mode="json"),
         execution={"strategy": endpoint.execution_strategy},
         validation_requirement=endpoint.validation.model_dump(mode="json"),
         published_at="2026-06-30T00:00:00+00:00",
@@ -102,6 +104,7 @@ def test_publish_configuration_creates_signed_current_record() -> None:
             runtime=created.endpoint.runtime.model_dump(mode="json"),
             publication=created.endpoint.publication.model_dump(mode="json"),
             pricing=created.endpoint.pricing.model_dump(mode="json"),
+            session=created.endpoint.session.model_dump(mode="json"),
             execution={"strategy": created.endpoint.execution_strategy},
         )
     )
@@ -112,6 +115,7 @@ def test_publish_configuration_creates_signed_current_record() -> None:
     assert record.sequence == 1
     assert record.previous_configuration_hash is None
     assert record.configuration_hash == expected_hash
+    assert record.session == created.endpoint.session.model_dump(mode="json")
     assert record.status == "published"
     assert record.wallet_signature
 

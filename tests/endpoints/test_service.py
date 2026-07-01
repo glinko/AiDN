@@ -127,3 +127,32 @@ def test_create_endpoint_preserves_shared_wallet_allowlist() -> None:
         created.snapshot.publication.shared_with_wallet_ids
         == ["wallet-a", "wallet-b"]
     )
+
+
+def test_create_endpoint_persists_session_policy() -> None:
+    service = EndpointService(EndpointStore())
+
+    created = service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 2,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+
+    assert created.endpoint.session.minimum_deposit == 10.0
+    assert created.endpoint.session.max_concurrent_sessions == 2
+    assert created.snapshot.session.queue_policy == "busy"

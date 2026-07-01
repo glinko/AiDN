@@ -8,6 +8,7 @@ from aidn_hypervisor.endpoints.models import (
     EndpointPricing,
     EndpointPublicationPolicy,
     EndpointRuntimeConfig,
+    EndpointSessionPolicy,
 )
 
 
@@ -68,3 +69,11 @@ def test_non_shared_publication_discards_allowlist() -> None:
     )
 
     assert policy.shared_with_wallet_ids == []
+
+
+def test_endpoint_session_policy_rejects_recommended_deposit_below_minimum() -> None:
+    with pytest.raises(ValidationError):
+        EndpointSessionPolicy(
+            minimum_deposit=10.0,
+            recommended_deposit=9.0,
+        )

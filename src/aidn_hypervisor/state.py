@@ -8,6 +8,7 @@ from aidn_hypervisor.endpoints.state import (
     EndpointManifestSnapshot,
 )
 from aidn_hypervisor.remote_endpoints.models import RemoteEndpointReference
+from aidn_hypervisor.sessions.models import EndpointSession, LockedDeposit
 from aidn_hypervisor.wallet_models import WalletQuote
 
 
@@ -167,6 +168,14 @@ class OwnerWalletSnapshot(BaseModel):
     imported: bool = False
 
 
+class EndpointSessionSnapshot(EndpointSession):
+    pass
+
+
+class LockedDepositSnapshot(LockedDeposit):
+    pass
+
+
 class HypervisorStateSnapshot(BaseModel):
     tasks: list[TaskSnapshot] = Field(default_factory=list)
     runtimes: list[RuntimeSnapshot] = Field(default_factory=list)
@@ -197,4 +206,6 @@ class HypervisorStateSnapshot(BaseModel):
         default_factory=list
     )
     remote_endpoints: list[RemoteEndpointReference] = Field(default_factory=list)
+    endpoint_sessions: list[EndpointSessionSnapshot] = Field(default_factory=list)
+    locked_deposits: list[LockedDepositSnapshot] = Field(default_factory=list)
     events: list[JournalEvent] = Field(default_factory=list)

@@ -1693,6 +1693,39 @@ def test_operator_dashboard_endpoints_endpoint_returns_endpoint_control_payload(
     assert response.json()["policy"]["publish_requires_validation"] is False
 
 
+def test_operator_dashboard_endpoints_payload_exposes_session_policy() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Paid STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 2,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    client = TestClient(build_app(service=service, endpoint_service=endpoint_service))
+
+    response = client.get("/operators/dashboard/endpoints")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["session"]["minimum_deposit"] == 10.0
+    assert response.json()["items"][0]["session"]["max_concurrent_sessions"] == 2
+
+
 def test_operator_dashboard_endpoints_endpoint_prefers_endpoint_service_payload_for_configured_endpoint() -> None:
     service = _service(whisper_endpoint="http://127.0.0.1:9000")
     service.configure_owner_wallet(mode="create", label="Primary Wallet")

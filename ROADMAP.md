@@ -171,12 +171,12 @@ Exit criteria:
 
 Goal: make endpoint consumption explicit, reserved, and economically safe through session-based execution.
 
-Status: `Planned`
+Status: `In Progress`
 
 Checkpoints:
-- [ ] Session create/close contract
-- [ ] Deposit lock and refund lifecycle
-- [ ] Endpoint-declared session policy:
+- [x] Session create/close contract
+- [x] Deposit lock and refund lifecycle
+- [x] Endpoint-declared session policy:
   - `minimum_deposit`
   - `recommended_deposit`
   - `idle_fee_per_minute`
@@ -184,7 +184,7 @@ Checkpoints:
   - `max_concurrent_sessions`
   - `maximum_session_duration`
 - [ ] Session-scoped request execution
-- [ ] Busy vs queue policy for saturated endpoints
+- [x] Busy vs queue policy for saturated endpoints
 - [ ] No-request minimum fee rule
 - [ ] Operator and client-facing confirmation UX for opening paid Sessions
 

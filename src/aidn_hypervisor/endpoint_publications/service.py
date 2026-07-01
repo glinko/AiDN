@@ -32,6 +32,7 @@ class EndpointPublicationService:
             runtime=manifest.runtime.model_dump(mode="json"),
             publication=manifest.publication.model_dump(mode="json"),
             pricing=manifest.pricing.model_dump(mode="json"),
+            session=manifest.session.model_dump(mode="json"),
             execution=execution_payload,
         )
         configuration_hash = configuration_hash_for_publication(payload)
@@ -55,6 +56,7 @@ class EndpointPublicationService:
             runtime=manifest.runtime.model_dump(mode="json"),
             publication=manifest.publication.model_dump(mode="json"),
             pricing=manifest.pricing.model_dump(mode="json"),
+            session=manifest.session.model_dump(mode="json"),
             execution=execution_payload,
             validation_requirement=manifest.validation.model_dump(mode="json"),
             published_at=datetime.now(timezone.utc).isoformat(),

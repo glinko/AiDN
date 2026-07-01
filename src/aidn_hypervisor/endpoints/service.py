@@ -36,6 +36,7 @@ class EndpointService:
         execution_config = self._execution_config(
             cmd.runtime,
             cmd.publication,
+            cmd.session,
             execution_strategy="local",
             proxy_target=None,
         )
@@ -43,6 +44,7 @@ class EndpointService:
             bundle_hash=cmd.bundle_hash,
             runtime=cmd.runtime,
             publication=cmd.publication,
+            session=cmd.session,
             proxy_target=None,
             execution_config=execution_config,
         )
@@ -60,6 +62,7 @@ class EndpointService:
             runtime=cmd.runtime,
             publication=cmd.publication,
             pricing=cmd.pricing,
+            session=cmd.session,
             validation=cmd.validation,
             execution_strategy="local",
             proxy_target=None,
@@ -72,6 +75,7 @@ class EndpointService:
             created_at=created_at,
             runtime=cmd.runtime,
             publication=cmd.publication,
+            session=cmd.session,
             proxy_target=None,
             execution_config=execution_config,
         )
@@ -83,12 +87,14 @@ class EndpointService:
         current = self.store.get_manifest(cmd.endpoint_id)
         next_runtime = cmd.runtime or current.runtime
         next_publication = cmd.publication or current.publication
+        next_session = cmd.session or current.session
         next_validation = cmd.validation or current.validation
         next_execution_strategy = cmd.execution_strategy or current.execution_strategy
         next_proxy_target = cmd.proxy_target if cmd.proxy_target is not None else current.proxy_target
         should_rotate_config = (
             cmd.runtime is not None
             or cmd.publication is not None
+            or cmd.session is not None
             or cmd.execution_strategy is not None
             or cmd.proxy_target is not None
         )
@@ -98,6 +104,7 @@ class EndpointService:
             execution_config = self._execution_config(
                 next_runtime,
                 next_publication,
+                next_session,
                 execution_strategy=next_execution_strategy,
                 proxy_target=next_proxy_target,
             )
@@ -105,6 +112,7 @@ class EndpointService:
                 bundle_hash=current.bundle_hash,
                 runtime=next_runtime,
                 publication=next_publication,
+                session=next_session,
                 proxy_target=next_proxy_target,
                 execution_config=execution_config,
             )
@@ -115,6 +123,7 @@ class EndpointService:
                 created_at=datetime.now(timezone.utc).isoformat(),
                 runtime=next_runtime,
                 publication=next_publication,
+                session=next_session,
                 proxy_target=next_proxy_target,
                 execution_config=execution_config,
             )
@@ -126,6 +135,7 @@ class EndpointService:
                 "runtime": next_runtime,
                 "publication": next_publication,
                 "pricing": cmd.pricing or current.pricing,
+                "session": next_session,
                 "validation": next_validation,
                 "execution_strategy": next_execution_strategy,
                 "proxy_target": next_proxy_target,
@@ -153,6 +163,7 @@ class EndpointService:
         execution_config = self._execution_config(
             current.runtime,
             current.publication,
+            current.session,
             execution_strategy="proxy",
             proxy_target=proxy_target,
         )
@@ -160,6 +171,7 @@ class EndpointService:
             bundle_hash=current.bundle_hash,
             runtime=current.runtime,
             publication=current.publication,
+            session=current.session,
             proxy_target=proxy_target,
             execution_config=execution_config,
         )
@@ -170,6 +182,7 @@ class EndpointService:
             created_at=attached_at,
             runtime=current.runtime,
             publication=current.publication,
+            session=current.session,
             proxy_target=proxy_target,
             execution_config=execution_config,
         )
@@ -238,6 +251,7 @@ class EndpointService:
         bundle_hash: str,
         runtime,
         publication,
+        session,
         proxy_target,
         execution_config,
     ) -> str:
@@ -245,6 +259,7 @@ class EndpointService:
             "bundle_hash": bundle_hash,
             "runtime": runtime.model_dump(mode="json"),
             "publication": publication.model_dump(mode="json"),
+            "session": session.model_dump(mode="json"),
             "proxy_target": (
                 proxy_target.model_dump(mode="json")
                 if proxy_target is not None
@@ -259,6 +274,7 @@ class EndpointService:
         self,
         runtime: EndpointRuntimeConfig,
         publication,
+        session,
         *,
         execution_strategy: str,
         proxy_target,
@@ -272,6 +288,8 @@ class EndpointService:
             "proxy_target_id": (
                 proxy_target.remote_endpoint_id if proxy_target is not None else None
             ),
+            "session_queue_policy": session.queue_policy,
+            "session_max_concurrency": session.max_concurrent_sessions,
             "proxy_source_hash": (
                 proxy_target.source_configuration_hash
                 if proxy_target is not None

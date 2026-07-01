@@ -119,6 +119,7 @@ def _operator_dashboard_endpoints_payload(
             runtime=manifest.runtime.model_dump(mode="json"),
             publication=manifest.publication.model_dump(mode="json"),
             pricing=manifest.pricing.model_dump(mode="json"),
+            session=manifest.session.model_dump(mode="json"),
             execution=execution_payload_for_manifest(manifest),
         )
         local_configuration_hash = configuration_hash_for_publication(
@@ -170,6 +171,7 @@ def _operator_dashboard_endpoints_payload(
                 "capabilities": list(manifest.capabilities),
                 "profile": manifest.profile.model_dump(mode="json"),
                 "runtime": manifest.runtime.model_dump(mode="json"),
+                "session": manifest.session.model_dump(mode="json"),
                 "execution_strategy": manifest.execution_strategy,
                 "proxy_target": (
                     manifest.proxy_target.model_dump(mode="json")
@@ -331,6 +333,7 @@ def build_api_router(
     endpoint_service=None,
     endpoint_publication_service=None,
     remote_endpoint_service=None,
+    session_service=None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -645,6 +648,69 @@ def build_api_router(
                 endpoint_publication_service=endpoint_publication_service,
             )
         return service.operator_dashboard_endpoints()
+
+    @router.get("/api/v1/sessions")
+    async def list_sessions() -> JSONResponse:
+        if session_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        return _ok(
+            {
+                "items": [
+                    session.model_dump(mode="json")
+                    for session in session_service.list_sessions()
+                ]
+            }
+        )
+
+    @router.get("/api/v1/sessions/{session_id}")
+    async def get_session(session_id: str) -> JSONResponse:
+        if session_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            result = session_service.get_session(session_id)
+        except KeyError:
+            return _error(
+                404,
+                "session_not_found",
+                f"Unknown session: {session_id}",
+            )
+        return _ok(
+            {
+                "session": result.session.model_dump(mode="json"),
+                "deposit": result.deposit.model_dump(mode="json"),
+            }
+        )
+
+    @router.post("/api/v1/sessions/{session_id}/close")
+    async def close_session(session_id: str) -> JSONResponse:
+        if session_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            result = session_service.close_session(session_id)
+        except KeyError:
+            return _error(
+                404,
+                "session_not_found",
+                f"Unknown session: {session_id}",
+            )
+        return _ok(
+            {
+                "session": result.session.model_dump(mode="json"),
+                "deposit": result.deposit.model_dump(mode="json"),
+            }
+        )
 
     @router.post("/api/v1/endpoints/{endpoint_id}/publish-configuration")
     async def publish_endpoint_configuration(endpoint_id: str) -> JSONResponse:

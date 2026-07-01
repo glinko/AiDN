@@ -15,6 +15,7 @@ def canonical_configuration_payload(
     runtime: dict,
     publication: dict,
     pricing: dict,
+    session: dict | None = None,
     execution: dict | None = None,
 ) -> dict:
     return {
@@ -24,6 +25,7 @@ def canonical_configuration_payload(
         "runtime": runtime,
         "publication": publication,
         "pricing": pricing,
+        "session": session or {},
         "execution": execution or {},
     }
 
@@ -49,6 +51,7 @@ class PublishedEndpointConfiguration(BaseModel):
     runtime: dict = Field(default_factory=dict)
     publication: dict = Field(default_factory=dict)
     pricing: dict = Field(default_factory=dict)
+    session: dict = Field(default_factory=dict)
     execution: dict = Field(default_factory=dict)
     validation_requirement: dict = Field(default_factory=dict)
     published_at: str
@@ -66,6 +69,7 @@ class PublishedEndpointConfiguration(BaseModel):
                 runtime=self.runtime,
                 publication=self.publication,
                 pricing=self.pricing,
+                session=self.session,
                 execution=self.execution,
             )
         )

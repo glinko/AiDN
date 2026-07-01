@@ -24,6 +24,8 @@ from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.sessions.service import SessionService
+from aidn_hypervisor.sessions.store import SessionStore
 
 
 def build_app(
@@ -32,6 +34,7 @@ def build_app(
     endpoint_service: EndpointService | None = None,
     endpoint_publication_service: EndpointPublicationService | None = None,
     remote_endpoint_service: RemoteEndpointService | None = None,
+    session_service: SessionService | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="AiDN Hypervisor",
@@ -60,11 +63,15 @@ def build_app(
         remote_endpoint_service
         or _build_default_remote_endpoint_service(state_store=state_store)
     )
+    resolved_session_service = (
+        session_service or _build_default_session_service(state_store=state_store)
+    )
     resolved_service.endpoint_publication_service = (
         resolved_endpoint_publication_service
     )
     resolved_service.endpoint_service = resolved_endpoint_service
     resolved_service.remote_endpoint_service = resolved_remote_endpoint_service
+    resolved_service.session_service = resolved_session_service
 
     app.include_router(
         build_api_router(
@@ -73,12 +80,14 @@ def build_app(
             endpoint_service=resolved_endpoint_service,
             endpoint_publication_service=resolved_endpoint_publication_service,
             remote_endpoint_service=resolved_remote_endpoint_service,
+            session_service=resolved_session_service,
         )
     )
     app.include_router(
         build_endpoint_router(
             resolved_endpoint_service,
             remote_endpoint_service=resolved_remote_endpoint_service,
+            session_service=resolved_session_service,
         )
     )
 
@@ -155,6 +164,15 @@ def _build_default_remote_endpoint_service(
     if state_store is None:
         state_store = _default_state_store()
     return RemoteEndpointService(RemoteEndpointStore(state_store))
+
+
+def _build_default_session_service(
+    *,
+    state_store: FileStateStore | None = None,
+) -> SessionService:
+    if state_store is None:
+        state_store = _default_state_store()
+    return SessionService(SessionStore(state_store))
 
 
 def _default_state_store() -> FileStateStore | None:
