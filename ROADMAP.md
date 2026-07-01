@@ -183,9 +183,10 @@ Checkpoints:
   - `idle_timeout`
   - `max_concurrent_sessions`
   - `maximum_session_duration`
-- [ ] Session-scoped request execution
+- [x] Session-scoped request execution
 - [x] Busy vs queue policy for saturated endpoints
 - [x] No-request minimum fee rule
+- [x] Idle timeout auto-close and idle-fee settlement
 - [ ] Operator and client-facing confirmation UX for opening paid Sessions
 
 Exit criteria:

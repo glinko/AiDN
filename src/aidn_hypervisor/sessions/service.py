@@ -136,52 +136,14 @@ class SessionService:
         deposit = self.store.get_deposit_for_session(session_id)
         if current.status == "closed":
             return SessionResult(session=current, deposit=deposit)
-        minimum_session_fee = float(
-            current.session_policy_snapshot.get("minimum_session_fee", 0.0) or 0.0
-        )
-        no_request = deposit.consumed_q == 0.0
-        charged_q = deposit.consumed_q
-        if no_request and minimum_session_fee > 0.0:
-            charged_q = min(deposit.locked_q, minimum_session_fee)
-        refunded_q = max(0.0, deposit.locked_q - charged_q)
-        settlement = SessionSettlementSummary(
-            usage_charged_q=deposit.consumed_q,
-            minimum_session_fee_q=(minimum_session_fee if no_request else 0.0),
-            charged_q=charged_q,
-            refunded_q=refunded_q,
-            payout_q=charged_q,
-            no_request=no_request,
-        )
-        closed = current.model_copy(
-            update={
-                "status": "closed",
-                "reserved_slot_index": None,
-                "close_reason": current.close_reason or "closed_by_client",
-            }
-        )
-        released = deposit.model_copy(
-            update={
-                "status": "released",
-                "consumed_q": charged_q,
-                "refunded_q": refunded_q,
-            }
-        )
-        self.store.save_session(closed)
-        self.store.save_deposit(released)
-        self._emit(
-            event_type="session.settled",
-            message="session settled and released",
-            details={
-                "session_id": session_id,
-                "endpoint_id": current.endpoint_id,
-                "charged_q": settlement.charged_q,
-                "refunded_q": settlement.refunded_q,
-                "payout_q": settlement.payout_q,
-                "no_request": settlement.no_request,
-            },
+        result = self._settle_and_close_session(
+            current,
+            deposit,
+            closed_at=datetime.now(timezone.utc),
+            close_reason=current.close_reason or "closed_by_client",
         )
         self._promote_next_waiting_session(endpoint_id=current.endpoint_id)
-        return SessionResult(session=closed, deposit=released, settlement=settlement)
+        return result
 
     def touch_session(self, session_id: str) -> EndpointSession:
         current = self.store.get_session(session_id)
@@ -207,9 +169,12 @@ class SessionService:
         session_id: str,
         *,
         amount_q: float,
+        request_count: int = 1,
     ) -> SessionResult:
         if amount_q < 0.0:
             raise ValueError("usage charge cannot be negative")
+        if request_count < 0:
+            raise ValueError("request_count cannot be negative")
         current = self.store.get_session(session_id)
         if current.status != "active":
             raise ValueError(f"Session is not active: {session_id}")
@@ -222,6 +187,12 @@ class SessionService:
                 "consumed_q": next_consumed_q,
             }
         )
+        updated_session = current.model_copy(
+            update={
+                "request_count": current.request_count + request_count,
+            }
+        )
+        self.store.save_session(updated_session)
         self.store.save_deposit(updated_deposit)
         self._emit(
             event_type="session.usage_charged",
@@ -234,7 +205,121 @@ class SessionService:
                 "remaining_q": max(0.0, deposit.locked_q - next_consumed_q),
             },
         )
-        return SessionResult(session=current, deposit=updated_deposit)
+        return SessionResult(session=updated_session, deposit=updated_deposit)
+
+    def sweep_idle_sessions(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> list[SessionResult]:
+        current_time = now or datetime.now(timezone.utc)
+        closed: list[SessionResult] = []
+        for session in self.store.list_sessions():
+            if session.status != "active":
+                continue
+            try:
+                idle_deadline = datetime.fromisoformat(session.idle_deadline_at)
+            except ValueError:
+                idle_deadline = current_time
+            if idle_deadline > current_time:
+                continue
+            deposit = self.store.get_deposit_for_session(session.session_id)
+            self._emit(
+                event_type="session.idle_timeout",
+                message="session closed after idle timeout",
+                details={
+                    "session_id": session.session_id,
+                    "endpoint_id": session.endpoint_id,
+                    "idle_deadline_at": session.idle_deadline_at,
+                },
+            )
+            result = self._settle_and_close_session(
+                session,
+                deposit,
+                closed_at=current_time,
+                close_reason="idle_timeout",
+            )
+            self._promote_next_waiting_session(endpoint_id=session.endpoint_id)
+            closed.append(result)
+        return closed
+
+    def _settle_and_close_session(
+        self,
+        session: EndpointSession,
+        deposit: LockedDeposit,
+        *,
+        closed_at: datetime,
+        close_reason: str,
+    ) -> SessionResult:
+        minimum_session_fee = float(
+            session.session_policy_snapshot.get("minimum_session_fee", 0.0) or 0.0
+        )
+        idle_fee_per_minute = float(
+            session.session_policy_snapshot.get("idle_fee_per_minute", 0.0) or 0.0
+        )
+        no_request = session.request_count == 0
+        idle_fee_charged_q = 0.0
+        if not no_request and close_reason == "idle_timeout" and idle_fee_per_minute > 0.0:
+            try:
+                last_activity_at = datetime.fromisoformat(
+                    session.last_activity_at or session.created_at
+                )
+            except ValueError:
+                last_activity_at = closed_at
+            idle_minutes = max(
+                0.0,
+                (closed_at - last_activity_at).total_seconds() / 60.0,
+            )
+            idle_fee_charged_q = idle_minutes * idle_fee_per_minute
+        charged_q = min(
+            deposit.locked_q,
+            deposit.consumed_q + idle_fee_charged_q,
+        )
+        minimum_session_fee_q = 0.0
+        if no_request and minimum_session_fee > 0.0:
+            minimum_session_fee_q = min(deposit.locked_q, minimum_session_fee)
+            charged_q = minimum_session_fee_q
+            idle_fee_charged_q = 0.0
+        refunded_q = max(0.0, deposit.locked_q - charged_q)
+        settlement = SessionSettlementSummary(
+            usage_charged_q=deposit.consumed_q,
+            idle_fee_charged_q=idle_fee_charged_q,
+            minimum_session_fee_q=minimum_session_fee_q,
+            charged_q=charged_q,
+            refunded_q=refunded_q,
+            payout_q=charged_q,
+            no_request=no_request,
+        )
+        closed = session.model_copy(
+            update={
+                "status": "closed",
+                "reserved_slot_index": None,
+                "close_reason": close_reason,
+            }
+        )
+        released = deposit.model_copy(
+            update={
+                "status": "released",
+                "consumed_q": charged_q,
+                "refunded_q": refunded_q,
+            }
+        )
+        self.store.save_session(closed)
+        self.store.save_deposit(released)
+        self._emit(
+            event_type="session.settled",
+            message="session settled and released",
+            details={
+                "session_id": session.session_id,
+                "endpoint_id": session.endpoint_id,
+                "charged_q": settlement.charged_q,
+                "refunded_q": settlement.refunded_q,
+                "payout_q": settlement.payout_q,
+                "no_request": settlement.no_request,
+                "close_reason": close_reason,
+            },
+        )
+        return SessionResult(session=closed, deposit=released, settlement=settlement)
 
     def _promote_next_waiting_session(self, *, endpoint_id: str) -> None:
         active_sessions = [

@@ -233,6 +233,57 @@ def _operator_dashboard_endpoints_payload(
     }
 
 
+def _operator_dashboard_sessions_payload(
+    *,
+    service: HypervisorService,
+    endpoint_service=None,
+    session_service=None,
+) -> dict:
+    if session_service is None:
+        return {
+            "owner_wallet": service.owner_wallet_state(),
+            "node_identity": service.node_identity(),
+            "summary": {"total": 0, "active": 0, "queued": 0, "closed": 0},
+            "items": [],
+        }
+    endpoint_names: dict[str, str] = {}
+    if endpoint_service is not None:
+        for manifest in endpoint_service.list_endpoints():
+            endpoint_names[manifest.endpoint_id] = manifest.display_name
+    items = []
+    for session in sorted(
+        session_service.list_sessions(),
+        key=lambda item: (item.status != "active", item.status != "queued", item.created_at),
+    ):
+        result = session_service.get_session(session.session_id)
+        items.append(
+            {
+                "session": result.session.model_dump(mode="json"),
+                "deposit": result.deposit.model_dump(mode="json"),
+                "settlement": (
+                    result.settlement.model_dump(mode="json")
+                    if result.settlement is not None
+                    else None
+                ),
+                "display_name": endpoint_names.get(session.endpoint_id, session.endpoint_id),
+                "remaining_q": max(
+                    0.0, result.deposit.locked_q - result.deposit.consumed_q
+                ),
+            }
+        )
+    return {
+        "owner_wallet": service.owner_wallet_state(),
+        "node_identity": service.node_identity(),
+        "summary": {
+            "total": len(items),
+            "active": sum(1 for item in items if item["session"]["status"] == "active"),
+            "queued": sum(1 for item in items if item["session"]["status"] == "queued"),
+            "closed": sum(1 for item in items if item["session"]["status"] == "closed"),
+        },
+        "items": items,
+    }
+
+
 class OperatorRequestsPolicyRequest(BaseModel):
     allow_spillover: bool
     dispatch_strategy: str
@@ -648,6 +699,14 @@ def build_api_router(
                 endpoint_publication_service=endpoint_publication_service,
             )
         return service.operator_dashboard_endpoints()
+
+    @router.get("/operators/dashboard/sessions")
+    async def operator_dashboard_sessions() -> dict:
+        return _operator_dashboard_sessions_payload(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
 
     @router.get("/api/v1/sessions")
     async def list_sessions() -> JSONResponse:

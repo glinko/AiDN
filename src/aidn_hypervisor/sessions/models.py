@@ -20,6 +20,7 @@ class EndpointSession(BaseModel):
     expires_at: str
     idle_deadline_at: str
     deposit_locked_q: float = Field(gt=0.0)
+    request_count: int = Field(default=0, ge=0)
     reserved_slot_index: int | None = Field(default=None, ge=0)
     queue_policy_snapshot: str
     session_policy_snapshot: dict = Field(default_factory=dict)
@@ -48,6 +49,7 @@ class LockedDeposit(BaseModel):
 
 class SessionSettlementSummary(BaseModel):
     usage_charged_q: float = Field(default=0.0, ge=0.0)
+    idle_fee_charged_q: float = Field(default=0.0, ge=0.0)
     minimum_session_fee_q: float = Field(default=0.0, ge=0.0)
     charged_q: float = Field(default=0.0, ge=0.0)
     refunded_q: float = Field(default=0.0, ge=0.0)

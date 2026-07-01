@@ -1842,6 +1842,76 @@ def test_operator_dashboard_endpoints_payload_exposes_session_policy() -> None:
     assert response.json()["items"][0]["session"]["max_concurrent_sessions"] == 2
 
 
+def test_operator_dashboard_sessions_endpoint_returns_operator_session_summary() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Paid STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "queue",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    first = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-a",
+        provider_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    second = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-b",
+        provider_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    session_service.close_session(first.session.session_id)
+    third = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-c",
+        provider_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.get("/operators/dashboard/sessions")
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["total"] == 3
+    assert response.json()["summary"]["active"] == 1
+    assert response.json()["summary"]["queued"] == 1
+    assert response.json()["summary"]["closed"] == 1
+    assert response.json()["items"][0]["display_name"] == "Paid STT"
+    assert response.json()["items"][0]["deposit"]["locked_q"] == 10.0
+    assert response.json()["items"][0]["session"]["endpoint_id"] == created.endpoint.endpoint_id
+
+
 def test_operator_dashboard_endpoints_endpoint_prefers_endpoint_service_payload_for_configured_endpoint() -> None:
     service = _service(whisper_endpoint="http://127.0.0.1:9000")
     service.configure_owner_wallet(mode="create", label="Primary Wallet")

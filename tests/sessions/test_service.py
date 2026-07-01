@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from aidn_hypervisor.sessions.service import SessionService
@@ -154,3 +156,72 @@ def test_record_usage_charge_rejects_charge_above_locked_deposit() -> None:
 
     with pytest.raises(ValueError, match="deposit"):
         service.record_usage_charge(opened.session.session_id, amount_q=11.0)
+
+
+def test_sweep_idle_sessions_auto_closes_timed_out_session_with_idle_fee() -> None:
+    service = _session_service()
+
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=30.0,
+        session_policy=_session_policy(idle_fee_per_minute=1.0, idle_timeout_seconds=600),
+    )
+    service.record_usage_charge(opened.session.session_id, amount_q=6.0)
+    service.store.save_session(
+        service.get_session(opened.session.session_id).session.model_copy(
+            update={
+                "last_activity_at": "2026-07-01T00:00:00+00:00",
+                "idle_deadline_at": "2026-07-01T00:10:00+00:00",
+            }
+        )
+    )
+
+    swept = service.sweep_idle_sessions(
+        now=datetime(2026, 7, 1, 0, 10, 0, tzinfo=timezone.utc)
+    )
+
+    assert len(swept) == 1
+    assert swept[0].session.close_reason == "idle_timeout"
+    assert swept[0].settlement is not None
+    assert swept[0].settlement.idle_fee_charged_q == 10.0
+    assert swept[0].settlement.charged_q == 16.0
+    assert swept[0].deposit.refunded_q == 14.0
+
+
+def test_sweep_idle_sessions_keeps_no_request_minimum_fee_rule() -> None:
+    service = _session_service()
+
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(
+            minimum_session_fee=2.0,
+            idle_fee_per_minute=1.0,
+            idle_timeout_seconds=600,
+        ),
+    )
+    service.store.save_session(
+        opened.session.model_copy(
+            update={
+                "last_activity_at": "2026-07-01T00:00:00+00:00",
+                "idle_deadline_at": "2026-07-01T00:10:00+00:00",
+            }
+        )
+    )
+
+    swept = service.sweep_idle_sessions(
+        now=datetime(2026, 7, 1, 0, 10, 0, tzinfo=timezone.utc)
+    )
+
+    assert len(swept) == 1
+    assert swept[0].settlement is not None
+    assert swept[0].settlement.no_request is True
+    assert swept[0].settlement.minimum_session_fee_q == 2.0
+    assert swept[0].settlement.idle_fee_charged_q == 0.0
+    assert swept[0].deposit.consumed_q == 2.0
