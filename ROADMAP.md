@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-06-30`
+Last updated: `2026-07-01`
 
 This is the main public roadmap for the repository.
 
@@ -12,6 +12,8 @@ It should stay current and answer four questions:
 4. What has to be true before we move to the next stage?
 
 The roadmap must also stay aligned with the product-level operator journey defined in [docs/product/UX-0001-hypervisor-operator-journey.md](./docs/product/UX-0001-hypervisor-operator-journey.md).
+
+Paid endpoint consumption and client-facing execution economics must also stay aligned with [docs/product/UX-0002-endpoint-session-and-payment-flow.md](./docs/product/UX-0002-endpoint-session-and-payment-flow.md).
 
 Milestones still describe technical delivery order, but feature sequencing and UI priorities should preserve that operator journey whenever reasonably possible.
 
@@ -36,7 +38,8 @@ Status: `M2 complete, M3 started`
 Product alignment summary:
 - the repo now has a strong local hypervisor and operator-dashboard foundation;
 - the next product-critical gap is the operator bootstrap loop from install -> wallet -> provider -> model -> first endpoint;
-- validation, marketplace, and remote execution should stay explicit operator actions layered on top of that core flow, not replace it.
+- endpoint publication is now a first trust layer, but paid consumption still lacks a first-class Session contract;
+- validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
 
 We already have a working local hypervisor foundation:
 - local task queue and admission control;
@@ -85,6 +88,8 @@ What is still missing in the current stage:
 - full endpoint-first persistence and API beyond the current bootstrap/dashboard slice, so privacy, sharing, publication, and validation remain distinct all the way through the service contract;
 - complete dashboard migration of `Home` bootstrap and remaining bundle-centric endpoint affordances onto the new endpoint service and `/api/v1/endpoints` contract;
 - remote endpoint and proxy endpoint workflows framed as operator routing tools, not only discovery data.
+- a first-class `Endpoint Session` primitive with deposit lock, queue/busy policy, idle timeout, and refund semantics.
+- client-facing payment confirmation UX for paid endpoint reservation.
 
 ## Milestones
 
@@ -162,7 +167,34 @@ Exit criteria:
 - a wallet layer can consume usage events and calculate spend;
 - pricing is part of discovery, not hidden in node-local config only.
 
-### M4: Rating And Reputation
+### M4: Endpoint Sessions And Paid Execution
+
+Goal: make endpoint consumption explicit, reserved, and economically safe through session-based execution.
+
+Status: `Planned`
+
+Checkpoints:
+- [ ] Session create/close contract
+- [ ] Deposit lock and refund lifecycle
+- [ ] Endpoint-declared session policy:
+  - `minimum_deposit`
+  - `recommended_deposit`
+  - `idle_fee_per_minute`
+  - `idle_timeout`
+  - `max_concurrent_sessions`
+  - `maximum_session_duration`
+- [ ] Session-scoped request execution
+- [ ] Busy vs queue policy for saturated endpoints
+- [ ] No-request minimum fee rule
+- [ ] Operator and client-facing confirmation UX for opening paid Sessions
+
+Exit criteria:
+- clients must create a Session before using a paid Endpoint;
+- the system can reserve endpoint capacity through explicit concurrent-session slots;
+- locked funds are settled against actual usage and refunded automatically when unused;
+- idle reservation behavior is operator-controlled and visible before the client commits funds.
+
+### M5: Rating And Reputation
 
 Goal: publish trust and quality signals for node selection.
 
@@ -183,7 +215,7 @@ Exit criteria:
 - nodes are ranked by structured signals instead of static preference only;
 - discovery clients can filter or sort by trust and price together.
 
-### M5: Custom Model Onboarding
+### M6: Custom Model Onboarding
 
 Goal: let nodes advertise and execute whether they can download and host custom models.
 
@@ -200,7 +232,7 @@ Exit criteria:
 - a node can explicitly declare whether it accepts custom model onboarding;
 - the registry can expose that capability to agents or operators.
 
-### M6: Federated Or Distributed Registry
+### M7: Federated Or Distributed Registry
 
 Goal: move from a single registry service to a federated or distributed discovery layer.
 
@@ -224,15 +256,17 @@ Order of work right now:
 1. Close the operator bootstrap loop from `install -> wallet ownership -> provider attach -> model/bundle setup -> first endpoint publish`
 2. Make endpoint management the primary operator object, including privacy mode, publication mode, and validation as separate actions
 3. Finish migrating the operator shell onto the endpoint-first trust layer, so publish/proof/sync state are first-class controls across `Home`, `Endpoints`, and later marketplace flows
-4. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
-5. Finish `M3` accounting decisions in a way that supports the operator journey instead of leaking settlement complexity into first-run UX
-6. Define `M4` rating and `M5` custom model onboarding contracts around the endpoint-centric operator experience
+4. Define the `M4` Session contract for paid Endpoints, so reservation, deposit lock, idle billing, and refunds are explicit before rating or broader market automation
+5. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
+6. Finish `M3` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
+7. Define `M5` rating and `M6` custom model onboarding contracts around the endpoint-centric operator experience
 
 ## Source Documents
 
 - Vision: [00_VISION.md](./00_VISION.md)
 - Terms: [01_TERMS.md](./01_TERMS.md)
 - Operator journey: [docs/product/UX-0001-hypervisor-operator-journey.md](./docs/product/UX-0001-hypervisor-operator-journey.md)
+- Session and payment journey: [docs/product/UX-0002-endpoint-session-and-payment-flow.md](./docs/product/UX-0002-endpoint-session-and-payment-flow.md)
 - Current hypervisor execution plan: [docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md](./docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md)
 - Network architecture spec: [docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md](./docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md)
 - M2 registry contract: [docs/superpowers/specs/2026-06-19-m2-centralized-registry-and-discovery-design.md](./docs/superpowers/specs/2026-06-19-m2-centralized-registry-and-discovery-design.md)
@@ -240,6 +274,8 @@ Order of work right now:
 - Operator dashboard terminal redesign spec: [docs/superpowers/specs/2026-06-20-operator-dashboard-terminal-redesign-design.md](./docs/superpowers/specs/2026-06-20-operator-dashboard-terminal-redesign-design.md)
 - Operator dashboard terminal redesign plan: [docs/superpowers/plans/2026-06-20-operator-dashboard-terminal-redesign.md](./docs/superpowers/plans/2026-06-20-operator-dashboard-terminal-redesign.md)
 - M3 pricing and metering plan: [docs/superpowers/plans/2026-06-19-m3-wallet-pricing-and-usage-metering.md](./docs/superpowers/plans/2026-06-19-m3-wallet-pricing-and-usage-metering.md)
+- M4 endpoint session and payment design: [docs/superpowers/specs/2026-07-01-endpoint-session-payment-flow-design.md](./docs/superpowers/specs/2026-07-01-endpoint-session-payment-flow-design.md)
+- M4 endpoint session and payment plan: [docs/superpowers/plans/2026-07-01-endpoint-session-payment-flow.md](./docs/superpowers/plans/2026-07-01-endpoint-session-payment-flow.md)
 
 ## Maintenance Rule
 

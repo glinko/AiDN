@@ -12,6 +12,8 @@ Unlike RFC documents, this specification describes the product from the operator
 
 All implementation decisions should preserve this user journey whenever reasonably possible.
 
+Commercial consumption and paid execution behavior are defined separately in [UX-0002 Endpoint Session and Payment Flow](./UX-0002-endpoint-session-and-payment-flow.md).
+
 ## 1. Core Philosophy
 
 The Hypervisor is the product.

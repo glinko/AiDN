@@ -6,6 +6,8 @@ Detailed network architecture spec: see [docs/superpowers/specs/2026-06-19-netwo
 
 Primary operator experience reference: see [docs/product/UX-0001-hypervisor-operator-journey.md](./docs/product/UX-0001-hypervisor-operator-journey.md)
 
+Primary paid-consumption reference: see [docs/product/UX-0002-endpoint-session-and-payment-flow.md](./docs/product/UX-0002-endpoint-session-and-payment-flow.md)
+
 ## Goal
 
 Build a decentralized network of trusted AI compute where:
@@ -54,6 +56,8 @@ The Hypervisor is not only infrastructure.
 
 It should feel like an operator-facing operating system for AI resources, where wallet setup, provider attachment, endpoint publication, marketplace discovery, and automation are understandable without requiring knowledge of internal AiDN architecture.
 
+It should also expose a predictable paid-execution contract, where clients reserve Endpoint Sessions explicitly, lock deposits up front, and receive automatic refunds for unused balance.
+
 ## Delivery Strategy
 
 The target is a distributed network, but delivery is phased:
@@ -70,5 +74,6 @@ Within those milestones, product sequencing should follow the operator journey i
 2. configure wallet ownership
 3. attach providers and models
 4. create and publish endpoints
-5. discover, consume, and proxy remote endpoints
-6. automate the node through MCP and agents
+5. define how those endpoints can be consumed through paid Sessions as described in `UX-0002`
+6. discover, consume, and proxy remote endpoints
+7. automate the node through MCP and agents
