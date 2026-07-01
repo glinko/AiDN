@@ -1543,8 +1543,12 @@ def test_operator_dashboard_shell_route_exposes_sessions_workspace_controls() ->
     assert response.status_code == 200
     assert 'data-screen="sessions"' in response.text
     assert "/operators/dashboard/sessions" in response.text
+    assert "/operators/dashboard/sessions/actions/close" in response.text
+    assert "/operators/dashboard/sessions/actions/sweep-idle" in response.text
     assert "Session Console" in response.text
     assert "Idle Timeout Watch" in response.text
+    assert "Sweep Idle Sessions" in response.text
+    assert "Close Session" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -> None:
@@ -1923,6 +1927,120 @@ def test_operator_dashboard_sessions_endpoint_returns_operator_session_summary()
     assert response.json()["items"][0]["display_name"] == "Paid STT"
     assert response.json()["items"][0]["deposit"]["locked_q"] == 10.0
     assert response.json()["items"][0]["session"]["endpoint_id"] == created.endpoint.endpoint_id
+
+
+def test_operator_dashboard_session_close_action_closes_selected_session() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    session_store = SessionStore()
+    session_service = SessionService(session_store)
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Paid STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-a",
+        provider_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.post(
+        "/operators/dashboard/sessions/actions/close",
+        json={"session_id": opened.session.session_id},
+    )
+
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["data"]["session"]["session_id"] == opened.session.session_id
+    assert body["data"]["session"]["status"] == "closed"
+    assert body["data"]["deposit"]["status"] == "released"
+    assert body["data"]["settlement"]["charged_q"] == 2.0
+
+
+def test_operator_dashboard_session_sweep_action_closes_idle_sessions() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    session_store = SessionStore()
+    session_service = SessionService(session_store)
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Paid STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-a",
+        provider_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    session_store.save_session(
+        opened.session.model_copy(
+            update={"idle_deadline_at": "2020-01-01T00:00:00+00:00"}
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.post("/operators/dashboard/sessions/actions/sweep-idle", json={})
+
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["data"]["closed_count"] == 1
+    assert body["data"]["items"][0]["session"]["session_id"] == opened.session.session_id
+    assert body["data"]["items"][0]["session"]["status"] == "closed"
+    assert body["data"]["items"][0]["session"]["close_reason"] == "idle_timeout"
 
 
 def test_operator_dashboard_endpoints_endpoint_prefers_endpoint_service_payload_for_configured_endpoint() -> None:

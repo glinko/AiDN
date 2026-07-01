@@ -1370,6 +1370,10 @@
       `${endpointApiBase}/${endpointId}/publish-configuration`;
     const endpointProxyTargetPath = (endpointId) =>
       `${endpointApiBase}/${endpointId}/proxy-target`;
+    const sessionActionEndpoints = {
+      close: "/operators/dashboard/sessions/actions/close",
+      sweepIdle: "/operators/dashboard/sessions/actions/sweep-idle",
+    };
 
     const state = {
       screen: "home",
@@ -1385,9 +1389,11 @@
       requestDetailCache: {},
       requestDetailLoading: null,
       requestMessage: null,
+      sessionMessage: null,
       remoteMessage: null,
       remoteAttachPending: null,
       requestPolicyPending: false,
+      sessionActionPending: null,
       marketOriginFilter: "all",
       requireReadyEndpoint: false,
       policyStrictAccounting: true,
@@ -1867,6 +1873,29 @@
 
     function selectedSessionRow() {
       return syncSessionSelection();
+    }
+
+    function mergeSessionResultIntoPayload(result) {
+      if (!result || !state.payloads.sessions || !Array.isArray(state.payloads.sessions.items)) {
+        return;
+      }
+      const items = state.payloads.sessions.items;
+      const index = items.findIndex(
+        (item) => item.session?.session_id === result.session?.session_id
+      );
+      if (index === -1) {
+        return;
+      }
+      items[index] = {
+        session: result.session,
+        deposit: result.deposit,
+        settlement: result.settlement || null,
+        display_name: items[index].display_name || result.session.endpoint_id,
+        remaining_q: Math.max(
+          0,
+          Number(result.deposit?.locked_q || 0) - Number(result.deposit?.consumed_q || 0)
+        ),
+      };
     }
 
     function selectedRequestRow() {
@@ -2595,6 +2624,9 @@
       const summary = payload.summary || {};
       const items = payload.items || [];
       const selected = selectedSessionRow();
+      const canClose = Boolean(
+        selected && selected.session && selected.session.status !== "closed"
+      );
 
       return `
         <div class="workspace-header">
@@ -2610,6 +2642,11 @@
           </div>
         </div>
         <div class="workspace-body">
+          ${
+            state.sessionMessage
+              ? `<div class="status-banner ${state.sessionMessage.kind}" style="margin-bottom: 16px;">${escapeHtml(state.sessionMessage.text)}</div>`
+              : ""
+          }
           <div class="summary-grid">
             <section class="summary-card">
               <div class="panel-heading">Tracked Sessions</div>
@@ -2632,6 +2669,17 @@
               <div class="summary-copy">Unused deposit still recoverable before or after settlement closes the session.</div>
             </section>
           </div>
+          <section class="subpanel" style="margin-bottom: 18px;">
+            <div class="panel-heading">Session Actions</div>
+            <div class="chip-row" style="margin-top: 14px;">
+              <button class="primary-button" type="button" data-session-action="sweep-idle">
+                ${state.sessionActionPending === "sweep-idle" ? "Sweeping..." : "Sweep Idle Sessions"}
+              </button>
+              <button class="secondary-button" type="button" data-session-action="close" ${canClose && state.sessionActionPending !== "close" ? "" : "disabled"}>
+                ${state.sessionActionPending === "close" ? "Closing..." : "Close Session"}
+              </button>
+            </div>
+          </section>
           <div class="fleet-columns">
             <section class="subpanel">
               <div class="panel-heading">Reserved Sessions</div>
@@ -4096,6 +4144,12 @@
       render();
     }
 
+    async function refreshSessionsPayload() {
+      await loadScreen("sessions");
+      syncSessionSelection();
+      render();
+    }
+
     function renderEndpointPublicationHistory(selected) {
       const history = selected?.publication_history || [];
       if (!history.length) {
@@ -4564,6 +4618,57 @@
       }
     }
 
+    async function closeSelectedSession() {
+      const selected = selectedSessionRow();
+      if (!selected?.session?.session_id || selected.session.status === "closed") {
+        return;
+      }
+      state.sessionActionPending = "close";
+      state.sessionMessage = null;
+      render();
+      try {
+        const result = await postJson(sessionActionEndpoints.close, {
+          session_id: selected.session.session_id,
+        });
+        state.sessionMessage = {
+          kind: "good",
+          text: `Session ${result.data.session.session_id} closed and settlement released.`,
+        };
+        await refreshSessionsPayload();
+        mergeSessionResultIntoPayload(result.data);
+      } catch (error) {
+        state.sessionMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.sessionActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function sweepIdleSessions() {
+      state.sessionActionPending = "sweep-idle";
+      state.sessionMessage = null;
+      render();
+      try {
+        const result = await postJson(sessionActionEndpoints.sweepIdle, {});
+        state.sessionMessage = {
+          kind: result.data.closed_count > 0 ? "good" : "",
+          text:
+            result.data.closed_count > 0
+              ? `Sweep closed ${formatCount(result.data.closed_count)} idle session${result.data.closed_count === 1 ? "" : "s"}.`
+              : "Sweep found no expired idle sessions.",
+        };
+        await refreshSessionsPayload();
+        (result.data.items || []).forEach((item) => mergeSessionResultIntoPayload(item));
+      } catch (error) {
+        state.sessionMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.sessionActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     function viewSignedEndpointPublication() {
       const draft = selectedEndpointDraft();
       const publication = draft?.current_publication;
@@ -4750,9 +4855,20 @@
       document.querySelectorAll("[data-session-row]").forEach((row) => {
         row.addEventListener("click", () => {
           state.selectedSessionId = row.dataset.sessionRow;
+          state.sessionMessage = null;
           renderInspector();
           renderWorkspace();
           bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-session-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.sessionAction === "close") {
+            void closeSelectedSession();
+          } else if (button.dataset.sessionAction === "sweep-idle") {
+            void sweepIdleSessions();
+          }
         });
       });
 

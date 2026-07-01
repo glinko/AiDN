@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from datetime import datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status
@@ -304,6 +305,14 @@ class RemoteEndpointAttachRequest(BaseModel):
     endpoint_id: str
     alias: str | None = None
     routing_mode: str = "preferred"
+
+
+class OperatorSessionCloseActionRequest(BaseModel):
+    session_id: str
+
+
+class OperatorSessionSweepIdleActionRequest(BaseModel):
+    now: str | None = None
 
 
 def _operator_dashboard_remote_endpoints_payload(
@@ -706,6 +715,75 @@ def build_api_router(
             service=service,
             endpoint_service=endpoint_service,
             session_service=session_service,
+        )
+
+    @router.post("/operators/dashboard/sessions/actions/close")
+    async def operator_dashboard_close_session(
+        request: OperatorSessionCloseActionRequest,
+    ) -> JSONResponse:
+        if session_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            result = session_service.close_session(request.session_id)
+        except KeyError:
+            return _error(
+                404,
+                "session_not_found",
+                f"Unknown session: {request.session_id}",
+            )
+        return _ok(
+            {
+                "session": result.session.model_dump(mode="json"),
+                "deposit": result.deposit.model_dump(mode="json"),
+                "settlement": (
+                    result.settlement.model_dump(mode="json")
+                    if result.settlement is not None
+                    else None
+                ),
+            }
+        )
+
+    @router.post("/operators/dashboard/sessions/actions/sweep-idle")
+    async def operator_dashboard_sweep_idle_sessions(
+        request: OperatorSessionSweepIdleActionRequest,
+    ) -> JSONResponse:
+        if session_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        current_time = None
+        if request.now:
+            try:
+                current_time = datetime.fromisoformat(request.now)
+            except ValueError:
+                return _error(
+                    422,
+                    "invalid_timestamp",
+                    "Expected ISO-8601 timestamp for now",
+                )
+        results = session_service.sweep_idle_sessions(now=current_time)
+        return _ok(
+            {
+                "closed_count": len(results),
+                "items": [
+                    {
+                        "session": result.session.model_dump(mode="json"),
+                        "deposit": result.deposit.model_dump(mode="json"),
+                        "settlement": (
+                            result.settlement.model_dump(mode="json")
+                            if result.settlement is not None
+                            else None
+                        ),
+                    }
+                    for result in results
+                ],
+            }
         )
 
     @router.get("/api/v1/sessions")
