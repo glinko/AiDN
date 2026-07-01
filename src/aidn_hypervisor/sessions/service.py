@@ -1,12 +1,33 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from aidn_hypervisor.sessions.models import EndpointSession, LockedDeposit, SessionResult
+from aidn_hypervisor.sessions.models import (
+    EndpointSession,
+    LockedDeposit,
+    SessionResult,
+    SessionSettlementSummary,
+)
 
 
 class SessionService:
-    def __init__(self, store) -> None:
+    def __init__(self, store, event_recorder=None) -> None:
         self.store = store
+        self.event_recorder = event_recorder
+
+    def _emit(
+        self,
+        *,
+        event_type: str,
+        message: str,
+        details: dict | None = None,
+    ) -> None:
+        if self.event_recorder is None:
+            return
+        self.event_recorder(
+            event_type=event_type,
+            message=message,
+            details=dict(details or {}),
+        )
 
     def list_sessions(self) -> list[EndpointSession]:
         return self.store.list_sessions()
@@ -96,6 +117,18 @@ class SessionService:
         )
         self.store.save_session(session)
         self.store.save_deposit(deposit)
+        self._emit(
+            event_type="session.deposit_locked",
+            message="session deposit locked",
+            details={
+                "session_id": session.session_id,
+                "endpoint_id": endpoint_id,
+                "client_wallet": client_wallet,
+                "provider_wallet": provider_wallet,
+                "locked_q": deposit_q,
+                "status": status,
+            },
+        )
         return SessionResult(session=session, deposit=deposit)
 
     def close_session(self, session_id: str) -> SessionResult:
@@ -103,6 +136,22 @@ class SessionService:
         deposit = self.store.get_deposit_for_session(session_id)
         if current.status == "closed":
             return SessionResult(session=current, deposit=deposit)
+        minimum_session_fee = float(
+            current.session_policy_snapshot.get("minimum_session_fee", 0.0) or 0.0
+        )
+        no_request = deposit.consumed_q == 0.0
+        charged_q = deposit.consumed_q
+        if no_request and minimum_session_fee > 0.0:
+            charged_q = min(deposit.locked_q, minimum_session_fee)
+        refunded_q = max(0.0, deposit.locked_q - charged_q)
+        settlement = SessionSettlementSummary(
+            usage_charged_q=deposit.consumed_q,
+            minimum_session_fee_q=(minimum_session_fee if no_request else 0.0),
+            charged_q=charged_q,
+            refunded_q=refunded_q,
+            payout_q=charged_q,
+            no_request=no_request,
+        )
         closed = current.model_copy(
             update={
                 "status": "closed",
@@ -113,13 +162,26 @@ class SessionService:
         released = deposit.model_copy(
             update={
                 "status": "released",
-                "refunded_q": max(0.0, deposit.locked_q - deposit.consumed_q),
+                "consumed_q": charged_q,
+                "refunded_q": refunded_q,
             }
         )
         self.store.save_session(closed)
         self.store.save_deposit(released)
+        self._emit(
+            event_type="session.settled",
+            message="session settled and released",
+            details={
+                "session_id": session_id,
+                "endpoint_id": current.endpoint_id,
+                "charged_q": settlement.charged_q,
+                "refunded_q": settlement.refunded_q,
+                "payout_q": settlement.payout_q,
+                "no_request": settlement.no_request,
+            },
+        )
         self._promote_next_waiting_session(endpoint_id=current.endpoint_id)
-        return SessionResult(session=closed, deposit=released)
+        return SessionResult(session=closed, deposit=released, settlement=settlement)
 
     def touch_session(self, session_id: str) -> EndpointSession:
         current = self.store.get_session(session_id)
@@ -139,6 +201,40 @@ class SessionService:
         )
         self.store.save_session(updated)
         return updated
+
+    def record_usage_charge(
+        self,
+        session_id: str,
+        *,
+        amount_q: float,
+    ) -> SessionResult:
+        if amount_q < 0.0:
+            raise ValueError("usage charge cannot be negative")
+        current = self.store.get_session(session_id)
+        if current.status != "active":
+            raise ValueError(f"Session is not active: {session_id}")
+        deposit = self.store.get_deposit_for_session(session_id)
+        next_consumed_q = deposit.consumed_q + amount_q
+        if next_consumed_q > deposit.locked_q:
+            raise ValueError(f"Session deposit exhausted: {session_id}")
+        updated_deposit = deposit.model_copy(
+            update={
+                "consumed_q": next_consumed_q,
+            }
+        )
+        self.store.save_deposit(updated_deposit)
+        self._emit(
+            event_type="session.usage_charged",
+            message="session usage charge recorded",
+            details={
+                "session_id": session_id,
+                "endpoint_id": current.endpoint_id,
+                "amount_q": amount_q,
+                "consumed_q": next_consumed_q,
+                "remaining_q": max(0.0, deposit.locked_q - next_consumed_q),
+            },
+        )
+        return SessionResult(session=current, deposit=updated_deposit)
 
     def _promote_next_waiting_session(self, *, endpoint_id: str) -> None:
         active_sessions = [

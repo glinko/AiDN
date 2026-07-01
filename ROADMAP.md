@@ -185,7 +185,7 @@ Checkpoints:
   - `maximum_session_duration`
 - [ ] Session-scoped request execution
 - [x] Busy vs queue policy for saturated endpoints
-- [ ] No-request minimum fee rule
+- [x] No-request minimum fee rule
 - [ ] Operator and client-facing confirmation UX for opening paid Sessions
 
 Exit criteria:

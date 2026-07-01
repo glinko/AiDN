@@ -46,6 +46,16 @@ class LockedDeposit(BaseModel):
         return self
 
 
+class SessionSettlementSummary(BaseModel):
+    usage_charged_q: float = Field(default=0.0, ge=0.0)
+    minimum_session_fee_q: float = Field(default=0.0, ge=0.0)
+    charged_q: float = Field(default=0.0, ge=0.0)
+    refunded_q: float = Field(default=0.0, ge=0.0)
+    payout_q: float = Field(default=0.0, ge=0.0)
+    no_request: bool = False
+
+
 class SessionResult(BaseModel):
     session: EndpointSession
     deposit: LockedDeposit
+    settlement: SessionSettlementSummary | None = None

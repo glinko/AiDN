@@ -2,6 +2,9 @@ from datetime import datetime, timedelta, timezone
 
 from aidn_hypervisor.bundle_registry import FileBundleRegistry
 from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, NodeCapacity, ResourceProfile
+from aidn_hypervisor.endpoints.models import CreateEndpointCommand
+from aidn_hypervisor.endpoints.service import EndpointService
+from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.main import build_app
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
@@ -10,6 +13,8 @@ from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.sessions.service import SessionService
+from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.domain.models import TaskRequest
 from aidn_hypervisor.wallet import quote_usage_q
 from fastapi.testclient import TestClient
@@ -248,6 +253,69 @@ def test_service_automatically_records_wallet_usage_from_completed_task() -> Non
     assert usage_events[0]["measurement_kind"] == "exact"
     assert usage_events[0]["measurement_source"] == "provider_api"
     assert usage_events[0]["quote"]["charges"]["total_q"] == 16.0
+
+
+def test_service_charges_paid_session_from_completed_task_usage() -> None:
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(update={"plugin_id": "fake-usage-metering"}),
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    service.endpoint_service = endpoint_service
+    service.session_service = session_service
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="phi4-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=25.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+
+    task = service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={
+                "endpoint_id": created.endpoint.endpoint_id,
+                "session_id": opened.session.session_id,
+                "wallet_owner_id": "agent-a",
+            },
+        )
+    )
+    closed = session_service.close_session(opened.session.session_id)
+
+    usage_events = service.list_wallet_usage_events()
+
+    assert service.get_task(task.task_id).status == "completed"
+    assert len(usage_events) == 1
+    assert usage_events[0]["quote"]["charges"]["total_q"] == 16.0
+    assert closed.deposit.consumed_q == 16.0
+    assert closed.deposit.refunded_q == 9.0
+    assert closed.settlement is not None
+    assert closed.settlement.no_request is False
+    assert closed.settlement.usage_charged_q == 16.0
 
 
 def test_service_automatically_records_allocation_id_from_completed_task() -> None:

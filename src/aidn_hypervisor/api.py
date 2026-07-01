@@ -686,6 +686,11 @@ def build_api_router(
             {
                 "session": result.session.model_dump(mode="json"),
                 "deposit": result.deposit.model_dump(mode="json"),
+                "settlement": (
+                    result.settlement.model_dump(mode="json")
+                    if result.settlement is not None
+                    else None
+                ),
             }
         )
 
@@ -709,6 +714,11 @@ def build_api_router(
             {
                 "session": result.session.model_dump(mode="json"),
                 "deposit": result.deposit.model_dump(mode="json"),
+                "settlement": (
+                    result.settlement.model_dump(mode="json")
+                    if result.settlement is not None
+                    else None
+                ),
             }
         )
 

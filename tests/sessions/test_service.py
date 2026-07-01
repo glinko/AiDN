@@ -90,3 +90,67 @@ def test_close_session_releases_slot_for_next_waiting_session() -> None:
     assert closed.session.status == "closed"
     assert promoted.session.status == "active"
     assert promoted.session.reserved_slot_index == 0
+
+
+def test_close_session_applies_minimum_session_fee_when_no_requests_were_sent() -> None:
+    service = _session_service()
+
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(minimum_session_fee=2.0),
+    )
+
+    closed = service.close_session(opened.session.session_id)
+
+    assert closed.deposit.status == "released"
+    assert closed.deposit.consumed_q == 2.0
+    assert closed.deposit.refunded_q == 8.0
+    assert closed.settlement is not None
+    assert closed.settlement.no_request is True
+    assert closed.settlement.charged_q == 2.0
+    assert closed.settlement.refunded_q == 8.0
+
+
+def test_close_session_refunds_remaining_balance_after_usage_charge() -> None:
+    service = _session_service()
+
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(minimum_session_fee=2.0),
+    )
+    service.record_usage_charge(opened.session.session_id, amount_q=6.5)
+
+    closed = service.close_session(opened.session.session_id)
+
+    assert closed.deposit.status == "released"
+    assert closed.deposit.consumed_q == 6.5
+    assert closed.deposit.refunded_q == 13.5
+    assert closed.settlement is not None
+    assert closed.settlement.no_request is False
+    assert closed.settlement.usage_charged_q == 6.5
+    assert closed.settlement.charged_q == 6.5
+    assert closed.settlement.refunded_q == 13.5
+
+
+def test_record_usage_charge_rejects_charge_above_locked_deposit() -> None:
+    service = _session_service()
+
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(),
+    )
+
+    with pytest.raises(ValueError, match="deposit"):
+        service.record_usage_charge(opened.session.session_id, amount_q=11.0)

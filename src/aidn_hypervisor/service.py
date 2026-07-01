@@ -3075,14 +3075,14 @@ class HypervisorService:
         task: TaskRequest,
     ) -> None:
         owner_id, allocation_id = self._wallet_usage_attribution_for_task(task)
-        if owner_id is None:
-            return
         result = self._task_results.get(task_id)
         if not isinstance(result, dict):
             return
         usage_contract = self._provider_usage_contract_for_bundle(bundle)
         usage = result.get("usage")
         if not isinstance(usage, dict):
+            if owner_id is None:
+                return
             if usage_contract.get("missing_usage_behavior") == "strict_accounting":
                 self._mark_task_wallet_accounting_blocked(
                     task_id=task_id,
@@ -3094,6 +3094,8 @@ class HypervisorService:
         try:
             measurement = WalletUsageMeasurement(**usage)
         except ValidationError as error:
+            if owner_id is None:
+                return
             self._record_wallet_usage_skipped(
                 task_id=task_id,
                 bundle_id=bundle.bundle_id,
@@ -3105,6 +3107,18 @@ class HypervisorService:
                     usage_contract.get("missing_usage_behavior") == "strict_accounting"
                 ),
             )
+            return
+        usage_quote = self.quote_wallet_usage(
+            input_tokens=measurement.input_tokens,
+            output_tokens=measurement.output_tokens,
+            fixed_request_count=measurement.fixed_request_count,
+        )
+        self._record_session_usage_charge_for_task(
+            task_id=task_id,
+            task=task,
+            amount_q=float(usage_quote["charges"]["total_q"]),
+        )
+        if owner_id is None:
             return
         self.record_wallet_usage(
             owner_id=str(owner_id),
@@ -3119,6 +3133,44 @@ class HypervisorService:
             measurement_source=measurement.measurement_source,
             source=str(usage.get("source", "task_auto")),
         )
+
+    def _record_session_usage_charge_for_task(
+        self,
+        *,
+        task_id: str,
+        task: TaskRequest,
+        amount_q: float,
+    ) -> None:
+        session_id = task.constraints.get("session_id")
+        if session_id is None:
+            return
+        session_service = getattr(self, "session_service", None)
+        if session_service is None:
+            return
+        try:
+            session_service.record_usage_charge(
+                str(session_id),
+                amount_q=amount_q,
+            )
+        except ValueError as error:
+            result = self._task_results.get(task_id)
+            if isinstance(result, dict):
+                result["session_accounting"] = {
+                    "status": "blocked",
+                    "reason": str(error),
+                    "charged_q": amount_q,
+                }
+            self.record_event(
+                event_type="session.charge_blocked",
+                message="session usage charge blocked",
+                task_id=task_id,
+                bundle_id=self.selected_bundle_id(task_id),
+                details={
+                    "session_id": str(session_id),
+                    "charged_q": amount_q,
+                    "reason": str(error),
+                },
+            )
 
     def _provider_usage_contract_for_bundle(self, bundle: BundleConfig) -> dict:
         plugin = self.plugins.get(bundle.plugin_id)
