@@ -29,6 +29,8 @@ from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.sessions.service import SessionService
+from aidn_hypervisor.sessions.store import SessionStore
 
 
 def _bundle(
@@ -290,6 +292,120 @@ def test_submit_task_endpoint_executes_via_proxy_endpoint_when_endpoint_id_is_pr
     assert detail.json()["status"] == "completed"
     assert detail.json()["result"]["output_text"] == "hello from remote"
     assert detail.json()["result"]["proxy"]["remote_endpoint_id"] == "ep-remote"
+
+
+def test_submit_task_endpoint_rejects_paid_endpoint_request_without_session() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="whisper-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.post(
+        "/tasks",
+        json={
+            "task_type": "audio.transcribe",
+            "payload": {"audio_ref": "clip.wav"},
+            "constraints": {"endpoint_id": created.endpoint.endpoint_id},
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        f"Active session required for paid endpoint: {created.endpoint.endpoint_id}"
+    )
+
+
+def test_submit_task_endpoint_updates_session_activity_for_paid_endpoint_session() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="whisper-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    session = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    ).session
+    session_service.store.save_session(
+        session.model_copy(
+            update={
+                "last_activity_at": "2026-06-30T00:00:00+00:00",
+                "idle_deadline_at": "2026-06-30T00:10:00+00:00",
+            }
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.post(
+        "/tasks",
+        json={
+            "task_type": "audio.transcribe",
+            "payload": {"audio_ref": "clip.wav"},
+            "constraints": {
+                "endpoint_id": created.endpoint.endpoint_id,
+                "session_id": session.session_id,
+            },
+        },
+    )
+
+    refreshed = session_service.get_session(session.session_id).session
+
+    assert response.status_code == 202
+    assert refreshed.last_activity_at != "2026-06-30T00:00:00+00:00"
+    assert refreshed.idle_deadline_at != "2026-06-30T00:10:00+00:00"
 
 
 def test_get_task_endpoint_exposes_proxy_trace_for_proxy_execution() -> None:

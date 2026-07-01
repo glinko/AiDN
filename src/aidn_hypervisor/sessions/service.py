@@ -16,6 +16,19 @@ class SessionService:
         deposit = self.store.get_deposit_for_session(session_id)
         return SessionResult(session=session, deposit=deposit)
 
+    def require_active_session(
+        self,
+        *,
+        endpoint_id: str,
+        session_id: str,
+    ) -> EndpointSession:
+        session = self.store.get_session(session_id)
+        if session.endpoint_id != endpoint_id:
+            raise ValueError(f"Session does not belong to endpoint: {session_id}")
+        if session.status != "active":
+            raise ValueError(f"Session is not active: {session_id}")
+        return session
+
     def open_session(
         self,
         *,
@@ -107,6 +120,25 @@ class SessionService:
         self.store.save_deposit(released)
         self._promote_next_waiting_session(endpoint_id=current.endpoint_id)
         return SessionResult(session=closed, deposit=released)
+
+    def touch_session(self, session_id: str) -> EndpointSession:
+        current = self.store.get_session(session_id)
+        if current.status != "active":
+            raise ValueError(f"Session is not active: {session_id}")
+        now = datetime.now(timezone.utc)
+        idle_timeout_seconds = int(
+            current.session_policy_snapshot.get("idle_timeout_seconds", 600) or 600
+        )
+        updated = current.model_copy(
+            update={
+                "last_activity_at": now.isoformat(),
+                "idle_deadline_at": (
+                    now + timedelta(seconds=idle_timeout_seconds)
+                ).isoformat(),
+            }
+        )
+        self.store.save_session(updated)
+        return updated
 
     def _promote_next_waiting_session(self, *, endpoint_id: str) -> None:
         active_sessions = [

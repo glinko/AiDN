@@ -2769,6 +2769,7 @@ class HypervisorService:
 
             self.queue.transition_status(task_id, "running")
             entered_running = True
+            self._touch_task_session(task.request)
             self._task_results[task_id] = self._invoke_with_retry(
                 plugin,
                 bundle,
@@ -3235,12 +3236,54 @@ class HypervisorService:
                 "Endpoint bundle conflicts with requested bundle_override: "
                 f"{manifest.endpoint_id}"
             )
+        self._validate_task_session(manifest, request)
         return request.model_copy(
             update={
                 "mode": "manual",
                 "bundle_override": manifest.bundle_id,
             }
         )
+
+    def _endpoint_requires_session(self, manifest) -> bool:
+        session_policy = manifest.session
+        return any(
+            (
+                session_policy.minimum_deposit > 0,
+                session_policy.minimum_session_fee > 0,
+                session_policy.idle_fee_per_minute > 0,
+            )
+        )
+
+    def _validate_task_session(self, manifest, request: TaskRequest) -> None:
+        session_id = request.constraints.get("session_id")
+        if not self._endpoint_requires_session(manifest) and session_id is None:
+            return
+        if session_id is None:
+            raise ValueError(
+                f"Active session required for paid endpoint: {manifest.endpoint_id}"
+            )
+        session_service = getattr(self, "session_service", None)
+        if session_service is None:
+            raise ValueError("Session service is not configured")
+        try:
+            session_service.require_active_session(
+                endpoint_id=manifest.endpoint_id,
+                session_id=str(session_id),
+            )
+        except KeyError as error:
+            raise ValueError(f"Unknown session: {session_id}") from error
+
+    def _touch_task_session(self, request: TaskRequest) -> None:
+        session_id = request.constraints.get("session_id")
+        if session_id is None:
+            return
+        session_service = getattr(self, "session_service", None)
+        if session_service is None:
+            raise RuntimeError("Session service is not configured")
+        try:
+            session_service.touch_session(str(session_id))
+        except KeyError as error:
+            raise RuntimeError(f"Unknown session: {session_id}") from error
 
     def _endpoint_manifest_for_request(self, request: TaskRequest):
         endpoint_id = request.constraints.get("endpoint_id")
@@ -3265,8 +3308,9 @@ class HypervisorService:
                 "source_base_url": endpoint_manifest.proxy_target.source_base_url,
             },
         )
-        self.queue.transition_status(task_id, "running")
         try:
+            self.queue.transition_status(task_id, "running")
+            self._touch_task_session(task.request)
             self._task_results[task_id] = self._invoke_proxy_endpoint(
                 endpoint_manifest,
                 task.request,
