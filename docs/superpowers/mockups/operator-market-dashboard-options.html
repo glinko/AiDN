@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AiDN Operator Dashboard Directions</title>
+  <style>
+    :root {
+      --bg: #f5efe5;
+      --panel: rgba(255, 252, 247, 0.94);
+      --panel-strong: #fffaf4;
+      --line: rgba(25, 34, 39, 0.12);
+      --ink: #182126;
+      --muted: #61707a;
+      --accent: #c05c36;
+      --accent-soft: #f5d5c7;
+      --good: #2f6c57;
+      --good-soft: #dcefe7;
+      --warn: #9a6a1f;
+      --warn-soft: #f8ebcf;
+      --info: #264f78;
+      --info-soft: #d9e6f2;
+      --shadow: 0 24px 50px rgba(67, 47, 21, 0.14);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --radius-md: 16px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(192, 92, 54, 0.18), transparent 30%),
+        radial-gradient(circle at top right, rgba(47, 108, 87, 0.16), transparent 28%),
+        linear-gradient(180deg, #f9f3ea 0%, var(--bg) 100%);
+    }
+
+    .page {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 34px 26px 60px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.25fr 0.75fr;
+      gap: 18px;
+      margin-bottom: 22px;
+    }
+
+    .hero-card,
+    .option {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+    }
+
+    .hero-card {
+      padding: 28px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      margin-bottom: 12px;
+      color: var(--accent);
+      font-size: 12px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: 46px;
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+
+    .lead {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.58;
+      color: var(--muted);
+      max-width: 58ch;
+    }
+
+    .hero-side {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .status,
+    .fact {
+      padding: 16px 18px;
+      border-radius: var(--radius-lg);
+      background: rgba(255, 255, 255, 0.74);
+      border: 1px solid var(--line);
+    }
+
+    .status strong,
+    .fact strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .status p,
+    .fact p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 14px;
+    }
+
+    .status strong {
+      color: var(--good);
+    }
+
+    .fact strong {
+      color: var(--info);
+    }
+
+    .section-title {
+      margin: 0 0 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 25px;
+      font-weight: 700;
+    }
+
+    .section-title::before {
+      content: "";
+      width: 32px;
+      height: 2px;
+      background: var(--accent);
+    }
+
+    .options {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .option {
+      padding: 18px;
+      position: relative;
+    }
+
+    .option.recommended {
+      border: 2px solid var(--accent);
+      background: linear-gradient(180deg, rgba(255, 245, 239, 0.96), rgba(255, 252, 247, 0.94));
+      transform: translateY(-4px);
+    }
+
+    .badge {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      padding: 6px 11px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: #713116;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-weight: 700;
+    }
+
+    .option h3 {
+      margin: 2px 0 8px;
+      font-size: 28px;
+      letter-spacing: -0.02em;
+    }
+
+    .summary {
+      margin: 0 0 12px;
+      color: var(--muted);
+      line-height: 1.52;
+      min-height: 72px;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .pill {
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 12px;
+      background: rgba(255, 255, 255, 0.84);
+      color: var(--ink);
+    }
+
+    .mockup {
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+
+    .mockup-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(245, 239, 229, 0.9);
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
+
+    .topnav {
+      display: flex;
+      gap: 10px;
+    }
+
+    .nav-chip {
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      font-size: 11px;
+    }
+
+    .nav-chip.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    .mockup-body {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .stat {
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.88);
+    }
+
+    .stat .k {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+
+    .stat .v {
+      font-size: 21px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+
+    .layout-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .layout-publish-first {
+      grid-template-columns: 1.15fr 0.85fr;
+    }
+
+    .layout-market-first {
+      grid-template-columns: 0.82fr 1.18fr;
+    }
+
+    .layout-split {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.88);
+      padding: 12px;
+    }
+
+    .panel h4 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .rows {
+      display: grid;
+      gap: 8px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 11px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #fff;
+      font-size: 13px;
+    }
+
+    .row strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 13px;
+    }
+
+    .row span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .tone-good,
+    .tone-warn,
+    .tone-info {
+      padding: 5px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+
+    .tone-good {
+      background: var(--good-soft);
+      color: #27503f;
+    }
+
+    .tone-warn {
+      background: var(--warn-soft);
+      color: #6a4914;
+    }
+
+    .tone-info {
+      background: var(--info-soft);
+      color: #204362;
+    }
+
+    .control-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .control {
+      padding: 8px 11px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #fff;
+      font-size: 12px;
+      color: var(--ink);
+    }
+
+    .control.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .pros-cons {
+      display: grid;
+      gap: 12px;
+    }
+
+    .callout {
+      padding: 13px 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .callout.good {
+      background: var(--good-soft);
+      color: #284a3b;
+    }
+
+    .callout.warn {
+      background: var(--warn-soft);
+      color: #684612;
+    }
+
+    .next-step {
+      margin-top: 22px;
+      padding: 18px 20px;
+      border-radius: 22px;
+      border: 1px solid var(--line);
+      background: rgba(255, 252, 247, 0.95);
+      font-size: 16px;
+      color: var(--muted);
+    }
+
+    .next-step strong {
+      color: var(--ink);
+    }
+
+    @media (max-width: 1240px) {
+      .hero,
+      .options {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 920px) {
+      .stats,
+      .layout-publish-first,
+      .layout-market-first,
+      .layout-split {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 38px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <div class="hero-card">
+        <div class="eyebrow">AiDN / Operator UX / Multi-node Hypervisor</div>
+        <h1>Three Real Directions for the Fleet + Market Dashboard</h1>
+        <p class="lead">
+          Shared brief: multi-node operator view, two modes <strong>Fleet</strong> and <strong>Market</strong>,
+          first priority on <strong>custom model onboarding and publishing</strong>, second priority on
+          <strong>market visibility and external endpoint consumption</strong>. The question now is not
+          whether these blocks exist, but which one owns the top of the interface.
+        </p>
+      </div>
+      <div class="hero-side">
+        <div class="status">
+          <strong>Locked So Far</strong>
+          <p>Multi-node, two-mode navigation, full interactivity target, hybrid operator surface.</p>
+        </div>
+        <div class="fact">
+          <strong>Primary Workflow</strong>
+          <p>Publish and onboard models, then immediately see how they appear as offers and endpoints.</p>
+        </div>
+        <div class="fact">
+          <strong>Secondary Workflow</strong>
+          <p>Browse internal and external market inventory, compare price, rating, readiness, and attach endpoints.</p>
+        </div>
+      </div>
+    </section>
+
+    <h2 class="section-title">Three Dashboard Approaches</h2>
+
+    <section class="options">
+      <article class="option">
+        <h3>A. Publish-First Workshop</h3>
+        <p class="summary">
+          The home screen behaves like an operator workbench: install model, register bundle, publish offer,
+          then review how it lands in fleet and market inventory.
+        </p>
+        <div class="pill-row">
+          <span class="pill">best for onboarding velocity</span>
+          <span class="pill">operator-centric</span>
+          <span class="pill">market as output</span>
+        </div>
+
+        <div class="mockup">
+          <div class="mockup-header">
+            <div class="topnav">
+              <div class="nav-chip active">Fleet</div>
+              <div class="nav-chip">Market</div>
+              <div class="nav-chip">Wallet</div>
+            </div>
+            <div>Home / Publish Workshop</div>
+          </div>
+          <div class="mockup-body">
+            <div class="stats">
+              <div class="stat"><div class="k">Active Nodes</div><div class="v">12</div></div>
+              <div class="stat"><div class="k">Draft Offers</div><div class="v">6</div></div>
+              <div class="stat"><div class="k">Published Models</div><div class="v">31</div></div>
+              <div class="stat"><div class="k">Queue Pressure</div><div class="v">62%</div></div>
+            </div>
+            <div class="layout-grid layout-publish-first">
+              <div class="panel">
+                <h4>Publish Pipeline</h4>
+                <div class="rows">
+                  <div class="row"><div><strong>1. Download Artifact</strong><span>phi-4-mini.gguf from trusted source</span></div><div class="tone-good">Ready</div></div>
+                  <div class="row"><div><strong>2. Bind Provider</strong><span>llama.cpp / 16 GB VRAM / queue enabled</span></div><div class="tone-info">Editing</div></div>
+                  <div class="row"><div><strong>3. Price Offer</strong><span>12q input / 19q output / fixed request 2q</span></div><div class="tone-warn">Review</div></div>
+                  <div class="row"><div><strong>4. Publish To Registry</strong><span>Visible to Fleet and Market catalogs</span></div><div class="tone-info">Pending</div></div>
+                </div>
+              </div>
+              <div class="panel">
+                <h4>Market Snapshot</h4>
+                <div class="rows">
+                  <div class="row"><div><strong>Own Offer: phi-4-mini</strong><span>Rating 0.93 - endpoint ready - 14 leases today</span></div><div class="tone-good">Live</div></div>
+                  <div class="row"><div><strong>External Whisper XL</strong><span>7q / 1kk sec - remote node - attachable</span></div><div class="tone-info">Rent</div></div>
+                  <div class="row"><div><strong>GPU Reserve</strong><span>Node us-east-2 - 24 GB free VRAM</span></div><div class="tone-good">Free</div></div>
+                </div>
+              </div>
+            </div>
+            <div class="control-row">
+              <div class="control primary">Install Model</div>
+              <div class="control">Create Bundle</div>
+              <div class="control">Publish Offer</div>
+              <div class="control">Preview Market Listing</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pros-cons">
+          <div class="callout good">Strongest match to your stated priority: it makes publishing and onboarding the default habit loop.</div>
+          <div class="callout warn">Weakness: external market browsing feels secondary unless the user explicitly switches into Market mode.</div>
+        </div>
+      </article>
+
+      <article class="option">
+        <h3>B. Market-First Terminal</h3>
+        <p class="summary">
+          The dashboard opens as a live exchange board: offers, prices, ratings, endpoint readiness,
+          and leaseable capacity dominate. Publishing is treated as a panel inside that market view.
+        </p>
+        <div class="pill-row">
+          <span class="pill">best for trading decisions</span>
+          <span class="pill">strong catalog UX</span>
+          <span class="pill">infra controls recede</span>
+        </div>
+
+        <div class="mockup">
+          <div class="mockup-header">
+            <div class="topnav">
+              <div class="nav-chip">Fleet</div>
+              <div class="nav-chip active">Market</div>
+              <div class="nav-chip">Wallet</div>
+            </div>
+            <div>Home / Live Market</div>
+          </div>
+          <div class="mockup-body">
+            <div class="stats">
+              <div class="stat"><div class="k">Listed Offers</div><div class="v">284</div></div>
+              <div class="stat"><div class="k">Cheapest LLM</div><div class="v">9q</div></div>
+              <div class="stat"><div class="k">Best Rated</div><div class="v">0.98</div></div>
+              <div class="stat"><div class="k">Attachable Endpoints</div><div class="v">71</div></div>
+            </div>
+            <div class="layout-grid layout-market-first">
+              <div class="panel">
+                <h4>Filters</h4>
+                <div class="rows">
+                  <div class="row"><div><strong>Model Family</strong><span>phi / mistral / whisper / embedding</span></div><div class="tone-info">Active</div></div>
+                  <div class="row"><div><strong>Price Cap</strong><span>max 18q input - min rating 0.9</span></div><div class="tone-info">Active</div></div>
+                  <div class="row"><div><strong>Custom Hosting</strong><span>only nodes that accept custom model onboarding</span></div><div class="tone-good">Yes</div></div>
+                </div>
+              </div>
+              <div class="panel">
+                <h4>Offers Board</h4>
+                <div class="rows">
+                  <div class="row"><div><strong>Own: phi-4-mini / node-west-1</strong><span>12q in - 18q out - ready endpoint - tier A</span></div><div class="tone-good">Lease</div></div>
+                  <div class="row"><div><strong>External: whisper-large-v3</strong><span>6q fixed - queue support - custom download allowed</span></div><div class="tone-info">Attach</div></div>
+                  <div class="row"><div><strong>External: mistral-small</strong><span>11q in - 17q out - uptime 99.7%</span></div><div class="tone-good">Ready</div></div>
+                  <div class="row"><div><strong>Draft Publish Offer</strong><span>local gguf not listed yet</span></div><div class="tone-warn">Publish</div></div>
+                </div>
+              </div>
+            </div>
+            <div class="control-row">
+              <div class="control primary">Attach Endpoint</div>
+              <div class="control">Compare Offers</div>
+              <div class="control">Publish Local Model</div>
+              <div class="control">Open Fleet Capacity</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pros-cons">
+          <div class="callout good">Best if AiDN is treated first as a compute market and only second as node operations.</div>
+          <div class="callout warn">It undersells the hypervisor identity and makes install/register/publish feel like a side workflow.</div>
+        </div>
+      </article>
+
+      <article class="option recommended">
+        <div class="badge">Recommended</div>
+        <h3>C. Split Command Center</h3>
+        <p class="summary">
+          A balanced hybrid: top row is publish and market intent, lower row is fleet capacity and node controls.
+          Operators always see both "what I can publish" and "what I can buy or attach".
+        </p>
+        <div class="pill-row">
+          <span class="pill">best overall hybrid</span>
+          <span class="pill">keeps hypervisor feel</span>
+          <span class="pill">scales to multi-node</span>
+        </div>
+
+        <div class="mockup">
+          <div class="mockup-header">
+            <div class="topnav">
+              <div class="nav-chip active">Fleet</div>
+              <div class="nav-chip">Market</div>
+              <div class="nav-chip">Wallet</div>
+            </div>
+            <div>Home / Command Center</div>
+          </div>
+          <div class="mockup-body">
+            <div class="stats">
+              <div class="stat"><div class="k">Fleet Nodes</div><div class="v">12</div></div>
+              <div class="stat"><div class="k">Published Offers</div><div class="v">31</div></div>
+              <div class="stat"><div class="k">External Endpoints</div><div class="v">9</div></div>
+              <div class="stat"><div class="k">Unplaced Jobs</div><div class="v">4</div></div>
+            </div>
+            <div class="layout-grid layout-split">
+              <div class="panel">
+                <h4>Publish And Onboard</h4>
+                <div class="rows">
+                  <div class="row"><div><strong>Install Custom Model</strong><span>artifact source, checksum, provider template, target node group</span></div><div class="tone-info">Open</div></div>
+                  <div class="row"><div><strong>Draft Offer</strong><span>price in q, queue policy, custom-host flag, endpoint exposure</span></div><div class="tone-warn">2 drafts</div></div>
+                  <div class="row"><div><strong>Registry Publish</strong><span>31 live offers, 3 staged updates pending approval</span></div><div class="tone-good">Live</div></div>
+                </div>
+              </div>
+              <div class="panel">
+                <h4>Market And Consumption</h4>
+                <div class="rows">
+                  <div class="row"><div><strong>Attach External Endpoint</strong><span>whisper-large-v3 - rating 0.96 - queue ready - 7q fixed</span></div><div class="tone-good">Attach</div></div>
+                  <div class="row"><div><strong>Compare Offers</strong><span>sorted by price, rating, endpoint readiness, custom-host support</span></div><div class="tone-info">Browse</div></div>
+                  <div class="row"><div><strong>Lease Pressure</strong><span>4 pending jobs could spill into market if local VRAM stays constrained</span></div><div class="tone-warn">Watch</div></div>
+                </div>
+              </div>
+              <div class="panel">
+                <h4>Fleet Capacity</h4>
+                <div class="rows">
+                  <div class="row"><div><strong>node-west-1</strong><span>24 CPU - 61 GB RAM - 22 GB free VRAM - auto-start enabled</span></div><div class="tone-good">Healthy</div></div>
+                  <div class="row"><div><strong>node-lab-2</strong><span>queue backlog high - 2 jobs waiting - can evict warm runtimes</span></div><div class="tone-warn">Busy</div></div>
+                </div>
+              </div>
+              <div class="panel">
+                <h4>Operator Controls</h4>
+                <div class="control-row">
+                  <div class="control primary">Publish Offer</div>
+                  <div class="control">Connect Remote Node</div>
+                  <div class="control">Attach Market Endpoint</div>
+                  <div class="control">Raise VRAM Limit</div>
+                  <div class="control">Pause Queue</div>
+                  <div class="control">Reprice Bundle</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pros-cons">
+          <div class="callout good">This is the cleanest fit for your target system: operators manage their fleet and the market in the same mental model without collapsing them into one table.</div>
+          <div class="callout warn">Slightly denser than the other two, so information hierarchy must stay disciplined or it can drift into noisy "devops wallpaper".</div>
+        </div>
+      </article>
+    </section>
+
+    <div class="next-step">
+      <strong>Recommendation:</strong> choose <strong>C. Split Command Center</strong> as the primary shell,
+      then give it two strong top-level modes: <strong>Fleet</strong> and <strong>Market</strong>. In that model,
+      the home screen stays hybrid, Fleet owns publish/onboard/resource controls, and Market owns external offers,
+      comparison, attach, and consumption flows.
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AiDN M2 Registry Design</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --ink: #172126;
+      --muted: #59656d;
+      --panel: rgba(255, 252, 247, 0.92);
+      --line: rgba(23, 33, 38, 0.12);
+      --accent: #bf5a36;
+      --accent-soft: #f1c8b3;
+      --good: #2f6b55;
+      --good-soft: #dcefe5;
+      --warn: #8e5c16;
+      --warn-soft: #f7e7c8;
+      --shadow: 0 18px 40px rgba(72, 54, 30, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(191, 90, 54, 0.18), transparent 32%),
+        radial-gradient(circle at top right, rgba(47, 107, 85, 0.16), transparent 28%),
+        linear-gradient(180deg, #f8f3eb 0%, var(--bg) 100%);
+    }
+
+    .page {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 40px 28px 60px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 24px;
+      align-items: stretch;
+      margin-bottom: 26px;
+    }
+
+    .hero-card,
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .hero-card {
+      padding: 28px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      font-size: 12px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 14px;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: 48px;
+      line-height: 1.03;
+      font-weight: 600;
+    }
+
+    .lead {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.6;
+      color: var(--muted);
+      max-width: 60ch;
+    }
+
+    .hero-side {
+      padding: 24px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-size: 14px;
+      width: fit-content;
+      border: 1px solid var(--line);
+      background: #fff9f2;
+    }
+
+    .status-chip strong { color: var(--good); }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+    .mini-card {
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.78);
+      border: 1px solid var(--line);
+    }
+
+    .mini-card .k {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .mini-card .v {
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .section {
+      margin-top: 18px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 0 0 16px;
+      font-size: 26px;
+    }
+
+    .section-title::before {
+      content: "";
+      width: 34px;
+      height: 2px;
+      background: var(--accent);
+    }
+
+    .options {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+    }
+
+    .option {
+      padding: 20px;
+      border-radius: 22px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.82);
+      min-height: 260px;
+      position: relative;
+    }
+
+    .option.recommended {
+      border: 2px solid var(--accent);
+      background: linear-gradient(180deg, rgba(255,245,238,0.96), rgba(255,255,255,0.9));
+      transform: translateY(-4px);
+    }
+
+    .badge {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      background: var(--accent-soft);
+      color: #6d2d15;
+    }
+
+    .option h3 {
+      margin: 0 0 10px;
+      font-size: 26px;
+    }
+
+    .option p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .pill {
+      padding: 7px 11px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 13px;
+      background: #fff;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 18px;
+      line-height: 1.6;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 18px;
+    }
+
+    .panel {
+      padding: 22px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 14px;
+    }
+
+    .flow {
+      display: grid;
+      gap: 12px;
+    }
+
+    .flow-step {
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.82);
+    }
+
+    .flow-step strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 16px;
+    }
+
+    pre {
+      margin: 0;
+      padding: 16px;
+      overflow: auto;
+      border-radius: 18px;
+      background: #161d21;
+      color: #e8f0f2;
+      font-size: 13px;
+      line-height: 1.5;
+      font-family: "Cascadia Code", Consolas, monospace;
+    }
+
+    .callout {
+      padding: 16px 18px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+    }
+
+    .callout.good {
+      background: var(--good-soft);
+      color: #24483a;
+    }
+
+    .callout.warn {
+      background: var(--warn-soft);
+      color: #6f4d15;
+    }
+
+    .footer-note {
+      margin-top: 20px;
+      font-size: 15px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 1080px) {
+      .hero,
+      .options,
+      .split {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <div class="hero-card">
+        <div class="eyebrow">AiDN / M2 / Registry Contract</div>
+        <h1>Как запускать сетевой реестр гипервизоров</h1>
+        <p class="lead">
+          Цель следующего этапа: любой локальный гипервизор публикует ресурсы, модели,
+          провайдеров, флаг кастомного онбординга, цену в <strong>q</strong> и рейтинг,
+          а агент получает один discovery JSON вместо привязки к конкретной ноде.
+        </p>
+      </div>
+      <div class="hero-card hero-side">
+        <div class="status-chip">Статус: <strong>M1 закрыт</strong> → следующий фокус <strong>M2</strong></div>
+        <div class="mini-grid">
+          <div class="mini-card">
+            <div class="k">Registry Mode</div>
+            <div class="v">Centralized First</div>
+          </div>
+          <div class="mini-card">
+            <div class="k">Discovery Output</div>
+            <div class="v">Node + Bundle JSON</div>
+          </div>
+          <div class="mini-card">
+            <div class="k">Pricing</div>
+            <div class="v">q / 1kk tokens</div>
+          </div>
+          <div class="mini-card">
+            <div class="k">Custom Model</div>
+            <div class="v">Explicit Flag</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Три пути для первого релиза</h2>
+      <div class="options">
+        <article class="option">
+          <h3>A. Только каталог нод</h3>
+          <p>Реестр хранит только базовую информацию о ноде без bundle-level деталей.</p>
+          <div class="pill-row">
+            <span class="pill">быстро</span>
+            <span class="pill">мало схем</span>
+            <span class="pill">слабый discovery</span>
+          </div>
+          <ul>
+            <li>Подходит для раннего smoke-stage.</li>
+            <li>Плохо отвечает на вопрос, какой endpoint реально доступен агенту.</li>
+            <li>Придётся быстро переделывать под bundle-level модель.</li>
+          </ul>
+        </article>
+
+        <article class="option recommended">
+          <div class="badge">Рекомендация</div>
+          <h3>B. Node Registry + Bundle Discovery</h3>
+          <p>Реестр принимает heartbeat от ноды и хранит одновременно node-level и bundle-level capabilities.</p>
+          <div class="pill-row">
+            <span class="pill">правильный MVP</span>
+            <span class="pill">достаточно конкретно</span>
+            <span class="pill">без федерации</span>
+          </div>
+          <ul>
+            <li>Агент видит ресурсы, провайдеров, цены, рейтинг и endpoints в одном ответе.</li>
+            <li>Не тащит распределенность раньше времени.</li>
+            <li>Хорошо совместим с будущими wallet/rating слоями.</li>
+          </ul>
+        </article>
+
+        <article class="option">
+          <h3>C. Сразу market-ready registry</h3>
+          <p>С первого дня включаем settlement, рейтинг, dispute-поля и почти финальную сетевую модель.</p>
+          <div class="pill-row">
+            <span class="pill">богатый контракт</span>
+            <span class="pill">высокий риск</span>
+            <span class="pill">медленный старт</span>
+          </div>
+          <ul>
+            <li>Архитектурно красиво, но тяжело двигать итерациями.</li>
+            <li>Смешивает discovery и market concerns слишком рано.</li>
+            <li>Высокий шанс затормозить сетевой запуск.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section split">
+      <div class="panel stack">
+        <h2 class="section-title">Рекомендуемый контракт</h2>
+        <div class="callout good">
+          <strong>Первый shipping-срез:</strong> один registry service, куда гипервизоры регистрируются сами,
+          публикуют heartbeat и bundle inventory, а агент делает фильтрованный discovery-запрос.
+        </div>
+        <div class="flow">
+          <div class="flow-step">
+            <strong>1. Node Registration</strong>
+            `node_id`, operator, base URL, heartbeat TTL, totals по CPU/RAM/VRAM, `can_host_custom_model`.
+          </div>
+          <div class="flow-step">
+            <strong>2. Bundle Publication</strong>
+            Для каждой schedulable bundle: `workload_type`, `provider_type`, `model_id`, endpoint, launch mode, enabled, pricing.
+          </div>
+          <div class="flow-step">
+            <strong>3. Discovery API</strong>
+            Фильтры по `workload_type`, `provider_type`, `model_id`, `can_host_custom_model`, max price, min rating.
+          </div>
+          <div class="flow-step">
+            <strong>4. Freshness Rules</strong>
+            Если heartbeat устарел, нода скрывается или деградирует в discovery.
+          </div>
+        </div>
+      </div>
+
+      <div class="panel stack">
+        <h2 class="section-title">Что публикует нода</h2>
+        <pre>{
+  "node_id": "node-us-east-1a",
+  "operator_id": "glinko",
+  "registry_version": "m2.v1",
+  "base_url": "https://node.example",
+  "heartbeat_at": "2026-06-19T18:30:00Z",
+  "resources": {
+    "total": { "cpu": 24, "ram_mb": 65536, "vram_mb": 49152 },
+    "free":  { "cpu": 12, "ram_mb": 32768, "vram_mb": 24576 }
+  },
+  "can_host_custom_model": true,
+  "rating": { "score": 0.94, "tier": "A" },
+  "pricing": {
+    "unit": "q_per_1kk_tokens",
+    "input": 14,
+    "output": 22
+  }
+}</pre>
+      </div>
+    </section>
+
+    <section class="section split">
+      <div class="panel stack">
+        <h2 class="section-title">Discovery Response для агента</h2>
+        <pre>{
+  "query": {
+    "workload_type": "llm_text",
+    "model_id": "phi-4-mini",
+    "can_host_custom_model": true
+  },
+  "nodes": [
+    {
+      "node_id": "node-us-east-1a",
+      "rating": 0.94,
+      "pricing": { "input": 14, "output": 22, "unit": "q_per_1kk_tokens" },
+      "bundles": [
+        {
+          "bundle_id": "phi4-local",
+          "provider_type": "llama.cpp",
+          "model_id": "phi-4-mini.gguf",
+          "endpoint": "https://node.example/runtimes/phi4-local",
+          "status": "ready"
+        }
+      ]
+    }
+  ]
+}</pre>
+      </div>
+
+      <div class="panel stack">
+        <h2 class="section-title">Почему не брать distributed сейчас</h2>
+        <div class="callout warn">
+          Федерация остаётся целевой архитектурой, но для ближайшего релиза это лишняя сложность:
+          сначала нужно стабилизировать metadata contract, heartbeat semantics и discovery ranking.
+        </div>
+        <ul>
+          <li>Сначала фиксируем один source of truth для `node + bundle` публикации.</li>
+          <li>Затем добавляем pricing/rating как стабильные поля того же контракта.</li>
+          <li>Только после этого имеет смысл подписывать объявления и реплицировать их между registry peers.</li>
+        </ul>
+        <p class="footer-note">
+          Если этот вариант выглядит правильно, следующий шаг — зафиксировать его в spec/plan и реализовать
+          первый технический срез: in-memory registry service + node advertisement endpoint + discovery endpoint.
+        </p>
+      </div>
+    </section>
+  </div>
+</body>
+</html>
