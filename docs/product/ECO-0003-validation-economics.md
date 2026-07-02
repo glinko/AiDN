@@ -16,6 +16,8 @@ This document complements [UX-0001 Hypervisor Operator Journey](./UX-0001-hyperv
 
 `ECO-0003` defines the bond, reward, revalidation, and forfeiture rules behind that trust layer.
 
+Validator anonymity, validation Session guarantees, and shared Escrow Pool semantics are defined separately in [RFC-0035 Validation Escrow Protocol](./RFC-0035-validation-escrow-protocol.md).
+
 ## 1. Design Goals
 
 The Validation Economy SHALL:

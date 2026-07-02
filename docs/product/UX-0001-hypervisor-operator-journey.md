@@ -16,6 +16,8 @@ Commercial consumption and paid execution behavior are defined separately in [UX
 
 Validation economics, maintenance revalidation, and Validator incentives are defined separately in [ECO-0003 Validation Economics](./ECO-0003-validation-economics.md).
 
+Validator-side Session guarantees and anonymity-preserving Validation Escrow are defined separately in [RFC-0035 Validation Escrow Protocol](./RFC-0035-validation-escrow-protocol.md).
+
 ## 1. Core Philosophy
 
 The Hypervisor is the product.
