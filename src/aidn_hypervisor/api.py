@@ -408,6 +408,14 @@ def _operator_dashboard_sessions_payload(
                     else None
                 ),
                 "display_name": endpoint_names.get(session.endpoint_id, session.endpoint_id),
+                "proxy_session": (
+                    (
+                        session_service.try_get_proxy_session_binding(session.session_id)
+                    ).model_dump(mode="json")
+                    if session_service.try_get_proxy_session_binding(session.session_id)
+                    is not None
+                    else None
+                ),
                 "remaining_q": max(
                     0.0, result.deposit.locked_q - result.deposit.consumed_q
                 ),
@@ -544,6 +552,17 @@ def build_api_router(
 ) -> APIRouter:
     router = APIRouter()
 
+    def _task_proxy_session_payload(task_request: TaskRequest) -> dict | None:
+        if session_service is None:
+            return None
+        session_id = task_request.constraints.get("session_id")
+        if session_id is None:
+            return None
+        binding = session_service.try_get_proxy_session_binding(str(session_id))
+        if binding is None:
+            return None
+        return binding.model_dump(mode="json")
+
     @router.post("/tasks", status_code=status.HTTP_202_ACCEPTED)
     async def submit_task(request: TaskRequest) -> dict:
         try:
@@ -575,6 +594,11 @@ def build_api_router(
             result=service.task_result(task.task_id),
             recovery_reason=service.task_recovery_reason(task.task_id),
             proxy_trace=proxy_trace if proxy_trace is not None else ...,
+            proxy_session=(
+                _task_proxy_session_payload(task.request)
+                if _task_proxy_session_payload(task.request) is not None
+                else ...
+            ),
             history=[
                 event.model_dump(mode="json")
                 for event in service.task_history(task.task_id)
@@ -875,7 +899,7 @@ def build_api_router(
                 "Session service is not configured",
             )
         try:
-            result = session_service.close_session(request.session_id)
+            result = service.close_endpoint_session(request.session_id)
         except KeyError:
             return _error(
                 404,
@@ -915,6 +939,8 @@ def build_api_router(
                     "Expected ISO-8601 timestamp for now",
                 )
         results = session_service.sweep_idle_sessions(now=current_time)
+        for result in results:
+            service.propagate_proxy_session_close(result.session.session_id)
         return _ok(
             {
                 "closed_count": len(results),
@@ -987,7 +1013,7 @@ def build_api_router(
                 "Session service is not configured",
             )
         try:
-            result = session_service.close_session(session_id)
+            result = service.close_endpoint_session(session_id)
         except KeyError:
             return _error(
                 404,
@@ -1229,6 +1255,10 @@ def build_api_router(
     async def wallet_session_events(limit: int = 100) -> list[dict]:
         return service.list_wallet_session_events(limit=limit)
 
+    @router.get("/operators/wallet/ledger")
+    async def wallet_ledger_events(limit: int = 100) -> list[dict]:
+        return service.list_wallet_ledger_events(limit=limit)
+
     @router.get("/operators/wallet/endpoints/publications")
     async def wallet_endpoint_publications(endpoint_id: str | None = None) -> dict:
         if endpoint_publication_service is None:
@@ -1278,6 +1308,18 @@ def build_api_router(
         limit: int = 100,
     ) -> dict:
         return service.export_wallet_session_events(
+            after_event_id=after_event_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
+    @router.get("/operators/wallet/ledger/export")
+    async def export_wallet_ledger_events(
+        after_event_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return service.export_wallet_ledger_events(
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -1501,6 +1543,7 @@ def _serialize_task(
     result=...,
     recovery_reason=...,
     proxy_trace=...,
+    proxy_session=...,
     history=...,
 ) -> dict:
     payload = {
@@ -1516,6 +1559,8 @@ def _serialize_task(
         payload["recovery_reason"] = recovery_reason
     if proxy_trace is not ...:
         payload["proxy_trace"] = proxy_trace
+    if proxy_session is not ...:
+        payload["proxy_session"] = proxy_session
     if history is not ...:
         payload["history"] = history
     return payload

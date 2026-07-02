@@ -69,3 +69,30 @@ def test_attach_remote_endpoint_refreshes_existing_entry_without_duplication() -
     assert listed[0].source_configuration_hash == "cfg-remote-2"
     assert listed[0].source_base_url == "https://remote-v2.example"
     assert listed[0].alias == "Refreshed Remote"
+
+
+def test_attach_remote_endpoint_persists_session_policy_snapshot() -> None:
+    service = RemoteEndpointService(RemoteEndpointStore())
+
+    attached = service.attach_remote_endpoint(
+        source_node_id="node-remote",
+        source_endpoint_id="ep-remote",
+        source_owner_wallet="wallet-remote",
+        source_publication_id="pub-remote",
+        source_configuration_hash="cfg-remote",
+        source_visibility="public",
+        source_model_class="llm_text",
+        source_status="published",
+        source_base_url="https://remote.example",
+        operator_id="operator-remote",
+        pricing={"unit": "q_per_1kk_tokens", "input": 8, "output": 12},
+        rating={"score": 0.96, "tier": "A", "updated_at": "2026-06-30T00:00:00+00:00"},
+        session_policy={
+            "minimum_deposit": 10.0,
+            "recommended_deposit": 25.0,
+            "max_concurrent_sessions": 1,
+        },
+    )
+
+    assert attached.session_policy["minimum_deposit"] == 10.0
+    assert service.list_remote_endpoints()[0].session_policy["recommended_deposit"] == 25.0

@@ -4,6 +4,7 @@ from uuid import uuid4
 from aidn_hypervisor.sessions.models import (
     EndpointSession,
     LockedDeposit,
+    ProxySessionBinding,
     SessionResult,
     SessionSettlementSummary,
 )
@@ -36,6 +37,20 @@ class SessionService:
         session = self.store.get_session(session_id)
         deposit = self.store.get_deposit_for_session(session_id)
         return SessionResult(session=session, deposit=deposit)
+
+    def get_proxy_session_binding(self, local_session_id: str) -> ProxySessionBinding:
+        return self.store.get_proxy_session_binding(local_session_id)
+
+    def try_get_proxy_session_binding(
+        self, local_session_id: str
+    ) -> ProxySessionBinding | None:
+        return self.store.try_get_proxy_session_binding(local_session_id)
+
+    def save_proxy_session_binding(
+        self, binding: ProxySessionBinding
+    ) -> ProxySessionBinding:
+        self.store.save_proxy_session_binding(binding)
+        return binding
 
     def require_active_session(
         self,

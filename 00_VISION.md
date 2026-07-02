@@ -8,6 +8,8 @@ Primary operator experience reference: see [docs/product/UX-0001-hypervisor-oper
 
 Primary paid-consumption reference: see [docs/product/UX-0002-endpoint-session-and-payment-flow.md](./docs/product/UX-0002-endpoint-session-and-payment-flow.md)
 
+Primary validation-economics reference: see [docs/product/ECO-0003-validation-economics.md](./docs/product/ECO-0003-validation-economics.md)
+
 ## Goal
 
 Build a decentralized network of trusted AI compute where:
@@ -65,7 +67,7 @@ The target is a distributed network, but delivery is phased:
 1. local hypervisor first
 2. centralized registry and discovery second
 3. wallet and pricing interfaces next
-4. rating and reputation publication after that
+4. rating, reputation, and validation economics after that
 5. federated or distributed registry later
 
 Within those milestones, product sequencing should follow the operator journey in `UX-0001`:

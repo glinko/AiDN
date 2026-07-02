@@ -15,6 +15,8 @@ The roadmap must also stay aligned with the product-level operator journey defin
 
 Paid endpoint consumption and client-facing execution economics must also stay aligned with [docs/product/UX-0002-endpoint-session-and-payment-flow.md](./docs/product/UX-0002-endpoint-session-and-payment-flow.md).
 
+Validation-status issuance, maintenance revalidation, and Validator incentives must also stay aligned with [docs/product/ECO-0003-validation-economics.md](./docs/product/ECO-0003-validation-economics.md).
+
 Milestones still describe technical delivery order, but feature sequencing and UI priorities should preserve that operator journey whenever reasonably possible.
 
 ## North Star
@@ -33,12 +35,13 @@ The distributed registry is a target architecture, not the first milestone.
 
 ## Current Stage
 
-Status: `M2 complete, M3 complete, M4 in progress`
+Status: `M2 complete, M3 complete, M4 complete, M5 planned`
 
 Product alignment summary:
 - the repo now has a strong local hypervisor and operator-dashboard foundation;
 - the next product-critical gap is the operator bootstrap loop from install -> wallet -> provider -> model -> first endpoint;
 - endpoint publication is now a first trust layer, and paid consumption now has a working first Session contract;
+- validation economics and maintenance-validation policy are now defined at the product level, but the protocol and registry trust layer are still incomplete;
 - validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
 
 We already have a working local hypervisor foundation:
@@ -81,16 +84,17 @@ We already have a working local hypervisor foundation:
 - settlement export now exposes monotonic `sequence_id` cursors, retention window metadata, and stale-cursor detection.
 - paid endpoint sessions now support explicit create/close lifecycle, deposit lock/release, queue-vs-busy admission, no-request minimum fee, idle timeout auto-close, and usage-linked refund settlement;
 - the operator dashboard now includes a dedicated `Sessions` workspace with reservation composer, session control actions, session-bound task launch, activity timeline, and settlement preview telemetry;
+- wallet exports now include a unified replay-safe ledger stream that stitches session settlement events together with usage and allocation-family wallet events;
+- proxy-backed paid Sessions now preserve upstream session policy snapshots, lazily broker remote Session opens, propagate remote Session close on manual and idle-driven release, and expose proxy-session bindings through task and operator-session APIs;
 
 What is still missing in the current stage:
 - decision on whether adapter-declared `usage_contract` becomes an enforced runtime gate, plus a first non-token pricing unit for `whisper`-class workloads;
-- rating publication and reputation policy;
+- rating publication, reputation policy, and validation economics implementation;
 - network-visible custom model onboarding workflow.
 - first-class wallet ownership onboarding and node identity flow in the operator experience;
 - full endpoint-first persistence and API beyond the current bootstrap/dashboard slice, so privacy, sharing, publication, and validation remain distinct all the way through the service contract;
 - complete dashboard migration of `Home` bootstrap and remaining bundle-centric endpoint affordances onto the new endpoint service and `/api/v1/endpoints` contract;
 - remote endpoint and proxy endpoint workflows framed as operator routing tools, not only discovery data.
-- session settlement export stitched into the wallet ledger as a replay-safe stream, so session economics and future on-chain settlement can share one source of truth.
 - full client-facing payment confirmation and paid-session workflow polish across bootstrap, remote/proxy, and future marketplace paths.
 
 ## Milestones
@@ -173,7 +177,7 @@ Exit criteria:
 
 Goal: make endpoint consumption explicit, reserved, and economically safe through session-based execution.
 
-Status: `In Progress`
+Status: `Complete`
 
 Checkpoints:
 - [x] Session create/close contract
@@ -191,8 +195,8 @@ Checkpoints:
 - [x] Idle timeout auto-close and idle-fee settlement
 - [x] Operator and client-facing confirmation UX for opening paid Sessions
 - [x] Operator-facing Sessions workspace with reservation, task launch, and telemetry
-- [ ] Session settlement export stitched into the wallet ledger
-- [ ] Remote/proxy-aware paid session propagation
+- [x] Session settlement export stitched into the wallet ledger
+- [x] Remote/proxy-aware paid session propagation
 
 Exit criteria:
 - clients must create a Session before using a paid Endpoint;
@@ -201,9 +205,9 @@ Exit criteria:
 - idle reservation behavior is operator-controlled and visible before the client commits funds;
 - session economics can be exported through the same replay-safe ledger model used by the wallet layer.
 
-### M5: Rating And Reputation
+### M5: Rating, Reputation, And Validation Trust
 
-Goal: publish trust and quality signals for node selection.
+Goal: publish trust, validation, and quality signals for node selection.
 
 Status: `Planned`
 
@@ -217,9 +221,12 @@ Checkpoints:
   - dispute or penalty history
 - [ ] Registry publication of rating data
 - [ ] Selection policy that can combine price and rating
+- [ ] Validation Bond, Validator Reward, and Maintenance Validation contract
+- [ ] Validator qualification and deterministic selection policy
 
 Exit criteria:
-- nodes are ranked by structured signals instead of static preference only;
+- nodes and validated Endpoints are ranked by structured signals instead of static preference only;
+- validated status can be issued, maintained, or revoked through explicit economic rules rather than one-time manual claims;
 - discovery clients can filter or sort by trust and price together.
 
 ### M6: Custom Model Onboarding
@@ -266,7 +273,7 @@ Order of work right now:
 4. Stitch `M4` session settlement events into the wallet/export layer, so paid endpoint economics and future on-chain settlement share one replay-safe ledger
 5. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
 6. Finish the remaining `M3/M4` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
-7. Define `M5` rating and `M6` custom model onboarding contracts around the endpoint-centric operator experience
+7. Define `M5` rating, validation economics, and `M6` custom model onboarding contracts around the endpoint-centric operator experience
 
 ## Source Documents
 
@@ -274,6 +281,7 @@ Order of work right now:
 - Terms: [01_TERMS.md](./01_TERMS.md)
 - Operator journey: [docs/product/UX-0001-hypervisor-operator-journey.md](./docs/product/UX-0001-hypervisor-operator-journey.md)
 - Session and payment journey: [docs/product/UX-0002-endpoint-session-and-payment-flow.md](./docs/product/UX-0002-endpoint-session-and-payment-flow.md)
+- Validation economics: [docs/product/ECO-0003-validation-economics.md](./docs/product/ECO-0003-validation-economics.md)
 - Current hypervisor execution plan: [docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md](./docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md)
 - Network architecture spec: [docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md](./docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md)
 - M2 registry contract: [docs/superpowers/specs/2026-06-19-m2-centralized-registry-and-discovery-design.md](./docs/superpowers/specs/2026-06-19-m2-centralized-registry-and-discovery-design.md)

@@ -14,6 +14,8 @@ All implementation decisions should preserve this user journey whenever reasonab
 
 Commercial consumption and paid execution behavior are defined separately in [UX-0002 Endpoint Session and Payment Flow](./UX-0002-endpoint-session-and-payment-flow.md).
 
+Validation economics, maintenance revalidation, and Validator incentives are defined separately in [ECO-0003 Validation Economics](./ECO-0003-validation-economics.md).
+
 ## 1. Core Philosophy
 
 The Hypervisor is the product.
@@ -202,11 +204,11 @@ An operator may permanently operate unvalidated Endpoints.
 
 Validation is intended for operators wishing to provide publicly trusted services.
 
-## 12. Validation Stake
+## 12. Validation Bond
 
-Requesting validation locks a configurable stake.
+Requesting validation locks a configurable Validation Bond.
 
-Stake requirements may depend on Endpoint characteristics.
+Bond requirements may depend on Endpoint characteristics.
 
 Examples include:
 
@@ -214,7 +216,7 @@ Examples include:
 - Capability;
 - required resources.
 
-Stake remains locked while the validated Endpoint continues operating without execution-relevant modifications.
+The Bond remains locked while the validated Endpoint continues operating without execution-relevant modifications.
 
 Changing the Endpoint configuration creates a new Configuration Snapshot and requires a new validation request.
 

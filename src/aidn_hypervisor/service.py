@@ -18,6 +18,7 @@ from aidn_hypervisor.registry_models import (
     RegistryRating,
 )
 from aidn_hypervisor.scheduler import Scheduler
+from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.state import (
     AllocationSnapshot,
     BundleStateSnapshot,
@@ -30,6 +31,7 @@ from aidn_hypervisor.state import (
     WalletAllocationActivationSnapshot,
     WalletAllocationDisputeSnapshot,
     WalletAllocationSnapshot,
+    WalletLedgerSnapshot,
     WalletSessionSnapshot,
     WalletUsageSnapshot,
 )
@@ -38,6 +40,7 @@ from aidn_hypervisor.wallet_models import (
     WalletAllocationActivationEvent,
     WalletAllocationDisputeEvent,
     WalletAllocationEvent,
+    WalletLedgerEvent,
     WalletSessionEvent,
     WalletUsageEvent,
     WalletUsageMeasurement,
@@ -172,6 +175,8 @@ class HypervisorService:
         self._next_wallet_usage_sequence = 1
         self._wallet_session_events: list[dict] = []
         self._next_wallet_session_sequence = 1
+        self._wallet_ledger_events: list[dict] = []
+        self._next_wallet_ledger_sequence = 1
         self._wallet_allocation_activation_events: list[dict] = []
         self._next_wallet_allocation_activation_sequence = 1
         self._wallet_allocation_dispute_events: list[dict] = []
@@ -289,6 +294,12 @@ class HypervisorService:
             return events
         return events[-limit:]
 
+    def list_wallet_ledger_events(self, *, limit: int | None = None) -> list[dict]:
+        events = list(self._wallet_ledger_events)
+        if limit is None or limit >= len(events):
+            return events
+        return events[-limit:]
+
     def list_wallet_allocation_events(self, *, limit: int | None = None) -> list[dict]:
         self._reconcile_wallet_allocation_events()
         events = list(self._wallet_allocation_events)
@@ -340,6 +351,20 @@ class HypervisorService:
             limit=limit,
         )
 
+    def export_wallet_ledger_events(
+        self,
+        *,
+        after_event_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return self._export_wallet_event_stream(
+            self._wallet_ledger_events,
+            after_event_id=after_event_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
     def export_wallet_allocation_events(
         self,
         *,
@@ -382,6 +407,49 @@ class HypervisorService:
             after_sequence=after_sequence,
             limit=limit,
         )
+
+    def _append_wallet_ledger_event(
+        self,
+        *,
+        stream: str,
+        source_event: dict,
+        event_type: str,
+        owner_id: str,
+        task_id: str | None = None,
+        allocation_id: str | None = None,
+        session_id: str | None = None,
+        endpoint_id: str | None = None,
+        bundle_id: str | None = None,
+        workload_type: str | None = None,
+        status: str | None = None,
+        settlement_status: str | None = None,
+        amount_q: float = 0.0,
+    ) -> dict:
+        ledger_event = WalletLedgerEvent(
+            sequence_id=self._next_wallet_ledger_sequence,
+            event_id=str(uuid4()),
+            stream=stream,
+            stream_event_id=str(source_event["event_id"]),
+            stream_sequence_id=int(source_event["sequence_id"]),
+            event_type=event_type,
+            occurred_at=str(source_event["occurred_at"]),
+            owner_id=owner_id,
+            node_id=self.node_id,
+            operator_id=self.operator_id,
+            task_id=task_id,
+            allocation_id=allocation_id,
+            session_id=session_id,
+            endpoint_id=endpoint_id,
+            bundle_id=bundle_id,
+            workload_type=workload_type,
+            status=status,
+            settlement_status=settlement_status,
+            amount_q=float(amount_q),
+            payload=dict(source_event),
+        ).model_dump(mode="json")
+        self._wallet_ledger_events.append(ledger_event)
+        self._next_wallet_ledger_sequence += 1
+        return ledger_event
 
     def reopen_wallet_allocation_event(
         self, event_id: str, *, reason: str | None = None
@@ -461,25 +529,34 @@ class HypervisorService:
         event["dispute_resolved_at"] = None
         event["dispute_resolution"] = None
         event["dispute_resolution_reason"] = None
-        self._wallet_allocation_dispute_events.append(
-            WalletAllocationDisputeEvent(
-                sequence_id=self._next_wallet_allocation_dispute_sequence,
-                event_id=str(uuid4()),
-                dispute_id=dispute_id,
-                allocation_event_id=event["event_id"],
-                allocation_id=event["allocation_id"],
-                owner_id=event["owner_id"],
-                node_id=self.node_id,
-                operator_id=self.operator_id,
-                bundle_id=event["bundle_id"],
-                workload_type=event["workload_type"],
-                event_type="opened",
-                occurred_at=timestamp,
-                reason=reason,
-                opened_by=self.operator_id,
-            ).model_dump(mode="json")
-        )
+        dispute_payload = WalletAllocationDisputeEvent(
+            sequence_id=self._next_wallet_allocation_dispute_sequence,
+            event_id=str(uuid4()),
+            dispute_id=dispute_id,
+            allocation_event_id=event["event_id"],
+            allocation_id=event["allocation_id"],
+            owner_id=event["owner_id"],
+            node_id=self.node_id,
+            operator_id=self.operator_id,
+            bundle_id=event["bundle_id"],
+            workload_type=event["workload_type"],
+            event_type="opened",
+            occurred_at=timestamp,
+            reason=reason,
+            opened_by=self.operator_id,
+        ).model_dump(mode="json")
+        self._wallet_allocation_dispute_events.append(dispute_payload)
         self._next_wallet_allocation_dispute_sequence += 1
+        self._append_wallet_ledger_event(
+            stream="allocation_dispute",
+            source_event=dispute_payload,
+            event_type="opened",
+            owner_id=str(dispute_payload["owner_id"]),
+            allocation_id=str(dispute_payload["allocation_id"]),
+            bundle_id=str(dispute_payload["bundle_id"]),
+            workload_type=str(dispute_payload["workload_type"]),
+            amount_q=0.0,
+        )
         self.record_event(
             event_type="wallet.allocation_disputed",
             message="wallet allocation settlement disputed",
@@ -547,25 +624,34 @@ class HypervisorService:
             event["closed_at"] = timestamp
         else:
             raise ValueError(f"Unsupported dispute resolution: {resolution}")
-        self._wallet_allocation_dispute_events.append(
-            WalletAllocationDisputeEvent(
-                sequence_id=self._next_wallet_allocation_dispute_sequence,
-                event_id=str(uuid4()),
-                dispute_id=str(event["dispute_id"]),
-                allocation_event_id=event["event_id"],
-                allocation_id=event["allocation_id"],
-                owner_id=event["owner_id"],
-                node_id=self.node_id,
-                operator_id=self.operator_id,
-                bundle_id=event["bundle_id"],
-                workload_type=event["workload_type"],
-                event_type="resolved",
-                occurred_at=timestamp,
-                resolution=resolution,
-                resolution_reason=normalized_reason or None,
-            ).model_dump(mode="json")
-        )
+        dispute_payload = WalletAllocationDisputeEvent(
+            sequence_id=self._next_wallet_allocation_dispute_sequence,
+            event_id=str(uuid4()),
+            dispute_id=str(event["dispute_id"]),
+            allocation_event_id=event["event_id"],
+            allocation_id=event["allocation_id"],
+            owner_id=event["owner_id"],
+            node_id=self.node_id,
+            operator_id=self.operator_id,
+            bundle_id=event["bundle_id"],
+            workload_type=event["workload_type"],
+            event_type="resolved",
+            occurred_at=timestamp,
+            resolution=resolution,
+            resolution_reason=normalized_reason or None,
+        ).model_dump(mode="json")
+        self._wallet_allocation_dispute_events.append(dispute_payload)
         self._next_wallet_allocation_dispute_sequence += 1
+        self._append_wallet_ledger_event(
+            stream="allocation_dispute",
+            source_event=dispute_payload,
+            event_type="resolved",
+            owner_id=str(dispute_payload["owner_id"]),
+            allocation_id=str(dispute_payload["allocation_id"]),
+            bundle_id=str(dispute_payload["bundle_id"]),
+            workload_type=str(dispute_payload["workload_type"]),
+            amount_q=0.0,
+        )
         self.record_event(
             event_type="wallet.allocation_dispute_resolved",
             message="wallet allocation dispute resolved",
@@ -690,6 +776,17 @@ class HypervisorService:
         payload = event.model_dump(mode="json")
         self._wallet_usage_events.append(payload)
         self._next_wallet_usage_sequence += 1
+        self._append_wallet_ledger_event(
+            stream="usage",
+            source_event=payload,
+            event_type="usage_recorded",
+            owner_id=owner_id,
+            task_id=task_id,
+            allocation_id=allocation_id,
+            bundle_id=bundle_id,
+            workload_type=workload_type,
+            amount_q=float(payload["quote"]["charges"]["total_q"]),
+        )
         self._prune_wallet_usage_events()
         self.record_event(
             event_type="wallet.usage_recorded",
@@ -763,6 +860,18 @@ class HypervisorService:
         payload = event.model_dump(mode="json")
         self._wallet_allocation_events.append(payload)
         self._next_wallet_allocation_sequence += 1
+        self._append_wallet_ledger_event(
+            stream="allocation",
+            source_event=payload,
+            event_type=str(payload["status"]),
+            owner_id=str(payload["owner_id"]),
+            allocation_id=str(payload["allocation_id"]),
+            bundle_id=str(payload["bundle_id"]),
+            workload_type=str(payload["workload_type"]),
+            status=str(payload["status"]),
+            settlement_status=str(payload["settlement_status"]),
+            amount_q=float(payload["usage_total_q"]),
+        )
         self.record_event(
             event_type="wallet.allocation_finalized",
             message="wallet allocation finalization recorded",
@@ -803,6 +912,16 @@ class HypervisorService:
         payload = event.model_dump(mode="json")
         self._wallet_allocation_activation_events.append(payload)
         self._next_wallet_allocation_activation_sequence += 1
+        self._append_wallet_ledger_event(
+            stream="allocation_activation",
+            source_event=payload,
+            event_type="activated",
+            owner_id=str(payload["owner_id"]),
+            allocation_id=str(payload["allocation_id"]),
+            bundle_id=str(payload["bundle_id"]),
+            workload_type=str(payload["workload_type"]),
+            amount_q=0.0,
+        )
         self.record_event(
             event_type="wallet.allocation_activated",
             message="wallet allocation activation recorded",
@@ -1606,6 +1725,27 @@ class HypervisorService:
         ).model_dump(mode="json")
         self._wallet_session_events.append(session_event)
         self._next_wallet_session_sequence += 1
+        session_amount_q = (
+            float(session_event["locked_q"])
+            if normalized_type == "deposit_locked"
+            else float(session_event["charged_q"])
+        )
+        self._append_wallet_ledger_event(
+            stream="session",
+            source_event=session_event,
+            event_type=normalized_type,
+            owner_id=str(session_event["owner_id"]),
+            task_id=(
+                str(session_event["task_id"])
+                if session_event.get("task_id") is not None
+                else None
+            ),
+            session_id=str(session_event["session_id"]),
+            endpoint_id=str(session_event["endpoint_id"]),
+            status=str(session_event["status"]),
+            settlement_status=str(session_event["settlement_status"]),
+            amount_q=session_amount_q,
+        )
         return True
 
     def snapshot_state(self) -> HypervisorStateSnapshot:
@@ -1674,6 +1814,10 @@ class HypervisorService:
                 WalletSessionSnapshot(**event)
                 for event in self._wallet_session_events
             ],
+            wallet_ledger_events=[
+                WalletLedgerSnapshot(**event)
+                for event in self._wallet_ledger_events
+            ],
             wallet_allocation_activation_events=[
                 WalletAllocationActivationSnapshot(**event)
                 for event in self._wallet_allocation_activation_events
@@ -1703,6 +1847,7 @@ class HypervisorService:
         )
         self._wallet_usage_events = []
         self._wallet_session_events = []
+        self._wallet_ledger_events = []
         self._wallet_allocation_activation_events = []
         self._wallet_allocation_dispute_events = []
         self._wallet_allocation_events = []
@@ -1740,6 +1885,16 @@ class HypervisorService:
         self._next_wallet_session_sequence = (
             max(
                 (event["sequence_id"] for event in self._wallet_session_events),
+                default=0,
+            )
+            + 1
+        )
+        self._wallet_ledger_events = [
+            event.model_dump(mode="json") for event in snapshot.wallet_ledger_events
+        ]
+        self._next_wallet_ledger_sequence = (
+            max(
+                (event["sequence_id"] for event in self._wallet_ledger_events),
                 default=0,
             )
             + 1
@@ -3490,6 +3645,147 @@ class HypervisorService:
             return None
         return endpoint_service.get_endpoint(str(endpoint_id)).endpoint
 
+    def close_endpoint_session(self, session_id: str):
+        session_service = getattr(self, "session_service", None)
+        if session_service is None:
+            raise RuntimeError("Session service is not configured")
+        result = session_service.close_session(session_id)
+        self.propagate_proxy_session_close(session_id)
+        return result
+
+    def propagate_proxy_session_close(self, session_id: str) -> None:
+        session_service = getattr(self, "session_service", None)
+        if session_service is None:
+            raise RuntimeError("Session service is not configured")
+        binding = session_service.try_get_proxy_session_binding(session_id)
+        if binding is None or not binding.remote_session_id:
+            return
+        self._close_remote_proxy_session_binding(session_service, binding)
+
+    def _close_remote_proxy_session_binding(
+        self,
+        session_service,
+        binding: ProxySessionBinding,
+    ) -> None:
+        if binding.status == "closed" and binding.close_status == "closed":
+            return
+        try:
+            self._remote_request_json(
+                "POST",
+                f"{binding.source_base_url.rstrip('/')}/api/v1/sessions/{binding.remote_session_id}/close",
+            )
+            session_service.save_proxy_session_binding(
+                binding.model_copy(
+                    update={
+                        "status": "closed",
+                        "close_status": "closed",
+                        "last_error": None,
+                    }
+                )
+            )
+        except Exception as error:
+            session_service.save_proxy_session_binding(
+                binding.model_copy(
+                    update={
+                        "status": "close_pending",
+                        "close_status": "pending_reconcile",
+                        "last_error": str(error),
+                    }
+                )
+            )
+
+    def _proxy_target_requires_remote_session(self, endpoint_manifest) -> bool:
+        proxy_target = endpoint_manifest.proxy_target
+        if proxy_target is None:
+            return False
+        remote_endpoint_service = getattr(self, "remote_endpoint_service", None)
+        if remote_endpoint_service is None:
+            return False
+        try:
+            remote_endpoint = remote_endpoint_service.get_remote_endpoint(
+                proxy_target.remote_endpoint_id
+            )
+        except KeyError:
+            return False
+        session_policy = remote_endpoint.session_policy or {}
+        return any(
+            (
+                float(session_policy.get("minimum_deposit", 0.0) or 0.0) > 0.0,
+                float(session_policy.get("minimum_session_fee", 0.0) or 0.0) > 0.0,
+                float(session_policy.get("idle_fee_per_minute", 0.0) or 0.0) > 0.0,
+            )
+        )
+
+    def _ensure_proxy_session_binding(self, endpoint_manifest, task_request: TaskRequest):
+        session_id = task_request.constraints.get("session_id")
+        if session_id is None:
+            raise RuntimeError("Local session is required for proxy session brokering")
+        session_service = getattr(self, "session_service", None)
+        if session_service is None:
+            raise RuntimeError("Session service is not configured")
+        existing = session_service.try_get_proxy_session_binding(str(session_id))
+        if existing is not None and existing.status == "active" and existing.remote_session_id:
+            return existing
+        session_result = session_service.get_session(str(session_id))
+        proxy_target = endpoint_manifest.proxy_target
+        if proxy_target is None:
+            raise RuntimeError(f"Proxy endpoint has no target: {endpoint_manifest.endpoint_id}")
+        remote_endpoint = self.remote_endpoint_service.get_remote_endpoint(
+            proxy_target.remote_endpoint_id
+        )
+        remote_policy = remote_endpoint.session_policy or {}
+        deposit_q = float(
+            remote_policy.get("recommended_deposit")
+            or remote_policy.get("minimum_deposit")
+            or session_result.deposit.locked_q
+        )
+        open_url = (
+            f"{proxy_target.source_base_url.rstrip('/')}/api/v1/endpoints/"
+            f"{proxy_target.source_endpoint_id}/sessions"
+        )
+        try:
+            opened = self._remote_request_json(
+                "POST",
+                open_url,
+                {
+                    "client_wallet": session_result.session.client_wallet,
+                    "deposit_q": deposit_q,
+                },
+            )
+        except Exception as error:
+            degraded = session_service.save_proxy_session_binding(
+                ProxySessionBinding(
+                    local_session_id=str(session_id),
+                    remote_endpoint_id=proxy_target.source_endpoint_id,
+                    remote_session_id="",
+                    remote_node_id=proxy_target.source_node_id,
+                    source_base_url=proxy_target.source_base_url,
+                    status="degraded",
+                    opened_at=datetime.now(timezone.utc).isoformat(),
+                    last_error=str(error),
+                    close_status="not_requested",
+                )
+            )
+            raise RuntimeError(str(error)) from error
+        remote_session = dict(opened.get("session") or {})
+        binding = session_service.save_proxy_session_binding(
+            ProxySessionBinding(
+                local_session_id=str(session_id),
+                remote_endpoint_id=proxy_target.source_endpoint_id,
+                remote_session_id=str(remote_session["session_id"]),
+                remote_node_id=proxy_target.source_node_id,
+                source_base_url=proxy_target.source_base_url,
+                status="active",
+                opened_at=str(
+                    remote_session.get("opened_at")
+                    or datetime.now(timezone.utc).isoformat()
+                ),
+                last_error=None,
+                close_status="not_requested",
+            )
+        )
+        return binding
+
     def _attempt_proxy_task(self, task_id: str, task: QueuedTask, bundle: BundleConfig, endpoint_manifest) -> bool:
         self.queue.transition_status(task_id, "admitted")
         self.record_event(
@@ -3541,8 +3837,11 @@ class HypervisorService:
         remote_constraints = {
             key: value
             for key, value in task_request.constraints.items()
-            if key not in {"endpoint_id", "allocation_id"}
+            if key not in {"endpoint_id", "allocation_id", "session_id"}
         }
+        if self._proxy_target_requires_remote_session(endpoint_manifest):
+            binding = self._ensure_proxy_session_binding(endpoint_manifest, task_request)
+            remote_constraints["session_id"] = binding.remote_session_id
         remote_constraints["endpoint_id"] = proxy_target.source_endpoint_id
         remote_request = task_request.model_copy(
             update={

@@ -35,6 +35,7 @@ class RemoteEndpointService:
         operator_id: str,
         pricing: dict[str, str | int | float | None],
         rating: dict[str, str | int | float | None],
+        session_policy: dict | None = None,
         alias: str | None = None,
         routing_mode: RemoteEndpointRoutingMode = "preferred",
     ) -> RemoteEndpointReference:
@@ -68,6 +69,7 @@ class RemoteEndpointService:
                 last_seen_at=now,
                 pricing=dict(pricing),
                 rating=dict(rating),
+                session_policy=dict(session_policy or {}),
             )
             self.store.replace_records([*records, attached])
             return attached
@@ -87,6 +89,7 @@ class RemoteEndpointService:
                 "last_seen_at": now,
                 "pricing": dict(pricing),
                 "rating": dict(rating),
+                "session_policy": dict(session_policy or existing.session_policy),
             }
         )
         self.store.replace_records(

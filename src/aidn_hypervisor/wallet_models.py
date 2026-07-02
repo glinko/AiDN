@@ -160,3 +160,32 @@ class WalletSessionEvent(BaseModel):
     idle_fee_charged_q: float = Field(ge=0.0)
     minimum_session_fee_q: float = Field(ge=0.0)
     close_reason: str | None = None
+
+
+class WalletLedgerEvent(BaseModel):
+    sequence_id: int = Field(ge=1)
+    event_id: str
+    stream: Literal[
+        "usage",
+        "session",
+        "allocation",
+        "allocation_activation",
+        "allocation_dispute",
+    ]
+    stream_event_id: str
+    stream_sequence_id: int = Field(ge=1)
+    event_type: str = Field(min_length=1)
+    occurred_at: str
+    owner_id: str
+    node_id: str
+    operator_id: str
+    task_id: str | None = None
+    allocation_id: str | None = None
+    session_id: str | None = None
+    endpoint_id: str | None = None
+    bundle_id: str | None = None
+    workload_type: str | None = None
+    status: str | None = None
+    settlement_status: str | None = None
+    amount_q: float = Field(default=0.0, ge=0.0)
+    payload: dict = Field(default_factory=dict)

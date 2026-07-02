@@ -5,6 +5,14 @@ from pydantic import BaseModel, Field, model_validator
 
 SessionStatus = Literal["queued", "active", "closed"]
 DepositStatus = Literal["locked", "released"]
+ProxySessionBindingStatus = Literal[
+    "pending_open",
+    "active",
+    "degraded",
+    "close_pending",
+    "closed",
+]
+ProxySessionCloseStatus = Literal["not_requested", "closed", "pending_reconcile"]
 
 
 class EndpointSession(BaseModel):
@@ -55,6 +63,18 @@ class SessionSettlementSummary(BaseModel):
     refunded_q: float = Field(default=0.0, ge=0.0)
     payout_q: float = Field(default=0.0, ge=0.0)
     no_request: bool = False
+
+
+class ProxySessionBinding(BaseModel):
+    local_session_id: str
+    remote_endpoint_id: str
+    remote_session_id: str
+    remote_node_id: str
+    source_base_url: str
+    status: ProxySessionBindingStatus
+    opened_at: str
+    last_error: str | None = None
+    close_status: ProxySessionCloseStatus = "not_requested"
 
 
 class SessionResult(BaseModel):

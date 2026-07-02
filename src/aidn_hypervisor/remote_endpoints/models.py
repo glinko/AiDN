@@ -24,3 +24,4 @@ class RemoteEndpointReference(BaseModel):
     last_seen_at: str
     pricing: dict[str, str | int | float | None] = Field(default_factory=dict)
     rating: dict[str, str | int | float | None] = Field(default_factory=dict)
+    session_policy: dict = Field(default_factory=dict)

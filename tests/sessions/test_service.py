@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 
@@ -225,3 +226,21 @@ def test_sweep_idle_sessions_keeps_no_request_minimum_fee_rule() -> None:
     assert swept[0].settlement.minimum_session_fee_q == 2.0
     assert swept[0].settlement.idle_fee_charged_q == 0.0
     assert swept[0].deposit.consumed_q == 2.0
+
+
+def test_session_service_round_trips_proxy_session_binding() -> None:
+    service = _session_service()
+    binding = ProxySessionBinding(
+        local_session_id="sess-local",
+        remote_endpoint_id="ep-remote",
+        remote_session_id="sess-remote",
+        remote_node_id="node-remote",
+        source_base_url="https://remote.example",
+        status="active",
+        opened_at="2026-07-02T00:00:00+00:00",
+        close_status="not_requested",
+    )
+
+    service.save_proxy_session_binding(binding)
+
+    assert service.get_proxy_session_binding("sess-local").remote_session_id == "sess-remote"

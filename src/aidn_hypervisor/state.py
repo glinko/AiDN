@@ -8,7 +8,7 @@ from aidn_hypervisor.endpoints.state import (
     EndpointManifestSnapshot,
 )
 from aidn_hypervisor.remote_endpoints.models import RemoteEndpointReference
-from aidn_hypervisor.sessions.models import EndpointSession, LockedDeposit
+from aidn_hypervisor.sessions.models import EndpointSession, LockedDeposit, ProxySessionBinding
 from aidn_hypervisor.wallet_models import WalletQuote
 
 
@@ -183,6 +183,29 @@ class WalletSessionSnapshot(BaseModel):
     close_reason: str | None = None
 
 
+class WalletLedgerSnapshot(BaseModel):
+    sequence_id: int = Field(ge=1)
+    event_id: str
+    stream: str
+    stream_event_id: str
+    stream_sequence_id: int = Field(ge=1)
+    event_type: str
+    occurred_at: str
+    owner_id: str
+    node_id: str
+    operator_id: str
+    task_id: str | None = None
+    allocation_id: str | None = None
+    session_id: str | None = None
+    endpoint_id: str | None = None
+    bundle_id: str | None = None
+    workload_type: str | None = None
+    status: str | None = None
+    settlement_status: str | None = None
+    amount_q: float = Field(default=0.0, ge=0.0)
+    payload: dict = Field(default_factory=dict)
+
+
 class OwnerWalletSnapshot(BaseModel):
     wallet_id: str
     public_key: str
@@ -197,6 +220,10 @@ class EndpointSessionSnapshot(EndpointSession):
 
 
 class LockedDepositSnapshot(LockedDeposit):
+    pass
+
+
+class ProxySessionBindingSnapshot(ProxySessionBinding):
     pass
 
 
@@ -215,6 +242,7 @@ class HypervisorStateSnapshot(BaseModel):
     )
     wallet_usage_events: list[WalletUsageSnapshot] = Field(default_factory=list)
     wallet_session_events: list[WalletSessionSnapshot] = Field(default_factory=list)
+    wallet_ledger_events: list[WalletLedgerSnapshot] = Field(default_factory=list)
     wallet_allocation_events: list[WalletAllocationSnapshot] = Field(default_factory=list)
     wallet_allocation_activation_events: list[WalletAllocationActivationSnapshot] = Field(
         default_factory=list
@@ -233,4 +261,5 @@ class HypervisorStateSnapshot(BaseModel):
     remote_endpoints: list[RemoteEndpointReference] = Field(default_factory=list)
     endpoint_sessions: list[EndpointSessionSnapshot] = Field(default_factory=list)
     locked_deposits: list[LockedDepositSnapshot] = Field(default_factory=list)
+    proxy_session_bindings: list[ProxySessionBindingSnapshot] = Field(default_factory=list)
     events: list[JournalEvent] = Field(default_factory=list)

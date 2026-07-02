@@ -27,6 +27,9 @@ from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.sessions.models import ProxySessionBinding
+from aidn_hypervisor.sessions.service import SessionService
+from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.state import HypervisorStateSnapshot, JournalEvent, TaskSnapshot
 
 
@@ -380,6 +383,31 @@ def test_remote_endpoint_store_restores_records_from_state_store(
     store = RemoteEndpointStore(file_store)
 
     assert store.list_records() == snapshot.remote_endpoints
+
+
+def test_file_state_store_round_trips_proxy_session_bindings(tmp_path: Path) -> None:
+    state_path = tmp_path / "hypervisor-state.json"
+    service = _service(state_path)
+    service.session_service = SessionService(SessionStore(FileStateStore(state_path)))
+    service.session_service.save_proxy_session_binding(
+        ProxySessionBinding(
+            local_session_id="sess-local",
+            remote_endpoint_id="ep-remote",
+            remote_session_id="sess-remote",
+            remote_node_id="node-remote",
+            source_base_url="https://remote.example",
+            status="active",
+            opened_at="2026-07-02T00:00:00+00:00",
+            close_status="not_requested",
+        )
+    )
+
+    restored = SessionService(SessionStore(FileStateStore(state_path)))
+
+    assert (
+        restored.get_proxy_session_binding("sess-local").remote_session_id
+        == "sess-remote"
+    )
 
 
 def test_service_submit_persists_latest_state_to_disk(tmp_path: Path) -> None:

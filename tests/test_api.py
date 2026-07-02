@@ -29,6 +29,7 @@ from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 
@@ -120,6 +121,17 @@ def _service(
         bundle_registry=bundle_registry,
         model_store=model_store,
     )
+
+
+class _StubRemoteSessionCloseTransport:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, dict | None]] = []
+
+    def request_json(self, method: str, url: str, payload: dict | None = None) -> dict:
+        self.calls.append((method, url, payload))
+        if method == "POST" and url.endswith("/api/v1/sessions/remote-session-1/close"):
+            return {"session": {"session_id": "remote-session-1", "status": "closed"}}
+        raise AssertionError(f"unexpected proxy request: {method} {url}")
 
 
 class CooldownApiPlugin(FakeManagedPlugin):
@@ -501,6 +513,127 @@ def test_get_task_endpoint_exposes_proxy_trace_for_proxy_execution() -> None:
     assert detail.json()["proxy_trace"]["remote_node_id"] == "node-remote"
     assert detail.json()["proxy_trace"]["source_base_url"] == "http://remote-hv"
     assert detail.json()["proxy_trace"]["dispatched_at"]
+
+
+def test_get_task_endpoint_exposes_proxy_session_for_proxy_paid_execution() -> None:
+    class StubPaidRemoteHypervisorTransport:
+        def request_json(self, method: str, url: str, payload: dict | None = None) -> dict:
+            if method == "POST" and url == "http://remote-hv/api/v1/endpoints/ep-remote/sessions":
+                return {
+                    "session": {
+                        "session_id": "remote-session-1",
+                        "opened_at": "2026-07-02T00:00:00+00:00",
+                    }
+                }
+            if method == "POST" and url == "http://remote-hv/tasks":
+                return {
+                    "task_id": "remote-task-1",
+                    "status": "queued",
+                    "priority": 50,
+                    "task_type": "llm_text.generate",
+                    "bundle_id": "remote-text",
+                }
+            if method == "GET" and url == "http://remote-hv/tasks/remote-task-1":
+                return {
+                    "task_id": "remote-task-1",
+                    "status": "completed",
+                    "priority": 50,
+                    "task_type": "llm_text.generate",
+                    "bundle_id": "remote-text",
+                    "result": {
+                        "ok": True,
+                        "output_text": "hello from remote",
+                    },
+                }
+            raise AssertionError(f"unexpected proxy request: {method} {url}")
+
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(cpu_cores=4.0, ram_mb=8192, gpu_devices=["gpu0"], vram_mb={"gpu0": 4096})
+        ),
+        bundles=[_bundle("text-a", "llm_text", priority_class=100)],
+        plugins=PluginRegistry(),
+        runtimes=ProviderProcessManager(),
+    )
+    service.plugins.register(FakeManagedPlugin())
+    endpoint_service = EndpointService(EndpointStore())
+    remote_endpoint_service = RemoteEndpointService(RemoteEndpointStore())
+    session_service = SessionService(SessionStore())
+    attached = remote_endpoint_service.attach_remote_endpoint(
+        source_node_id="node-remote",
+        source_endpoint_id="ep-remote",
+        source_owner_wallet="wallet-remote",
+        source_publication_id="pub-remote",
+        source_configuration_hash="cfg-remote",
+        source_visibility="public",
+        source_model_class="llm_text",
+        source_status="published",
+        source_base_url="http://remote-hv",
+        operator_id="operator-remote",
+        pricing={"unit": "q_per_1kk_tokens", "input": 8, "output": 12},
+        rating={"score": 0.96, "tier": "A", "updated_at": "2026-06-30T00:00:00+00:00"},
+        session_policy={"minimum_deposit": 10.0},
+    )
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Proxy Paid Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    endpoint_service.attach_proxy_target(created.endpoint.endpoint_id, attached)
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=25.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    service.remote_transport = StubPaidRemoteHypervisorTransport()
+    service.proxy_poll_attempts = 1
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            remote_endpoint_service=remote_endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.post(
+        "/tasks",
+        json={
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "hello"},
+            "constraints": {
+                "endpoint_id": created.endpoint.endpoint_id,
+                "session_id": opened.session.session_id,
+            },
+        },
+    )
+
+    assert response.status_code == 202
+    detail = client.get(f"/tasks/{response.json()['task_id']}")
+
+    assert detail.status_code == 200
+    assert detail.json()["proxy_session"]["remote_session_id"] == "remote-session-1"
+    assert detail.json()["proxy_session"]["status"] == "active"
 
 
 def test_submit_task_endpoint_rejects_released_allocation_id() -> None:
@@ -2010,6 +2143,116 @@ def test_operator_dashboard_sessions_endpoint_includes_related_task_telemetry() 
     )
 
 
+def test_operator_dashboard_sessions_endpoint_exposes_proxy_session_binding() -> None:
+    class StubPaidRemoteHypervisorTransport:
+        def request_json(self, method: str, url: str, payload: dict | None = None) -> dict:
+            if method == "POST" and url == "http://remote-hv/api/v1/endpoints/ep-remote/sessions":
+                return {
+                    "session": {
+                        "session_id": "remote-session-1",
+                        "opened_at": "2026-07-02T00:00:00+00:00",
+                    }
+                }
+            if method == "POST" and url == "http://remote-hv/tasks":
+                return {
+                    "task_id": "remote-task-1",
+                    "status": "queued",
+                    "priority": 50,
+                    "task_type": "llm_text.generate",
+                    "bundle_id": "remote-text",
+                }
+            if method == "GET" and url == "http://remote-hv/tasks/remote-task-1":
+                return {
+                    "task_id": "remote-task-1",
+                    "status": "completed",
+                    "priority": 50,
+                    "task_type": "llm_text.generate",
+                    "bundle_id": "remote-text",
+                    "result": {
+                        "ok": True,
+                        "task_type": "llm_text.generate",
+                        "output_text": "hello from remote",
+                    },
+                }
+            raise AssertionError(f"unexpected proxy request: {method} {url}")
+
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    remote_endpoint_service = RemoteEndpointService(RemoteEndpointStore())
+    attached = remote_endpoint_service.attach_remote_endpoint(
+        source_node_id="node-remote",
+        source_endpoint_id="ep-remote",
+        source_owner_wallet="wallet-remote",
+        source_publication_id="pub-remote",
+        source_configuration_hash="cfg-remote",
+        source_visibility="public",
+        source_model_class="llm_text",
+        source_status="published",
+        source_base_url="http://remote-hv",
+        operator_id="operator-remote",
+        pricing={"unit": "q_per_1kk_tokens", "input": 8, "output": 12},
+        rating={"score": 0.96, "tier": "A", "updated_at": "2026-06-30T00:00:00+00:00"},
+        session_policy={"minimum_deposit": 10.0},
+    )
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Proxy Paid Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    endpoint_service.attach_proxy_target(created.endpoint.endpoint_id, attached)
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=25.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    service.remote_transport = StubPaidRemoteHypervisorTransport()
+    service.proxy_poll_attempts = 1
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+            remote_endpoint_service=remote_endpoint_service,
+        )
+    )
+    client.post(
+        "/tasks",
+        json={
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "hello"},
+            "constraints": {
+                "endpoint_id": created.endpoint.endpoint_id,
+                "session_id": opened.session.session_id,
+            },
+        },
+    )
+
+    response = client.get("/operators/dashboard/sessions")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["proxy_session"]["remote_session_id"] == "remote-session-1"
+    assert response.json()["items"][0]["proxy_session"]["status"] == "active"
+
+
 def test_operator_dashboard_sessions_endpoint_includes_settlement_preview() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())
@@ -2132,6 +2375,147 @@ def test_operator_dashboard_session_close_action_closes_selected_session() -> No
     assert body["data"]["settlement"]["charged_q"] == 2.0
 
 
+def test_operator_dashboard_session_close_action_propagates_proxy_session_close() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    session_store = SessionStore()
+    session_service = SessionService(session_store)
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Proxy Paid Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-a",
+        provider_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        deposit_q=25.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    session_service.save_proxy_session_binding(
+        ProxySessionBinding(
+            local_session_id=opened.session.session_id,
+            remote_endpoint_id="ep-remote",
+            remote_session_id="remote-session-1",
+            remote_node_id="node-remote",
+            source_base_url="http://remote-hv",
+            status="active",
+            opened_at="2026-07-02T00:00:00+00:00",
+        )
+    )
+    service.session_service = session_service
+    service.remote_transport = _StubRemoteSessionCloseTransport()
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.post(
+        "/operators/dashboard/sessions/actions/close",
+        json={"session_id": opened.session.session_id},
+    )
+
+    assert response.status_code == 200
+    assert (
+        "POST",
+        "http://remote-hv/api/v1/sessions/remote-session-1/close",
+        None,
+    ) in service.remote_transport.calls
+    assert (
+        session_service.get_proxy_session_binding(opened.session.session_id).close_status
+        == "closed"
+    )
+
+
+def test_public_session_close_endpoint_propagates_proxy_session_close() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    session_store = SessionStore()
+    session_service = SessionService(session_store)
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Proxy Paid Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-a",
+        provider_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        deposit_q=25.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    session_service.save_proxy_session_binding(
+        ProxySessionBinding(
+            local_session_id=opened.session.session_id,
+            remote_endpoint_id="ep-remote",
+            remote_session_id="remote-session-1",
+            remote_node_id="node-remote",
+            source_base_url="http://remote-hv",
+            status="active",
+            opened_at="2026-07-02T00:00:00+00:00",
+        )
+    )
+    service.session_service = session_service
+    service.remote_transport = _StubRemoteSessionCloseTransport()
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.post(f"/api/v1/sessions/{opened.session.session_id}/close")
+
+    assert response.status_code == 200
+    assert (
+        "POST",
+        "http://remote-hv/api/v1/sessions/remote-session-1/close",
+        None,
+    ) in service.remote_transport.calls
+    assert (
+        session_service.get_proxy_session_binding(opened.session.session_id).close_status
+        == "closed"
+    )
+
+
 def test_operator_dashboard_session_sweep_action_closes_idle_sessions() -> None:
     service = _service(whisper_endpoint="http://127.0.0.1:9000")
     service.configure_owner_wallet(mode="create", label="Primary Wallet")
@@ -2188,6 +2572,80 @@ def test_operator_dashboard_session_sweep_action_closes_idle_sessions() -> None:
     assert body["data"]["items"][0]["session"]["session_id"] == opened.session.session_id
     assert body["data"]["items"][0]["session"]["status"] == "closed"
     assert body["data"]["items"][0]["session"]["close_reason"] == "idle_timeout"
+
+
+def test_operator_dashboard_session_sweep_action_propagates_proxy_session_close() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    session_store = SessionStore()
+    session_service = SessionService(session_store)
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Proxy Paid Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-a",
+        provider_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        deposit_q=25.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    session_service.save_proxy_session_binding(
+        ProxySessionBinding(
+            local_session_id=opened.session.session_id,
+            remote_endpoint_id="ep-remote",
+            remote_session_id="remote-session-1",
+            remote_node_id="node-remote",
+            source_base_url="http://remote-hv",
+            status="active",
+            opened_at="2026-07-02T00:00:00+00:00",
+        )
+    )
+    session_store.save_session(
+        opened.session.model_copy(
+            update={"idle_deadline_at": "2020-01-01T00:00:00+00:00"}
+        )
+    )
+    service.session_service = session_service
+    service.remote_transport = _StubRemoteSessionCloseTransport()
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.post("/operators/dashboard/sessions/actions/sweep-idle", json={})
+
+    assert response.status_code == 200
+    assert (
+        "POST",
+        "http://remote-hv/api/v1/sessions/remote-session-1/close",
+        None,
+    ) in service.remote_transport.calls
+    assert (
+        session_service.get_proxy_session_binding(opened.session.session_id).close_status
+        == "closed"
+    )
 
 
 def test_operator_dashboard_endpoints_endpoint_prefers_endpoint_service_payload_for_configured_endpoint() -> None:
