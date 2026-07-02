@@ -27,7 +27,6 @@ def test_validation_bond_preserves_balanced_totals() -> None:
     assert bond.released_q == 0.0
     assert bond.forfeited_q == 0.0
 
-
 def test_validation_bond_accepts_balanced_fractional_totals() -> None:
     bond = ValidationBond(
         bond_id="bond-1",
