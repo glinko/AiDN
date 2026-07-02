@@ -65,6 +65,8 @@ class ValidationService:
         configuration_hash: str,
         minimum_session_deposit_q: float,
     ) -> ValidationRequestOutcome:
+        if minimum_session_deposit_q < 0.0:
+            raise ValueError("minimum_session_deposit_q must be greater than or equal to 0")
         now = self._now()
         request_id = self._new_id("req")
         bond_id = self._new_id("bond")
@@ -146,10 +148,14 @@ class ValidationService:
         )
         if queued_requests and not shuffled:
             raise ValueError("No validator capacity available")
+        if len(queued_requests) > len(shuffled):
+            raise ValueError(
+                "Queued requests exceed available validator share capacity for epoch"
+            )
         assignments: list[ValidationAssignment] = []
         authorizations = []
         for index, request in enumerate(queued_requests):
-            validator_id = shuffled[index % len(shuffled)]
+            validator_id = shuffled[index]
             assignment = ValidationAssignment(
                 assignment_id=self._new_id("assign"),
                 epoch_id=epoch_id,
@@ -352,6 +358,7 @@ class ValidationService:
                     "latest_request_id": request.request_id,
                     "latest_report_id": report.report_id,
                     "maintenance_count": snapshot.maintenance_count + 1,
+                    "validated_at": None,
                 }
             )
             updated_request = request.model_copy(update={"status": "failed"})

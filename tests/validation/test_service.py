@@ -5,6 +5,18 @@ from aidn_hypervisor.validation.service import ValidationService
 from aidn_hypervisor.validation.store import ValidationStore
 
 
+class CountingBondEscrowAdapter:
+    adapter_name = "counting_bond_escrow"
+
+    def __init__(self) -> None:
+        self.lock_calls = 0
+
+    def lock_bond(self, owner_wallet: str, amount_q: float, purpose: dict):
+        del owner_wallet, amount_q, purpose
+        self.lock_calls += 1
+        raise AssertionError("lock_bond should not be called for invalid input")
+
+
 def test_request_validation_locks_operator_bond_and_sets_pending_status() -> None:
     service = ValidationService(ValidationStore())
 
@@ -19,6 +31,21 @@ def test_request_validation_locks_operator_bond_and_sets_pending_status() -> Non
     assert result.bond.amount_q == 500.0
     assert result.bond.remaining_locked_q == 500.0
     assert result.snapshot.status == "pending_initial"
+
+
+def test_request_validation_rejects_negative_session_deposit_before_locking_bond() -> None:
+    bond_escrow = CountingBondEscrowAdapter()
+    service = ValidationService(ValidationStore(), bond_escrow=bond_escrow)
+
+    with pytest.raises(ValueError, match="minimum_session_deposit_q"):
+        service.request_validation(
+            endpoint_id="ep-1",
+            owner_wallet="wallet-1",
+            configuration_hash="cfg-1",
+            minimum_session_deposit_q=-1.0,
+        )
+
+    assert bond_escrow.lock_calls == 0
 
 
 def test_submit_validation_report_with_pass_marks_validated_without_releasing_initial_bond() -> (
@@ -110,6 +137,33 @@ def test_maintenance_fail_forfeits_remaining_locked_bond() -> None:
     assert outcome.bond.remaining_locked_q == 0.0
     assert outcome.bond.forfeited_q == 500.0
     assert outcome.snapshot.status == "validation_failed"
+    assert outcome.snapshot.validated_at is None
+
+
+def test_assign_epoch_requests_raises_when_queued_requests_exceed_share_capacity() -> None:
+    service = ValidationService(ValidationStore())
+    for index in range(3):
+        service.request_validation(
+            endpoint_id=f"ep-{index}",
+            owner_wallet=f"wallet-{index}",
+            configuration_hash=f"cfg-{index}",
+            minimum_session_deposit_q=25.0,
+        )
+
+    with pytest.raises(ValueError, match="share capacity"):
+        service.assign_epoch_requests(
+            epoch_id="epoch-1",
+            validator_entries=[
+                {
+                    "validator_id": "val-1",
+                    "validator_label": "validator-a",
+                    "shares": 1,
+                    "capability_profiles": ["llm_text"],
+                    "contribution_q": 500.0,
+                }
+            ],
+            seed="seed-1",
+        )
 
 
 def test_restore_round_trip_then_assign_epoch_requests_succeeds() -> None:
