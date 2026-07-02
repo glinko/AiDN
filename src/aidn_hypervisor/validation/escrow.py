@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from hashlib import sha256
 import random
 from uuid import uuid4
@@ -63,6 +64,7 @@ class LocalValidatorEscrowPoolAdapter:
         issued_at: str,
     ) -> ValidationAuthorization:
         token = sha256(f"{epoch_id}:{request_id}:{guarantee_q}".encode("utf-8")).hexdigest()
+        expires_at = (datetime.fromisoformat(issued_at) + timedelta(hours=1)).isoformat()
         return ValidationAuthorization(
             authorization_id=f"auth-{uuid4().hex[:12]}",
             request_id=request_id,
@@ -70,6 +72,6 @@ class LocalValidatorEscrowPoolAdapter:
             authorization_token=token,
             guarantee_q=guarantee_q,
             issued_at=issued_at,
-            expires_at=issued_at,
+            expires_at=expires_at,
             status="issued",
         )

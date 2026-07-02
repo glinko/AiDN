@@ -22,7 +22,6 @@ class ValidationStore:
         self._validator_entries: dict[str, ValidationValidatorEntry] = {}
         self._assignments: dict[str, ValidationAssignment] = {}
         self._authorizations: dict[str, ValidationAuthorization] = {}
-        self._request_minimum_session_deposits: dict[str, float] = {}
         self.restore()
 
     def restore(self, snapshot: HypervisorStateSnapshot | None = None) -> None:
@@ -74,14 +73,8 @@ class ValidationStore:
     def save_request(
         self,
         request: ValidationRequest,
-        *,
-        minimum_session_deposit_q: float | None = None,
     ) -> None:
         self._requests[request.request_id] = request
-        if minimum_session_deposit_q is not None:
-            self._request_minimum_session_deposits[request.request_id] = (
-                minimum_session_deposit_q
-            )
         self._flush()
 
     def get_request(self, request_id: str) -> ValidationRequest:
@@ -147,7 +140,7 @@ class ValidationStore:
         self._flush()
 
     def minimum_session_deposit_for_request(self, request_id: str) -> float:
-        return self._request_minimum_session_deposits[request_id]
+        return self.get_request(request_id).minimum_session_deposit_q
 
     def latest_request_for_snapshot(
         self,

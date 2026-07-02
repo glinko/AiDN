@@ -8,6 +8,7 @@ from aidn_hypervisor.validation.escrow import (
 )
 from aidn_hypervisor.validation.models import (
     ValidationAssignment,
+    ValidationAuthorization,
     ValidationBond,
     ValidationEpoch,
     ValidationReport,
@@ -39,7 +40,7 @@ class ValidationReportOutcome:
 class ValidationAssignmentOutcome:
     epoch: ValidationEpoch
     assignments: list[ValidationAssignment]
-    authorizations: list
+    authorizations: list[ValidationAuthorization]
 
 
 class ValidationService:
@@ -48,11 +49,12 @@ class ValidationService:
         store,
         *,
         bond_escrow=None,
+        validator_escrow=None,
         event_recorder=None,
     ) -> None:
         self.store = store
         self.bond_escrow = bond_escrow or LocalOperatorBondEscrowAdapter()
-        self.validator_escrow = LocalValidatorEscrowPoolAdapter()
+        self.validator_escrow = validator_escrow or LocalValidatorEscrowPoolAdapter()
         self.event_recorder = event_recorder
 
     def request_validation(
@@ -80,6 +82,7 @@ class ValidationService:
             endpoint_id=endpoint_id,
             configuration_hash=configuration_hash,
             owner_wallet=owner_wallet,
+            minimum_session_deposit_q=minimum_session_deposit_q,
             request_kind="initial",
             status="queued",
             created_at=now,
@@ -104,10 +107,7 @@ class ValidationService:
             status="pending_initial",
             latest_request_id=request_id,
         )
-        self.store.save_request(
-            request,
-            minimum_session_deposit_q=minimum_session_deposit_q,
-        )
+        self.store.save_request(request)
         self.store.save_bond(bond)
         self.store.save_snapshot(snapshot)
         self._emit(
@@ -196,6 +196,12 @@ class ValidationService:
         evidence_summary: str,
     ) -> ValidationReportOutcome:
         request = self.store.get_request(request_id)
+        if request.status in {"passed", "failed", "forfeited", "revoked", "superseded"}:
+            raise ValueError(f"Request is already terminal: {request_id}")
+        if request.status != "authorization_issued":
+            raise ValueError(
+                f"Request must be authorization_issued before report submission: {request_id}"
+            )
         bond = self.store.get_bond(request.bond_id)
         report = ValidationReport(
             report_id=self._new_id("report"),
@@ -287,6 +293,10 @@ class ValidationService:
     ) -> ValidationReportOutcome:
         snapshot = self.store.get_snapshot(endpoint_id, configuration_hash)
         request = self.store.latest_request_for_snapshot(endpoint_id, configuration_hash)
+        if snapshot.status != "validated" or request.status != "passed":
+            raise ValueError(
+                "Maintenance resolution requires a validated snapshot and passed request"
+            )
         bond = self.store.get_bond(request.bond_id)
         report = ValidationReport(
             report_id=self._new_id("report"),

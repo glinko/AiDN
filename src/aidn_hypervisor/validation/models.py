@@ -43,6 +43,7 @@ class ValidationRequest(BaseModel):
     endpoint_id: str
     configuration_hash: str
     owner_wallet: str
+    minimum_session_deposit_q: float = Field(ge=0.0)
     request_kind: ValidationRequestKind = "initial"
     status: ValidationRequestStatus
     created_at: str
