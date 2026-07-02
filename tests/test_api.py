@@ -32,6 +32,8 @@ from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
+from aidn_hypervisor.validation.service import ValidationService
+from aidn_hypervisor.validation.store import ValidationStore
 
 
 def _bundle(
@@ -2856,6 +2858,148 @@ def test_endpoint_proof_returns_live_configuration_hash() -> None:
         == created.endpoint.configuration_hash
     )
     assert body["data"]["proof"]["publication"]["visibility"] == "shared"
+
+
+def test_request_validation_endpoint_returns_bond_and_snapshot_summary() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Validated Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            validation_service=validation_service,
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/request-validation"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["request"]["status"] == "queued"
+    assert response.json()["data"]["bond"]["amount_q"] == 500.0
+    assert response.json()["data"]["snapshot"]["status"] == "pending_initial"
+
+
+def test_endpoint_validation_history_endpoint_returns_reports_and_assignments() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Validated Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            validation_service=validation_service,
+        )
+    )
+
+    response = client.get(
+        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/validation/history"
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["data"]["requests"]) == 1
+    assert response.json()["data"]["requests"][0]["request_id"] == requested.request.request_id
+    assert len(response.json()["data"]["assignments"]) == 1
+    assert len(response.json()["data"]["authorizations"]) == 1
+
+
+def test_submit_validation_report_endpoint_marks_request_passed() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Validated Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            validation_service=validation_service,
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/validation/requests/{requested.request.request_id}/reports",
+        json={
+            "outcome": "pass",
+            "validator_label": "validator-a",
+            "evidence_summary": "ok",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["request"]["status"] == "passed"
+    assert response.json()["data"]["snapshot"]["status"] == "validated"
 
 
 def test_revoke_publication_endpoint_returns_revoked_record() -> None:

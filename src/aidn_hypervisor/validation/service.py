@@ -259,6 +259,108 @@ class ValidationService:
             report=report,
         )
 
+    def validation_summary(self, endpoint_id: str) -> dict:
+        requests = sorted(
+            self.store.list_requests_for_endpoint(endpoint_id),
+            key=lambda item: item.created_at,
+        )
+        reports = sorted(
+            self.store.list_reports_for_endpoint(endpoint_id),
+            key=lambda item: item.created_at,
+        )
+        request_ids = {item.request_id for item in requests}
+        snapshots = [
+            item
+            for item in self.store.list_snapshots()
+            if item.endpoint_id == endpoint_id
+        ]
+        current_snapshot = snapshots[-1] if snapshots else None
+        return {
+            "endpoint_id": endpoint_id,
+            "current_snapshot": (
+                current_snapshot.model_dump(mode="json")
+                if current_snapshot is not None
+                else None
+            ),
+            "request_count": len(requests),
+            "report_count": len(reports),
+            "assigned_request_count": sum(
+                1 for item in requests if item.assignment_id is not None
+            ),
+            "validated_request_count": sum(
+                1 for item in requests if item.status == "passed"
+            ),
+            "failed_request_count": sum(
+                1 for item in requests if item.status == "failed"
+            ),
+            "active_request_ids": [
+                item.request_id
+                for item in requests
+                if item.status in {"queued", "authorization_issued"}
+            ],
+            "assignment_count": sum(
+                1
+                for item in self.store.list_assignments()
+                if item.request_id in request_ids
+            ),
+            "authorization_count": sum(
+                1
+                for item in self.store.list_authorizations()
+                if item.request_id in request_ids
+            ),
+        }
+
+    def validation_history(self, endpoint_id: str) -> dict:
+        requests = sorted(
+            self.store.list_requests_for_endpoint(endpoint_id),
+            key=lambda item: item.created_at,
+        )
+        request_ids = {item.request_id for item in requests}
+        assignment_ids = {
+            item.assignment_id for item in requests if item.assignment_id is not None
+        }
+        authorization_ids = {
+            item.authorization_id
+            for item in requests
+            if item.authorization_id is not None
+        }
+        assignments = [
+            item
+            for item in self.store.list_assignments()
+            if item.assignment_id in assignment_ids
+        ]
+        authorizations = [
+            item
+            for item in self.store.list_authorizations()
+            if item.authorization_id in authorization_ids
+        ]
+        reports = sorted(
+            self.store.list_reports_for_endpoint(endpoint_id),
+            key=lambda item: item.created_at,
+        )
+        snapshots = [
+            item
+            for item in self.store.list_snapshots()
+            if item.endpoint_id == endpoint_id
+        ]
+        epochs = [
+            item
+            for item in self.store.list_epochs()
+            if any(assignment.epoch_id == item.epoch_id for assignment in assignments)
+        ]
+        return {
+            "endpoint_id": endpoint_id,
+            "requests": [item.model_dump(mode="json") for item in requests],
+            "assignments": [item.model_dump(mode="json") for item in assignments],
+            "authorizations": [
+                item.model_dump(mode="json") for item in authorizations
+            ],
+            "reports": [item.model_dump(mode="json") for item in reports],
+            "snapshots": [item.model_dump(mode="json") for item in snapshots],
+            "epochs": [item.model_dump(mode="json") for item in epochs],
+            "request_count": len(request_ids),
+        }
+
     def force_mark_validated(
         self,
         *,

@@ -549,6 +549,7 @@ def build_api_router(
     endpoint_publication_service=None,
     remote_endpoint_service=None,
     session_service=None,
+    validation_service=None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -1064,6 +1065,56 @@ def build_api_router(
             return _error(409, "publication_conflict", str(error))
         return _ok({"publication": record.model_dump(mode="json")})
 
+    @router.post("/api/v1/endpoints/{endpoint_id}/request-validation")
+    async def request_endpoint_validation(endpoint_id: str) -> JSONResponse:
+        if validation_service is None or endpoint_service is None:
+            return _error(
+                503,
+                "validation_unavailable",
+                "Validation service is not configured",
+            )
+        try:
+            endpoint = endpoint_service.get_endpoint(endpoint_id).endpoint
+        except KeyError:
+            return _error(
+                404,
+                "endpoint_not_found",
+                f"Unknown endpoint: {endpoint_id}",
+            )
+        result = validation_service.request_validation(
+            endpoint_id=endpoint.endpoint_id,
+            owner_wallet=endpoint.owner_wallet,
+            configuration_hash=endpoint.configuration_hash,
+            minimum_session_deposit_q=endpoint.session.minimum_deposit,
+        )
+        return _ok(
+            {
+                "request": result.request.model_dump(mode="json"),
+                "bond": result.bond.model_dump(mode="json"),
+                "snapshot": result.snapshot.model_dump(mode="json"),
+            }
+        )
+
+    @router.get("/api/v1/endpoints/{endpoint_id}/validation")
+    async def endpoint_validation_summary(endpoint_id: str) -> JSONResponse:
+        if validation_service is None:
+            return _error(
+                503,
+                "validation_unavailable",
+                "Validation service is not configured",
+            )
+        return _ok(validation_service.validation_summary(endpoint_id))
+
+    @router.get("/api/v1/endpoints/{endpoint_id}/validation/history")
+    async def endpoint_validation_history(endpoint_id: str) -> JSONResponse:
+        if validation_service is None:
+            return _error(
+                503,
+                "validation_unavailable",
+                "Validation service is not configured",
+            )
+        return _ok(validation_service.validation_history(endpoint_id))
+
     @router.get("/api/v1/endpoints/{endpoint_id}/proof")
     async def endpoint_proof(endpoint_id: str) -> JSONResponse:
         if endpoint_service is None:
@@ -1100,6 +1151,40 @@ def build_api_router(
                         else None
                     ),
                 }
+            }
+        )
+
+    @router.post("/api/v1/validation/requests/{request_id}/reports")
+    async def submit_validation_report(
+        request_id: str,
+        payload: dict,
+    ) -> JSONResponse:
+        if validation_service is None:
+            return _error(
+                503,
+                "validation_unavailable",
+                "Validation service is not configured",
+            )
+        try:
+            result = validation_service.submit_validation_report(
+                request_id=request_id,
+                outcome=str(payload["outcome"]),
+                validator_label=str(payload["validator_label"]),
+                evidence_summary=str(payload["evidence_summary"]),
+            )
+        except KeyError:
+            return _error(
+                404,
+                "validation_request_not_found",
+                f"Unknown validation request: {request_id}",
+            )
+        except ValueError as error:
+            return _error(409, "validation_conflict", str(error))
+        return _ok(
+            {
+                "request": result.request.model_dump(mode="json"),
+                "snapshot": result.snapshot.model_dump(mode="json"),
+                "report": result.report.model_dump(mode="json"),
             }
         )
 

@@ -26,6 +26,8 @@ from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
+from aidn_hypervisor.validation.service import ValidationService
+from aidn_hypervisor.validation.store import ValidationStore
 
 
 def build_app(
@@ -35,6 +37,7 @@ def build_app(
     endpoint_publication_service: EndpointPublicationService | None = None,
     remote_endpoint_service: RemoteEndpointService | None = None,
     session_service: SessionService | None = None,
+    validation_service: ValidationService | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="AiDN Hypervisor",
@@ -66,12 +69,17 @@ def build_app(
     resolved_session_service = (
         session_service or _build_default_session_service(state_store=state_store)
     )
+    resolved_validation_service = (
+        validation_service
+        or _build_default_validation_service(state_store=state_store)
+    )
     resolved_service.endpoint_publication_service = (
         resolved_endpoint_publication_service
     )
     resolved_service.endpoint_service = resolved_endpoint_service
     resolved_service.remote_endpoint_service = resolved_remote_endpoint_service
     resolved_service.session_service = resolved_session_service
+    resolved_service.validation_service = resolved_validation_service
     resolved_session_service.event_recorder = resolved_service.record_event
 
     app.include_router(
@@ -82,6 +90,7 @@ def build_app(
             endpoint_publication_service=resolved_endpoint_publication_service,
             remote_endpoint_service=resolved_remote_endpoint_service,
             session_service=resolved_session_service,
+            validation_service=resolved_validation_service,
         )
     )
     app.include_router(
@@ -174,6 +183,15 @@ def _build_default_session_service(
     if state_store is None:
         state_store = _default_state_store()
     return SessionService(SessionStore(state_store))
+
+
+def _build_default_validation_service(
+    *,
+    state_store: FileStateStore | None = None,
+) -> ValidationService:
+    if state_store is None:
+        state_store = _default_state_store()
+    return ValidationService(ValidationStore(state_store))
 
 
 def _default_state_store() -> FileStateStore | None:

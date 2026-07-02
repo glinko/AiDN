@@ -109,6 +109,9 @@ class ValidationStore:
     def list_reports(self) -> list[ValidationReport]:
         return list(self._reports.values())
 
+    def list_reports_for_endpoint(self, endpoint_id: str) -> list[ValidationReport]:
+        return [item for item in self._reports.values() if item.endpoint_id == endpoint_id]
+
     def save_snapshot(self, snapshot: ValidationStatusSnapshot) -> None:
         self._snapshots[(snapshot.endpoint_id, snapshot.configuration_hash)] = snapshot
         self._flush()
@@ -127,17 +130,29 @@ class ValidationStore:
         self._epochs[epoch.epoch_id] = epoch
         self._flush()
 
+    def list_epochs(self) -> list[ValidationEpoch]:
+        return list(self._epochs.values())
+
     def save_validator_entry(self, entry: ValidationValidatorEntry) -> None:
         self._validator_entries[entry.validator_id] = entry
         self._flush()
+
+    def list_validator_entries(self) -> list[ValidationValidatorEntry]:
+        return list(self._validator_entries.values())
 
     def save_assignment(self, assignment: ValidationAssignment) -> None:
         self._assignments[assignment.assignment_id] = assignment
         self._flush()
 
+    def list_assignments(self) -> list[ValidationAssignment]:
+        return list(self._assignments.values())
+
     def save_authorization(self, authorization: ValidationAuthorization) -> None:
         self._authorizations[authorization.authorization_id] = authorization
         self._flush()
+
+    def list_authorizations(self) -> list[ValidationAuthorization]:
+        return list(self._authorizations.values())
 
     def minimum_session_deposit_for_request(self, request_id: str) -> float:
         return self.get_request(request_id).minimum_session_deposit_q
