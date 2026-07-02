@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -67,8 +68,16 @@ class ValidationBond(BaseModel):
 
     @model_validator(mode="after")
     def _validate_totals(self):
-        total = self.remaining_locked_q + self.released_q + self.forfeited_q
-        if total > self.amount_q:
+        total = sum(
+            Decimal(str(value))
+            for value in (
+                self.remaining_locked_q,
+                self.released_q,
+                self.forfeited_q,
+            )
+        )
+        amount = Decimal(str(self.amount_q))
+        if total > amount:
             raise ValueError("bond allocations cannot exceed amount_q")
         return self
 
@@ -98,7 +107,9 @@ class ValidationStatusSnapshot(BaseModel):
 
     @model_validator(mode="after")
     def _validate_validated_status(self):
-        if self.status == "validated" and self.latest_request_id is None:
+        if self.status == "validated" and not (
+            self.latest_request_id and self.latest_request_id.strip()
+        ):
             raise ValueError("validated status requires latest_request_id")
         return self
 
