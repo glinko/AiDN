@@ -15,8 +15,6 @@ class CountingBondEscrowAdapter:
         del owner_wallet, amount_q, purpose
         self.lock_calls += 1
         raise AssertionError("lock_bond should not be called for invalid input")
-
-
 def test_request_validation_locks_operator_bond_and_sets_pending_status() -> None:
     service = ValidationService(ValidationStore())
 
