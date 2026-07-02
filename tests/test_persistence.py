@@ -31,6 +31,12 @@ from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.state import HypervisorStateSnapshot, JournalEvent, TaskSnapshot
+from aidn_hypervisor.validation.models import (
+    ValidationAuthorization,
+    ValidationBond,
+    ValidationEpoch,
+    ValidationRequest,
+)
 
 
 def _published_record(
@@ -368,6 +374,71 @@ def test_file_state_store_round_trips_remote_endpoint_records(
     restored = store.load()
 
     assert restored == snapshot
+
+
+def test_file_state_store_round_trips_validation_snapshot_fields(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "hypervisor-state.json"
+    store = FileStateStore(state_path)
+    snapshot = HypervisorStateSnapshot(
+        validation_requests=[
+            ValidationRequest(
+                request_id="req-1",
+                endpoint_id="ep-1",
+                configuration_hash="cfg-1",
+                owner_wallet="wallet-1",
+                status="queued",
+                created_at="2026-07-02T00:00:00+00:00",
+                bond_id="bond-1",
+                epoch_id="epoch-1",
+                authorization_id="auth-1",
+            )
+        ],
+        validation_bonds=[
+            ValidationBond(
+                bond_id="bond-1",
+                owner_wallet="wallet-1",
+                endpoint_id="ep-1",
+                configuration_hash="cfg-1",
+                amount_q=500.0,
+                remaining_locked_q=500.0,
+                released_q=0.0,
+                forfeited_q=0.0,
+                escrow_adapter="adapter-1",
+                escrow_reference="escrow-1",
+                status="locked",
+            )
+        ],
+        validation_epochs=[
+            ValidationEpoch(
+                epoch_id="epoch-1",
+                seed="seed-1",
+                status="open",
+                created_at="2026-07-02T00:00:00+00:00",
+            )
+        ],
+        validation_authorizations=[
+            ValidationAuthorization(
+                authorization_id="auth-1",
+                request_id="req-1",
+                epoch_id="epoch-1",
+                authorization_token="token-1",
+                guarantee_q=250.0,
+                issued_at="2026-07-02T00:00:00+00:00",
+                expires_at="2026-07-03T00:00:00+00:00",
+                status="issued",
+            )
+        ],
+    )
+
+    store.save(snapshot)
+    restored = store.load()
+
+    assert restored.validation_requests == snapshot.validation_requests
+    assert restored.validation_bonds == snapshot.validation_bonds
+    assert restored.validation_epochs == snapshot.validation_epochs
+    assert restored.validation_authorizations == snapshot.validation_authorizations
 
 
 def test_remote_endpoint_store_restores_records_from_state_store(

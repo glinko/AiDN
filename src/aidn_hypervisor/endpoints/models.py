@@ -90,6 +90,11 @@ class EndpointValidationState(BaseModel):
     model_class_supported: bool = False
     verification_status: EndpointVerificationStatus = "unsupported"
     validation_profile: str | None = None
+    validation_status: str = "unvalidated"
+    latest_request_id: str | None = None
+    latest_report_id: str | None = None
+    validated_configuration_hash: str | None = None
+    validated_at: str | None = None
 
 
 class EndpointProxyTarget(BaseModel):

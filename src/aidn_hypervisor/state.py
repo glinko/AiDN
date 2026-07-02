@@ -9,6 +9,16 @@ from aidn_hypervisor.endpoints.state import (
 )
 from aidn_hypervisor.remote_endpoints.models import RemoteEndpointReference
 from aidn_hypervisor.sessions.models import EndpointSession, LockedDeposit, ProxySessionBinding
+from aidn_hypervisor.validation.models import (
+    ValidationAssignment,
+    ValidationAuthorization,
+    ValidationBond,
+    ValidationEpoch,
+    ValidationReport,
+    ValidationRequest,
+    ValidationStatusSnapshot,
+    ValidationValidatorEntry,
+)
 from aidn_hypervisor.wallet_models import WalletQuote
 
 
@@ -233,6 +243,20 @@ class HypervisorStateSnapshot(BaseModel):
     bundle_states: list[BundleStateSnapshot] = Field(default_factory=list)
     allocations: list[AllocationSnapshot] = Field(default_factory=list)
     model_installs: list[ModelInstallSnapshot] = Field(default_factory=list)
+    validation_requests: list[ValidationRequest] = Field(default_factory=list)
+    validation_bonds: list[ValidationBond] = Field(default_factory=list)
+    validation_reports: list[ValidationReport] = Field(default_factory=list)
+    validation_status_snapshots: list[ValidationStatusSnapshot] = Field(
+        default_factory=list
+    )
+    validation_epochs: list[ValidationEpoch] = Field(default_factory=list)
+    validation_validator_entries: list[ValidationValidatorEntry] = Field(
+        default_factory=list
+    )
+    validation_assignments: list[ValidationAssignment] = Field(default_factory=list)
+    validation_authorizations: list[ValidationAuthorization] = Field(
+        default_factory=list
+    )
     operator_requests_policy: dict[str, bool | str] = Field(
         default_factory=lambda: {
             "allow_spillover": False,
