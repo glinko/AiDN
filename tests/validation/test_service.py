@@ -166,6 +166,99 @@ def test_assign_epoch_requests_raises_when_queued_requests_exceed_share_capacity
         )
 
 
+def test_assign_epoch_requests_expands_validator_shares_and_assigns_in_seed_order() -> (
+    None
+):
+    service = ValidationService(ValidationStore())
+    first = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    second = service.request_validation(
+        endpoint_id="ep-2",
+        owner_wallet="wallet-2",
+        configuration_hash="cfg-2",
+        minimum_session_deposit_q=35.0,
+    )
+
+    epoch = service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-a",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            },
+            {
+                "validator_id": "val-b",
+                "validator_label": "validator-b",
+                "shares": 2,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 1000.0,
+            },
+        ],
+        seed="seed-2",
+    )
+
+    updated_first = service.store.get_request(first.request.request_id)
+    updated_second = service.store.get_request(second.request.request_id)
+
+    assert epoch.epoch.seed == "seed-2"
+    assert [item.validator_id for item in epoch.assignments] == ["val-b", "val-a"]
+    assert all(item.authorization_id for item in [updated_first, updated_second])
+    assert updated_first.status == "authorization_issued"
+    assert updated_second.status == "authorization_issued"
+
+
+def test_authorization_hides_validator_wallet_and_share_count() -> None:
+    service = ValidationService(ValidationStore())
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=40.0,
+    )
+
+    epoch = service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-a",
+                "validator_label": "validator-a",
+                "shares": 3,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 1500.0,
+            }
+        ],
+        seed="seed-2",
+    )
+
+    authorization = epoch.authorizations[0]
+    authorization_payload = authorization.model_dump(mode="json")
+
+    assert requested.request.request_id == epoch.assignments[0].request_id
+    assert authorization.guarantee_q == 40.0
+    assert authorization.status == "issued"
+    assert "val-a" not in authorization.authorization_token
+    assert set(authorization_payload) == {
+        "authorization_id",
+        "request_id",
+        "epoch_id",
+        "authorization_token",
+        "guarantee_q",
+        "issued_at",
+        "expires_at",
+        "status",
+    }
+    assert "validator_id" not in authorization_payload
+    assert "validator_wallet" not in authorization_payload
+    assert "shares" not in authorization_payload
+
+
 def test_restore_round_trip_then_assign_epoch_requests_succeeds() -> None:
     service = ValidationService(ValidationStore())
     requested = service.request_validation(
