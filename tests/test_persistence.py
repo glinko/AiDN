@@ -37,6 +37,7 @@ from aidn_hypervisor.validation.models import (
     ValidationEpoch,
     ValidationRequest,
 )
+from aidn_hypervisor.validation.store import ValidationStore
 
 
 def _published_record(
@@ -439,6 +440,43 @@ def test_file_state_store_round_trips_validation_snapshot_fields(
     assert restored.validation_bonds == snapshot.validation_bonds
     assert restored.validation_epochs == snapshot.validation_epochs
     assert restored.validation_authorizations == snapshot.validation_authorizations
+
+
+def test_validation_state_survives_snapshot_restore() -> None:
+    snapshot = HypervisorStateSnapshot(
+        validation_requests=[
+            ValidationRequest(
+                request_id="req-1",
+                endpoint_id="ep-1",
+                configuration_hash="cfg-1",
+                owner_wallet="wallet-1",
+                minimum_session_deposit_q=25.0,
+                status="queued",
+                created_at="2026-07-02T00:00:00+00:00",
+                bond_id="bond-1",
+            )
+        ],
+        validation_bonds=[
+            ValidationBond(
+                bond_id="bond-1",
+                owner_wallet="wallet-1",
+                endpoint_id="ep-1",
+                configuration_hash="cfg-1",
+                amount_q=500.0,
+                remaining_locked_q=500.0,
+                released_q=0.0,
+                forfeited_q=0.0,
+                escrow_adapter="adapter-1",
+                escrow_reference="escrow-1",
+                status="locked",
+            )
+        ],
+    )
+
+    restored = ValidationStore()
+    restored.restore(snapshot)
+
+    assert restored.get_request("req-1").request_id == "req-1"
 
 
 def test_remote_endpoint_store_restores_records_from_state_store(

@@ -171,6 +171,7 @@ class WalletLedgerEvent(BaseModel):
         "allocation",
         "allocation_activation",
         "allocation_dispute",
+        "validation",
     ]
     stream_event_id: str
     stream_sequence_id: int = Field(ge=1)

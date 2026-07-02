@@ -1620,9 +1620,16 @@ class HypervisorService:
             details=dict(details or {}),
         )
         self._events.append(event)
-        if self._record_wallet_session_event_from_journal(event):
+        if (
+            self._record_wallet_session_event_from_journal(event)
+            or self._record_wallet_validation_event_from_journal(event)
+        ):
             self._persist_state()
         return event
+
+    def bind_validation_service(self, validation_service) -> None:
+        self.validation_service = validation_service
+        validation_service.event_recorder = self.record_event
 
     def _record_wallet_session_event_from_journal(self, event: JournalEvent) -> bool:
         event_type_map = {
@@ -1745,6 +1752,40 @@ class HypervisorService:
             status=str(session_event["status"]),
             settlement_status=str(session_event["settlement_status"]),
             amount_q=session_amount_q,
+        )
+        return True
+
+    def _record_wallet_validation_event_from_journal(self, event: JournalEvent) -> bool:
+        validation_event_types = {
+            "validation_bond_locked",
+            "validation_bond_refunded",
+            "validation_bond_forfeited",
+            "validation_request_passed",
+            "validation_request_failed",
+            "maintenance_validation_passed",
+            "maintenance_validation_failed",
+        }
+        if event.event_type not in validation_event_types:
+            return False
+        owner_id = event.details.get("owner_wallet") or event.details.get("owner_id")
+        endpoint_id = event.details.get("endpoint_id")
+        if owner_id is None or endpoint_id is None:
+            return False
+        source_event = {
+            "event_id": str(uuid4()),
+            "sequence_id": len(self._wallet_ledger_events) + 1,
+            "occurred_at": event.timestamp,
+            "journal_event_type": event.event_type,
+            "details": dict(event.details),
+        }
+        self._append_wallet_ledger_event(
+            stream="validation",
+            source_event=source_event,
+            event_type=event.event_type,
+            owner_id=str(owner_id),
+            endpoint_id=str(endpoint_id),
+            status=str(event.details.get("outcome") or event.details.get("status") or "recorded"),
+            amount_q=float(event.details.get("amount_q", 0.0) or 0.0),
         )
         return True
 

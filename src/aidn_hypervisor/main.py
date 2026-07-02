@@ -79,7 +79,7 @@ def build_app(
     resolved_service.endpoint_service = resolved_endpoint_service
     resolved_service.remote_endpoint_service = resolved_remote_endpoint_service
     resolved_service.session_service = resolved_session_service
-    resolved_service.validation_service = resolved_validation_service
+    resolved_service.bind_validation_service(resolved_validation_service)
     resolved_session_service.event_recorder = resolved_service.record_event
 
     app.include_router(

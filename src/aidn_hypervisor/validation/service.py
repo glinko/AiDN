@@ -361,6 +361,23 @@ class ValidationService:
             "request_count": len(request_ids),
         }
 
+    def resolve_maintenance_by_request(
+        self,
+        *,
+        request_id: str,
+        outcome: str,
+        validator_label: str,
+        evidence_summary: str,
+    ) -> ValidationReportOutcome:
+        request = self.store.get_request(request_id)
+        return self.resolve_maintenance(
+            endpoint_id=request.endpoint_id,
+            configuration_hash=request.configuration_hash,
+            outcome=outcome,
+            validator_label=validator_label,
+            evidence_summary=evidence_summary,
+        )
+
     def force_mark_validated(
         self,
         *,
@@ -444,6 +461,18 @@ class ValidationService:
             )
             updated_request = request.model_copy(update={"status": "passed"})
             event_type = "maintenance_validation_passed"
+            self._emit(
+                event_type="validation_bond_refunded",
+                message="validation bond refunded",
+                details={
+                    "bond_id": bond.bond_id,
+                    "request_id": request.request_id,
+                    "endpoint_id": endpoint_id,
+                    "owner_wallet": bond.owner_wallet,
+                    "amount_q": refund_q,
+                    "remaining_locked_q": remaining_locked_q,
+                },
+            )
         else:
             forfeit_q = bond.remaining_locked_q
             self.bond_escrow.forfeit_bond(bond.bond_id, forfeit_q, "validator_pool")
@@ -465,6 +494,17 @@ class ValidationService:
             )
             updated_request = request.model_copy(update={"status": "failed"})
             event_type = "maintenance_validation_failed"
+            self._emit(
+                event_type="validation_bond_forfeited",
+                message="validation bond forfeited",
+                details={
+                    "bond_id": bond.bond_id,
+                    "request_id": request.request_id,
+                    "endpoint_id": endpoint_id,
+                    "owner_wallet": bond.owner_wallet,
+                    "amount_q": forfeit_q,
+                },
+            )
         self.store.save_bond(updated_bond)
         self.store.save_request(updated_request)
         self.store.save_snapshot(updated_snapshot)
@@ -475,6 +515,7 @@ class ValidationService:
                 "request_id": request.request_id,
                 "report_id": report.report_id,
                 "endpoint_id": endpoint_id,
+                "owner_wallet": bond.owner_wallet,
                 "outcome": outcome,
             },
         )

@@ -16,6 +16,8 @@ from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.domain.models import TaskRequest
+from aidn_hypervisor.validation.service import ValidationService
+from aidn_hypervisor.validation.store import ValidationStore
 from aidn_hypervisor.wallet import quote_usage_q
 from fastapi.testclient import TestClient
 
@@ -618,6 +620,38 @@ def test_wallet_ledger_snapshot_and_restore_preserves_merged_events() -> None:
     restored.restore_state(snapshot)
 
     assert restored.export_wallet_ledger_events(limit=20)["items"] == service.export_wallet_ledger_events(limit=20)["items"]
+
+
+def test_validation_events_appear_in_wallet_ledger_export() -> None:
+    service = _service()
+    validation_service = ValidationService(ValidationStore())
+    service.bind_validation_service(validation_service)
+    requested = validation_service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    validation_service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-02T00:00:00+00:00",
+    )
+    validation_service.resolve_maintenance(
+        endpoint_id="ep-1",
+        configuration_hash="cfg-1",
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="healthy",
+    )
+
+    ledger = service.export_wallet_ledger_events(limit=20)
+
+    assert {item["event_type"] for item in ledger["items"]} >= {
+        "validation_bond_locked",
+        "maintenance_validation_passed",
+        "validation_bond_refunded",
+    }
 
 
 def test_service_automatically_records_allocation_id_from_completed_task() -> None:

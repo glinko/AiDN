@@ -3002,6 +3002,37 @@ def test_submit_validation_report_endpoint_marks_request_passed() -> None:
     assert response.json()["data"]["snapshot"]["status"] == "validated"
 
 
+def test_maintenance_route_forfeits_remaining_bond_on_fail() -> None:
+    validation_service = ValidationService(ValidationStore())
+    requested = validation_service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    validation_service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-02T00:00:00+00:00",
+    )
+    client = TestClient(
+        build_app(service=_service(), validation_service=validation_service)
+    )
+
+    response = client.post(
+        f"/api/v1/validation/requests/{requested.request.request_id}/maintenance",
+        json={
+            "outcome": "fail",
+            "validator_label": "validator-a",
+            "evidence_summary": "timeout",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["bond"]["forfeited_q"] == 500.0
+    assert response.json()["data"]["snapshot"]["status"] == "validation_failed"
+
+
 def test_revoke_publication_endpoint_returns_revoked_record() -> None:
     service = _service(whisper_endpoint="http://127.0.0.1:9000")
     service.configure_owner_wallet(mode="create", label="Primary Wallet")

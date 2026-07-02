@@ -1188,6 +1188,41 @@ def build_api_router(
             }
         )
 
+    @router.post("/api/v1/validation/requests/{request_id}/maintenance")
+    async def resolve_validation_maintenance(
+        request_id: str,
+        payload: dict,
+    ) -> JSONResponse:
+        if validation_service is None:
+            return _error(
+                503,
+                "validation_unavailable",
+                "Validation service is not configured",
+            )
+        try:
+            result = validation_service.resolve_maintenance_by_request(
+                request_id=request_id,
+                outcome=str(payload["outcome"]),
+                validator_label=str(payload["validator_label"]),
+                evidence_summary=str(payload["evidence_summary"]),
+            )
+        except KeyError:
+            return _error(
+                404,
+                "validation_request_not_found",
+                f"Unknown validation request: {request_id}",
+            )
+        except ValueError as error:
+            return _error(409, "validation_conflict", str(error))
+        return _ok(
+            {
+                "request": result.request.model_dump(mode="json"),
+                "bond": result.bond.model_dump(mode="json"),
+                "snapshot": result.snapshot.model_dump(mode="json"),
+                "report": result.report.model_dump(mode="json"),
+            }
+        )
+
     @router.post("/api/v1/endpoints/{endpoint_id}/revoke-publication")
     async def revoke_endpoint_publication(endpoint_id: str) -> JSONResponse:
         if endpoint_publication_service is None:
