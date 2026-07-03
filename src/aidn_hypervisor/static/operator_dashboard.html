@@ -1314,13 +1314,17 @@
           <span class="rail-button-title">Fleet</span>
           <span class="rail-button-copy">Bundles, installs, and resource health</span>
         </button>
+        <button class="rail-button" data-screen="providers" type="button">
+          <span class="rail-button-title">Providers</span>
+          <span class="rail-button-copy">Provider plugins, bundle density, and install pressure</span>
+        </button>
+        <button class="rail-button" data-screen="bundles" type="button">
+          <span class="rail-button-title">Bundles</span>
+          <span class="rail-button-copy">First-endpoint candidates and local execution inventory</span>
+        </button>
         <button class="rail-button" data-screen="endpoints" type="button">
           <span class="rail-button-title">Endpoints</span>
           <span class="rail-button-copy">Visibility, publication, and validation control</span>
-        </button>
-        <button class="rail-button" data-screen="sessions" type="button">
-          <span class="rail-button-title">Sessions</span>
-          <span class="rail-button-copy">Deposits, idle timeout, and paid execution state</span>
         </button>
         <button class="rail-button" data-screen="market" type="button">
           <span class="rail-button-title">Market</span>
@@ -1329,6 +1333,14 @@
       </nav>
 
       <section class="rail-secondary">
+        <button class="rail-button" type="button" data-screen="installs">
+          <span class="rail-button-title">Installs</span>
+          <span class="rail-button-copy">Model acquisition, failures, and register-ready artifacts</span>
+        </button>
+        <button class="rail-button" data-screen="sessions" type="button">
+          <span class="rail-button-title">Sessions</span>
+          <span class="rail-button-copy">Deposits, idle timeout, and paid execution state</span>
+        </button>
         <button class="rail-button" type="button" data-screen="remote">
           <span class="rail-button-title">Remote Endpoints</span>
           <span class="rail-button-copy">Attach remote execution and future proxy routes</span>
@@ -1336,10 +1348,6 @@
         <button class="rail-button" type="button" data-screen="requests">
           <span class="rail-button-title">Requests</span>
           <span class="rail-button-copy">Workload queue and spillover policy</span>
-        </button>
-        <button class="rail-button" type="button" aria-disabled="true">
-          <span class="rail-button-title">Models</span>
-          <span class="rail-button-copy">Bundles, installs, and onboarding</span>
         </button>
         <button class="rail-button" type="button" aria-disabled="true">
           <span class="rail-button-title">Policies</span>
@@ -1406,6 +1414,9 @@
     const endpoints = {
       home: "/operators/dashboard/home",
       fleet: "/operators/dashboard/fleet",
+      providers: "/operators/dashboard/providers",
+      bundles: "/operators/dashboard/bundles",
+      installs: "/operators/dashboard/installs",
       endpoints: "/operators/dashboard/endpoints",
       sessions: "/operators/dashboard/sessions",
       market: "/operators/dashboard/market",
@@ -1442,6 +1453,8 @@
       payloads: {},
       selectedMarketCandidateId: null,
       selectedFleetBundleId: null,
+      selectedProviderId: null,
+      selectedInstallId: null,
       selectedEndpointDraftId: null,
       selectedSessionId: null,
       selectedRemoteEndpointKey: null,
@@ -1655,8 +1668,8 @@
     }
 
     function selectedFleetBundle() {
-      const payload = state.payloads.fleet || { bundles: [] };
-      const bundles = payload.bundles || [];
+      const bundles =
+        state.payloads.bundles?.items || state.payloads.fleet?.bundles || [];
       if (!bundles.length) {
         state.selectedFleetBundleId = null;
         return null;
@@ -1664,6 +1677,38 @@
       const selected =
         bundles.find((bundle) => bundle.bundle_id === state.selectedFleetBundleId) || bundles[0];
       state.selectedFleetBundleId = selected.bundle_id;
+      return selected;
+    }
+
+    function providerRows() {
+      return (state.payloads.providers || { items: [] }).items || [];
+    }
+
+    function selectedProvider() {
+      const items = providerRows();
+      if (!items.length) {
+        state.selectedProviderId = null;
+        return null;
+      }
+      const selected =
+        items.find((item) => item.plugin_id === state.selectedProviderId) || items[0];
+      state.selectedProviderId = selected.plugin_id;
+      return selected;
+    }
+
+    function installRows() {
+      return (state.payloads.installs || { items: [] }).items || [];
+    }
+
+    function selectedInstall() {
+      const items = installRows();
+      if (!items.length) {
+        state.selectedInstallId = null;
+        return null;
+      }
+      const selected =
+        items.find((item) => item.install_id === state.selectedInstallId) || items[0];
+      state.selectedInstallId = selected.install_id;
       return selected;
     }
 
@@ -2666,6 +2711,226 @@
               </section>
             </div>
           </div>
+        </div>
+      `;
+    }
+
+    function renderProvidersWorkspace() {
+      const payload = state.payloads.providers || {};
+      const summary = payload.summary || {};
+      const items = providerRows();
+
+      return `
+        <div class="workspace-header">
+          <div>
+            <div class="panel-heading">Execution Backends</div>
+            <h1 class="workspace-title">Providers</h1>
+            <p class="workspace-copy">Provider plugins stay separate from endpoint publication so the operator can inspect raw execution capacity, bundle density, and install pressure before exposing anything to the network.</p>
+          </div>
+          <div class="toolbar">
+            <button type="button" class="active">Installed Plugins</button>
+            <button type="button" data-screen-jump="bundles">Open Bundles</button>
+          </div>
+        </div>
+        <div class="workspace-body">
+          <div class="summary-grid">
+            <section class="summary-card">
+              <div class="panel-heading">Providers</div>
+              <div class="summary-value">${formatCount(summary.total)}</div>
+              <div class="summary-copy">Registered execution plugin adapters on this hypervisor.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Bundles</div>
+              <div class="summary-value">${formatCount(summary.bundles)}</div>
+              <div class="summary-copy">Local execution bundles currently attached to provider plugins.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Install Jobs</div>
+              <div class="summary-value">${formatCount(summary.installs)}</div>
+              <div class="summary-copy">Model installs still converging into bundle-ready artifacts.</div>
+            </section>
+          </div>
+          <section class="subpanel">
+            <div class="panel-heading">Provider Inventory</div>
+            <div class="table-shell" style="margin-top: 14px;">
+              <div class="table-head">
+                <div>Provider</div>
+                <div>Workloads</div>
+                <div>Bundles</div>
+                <div>Installs</div>
+                <div>Action</div>
+              </div>
+              ${
+                items.length
+                  ? items
+                      .map((provider) => {
+                        const active = provider.plugin_id === state.selectedProviderId;
+                        return `
+                          <div class="table-row ${active ? "active" : ""}" data-provider-row="${provider.plugin_id}">
+                            <div>
+                              <div class="row-title">${provider.plugin_id}</div>
+                              <span class="row-copy">${provider.pending_install_count ? `${formatCount(provider.pending_install_count)} pending installs` : "No pending installs"}</span>
+                            </div>
+                            <div class="row-meta">${(provider.workload_types || []).join(", ") || "-"}</div>
+                            <div><span class="chip">${formatCount(provider.bundle_count)}</span></div>
+                            <div><span class="chip ${provider.pending_install_count ? "" : "good"}">${formatCount(provider.install_count)}</span></div>
+                            <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Inspect"}</button>
+                          </div>
+                        `;
+                      })
+                      .join("")
+                  : `<div class="empty-state">No provider plugins are registered on this node yet.</div>`
+              }
+            </div>
+          </section>
+        </div>
+      `;
+    }
+
+    function renderBundlesWorkspace() {
+      const payload = state.payloads.bundles || {};
+      const summary = payload.summary || {};
+      const items = payload.items || [];
+
+      return `
+        <div class="workspace-header">
+          <div>
+            <div class="panel-heading">Local Inventory</div>
+            <h1 class="workspace-title">Bundles</h1>
+            <p class="workspace-copy">This view isolates local models and runtimes from the publish layer so the operator can spot the best first-endpoint candidate before worrying about visibility, pricing, or validation.</p>
+          </div>
+          <div class="toolbar">
+            <button type="button" class="active">Local Bundles</button>
+            <button type="button" data-screen-jump="endpoints">Open Endpoints</button>
+          </div>
+        </div>
+        <div class="workspace-body">
+          <div class="summary-grid">
+            <section class="summary-card">
+              <div class="panel-heading">Bundles</div>
+              <div class="summary-value">${formatCount(summary.total)}</div>
+              <div class="summary-copy">Registered bundle definitions currently available on this node.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Ready To Publish</div>
+              <div class="summary-value">${formatCount(summary.ready_to_publish)}</div>
+              <div class="summary-copy">Enabled bundles already eligible for endpoint wiring.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">First Endpoint Picks</div>
+              <div class="summary-value">${formatCount(summary.first_endpoint_candidates)}</div>
+              <div class="summary-copy">Bundles recommended by bootstrap as the cleanest first endpoint.</div>
+            </section>
+          </div>
+          <section class="subpanel">
+            <div class="panel-heading">Bundle Readiness</div>
+            <div class="table-shell" style="margin-top: 14px;">
+              <div class="table-head">
+                <div>Bundle</div>
+                <div>Model</div>
+                <div>Runtime</div>
+                <div>Provider</div>
+                <div>Bootstrap Fit</div>
+                <div>Action</div>
+              </div>
+              ${
+                items.length
+                  ? items
+                      .map((bundle) => {
+                        const active = bundle.bundle_id === state.selectedFleetBundleId;
+                        return `
+                          <div class="table-row ${active ? "active" : ""}" data-fleet-bundle="${bundle.bundle_id}">
+                            <div>
+                              <div class="row-title">${bundle.bundle_id}</div>
+                              <span class="row-copy">${bundle.workload_type}</span>
+                            </div>
+                            <div class="row-meta">${bundle.model_id}</div>
+                            <div><span class="chip ${bundle.enabled ? "good" : "bad"}">${formatMaybe(bundle.runtime_status)}</span></div>
+                            <div class="row-meta">${bundle.provider_type}</div>
+                            <div><span class="chip ${bundle.is_first_endpoint_candidate ? "good" : ""}">${bundle.is_first_endpoint_candidate ? "first endpoint" : bundle.endpoint_action?.recommended || "inspect"}</span></div>
+                            <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Inspect"}</button>
+                          </div>
+                        `;
+                      })
+                      .join("")
+                  : `<div class="empty-state">No bundles are registered on this node.</div>`
+              }
+            </div>
+          </section>
+        </div>
+      `;
+    }
+
+    function renderInstallsWorkspace() {
+      const payload = state.payloads.installs || {};
+      const summary = payload.summary || {};
+      const items = installRows();
+
+      return `
+        <div class="workspace-header">
+          <div>
+            <div class="panel-heading">Artifact Pipeline</div>
+            <h1 class="workspace-title">Installs</h1>
+            <p class="workspace-copy">Model downloads and imports stay visible as a distinct pipeline so the operator can see what is still materializing, what failed, and what is ready to turn into a bundle.</p>
+          </div>
+          <div class="toolbar">
+            <button type="button" class="active">Install Queue</button>
+            <button type="button" data-screen-jump="providers">Open Providers</button>
+          </div>
+        </div>
+        <div class="workspace-body">
+          <div class="summary-grid">
+            <section class="summary-card">
+              <div class="panel-heading">Jobs</div>
+              <div class="summary-value">${formatCount(summary.total)}</div>
+              <div class="summary-copy">Tracked model acquisition jobs in local operator state.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Pending Or Running</div>
+              <div class="summary-value">${formatCount(Number(summary.pending || 0) + Number(summary.running || 0))}</div>
+              <div class="summary-copy">Artifacts still downloading, importing, or materializing.</div>
+            </section>
+            <section class="summary-card">
+              <div class="panel-heading">Ready To Register</div>
+              <div class="summary-value">${formatCount(summary.ready_to_register)}</div>
+              <div class="summary-copy">Completed installs that can immediately become a new bundle.</div>
+            </section>
+          </div>
+          <section class="subpanel">
+            <div class="panel-heading">Install State</div>
+            <div class="table-shell" style="margin-top: 14px;">
+              <div class="table-head">
+                <div>Model</div>
+                <div>Provider</div>
+                <div>Status</div>
+                <div>Bundle</div>
+                <div>Next</div>
+                <div>Action</div>
+              </div>
+              ${
+                items.length
+                  ? items
+                      .map((install) => {
+                        const active = install.install_id === state.selectedInstallId;
+                        return `
+                          <div class="table-row ${active ? "active" : ""}" data-install-row="${install.install_id}">
+                            <div>
+                              <div class="row-title">${install.model_id}</div>
+                              <span class="row-copy">${install.target_path || "Artifact path pending"}</span>
+                            </div>
+                            <div class="row-meta">${install.provider_type}</div>
+                            <div><span class="chip ${install.install_status === "failed" ? "bad" : install.can_register_bundle ? "good" : ""}">${install.install_status}</span></div>
+                            <div class="row-meta">${formatMaybe(install.bundle_id, "unregistered")}</div>
+                            <div><span class="chip ${install.can_register_bundle ? "good" : ""}">${install.next_action}</span></div>
+                            <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Inspect"}</button>
+                          </div>
+                        `;
+                      })
+                      .join("")
+                  : `<div class="empty-state">No install jobs are active right now.</div>`
+              }
+            </div>
+          </section>
         </div>
       `;
     }
@@ -4037,8 +4302,14 @@
         root.innerHTML = renderSessionsWorkspace();
       } else if (state.screen === "remote") {
         root.innerHTML = renderRemoteWorkspace();
+      } else if (state.screen === "installs") {
+        root.innerHTML = renderInstallsWorkspace();
       } else if (state.screen === "endpoints") {
         root.innerHTML = renderEndpointsWorkspace();
+      } else if (state.screen === "bundles") {
+        root.innerHTML = renderBundlesWorkspace();
+      } else if (state.screen === "providers") {
+        root.innerHTML = renderProvidersWorkspace();
       } else if (state.screen === "fleet") {
         root.innerHTML = renderFleetWorkspace();
       } else if (state.screen === "market") {
@@ -4154,6 +4425,106 @@
         <div class="inspector-actions">
           <button class="primary-button" type="button" data-screen-jump="market">Compare Against Market</button>
           <button class="secondary-button" type="button">Publish Controls Soon</button>
+        </div>
+      `;
+    }
+
+    function renderProvidersInspector() {
+      const provider = selectedProvider();
+      if (!provider) {
+        return `
+          <div class="panel-heading">Selected Provider</div>
+          <div class="inspector-title">No Provider Selected</div>
+          <div class="inspector-copy">No provider plugin data is available yet.</div>
+        `;
+      }
+
+      return `
+        <div class="panel-heading">Selected Provider</div>
+        <div class="inspector-title">${provider.plugin_id}</div>
+        <div class="chip-row">
+          <span class="chip good">${formatCount(provider.bundle_count)} bundles</span>
+          <span class="chip ${provider.pending_install_count ? "" : "good"}">${formatCount(provider.install_count)} installs</span>
+        </div>
+        <div class="inspector-copy">Provider plugins are raw execution adapters. They become operator-visible inventory through bundles and install jobs, not through publication directly.</div>
+        <div class="inspector-grid">
+          <div class="inspector-card">
+            <strong>Workloads</strong>
+            <div class="inspector-metric">${(provider.workload_types || []).length}</div>
+          </div>
+          <div class="inspector-card">
+            <strong>Active Bundles</strong>
+            <div class="inspector-metric">${formatCount(provider.active_bundle_count)}</div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="inspector-stat">
+            <strong>Usage Contract</strong>
+            <span>${provider.usage_contract?.missing_usage_behavior || "unspecified"} / ${provider.usage_contract?.fallback_policy || "none"}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Pending Installs</strong>
+            <span>${formatCount(provider.pending_install_count)}</span>
+          </div>
+        </div>
+        <div class="inspector-actions">
+          <button class="primary-button" type="button" data-screen-jump="bundles">Inspect Bundles</button>
+          <button class="secondary-button" type="button" data-screen-jump="installs">Inspect Installs</button>
+        </div>
+      `;
+    }
+
+    function renderInstallsInspector() {
+      const install = selectedInstall();
+      if (!install) {
+        return `
+          <div class="panel-heading">Selected Install</div>
+          <div class="inspector-title">No Install Selected</div>
+          <div class="inspector-copy">Queue or import a model artifact to inspect install-state and bundle registration readiness.</div>
+        `;
+      }
+
+      return `
+        <div class="panel-heading">Selected Install</div>
+        <div class="inspector-title">${install.model_id}</div>
+        <div class="chip-row">
+          <span class="chip ${install.install_status === "failed" ? "bad" : install.can_register_bundle ? "good" : ""}">${install.install_status}</span>
+          <span class="chip">${install.provider_type}</span>
+        </div>
+        <div class="inspector-copy">Install jobs should converge into a bundle before they become endpoint candidates. This panel keeps that pre-publication step explicit for the operator.</div>
+        <div class="inspector-grid">
+          <div class="inspector-card">
+            <strong>Next Action</strong>
+            <div class="inspector-metric">${install.next_action}</div>
+          </div>
+          <div class="inspector-card">
+            <strong>Bundle</strong>
+            <div class="inspector-metric">${formatMaybe(install.bundle_id, "none")}</div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="inspector-stat">
+            <strong>Requested By</strong>
+            <span>${install.requested_by || "-"}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Artifact Path</strong>
+            <span>${install.target_path || "pending"}</span>
+          </div>
+          ${
+            install.last_error
+              ? `
+                <div class="inspector-stat">
+                  <strong>Last Error</strong>
+                  <span>${install.last_error}</span>
+                </div>
+              `
+              : ""
+          }
+        </div>
+        <div class="inspector-actions">
+          <button class="primary-button" type="button" data-screen-jump="${install.can_register_bundle ? "bundles" : "providers"}">${install.can_register_bundle ? "Prepare Bundle Registration" : "Inspect Provider"}</button>
+          <button class="secondary-button" type="button" data-screen-jump="home">Back To Bootstrap</button>
         </div>
       `;
     }
@@ -4656,8 +5027,14 @@
         root.innerHTML = renderSessionsInspector();
       } else if (state.screen === "remote") {
         root.innerHTML = renderRemoteInspector();
+      } else if (state.screen === "installs") {
+        root.innerHTML = renderInstallsInspector();
       } else if (state.screen === "endpoints") {
         root.innerHTML = renderEndpointsInspector();
+      } else if (state.screen === "bundles") {
+        root.innerHTML = renderFleetInspector();
+      } else if (state.screen === "providers") {
+        root.innerHTML = renderProvidersInspector();
       } else if (state.screen === "fleet") {
         root.innerHTML = renderFleetInspector();
       } else if (state.screen === "market") {
@@ -4836,7 +5213,15 @@
     }
 
     async function refreshBootstrapPayloads() {
-      await Promise.all([loadScreen("home"), loadScreen("fleet"), loadScreen("endpoints"), loadScreen("remote")]);
+      await Promise.all([
+        loadScreen("home"),
+        loadScreen("fleet"),
+        loadScreen("providers"),
+        loadScreen("bundles"),
+        loadScreen("installs"),
+        loadScreen("endpoints"),
+        loadScreen("remote"),
+      ]);
       render();
     }
 
@@ -5575,9 +5960,27 @@
     }
 
     function bindInteractiveElements() {
+      document.querySelectorAll("[data-provider-row]").forEach((row) => {
+        row.addEventListener("click", () => {
+          state.selectedProviderId = row.dataset.providerRow;
+          renderInspector();
+          renderWorkspace();
+          bindInteractiveElements();
+        });
+      });
+
       document.querySelectorAll("[data-fleet-bundle]").forEach((row) => {
         row.addEventListener("click", () => {
           state.selectedFleetBundleId = row.dataset.fleetBundle;
+          renderInspector();
+          renderWorkspace();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-install-row]").forEach((row) => {
+        row.addEventListener("click", () => {
+          state.selectedInstallId = row.dataset.installRow;
           renderInspector();
           renderWorkspace();
           bindInteractiveElements();
