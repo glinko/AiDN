@@ -98,6 +98,7 @@ def build_app(
             resolved_endpoint_service,
             remote_endpoint_service=resolved_remote_endpoint_service,
             session_service=resolved_session_service,
+            validation_service=resolved_validation_service,
         )
     )
 

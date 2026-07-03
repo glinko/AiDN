@@ -2784,6 +2784,7 @@ def test_publish_configuration_endpoint_returns_signed_record() -> None:
         store=EndpointPublicationStore(),
         endpoint_service=endpoint_service,
     )
+    validation_service = ValidationService(ValidationStore())
     created = endpoint_service.create_endpoint(
         CreateEndpointCommand(
             owner_wallet=service.owner_wallet_state()["wallet_id"],
@@ -2794,11 +2795,23 @@ def test_publish_configuration_endpoint_returns_signed_record() -> None:
             capabilities=["speech.stt"],
         )
     )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-02T00:00:00+00:00",
+    )
     client = TestClient(
         build_app(
             service=service,
             endpoint_service=endpoint_service,
             endpoint_publication_service=publication_service,
+            validation_service=validation_service,
         )
     )
 
@@ -2814,6 +2827,11 @@ def test_publish_configuration_endpoint_returns_signed_record() -> None:
         == service.owner_wallet_state()["wallet_id"]
     )
     assert body["data"]["publication"]["wallet_signature"]
+    assert body["data"]["validation_summary"]["validation_status"] == "validated"
+    assert (
+        body["data"]["validation_summary"]["configuration_hash"]
+        == created.endpoint.configuration_hash
+    )
 
 
 def test_endpoint_proof_returns_live_configuration_hash() -> None:
@@ -2824,6 +2842,7 @@ def test_endpoint_proof_returns_live_configuration_hash() -> None:
         store=EndpointPublicationStore(),
         endpoint_service=endpoint_service,
     )
+    validation_service = ValidationService(ValidationStore())
     created = endpoint_service.create_endpoint(
         CreateEndpointCommand(
             owner_wallet=service.owner_wallet_state()["wallet_id"],
@@ -2839,11 +2858,35 @@ def test_endpoint_proof_returns_live_configuration_hash() -> None:
             },
         )
     )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-02T00:00:00+00:00",
+    )
+    publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+    updated = endpoint_service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=created.endpoint.endpoint_id,
+            runtime={"streaming": True, "timeout": 45},
+        )
+    )
     client = TestClient(
         build_app(
             service=service,
             endpoint_service=endpoint_service,
             endpoint_publication_service=publication_service,
+            validation_service=validation_service,
         )
     )
 
@@ -2855,9 +2898,79 @@ def test_endpoint_proof_returns_live_configuration_hash() -> None:
     assert body["data"]["proof"]["node_id"] == service.node_id
     assert (
         body["data"]["proof"]["configuration_hash"]
-        == created.endpoint.configuration_hash
+        == updated.endpoint.configuration_hash
     )
     assert body["data"]["proof"]["publication"]["visibility"] == "shared"
+    assert (
+        body["data"]["proof"]["validation_summary"]["configuration_hash"]
+        == updated.endpoint.configuration_hash
+    )
+    assert body["data"]["proof"]["validation_summary"]["validation_status"] == "unvalidated"
+    assert (
+        body["data"]["proof"]["local_publication_configuration_hash"]
+        != body["data"]["proof"]["current_publication"]["configuration_hash"]
+    )
+    assert body["data"]["proof"]["publication_sync_status"] == "local_changes_not_published"
+    assert (
+        body["data"]["proof"]["published_validation_summary"]["configuration_hash"]
+        == body["data"]["proof"]["current_publication"]["configuration_hash"]
+    )
+    assert body["data"]["proof"]["published_validation_summary"]["validation_status"] == "unvalidated"
+
+
+def test_patch_endpoint_rotation_supersedes_previous_validation_snapshot() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Validated Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-02T00:00:00+00:00",
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            validation_service=validation_service,
+        )
+    )
+
+    response = client.patch(
+        f"/api/v1/endpoints/{created.endpoint.endpoint_id}",
+        json={"runtime": {"streaming": True, "timeout": 45}},
+    )
+
+    assert response.status_code == 200
+    rotated_hash = response.json()["data"]["endpoint"]["configuration_hash"]
+    old_summary = validation_service.validation_summary(
+        created.endpoint.endpoint_id,
+        configuration_hash=created.endpoint.configuration_hash,
+    )
+    new_summary = validation_service.validation_summary(
+        created.endpoint.endpoint_id,
+        configuration_hash=rotated_hash,
+    )
+
+    assert old_summary["validation_status"] == "superseded"
+    assert old_summary["latest_request_id"] == requested.request.request_id
+    assert new_summary["validation_status"] == "unvalidated"
 
 
 def test_request_validation_endpoint_returns_bond_and_snapshot_summary() -> None:

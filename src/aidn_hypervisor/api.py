@@ -55,6 +55,35 @@ def _error(status_code: int, code: str, message: str) -> JSONResponse:
     )
 
 
+def _execution_payload_for_manifest(manifest) -> dict:
+    if manifest.execution_strategy != "proxy" or manifest.proxy_target is None:
+        return {"strategy": manifest.execution_strategy}
+    return {
+        "strategy": manifest.execution_strategy,
+        "target_fingerprint": configuration_hash_for_publication(
+            {
+                "remote_endpoint_id": manifest.proxy_target.remote_endpoint_id,
+                "source_publication_id": manifest.proxy_target.source_publication_id,
+                "source_configuration_hash": manifest.proxy_target.source_configuration_hash,
+            }
+        ),
+    }
+
+
+def _local_publication_configuration_hash(manifest) -> str:
+    payload = canonical_configuration_payload(
+        bundle_hash=manifest.bundle_hash,
+        model_class=manifest.model_class,
+        capabilities=manifest.capabilities,
+        runtime=manifest.runtime.model_dump(mode="json"),
+        publication=manifest.publication.model_dump(mode="json"),
+        pricing=manifest.pricing.model_dump(mode="json"),
+        session=manifest.session.model_dump(mode="json"),
+        execution=_execution_payload_for_manifest(manifest),
+    )
+    return configuration_hash_for_publication(payload)
+
+
 def _operator_dashboard_home_bootstrap_payload(
     *,
     service: HypervisorService,
@@ -100,35 +129,9 @@ def _operator_dashboard_endpoints_payload(
     endpoint_publication_service=None,
     validation_service=None,
 ) -> dict:
-    def execution_payload_for_manifest(manifest) -> dict:
-        if manifest.execution_strategy != "proxy" or manifest.proxy_target is None:
-            return {"strategy": manifest.execution_strategy}
-        return {
-            "strategy": manifest.execution_strategy,
-            "target_fingerprint": configuration_hash_for_publication(
-                {
-                    "remote_endpoint_id": manifest.proxy_target.remote_endpoint_id,
-                    "source_publication_id": manifest.proxy_target.source_publication_id,
-                    "source_configuration_hash": manifest.proxy_target.source_configuration_hash,
-                }
-            ),
-        }
-
     items = []
     for manifest in endpoint_service.list_endpoints():
-        local_publication_payload = canonical_configuration_payload(
-            bundle_hash=manifest.bundle_hash,
-            model_class=manifest.model_class,
-            capabilities=manifest.capabilities,
-            runtime=manifest.runtime.model_dump(mode="json"),
-            publication=manifest.publication.model_dump(mode="json"),
-            pricing=manifest.pricing.model_dump(mode="json"),
-            session=manifest.session.model_dump(mode="json"),
-            execution=execution_payload_for_manifest(manifest),
-        )
-        local_configuration_hash = configuration_hash_for_publication(
-            local_publication_payload
-        )
+        local_configuration_hash = _local_publication_configuration_hash(manifest)
         current_publication = (
             endpoint_publication_service.current_publication(manifest.endpoint_id)
             if endpoint_publication_service is not None
@@ -1083,7 +1086,19 @@ def build_api_router(
             )
         except ValueError as error:
             return _error(409, "publication_conflict", str(error))
-        return _ok({"publication": record.model_dump(mode="json")})
+        validation_summary = None
+        if validation_service is not None:
+            endpoint = endpoint_service.get_endpoint(endpoint_id).endpoint
+            validation_summary = validation_service.validation_summary(
+                endpoint_id,
+                configuration_hash=endpoint.configuration_hash,
+            )
+        return _ok(
+            {
+                "publication": record.model_dump(mode="json"),
+                "validation_summary": validation_summary,
+            }
+        )
 
     @router.post("/api/v1/endpoints/{endpoint_id}/request-validation")
     async def request_endpoint_validation(endpoint_id: str) -> JSONResponse:
@@ -1201,15 +1216,46 @@ def build_api_router(
             if endpoint_publication_service is not None
             else None
         )
+        local_publication_configuration_hash = _local_publication_configuration_hash(
+            endpoint
+        )
+        validation_summary = (
+            validation_service.validation_summary(
+                endpoint_id,
+                configuration_hash=endpoint.configuration_hash,
+            )
+            if validation_service is not None
+            else None
+        )
+        published_validation_summary = (
+            validation_service.validation_summary(
+                endpoint_id,
+                configuration_hash=current_publication.configuration_hash,
+            )
+            if validation_service is not None and current_publication is not None
+            else None
+        )
         return _ok(
             {
                 "proof": {
                     "endpoint_id": endpoint.endpoint_id,
                     "node_id": service.node_id,
                     "configuration_hash": endpoint.configuration_hash,
+                    "local_publication_configuration_hash": local_publication_configuration_hash,
+                    "publication_sync_status": (
+                        "in_sync"
+                        if current_publication is not None
+                        and current_publication.configuration_hash
+                        == local_publication_configuration_hash
+                        else "local_changes_not_published"
+                        if current_publication is not None
+                        else "never_published"
+                    ),
                     "bundle_hash": endpoint.bundle_hash,
                     "runtime_status": endpoint.status,
                     "publication": endpoint.publication.model_dump(mode="json"),
+                    "validation_summary": validation_summary,
+                    "published_validation_summary": published_validation_summary,
                     "current_publication": (
                         current_publication.model_dump(mode="json")
                         if current_publication is not None

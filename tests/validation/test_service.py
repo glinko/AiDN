@@ -284,6 +284,41 @@ def test_validation_summary_returns_spec_required_fields() -> None:
     assert summary["superseded_at"] is None
 
 
+def test_supersede_configuration_marks_old_snapshot_superseded_and_new_hash_unvalidated() -> (
+    None
+):
+    service = ValidationService(ValidationStore())
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-02T00:00:00+00:00",
+    )
+
+    service.supersede_configuration(
+        endpoint_id="ep-1",
+        previous_configuration_hash="cfg-1",
+        replacement_configuration_hash="cfg-2",
+        superseded_at="2026-07-02T01:00:00+00:00",
+    )
+
+    old_summary = service.validation_summary("ep-1", configuration_hash="cfg-1")
+    new_summary = service.validation_summary("ep-1", configuration_hash="cfg-2")
+
+    assert old_summary["validation_status"] == "superseded"
+    assert old_summary["superseded_at"] == "2026-07-02T01:00:00+00:00"
+    assert old_summary["latest_request_id"] == requested.request.request_id
+    assert new_summary["configuration_hash"] == "cfg-2"
+    assert new_summary["validation_status"] == "unvalidated"
+    assert new_summary["latest_request_id"] is None
+    assert new_summary["bond_state"] is None
+
+
 def test_authorization_hides_validator_wallet_and_share_count() -> None:
     service = ValidationService(ValidationStore())
     requested = service.request_validation(

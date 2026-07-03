@@ -2,7 +2,6 @@ from uuid import uuid4
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand, UpdateEndpointCommand
 from pydantic import BaseModel
 
@@ -20,6 +19,7 @@ def build_endpoint_router(
     service,
     remote_endpoint_service=None,
     session_service=None,
+    validation_service=None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/endpoints")
 
@@ -75,9 +75,21 @@ def build_endpoint_router(
         if command.endpoint_id != endpoint_id:
             command = command.model_copy(update={"endpoint_id": endpoint_id})
         try:
+            current = service.get_endpoint(endpoint_id).endpoint
             updated = service.update_endpoint(command)
         except KeyError:
             return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        if (
+            validation_service is not None
+            and updated.snapshot is not None
+            and current.configuration_hash != updated.endpoint.configuration_hash
+        ):
+            validation_service.supersede_configuration(
+                endpoint_id=endpoint_id,
+                previous_configuration_hash=current.configuration_hash,
+                replacement_configuration_hash=updated.endpoint.configuration_hash,
+                superseded_at=updated.snapshot.created_at,
+            )
         return _ok(
             {
                 "endpoint": updated.endpoint.model_dump(mode="json"),
@@ -111,9 +123,21 @@ def build_endpoint_router(
                 f"Unknown remote endpoint: {request.remote_endpoint_id}",
             )
         try:
+            current = service.get_endpoint(endpoint_id).endpoint
             updated = service.attach_proxy_target(endpoint_id, remote_endpoint)
         except KeyError:
             return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        if (
+            validation_service is not None
+            and updated.snapshot is not None
+            and current.configuration_hash != updated.endpoint.configuration_hash
+        ):
+            validation_service.supersede_configuration(
+                endpoint_id=endpoint_id,
+                previous_configuration_hash=current.configuration_hash,
+                replacement_configuration_hash=updated.endpoint.configuration_hash,
+                superseded_at=updated.snapshot.created_at,
+            )
         return _ok(
             {
                 "endpoint": updated.endpoint.model_dump(mode="json"),

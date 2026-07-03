@@ -279,11 +279,21 @@ class ValidationService:
         configuration_hash: str | None = None,
     ) -> dict:
         requests = sorted(
-            self.store.list_requests_for_endpoint(endpoint_id),
+            [
+                item
+                for item in self.store.list_requests_for_endpoint(endpoint_id)
+                if configuration_hash is None
+                or item.configuration_hash == configuration_hash
+            ],
             key=lambda item: item.created_at,
         )
         reports = sorted(
-            self.store.list_reports_for_endpoint(endpoint_id),
+            [
+                item
+                for item in self.store.list_reports_for_endpoint(endpoint_id)
+                if configuration_hash is None
+                or item.configuration_hash == configuration_hash
+            ],
             key=lambda item: item.created_at,
         )
         request_ids = {item.request_id for item in requests}
@@ -291,6 +301,10 @@ class ValidationService:
             item
             for item in self.store.list_snapshots()
             if item.endpoint_id == endpoint_id
+            and (
+                configuration_hash is None
+                or item.configuration_hash == configuration_hash
+            )
         ]
         current_snapshot = snapshots[-1] if snapshots else None
         latest_request = requests[-1] if requests else None
@@ -369,6 +383,57 @@ class ValidationService:
                 if item.request_id in request_ids
             ),
         }
+
+    def supersede_configuration(
+        self,
+        *,
+        endpoint_id: str,
+        previous_configuration_hash: str,
+        replacement_configuration_hash: str,
+        superseded_at: str,
+    ) -> None:
+        if previous_configuration_hash == replacement_configuration_hash:
+            return
+        try:
+            snapshot = self.store.get_snapshot(
+                endpoint_id,
+                previous_configuration_hash,
+            )
+        except KeyError:
+            return
+        updated_snapshot = snapshot.model_copy(
+            update={
+                "status": "superseded",
+                "superseded_at": superseded_at,
+            }
+        )
+        self.store.save_snapshot(updated_snapshot)
+        try:
+            request = self.store.latest_request_for_snapshot(
+                endpoint_id,
+                previous_configuration_hash,
+            )
+        except KeyError:
+            request = None
+        if request is not None:
+            self.store.save_request(
+                request.model_copy(
+                    update={
+                        "status": "superseded",
+                        "superseded_at": superseded_at,
+                    }
+                )
+            )
+        self._emit(
+            event_type="validation_configuration_superseded",
+            message="validation configuration superseded",
+            details={
+                "endpoint_id": endpoint_id,
+                "previous_configuration_hash": previous_configuration_hash,
+                "replacement_configuration_hash": replacement_configuration_hash,
+                "superseded_at": superseded_at,
+            },
+        )
 
     def validation_history(self, endpoint_id: str) -> dict:
         requests = sorted(
