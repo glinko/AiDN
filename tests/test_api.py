@@ -2913,9 +2913,9 @@ def test_endpoint_proof_returns_live_configuration_hash() -> None:
     assert body["data"]["proof"]["publication_sync_status"] == "local_changes_not_published"
     assert (
         body["data"]["proof"]["published_validation_summary"]["configuration_hash"]
-        == body["data"]["proof"]["current_publication"]["configuration_hash"]
+        == created.endpoint.configuration_hash
     )
-    assert body["data"]["proof"]["published_validation_summary"]["validation_status"] == "unvalidated"
+    assert body["data"]["proof"]["published_validation_summary"]["validation_status"] == "validated"
 
 
 def test_patch_endpoint_rotation_supersedes_previous_validation_snapshot() -> None:
@@ -3235,6 +3235,67 @@ def test_operator_dashboard_endpoints_payload_includes_validation_summary() -> N
     assert item["validation_summary"]["bond_state"]["bond_id"] == requested.bond.bond_id
 
 
+def test_operator_dashboard_endpoints_payload_includes_dual_layer_trust() -> None:
+    service = _service()
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Dual Trust Endpoint",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    publication = publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-validated",
+        validated_at="2026-07-03T00:00:00+00:00",
+    )
+    endpoint_service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=created.endpoint.endpoint_id,
+            runtime={"streaming": True, "timeout": 45},
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+            validation_service=validation_service,
+        )
+    )
+
+    response = client.get("/operators/dashboard/endpoints")
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["validation_summary"]["validation_status"] == "unvalidated"
+    assert item["published_validation_summary"]["validation_status"] == "validated"
+    assert item["publication_sync_status"] == "local_changes_not_published"
+
+
 def test_maintenance_route_forfeits_remaining_bond_on_fail() -> None:
     validation_service = ValidationService(ValidationStore())
     requested = validation_service.request_validation(
@@ -3402,6 +3463,61 @@ def test_registry_advertisement_includes_current_published_configuration_hash() 
     )
 
 
+def test_registry_advertisement_includes_dual_layer_trust_fields() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Trusty STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    publication = publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+        node_id=hypervisor.node_id,
+        wallet_private_key=hypervisor.owner_wallet_private_key(),
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-03T00:00:00+00:00",
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+            validation_service=validation_service,
+        )
+    )
+
+    response = client.get("/operators/registry/advertisement")
+
+    assert response.status_code == 200
+    item = response.json()["published_endpoints"][0]
+    assert item["publication_sync_status"] == "in_sync"
+    assert item["published_validation_summary"]["validation_status"] == "validated"
+    assert item["live_validation_summary"]["validation_status"] == "validated"
+
+
 def test_operator_dashboard_endpoints_payload_reports_publication_sync_state() -> None:
     service = _service(whisper_endpoint="http://127.0.0.1:9000")
     service.configure_owner_wallet(mode="create", label="Primary Wallet")
@@ -3489,6 +3605,161 @@ def test_operator_dashboard_endpoints_payload_requires_signed_publication_for_pu
     assert item["publication_sync_status"] == "never_published"
 
 
+def test_operator_dashboard_market_payload_includes_trust_summary() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    registry = RegistryService()
+    registry.upsert_node(RegistryNodeAdvertisement(**hypervisor.node_advertisement()))
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-external",
+            operator_id="operator-b",
+            base_url="https://remote.example",
+            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={
+                "unit": "q_per_1kk_tokens",
+                "input": 9,
+                "output": 15,
+                "fixed_request": 1,
+            },
+            rating={
+                "score": 0.97,
+                "tier": "A",
+                "updated_at": "2026-06-20T11:55:00Z",
+            },
+            bundles=[
+                {
+                    "bundle_id": "remote-text",
+                    "plugin_id": "fake-managed",
+                    "workload_type": "llm_text",
+                    "provider_type": "fake",
+                    "model_id": "remote-text-model",
+                    "endpoint": "https://remote.example/runtimes/remote-text",
+                    "enabled": True,
+                    "status": "ready",
+                    "launch_mode": "attached_service",
+                    "device_affinity": "cpu",
+                    "max_parallel_requests": 2,
+                    "supports_allocation": True,
+                    "supports_queue": True,
+                }
+            ],
+            published_endpoints=[
+                {
+                    "endpoint_id": "ep-remote-a",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-external",
+                    "current_publication_id": "pub-remote-a",
+                    "current_configuration_hash": "cfg-remote-a",
+                    "published_at": "2026-06-30T00:00:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                    "publication_sync_status": "in_sync",
+                    "published_validation_summary": {
+                        "validation_status": "validated",
+                        "configuration_hash": "cfg-remote-a",
+                    },
+                },
+                {
+                    "endpoint_id": "ep-remote-b",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-external",
+                    "current_publication_id": "pub-remote-b",
+                    "current_configuration_hash": "cfg-remote-b",
+                    "published_at": "2026-06-30T00:00:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                    "publication_sync_status": "published_configuration_not_served",
+                    "published_validation_summary": {
+                        "validation_status": "superseded",
+                        "configuration_hash": "cfg-remote-b",
+                    },
+                },
+            ],
+        )
+    )
+    client = TestClient(build_app(service=hypervisor, registry_service=registry))
+
+    response = client.get("/operators/dashboard/market")
+
+    assert response.status_code == 200
+    item = next(
+        candidate
+        for candidate in response.json()["candidates"]
+        if candidate["node_id"] == "node-external"
+    )
+    assert item["trust_summary"]["total_endpoints"] == 2
+    assert item["trust_summary"]["validated_count"] == 1
+    assert item["trust_summary"]["attention_count"] == 1
+    assert item["trust_summary"]["in_sync_count"] == 1
+    assert item["trust_summary"]["drift_count"] == 1
+
+
+def test_operator_dashboard_remote_endpoints_payload_includes_trust_fields() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    registry = RegistryService()
+    registry.upsert_node(RegistryNodeAdvertisement(**hypervisor.node_advertisement()))
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-external",
+            operator_id="operator-b",
+            base_url="https://remote.example",
+            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={
+                "unit": "q_per_1kk_tokens",
+                "input": 9,
+                "output": 15,
+                "fixed_request": 1,
+            },
+            rating={
+                "score": 0.97,
+                "tier": "A",
+                "updated_at": "2026-06-20T11:55:00Z",
+            },
+            bundles=[],
+            published_endpoints=[
+                {
+                    "endpoint_id": "ep-remote",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-external",
+                    "current_publication_id": "pub-remote",
+                    "current_configuration_hash": "cfg-remote",
+                    "published_at": "2026-06-30T00:00:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                    "publication_sync_status": "published_configuration_not_served",
+                    "published_validation_summary": {
+                        "validation_status": "validated",
+                        "configuration_hash": "cfg-remote",
+                    },
+                }
+            ],
+        )
+    )
+    client = TestClient(build_app(service=hypervisor, registry_service=registry))
+
+    response = client.get("/operators/dashboard/remote-endpoints")
+
+    assert response.status_code == 200
+    item = response.json()["discovered"][0]
+    assert item["publication_sync_status"] == "published_configuration_not_served"
+    assert item["published_validation_summary"]["validation_status"] == "validated"
+
+
 def test_operator_dashboard_shell_exposes_publication_sync_copy() -> None:
     client = TestClient(build_app(service=_service()))
 
@@ -3497,6 +3768,8 @@ def test_operator_dashboard_shell_exposes_publication_sync_copy() -> None:
     assert response.status_code == 200
     assert "Published Configuration" in response.text
     assert "Sync Status" in response.text
+    assert "Validation Trust" in response.text
+    assert "Publication Trust" in response.text
     assert 'data-endpoint-action="publish-configuration"' in response.text
     assert "/publish-configuration" in response.text
     assert 'data-endpoint-action="revoke-publication"' in response.text

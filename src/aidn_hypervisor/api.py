@@ -84,6 +84,122 @@ def _local_publication_configuration_hash(manifest) -> str:
     return configuration_hash_for_publication(payload)
 
 
+def _publication_sync_status(
+    *,
+    local_configuration_hash: str | None,
+    published_configuration_hash: str | None,
+) -> str:
+    if published_configuration_hash is None:
+        return "never_published"
+    if local_configuration_hash == published_configuration_hash:
+        return "in_sync"
+    return "local_changes_not_published"
+
+
+def _validation_summary_for(
+    validation_service,
+    *,
+    endpoint_id: str,
+    configuration_hash: str | None,
+) -> dict | None:
+    if validation_service is None or configuration_hash is None:
+        return None
+    return validation_service.validation_summary(
+        endpoint_id,
+        configuration_hash=configuration_hash,
+    )
+
+
+def _snapshot_publication_configuration_hash(manifest, snapshot) -> str:
+    snapshot_manifest = manifest.model_copy(
+        update={
+            "bundle_hash": snapshot.bundle_hash,
+            "runtime": snapshot.runtime,
+            "publication": snapshot.publication,
+            "session": snapshot.session,
+            "execution_strategy": snapshot.execution_config.get(
+                "execution_strategy",
+                manifest.execution_strategy,
+            ),
+            "proxy_target": snapshot.proxy_target,
+        }
+    )
+    return _local_publication_configuration_hash(snapshot_manifest)
+
+
+def _configuration_hash_for_publication_record(
+    *,
+    endpoint_service,
+    manifest,
+    publication_configuration_hash: str | None,
+) -> str | None:
+    if (
+        endpoint_service is None
+        or manifest is None
+        or publication_configuration_hash is None
+    ):
+        return None
+    for snapshot in reversed(
+        endpoint_service.list_configuration_snapshots(manifest.endpoint_id)
+    ):
+        if (
+            _snapshot_publication_configuration_hash(manifest, snapshot)
+            == publication_configuration_hash
+        ):
+            return snapshot.configuration_hash
+    return None
+
+
+def _registry_published_endpoint_summaries(
+    *,
+    advertisement: dict,
+    endpoint_service,
+    validation_service=None,
+) -> list[dict]:
+    manifests = {}
+    if endpoint_service is not None:
+        manifests = {
+            manifest.endpoint_id: manifest
+            for manifest in endpoint_service.list_endpoints()
+        }
+
+    items: list[dict] = []
+    for entry in advertisement.get("published_endpoints", []):
+        item = dict(entry)
+        manifest = manifests.get(item["endpoint_id"])
+        local_configuration_hash = (
+            _local_publication_configuration_hash(manifest)
+            if manifest is not None
+            else None
+        )
+        live_configuration_hash = (
+            manifest.configuration_hash if manifest is not None else None
+        )
+        item["publication_sync_status"] = item.get("publication_sync_status") or _publication_sync_status(
+            local_configuration_hash=local_configuration_hash,
+            published_configuration_hash=item.get("current_configuration_hash"),
+        )
+        published_endpoint_configuration_hash = _configuration_hash_for_publication_record(
+            endpoint_service=endpoint_service,
+            manifest=manifest,
+            publication_configuration_hash=item.get("current_configuration_hash"),
+        )
+        item["published_validation_summary"] = item.get(
+            "published_validation_summary"
+        ) or _validation_summary_for(
+            validation_service,
+            endpoint_id=item["endpoint_id"],
+            configuration_hash=published_endpoint_configuration_hash,
+        )
+        item["live_validation_summary"] = item.get("live_validation_summary") or _validation_summary_for(
+            validation_service,
+            endpoint_id=item["endpoint_id"],
+            configuration_hash=live_configuration_hash,
+        )
+        items.append(item)
+    return items
+
+
 def _operator_dashboard_home_bootstrap_payload(
     *,
     service: HypervisorService,
@@ -153,12 +269,30 @@ def _operator_dashboard_endpoints_payload(
             manifest.validation.enabled
             or manifest.publication.validation == "enabled"
         )
+        published_endpoint_configuration_hash = _configuration_hash_for_publication_record(
+            endpoint_service=endpoint_service,
+            manifest=manifest,
+            publication_configuration_hash=(
+                current_publication.configuration_hash
+                if current_publication is not None
+                else None
+            ),
+        )
         validation_summary = (
             validation_service.validation_summary(
                 manifest.endpoint_id,
                 configuration_hash=manifest.configuration_hash,
             )
             if validation_service is not None
+            else None
+        )
+        published_validation_summary = (
+            _validation_summary_for(
+                validation_service,
+                endpoint_id=manifest.endpoint_id,
+                configuration_hash=published_endpoint_configuration_hash,
+            )
+            if current_publication is not None
             else None
         )
         items.append(
@@ -174,13 +308,14 @@ def _operator_dashboard_endpoints_payload(
                     else None
                 ),
                 "publication_sync_status": (
-                    "in_sync"
-                    if current_publication is not None
-                    and current_publication.configuration_hash
-                    == local_configuration_hash
-                    else "local_changes_not_published"
-                    if current_publication is not None
-                    else "never_published"
+                    _publication_sync_status(
+                        local_configuration_hash=local_configuration_hash,
+                        published_configuration_hash=(
+                            current_publication.configuration_hash
+                            if current_publication is not None
+                            else None
+                        ),
+                    )
                 ),
                 "model_class": manifest.model_class,
                 "capabilities": list(manifest.capabilities),
@@ -200,6 +335,7 @@ def _operator_dashboard_endpoints_payload(
                 "publication": manifest.publication.model_dump(mode="json"),
                 "validation": manifest.validation.model_dump(mode="json"),
                 "validation_summary": validation_summary,
+                "published_validation_summary": published_validation_summary,
                 "current_publication": (
                     current_publication.model_dump(mode="json")
                     if current_publication is not None
@@ -530,6 +666,15 @@ def _operator_dashboard_remote_endpoints_payload(
                         "published_at": endpoint["published_at"],
                         "visibility": endpoint["visibility"],
                         "model_class": endpoint["model_class"],
+                        "publication_sync_status": endpoint.get(
+                            "publication_sync_status"
+                        ),
+                        "published_validation_summary": endpoint.get(
+                            "published_validation_summary"
+                        ),
+                        "live_validation_summary": endpoint.get(
+                            "live_validation_summary"
+                        ),
                         "already_attached": (
                             (node["node_id"], endpoint["endpoint_id"]) in attached_keys
                         ),
@@ -867,7 +1012,13 @@ def build_api_router(
 
     @router.get("/operators/registry/advertisement")
     async def registry_advertisement() -> dict:
-        return service.node_advertisement()
+        advertisement = service.node_advertisement()
+        advertisement["published_endpoints"] = _registry_published_endpoint_summaries(
+            advertisement=advertisement,
+            endpoint_service=endpoint_service,
+            validation_service=validation_service,
+        )
+        return advertisement
 
     @router.get("/operators/dashboard/home")
     async def operator_dashboard_home() -> dict:
@@ -1219,21 +1370,28 @@ def build_api_router(
         local_publication_configuration_hash = _local_publication_configuration_hash(
             endpoint
         )
+        published_endpoint_configuration_hash = _configuration_hash_for_publication_record(
+            endpoint_service=endpoint_service,
+            manifest=endpoint,
+            publication_configuration_hash=(
+                current_publication.configuration_hash
+                if current_publication is not None
+                else None
+            ),
+        )
         validation_summary = (
-            validation_service.validation_summary(
-                endpoint_id,
+            _validation_summary_for(
+                validation_service,
+                endpoint_id=endpoint_id,
                 configuration_hash=endpoint.configuration_hash,
             )
-            if validation_service is not None
-            else None
         )
         published_validation_summary = (
-            validation_service.validation_summary(
-                endpoint_id,
-                configuration_hash=current_publication.configuration_hash,
+            _validation_summary_for(
+                validation_service,
+                endpoint_id=endpoint_id,
+                configuration_hash=published_endpoint_configuration_hash,
             )
-            if validation_service is not None and current_publication is not None
-            else None
         )
         return _ok(
             {
@@ -1242,14 +1400,13 @@ def build_api_router(
                     "node_id": service.node_id,
                     "configuration_hash": endpoint.configuration_hash,
                     "local_publication_configuration_hash": local_publication_configuration_hash,
-                    "publication_sync_status": (
-                        "in_sync"
-                        if current_publication is not None
-                        and current_publication.configuration_hash
-                        == local_publication_configuration_hash
-                        else "local_changes_not_published"
-                        if current_publication is not None
-                        else "never_published"
+                    "publication_sync_status": _publication_sync_status(
+                        local_configuration_hash=local_publication_configuration_hash,
+                        published_configuration_hash=(
+                            current_publication.configuration_hash
+                            if current_publication is not None
+                            else None
+                        ),
                     ),
                     "bundle_hash": endpoint.bundle_hash,
                     "runtime_status": endpoint.status,

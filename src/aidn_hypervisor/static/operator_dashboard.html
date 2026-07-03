@@ -235,6 +235,68 @@
       background: var(--bad-soft);
     }
 
+    .chip.warn {
+      color: var(--accent);
+      border-color: rgba(255, 174, 87, 0.26);
+      background: var(--accent-soft);
+    }
+
+    .chip.info {
+      color: var(--blue);
+      border-color: rgba(98, 182, 255, 0.24);
+      background: rgba(98, 182, 255, 0.12);
+    }
+
+    .trust-grid {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .trust-grid.compact {
+      margin-top: 0;
+    }
+
+    .trust-lane {
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(8, 20, 33, 0.72);
+    }
+
+    .trust-lane-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .trust-lane-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--muted);
+    }
+
+    .trust-lane-copy {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .table-trust {
+      display: grid;
+      gap: 6px;
+      justify-items: start;
+    }
+
+    .table-trust .chip {
+      min-height: 24px;
+      font-size: 11px;
+      padding: 4px 9px;
+    }
+
     .dashboard-stage {
       display: grid;
       grid-template-rows: auto minmax(0, 1fr) auto;
@@ -1709,6 +1771,170 @@
       return item?.publication_sync_status || "never_published";
     }
 
+    function validationStatus(summary) {
+      return summary?.validation_status || "unvalidated";
+    }
+
+    function validationStatusOr(summary, fallback = "unvalidated") {
+      return summary?.validation_status || fallback;
+    }
+
+    function trustStatusLabel(status) {
+      switch (status) {
+        case "validated":
+          return "Validated";
+        case "pending_initial":
+          return "Pending Initial";
+        case "pending_maintenance":
+          return "Pending Maintenance";
+        case "superseded":
+          return "Superseded";
+        case "validation_failed":
+          return "Validation Failed";
+        case "revoked":
+          return "Revoked";
+        case "forfeited":
+          return "Forfeited";
+        case "local_changes_not_published":
+          return "Local Changes Not Published";
+        case "published_configuration_not_served":
+          return "Published Config Not Served";
+        case "in_sync":
+          return "In Sync";
+        case "never_published":
+          return "Never Published";
+        case "unvalidated":
+          return "Unvalidated";
+        default:
+          return String(status || "Unknown")
+            .replaceAll("_", " ")
+            .replace(/\b\w/g, (letter) => letter.toUpperCase());
+      }
+    }
+
+    function validationTrustTone(summary) {
+      switch (validationStatus(summary)) {
+        case "validated":
+          return "good";
+        case "pending_initial":
+        case "pending_maintenance":
+          return "warn";
+        case "superseded":
+        case "validation_failed":
+        case "revoked":
+        case "forfeited":
+          return "bad";
+        default:
+          return "";
+      }
+    }
+
+    function publicationTrustTone(status) {
+      switch (status) {
+        case "in_sync":
+          return "good";
+        case "local_changes_not_published":
+        case "published_configuration_not_served":
+          return "warn";
+        default:
+          return "";
+      }
+    }
+
+    function endpointLiveValidationSummary(item) {
+      return item?.validation_summary || null;
+    }
+
+    function endpointPublishedValidationSummary(item) {
+      return item?.published_validation_summary || null;
+    }
+
+    function marketTrustSummary(candidate) {
+      return (
+        candidate?.trust_summary || {
+          total_endpoints: 0,
+          validated_count: 0,
+          pending_count: 0,
+          attention_count: 0,
+          in_sync_count: 0,
+          drift_count: 0,
+        }
+      );
+    }
+
+    function marketValidationTrustChip(candidate) {
+      const trust = marketTrustSummary(candidate);
+      if (!trust.total_endpoints) {
+        return { label: "No Trust Data", tone: "" };
+      }
+      if (trust.attention_count) {
+        return {
+          label: `${formatCount(trust.attention_count)} attention / ${formatCount(trust.total_endpoints)}`,
+          tone: "bad",
+        };
+      }
+      if (trust.validated_count) {
+        return {
+          label: `${formatCount(trust.validated_count)} validated / ${formatCount(trust.total_endpoints)}`,
+          tone: "good",
+        };
+      }
+      if (trust.pending_count) {
+        return {
+          label: `${formatCount(trust.pending_count)} pending / ${formatCount(trust.total_endpoints)}`,
+          tone: "warn",
+        };
+      }
+      return { label: "Validation Unknown", tone: "" };
+    }
+
+    function marketPublicationTrustChip(candidate) {
+      const trust = marketTrustSummary(candidate);
+      if (!trust.total_endpoints) {
+        return { label: "No Published Endpoints", tone: "" };
+      }
+      if (trust.drift_count) {
+        return {
+          label: `${formatCount(trust.drift_count)} drifted / ${formatCount(trust.total_endpoints)}`,
+          tone: "warn",
+        };
+      }
+      if (trust.in_sync_count) {
+        return {
+          label: `${formatCount(trust.in_sync_count)} in sync / ${formatCount(trust.total_endpoints)}`,
+          tone: "good",
+        };
+      }
+      return { label: "Publication Unknown", tone: "" };
+    }
+
+    function remoteTrustSource(item) {
+      if (!item) {
+        return null;
+      }
+      if (!item.remote_endpoint_id) {
+        return item;
+      }
+      const discovered = (remotePayload().discovered || []).find(
+        (candidate) =>
+          candidate.node_id === item.source_node_id &&
+          candidate.endpoint_id === item.source_endpoint_id
+      );
+      return discovered || null;
+    }
+
+    function renderTrustLane(label, statusLabel, tone, copy) {
+      return `
+        <div class="trust-lane">
+          <div class="trust-lane-head">
+            <span class="trust-lane-label">${label}</span>
+            <span class="chip ${tone}">${statusLabel}</span>
+          </div>
+          ${copy ? `<div class="trust-lane-copy">${copy}</div>` : ""}
+        </div>
+      `;
+    }
+
     function endpointSharedWallets(item) {
       return item?.shared_with_wallet_ids || item?.publication?.shared_with_wallet_ids || [];
     }
@@ -2494,8 +2720,8 @@
                 <div class="table-head">
                   <div>Endpoint</div>
                   <div>Visibility</div>
-                  <div>Publication</div>
-                  <div>Validation</div>
+                  <div>Publication Trust</div>
+                  <div>Validation Trust</div>
                   <div>Bundle</div>
                   <div>Route</div>
                   <div>Action</div>
@@ -2509,11 +2735,11 @@
                             <div class="table-row ${active ? "active" : ""}" data-endpoint-draft="${draft.endpoint_id}">
                               <div>
                                 <div class="row-title">${draft.display_name}</div>
-                                <span class="row-copy">${draft.endpoint_id}</span>
+                                <span class="row-copy">${draft.endpoint_id} / ${endpointPublicationStatus(draft)}</span>
                               </div>
                               <div><span class="chip ${endpointVisibility(draft) === "private" ? "" : "good"}">${endpointVisibility(draft)}</span></div>
-                              <div><span class="chip ${endpointPublicationStatus(draft) === "published" ? "good" : ""}">${endpointPublicationStatus(draft)}</span></div>
-                              <div><span class="chip ${endpointValidationMode(draft) === "requested" ? "good" : ""}">${endpointValidationMode(draft)}</span></div>
+                              <div><span class="chip ${publicationTrustTone(endpointPublicationSyncStatus(draft))}">${trustStatusLabel(endpointPublicationSyncStatus(draft))}</span></div>
+                              <div><span class="chip ${validationTrustTone(endpointLiveValidationSummary(draft))}">${trustStatusLabel(validationStatus(endpointLiveValidationSummary(draft)))}</span></div>
                               <div class="row-meta">${draft.bundle_id}</div>
                               <div class="row-meta">${endpointRouteStatus(draft)}</div>
                               <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Inspect"}</button>
@@ -2551,7 +2777,7 @@
                             <strong>Published Configuration</strong>
                             <span>${formatMaybe(selected.published_configuration_hash)}</span>
                           </div>
-                          <span class="chip ${endpointPublicationSyncStatus(selected) === "in_sync" ? "good" : ""}">${endpointPublicationSyncStatus(selected)}</span>
+                          <span class="chip ${publicationTrustTone(endpointPublicationSyncStatus(selected))}">${trustStatusLabel(endpointPublicationSyncStatus(selected))}</span>
                         </div>
                         <div class="list-row">
                           <div>
@@ -2560,6 +2786,24 @@
                           </div>
                           <span class="chip ${selected.execution_strategy === "proxy" ? "good" : ""}">${selected.execution_strategy || "local"}</span>
                         </div>
+                      </div>
+                      <div class="trust-grid">
+                        ${renderTrustLane(
+                          "Validation Trust",
+                          trustStatusLabel(validationStatus(endpointLiveValidationSummary(selected))),
+                          validationTrustTone(endpointLiveValidationSummary(selected)),
+                          endpointPublishedValidationSummary(selected)
+                            ? `Live execution is compared against a published snapshot that currently reports ${trustStatusLabel(validationStatus(endpointPublishedValidationSummary(selected))).toLowerCase()}.`
+                            : "Validation remains optional and applies to the live endpoint configuration snapshot."
+                        )}
+                        ${renderTrustLane(
+                          "Publication Trust",
+                          trustStatusLabel(endpointPublicationSyncStatus(selected)),
+                          publicationTrustTone(endpointPublicationSyncStatus(selected)),
+                          endpointPublishedValidationSummary(selected)
+                            ? `Published snapshot trust: ${trustStatusLabel(validationStatus(endpointPublishedValidationSummary(selected)))}.`
+                            : "No published snapshot is available for remote comparison yet."
+                        )}
                       </div>
                       <div class="panel-heading" style="margin-top: 16px;">Endpoint Policy Editor</div>
                       <div class="wallet-form-grid" style="margin-top: 12px;">
@@ -2689,7 +2933,7 @@
                 <div>Price</div>
                 <div>Capacity</div>
                 <div>Queue</div>
-                <div>Published Endpoints</div>
+                <div>Trust</div>
                 <div>Policy</div>
                 <div>Action</div>
               </div>
@@ -2698,6 +2942,8 @@
                   ? candidates
                       .map((candidate) => {
                         const active = candidate.bundle_id === state.selectedMarketCandidateId;
+                        const validationChip = marketValidationTrustChip(candidate);
+                        const publicationChip = marketPublicationTrustChip(candidate);
                         return `
                           <div class="table-row ${active ? "active" : ""}" data-market-bundle="${candidate.bundle_id}">
                             <div>
@@ -2714,7 +2960,10 @@
                             </div>
                             <div class="row-meta">${candidateFreeResource(candidate, "cpu").toFixed(1)} CPU / ${formatCount(candidateFreeResource(candidate, "vram_mb"))} MB VRAM</div>
                             <div><span class="chip ${candidate.supports_queue ? "good" : "bad"}">${candidate.supports_queue ? "queued" : "direct only"}</span></div>
-                            <div><span class="chip ${Number(candidate.published_endpoint_count || 0) > 0 ? "good" : "bad"}">${formatCount(candidate.published_endpoint_count || 0)}</span></div>
+                            <div class="table-trust">
+                              <span class="chip ${validationChip.tone}">${validationChip.label}</span>
+                              <span class="chip ${publicationChip.tone}">${publicationChip.label}</span>
+                            </div>
                             <div><span class="chip ${candidate.can_host_custom_model ? "good" : "bad"}">${candidate.can_host_custom_model ? "custom allowed" : "restricted"}</span></div>
                             <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Select"}</button>
                           </div>
@@ -3157,8 +3406,9 @@
                   ? `
                     <div class="request-list" style="margin-top: 14px;">
                       ${attached
-                        .map(
-                          (item) => `
+                        .map((item) => {
+                          const trust = remoteTrustSource(item);
+                          return `
                             <button class="request-row ${selected && item.remote_endpoint_id === selected.remote_endpoint_id ? "active" : ""}" type="button" data-remote-select="${remoteSelectionKeyForAttached(item)}">
                               <div class="request-row-top">
                                 <div>
@@ -3167,13 +3417,23 @@
                                 </div>
                                 <span class="chip good">attached</span>
                               </div>
+                              ${
+                                trust
+                                  ? `
+                                    <div class="chip-row" style="margin-top: 10px;">
+                                      <span class="chip ${validationTrustTone(trust.published_validation_summary)}">${trustStatusLabel(validationStatus(trust.published_validation_summary))}</span>
+                                      <span class="chip ${publicationTrustTone(trust.publication_sync_status)}">${trustStatusLabel(trust.publication_sync_status)}</span>
+                                    </div>
+                                  `
+                                  : ""
+                              }
                               <div class="request-row-bottom">
                                 <span>${item.source_node_id}</span>
                                 <strong>${formatTimestamp(item.last_seen_at)}</strong>
                               </div>
                             </button>
-                          `
-                        )
+                          `;
+                        })
                         .join("")}
                     </div>
                   `
@@ -3187,20 +3447,22 @@
                   ? `
                     <div class="request-list" style="margin-top: 14px;">
                       ${discovered
-                        .map(
-                          (item) => `
+                        .map((item) => `
                             <div class="request-row ${selected && !selected.remote_endpoint_id && item.node_id === selected.node_id && item.endpoint_id === selected.endpoint_id ? "active" : ""}">
                               <div class="request-row-top">
                                 <button class="secondary-button" type="button" data-remote-select="${remoteSelectionKeyForDiscovered(item)}">${item.endpoint_id}</button>
                                 <span class="chip ${item.already_attached ? "good" : ""}">${item.model_class}</span>
+                              </div>
+                              <div class="chip-row" style="margin-top: 10px;">
+                                <span class="chip ${validationTrustTone(item.published_validation_summary)}">${trustStatusLabel(validationStatus(item.published_validation_summary))}</span>
+                                <span class="chip ${publicationTrustTone(item.publication_sync_status)}">${trustStatusLabel(item.publication_sync_status || "unknown")}</span>
                               </div>
                               <div class="request-row-bottom">
                                 <span>${item.operator_id} / ${item.node_id}</span>
                                 <button class="primary-button" type="button" data-remote-action="attach" data-node-id="${item.node_id}" data-endpoint-id="${item.endpoint_id}" ${item.already_attached || state.remoteAttachPending === `${item.node_id}:${item.endpoint_id}` ? "disabled" : ""}>${item.already_attached ? "Attached" : state.remoteAttachPending === `${item.node_id}:${item.endpoint_id}` ? "Attaching..." : "Attach Remote Endpoint"}</button>
                               </div>
                             </div>
-                          `
-                        )
+                          `)
                         .join("")}
                     </div>
                   `
@@ -3916,10 +4178,29 @@
         <div class="inspector-title">${selected.display_name}</div>
         <div class="chip-row">
           <span class="chip ${endpointPublicationStatus(selected) === "published" ? "good" : ""}">${endpointPublicationStatus(selected)}</span>
-          <span class="chip ${endpointValidationMode(selected) === "requested" ? "good" : ""}">${endpointValidationMode(selected)}</span>
+          <span class="chip ${validationTrustTone(endpointLiveValidationSummary(selected))}">${trustStatusLabel(validationStatus(endpointLiveValidationSummary(selected)))}</span>
+          <span class="chip ${publicationTrustTone(endpointPublicationSyncStatus(selected))}">${trustStatusLabel(endpointPublicationSyncStatus(selected))}</span>
           <span class="chip ${endpointVisibility(selected) === "private" ? "" : "good"}">${endpointVisibility(selected)}</span>
         </div>
         <div class="inspector-copy">${selected.bundle_id} on ${selected.provider_type || selected.model_class || "-"}. Endpoint implementation stays private even when the route is public or validation has been requested.</div>
+        <div class="trust-grid">
+          ${renderTrustLane(
+            "Validation Trust",
+            trustStatusLabel(validationStatus(endpointLiveValidationSummary(selected))),
+            validationTrustTone(endpointLiveValidationSummary(selected)),
+            endpointPublishedValidationSummary(selected)
+              ? `Published snapshot trust is ${trustStatusLabel(validationStatus(endpointPublishedValidationSummary(selected))).toLowerCase()}.`
+              : "No published validation posture exists yet for remote consumers."
+          )}
+          ${renderTrustLane(
+            "Publication Trust",
+            trustStatusLabel(endpointPublicationSyncStatus(selected)),
+            publicationTrustTone(endpointPublicationSyncStatus(selected)),
+            endpointPublishedValidationSummary(selected)
+              ? `Published snapshot validation: ${trustStatusLabel(validationStatus(endpointPublishedValidationSummary(selected)))}.`
+              : "Remote users will only see a trust artifact after publication."
+          )}
+        </div>
         <div class="inspector-grid">
           <div class="inspector-card">
             <strong>Owner</strong>
@@ -3959,7 +4240,11 @@
           </div>
           <div class="inspector-stat">
             <strong>Sync Status</strong>
-            <span>${formatMaybe(endpointPublicationSyncStatus(selected))}</span>
+            <span>${trustStatusLabel(endpointPublicationSyncStatus(selected))}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Published Validation</strong>
+            <span>${endpointPublishedValidationSummary(selected) ? trustStatusLabel(validationStatus(endpointPublishedValidationSummary(selected))) : "Not available"}</span>
           </div>
           <div>
             <div class="panel-heading">Published Configuration History</div>
@@ -4100,6 +4385,8 @@
           <div class="inspector-copy">Adjust the active filters or wait for registry discovery to publish more offers.</div>
         `;
       }
+      const validationChip = marketValidationTrustChip(candidate);
+      const publicationChip = marketPublicationTrustChip(candidate);
 
       return `
         <div class="panel-heading">Selected Offer</div>
@@ -4109,6 +4396,20 @@
           <span class="chip ${candidate.endpoint_ready ? "good" : "bad"}">${candidate.endpoint_ready ? "endpoint ready" : "endpoint pending"}</span>
         </div>
         <div class="inspector-copy">${candidate.model_id} advertised by ${candidate.node_id}. Keep the offer visible while you compare price, trust, queue support, and custom model policy.</div>
+        <div class="trust-grid">
+          ${renderTrustLane(
+            "Validation Trust",
+            validationChip.label,
+            validationChip.tone,
+            "Market trust aggregates the visible published endpoints on this node so route selection stays anchored in signed endpoint posture."
+          )}
+          ${renderTrustLane(
+            "Publication Trust",
+            publicationChip.label,
+            publicationChip.tone,
+            "Publication trust highlights whether visible endpoint claims are still in sync with what the node appears to be serving."
+          )}
+        </div>
         <div class="inspector-grid">
           <div class="inspector-card">
             <strong>Price</strong>
@@ -4135,6 +4436,14 @@
           <div class="inspector-stat">
             <strong>Published Endpoints</strong>
             <span>${formatCount(candidate.published_endpoint_count || 0)}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Validation Trust</strong>
+            <span>${validationChip.label}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Publication Trust</strong>
+            <span>${publicationChip.label}</span>
           </div>
           <div class="inspector-stat">
             <strong>Custom Model Policy</strong>
@@ -4165,6 +4474,7 @@
       const publicationId = attached ? selected.source_publication_id : selected.publication_id;
       const configurationHash = attached ? selected.source_configuration_hash : selected.configuration_hash;
       const ratingScore = Number(selected.rating?.score || 0);
+      const trust = remoteTrustSource(selected);
       return `
         <div class="panel-heading">Remote Endpoint</div>
         <div class="inspector-title">${endpointId}</div>
@@ -4174,6 +4484,20 @@
           <span class="chip">${visibility}</span>
         </div>
         <div class="inspector-copy">${selected.operator_id} / ${attached ? selected.source_node_id : selected.node_id}. Remote execution stays operator-selected and can later back proxy endpoints without exposing topology to downstream consumers.</div>
+        <div class="trust-grid">
+          ${renderTrustLane(
+            "Validation Trust",
+            trustStatusLabel(validationStatusOr(trust?.published_validation_summary, "unknown")),
+            validationTrustTone(trust?.published_validation_summary),
+            "Remote validation trust follows the published snapshot currently advertised by this endpoint."
+          )}
+          ${renderTrustLane(
+            "Publication Trust",
+            trustStatusLabel(trust?.publication_sync_status || "unknown"),
+            publicationTrustTone(trust?.publication_sync_status),
+            "Publication trust shows whether the public claim is still aligned with the route the node appears to expose."
+          )}
+        </div>
         <div class="inspector-grid">
           <div class="inspector-card">
             <strong>Rating</strong>
@@ -4196,6 +4520,14 @@
           <div class="inspector-stat">
             <strong>Configuration Hash</strong>
             <span>${configurationHash}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Validation Trust</strong>
+            <span>${trustStatusLabel(validationStatusOr(trust?.published_validation_summary, "unknown"))}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Publication Trust</strong>
+            <span>${trustStatusLabel(trust?.publication_sync_status || "unknown")}</span>
           </div>
           <div class="inspector-stat">
             <strong>Last Seen</strong>
