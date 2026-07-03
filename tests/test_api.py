@@ -1897,6 +1897,87 @@ def test_operator_dashboard_endpoints_route_uses_endpoint_first_payload(
     assert "validation_service" in captured["view_args"]
 
 
+def test_operator_dashboard_providers_route_returns_workspace_payload(
+    monkeypatch,
+) -> None:
+    hypervisor = _service()
+    expected_payload = {
+        "summary": {"total": 1},
+        "items": [{"plugin_id": "fake-managed"}],
+    }
+    captured: dict[str, object] = {}
+
+    def fake_build_operator_providers_payload(**kwargs) -> dict:
+        captured["view_args"] = kwargs
+        return expected_payload
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.api.build_operator_providers_payload",
+        fake_build_operator_providers_payload,
+    )
+    client = TestClient(build_app(service=hypervisor))
+
+    response = client.get("/operators/dashboard/providers")
+
+    assert response.status_code == 200
+    assert response.json() == expected_payload
+    assert captured["view_args"]["service"] is hypervisor
+
+
+def test_operator_dashboard_bundles_route_returns_workspace_payload(
+    monkeypatch,
+) -> None:
+    hypervisor = _service()
+    expected_payload = {
+        "summary": {"total": 2},
+        "items": [{"bundle_id": "whisper-a"}],
+    }
+    captured: dict[str, object] = {}
+
+    def fake_build_operator_bundles_payload(**kwargs) -> dict:
+        captured["view_args"] = kwargs
+        return expected_payload
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.api.build_operator_bundles_payload",
+        fake_build_operator_bundles_payload,
+    )
+    client = TestClient(build_app(service=hypervisor))
+
+    response = client.get("/operators/dashboard/bundles")
+
+    assert response.status_code == 200
+    assert response.json() == expected_payload
+    assert captured["view_args"]["service"] is hypervisor
+
+
+def test_operator_dashboard_installs_route_returns_actionable_install_state(
+    monkeypatch,
+) -> None:
+    hypervisor = _service()
+    expected_payload = {
+        "summary": {"total": 1, "ready_to_register": 1},
+        "items": [{"install_id": "install-1", "next_action": "register_bundle"}],
+    }
+    captured: dict[str, object] = {}
+
+    def fake_build_operator_installs_payload(**kwargs) -> dict:
+        captured["view_args"] = kwargs
+        return expected_payload
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.api.build_operator_installs_payload",
+        fake_build_operator_installs_payload,
+    )
+    client = TestClient(build_app(service=hypervisor))
+
+    response = client.get("/operators/dashboard/installs")
+
+    assert response.status_code == 200
+    assert response.json() == expected_payload
+    assert captured["view_args"]["service"] is hypervisor
+
+
 def test_owner_wallet_bootstrap_create_endpoint_returns_owner_state() -> None:
     client = TestClient(build_app(service=_service()))
 

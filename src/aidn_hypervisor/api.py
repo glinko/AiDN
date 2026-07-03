@@ -20,8 +20,11 @@ from aidn_hypervisor.endpoint_publications.models import (
 )
 from aidn_hypervisor.domain.types import TaskStatus
 from aidn_hypervisor.operator_views import (
+    build_operator_bundles_payload,
     build_operator_endpoints_payload,
     build_operator_home_payload,
+    build_operator_installs_payload,
+    build_operator_providers_payload,
 )
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
@@ -871,6 +874,18 @@ def build_api_router(
     @router.get("/operators/dashboard/fleet")
     async def operator_dashboard_fleet() -> dict:
         return service.operator_dashboard_fleet()
+
+    @router.get("/operators/dashboard/providers")
+    async def operator_dashboard_providers() -> dict:
+        return build_operator_providers_payload(service=service)
+
+    @router.get("/operators/dashboard/bundles")
+    async def operator_dashboard_bundles() -> dict:
+        return build_operator_bundles_payload(service=service)
+
+    @router.get("/operators/dashboard/installs")
+    async def operator_dashboard_installs() -> dict:
+        return build_operator_installs_payload(service=service)
 
     @router.get("/operators/dashboard/endpoints")
     async def operator_dashboard_endpoints() -> dict:

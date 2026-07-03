@@ -161,6 +161,139 @@ def build_operator_home_payload(
     }
 
 
+def build_operator_providers_payload(*, service) -> dict:
+    fleet = service.operator_dashboard_fleet()
+    bundles = fleet["bundles"]
+    installs = fleet["installs"]
+    items = []
+    for plugin in service.plugins.list():
+        description = plugin.describe()
+        plugin_id = description["plugin_id"]
+        provider_bundles = [
+            bundle for bundle in bundles if bundle["plugin_id"] == plugin_id
+        ]
+        provider_type_aliases = {bundle["provider_type"] for bundle in provider_bundles}
+        provider_type_aliases.add(plugin_id)
+        provider_installs = [
+            install
+            for install in installs
+            if install["provider_type"] in provider_type_aliases
+        ]
+        items.append(
+            {
+                **description,
+                "bundle_count": len(provider_bundles),
+                "active_bundle_count": sum(
+                    1 for bundle in provider_bundles if bundle["enabled"]
+                ),
+                "install_count": len(provider_installs),
+                "pending_install_count": sum(
+                    1
+                    for install in provider_installs
+                    if install["install_status"] in {"pending", "running"}
+                ),
+            }
+        )
+    return {
+        "owner_wallet": fleet["owner_wallet"],
+        "node_identity": fleet["node_identity"],
+        "summary": {
+            "total": len(items),
+            "bundles": len(bundles),
+            "installs": len(installs),
+        },
+        "items": items,
+    }
+
+
+def build_operator_bundles_payload(*, service) -> dict:
+    fleet = service.operator_dashboard_fleet()
+    bundles = fleet["bundles"]
+    candidate = service.operator_dashboard_home()["bootstrap"].get(
+        "first_endpoint_candidate"
+    )
+    candidate_id = candidate.get("bundle_id") if candidate is not None else None
+    items = []
+    for bundle in bundles:
+        is_first_endpoint_candidate = bundle["bundle_id"] == candidate_id
+        items.append(
+            {
+                **bundle,
+                "is_first_endpoint_candidate": is_first_endpoint_candidate,
+                "endpoint_action": {
+                    "recommended": (
+                        "create_endpoint"
+                        if is_first_endpoint_candidate
+                        else "inspect_bundle"
+                    )
+                },
+            }
+        )
+    return {
+        "owner_wallet": fleet["owner_wallet"],
+        "node_identity": fleet["node_identity"],
+        "summary": {
+            "total": len(items),
+            "enabled": sum(1 for item in items if item["enabled"]),
+            "ready_to_publish": sum(
+                1 for item in items if item["publish_status"] == "ready_to_publish"
+            ),
+            "first_endpoint_candidates": sum(
+                1 for item in items if item["is_first_endpoint_candidate"]
+            ),
+        },
+        "items": items,
+    }
+
+
+def build_operator_installs_payload(*, service) -> dict:
+    fleet = service.operator_dashboard_fleet()
+    raw_installs = {job["install_id"]: job for job in service.list_model_installs()}
+    items = []
+    for install in fleet["installs"]:
+        raw_install = raw_installs.get(install["install_id"], {})
+        can_register_bundle = (
+            install["install_status"] == "completed" and install["bundle_id"] is None
+        )
+        if can_register_bundle:
+            next_action = "register_bundle"
+        elif install["install_status"] in {"pending", "running"}:
+            next_action = "monitor_install"
+        elif install["install_status"] == "failed":
+            next_action = "review_error"
+        else:
+            next_action = "none"
+        items.append(
+            {
+                **install,
+                "target_path": raw_install.get("target_path"),
+                "can_register_bundle": can_register_bundle,
+                "next_action": next_action,
+            }
+        )
+    return {
+        "owner_wallet": fleet["owner_wallet"],
+        "node_identity": fleet["node_identity"],
+        "summary": {
+            "total": len(items),
+            "pending": sum(
+                1 for item in items if item["install_status"] == "pending"
+            ),
+            "running": sum(
+                1 for item in items if item["install_status"] == "running"
+            ),
+            "completed": sum(
+                1 for item in items if item["install_status"] == "completed"
+            ),
+            "failed": sum(1 for item in items if item["install_status"] == "failed"),
+            "ready_to_register": sum(
+                1 for item in items if item["can_register_bundle"]
+            ),
+        },
+        "items": items,
+    }
+
+
 def build_operator_endpoints_payload(
     *,
     service,
