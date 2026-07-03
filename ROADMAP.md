@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-07-02`
+Last updated: `2026-07-03`
 
 This is the main public roadmap for the repository.
 
@@ -15,7 +15,13 @@ The roadmap must also stay aligned with the product-level operator journey defin
 
 Paid endpoint consumption and client-facing execution economics must also stay aligned with [docs/product/UX-0002-endpoint-session-and-payment-flow.md](./docs/product/UX-0002-endpoint-session-and-payment-flow.md).
 
+Network-wide economic assumptions, `Q` utility, Session deposits, Network Fees, and operator reward boundaries must also stay aligned with [docs/product/ECO-0000-economic-principles.md](./docs/product/ECO-0000-economic-principles.md).
+
+Wallet ownership, signing semantics, and the separation between Wallet identity and Hypervisor node identity must also stay aligned with [docs/product/RFC-0016-wallet-and-identity.md](./docs/product/RFC-0016-wallet-and-identity.md).
+
 Validation-status issuance, maintenance revalidation, and Validator incentives must also stay aligned with [docs/product/ECO-0003-validation-economics.md](./docs/product/ECO-0003-validation-economics.md).
+
+Wallet balances, escrow state, validation bonds, and future on-chain settlement semantics must also stay aligned with [docs/product/RFC-0036-aidn-ledger-state-machine.md](./docs/product/RFC-0036-aidn-ledger-state-machine.md).
 
 Milestones still describe technical delivery order, but feature sequencing and UI priorities should preserve that operator journey whenever reasonably possible.
 
@@ -281,8 +287,11 @@ Order of work right now:
 - Terms: [01_TERMS.md](./01_TERMS.md)
 - Operator journey: [docs/product/UX-0001-hypervisor-operator-journey.md](./docs/product/UX-0001-hypervisor-operator-journey.md)
 - Session and payment journey: [docs/product/UX-0002-endpoint-session-and-payment-flow.md](./docs/product/UX-0002-endpoint-session-and-payment-flow.md)
+- Economic principles: [docs/product/ECO-0000-economic-principles.md](./docs/product/ECO-0000-economic-principles.md)
+- Wallet and identity: [docs/product/RFC-0016-wallet-and-identity.md](./docs/product/RFC-0016-wallet-and-identity.md)
 - Validation economics: [docs/product/ECO-0003-validation-economics.md](./docs/product/ECO-0003-validation-economics.md)
-- Validation escrow protocol: [docs/product/RFC-0035-validation-escrow-protocol.md](./docs/product/RFC-0035-validation-escrow-protocol.md)
+- Validation escrow system: [docs/product/RFC-0035-validation-escrow-system.md](./docs/product/RFC-0035-validation-escrow-system.md)
+- Ledger state machine: [docs/product/RFC-0036-aidn-ledger-state-machine.md](./docs/product/RFC-0036-aidn-ledger-state-machine.md)
 - M5 validation bond and escrow design: [docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md](./docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md)
 - Current hypervisor execution plan: [docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md](./docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md)
 - Network architecture spec: [docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md](./docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md)

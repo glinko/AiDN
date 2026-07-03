@@ -6,7 +6,7 @@ This spec defines the first implementation slice for `M5.1` validation trust:
 
 - operator-requested validation bound to a concrete `configuration_hash`;
 - operator-side Validation Bond economics from `ECO-0003`;
-- validator-side Validation Escrow Pool envelope from `RFC-0035`;
+- validator-side Validation Escrow System envelope from `RFC-0035`;
 - a local, deterministic implementation shape that can later be replaced by distributed Validator infrastructure.
 
 The key design correction in this slice is that two different economic systems must coexist:
@@ -37,7 +37,7 @@ What is missing is the first real trust contract behind validation:
 
 - [UX-0001 Hypervisor Operator Journey](../../product/UX-0001-hypervisor-operator-journey.md)
 - [ECO-0003 Validation Economics](../../product/ECO-0003-validation-economics.md)
-- [RFC-0035 Validation Escrow Protocol](../../product/RFC-0035-validation-escrow-protocol.md)
+- [RFC-0035 Validation Escrow System](../../product/RFC-0035-validation-escrow-system.md)
 - [Endpoint Configuration Publication Design](./2026-06-30-endpoint-configuration-publication-design.md)
 - [Endpoint Session And Payment Flow Design](./2026-07-01-endpoint-session-payment-flow-design.md)
 

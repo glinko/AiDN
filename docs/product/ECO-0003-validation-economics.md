@@ -10,13 +10,17 @@ This document defines the economic model governing Endpoint certification, maint
 
 The objective is to create long-term incentives for operators to maintain reliable Endpoints while preventing abuse of the validation process.
 
+This document builds on [ECO-0000 Economic Principles](./ECO-0000-economic-principles.md).
+
 This document complements [UX-0001 Hypervisor Operator Journey](./UX-0001-hypervisor-operator-journey.md).
 
 `UX-0001` defines when validation is requested and how it appears in the operator journey.
 
 `ECO-0003` defines the bond, reward, revalidation, and forfeiture rules behind that trust layer.
 
-Validator anonymity, validation Session guarantees, and shared Escrow Pool semantics are defined separately in [RFC-0035 Validation Escrow Protocol](./RFC-0035-validation-escrow-protocol.md).
+`ECO-0000` defines the broader utility-first economic philosophy that those validation incentives must respect.
+
+Validator anonymity, validation Session guarantees, assignment capacity, and shared Escrow semantics are defined separately in [RFC-0035 Validation Escrow System](./RFC-0035-validation-escrow-system.md).
 
 ## 1. Design Goals
 

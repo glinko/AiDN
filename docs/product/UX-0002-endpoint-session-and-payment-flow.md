@@ -10,6 +10,8 @@ This document defines how operators and users interact with paid Endpoints.
 
 The objective is to make AI resource usage predictable, fair, and economically secure for both parties.
 
+This document applies the utility-first accounting principles defined in [ECO-0000 Economic Principles](./ECO-0000-economic-principles.md) to client-facing Session behavior.
+
 This document complements [UX-0001 Hypervisor Operator Journey](./UX-0001-hypervisor-operator-journey.md).
 
 `UX-0001` explains how operators create, publish, and manage Endpoints.

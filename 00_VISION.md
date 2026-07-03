@@ -10,6 +10,12 @@ Primary paid-consumption reference: see [docs/product/UX-0002-endpoint-session-a
 
 Primary validation-economics reference: see [docs/product/ECO-0003-validation-economics.md](./docs/product/ECO-0003-validation-economics.md)
 
+Primary economic-principles reference: see [docs/product/ECO-0000-economic-principles.md](./docs/product/ECO-0000-economic-principles.md)
+
+Primary wallet-and-identity reference: see [docs/product/RFC-0016-wallet-and-identity.md](./docs/product/RFC-0016-wallet-and-identity.md)
+
+Primary ledger-state reference: see [docs/product/RFC-0036-aidn-ledger-state-machine.md](./docs/product/RFC-0036-aidn-ledger-state-machine.md)
+
 ## Goal
 
 Build a decentralized network of trusted AI compute where:
@@ -59,6 +65,8 @@ The Hypervisor is not only infrastructure.
 It should feel like an operator-facing operating system for AI resources, where wallet setup, provider attachment, endpoint publication, marketplace discovery, and automation are understandable without requiring knowledge of internal AiDN architecture.
 
 It should also expose a predictable paid-execution contract, where clients reserve Endpoint Sessions explicitly, lock deposits up front, and receive automatic refunds for unused balance.
+
+Its economic behavior should remain utility-first, where `Q` represents access to computation rather than a speculative asset.
 
 ## Delivery Strategy
 

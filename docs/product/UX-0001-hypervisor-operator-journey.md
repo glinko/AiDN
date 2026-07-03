@@ -14,9 +14,11 @@ All implementation decisions should preserve this user journey whenever reasonab
 
 Commercial consumption and paid execution behavior are defined separately in [UX-0002 Endpoint Session and Payment Flow](./UX-0002-endpoint-session-and-payment-flow.md).
 
+Wallet cryptographic identity, ownership semantics, and the separation between Wallet identity and Hypervisor node identity are defined separately in [RFC-0016 Wallet and Identity](./RFC-0016-wallet-and-identity.md).
+
 Validation economics, maintenance revalidation, and Validator incentives are defined separately in [ECO-0003 Validation Economics](./ECO-0003-validation-economics.md).
 
-Validator-side Session guarantees and anonymity-preserving Validation Escrow are defined separately in [RFC-0035 Validation Escrow Protocol](./RFC-0035-validation-escrow-protocol.md).
+Validator-side Session guarantees, anonymous assignment flow, and Validation Escrow coordination are defined separately in [RFC-0035 Validation Escrow System](./RFC-0035-validation-escrow-system.md).
 
 ## 1. Core Philosophy
 
