@@ -939,7 +939,7 @@ def test_service_dashboard_fleet_reports_node_resources_bundles_and_installs(
     assert fleet["installs"][0]["install_status"] == "pending"
 
 
-def test_service_dashboard_home_reports_publish_market_and_capacity_blocks(
+def test_service_dashboard_home_reduces_to_bootstrap_and_factual_summary(
     tmp_path,
 ) -> None:
     store = FileModelStore(tmp_path)
@@ -987,12 +987,20 @@ def test_service_dashboard_home_reports_publish_market_and_capacity_blocks(
     assert home["bootstrap"]["node_identity"]["node_id"] == service.node_id
     assert home["bootstrap"]["first_endpoint_candidate"]["bundle_id"] == "whisper-a"
     assert home["bootstrap"]["next_step"] == "Create or import a wallet"
-    assert home["publish"]["draft_offer_count"] == 3
-    assert home["publish"]["install_pending_count"] == 1
-    assert home["publish"]["live_offer_count"] == 2
-    assert home["market_visibility"]["local_offer_count"] == 3
-    assert home["fleet_capacity"]["node_count"] == 1
-    assert "Publish Offer" in home["operator_controls"]["actions"]
+    assert home["summary"]["bundle_total"] == 3
+    assert home["summary"]["enabled_bundle_total"] == 2
+    assert home["summary"]["pending_install_total"] == 1
+    assert home["summary"]["queue"] == {
+        "queued": 0,
+        "active": 0,
+        "completed": 0,
+        "failed": 0,
+    }
+    assert home["summary"]["free_resources"]["cpu"] == pytest.approx(6.5)
+    assert "publish" not in home
+    assert "market_visibility" not in home
+    assert "fleet_capacity" not in home
+    assert "operator_controls" not in home
 
 
 def test_service_owner_wallet_bootstrap_persists_and_restores_state() -> None:

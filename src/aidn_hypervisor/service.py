@@ -1283,32 +1283,12 @@ class HypervisorService:
         bootstrap = self._operator_dashboard_bootstrap(fleet)
         return {
             "bootstrap": bootstrap,
-            "publish": {
-                "draft_offer_count": len(fleet["bundles"]),
-                "install_pending_count": len(pending_installs),
-                "live_offer_count": len(enabled_bundles),
-            },
-            "market_visibility": {
-                "local_offer_count": len(fleet["bundles"]),
-                "live_offer_count": len(enabled_bundles),
-            },
-            "fleet_capacity": {
-                "node_count": 1,
-                "queued": fleet["queue"]["queued"],
-                "active": fleet["queue"]["active"],
-                "free": fleet["resources"]["free"],
-            },
-            "operator_controls": {
-                "actions": [
-                    "Create Wallet",
-                    "Install Model",
-                    "Create Endpoint",
-                    "Publish Offer",
-                    "Attach Endpoint",
-                    "Pause Queue",
-                    "Raise Limits",
-                    "Connect Remote Node",
-                ]
+            "summary": {
+                "bundle_total": len(fleet["bundles"]),
+                "enabled_bundle_total": len(enabled_bundles),
+                "pending_install_total": len(pending_installs),
+                "queue": fleet["queue"],
+                "free_resources": fleet["resources"]["free"],
             },
         }
 

@@ -169,6 +169,33 @@ def test_home_payload_prefers_first_endpoint_candidate_after_wallet_setup(
     assert payload["bootstrap"]["next_step"] == "Create your first endpoint from whisper-a"
 
 
+def test_home_payload_rebuilds_operator_shell_blocks_from_factual_service_summary(
+    tmp_path: Path,
+) -> None:
+    service = _service_with_model_store(tmp_path)
+    service.request_model_install(
+        provider_type="fake",
+        model_id="phi4-gguf",
+        source_url="https://example.invalid/models/phi4.gguf",
+        requested_by="operator-a",
+    )
+
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=EndpointService(EndpointStore()),
+        endpoint_publication_service=None,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["publish"]["draft_offer_count"] == 2
+    assert payload["publish"]["install_pending_count"] == 1
+    assert payload["publish"]["live_offer_count"] == 2
+    assert payload["market_visibility"]["local_offer_count"] == 2
+    assert payload["fleet_capacity"]["node_count"] == 1
+    assert "Publish Offer" in payload["operator_controls"]["actions"]
+
+
 def test_endpoints_payload_includes_publication_sync_and_validation_summary(
     service: HypervisorService,
     endpoint_service: EndpointService,

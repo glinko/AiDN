@@ -142,6 +142,7 @@ def build_operator_home_payload(
     market_candidates=None,
 ) -> dict:
     service_payload = service.operator_dashboard_home()
+    service_summary = service_payload.get("summary", {})
     endpoints_payload = build_operator_endpoints_payload(
         service=service,
         endpoint_service=endpoint_service,
@@ -149,12 +150,38 @@ def build_operator_home_payload(
         validation_service=validation_service,
     )
     return {
-        **service_payload,
         "bootstrap": _build_operator_home_bootstrap_payload(
             service=service,
             endpoint_items=endpoints_payload["items"],
             fallback_bootstrap=service_payload.get("bootstrap", {}),
         ),
+        "publish": {
+            "draft_offer_count": service_summary.get("bundle_total", 0),
+            "install_pending_count": service_summary.get("pending_install_total", 0),
+            "live_offer_count": service_summary.get("enabled_bundle_total", 0),
+        },
+        "market_visibility": {
+            "local_offer_count": service_summary.get("bundle_total", 0),
+            "live_offer_count": service_summary.get("enabled_bundle_total", 0),
+        },
+        "fleet_capacity": {
+            "node_count": 1,
+            "queued": service_summary.get("queue", {}).get("queued", 0),
+            "active": service_summary.get("queue", {}).get("active", 0),
+            "free": service_summary.get("free_resources", {}),
+        },
+        "operator_controls": {
+            "actions": [
+                "Create Wallet",
+                "Install Model",
+                "Create Endpoint",
+                "Publish Offer",
+                "Attach Endpoint",
+                "Pause Queue",
+                "Raise Limits",
+                "Connect Remote Node",
+            ]
+        },
         "market_preview": {
             "candidate_count": len(market_candidates or []),
         },
