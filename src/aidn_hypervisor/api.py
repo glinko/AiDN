@@ -60,12 +60,14 @@ def _operator_dashboard_home_bootstrap_payload(
     service: HypervisorService,
     endpoint_service,
     endpoint_publication_service=None,
+    validation_service=None,
     fallback_bootstrap: dict,
 ) -> dict:
     items = _operator_dashboard_endpoints_payload(
         service=service,
         endpoint_service=endpoint_service,
         endpoint_publication_service=endpoint_publication_service,
+        validation_service=validation_service,
     )["items"]
     configured = [
         item for item in items if item["publication_status"] in {"configured", "draft"}
@@ -96,6 +98,7 @@ def _operator_dashboard_endpoints_payload(
     service: HypervisorService,
     endpoint_service,
     endpoint_publication_service=None,
+    validation_service=None,
 ) -> dict:
     def execution_payload_for_manifest(manifest) -> dict:
         if manifest.execution_strategy != "proxy" or manifest.proxy_target is None:
@@ -147,6 +150,14 @@ def _operator_dashboard_endpoints_payload(
             manifest.validation.enabled
             or manifest.publication.validation == "enabled"
         )
+        validation_summary = (
+            validation_service.validation_summary(
+                manifest.endpoint_id,
+                configuration_hash=manifest.configuration_hash,
+            )
+            if validation_service is not None
+            else None
+        )
         items.append(
             {
                 "endpoint_id": manifest.endpoint_id,
@@ -185,6 +196,7 @@ def _operator_dashboard_endpoints_payload(
                 "runtime_status": manifest.status,
                 "publication": manifest.publication.model_dump(mode="json"),
                 "validation": manifest.validation.model_dump(mode="json"),
+                "validation_summary": validation_summary,
                 "current_publication": (
                     current_publication.model_dump(mode="json")
                     if current_publication is not None
@@ -468,6 +480,12 @@ class OperatorSessionCloseActionRequest(BaseModel):
 
 class OperatorSessionSweepIdleActionRequest(BaseModel):
     now: str | None = None
+
+
+class ValidationEpochCreateRequest(BaseModel):
+    epoch_id: str
+    seed: str
+    validator_entries: list[dict]
 
 
 def _operator_dashboard_remote_endpoints_payload(
@@ -860,6 +878,7 @@ def build_api_router(
                 service=service,
                 endpoint_service=endpoint_service,
                 endpoint_publication_service=endpoint_publication_service,
+                validation_service=validation_service,
                 fallback_bootstrap=payload.get("bootstrap", {}),
             )
         payload["market_preview"] = {
@@ -878,6 +897,7 @@ def build_api_router(
                 service=service,
                 endpoint_service=endpoint_service,
                 endpoint_publication_service=endpoint_publication_service,
+                validation_service=validation_service,
             )
         return service.operator_dashboard_endpoints()
 
@@ -1095,6 +1115,36 @@ def build_api_router(
             }
         )
 
+    @router.post("/api/v1/validation/epochs")
+    async def create_validation_epoch(
+        request: ValidationEpochCreateRequest,
+    ) -> JSONResponse:
+        if validation_service is None:
+            return _error(
+                503,
+                "validation_unavailable",
+                "Validation service is not configured",
+            )
+        try:
+            result = validation_service.create_validation_epoch(
+                epoch_id=request.epoch_id,
+                seed=request.seed,
+                validator_entries=request.validator_entries,
+            )
+        except ValueError as error:
+            return _error(409, "validation_conflict", str(error))
+        return _ok(
+            {
+                "epoch": result.epoch.model_dump(mode="json"),
+                "assignments": [
+                    item.model_dump(mode="json") for item in result.assignments
+                ],
+                "authorizations": [
+                    item.model_dump(mode="json") for item in result.authorizations
+                ],
+            }
+        )
+
     @router.get("/api/v1/endpoints/{endpoint_id}/validation")
     async def endpoint_validation_summary(endpoint_id: str) -> JSONResponse:
         if validation_service is None:
@@ -1102,6 +1152,21 @@ def build_api_router(
                 503,
                 "validation_unavailable",
                 "Validation service is not configured",
+            )
+        if endpoint_service is not None:
+            try:
+                endpoint = endpoint_service.get_endpoint(endpoint_id).endpoint
+            except KeyError:
+                return _error(
+                    404,
+                    "endpoint_not_found",
+                    f"Unknown endpoint: {endpoint_id}",
+                )
+            return _ok(
+                validation_service.validation_summary(
+                    endpoint_id,
+                    configuration_hash=endpoint.configuration_hash,
+                )
             )
         return _ok(validation_service.validation_summary(endpoint_id))
 

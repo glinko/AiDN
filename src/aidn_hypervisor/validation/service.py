@@ -193,6 +193,19 @@ class ValidationService:
             authorizations=authorizations,
         )
 
+    def create_validation_epoch(
+        self,
+        *,
+        epoch_id: str,
+        seed: str,
+        validator_entries: list[dict],
+    ) -> ValidationAssignmentOutcome:
+        return self.assign_epoch_requests(
+            epoch_id=epoch_id,
+            validator_entries=validator_entries,
+            seed=seed,
+        )
+
     def submit_validation_report(
         self,
         *,
@@ -259,7 +272,12 @@ class ValidationService:
             report=report,
         )
 
-    def validation_summary(self, endpoint_id: str) -> dict:
+    def validation_summary(
+        self,
+        endpoint_id: str,
+        *,
+        configuration_hash: str | None = None,
+    ) -> dict:
         requests = sorted(
             self.store.list_requests_for_endpoint(endpoint_id),
             key=lambda item: item.created_at,
@@ -275,8 +293,50 @@ class ValidationService:
             if item.endpoint_id == endpoint_id
         ]
         current_snapshot = snapshots[-1] if snapshots else None
+        latest_request = requests[-1] if requests else None
+        resolved_configuration_hash = configuration_hash or (
+            current_snapshot.configuration_hash
+            if current_snapshot is not None
+            else latest_request.configuration_hash
+            if latest_request is not None
+            else None
+        )
+        latest_bond = (
+            self.store.get_bond(latest_request.bond_id)
+            if latest_request is not None
+            else None
+        )
         return {
             "endpoint_id": endpoint_id,
+            "configuration_hash": resolved_configuration_hash,
+            "validation_status": (
+                current_snapshot.status
+                if current_snapshot is not None
+                else "unvalidated"
+            ),
+            "latest_request_id": (
+                current_snapshot.latest_request_id
+                if current_snapshot is not None
+                else latest_request.request_id
+                if latest_request is not None
+                else None
+            ),
+            "latest_report_id": (
+                current_snapshot.latest_report_id
+                if current_snapshot is not None
+                else None
+            ),
+            "bond_state": (
+                latest_bond.model_dump(mode="json")
+                if latest_bond is not None
+                else None
+            ),
+            "validated_at": (
+                current_snapshot.validated_at if current_snapshot is not None else None
+            ),
+            "superseded_at": (
+                current_snapshot.superseded_at if current_snapshot is not None else None
+            ),
             "current_snapshot": (
                 current_snapshot.model_dump(mode="json")
                 if current_snapshot is not None

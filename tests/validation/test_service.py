@@ -214,6 +214,76 @@ def test_assign_epoch_requests_expands_validator_shares_and_assigns_in_seed_orde
     assert updated_second.status == "authorization_issued"
 
 
+def test_create_validation_epoch_assigns_queued_requests() -> None:
+    service = ValidationService(ValidationStore())
+    first = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    second = service.request_validation(
+        endpoint_id="ep-2",
+        owner_wallet="wallet-2",
+        configuration_hash="cfg-2",
+        minimum_session_deposit_q=30.0,
+    )
+
+    epoch = service.create_validation_epoch(
+        epoch_id="epoch-1",
+        seed="seed-2",
+        validator_entries=[
+            {
+                "validator_id": "val-a",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            },
+            {
+                "validator_id": "val-b",
+                "validator_label": "validator-b",
+                "shares": 2,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 1000.0,
+            },
+        ],
+    )
+
+    assert epoch.epoch.seed == "seed-2"
+    assert len(epoch.assignments) == 2
+    assert (
+        service.store.get_request(first.request.request_id).status
+        == "authorization_issued"
+    )
+    assert (
+        service.store.get_request(second.request.request_id).status
+        == "authorization_issued"
+    )
+
+
+def test_validation_summary_returns_spec_required_fields() -> None:
+    service = ValidationService(ValidationStore())
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+
+    summary = service.validation_summary("ep-1")
+
+    assert summary["endpoint_id"] == "ep-1"
+    assert summary["configuration_hash"] == "cfg-1"
+    assert summary["validation_status"] == "pending_initial"
+    assert summary["latest_request_id"] == requested.request.request_id
+    assert summary["latest_report_id"] is None
+    assert summary["bond_state"]["bond_id"] == requested.bond.bond_id
+    assert summary["bond_state"]["status"] == "locked"
+    assert summary["validated_at"] is None
+    assert summary["superseded_at"] is None
+
+
 def test_authorization_hides_validator_wallet_and_share_count() -> None:
     service = ValidationService(ValidationStore())
     requested = service.request_validation(
