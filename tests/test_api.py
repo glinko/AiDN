@@ -1814,6 +1814,89 @@ def test_operator_dashboard_home_bootstrap_prefers_endpoint_service_state() -> N
     assert home.json()["bootstrap"]["next_step"] == "Review your configured endpoint and publish it"
 
 
+def test_operator_dashboard_home_route_uses_operator_view_payload(
+    monkeypatch,
+) -> None:
+    hypervisor = _service()
+    expected_payload = {
+        "bootstrap": {
+            "wallet_ready": False,
+            "node_identity": {"node_id": "node-from-operator-view"},
+        },
+        "market_preview": {"candidate_count": 2},
+    }
+    captured: dict[str, object] = {}
+
+    def fake_build_market_payload(*, service, registry_service) -> dict:
+        captured["market_args"] = {
+            "service": service,
+            "registry_service": registry_service,
+        }
+        return {"candidates": [{"bundle_id": "whisper-a"}, {"bundle_id": "text-a"}]}
+
+    def fake_build_operator_home_payload(**kwargs) -> dict:
+        captured["view_args"] = kwargs
+        return expected_payload
+
+    monkeypatch.setattr("aidn_hypervisor.api.build_market_payload", fake_build_market_payload)
+    monkeypatch.setattr(
+        "aidn_hypervisor.api.build_operator_home_payload",
+        fake_build_operator_home_payload,
+    )
+    client = TestClient(build_app(service=hypervisor))
+
+    response = client.get("/operators/dashboard/home")
+
+    assert response.status_code == 200
+    assert response.json() == expected_payload
+    assert captured["market_args"] == {
+        "service": hypervisor,
+        "registry_service": None,
+    }
+    assert captured["view_args"]["service"] is hypervisor
+    assert captured["view_args"]["market_candidates"] == [
+        {"bundle_id": "whisper-a"},
+        {"bundle_id": "text-a"},
+    ]
+    assert "endpoint_service" in captured["view_args"]
+    assert "endpoint_publication_service" in captured["view_args"]
+    assert "validation_service" in captured["view_args"]
+
+
+def test_operator_dashboard_endpoints_route_uses_endpoint_first_payload(
+    monkeypatch,
+) -> None:
+    hypervisor = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    expected_payload = {
+        "owner_wallet": {"configured": False},
+        "summary": {"total": 0},
+        "items": [],
+    }
+    captured: dict[str, object] = {}
+
+    def fake_build_operator_endpoints_payload(**kwargs) -> dict:
+        captured["view_args"] = kwargs
+        return expected_payload
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.api.build_operator_endpoints_payload",
+        fake_build_operator_endpoints_payload,
+    )
+    client = TestClient(
+        build_app(service=hypervisor, endpoint_service=endpoint_service)
+    )
+
+    response = client.get("/operators/dashboard/endpoints")
+
+    assert response.status_code == 200
+    assert response.json() == expected_payload
+    assert captured["view_args"]["service"] is hypervisor
+    assert captured["view_args"]["endpoint_service"] is endpoint_service
+    assert "endpoint_publication_service" in captured["view_args"]
+    assert "validation_service" in captured["view_args"]
+
+
 def test_owner_wallet_bootstrap_create_endpoint_returns_owner_state() -> None:
     client = TestClient(build_app(service=_service()))
 

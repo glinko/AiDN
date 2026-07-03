@@ -874,14 +874,12 @@ def build_api_router(
 
     @router.get("/operators/dashboard/endpoints")
     async def operator_dashboard_endpoints() -> dict:
-        if endpoint_service is not None and endpoint_service.list_endpoints():
-            return _operator_dashboard_endpoints_payload(
-                service=service,
-                endpoint_service=endpoint_service,
-                endpoint_publication_service=endpoint_publication_service,
-                validation_service=validation_service,
-            )
-        return service.operator_dashboard_endpoints()
+        return _operator_dashboard_endpoints_payload(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            validation_service=validation_service,
+        )
 
     @router.get("/operators/dashboard/sessions")
     async def operator_dashboard_sessions() -> dict:
