@@ -1815,6 +1815,16 @@ def test_operator_dashboard_shell_route_exposes_install_to_bundles_handoff_logic
     assert "Ready to review bundle" in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_bundles_to_endpoints_handoff_logic() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'state.screen = "endpoints";' in response.text
+    assert "Ready to review endpoint" in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -> None:
     client = TestClient(build_app(service=_service()))
 

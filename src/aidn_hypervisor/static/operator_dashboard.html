@@ -5991,7 +5991,7 @@
         state.screen = "endpoints";
         state.bootstrapMessage = {
           kind: "good",
-          text: `Endpoint ${created.endpoint.endpoint_id} created from bundle ${bundle.bundle_id}.`,
+          text: `Ready to review endpoint ${created.endpoint.endpoint_id} from bundle ${bundle.bundle_id}.`,
         };
         await refreshBootstrapPayloads();
       } catch (error) {
