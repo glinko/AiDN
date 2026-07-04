@@ -1785,6 +1785,16 @@ def test_operator_dashboard_shell_route_exposes_provider_install_processing_cont
     assert 'data-provider-action="process-installs"' in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_provider_to_installs_handoff_logic() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'state.screen = "installs";' in response.text
+    assert "Ready to review install" in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -> None:
     client = TestClient(build_app(service=_service()))
 

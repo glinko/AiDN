@@ -6124,6 +6124,11 @@
         const selectedProcessed = matching[0] || processed[0] || null;
         if (selectedProcessed?.install_id) {
           state.selectedInstallId = selectedProcessed.install_id;
+          state.screen = "installs";
+          state.installMessage = {
+            kind: "good",
+            text: `Ready to review install ${selectedProcessed.install_id} in Installs.`,
+          };
         }
         state.providerMessage = {
           kind: "good",
