@@ -1548,6 +1548,12 @@
         workloadType: "llm_text",
         endpoint: "http://127.0.0.1:8080",
       },
+      providerInstallDraft: {
+        pluginId: null,
+        modelId: "",
+        sourceUrl: "",
+        requestedBy: "",
+      },
       bundleEndpointDraft: {
         bundleId: null,
         displayName: "",
@@ -2148,6 +2154,25 @@
         };
       }
       return state.providerBundleDraft;
+    }
+
+    function syncProviderInstallDraft(provider) {
+      const pluginId = provider?.plugin_id || null;
+      const ownerWalletId =
+        state.payloads.providers?.owner_wallet?.wallet_id ||
+        state.payloads.home?.bootstrap?.owner_wallet?.wallet_id ||
+        "operator";
+      if (state.providerInstallDraft.pluginId !== pluginId) {
+        state.providerInstallDraft = {
+          pluginId,
+          modelId: "",
+          sourceUrl: "",
+          requestedBy: ownerWalletId,
+        };
+      } else if (!state.providerInstallDraft.requestedBy && ownerWalletId) {
+        state.providerInstallDraft.requestedBy = ownerWalletId;
+      }
+      return state.providerInstallDraft;
     }
 
     function providerTypeForDraft(provider) {
@@ -4596,11 +4621,17 @@
       }
 
       const draft = syncProviderBundleDraft(provider);
+      const installDraft = syncProviderInstallDraft(provider);
       const canAttachBundle =
         Boolean(draft.bundleId) &&
         Boolean(draft.modelId) &&
         Boolean(draft.endpoint) &&
         state.providerActionPending !== "attach-bundle";
+      const canQueueInstall =
+        Boolean(installDraft.modelId) &&
+        Boolean(installDraft.sourceUrl) &&
+        Boolean(installDraft.requestedBy) &&
+        state.providerActionPending !== "queue-install";
 
       return `
         <div class="panel-heading">Selected Provider</div>
@@ -4629,6 +4660,18 @@
             <strong>Pending Installs</strong>
             <span>${formatCount(provider.pending_install_count)}</span>
           </div>
+          <section class="subpanel" style="padding: 16px; margin-top: 10px;">
+            <div class="panel-heading">Install Model Artifact</div>
+            <div class="inspector-copy">Queue a provider-scoped model install before bundle registration. This feeds the install pipeline through ${modelInstallRequestPath} and hands off the artifact to the Installs workspace for processing and registration.</div>
+            <div class="wallet-form-grid" style="margin-top: 12px;">
+              <input type="text" data-provider-install-field="modelId" value="${escapeHtml(installDraft.modelId)}" placeholder="Model ID">
+              <input type="text" data-provider-install-field="sourceUrl" value="${escapeHtml(installDraft.sourceUrl)}" placeholder="Source URL">
+            </div>
+            <div class="wallet-form-grid" style="margin-top: 10px;">
+              <input type="text" data-provider-install-field="requestedBy" value="${escapeHtml(installDraft.requestedBy)}" placeholder="Requested by">
+              <button class="primary-button" type="button" data-provider-action="queue-install" ${canQueueInstall ? "" : "disabled"}>${state.providerActionPending === "queue-install" ? "Queueing..." : "Queue Install"}</button>
+            </div>
+          </section>
           <section class="subpanel" style="padding: 16px; margin-top: 10px;">
             <div class="panel-heading">Manual Provider Attach</div>
             <div class="inspector-copy">Attach a provider directly into local bundle inventory when the service already exists. This writes bundle config through ${bundleConfigPath} and keeps publication out of scope until you explicitly create an endpoint.</div>
@@ -6023,6 +6066,44 @@
       }
     }
 
+    async function queueInstallForSelectedProvider() {
+      const provider = selectedProvider();
+      const draft = syncProviderInstallDraft(provider);
+      if (!provider?.plugin_id) {
+        return;
+      }
+      state.providerActionPending = "queue-install";
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(modelInstallRequestPath, {
+          provider_type: providerTypeForDraft(provider) || provider.plugin_id,
+          model_id: draft.modelId,
+          source_url: draft.sourceUrl,
+          requested_by: draft.requestedBy,
+        });
+        state.selectedInstallId = result.install_id;
+        state.providerInstallDraft = {
+          pluginId: provider.plugin_id,
+          modelId: "",
+          sourceUrl: "",
+          requestedBy: draft.requestedBy,
+        };
+        state.providerMessage = {
+          kind: "good",
+          text: `Install ${result.install_id} queued for ${provider.plugin_id}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function reloadSelectedProviderBundles() {
       const provider = selectedProvider();
       if (!provider?.plugin_id) {
@@ -6362,10 +6443,22 @@
         });
       });
 
+      document.querySelectorAll("[data-provider-install-field]").forEach((control) => {
+        const key = control.dataset.providerInstallField;
+        const eventName = control.tagName === "SELECT" ? "change" : "input";
+        control.addEventListener(eventName, () => {
+          state.providerInstallDraft[key] = control.value;
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
       document.querySelectorAll("[data-provider-action]").forEach((button) => {
         button.addEventListener("click", () => {
           if (button.dataset.providerAction === "attach-bundle") {
             void attachBundleToSelectedProvider();
+          } else if (button.dataset.providerAction === "queue-install") {
+            void queueInstallForSelectedProvider();
           } else if (button.dataset.providerAction === "reload-bundles") {
             void reloadSelectedProviderBundles();
           }
