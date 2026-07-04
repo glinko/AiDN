@@ -1440,6 +1440,7 @@
 
     const modelInstallApiBase = "/operators/models/";
     const modelInstallRequestPath = "/operators/models/install";
+    const modelInstallProcessPath = "/operators/models/install/process";
     const bundleConfigPath = "/operators/bundles/config";
     const bundleReloadPath = "/operators/bundles/reload";
     const endpointApiBase = "/api/v1/endpoints";
@@ -4671,6 +4672,9 @@
               <input type="text" data-provider-install-field="requestedBy" value="${escapeHtml(installDraft.requestedBy)}" placeholder="Requested by">
               <button class="primary-button" type="button" data-provider-action="queue-install" ${canQueueInstall ? "" : "disabled"}>${state.providerActionPending === "queue-install" ? "Queueing..." : "Queue Install"}</button>
             </div>
+            <div class="wallet-inline-actions" style="margin-top: 10px;">
+              <button class="secondary-button" type="button" data-provider-action="process-installs" ${state.providerActionPending === "process-installs" ? "disabled" : ""}>${state.providerActionPending === "process-installs" ? "Processing..." : "Process Queued Installs"}</button>
+            </div>
           </section>
           <section class="subpanel" style="padding: 16px; margin-top: 10px;">
             <div class="panel-heading">Manual Provider Attach</div>
@@ -6104,6 +6108,39 @@
       }
     }
 
+    async function processQueuedInstallsForSelectedProvider() {
+      const provider = selectedProvider();
+      if (!provider?.plugin_id) {
+        return;
+      }
+      state.providerActionPending = "process-installs";
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const processed = await postJson(modelInstallProcessPath, {});
+        const providerType = providerTypeForDraft(provider) || provider.plugin_id;
+        const matching = (processed || []).filter((item) => item.provider_type === providerType);
+        const selectedProcessed = matching[0] || processed[0] || null;
+        if (selectedProcessed?.install_id) {
+          state.selectedInstallId = selectedProcessed.install_id;
+        }
+        state.providerMessage = {
+          kind: "good",
+          text: matching.length
+            ? `Processed ${formatCount(matching.length)} queued installs for ${provider.plugin_id}.`
+            : `No queued installs were processed for ${provider.plugin_id}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function reloadSelectedProviderBundles() {
       const provider = selectedProvider();
       if (!provider?.plugin_id) {
@@ -6459,6 +6496,8 @@
             void attachBundleToSelectedProvider();
           } else if (button.dataset.providerAction === "queue-install") {
             void queueInstallForSelectedProvider();
+          } else if (button.dataset.providerAction === "process-installs") {
+            void processQueuedInstallsForSelectedProvider();
           } else if (button.dataset.providerAction === "reload-bundles") {
             void reloadSelectedProviderBundles();
           }

@@ -1773,6 +1773,18 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert 'data-provider-action="queue-install"' in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_provider_install_processing_controls() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'data-screen="providers"' in response.text
+    assert "/operators/models/install/process" in response.text
+    assert "Process Queued Installs" in response.text
+    assert 'data-provider-action="process-installs"' in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -> None:
     client = TestClient(build_app(service=_service()))
 
