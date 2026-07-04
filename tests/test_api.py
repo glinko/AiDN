@@ -1805,6 +1805,16 @@ def test_operator_dashboard_shell_route_exposes_install_registration_cta() -> No
     assert "Registration path stays local until you decide to create an endpoint." in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_install_to_bundles_handoff_logic() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'state.screen = "bundles";' in response.text
+    assert "Ready to review bundle" in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -> None:
     client = TestClient(build_app(service=_service()))
 

@@ -6020,9 +6020,10 @@
           endpoint: draft.endpoint,
         });
         state.selectedFleetBundleId = result.bundle_id;
+        state.screen = "bundles";
         state.installMessage = {
           kind: "good",
-          text: `Bundle ${result.bundle_id} registered from install ${install.install_id}.`,
+          text: `Ready to review bundle ${result.bundle_id} from install ${install.install_id}.`,
         };
         await refreshBootstrapPayloads();
       } catch (error) {
