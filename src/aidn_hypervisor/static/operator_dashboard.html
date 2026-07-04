@@ -1536,6 +1536,12 @@
         workloadType: "llm_text",
         endpoint: "http://127.0.0.1:8080",
       },
+      bundleEndpointDraft: {
+        bundleId: null,
+        displayName: "",
+        visibility: "private",
+        sharedWallets: "",
+      },
       sessionOpenDraft: {
         endpointId: null,
         clientWallet: "",
@@ -2088,6 +2094,19 @@
         };
       }
       return state.installRegistrationDraft;
+    }
+
+    function syncBundleEndpointDraft(bundle) {
+      const bundleId = bundle?.bundle_id || null;
+      if (state.bundleEndpointDraft.bundleId !== bundleId) {
+        state.bundleEndpointDraft = {
+          bundleId,
+          displayName: bundle ? `${bundle.bundle_id} Endpoint` : "",
+          visibility: "private",
+          sharedWallets: "",
+        };
+      }
+      return state.bundleEndpointDraft;
     }
 
     function parseOptionalInteger(value) {
@@ -4430,6 +4449,7 @@
       const vramUsage = resourceTotals.vram_mb
         ? 1 - Number(resourceFree.vram_mb || 0) / Number(resourceTotals.vram_mb || 1)
         : 0;
+      const endpointDraft = syncBundleEndpointDraft(bundle);
 
       return `
         <div class="panel-heading">Selected Bundle</div>
@@ -4462,6 +4482,22 @@
             <strong>Custom Hosting</strong>
             <span>${fleet.node?.can_host_custom_model ? "Enabled on node" : "Not allowed"}</span>
           </div>
+          <section class="subpanel" style="padding: 16px; margin-top: 10px;">
+            <div class="panel-heading">Bundle To Endpoint</div>
+            <div class="inspector-copy">Promote this local bundle into an endpoint without leaving the inventory view. Publication and validation remain separate later decisions.</div>
+            <div class="wallet-form-grid" style="margin-top: 12px;">
+              <input type="text" data-bundle-endpoint-field="displayName" value="${escapeHtml(endpointDraft.displayName)}" placeholder="Endpoint display name">
+              <select data-bundle-endpoint-field="visibility">
+                <option value="private" ${endpointDraft.visibility === "private" ? "selected" : ""}>Private</option>
+                <option value="shared" ${endpointDraft.visibility === "shared" ? "selected" : ""}>Shared</option>
+                <option value="public" ${endpointDraft.visibility === "public" ? "selected" : ""}>Public</option>
+              </select>
+            </div>
+            <div class="wallet-form-grid" style="margin-top: 10px;">
+              <input type="text" data-bundle-endpoint-field="sharedWallets" value="${escapeHtml(endpointDraft.sharedWallets)}" placeholder="Shared wallet ids (comma separated)">
+              <button class="primary-button" type="button" data-bundle-endpoint-action="create-endpoint" ${endpointDraft.displayName && state.bootstrapPending !== "create-bundle-endpoint" ? "" : "disabled"}>${state.bootstrapPending === "create-bundle-endpoint" ? "Creating..." : "Create Endpoint From Bundle"}</button>
+            </div>
+          </section>
         </div>
         <div class="inspector-actions">
           <button class="primary-button" type="button" data-screen-jump="market">Compare Against Market</button>
@@ -5733,6 +5769,66 @@
       }
     }
 
+    async function createEndpointFromSelectedBundle() {
+      const bundle = selectedFleetBundle();
+      const draft = syncBundleEndpointDraft(bundle);
+      const ownerWalletId = state.payloads.home?.bootstrap?.owner_wallet?.wallet_id;
+      if (!bundle?.bundle_id || !ownerWalletId) {
+        state.bootstrapMessage = {
+          kind: "bad",
+          text: "Configure a wallet before creating an endpoint from a bundle.",
+        };
+        render();
+        bindInteractiveElements();
+        return;
+      }
+      const visibility = draft.visibility || "private";
+      const sharedWithWalletIds =
+        visibility === "shared" ? parseSharedWallets(draft.sharedWallets) : [];
+      if (visibility === "shared" && !sharedWithWalletIds.length) {
+        state.bootstrapMessage = {
+          kind: "bad",
+          text: "Shared endpoints require at least one allowed wallet.",
+        };
+        render();
+        bindInteractiveElements();
+        return;
+      }
+      state.bootstrapPending = "create-bundle-endpoint";
+      state.bootstrapMessage = null;
+      render();
+      try {
+        const created = await postJson(endpointApiBase, {
+          owner_wallet: ownerWalletId,
+          bundle_id: bundle.bundle_id,
+          bundle_hash: bundle.bundle_id,
+          display_name: draft.displayName,
+          model_class: bundle.workload_type || bundle.model_id || "generic",
+          capabilities: [bundle.workload_type || bundle.model_id || "generic"],
+          publication: {
+            visibility,
+            shared_with_wallet_ids: sharedWithWalletIds,
+            discoverable: false,
+            accepts_external_requests: false,
+            validation: "disabled",
+          },
+        });
+        state.selectedEndpointDraftId = created.endpoint.endpoint_id;
+        state.screen = "endpoints";
+        state.bootstrapMessage = {
+          kind: "good",
+          text: `Endpoint ${created.endpoint.endpoint_id} created from bundle ${bundle.bundle_id}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.bootstrapMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.bootstrapPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function registerSelectedInstallAsBundle() {
       const install = selectedInstall();
       const draft = syncInstallRegistrationDraft(install);
@@ -6100,6 +6196,24 @@
         button.addEventListener("click", () => {
           if (button.dataset.installAction === "register-bundle") {
             void registerSelectedInstallAsBundle();
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-bundle-endpoint-field]").forEach((control) => {
+        const key = control.dataset.bundleEndpointField;
+        const eventName = control.tagName === "SELECT" ? "change" : "input";
+        control.addEventListener(eventName, () => {
+          state.bundleEndpointDraft[key] = control.value;
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-bundle-endpoint-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.bundleEndpointAction === "create-endpoint") {
+            void createEndpointFromSelectedBundle();
           }
         });
       });

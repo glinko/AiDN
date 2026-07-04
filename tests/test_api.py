@@ -1720,6 +1720,23 @@ def test_operator_dashboard_shell_route_exposes_install_registration_controls() 
     assert "Register Bundle" in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_bundle_endpoint_creation_controls() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'data-screen="bundles"' in response.text
+    assert "/operators/dashboard/bundles" in response.text
+    assert "/api/v1/endpoints" in response.text
+    assert "Bundle To Endpoint" in response.text
+    assert 'data-bundle-endpoint-field="displayName"' in response.text
+    assert 'data-bundle-endpoint-field="visibility"' in response.text
+    assert 'data-bundle-endpoint-field="sharedWallets"' in response.text
+    assert 'data-bundle-endpoint-action="create-endpoint"' in response.text
+    assert "Create Endpoint From Bundle" in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -> None:
     client = TestClient(build_app(service=_service()))
 
