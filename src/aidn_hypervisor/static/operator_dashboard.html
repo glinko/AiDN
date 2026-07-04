@@ -1438,7 +1438,10 @@
       nodeIdentity: "/operators/node/identity",
     };
 
+    const modelInstallApiBase = "/operators/models/";
     const endpointApiBase = "/api/v1/endpoints";
+    const registerBundleFromInstallPath = (installId) =>
+      `${modelInstallApiBase}${installId}/register-bundle`;
     const endpointPublishConfigurationPath = (endpointId) =>
       `${endpointApiBase}/${endpointId}/publish-configuration`;
     const endpointProxyTargetPath = (endpointId) =>
@@ -1469,6 +1472,8 @@
       remoteAttachPending: null,
       requestPolicyPending: false,
       sessionActionPending: null,
+      installActionPending: null,
+      installMessage: null,
       marketOriginFilter: "all",
       requireReadyEndpoint: false,
       policyStrictAccounting: true,
@@ -1524,6 +1529,12 @@
       endpointProxyDraft: {
         endpointId: null,
         remoteEndpointId: "",
+      },
+      installRegistrationDraft: {
+        installId: null,
+        bundleId: "",
+        workloadType: "llm_text",
+        endpoint: "http://127.0.0.1:8080",
       },
       sessionOpenDraft: {
         endpointId: null,
@@ -2047,6 +2058,36 @@
           "";
       }
       return state.endpointProxyDraft;
+    }
+
+    function installSuggestedBundleId(install) {
+      const source = String(install?.model_id || "model")
+        .replace(/\.[^/.]+$/, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      return source || "model-local";
+    }
+
+    function installSuggestedWorkloadType(install) {
+      const modelId = String(install?.model_id || "").toLowerCase();
+      if (modelId.includes("whisper")) {
+        return "speech_to_text";
+      }
+      return "llm_text";
+    }
+
+    function syncInstallRegistrationDraft(install) {
+      const installId = install?.install_id || null;
+      if (state.installRegistrationDraft.installId !== installId) {
+        state.installRegistrationDraft = {
+          installId,
+          bundleId: install ? installSuggestedBundleId(install) : "",
+          workloadType: install ? installSuggestedWorkloadType(install) : "llm_text",
+          endpoint: "http://127.0.0.1:8080",
+        };
+      }
+      return state.installRegistrationDraft;
     }
 
     function parseOptionalInteger(value) {
@@ -4484,6 +4525,8 @@
         `;
       }
 
+      const draft = syncInstallRegistrationDraft(install);
+
       return `
         <div class="panel-heading">Selected Install</div>
         <div class="inspector-title">${install.model_id}</div>
@@ -4520,6 +4563,30 @@
                 </div>
               `
               : ""
+          }
+          ${
+            install.can_register_bundle
+              ? `
+                <section class="subpanel" style="padding: 16px; margin-top: 10px;">
+                  <div class="panel-heading">Bundle Registration</div>
+                  <div class="inspector-copy">Completed installs become endpoint candidates only after bundle registration. Use this form to promote the artifact into local execution inventory.</div>
+                  <div class="wallet-form-grid" style="margin-top: 12px;">
+                    <input type="text" data-install-field="bundleId" value="${escapeHtml(draft.bundleId)}" placeholder="Bundle ID">
+                    <select data-install-field="workloadType">
+                      <option value="llm_text" ${draft.workloadType === "llm_text" ? "selected" : ""}>llm_text</option>
+                      <option value="speech_to_text" ${draft.workloadType === "speech_to_text" ? "selected" : ""}>speech_to_text</option>
+                    </select>
+                  </div>
+                  <div class="wallet-form-grid" style="margin-top: 10px;">
+                    <input type="text" data-install-field="endpoint" value="${escapeHtml(draft.endpoint)}" placeholder="Endpoint URL">
+                    <button class="primary-button" type="button" data-install-action="register-bundle" ${draft.bundleId && draft.endpoint && state.installActionPending !== "register-bundle" ? "" : "disabled"}>${state.installActionPending === "register-bundle" ? "Registering..." : "Register Bundle"}</button>
+                  </div>
+                  ${state.installMessage ? `<div class="wallet-message ${state.installMessage.kind}" style="margin-top: 10px;">${state.installMessage.text}</div>` : ""}
+                </section>
+              `
+              : state.installMessage
+                ? `<div class="wallet-message ${state.installMessage.kind}" style="margin-top: 10px;">${state.installMessage.text}</div>`
+                : ""
           }
         </div>
         <div class="inspector-actions">
@@ -5666,6 +5733,37 @@
       }
     }
 
+    async function registerSelectedInstallAsBundle() {
+      const install = selectedInstall();
+      const draft = syncInstallRegistrationDraft(install);
+      if (!install?.install_id || !install.can_register_bundle) {
+        return;
+      }
+      state.installActionPending = "register-bundle";
+      state.installMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(registerBundleFromInstallPath(install.install_id), {
+          bundle_id: draft.bundleId,
+          workload_type: draft.workloadType,
+          endpoint: draft.endpoint,
+        });
+        state.selectedFleetBundleId = result.bundle_id;
+        state.installMessage = {
+          kind: "good",
+          text: `Bundle ${result.bundle_id} registered from install ${install.install_id}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.installMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.installActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function closeSelectedSession() {
       const selected = selectedSessionRow();
       if (!selected?.session?.session_id || selected.session.status === "closed") {
@@ -5981,9 +6079,28 @@
       document.querySelectorAll("[data-install-row]").forEach((row) => {
         row.addEventListener("click", () => {
           state.selectedInstallId = row.dataset.installRow;
+          state.installMessage = null;
           renderInspector();
           renderWorkspace();
           bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-install-field]").forEach((control) => {
+        const key = control.dataset.installField;
+        const eventName = control.tagName === "SELECT" ? "change" : "input";
+        control.addEventListener(eventName, () => {
+          state.installRegistrationDraft[key] = control.value;
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-install-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.installAction === "register-bundle") {
+            void registerSelectedInstallAsBundle();
+          }
         });
       });
 

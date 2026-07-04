@@ -1702,6 +1702,24 @@ def test_operator_dashboard_shell_route_exposes_sessions_workspace_controls() ->
     assert "Close Session" in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_install_registration_controls() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'data-screen="installs"' in response.text
+    assert "/operators/dashboard/installs" in response.text
+    assert "/operators/models/" in response.text
+    assert "/register-bundle" in response.text
+    assert "Bundle Registration" in response.text
+    assert 'data-install-field="bundleId"' in response.text
+    assert 'data-install-field="workloadType"' in response.text
+    assert 'data-install-field="endpoint"' in response.text
+    assert 'data-install-action="register-bundle"' in response.text
+    assert "Register Bundle" in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -> None:
     client = TestClient(build_app(service=_service()))
 
