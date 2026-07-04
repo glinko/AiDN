@@ -1737,6 +1737,27 @@ def test_operator_dashboard_shell_route_exposes_bundle_endpoint_creation_control
     assert "Create Endpoint From Bundle" in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_controls() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'data-screen="providers"' in response.text
+    assert "/operators/dashboard/providers" in response.text
+    assert "/operators/models/install" in response.text
+    assert "/operators/bundles/config" in response.text
+    assert "/operators/bundles/reload" in response.text
+    assert "Manual Provider Attach" in response.text
+    assert "Reload Saved Bundle Config" in response.text
+    assert 'data-provider-bundle-field="bundleId"' in response.text
+    assert 'data-provider-bundle-field="modelId"' in response.text
+    assert 'data-provider-bundle-field="workloadType"' in response.text
+    assert 'data-provider-bundle-field="endpoint"' in response.text
+    assert 'data-provider-action="attach-bundle"' in response.text
+    assert 'data-provider-action="reload-bundles"' in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -> None:
     client = TestClient(build_app(service=_service()))
 

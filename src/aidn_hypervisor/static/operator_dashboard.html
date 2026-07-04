@@ -1439,6 +1439,9 @@
     };
 
     const modelInstallApiBase = "/operators/models/";
+    const modelInstallRequestPath = "/operators/models/install";
+    const bundleConfigPath = "/operators/bundles/config";
+    const bundleReloadPath = "/operators/bundles/reload";
     const endpointApiBase = "/api/v1/endpoints";
     const registerBundleFromInstallPath = (installId) =>
       `${modelInstallApiBase}${installId}/register-bundle`;
@@ -1474,6 +1477,8 @@
       sessionActionPending: null,
       installActionPending: null,
       installMessage: null,
+      providerActionPending: null,
+      providerMessage: null,
       marketOriginFilter: "all",
       requireReadyEndpoint: false,
       policyStrictAccounting: true,
@@ -1533,6 +1538,13 @@
       installRegistrationDraft: {
         installId: null,
         bundleId: "",
+        workloadType: "llm_text",
+        endpoint: "http://127.0.0.1:8080",
+      },
+      providerBundleDraft: {
+        pluginId: null,
+        bundleId: "",
+        modelId: "",
         workloadType: "llm_text",
         endpoint: "http://127.0.0.1:8080",
       },
@@ -2107,6 +2119,73 @@
         };
       }
       return state.bundleEndpointDraft;
+    }
+
+    function providerSuggestedEndpoint(provider) {
+      switch (provider?.plugin_id) {
+        case "ollama":
+          return "http://127.0.0.1:11434";
+        case "whisper":
+          return "http://127.0.0.1:9000";
+        default:
+          return "http://127.0.0.1:8080";
+      }
+    }
+
+    function providerSuggestedWorkload(provider) {
+      return (provider?.workload_types || [])[0] || "llm_text";
+    }
+
+    function syncProviderBundleDraft(provider) {
+      const pluginId = provider?.plugin_id || null;
+      if (state.providerBundleDraft.pluginId !== pluginId) {
+        state.providerBundleDraft = {
+          pluginId,
+          bundleId: "",
+          modelId: "",
+          workloadType: providerSuggestedWorkload(provider),
+          endpoint: providerSuggestedEndpoint(provider),
+        };
+      }
+      return state.providerBundleDraft;
+    }
+
+    function providerTypeForDraft(provider) {
+      if (!provider) {
+        return null;
+      }
+      const bundles = ((state.payloads.bundles || {}).items || []).filter(
+        (item) => item.plugin_id === provider.plugin_id
+      );
+      return bundles[0]?.provider_type || provider.plugin_id;
+    }
+
+    function launchModeForProvider(provider) {
+      switch (provider?.plugin_id) {
+        case "ollama":
+        case "whisper":
+          return "attached_service";
+        default:
+          return "managed_process";
+      }
+    }
+
+    function buildBundleConfigDraft(provider, draft) {
+      return {
+        bundle_id: draft.bundleId,
+        plugin_id: provider.plugin_id,
+        provider_type: providerTypeForDraft(provider) || provider.plugin_id,
+        workload_type: draft.workloadType,
+        model_id: draft.modelId,
+        launch_mode: launchModeForProvider(provider),
+        endpoint: draft.endpoint,
+        device_affinity: "cpu",
+        resource_profile: {},
+        warm_policy: "auto",
+        priority_class: 50,
+        max_parallel_requests: 1,
+        enabled: true,
+      };
     }
 
     function parseOptionalInteger(value) {
@@ -4516,6 +4595,13 @@
         `;
       }
 
+      const draft = syncProviderBundleDraft(provider);
+      const canAttachBundle =
+        Boolean(draft.bundleId) &&
+        Boolean(draft.modelId) &&
+        Boolean(draft.endpoint) &&
+        state.providerActionPending !== "attach-bundle";
+
       return `
         <div class="panel-heading">Selected Provider</div>
         <div class="inspector-title">${provider.plugin_id}</div>
@@ -4543,6 +4629,31 @@
             <strong>Pending Installs</strong>
             <span>${formatCount(provider.pending_install_count)}</span>
           </div>
+          <section class="subpanel" style="padding: 16px; margin-top: 10px;">
+            <div class="panel-heading">Manual Provider Attach</div>
+            <div class="inspector-copy">Attach a provider directly into local bundle inventory when the service already exists. This writes bundle config through ${bundleConfigPath} and keeps publication out of scope until you explicitly create an endpoint.</div>
+            <div class="wallet-form-grid" style="margin-top: 12px;">
+              <input type="text" data-provider-bundle-field="bundleId" value="${escapeHtml(draft.bundleId)}" placeholder="Bundle ID">
+              <input type="text" data-provider-bundle-field="modelId" value="${escapeHtml(draft.modelId)}" placeholder="Model ID or path">
+            </div>
+            <div class="wallet-form-grid" style="margin-top: 10px;">
+              <select data-provider-bundle-field="workloadType">
+                ${(provider.workload_types || [])
+                  .map(
+                    (item) =>
+                      `<option value="${escapeHtml(item)}" ${draft.workloadType === item ? "selected" : ""}>${escapeHtml(item)}</option>`
+                  )
+                  .join("")}
+              </select>
+              <input type="text" data-provider-bundle-field="endpoint" value="${escapeHtml(draft.endpoint)}" placeholder="Endpoint URL">
+            </div>
+            <div class="wallet-form-grid" style="margin-top: 10px;">
+              <button class="primary-button" type="button" data-provider-action="attach-bundle" ${canAttachBundle ? "" : "disabled"}>${state.providerActionPending === "attach-bundle" ? "Attaching..." : "Attach Bundle"}</button>
+              <button class="secondary-button" type="button" data-provider-action="reload-bundles" ${state.providerActionPending === "reload-bundles" ? "disabled" : ""}>${state.providerActionPending === "reload-bundles" ? "Reloading..." : "Reload Saved Bundle Config"}</button>
+            </div>
+            ${state.providerMessage ? `<div class="wallet-message ${state.providerMessage.kind}" style="margin-top: 10px;">${state.providerMessage.text}</div>` : ""}
+            <div class="notice" style="margin-top: 10px;">Install bridge: ${modelInstallRequestPath}</div>
+          </section>
         </div>
         <div class="inspector-actions">
           <button class="primary-button" type="button" data-screen-jump="bundles">Inspect Bundles</button>
@@ -5404,6 +5515,22 @@
       return body;
     }
 
+    async function putJson(url, payload) {
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const contentType = response.headers.get("content-type") || "";
+      const body = contentType.includes("application/json") ? await response.json() : await response.text();
+      if (!response.ok) {
+        throw new Error(extractErrorMessage(body));
+      }
+      return body;
+    }
+
     async function attachRemoteEndpoint(nodeId, endpointId) {
       state.remoteAttachPending = `${nodeId}:${endpointId}`;
       state.remoteMessage = null;
@@ -5860,6 +5987,67 @@
       }
     }
 
+    async function attachBundleToSelectedProvider() {
+      const provider = selectedProvider();
+      const draft = syncProviderBundleDraft(provider);
+      if (!provider?.plugin_id) {
+        return;
+      }
+      state.providerActionPending = "attach-bundle";
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const currentConfigResponse = await fetch(bundleConfigPath, { cache: "no-store" });
+        const currentConfig = currentConfigResponse.ok ? await currentConfigResponse.json() : [];
+        if (!currentConfigResponse.ok) {
+          throw new Error(extractErrorMessage(currentConfig));
+        }
+        const nextConfig = [
+          ...currentConfig,
+          buildBundleConfigDraft(provider, draft),
+        ];
+        await putJson(bundleConfigPath, nextConfig);
+        state.selectedFleetBundleId = draft.bundleId;
+        state.providerMessage = {
+          kind: "good",
+          text: `Bundle ${draft.bundleId} attached to ${provider.plugin_id}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function reloadSelectedProviderBundles() {
+      const provider = selectedProvider();
+      if (!provider?.plugin_id) {
+        return;
+      }
+      state.providerActionPending = "reload-bundles";
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(bundleReloadPath, {});
+        state.providerMessage = {
+          kind: "good",
+          text: `Reloaded ${formatCount(result.bundle_count)} bundle configs for local providers.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function closeSelectedSession() {
       const selected = selectedSessionRow();
       if (!selected?.session?.session_id || selected.session.status === "closed") {
@@ -6157,9 +6345,30 @@
       document.querySelectorAll("[data-provider-row]").forEach((row) => {
         row.addEventListener("click", () => {
           state.selectedProviderId = row.dataset.providerRow;
+          state.providerMessage = null;
           renderInspector();
           renderWorkspace();
           bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-bundle-field]").forEach((control) => {
+        const key = control.dataset.providerBundleField;
+        const eventName = control.tagName === "SELECT" ? "change" : "input";
+        control.addEventListener(eventName, () => {
+          state.providerBundleDraft[key] = control.value;
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.providerAction === "attach-bundle") {
+            void attachBundleToSelectedProvider();
+          } else if (button.dataset.providerAction === "reload-bundles") {
+            void reloadSelectedProviderBundles();
+          }
         });
       });
 
