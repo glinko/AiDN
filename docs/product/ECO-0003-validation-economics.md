@@ -222,7 +222,7 @@ Endpoints SHALL NOT be able to determine whether requests originate from:
 - agents;
 - Validators.
 
-Only the Settlement Engine is aware of validation-specific accounting.
+Only the [Settlement Engine](./RFC-0037-settlement-engine.md) is aware of validation-specific accounting.
 
 ## 13. Economic Properties
 

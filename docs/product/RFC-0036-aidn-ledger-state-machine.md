@@ -22,6 +22,8 @@ The Ledger defines their meaning.
 
 `RFC-0036` defines how they become deterministic network state.
 
+Detailed economic execution semantics for deposits, invoices, refunds, fees, rewards, and bond transitions are defined separately in [RFC-0037 Settlement Engine](./RFC-0037-settlement-engine.md).
+
 The Consensus Engine never interprets network logic.
 
 It only guarantees that every node executes the same operations in the same order.
@@ -205,6 +207,8 @@ Examples:
 Validation Reports themselves may be stored off-chain.
 
 Only their cryptographic reference is stored in the Ledger.
+
+The Settlement Engine computes the corresponding deterministic balance transitions before they are materialized as Ledger Operations, as defined in [RFC-0037 Settlement Engine](./RFC-0037-settlement-engine.md).
 
 ## 15. Reputation
 

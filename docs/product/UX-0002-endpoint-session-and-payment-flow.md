@@ -14,6 +14,8 @@ This document applies the utility-first accounting principles defined in [ECO-00
 
 This document complements [UX-0001 Hypervisor Operator Journey](./UX-0001-hypervisor-operator-journey.md).
 
+Deterministic execution of invoices, refunds, fees, and Session-close accounting is defined separately in [RFC-0037 Settlement Engine](./RFC-0037-settlement-engine.md).
+
 `UX-0001` explains how operators create, publish, and manage Endpoints.
 
 `UX-0002` explains how consumers reserve, pay for, and use those Endpoints through explicit Sessions.
