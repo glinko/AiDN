@@ -684,6 +684,13 @@
       background: rgba(7, 18, 28, 0.86);
     }
 
+    .primary-button.action-focus,
+    .secondary-button.action-focus {
+      border-color: var(--line-strong);
+      box-shadow: 0 0 0 1px rgba(255, 174, 87, 0.2), 0 0 24px rgba(255, 174, 87, 0.16);
+      transform: translateY(-1px);
+    }
+
     .operations-band {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1536,6 +1543,11 @@
         endpointId: null,
         remoteEndpointId: "",
       },
+      proxyGuidedFlow: {
+        endpointId: null,
+        remoteEndpointId: "",
+        phase: null,
+      },
       installRegistrationDraft: {
         installId: null,
         bundleId: "",
@@ -1690,6 +1702,10 @@
       });
     }
 
+    function marketCandidateCount() {
+      return ((state.payloads.market || {}).candidates || []).length;
+    }
+
     function selectedMarketCandidate() {
       const candidates = marketCandidates();
       if (!candidates.length) {
@@ -1701,6 +1717,30 @@
         candidates[0];
       state.selectedMarketCandidateId = selected.bundle_id;
       return selected;
+    }
+
+    function discoveredRemoteForMarketCandidate(candidate) {
+      if (!candidate) {
+        return null;
+      }
+      const discovered = remotePayload().discovered || [];
+      const exactEndpoint = discovered.find(
+        (item) =>
+          item.node_id === candidate.node_id &&
+          item.endpoint_id === candidate.endpoint_id
+      );
+      if (exactEndpoint) {
+        return exactEndpoint;
+      }
+      const sameNodeModelClass = discovered.find(
+        (item) =>
+          item.node_id === candidate.node_id &&
+          item.model_class === candidate.workload_type
+      );
+      if (sameNodeModelClass) {
+        return sameNodeModelClass;
+      }
+      return discovered.find((item) => item.node_id === candidate.node_id) || null;
     }
 
     function selectedFleetBundle() {
@@ -1928,6 +1968,401 @@
 
     function endpointPublishedValidationSummary(item) {
       return item?.published_validation_summary || null;
+    }
+
+    function endpointNextStepTone(state) {
+      switch (state) {
+        case "done":
+          return "good";
+        case "current":
+          return "warn";
+        default:
+          return "";
+      }
+    }
+
+    function endpointNextStepLabel(state) {
+      switch (state) {
+        case "done":
+          return "Done";
+        case "current":
+          return "Current Step";
+        case "optional":
+          return "Optional";
+        default:
+          return "Next";
+      }
+    }
+
+    function activeProxyGuidedFlow(item) {
+      if (!item?.endpoint_id) {
+        return null;
+      }
+      const proxyGuidedFlow = state.proxyGuidedFlow || {};
+      if (
+        proxyGuidedFlow.endpointId !== item.endpoint_id ||
+        !proxyGuidedFlow.remoteEndpointId
+      ) {
+        return null;
+      }
+      return proxyGuidedFlow;
+    }
+
+    function endpointNextSteps(item) {
+      if (!item) {
+        return [
+          {
+            key: "proxy",
+            title: "Proxy Route Binding",
+            detail:
+              "Attach the staged remote endpoint as the proxy target before publishing the new configuration.",
+            state: "optional",
+            status: "Optional",
+          },
+          {
+            key: "snapshot",
+            title: "Configuration Snapshot",
+            detail:
+              "Save policy and runtime changes before publishing a new configuration snapshot.",
+            state: "current",
+            status: "Draft",
+          },
+          {
+            key: "publish",
+            title: "Endpoint Availability",
+            detail:
+              "Publish this endpoint when routing, visibility, and pricing are ready for remote use.",
+            state: "next",
+            status: "Unavailable",
+          },
+          {
+            key: "validation",
+            title: "Optional Trust Upgrade",
+            detail:
+              "Validation remains optional and can be requested after publication when you want network trust.",
+            state: "optional",
+            status: "Optional",
+          },
+        ];
+      }
+
+      const publicationSync = endpointPublicationSyncStatus(item);
+      const publicationStatus = endpointPublicationStatus(item);
+      const validationSummary = endpointLiveValidationSummary(item);
+      const validation = validationStatus(validationSummary);
+      const validationMode = endpointValidationMode(item);
+      const proxyFlow = activeProxyGuidedFlow(item);
+      const hasProxyRoute = Boolean(
+        item.proxy_target?.remote_endpoint_id || item.execution_strategy === "proxy"
+      );
+      const proxyState =
+        proxyFlow?.phase === "attach"
+          ? "current"
+          : hasProxyRoute
+            ? "done"
+            : "optional";
+      const snapshotState =
+        proxyFlow?.phase === "attach"
+          ? "next"
+          : publicationSync === "in_sync"
+            ? "done"
+            : "current";
+      const publishState =
+        publicationStatus === "published"
+          ? "done"
+          : proxyFlow?.phase === "attach"
+            ? "next"
+            : publicationSync === "in_sync"
+            ? "current"
+            : "next";
+      const validationState =
+        validation === "validated"
+          ? "done"
+          : validationMode === "requested" &&
+              publicationSync === "in_sync" &&
+              publicationStatus === "published"
+            ? "current"
+            : validationMode === "requested"
+              ? "next"
+              : "optional";
+
+      return [
+        {
+          key: "proxy",
+          title: "Proxy Route Binding",
+          detail:
+            "Attach the staged remote endpoint as the proxy target before publishing the new configuration.",
+          state: proxyState,
+          status:
+            proxyFlow?.phase === "attach"
+              ? "Staged"
+              : hasProxyRoute
+                ? "Attached"
+                : "Optional",
+        },
+        {
+          key: "snapshot",
+          title: "Configuration Snapshot",
+          detail:
+            "Save policy and runtime changes before publishing a new configuration snapshot.",
+          state: snapshotState,
+          status: trustStatusLabel(publicationSync),
+        },
+        {
+          key: "publish",
+          title: "Endpoint Availability",
+          detail:
+            "Publish this endpoint when routing, visibility, and pricing are ready for remote use.",
+          state: publishState,
+          status:
+            publicationStatus === "published"
+              ? `Published / ${endpointVisibility(item)}`
+              : `Configured / ${endpointVisibility(item)}`,
+        },
+        {
+          key: "validation",
+          title: "Optional Trust Upgrade",
+          detail:
+            "Validation remains optional and can be requested after publication when you want network trust.",
+          state: validationState,
+          status:
+            validationMode === "requested" || validation !== "unvalidated"
+              ? trustStatusLabel(validation)
+              : "Optional",
+        },
+      ];
+    }
+
+    function endpointRecommendedAction(item) {
+      if (activeProxyGuidedFlow(item)?.phase === "attach") {
+        return "attach-proxy-target";
+      }
+      const currentStep = endpointNextSteps(item).find((step) => step.state === "current");
+      switch (currentStep?.key) {
+        case "proxy":
+          return "attach-proxy-target";
+        case "publish":
+          return "publish";
+        case "validation":
+          return "request-validation";
+        case "snapshot":
+        default:
+          return "publish-configuration";
+      }
+    }
+
+    function endpointRecommendedActionLabel(action) {
+      switch (action) {
+        case "attach-proxy-target":
+          return "Attach Proxy Route";
+        case "publish":
+          return "Publish Endpoint";
+        case "request-validation":
+          return "Request Validation";
+        case "publish-configuration":
+        default:
+          return "Publish Configuration";
+      }
+    }
+
+    function homeRecommendedAction(bootstrap) {
+      const firstEndpoint = bootstrap?.first_endpoint_candidate || {};
+      const endpointCount = Number(bootstrap?.endpoint_count || 0);
+      if (!bootstrap?.wallet_ready) {
+        return {
+          label: "Create Wallet",
+          detail: "Create or import a wallet before any publish or market-facing step.",
+          type: "bootstrap",
+          action: "create-wallet",
+        };
+      }
+      if (!firstEndpoint.bundle_id) {
+        return {
+          label: "Open Providers",
+          detail: "Attach a provider or finish a model install so bootstrap can surface a first endpoint candidate.",
+          type: "screen",
+          action: "providers",
+        };
+      }
+      if (!endpointCount) {
+        return {
+          label: "Create First Endpoint",
+          detail: "A first endpoint candidate is ready. Create the endpoint here, then continue in Endpoints for publication and validation.",
+          type: "endpoint",
+          action: "create",
+        };
+      }
+      return {
+        label: "Open Endpoints",
+        detail: "Endpoint drafts already exist. Continue with publication, configuration, and validation controls.",
+        type: "screen",
+        action: "endpoints",
+      };
+    }
+
+    function bundleRecommendedAction(summary, items, bundle) {
+      if (!items.length) {
+        return {
+          label: "Open Providers",
+          detail: "Attach a provider or register a bundle before local endpoint creation can begin.",
+          type: "screen",
+          action: "providers",
+        };
+      }
+      if (bundle?.endpoint) {
+        return {
+          label: "Open Endpoints",
+          detail: "This bundle already has an endpoint. Continue in Endpoints for publication and validation.",
+          type: "screen",
+          action: "endpoints",
+        };
+      }
+      if (bundle) {
+        return {
+          label: "Create Endpoint From Bundle",
+          detail: "This bundle is ready to become an endpoint. Create it here, then continue in Endpoints.",
+          type: "bundle-endpoint",
+          action: "create-endpoint",
+        };
+      }
+      if (Number(summary?.first_endpoint_candidates || 0) > 0) {
+        return {
+          label: "Inspect First Endpoint Pick",
+          detail: "Select a first-endpoint candidate, then create an endpoint from local inventory without leaving this workspace.",
+          type: "inspect",
+          action: "inspect",
+        };
+      }
+      return {
+        label: "Inspect Bundle Inventory",
+        detail: "Review local bundles and choose the cleanest endpoint candidate before opening publish controls.",
+        type: "inspect",
+        action: "inspect",
+      };
+    }
+
+    function providerRecommendedAction(summary, items, provider) {
+      if (!items.length) {
+        return {
+          label: "Attach Provider",
+          detail: "Attach a provider or import its manifest before bundle wiring or installs can begin.",
+          type: "none",
+          action: null,
+        };
+      }
+      if (provider?.pending_install_count) {
+        return {
+          label: "Process Queued Installs",
+          detail: "Queue or process a model install to hand off an artifact into Installs for registration.",
+          type: "provider-action",
+          action: "process-installs",
+        };
+      }
+      if (provider) {
+        return {
+          label: "Queue Install",
+          detail: "Queue a model install so the artifact can be handed off into Installs for registration.",
+          type: "provider-action",
+          action: "queue-install",
+        };
+      }
+      return {
+        label: "Inspect Provider",
+        detail: "Inspect a provider to queue installs or attach a bundle directly into local inventory.",
+        type: "none",
+        action: null,
+      };
+    }
+
+    function installRecommendedAction(summary, items, install) {
+      if (!items.length) {
+        return {
+          label: "Open Providers",
+          detail: "Queue or process a model install first so completed artifacts can be registered as bundles.",
+          type: "screen",
+          action: "providers",
+        };
+      }
+      if (install?.can_register_bundle) {
+        return {
+          label: "Register Bundle",
+          detail: "Select a completed install, then register it as a bundle so it can become an endpoint.",
+          type: "install-action",
+          action: "register-bundle",
+        };
+      }
+      if (Number(summary?.ready_to_register || 0) > 0) {
+        return {
+          label: "Inspect Ready Install",
+          detail: "Select a completed install, then register it as a bundle so it can become an endpoint.",
+          type: "none",
+          action: null,
+        };
+      }
+      return {
+        label: "Wait For Install",
+        detail: "Wait for an install to complete, then return here to register the resulting bundle.",
+        type: "none",
+        action: null,
+      };
+    }
+
+    function fleetRecommendedAction(bundles, installs, bundle) {
+      if (!bundles.length) {
+        return {
+          label: "Open Providers",
+          detail: "Open Providers to attach execution backends before local capacity can serve bundles.",
+          type: "screen",
+          action: "providers",
+        };
+      }
+      if (bundle) {
+        return {
+          label: "Inspect Bundles",
+          detail: "Open Bundles to turn local capacity into endpoint-ready inventory.",
+          type: "screen",
+          action: "bundles",
+        };
+      }
+      if (installs.length) {
+        return {
+          label: "Inspect Installs",
+          detail: "Review installs alongside local capacity so completed artifacts can graduate into bundles.",
+          type: "screen",
+          action: "installs",
+        };
+      }
+      return {
+        label: "Inspect Bundles",
+        detail: "Open Bundles to turn local capacity into endpoint-ready inventory.",
+        type: "screen",
+        action: "bundles",
+      };
+    }
+
+    function marketRecommendedAction(candidates, candidate) {
+      if (!candidates.length) {
+        return {
+          label: "Open Endpoints",
+          detail: "Open Endpoints and publish local supply before relying on remote market capacity.",
+          type: "screen",
+          action: "endpoints",
+        };
+      }
+      if (candidate) {
+        return {
+          label: "Check Local Capacity",
+          detail: "Compare the selected offer against local capacity before routing work outward.",
+          type: "screen",
+          action: "fleet",
+        };
+      }
+      return {
+        label: "Inspect Offer",
+        detail: "Select a market offer, then compare it against local capacity before routing work outward.",
+        type: "screen",
+        action: "fleet",
+      };
     }
 
     function marketTrustSummary(candidate) {
@@ -2620,6 +3055,11 @@
       const candidate = selectedMarketCandidate();
       const queueSummary = fleet.queue || { queued: 0, active: 0, completed: 0, failed: 0 };
       const actions = (home.operator_controls?.actions || []).map((action) => `<span class="chip">${action}</span>`).join("");
+      const recommendation = homeRecommendedAction(bootstrap);
+      const visibleMarketCandidateCount = Math.max(
+        Number(home.market_preview?.candidate_count || 0),
+        marketCandidateCount()
+      );
 
       return `
         <div class="workspace-header">
@@ -2643,7 +3083,7 @@
             </section>
             <section class="summary-card">
               <div class="panel-heading">Market Visibility</div>
-              <div class="summary-value">${formatCount(home.market_preview?.candidate_count)}</div>
+              <div class="summary-value">${formatCount(visibleMarketCandidateCount)}</div>
               <div class="summary-copy">${formatCount(home.market_visibility?.local_offer_count)} local offers currently visible through the market layer.</div>
             </section>
             <section class="summary-card">
@@ -2717,9 +3157,13 @@
                   <div><span class="chip ${firstPublishedEndpoint && endpointPublicationStatus(firstPublishedEndpoint) === "published" ? "good" : "bad"}">${firstPublishedEndpoint ? formatMaybe(firstPublishedEndpoint.published_configuration_hash, "unsigned") : "unsigned"}</span></div>
                 </div>
               </div>
+              <div class="notice" style="margin-top: 14px;">
+                <strong>Recommended Next Action</strong>
+                <span style="display: block; margin-top: 4px;">${recommendation.detail}</span>
+              </div>
               <div class="wallet-form-grid" style="margin-top: 14px;">
                 <input type="text" data-bootstrap-field="walletLabel" value="${state.bootstrapDrafts.walletLabel}" placeholder="Wallet label">
-                <button class="primary-button" type="button" data-bootstrap-action="create-wallet">${state.bootstrapPending === "create-wallet" ? "Creating..." : "Create Wallet"}</button>
+                <button class="primary-button ${recommendation.type === "bootstrap" ? "action-focus" : ""}" type="button" data-bootstrap-action="create-wallet">${state.bootstrapPending === "create-wallet" ? "Creating..." : "Create Wallet"}</button>
               </div>
               <div class="wallet-form-grid" style="margin-top: 10px;">
                 <input type="text" data-bootstrap-field="walletPrivateKey" value="${state.bootstrapDrafts.walletPrivateKey}" placeholder="Private key for import">
@@ -2738,7 +3182,8 @@
                 <div class="notice" style="margin-top: 0;">Used only when visibility is set to shared.</div>
               </div>
               <div class="wallet-inline-actions" style="margin-top: 10px;">
-                <button class="primary-button" type="button" data-endpoint-action="create" ${bootstrap.wallet_ready && firstEndpoint.bundle_id ? "" : "disabled"}>${state.bootstrapPending === "create-endpoint" ? "Creating..." : "Create First Endpoint"}</button>
+                <button class="primary-button ${recommendation.type === "endpoint" ? "action-focus" : ""}" type="button" data-endpoint-action="create" ${bootstrap.wallet_ready && firstEndpoint.bundle_id ? "" : "disabled"}>${state.bootstrapPending === "create-endpoint" ? "Creating..." : "Create First Endpoint"}</button>
+                ${recommendation.type === "screen" ? `<button class="secondary-button action-focus" type="button" data-screen-jump="${recommendation.action}">${recommendation.label}</button>` : ""}
               </div>
               <div class="wallet-inline-actions" style="margin-top: 10px;">
                 <button class="secondary-button" type="button" data-endpoint-action="publish">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Endpoint"}</button>
@@ -2763,6 +3208,7 @@
       const bundles = fleet.bundles || [];
       const resources = fleet.resources?.free || {};
       const installs = fleet.installs || [];
+      const recommendation = fleetRecommendedAction(bundles, installs, selectedFleetBundle());
 
       return `
         <div class="workspace-header">
@@ -2794,6 +3240,13 @@
               <div class="summary-copy">Free accelerator memory in MB.</div>
             </section>
           </div>
+          <section class="subpanel">
+            <div class="panel-heading">Recommended Next Action</div>
+            <div class="subpanel-copy">${recommendation.detail}</div>
+            <div class="wallet-inline-actions" style="margin-top: 12px;">
+              <button class="secondary-button action-focus" type="button" data-screen-jump="${recommendation.action}">${recommendation.label}</button>
+            </div>
+          </section>
           <div class="fleet-columns">
             <section class="subpanel">
               <div class="panel-heading">Bundles</div>
@@ -2884,6 +3337,7 @@
       const payload = state.payloads.providers || {};
       const summary = payload.summary || {};
       const items = providerRows();
+      const recommendation = providerRecommendedAction(summary, items, selectedProvider());
 
       return `
         <div class="workspace-header">
@@ -2915,6 +3369,10 @@
               <div class="summary-copy">Model installs still converging into bundle-ready artifacts.</div>
             </section>
           </div>
+          <section class="subpanel">
+            <div class="panel-heading">Recommended Next Action</div>
+            <div class="subpanel-copy">${recommendation.detail}</div>
+          </section>
           <section class="subpanel">
             <div class="panel-heading">Provider Inventory</div>
             <div class="table-shell" style="margin-top: 14px;">
@@ -2956,6 +3414,7 @@
       const payload = state.payloads.bundles || {};
       const summary = payload.summary || {};
       const items = payload.items || [];
+      const recommendation = bundleRecommendedAction(summary, items, selectedFleetBundle());
 
       return `
         <div class="workspace-header">
@@ -2987,6 +3446,10 @@
               <div class="summary-copy">Bundles recommended by bootstrap as the cleanest first endpoint.</div>
             </section>
           </div>
+          <section class="subpanel">
+            <div class="panel-heading">Recommended Next Action</div>
+            <div class="subpanel-copy">${recommendation.detail}</div>
+          </section>
           <section class="subpanel">
             <div class="panel-heading">Bundle Readiness</div>
             <div class="table-shell" style="margin-top: 14px;">
@@ -3030,6 +3493,7 @@
       const payload = state.payloads.installs || {};
       const summary = payload.summary || {};
       const items = installRows();
+      const recommendation = installRecommendedAction(summary, items, selectedInstall());
 
       return `
         <div class="workspace-header">
@@ -3061,6 +3525,11 @@
               <div class="summary-copy">Completed installs that can immediately become a new bundle.</div>
             </section>
           </div>
+          <section class="subpanel">
+            <div class="panel-heading">Recommended Next Action</div>
+            <div class="subpanel-copy">${recommendation.detail}</div>
+            ${recommendation.type === "screen" ? `<div class="wallet-inline-actions" style="margin-top: 12px;"><button class="secondary-button action-focus" type="button" data-screen-jump="${recommendation.action}">${recommendation.label}</button></div>` : ""}
+          </section>
           <section class="subpanel">
             <div class="panel-heading">Install State</div>
             <div class="table-shell" style="margin-top: 14px;">
@@ -3110,6 +3579,12 @@
       const config = syncEndpointConfigDraft(selected);
       const proxyDraft = syncEndpointProxyDraft(selected);
       const attachedRemotes = attachedRemoteCatalogue();
+      const proxyGuidedFlow = activeProxyGuidedFlow(selected);
+      const stagedRemote = proxyGuidedFlow
+        ? attachedRemotes.find(
+            (item) => item.remote_endpoint_id === proxyGuidedFlow.remoteEndpointId
+          ) || null
+        : null;
 
       return `
         <div class="workspace-header">
@@ -3235,6 +3710,46 @@
                             : "No published snapshot is available for remote comparison yet."
                         )}
                       </div>
+                      <div class="panel-heading" style="margin-top: 16px;">Endpoint Next Step</div>
+                      <div class="list" style="margin-top: 12px;">
+                        ${endpointNextSteps(selected)
+                          .map(
+                            (step) => `
+                              <div class="list-row" data-endpoint-next-step="${step.key}">
+                                <div>
+                                  <strong>${step.title}</strong>
+                                  <span>${step.detail}</span>
+                                </div>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                  <span class="chip ${endpointNextStepTone(step.state)}">${endpointNextStepLabel(step.state)}</span>
+                                  <span class="chip">${step.status}</span>
+                                </div>
+                              </div>
+                            `
+                          )
+                          .join("")}
+                      </div>
+                      <div class="notice" style="margin-top: 12px;">
+                        <strong>Recommended Action</strong>
+                        <span style="display: block; margin-top: 4px;">${endpointRecommendedActionLabel(endpointRecommendedAction(selected))}. The highlighted control matches the current step above.</span>
+                      </div>
+                      ${
+                        proxyGuidedFlow
+                          ? `
+                            <div class="notice" style="margin-top: 12px;">
+                              <strong>Guided Proxy Flow</strong>
+                              <span style="display: block; margin-top: 4px;">
+                                ${proxyGuidedFlow.phase === "attach"
+                                  ? `Stage the remote route ${stagedRemote?.alias || stagedRemote?.source_endpoint_id || proxyGuidedFlow.remoteEndpointId} on ${selected.endpoint_id}, then attach it before publishing the updated configuration.`
+                                  : `Proxy route ${stagedRemote?.alias || stagedRemote?.source_endpoint_id || proxyGuidedFlow.remoteEndpointId} is attached to ${selected.endpoint_id}. Publish configuration next so the new execution path becomes the signed snapshot.`}
+                              </span>
+                            </div>
+                            <div class="wallet-inline-actions" style="margin-top: 12px;">
+                              <button class="primary-button action-focus" type="button" data-endpoint-action="complete-guided-proxy-publish">${state.bootstrapPending === "guided-proxy-publish" ? "Completing..." : "Complete Guided Proxy Publish"}</button>
+                            </div>
+                          `
+                          : ""
+                      }
                       <div class="panel-heading" style="margin-top: 16px;">Endpoint Policy Editor</div>
                       <div class="wallet-form-grid" style="margin-top: 12px;">
                         <select data-endpoint-field="visibility">
@@ -3289,15 +3804,39 @@
                       <div class="wallet-inline-actions" style="margin-top: 14px;">
                         <button class="primary-button" type="button" data-endpoint-action="save-policy">${state.bootstrapPending === "save-endpoint-policy" ? "Saving..." : "Save Policy"}</button>
                         <button class="primary-button" type="button" data-endpoint-action="save-config">${state.bootstrapPending === "save-endpoint-config" ? "Saving..." : "Save Runtime"}</button>
-                        <button class="primary-button" type="button" data-endpoint-action="attach-proxy-target" ${attachedRemotes.length ? "" : "disabled"}>${state.bootstrapPending === "attach-proxy-target" ? "Attaching..." : "Attach Proxy Route"}</button>
-                        <button class="secondary-button" type="button" data-endpoint-action="publish">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Endpoint"}</button>
-                        <button class="secondary-button" type="button" data-endpoint-action="publish-configuration">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Configuration"}</button>
+                        <button class="primary-button ${endpointRecommendedAction(selected) === "attach-proxy-target" ? "action-focus" : ""}" type="button" data-endpoint-action="attach-proxy-target" ${attachedRemotes.length ? "" : "disabled"}>${state.bootstrapPending === "attach-proxy-target" ? "Attaching..." : "Attach Proxy Route"}</button>
+                        <button class="secondary-button ${endpointRecommendedAction(selected) === "publish" ? "action-focus" : ""}" type="button" data-endpoint-action="publish">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Endpoint"}</button>
+                        <button class="secondary-button ${endpointRecommendedAction(selected) === "publish-configuration" ? "action-focus" : ""}" type="button" data-endpoint-action="publish-configuration">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Configuration"}</button>
                         <button class="secondary-button" type="button" data-endpoint-action="revoke-publication">${state.bootstrapPending === "revoke-publication" ? "Revoking..." : "Revoke Publication"}</button>
                         <button class="secondary-button" type="button" data-endpoint-action="view-signed-publication">View Signed Publication</button>
-                        <button class="secondary-button" type="button" data-endpoint-action="request-validation">${state.bootstrapPending === "request-validation" ? "Requesting..." : "Request Validation"}</button>
+                        <button class="secondary-button ${endpointRecommendedAction(selected) === "request-validation" ? "action-focus" : ""}" type="button" data-endpoint-action="request-validation">${state.bootstrapPending === "request-validation" ? "Requesting..." : "Request Validation"}</button>
                       </div>
                     `
                     : `
+                      <div class="panel-heading">Endpoint Next Step</div>
+                      <div class="notice" style="margin-top: 12px;">Create or select an endpoint to save policy, publish configuration, and request validation later.</div>
+                      <div class="list" style="margin-top: 12px;">
+                        ${endpointNextSteps()
+                          .map(
+                            (step) => `
+                              <div class="list-row" data-endpoint-next-step="${step.key}">
+                                <div>
+                                  <strong>${step.title}</strong>
+                                  <span>${step.detail}</span>
+                                </div>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                  <span class="chip ${endpointNextStepTone(step.state)}">${endpointNextStepLabel(step.state)}</span>
+                                  <span class="chip">${step.status}</span>
+                                </div>
+                              </div>
+                            `
+                          )
+                          .join("")}
+                      </div>
+                      <div class="notice" style="margin-top: 12px;">
+                        <strong>Recommended Action</strong>
+                        <span style="display: block; margin-top: 4px;">${endpointRecommendedActionLabel(endpointRecommendedAction())}. The highlighted control matches the current step above.</span>
+                      </div>
                       <div class="panel-heading">Endpoint Policy Editor</div>
                       <div class="panel-heading" style="margin-top: 16px;">Endpoint Runtime Editor</div>
                       <div class="empty-state">Select an endpoint to edit visibility, allowlist, and validation posture.</div>
@@ -3316,6 +3855,10 @@
 
     function renderMarketWorkspace() {
       const candidates = marketCandidates();
+      const recommendation = marketRecommendedAction(
+        candidates,
+        selectedMarketCandidate()
+      );
 
       return `
         <div class="workspace-header">
@@ -3354,6 +3897,13 @@
               <div class="summary-copy">Signed endpoint publications visible across the current market result set.</div>
             </section>
           </div>
+          <section class="subpanel">
+            <div class="panel-heading">Recommended Next Action</div>
+            <div class="subpanel-copy">${recommendation.detail}</div>
+            <div class="wallet-inline-actions" style="margin-top: 12px;">
+              <button class="secondary-button action-focus" type="button" data-screen-jump="${recommendation.action}">${recommendation.label}</button>
+            </div>
+          </section>
           <section class="subpanel">
             <div class="panel-heading">Execution Market</div>
             <div class="table-shell" style="margin-top: 14px;">
@@ -4555,6 +5105,16 @@
         ? 1 - Number(resourceFree.vram_mb || 0) / Number(resourceTotals.vram_mb || 1)
         : 0;
       const endpointDraft = syncBundleEndpointDraft(bundle);
+      const fleetRecommendation = fleetRecommendedAction(
+        fleet.bundles || [],
+        fleet.installs || [],
+        bundle
+      );
+      const bundleRecommendation = bundleRecommendedAction(
+        state.payloads.bundles?.summary || {},
+        state.payloads.bundles?.items || [],
+        bundle
+      );
 
       return `
         <div class="panel-heading">Selected Bundle</div>
@@ -4587,9 +5147,17 @@
             <strong>Custom Hosting</strong>
             <span>${fleet.node?.can_host_custom_model ? "Enabled on node" : "Not allowed"}</span>
           </div>
+          <div class="notice" style="margin-top: 10px;">
+            <strong>Recommended Next Action</strong>
+            <span style="display: block; margin-top: 4px;">${fleetRecommendation.detail}</span>
+          </div>
           <section class="subpanel" style="padding: 16px; margin-top: 10px;">
             <div class="panel-heading">Bundle To Endpoint</div>
             <div class="inspector-copy">Promote this local bundle into an endpoint without leaving the inventory view. Publication and validation remain separate later decisions.</div>
+            <div class="notice" style="margin-top: 12px;">
+              <strong>Recommended Next Action</strong>
+              <span style="display: block; margin-top: 4px;">${bundleRecommendation.detail}</span>
+            </div>
             <div class="wallet-form-grid" style="margin-top: 12px;">
               <input type="text" data-bundle-endpoint-field="displayName" value="${escapeHtml(endpointDraft.displayName)}" placeholder="Endpoint display name">
               <select data-bundle-endpoint-field="visibility">
@@ -4600,7 +5168,7 @@
             </div>
             <div class="wallet-form-grid" style="margin-top: 10px;">
               <input type="text" data-bundle-endpoint-field="sharedWallets" value="${escapeHtml(endpointDraft.sharedWallets)}" placeholder="Shared wallet ids (comma separated)">
-              <button class="primary-button" type="button" data-bundle-endpoint-action="create-endpoint" ${endpointDraft.displayName && state.bootstrapPending !== "create-bundle-endpoint" ? "" : "disabled"}>${state.bootstrapPending === "create-bundle-endpoint" ? "Creating..." : "Create Endpoint From Bundle"}</button>
+              <button class="primary-button ${bundleRecommendation.type === "bundle-endpoint" ? "action-focus" : ""}" type="button" data-bundle-endpoint-action="create-endpoint" ${endpointDraft.displayName && state.bootstrapPending !== "create-bundle-endpoint" ? "" : "disabled"}>${state.bootstrapPending === "create-bundle-endpoint" ? "Creating..." : "Create Endpoint From Bundle"}</button>
             </div>
           </section>
         </div>
@@ -4623,6 +5191,11 @@
 
       const draft = syncProviderBundleDraft(provider);
       const installDraft = syncProviderInstallDraft(provider);
+      const recommendation = providerRecommendedAction(
+        state.payloads.providers?.summary || {},
+        providerRows(),
+        provider
+      );
       const canAttachBundle =
         Boolean(draft.bundleId) &&
         Boolean(draft.modelId) &&
@@ -4661,6 +5234,10 @@
             <strong>Pending Installs</strong>
             <span>${formatCount(provider.pending_install_count)}</span>
           </div>
+          <div class="notice" style="margin-top: 10px;">
+            <strong>Recommended Next Action</strong>
+            <span style="display: block; margin-top: 4px;">${recommendation.detail}</span>
+          </div>
           <section class="subpanel" style="padding: 16px; margin-top: 10px;">
             <div class="panel-heading">Install Model Artifact</div>
             <div class="inspector-copy">Queue a provider-scoped model install before bundle registration. This feeds the install pipeline through ${modelInstallRequestPath} and hands off the artifact to the Installs workspace for processing and registration.</div>
@@ -4670,10 +5247,10 @@
             </div>
             <div class="wallet-form-grid" style="margin-top: 10px;">
               <input type="text" data-provider-install-field="requestedBy" value="${escapeHtml(installDraft.requestedBy)}" placeholder="Requested by">
-              <button class="primary-button" type="button" data-provider-action="queue-install" ${canQueueInstall ? "" : "disabled"}>${state.providerActionPending === "queue-install" ? "Queueing..." : "Queue Install"}</button>
+              <button class="primary-button ${recommendation.type === "provider-action" && recommendation.action === "queue-install" ? "action-focus" : ""}" type="button" data-provider-action="queue-install" ${canQueueInstall ? "" : "disabled"}>${state.providerActionPending === "queue-install" ? "Queueing..." : "Queue Install"}</button>
             </div>
             <div class="wallet-inline-actions" style="margin-top: 10px;">
-              <button class="secondary-button" type="button" data-provider-action="process-installs" ${state.providerActionPending === "process-installs" ? "disabled" : ""}>${state.providerActionPending === "process-installs" ? "Processing..." : "Process Queued Installs"}</button>
+              <button class="secondary-button ${recommendation.type === "provider-action" && recommendation.action === "process-installs" ? "action-focus" : ""}" type="button" data-provider-action="process-installs" ${state.providerActionPending === "process-installs" ? "disabled" : ""}>${state.providerActionPending === "process-installs" ? "Processing..." : "Process Queued Installs"}</button>
             </div>
           </section>
           <section class="subpanel" style="padding: 16px; margin-top: 10px;">
@@ -4703,8 +5280,8 @@
           </section>
         </div>
         <div class="inspector-actions">
-          <button class="primary-button" type="button" data-screen-jump="bundles">Inspect Bundles</button>
-          <button class="secondary-button" type="button" data-screen-jump="installs">Inspect Installs</button>
+          <button class="primary-button ${recommendation.action === "bundles" ? "action-focus" : ""}" type="button" data-screen-jump="bundles">Inspect Bundles</button>
+          <button class="secondary-button ${recommendation.action === "installs" ? "action-focus" : recommendation.action === "providers" ? "action-focus" : ""}" type="button" data-screen-jump="${recommendation.action === "providers" ? "providers" : "installs"}">${recommendation.action === "providers" ? "Open Providers" : "Inspect Installs"}</button>
         </div>
       `;
     }
@@ -4720,6 +5297,11 @@
       }
 
       const draft = syncInstallRegistrationDraft(install);
+      const recommendation = installRecommendedAction(
+        state.payloads.installs?.summary || {},
+        installRows(),
+        install
+      );
 
       return `
         <div class="panel-heading">Selected Install</div>
@@ -4748,6 +5330,10 @@
             <strong>Artifact Path</strong>
             <span>${install.target_path || "pending"}</span>
           </div>
+          <div class="notice" style="margin-top: 10px;">
+            <strong>Recommended Next Action</strong>
+            <span style="display: block; margin-top: 4px;">${recommendation.detail}</span>
+          </div>
           ${
             install.last_error
               ? `
@@ -4773,7 +5359,7 @@
                   </div>
                   <div class="wallet-form-grid" style="margin-top: 10px;">
                     <input type="text" data-install-field="endpoint" value="${escapeHtml(draft.endpoint)}" placeholder="Endpoint URL">
-                    <button class="primary-button" type="button" data-install-action="register-bundle" ${draft.bundleId && draft.endpoint && state.installActionPending !== "register-bundle" ? "" : "disabled"}>${state.installActionPending === "register-bundle" ? "Registering..." : "Register Bundle"}</button>
+                    <button class="primary-button ${recommendation.type === "install-action" ? "action-focus" : ""}" type="button" data-install-action="register-bundle" ${draft.bundleId && draft.endpoint && state.installActionPending !== "register-bundle" ? "" : "disabled"}>${state.installActionPending === "register-bundle" ? "Registering..." : "Register Bundle"}</button>
                   </div>
                   ${state.installMessage ? `<div class="wallet-message ${state.installMessage.kind}" style="margin-top: 10px;">${state.installMessage.text}</div>` : ""}
                 </section>
@@ -4920,6 +5506,7 @@
           <span class="chip">${publication.model_class}</span>
         </div>
         <div class="inspector-copy">The wallet-signed publication is the public trust artifact for this endpoint. Remote agents compare this payload hash against live endpoint proof before routing work.</div>
+        <div class="panel-heading" style="margin-top: 16px;">Trust Artifact Summary</div>
         <div class="inspector-grid">
           <div class="inspector-card">
             <strong>Publication ID</strong>
@@ -4944,6 +5531,14 @@
             <span>${formatMaybe(publication.configuration_hash)}</span>
           </div>
           <div class="inspector-stat">
+            <strong>Execution Route</strong>
+            <span>${selected.execution_strategy === "proxy" ? "Proxy" : "Local"}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Proxy Target</strong>
+            <span>${selected.proxy_target ? `${selected.proxy_target.source_node_id} / ${selected.proxy_target.source_endpoint_id}` : "None"}</span>
+          </div>
+          <div class="inspector-stat">
             <strong>Wallet Signature</strong>
             <span>${formatMaybe(publication.wallet_signature)}</span>
           </div>
@@ -4954,6 +5549,7 @@
         </div>
         <div class="inspector-actions">
           <button class="primary-button" type="button" data-endpoint-action="view-endpoint-summary">Back To Endpoint Summary</button>
+          <button class="secondary-button" type="button" data-screen-jump="market">Open Execution Market</button>
           <button class="secondary-button" type="button" data-endpoint-action="revoke-publication">Revoke Publication</button>
         </div>
       `;
@@ -5011,14 +5607,23 @@
     function renderMarketInspector() {
       const candidate = selectedMarketCandidate();
       if (!candidate) {
+        const recommendation = marketRecommendedAction(marketCandidates(), null);
         return `
           <div class="panel-heading">Selected Offer</div>
           <div class="inspector-title">No Matches</div>
           <div class="inspector-copy">Adjust the active filters or wait for registry discovery to publish more offers.</div>
+          <div class="notice" style="margin-top: 10px;">
+            <strong>Recommended Next Action</strong>
+            <span style="display: block; margin-top: 4px;">${recommendation.detail}</span>
+          </div>
+          <div class="inspector-actions">
+            <button class="secondary-button action-focus" type="button" data-screen-jump="${recommendation.action}">${recommendation.label}</button>
+          </div>
         `;
       }
       const validationChip = marketValidationTrustChip(candidate);
       const publicationChip = marketPublicationTrustChip(candidate);
+      const recommendation = marketRecommendedAction(marketCandidates(), candidate);
 
       return `
         <div class="panel-heading">Selected Offer</div>
@@ -5082,9 +5687,13 @@
             <span>${candidate.can_host_custom_model ? "Allowed" : "Restricted"}</span>
           </div>
         </div>
+        <div class="notice" style="margin-top: 10px;">
+          <strong>Recommended Next Action</strong>
+          <span style="display: block; margin-top: 4px;">${recommendation.detail}</span>
+        </div>
         <div class="inspector-actions">
-          <button class="primary-button" type="button">Select Offer And Configure</button>
-          <button class="secondary-button" type="button" data-screen-jump="fleet">Check Local Capacity</button>
+          <button class="primary-button ${candidate.origin === "external" && candidate.published_endpoint_count ? "action-focus" : ""}" type="button" data-market-action="configure-offer" data-screen-jump="remote">Select Offer And Configure</button>
+          <button class="secondary-button ${recommendation.action === "fleet" ? "action-focus" : ""}" type="button" data-screen-jump="fleet">Check Local Capacity</button>
         </div>
       `;
     }
@@ -5169,6 +5778,14 @@
             <strong>Execution Privacy</strong>
             <span>${remotePayload().policy?.execution_privacy || "underlying execution topology remains private"}</span>
           </div>
+        </div>
+        <div class="inspector-actions">
+          ${
+            attached
+              ? `<button class="primary-button action-focus" type="button" data-remote-action="stage-proxy">Open Endpoints And Stage Proxy</button>`
+              : `<button class="primary-button" type="button" data-remote-action="attach" data-node-id="${selected.node_id}" data-endpoint-id="${selected.endpoint_id}" ${selected.already_attached || state.remoteAttachPending === `${selected.node_id}:${selected.endpoint_id}` ? "disabled" : ""}>${selected.already_attached ? "Attached" : state.remoteAttachPending === `${selected.node_id}:${selected.endpoint_id}` ? "Attaching..." : "Attach Remote Endpoint"}</button>`
+          }
+          <button class="secondary-button" type="button" data-screen-jump="endpoints">Open Endpoints</button>
         </div>
       `;
     }
@@ -5481,6 +6098,7 @@
         loadScreen("bundles"),
         loadScreen("installs"),
         loadScreen("endpoints"),
+        loadScreen("market"),
         loadScreen("remote"),
       ]);
       render();
@@ -5578,6 +6196,22 @@
       return body;
     }
 
+    async function patchJson(url, payload) {
+      const response = await fetch(url, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const contentType = response.headers.get("content-type") || "";
+      const body = contentType.includes("application/json") ? await response.json() : await response.text();
+      if (!response.ok) {
+        throw new Error(extractErrorMessage(body));
+      }
+      return body;
+    }
+
     async function attachRemoteEndpoint(nodeId, endpointId) {
       state.remoteAttachPending = `${nodeId}:${endpointId}`;
       state.remoteMessage = null;
@@ -5601,6 +6235,46 @@
       } finally {
         state.remoteAttachPending = null;
       }
+    }
+
+    function stageSelectedRemoteProxy() {
+      const remote = selectedRemoteEndpoint();
+      if (!remote?.remote_endpoint_id) {
+        state.remoteMessage = {
+          kind: "bad",
+          text: "Attach a preferred remote endpoint before staging it as a proxy target.",
+        };
+        render();
+        bindInteractiveElements();
+        return;
+      }
+      const endpoint = selectedEndpointDraft();
+      state.screen = "endpoints";
+      if (!endpoint?.endpoint_id) {
+        state.bootstrapMessage = {
+          kind: "bad",
+          text: `Remote endpoint ${remote.alias || remote.source_endpoint_id} is attached. Create a local endpoint before staging a proxy route.`,
+        };
+        render();
+        bindInteractiveElements();
+        return;
+      }
+      state.selectedEndpointDraftId = endpoint.endpoint_id;
+      state.endpointProxyDraft = {
+        endpointId: endpoint.endpoint_id,
+        remoteEndpointId: remote.remote_endpoint_id,
+      };
+      state.proxyGuidedFlow = {
+        endpointId: endpoint.endpoint_id,
+        remoteEndpointId: remote.remote_endpoint_id,
+        phase: "attach",
+      };
+      state.bootstrapMessage = {
+        kind: "good",
+        text: `Proxy draft staged for ${endpoint.endpoint_id} using ${remote.alias || remote.source_endpoint_id}. Review the endpoint policy, then attach the proxy route.`,
+      };
+      render();
+      bindInteractiveElements();
     }
 
     async function createBootstrapWallet() {
@@ -5696,7 +6370,7 @@
       if (!selected?.endpoint_id) {
         return false;
       }
-      const result = await postJson(`${endpointApiBase}/${selected.endpoint_id}`, payload);
+      const result = await patchJson(`${endpointApiBase}/${selected.endpoint_id}`, payload);
       state.bootstrapMessage = {
         kind: "good",
         text: successText(result.data ? result.data.endpoint || result.data : result.endpoint || result),
@@ -5727,7 +6401,7 @@
       state.bootstrapMessage = null;
       render();
       try {
-        await postJson(`${endpointApiBase}/${selected.endpoint_id}`, {
+        await patchJson(`${endpointApiBase}/${selected.endpoint_id}`, {
           publication: {
             visibility,
             shared_with_wallet_ids: sharedWithWalletIds,
@@ -5765,7 +6439,7 @@
       state.bootstrapMessage = null;
       render();
       try {
-        await postJson(`${endpointApiBase}/${selected.endpoint_id}`, {
+        await patchJson(`${endpointApiBase}/${selected.endpoint_id}`, {
           display_name: config.displayName || selected.display_name,
           profile: {
             ...(selected.profile || {}),
@@ -5799,6 +6473,7 @@
       if (!draft) {
         return;
       }
+      const proxyGuidedFlow = activeProxyGuidedFlow(draft);
       const editor = syncEndpointEditorDraft(draft);
       const visibility = editor.visibility || "private";
       const sharedWithWalletIds =
@@ -5816,7 +6491,7 @@
       state.bootstrapMessage = null;
       render();
       try {
-        await postJson(`${endpointApiBase}/${draft.endpoint_id}`, {
+        await patchJson(`${endpointApiBase}/${draft.endpoint_id}`, {
           publication: {
             visibility,
             shared_with_wallet_ids: sharedWithWalletIds,
@@ -5836,8 +6511,18 @@
         );
         state.bootstrapMessage = {
           kind: "good",
-          text: `Configuration ${result.data.publication.configuration_hash} published for ${draft.endpoint_id}.`,
+          text:
+            proxyGuidedFlow?.phase === "publish"
+              ? `Proxy route configuration ${result.data.publication.configuration_hash} published for ${draft.endpoint_id}.`
+              : `Configuration ${result.data.publication.configuration_hash} published for ${draft.endpoint_id}.`,
         };
+        if (proxyGuidedFlow?.phase === "publish") {
+          state.proxyGuidedFlow = {
+            endpointId: null,
+            remoteEndpointId: "",
+            phase: null,
+          };
+        }
         await refreshBootstrapPayloads();
       } catch (error) {
         state.bootstrapMessage = { kind: "bad", text: String(error) };
@@ -5929,11 +6614,90 @@
           endpointProxyTargetPath(draft.endpoint_id),
           { remote_endpoint_id: proxyDraft.remoteEndpointId }
         );
+        state.proxyGuidedFlow = {
+          endpointId: draft.endpoint_id,
+          remoteEndpointId: proxyDraft.remoteEndpointId,
+          phase: "publish",
+        };
         state.bootstrapMessage = {
           kind: "good",
-          text: `Proxy target ${result.data.endpoint.proxy_target.source_endpoint_id} attached to ${draft.endpoint_id}.`,
+          text: `Proxy target ${result.data.endpoint.proxy_target.source_endpoint_id} attached to ${draft.endpoint_id}. Publish configuration next to sign the new proxy route.`,
         };
         await refreshBootstrapPayloads();
+      } catch (error) {
+        state.bootstrapMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.bootstrapPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function completeGuidedProxyPublish() {
+      const draft = selectedEndpointDraft();
+      const proxyGuidedFlow = activeProxyGuidedFlow(draft);
+      if (!draft?.endpoint_id || !proxyGuidedFlow?.remoteEndpointId) {
+        return;
+      }
+      const editor = syncEndpointEditorDraft(draft);
+      const visibility = editor.visibility || "private";
+      const sharedWithWalletIds =
+        visibility === "shared" ? parseSharedWallets(editor.sharedWallets) : [];
+      if (visibility === "shared" && !sharedWithWalletIds.length) {
+        state.bootstrapMessage = {
+          kind: "bad",
+          text: "Shared endpoints require at least one allowed wallet.",
+        };
+        render();
+        bindInteractiveElements();
+        return;
+      }
+
+      state.bootstrapPending = "guided-proxy-publish";
+      state.bootstrapMessage = null;
+      render();
+      try {
+        let proxySourceLabel =
+          draft.proxy_target?.source_endpoint_id || proxyGuidedFlow.remoteEndpointId;
+        if (proxyGuidedFlow.phase === "attach") {
+          const proxyResult = await postJson(
+            endpointProxyTargetPath(draft.endpoint_id),
+            { remote_endpoint_id: proxyGuidedFlow.remoteEndpointId }
+          );
+          proxySourceLabel =
+            proxyResult.data.endpoint.proxy_target.source_endpoint_id || proxySourceLabel;
+        }
+
+        await patchJson(`${endpointApiBase}/${draft.endpoint_id}`, {
+          publication: {
+            visibility,
+            shared_with_wallet_ids: sharedWithWalletIds,
+            discoverable: true,
+            accepts_external_requests: true,
+            validation: editor.validationEnabled ? "enabled" : "disabled",
+          },
+          validation: {
+            enabled: Boolean(editor.validationEnabled),
+            model_class_supported: Boolean(editor.validationEnabled),
+            verification_status: editor.validationEnabled ? "pending" : "unsupported",
+          },
+        });
+
+        const result = await postJson(
+          endpointPublishConfigurationPath(draft.endpoint_id),
+          {}
+        );
+        state.proxyGuidedFlow = {
+          endpointId: null,
+          remoteEndpointId: "",
+          phase: null,
+        };
+        state.bootstrapMessage = {
+          kind: "good",
+          text: `Proxy route ${proxySourceLabel} attached and configuration ${result.data.publication.configuration_hash} published for ${draft.endpoint_id}.`,
+        };
+        await refreshBootstrapPayloads();
+        state.endpointInspectorView = "signed-publication";
       } catch (error) {
         state.bootstrapMessage = { kind: "bad", text: String(error) };
       } finally {
@@ -6675,6 +7439,34 @@
           if (button.dataset.remoteAction === "attach") {
             void attachRemoteEndpoint(button.dataset.nodeId, button.dataset.endpointId);
           }
+          if (button.dataset.remoteAction === "stage-proxy") {
+            stageSelectedRemoteProxy();
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-market-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.marketAction === "configure-offer") {
+            const candidate = selectedMarketCandidate();
+            const discovered = discoveredRemoteForMarketCandidate(candidate);
+            state.screen = "remote";
+            state.remoteMessage = discovered
+              ? {
+                  kind: "good",
+                  text: `Loaded remote catalogue for ${candidate.bundle_id} on ${candidate.node_id}. Review the discovered endpoint, then attach it to the preferred catalogue or use it as a proxy target.`,
+                }
+              : {
+                  kind: "bad",
+                  text: candidate
+                    ? `No published remote endpoint is discoverable yet for ${candidate.bundle_id} on ${candidate.node_id}. Inspect the remote catalogue or publish a public endpoint first.`
+                    : "Select a market offer before moving into remote endpoint configuration.",
+                };
+            state.selectedRemoteEndpointKey = discovered
+              ? remoteSelectionKeyForDiscovered(discovered)
+              : null;
+            render();
+          }
         });
       });
 
@@ -6841,6 +7633,8 @@
             void publishBootstrapEndpointDraft();
           } else if (button.dataset.endpointAction === "attach-proxy-target") {
             void attachSelectedEndpointProxyTarget();
+          } else if (button.dataset.endpointAction === "complete-guided-proxy-publish") {
+            void completeGuidedProxyPublish();
           } else if (button.dataset.endpointAction === "revoke-publication") {
             void revokeBootstrapEndpointPublication();
           } else if (button.dataset.endpointAction === "view-signed-publication") {
@@ -6879,6 +7673,27 @@
         const key = control.dataset.endpointProxyField;
         control.addEventListener("change", () => {
           state.endpointProxyDraft[key] = control.value;
+          if (key === "remoteEndpointId") {
+            if (
+              state.proxyGuidedFlow.endpointId === state.endpointProxyDraft.endpointId &&
+              control.value
+            ) {
+              state.proxyGuidedFlow = {
+                endpointId: state.endpointProxyDraft.endpointId,
+                remoteEndpointId: control.value,
+                phase: "attach",
+              };
+            } else if (
+              state.proxyGuidedFlow.endpointId === state.endpointProxyDraft.endpointId &&
+              !control.value
+            ) {
+              state.proxyGuidedFlow = {
+                endpointId: null,
+                remoteEndpointId: "",
+                phase: null,
+              };
+            }
+          }
         });
       });
     }

@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
+import dashboard_seed_preview
 from aidn_hypervisor.bundle_registry import FileBundleRegistry
 from aidn_hypervisor.domain.models import (
     AllocationRequest,
@@ -1627,6 +1628,51 @@ def test_operator_dashboard_shell_route_exposes_market_terminal_controls() -> No
     assert "Policy Controls" in response.text
     assert "Published Endpoints" in response.text
     assert "Trust Posture" in response.text
+    assert "Recommended Next Action" in response.text
+    assert "Open Endpoints and publish local supply before relying on remote market capacity." in response.text
+    assert "Compare the selected offer against local capacity before routing work outward." in response.text
+    assert "function marketRecommendedAction" in response.text
+
+
+def test_operator_dashboard_shell_route_keeps_home_market_preview_in_sync() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'loadScreen("market"),' in response.text
+    assert "function marketCandidateCount()" in response.text
+    assert "Math.max(" in response.text
+    assert "Number(home.market_preview?.candidate_count || 0)" in response.text
+    assert "marketCandidateCount()" in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_market_offer_configuration_handoff() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Select Offer And Configure" in response.text
+    assert 'data-market-action="configure-offer"' in response.text
+    assert 'data-screen-jump="remote"' in response.text
+    assert 'button.dataset.marketAction === "configure-offer"' in response.text
+    assert 'state.screen = "remote"' in response.text
+    assert "remoteSelectionKeyForDiscovered" in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_fleet_guided_handoff_controls() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'data-screen="fleet"' in response.text
+    assert "Node Inventory" in response.text
+    assert "Recommended Next Action" in response.text
+    assert "Open Providers to attach execution backends before local capacity can serve bundles." in response.text
+    assert "Open Bundles to turn local capacity into endpoint-ready inventory." in response.text
+    assert "function fleetRecommendedAction" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_remote_endpoint_controls() -> None:
@@ -1640,6 +1686,19 @@ def test_operator_dashboard_shell_route_exposes_remote_endpoint_controls() -> No
     assert "Remote Endpoints" in response.text
     assert "Preferred Catalogue" in response.text
     assert "Attach Remote Endpoint" in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_remote_proxy_handoff_controls() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Open Endpoints And Stage Proxy" in response.text
+    assert 'data-remote-action="stage-proxy"' in response.text
+    assert 'button.dataset.remoteAction === "stage-proxy"' in response.text
+    assert 'state.screen = "endpoints"' in response.text
+    assert 'state.endpointProxyDraft = {' in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_wallet_drawer_controls() -> None:
@@ -1718,6 +1777,10 @@ def test_operator_dashboard_shell_route_exposes_install_registration_controls() 
     assert 'data-install-field="endpoint"' in response.text
     assert 'data-install-action="register-bundle"' in response.text
     assert "Register Bundle" in response.text
+    assert "Recommended Next Action" in response.text
+    assert "Queue or process a model install first so completed artifacts can be registered as bundles." in response.text
+    assert "Select a completed install, then register it as a bundle so it can become an endpoint." in response.text
+    assert "function installRecommendedAction" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_bundle_endpoint_creation_controls() -> None:
@@ -1735,6 +1798,10 @@ def test_operator_dashboard_shell_route_exposes_bundle_endpoint_creation_control
     assert 'data-bundle-endpoint-field="sharedWallets"' in response.text
     assert 'data-bundle-endpoint-action="create-endpoint"' in response.text
     assert "Create Endpoint From Bundle" in response.text
+    assert "Recommended Next Action" in response.text
+    assert "Select a first-endpoint candidate, then create an endpoint from local inventory without leaving this workspace." in response.text
+    assert "function bundleRecommendedAction" in response.text
+    assert "action-focus" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_controls() -> None:
@@ -1756,6 +1823,10 @@ def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_contr
     assert 'data-provider-bundle-field="endpoint"' in response.text
     assert 'data-provider-action="attach-bundle"' in response.text
     assert 'data-provider-action="reload-bundles"' in response.text
+    assert "Recommended Next Action" in response.text
+    assert "Attach a provider or import its manifest before bundle wiring or installs can begin." in response.text
+    assert "Queue a model install so the artifact can be handed off into Installs for registration." in response.text
+    assert "function providerRecommendedAction" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> None:
@@ -1853,6 +1924,29 @@ def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -
     assert 'data-endpoint-config-field="profileSummary"' in response.text
     assert 'data-endpoint-config-field="contextLength"' in response.text
     assert 'data-endpoint-config-field="temperature"' in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_endpoint_next_step_guidance() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Endpoint Next Step" in response.text
+    assert "Current Step" in response.text
+    assert "Configuration Snapshot" in response.text
+    assert "Endpoint Availability" in response.text
+    assert "Recommended Action" in response.text
+    assert "The highlighted control matches the current step above." in response.text
+    assert "Save policy and runtime changes before publishing a new configuration snapshot." in response.text
+    assert "Publish this endpoint when routing, visibility, and pricing are ready for remote use." in response.text
+    assert "Validation remains optional and can be requested after publication when you want network trust." in response.text
+    assert "Create or select an endpoint to save policy, publish configuration, and request validation later." in response.text
+    assert 'key: "snapshot"' in response.text
+    assert 'key: "publish"' in response.text
+    assert 'key: "validation"' in response.text
+    assert "function endpointRecommendedAction" in response.text
+    assert "action-focus" in response.text
     assert 'data-endpoint-config-field="maxTokens"' in response.text
     assert 'data-endpoint-config-field="timeout"' in response.text
     assert 'data-endpoint-config-field="streaming"' in response.text
@@ -1869,6 +1963,34 @@ def test_operator_dashboard_shell_route_exposes_proxy_attach_controls() -> None:
     assert "Proxy Route Summary" in response.text
     assert 'data-endpoint-proxy-field="remoteEndpointId"' in response.text
     assert 'data-endpoint-action="attach-proxy-target"' in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_guided_proxy_publish_flow() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Proxy Route Binding" in response.text
+    assert (
+        "Attach the staged remote endpoint as the proxy target before publishing the new configuration."
+        in response.text
+    )
+    assert 'return "attach-proxy-target";' in response.text
+    assert 'case "attach-proxy-target":' in response.text
+    assert "proxyGuidedFlow" in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_one_click_guided_proxy_publish_action() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Complete Guided Proxy Publish" in response.text
+    assert 'data-endpoint-action="complete-guided-proxy-publish"' in response.text
+    assert 'button.dataset.endpointAction === "complete-guided-proxy-publish"' in response.text
+    assert 'state.endpointInspectorView = "signed-publication";' in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_wallet_and_endpoint_controls() -> None:
@@ -1891,6 +2013,11 @@ def test_operator_dashboard_shell_route_exposes_wallet_and_endpoint_controls() -
     assert 'data-bootstrap-field="walletLabel"' in response.text
     assert 'data-bootstrap-field="endpointVisibility"' in response.text
     assert 'data-bootstrap-field="sharedWallets"' in response.text
+    assert "Recommended Next Action" in response.text
+    assert "Create or import a wallet before any publish or market-facing step." in response.text
+    assert "Attach a provider or finish a model install so bootstrap can surface a first endpoint candidate." in response.text
+    assert "function homeRecommendedAction" in response.text
+    assert 'data-screen-jump="providers"' in response.text
     assert "/operators/endpoints/bootstrap" not in response.text
 
 
@@ -1910,6 +2037,38 @@ def test_operator_dashboard_home_market_preview_matches_market_candidates() -> N
     assert home.json()["market_preview"]["candidate_count"] == len(
         market.json()["candidates"]
     )
+
+
+def test_dashboard_seed_preview_refreshes_registry_visibility_after_heartbeat_ttl(
+    monkeypatch,
+) -> None:
+    preview_app = dashboard_seed_preview.create_app()
+    client = TestClient(preview_app)
+
+    initial_market = client.get("/operators/dashboard/market")
+
+    assert initial_market.status_code == 200
+    assert len(initial_market.json()["candidates"]) > 0
+
+    future_now = datetime.now(timezone.utc) + timedelta(seconds=120)
+
+    class _FutureDateTime:
+        @staticmethod
+        def now(tz=None):
+            if tz is None:
+                return future_now.replace(tzinfo=None)
+            return future_now.astimezone(tz)
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.time.time",
+        lambda: future_now.timestamp(),
+    )
+    monkeypatch.setattr(dashboard_seed_preview, "datetime", _FutureDateTime)
+
+    refreshed_market = client.get("/operators/dashboard/market")
+
+    assert refreshed_market.status_code == 200
+    assert len(refreshed_market.json()["candidates"]) > 0
 
 
 def test_operator_dashboard_home_bootstrap_prefers_endpoint_service_state() -> None:
@@ -4066,6 +4225,19 @@ def test_operator_dashboard_shell_exposes_publication_sync_copy() -> None:
     assert "Signed Publication" in response.text
     assert "Wallet Signature" in response.text
     assert "Publication Payload" in response.text
+
+
+def test_operator_dashboard_shell_exposes_signed_publication_operator_summary() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Trust Artifact Summary" in response.text
+    assert "Execution Route" in response.text
+    assert "Proxy Target" in response.text
+    assert "Open Execution Market" in response.text
+    assert "Back To Endpoint Summary" in response.text
 
 
 def test_operator_dashboard_endpoints_payload_includes_publication_history() -> None:

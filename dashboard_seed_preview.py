@@ -144,82 +144,7 @@ def _seed_remote_registry(
     remote_endpoint_service: RemoteEndpointService,
 ) -> None:
     heartbeat = datetime.now(timezone.utc).isoformat()
-    registry_service.upsert_node(
-        RegistryNodeAdvertisement(
-            node_id="aurora-compute",
-            operator_id="operator-aurora",
-            base_url="https://aurora.example",
-            heartbeat_at=heartbeat,
-            resources={
-                "total": {"cpu": 24.0, "ram_mb": 65536, "vram_mb": 81920},
-                "free": {"cpu": 16.0, "ram_mb": 49152, "vram_mb": 65536},
-            },
-            providers=["fake"],
-            can_host_custom_model=True,
-            pricing={
-                "unit": "q_per_1kk_tokens",
-                "input": 392,
-                "output": 518,
-                "fixed_request": 2,
-            },
-            rating={
-                "score": 0.98,
-                "tier": "A+",
-                "updated_at": heartbeat,
-            },
-            bundles=[
-                {
-                    "bundle_id": "remote-text",
-                    "plugin_id": "fake-managed",
-                    "workload_type": "llm_text",
-                    "provider_type": "fake",
-                    "model_id": "llama-3.1-70b",
-                    "endpoint": "https://aurora.example/runtimes/remote-text",
-                    "enabled": True,
-                    "status": "ready",
-                    "launch_mode": "attached_service",
-                    "device_affinity": "gpu",
-                    "max_parallel_requests": 8,
-                    "supports_allocation": True,
-                    "supports_queue": True,
-                }
-            ],
-            published_endpoints=[
-                {
-                    "endpoint_id": "ep-aurora-validated",
-                    "owner_wallet": "wallet-aurora",
-                    "node_id": "aurora-compute",
-                    "current_publication_id": "pub-aurora-1",
-                    "current_configuration_hash": "cfg-aurora-1",
-                    "published_at": "2026-07-01T00:00:00+00:00",
-                    "status": "published",
-                    "visibility": "public",
-                    "model_class": "llm_text",
-                    "publication_sync_status": "in_sync",
-                    "published_validation_summary": {
-                        "validation_status": "validated",
-                        "configuration_hash": "cfg-aurora-1",
-                    },
-                },
-                {
-                    "endpoint_id": "ep-aurora-drift",
-                    "owner_wallet": "wallet-aurora",
-                    "node_id": "aurora-compute",
-                    "current_publication_id": "pub-aurora-2",
-                    "current_configuration_hash": "cfg-aurora-2",
-                    "published_at": "2026-07-02T00:00:00+00:00",
-                    "status": "published",
-                    "visibility": "public",
-                    "model_class": "llm_text",
-                    "publication_sync_status": "published_configuration_not_served",
-                    "published_validation_summary": {
-                        "validation_status": "superseded",
-                        "configuration_hash": "cfg-aurora-2",
-                    },
-                },
-            ],
-        )
-    )
+    registry_service.upsert_node(_remote_registry_advertisement(heartbeat))
     remote_endpoint_service.attach_remote_endpoint(
         source_node_id="aurora-compute",
         source_endpoint_id="ep-aurora-validated",
@@ -244,6 +169,101 @@ def _seed_remote_registry(
         },
         alias="Aurora Trusted Route",
     )
+
+
+def _remote_registry_advertisement(heartbeat: str) -> RegistryNodeAdvertisement:
+    return RegistryNodeAdvertisement(
+        node_id="aurora-compute",
+        operator_id="operator-aurora",
+        base_url="https://aurora.example",
+        heartbeat_at=heartbeat,
+        resources={
+            "total": {"cpu": 24.0, "ram_mb": 65536, "vram_mb": 81920},
+            "free": {"cpu": 16.0, "ram_mb": 49152, "vram_mb": 65536},
+        },
+        providers=["fake"],
+        can_host_custom_model=True,
+        pricing={
+            "unit": "q_per_1kk_tokens",
+            "input": 392,
+            "output": 518,
+            "fixed_request": 2,
+        },
+        rating={
+            "score": 0.98,
+            "tier": "A+",
+            "updated_at": heartbeat,
+        },
+        bundles=[
+            {
+                "bundle_id": "remote-text",
+                "plugin_id": "fake-managed",
+                "workload_type": "llm_text",
+                "provider_type": "fake",
+                "model_id": "llama-3.1-70b",
+                "endpoint": "https://aurora.example/runtimes/remote-text",
+                "enabled": True,
+                "status": "ready",
+                "launch_mode": "attached_service",
+                "device_affinity": "gpu",
+                "max_parallel_requests": 8,
+                "supports_allocation": True,
+                "supports_queue": True,
+            }
+        ],
+        published_endpoints=[
+            {
+                "endpoint_id": "ep-aurora-validated",
+                "owner_wallet": "wallet-aurora",
+                "node_id": "aurora-compute",
+                "current_publication_id": "pub-aurora-1",
+                "current_configuration_hash": "cfg-aurora-1",
+                "published_at": "2026-07-01T00:00:00+00:00",
+                "status": "published",
+                "visibility": "public",
+                "model_class": "llm_text",
+                "publication_sync_status": "in_sync",
+                "published_validation_summary": {
+                    "validation_status": "validated",
+                    "configuration_hash": "cfg-aurora-1",
+                },
+            },
+            {
+                "endpoint_id": "ep-aurora-drift",
+                "owner_wallet": "wallet-aurora",
+                "node_id": "aurora-compute",
+                "current_publication_id": "pub-aurora-2",
+                "current_configuration_hash": "cfg-aurora-2",
+                "published_at": "2026-07-02T00:00:00+00:00",
+                "status": "published",
+                "visibility": "public",
+                "model_class": "llm_text",
+                "publication_sync_status": "published_configuration_not_served",
+                "published_validation_summary": {
+                    "validation_status": "superseded",
+                    "configuration_hash": "cfg-aurora-2",
+                },
+            },
+        ],
+    )
+
+
+def _refresh_registry_projection(
+    *,
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+    validation_service: ValidationService,
+    registry_service: RegistryService,
+) -> None:
+    heartbeat = datetime.now(timezone.utc).isoformat()
+    local_advertisement = service.node_advertisement(heartbeat_at=heartbeat)
+    local_advertisement["published_endpoints"] = _registry_published_endpoint_summaries(
+        advertisement=local_advertisement,
+        endpoint_service=endpoint_service,
+        validation_service=validation_service,
+    )
+    registry_service.upsert_node(RegistryNodeAdvertisement(**local_advertisement))
+    registry_service.upsert_node(_remote_registry_advertisement(heartbeat))
 
 
 def create_app():
@@ -276,7 +296,7 @@ def create_app():
         remote_endpoint_service=remote_endpoint_service,
     )
 
-    return build_app(
+    app = build_app(
         service=service,
         registry_service=registry_service,
         endpoint_service=endpoint_service,
@@ -284,6 +304,18 @@ def create_app():
         remote_endpoint_service=remote_endpoint_service,
         validation_service=validation_service,
     )
+    
+    @app.middleware("http")
+    async def refresh_seeded_registry(request, call_next):
+        _refresh_registry_projection(
+            service=service,
+            endpoint_service=endpoint_service,
+            validation_service=validation_service,
+            registry_service=registry_service,
+        )
+        return await call_next(request)
+
+    return app
 
 
 app = create_app()
