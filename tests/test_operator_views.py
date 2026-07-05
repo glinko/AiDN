@@ -86,6 +86,24 @@ def _service_with_model_store(tmp_path: Path) -> HypervisorService:
     )
 
 
+def _empty_service() -> HypervisorService:
+    return HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(
+                cpu_cores=8.0,
+                ram_mb=16384,
+                gpu_devices=["gpu0"],
+                vram_mb={"gpu0": 8192},
+            )
+        ),
+        bundles=[],
+        plugins=PluginRegistry(),
+        runtimes=ProviderProcessManager(),
+    )
+
+
 @pytest.fixture
 def service() -> HypervisorService:
     return HypervisorService(
@@ -167,6 +185,28 @@ def test_home_payload_prefers_first_endpoint_candidate_after_wallet_setup(
     assert payload["bootstrap"]["wallet_ready"] is True
     assert payload["bootstrap"]["first_endpoint_candidate"]["bundle_id"] == "whisper-a"
     assert payload["bootstrap"]["next_step"] == "Create your first endpoint from whisper-a"
+    assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
+    assert payload["endpoint_pipeline"]["primary_endpoint_id"] is None
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create-endpoint"
+
+
+def test_home_payload_endpoint_pipeline_aligns_with_provider_setup_when_wallet_ready_but_no_inventory(
+) -> None:
+    service = _empty_service()
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=EndpointService(EndpointStore()),
+        endpoint_publication_service=None,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["bootstrap"]["next_step"] == "Attach a provider or install a model"
+    assert payload["onboarding"]["current_step"] == "attach_provider"
+    assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "providers"
+    assert payload["endpoint_pipeline"]["recommended_action"]["workspace"] == "providers"
 
 
 def test_home_payload_surfaces_endpoint_pipeline_for_first_draft(
@@ -253,6 +293,44 @@ def test_home_payload_surfaces_drifted_publication_as_the_primary_attention_stat
     assert (
         payload["endpoint_pipeline"]["publication_sync_status"]
         == "local_changes_not_published"
+    )
+
+
+def test_home_payload_surfaces_in_sync_publication_as_operating_state(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+    endpoint_publication_service: EndpointPublicationService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Published Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+        )
+    )
+    endpoint_publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=endpoint_publication_service,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["endpoint_pipeline"]["state"] == "published_in_sync"
+    assert (
+        payload["endpoint_pipeline"]["primary_endpoint_id"]
+        == created.endpoint.endpoint_id
     )
 
 

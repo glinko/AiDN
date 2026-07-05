@@ -118,8 +118,14 @@ def _primary_endpoint_for_home(endpoint_items: list[dict]) -> dict | None:
     )[0]
 
 
-def _home_endpoint_pipeline(*, endpoint_items: list[dict], wallet_ready: bool) -> dict:
+def _home_endpoint_pipeline(
+    *,
+    endpoint_items: list[dict],
+    wallet_ready: bool,
+    onboarding: dict | None = None,
+) -> dict:
     primary = _primary_endpoint_for_home(endpoint_items)
+    onboarding = onboarding or {}
     if not wallet_ready:
         return {
             "state": "wallet_required",
@@ -137,9 +143,14 @@ def _home_endpoint_pipeline(*, endpoint_items: list[dict], wallet_ready: bool) -
             "primary_endpoint_id": None,
             "publication_sync_status": None,
             "recommended_action": {
-                "action": "open-bundles",
-                "label": "Open Bundles",
-                "workspace": "bundles",
+                **onboarding.get(
+                    "recommended_action",
+                    {
+                        "action": "open-bundles",
+                        "label": "Open Bundles",
+                    },
+                ),
+                "workspace": onboarding.get("workspace", "bundles"),
             },
         }
     if primary["publication_sync_status"] == "local_changes_not_published":
@@ -240,6 +251,7 @@ def build_operator_home_payload(
     endpoint_pipeline = _home_endpoint_pipeline(
         endpoint_items=endpoints_payload["items"],
         wallet_ready=wallet_ready,
+        onboarding=onboarding,
     )
     return {
         "bootstrap": _build_operator_home_bootstrap_payload(
