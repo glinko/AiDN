@@ -267,6 +267,7 @@ def _normalize_home_onboarding(
     endpoint_pipeline: dict,
     first_endpoint_candidate: dict | None,
 ) -> dict:
+    historical_completed = bool(onboarding.get("completed"))
     normalized = {
         **onboarding,
         "recommended_action": _normalized_home_onboarding_action(
@@ -278,7 +279,7 @@ def _normalize_home_onboarding(
     if state == "wallet_required":
         current_step = "configure_wallet"
         workspace = "home"
-        completed = False
+        completed = historical_completed
     elif state == "no_endpoint":
         action = endpoint_pipeline.get("recommended_action", {}).get("action")
         current_step = {
@@ -291,23 +292,20 @@ def _normalize_home_onboarding(
             "bundles": "bundles",
             "create": "bundles",
         }.get(action, "bundles")
-        completed = False
+        completed = historical_completed
     elif state == "draft_exists":
         current_step = "publish_endpoint"
         workspace = "endpoints"
-        completed = False
+        completed = historical_completed
     elif state == "published_drifted":
         current_step = "publish_endpoint"
         workspace = "endpoints"
-        completed = False
+        completed = historical_completed
     else:
         current_step = normalized.get("current_step", "operate")
         workspace = normalized.get("workspace", "home")
         completed = normalized.get("completed", False)
     normalized["completed"] = completed
-    if not completed:
-        normalized["completed_at"] = None
-        normalized["completed_via"] = None
     normalized["current_step"] = current_step
     normalized["workspace"] = workspace
     normalized["steps"] = _home_onboarding_steps(

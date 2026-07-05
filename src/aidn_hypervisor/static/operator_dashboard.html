@@ -3215,12 +3215,12 @@
                 <div class="notice" style="margin-top: 0;">Used only when visibility is set to shared.</div>
               </div>
               <div class="wallet-inline-actions" style="margin-top: 10px;">
-                <button class="primary-button ${recommendation.type === "endpoint" ? "action-focus" : ""}" type="button" data-endpoint-action="create" ${bootstrap.wallet_ready && firstEndpoint.bundle_id ? "" : "disabled"}>${state.bootstrapPending === "create-endpoint" ? "Creating..." : "Create First Endpoint"}</button>
+                <button class="primary-button ${recommendation.action === "create" ? "action-focus" : ""}" type="button" data-endpoint-action="create" ${bootstrap.wallet_ready && firstEndpoint.bundle_id ? "" : "disabled"}>${state.bootstrapPending === "create-endpoint" ? "Creating..." : "Create First Endpoint"}</button>
                 ${recommendation.type === "screen" ? `<button class="secondary-button action-focus" type="button" data-screen-jump="${recommendation.action}">${recommendation.label}</button>` : ""}
               </div>
               <div class="wallet-inline-actions" style="margin-top: 10px;">
                 <button class="secondary-button" type="button" data-endpoint-action="publish">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Endpoint"}</button>
-                <button class="secondary-button" type="button" data-endpoint-action="publish-configuration">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Configuration"}</button>
+                <button class="secondary-button ${recommendation.action === "publish-configuration" ? "action-focus" : ""}" type="button" data-endpoint-action="publish-configuration">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Configuration"}</button>
                 <button class="secondary-button" type="button" data-endpoint-action="request-validation">${state.bootstrapPending === "request-validation" ? "Requesting..." : "Request Validation"}</button>
               </div>
               ${state.bootstrapMessage ? `<div class="wallet-message ${state.bootstrapMessage.kind}">${state.bootstrapMessage.text}</div>` : ""}

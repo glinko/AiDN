@@ -262,9 +262,9 @@ def test_home_payload_endpoint_pipeline_ignores_persisted_completed_onboarding_w
         market_candidates=[],
     )
 
-    assert payload["onboarding"]["completed"] is False
-    assert payload["onboarding"]["completed_at"] is None
-    assert payload["onboarding"]["completed_via"] is None
+    assert payload["onboarding"]["completed"] is True
+    assert payload["onboarding"]["completed_at"] is not None
+    assert payload["onboarding"]["completed_via"] == "first_local_endpoint_published"
     assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
     assert payload["endpoint_pipeline"]["recommended_action"]["action"] != "open-home"
     assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create"

@@ -2127,6 +2127,38 @@ def test_operator_dashboard_home_exposes_endpoint_pipeline_create_action() -> No
     assert payload["onboarding"]["recommended_action"]["action"] == "create"
 
 
+def test_operator_dashboard_home_preserves_completion_history_while_recommending_create(
+) -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    hypervisor.sync_operator_onboarding_state(
+        endpoint_items=[{"publication_status": "published"}]
+    )
+    client = TestClient(build_app(service=hypervisor))
+
+    home = client.get("/operators/dashboard/home")
+
+    assert home.status_code == 200
+    payload = home.json()
+    assert payload["onboarding"]["completed"] is True
+    assert payload["onboarding"]["completed_at"] is not None
+    assert payload["onboarding"]["completed_via"] == "first_local_endpoint_published"
+    assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create"
+    assert payload["onboarding"]["recommended_action"]["action"] == "create"
+
+
+def test_operator_dashboard_home_shell_highlights_publish_configuration_recommendation(
+) -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'recommendation.action === "create" ? "action-focus" : ""' in response.text
+    assert 'recommendation.action === "publish-configuration" ? "action-focus" : ""' in response.text
+
+
 def test_create_endpoint_api_refreshes_onboarding_state() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
