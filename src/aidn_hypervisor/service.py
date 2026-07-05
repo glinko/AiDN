@@ -1246,6 +1246,40 @@ class HypervisorService:
             "can_host_custom_model": self.can_host_custom_model,
         }
 
+    def registry_enabled(self) -> bool:
+        return False
+
+    def validation_enabled(self) -> bool:
+        return False
+
+    def canonical_overlay_inventory(self) -> dict:
+        from aidn_hypervisor.canonical_projection import (
+            project_capability_runtimes,
+            project_compute_compatibility,
+            project_protocol_services,
+        )
+
+        runtimes = project_capability_runtimes(self)
+        compatibility = project_compute_compatibility(self)
+        capability_ids = sorted({runtime.capability_id for runtime in runtimes})
+        return {
+            "services": [
+                record.model_dump(mode="json")
+                for record in project_protocol_services(self)
+            ],
+            "capabilities": [
+                {
+                    "capability_id": capability_id,
+                    "source": "legacy_compute_overlay",
+                }
+                for capability_id in capability_ids
+            ],
+            "runtimes": [record.model_dump(mode="json") for record in runtimes],
+            "compatibility": [
+                record.model_dump(mode="json") for record in compatibility
+            ],
+        }
+
     def configure_owner_wallet(
         self,
         *,

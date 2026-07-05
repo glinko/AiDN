@@ -365,6 +365,34 @@ def test_service_submit_raises_when_request_cannot_be_routed() -> None:
         )
 
 
+def test_service_exposes_canonical_overlay_inventory() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        bundles=[
+            _bundle("text-a", "llm_text"),
+            _bundle("whisper-a", "speech_to_text"),
+        ],
+        runtimes=[
+            RuntimeHandle(
+                runtime_id="rt-1",
+                command=["whisper"],
+                status="running",
+                bundle_id="whisper-a",
+                health_status="healthy",
+            )
+        ],
+    )
+
+    payload = service.canonical_overlay_inventory()
+
+    assert "services" in payload
+    assert "capabilities" in payload
+    assert "runtimes" in payload
+    assert "compatibility" in payload
+    assert payload["services"][0]["kind"] == "compute"
+
+
 def test_service_executes_task_via_proxy_endpoint_when_endpoint_constraint_is_provided() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
