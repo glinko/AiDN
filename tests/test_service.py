@@ -1037,6 +1037,174 @@ def test_service_owner_wallet_bootstrap_persists_and_restores_state() -> None:
     assert restored.node_identity()["owner_wallet_id"] == created["wallet"]["wallet_id"]
 
 
+def test_service_onboarding_state_persists_after_wallet_and_publish() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
+        ),
+        bundles=[_bundle("whisper-a", "speech_to_text")],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+    )
+    endpoint_service = EndpointService(EndpointStore())
+
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Operator STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    service.sync_operator_onboarding_state(
+        endpoint_items=[
+            {
+                "endpoint_id": created.endpoint.endpoint_id,
+                "bundle_id": "whisper-a",
+                "publication_status": "published",
+                "visibility": "private",
+            }
+        ]
+    )
+
+    restored = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
+        ),
+        bundles=[_bundle("whisper-a", "speech_to_text")],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+    )
+    restored.restore_state(service.snapshot_state())
+
+    onboarding = restored.operator_onboarding_state()
+    assert onboarding["completed"] is True
+    assert onboarding["completed_via"] == "first_local_endpoint_published"
+    assert onboarding["current_step"] == "operate"
+
+
+def test_service_onboarding_stays_incomplete_for_unpublished_endpoint() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
+        ),
+        bundles=[_bundle("whisper-a", "speech_to_text")],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+    )
+
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    service.sync_operator_onboarding_state(
+        endpoint_items=[
+            {
+                "endpoint_id": "endpoint-draft",
+                "bundle_id": "whisper-a",
+                "publication_status": "configured",
+                "visibility": "private",
+            }
+        ]
+    )
+
+    onboarding = service.operator_onboarding_state()
+    assert onboarding["completed"] is False
+    assert onboarding["current_step"] == "publish_endpoint"
+
+
+def test_service_wallet_bootstrap_advances_onboarding_without_manual_sync() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
+        ),
+        bundles=[_bundle("whisper-a", "speech_to_text")],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+    )
+
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+
+    onboarding = service.operator_onboarding_state()
+    assert onboarding["completed"] is False
+    assert onboarding["current_step"] == "attach_provider"
+
+
+def test_service_onboarding_completion_remains_after_later_empty_sync() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
+        ),
+        bundles=[_bundle("whisper-a", "speech_to_text")],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+    )
+
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    service.sync_operator_onboarding_state(
+        endpoint_items=[
+            {
+                "endpoint_id": "endpoint-live",
+                "bundle_id": "whisper-a",
+                "publication_status": "published",
+                "visibility": "private",
+            }
+        ]
+    )
+
+    completed = service.operator_onboarding_state()
+    service.sync_operator_onboarding_state(endpoint_items=[])
+
+    onboarding = service.operator_onboarding_state()
+    assert onboarding["completed"] is True
+    assert onboarding["completed_via"] == "first_local_endpoint_published"
+    assert onboarding["completed_at"] == completed["completed_at"]
+    assert onboarding["current_step"] == "operate"
+
+
+def test_service_replacing_wallet_resets_completed_onboarding() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
+        ),
+        bundles=[_bundle("whisper-a", "speech_to_text")],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+    )
+
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    service.sync_operator_onboarding_state(
+        endpoint_items=[
+            {
+                "endpoint_id": "endpoint-live",
+                "bundle_id": "whisper-a",
+                "publication_status": "published",
+                "visibility": "private",
+            }
+        ]
+    )
+
+    service.configure_owner_wallet(mode="create", label="Replacement Wallet")
+
+    onboarding = service.operator_onboarding_state()
+    assert onboarding["completed"] is False
+    assert onboarding["completed_via"] is None
+    assert onboarding["completed_at"] is None
+    assert onboarding["current_step"] == "attach_provider"
+
+
 def test_service_home_bootstrap_requires_wallet_before_network_actions() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),

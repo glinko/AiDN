@@ -1,5 +1,6 @@
 import hashlib
 import json
+from copy import deepcopy
 from datetime import datetime, timezone
 import time
 from urllib import error as urllib_error, request as urllib_request
@@ -24,6 +25,7 @@ from aidn_hypervisor.state import (
     BundleStateSnapshot,
     HypervisorStateSnapshot,
     JournalEvent,
+    OperatorOnboardingSnapshot,
     ModelInstallSnapshot,
     OwnerWalletSnapshot,
     RuntimeSnapshot,
@@ -169,6 +171,7 @@ class HypervisorService:
         self._model_installs: dict[str, dict] = {}
         self._operator_requests_policy = dict(_DEFAULT_OPERATOR_REQUESTS_POLICY)
         self._owner_wallet: dict | None = None
+        self._operator_onboarding: dict | None = None
         self._runtime_reservations: set[str] = set()
         self._bundle_states: dict[str, dict] = {}
         self._wallet_usage_events: list[dict] = []
@@ -1266,11 +1269,64 @@ class HypervisorService:
             "created_at": created_at,
             "imported": mode == "import",
         }
-        self._persist_state()
+        self._operator_onboarding = None
+        self.sync_operator_onboarding_state(endpoint_items=[])
         return {
             "wallet": self.owner_wallet_state(),
             "private_key": resolved_private_key if mode == "create" else None,
         }
+
+    def operator_onboarding_state(self) -> dict:
+        if self._operator_onboarding is None:
+            return {
+                "completed": False,
+                "completed_at": None,
+                "completed_via": None,
+                "current_step": "configure_wallet",
+                "last_workspace": "home",
+                "transition_history": [],
+                "steps": [],
+            }
+        return deepcopy(self._operator_onboarding)
+
+    def sync_operator_onboarding_state(
+        self,
+        *,
+        endpoint_items: list[dict],
+        last_workspace: str | None = None,
+    ) -> dict:
+        onboarding = self.operator_onboarding_state()
+        already_completed = bool(onboarding.get("completed"))
+        if last_workspace is not None:
+            onboarding["last_workspace"] = last_workspace
+        if already_completed or any(
+            item.get("publication_status") == "published" for item in endpoint_items
+        ):
+            onboarding["completed"] = True
+            onboarding["completed_via"] = (
+                onboarding.get("completed_via") or "first_local_endpoint_published"
+            )
+            if onboarding["completed_at"] is None:
+                onboarding["completed_at"] = datetime.now(timezone.utc).isoformat()
+            onboarding["current_step"] = "operate"
+        elif endpoint_items:
+            onboarding["completed"] = False
+            onboarding["completed_via"] = None
+            onboarding["completed_at"] = None
+            onboarding["current_step"] = "publish_endpoint"
+        elif self.owner_wallet_state()["configured"]:
+            onboarding["completed"] = False
+            onboarding["completed_via"] = None
+            onboarding["completed_at"] = None
+            onboarding["current_step"] = "attach_provider"
+        else:
+            onboarding["completed"] = False
+            onboarding["completed_via"] = None
+            onboarding["completed_at"] = None
+            onboarding["current_step"] = "configure_wallet"
+        self._operator_onboarding = onboarding
+        self._persist_state()
+        return deepcopy(onboarding)
 
     def operator_dashboard_home(self) -> dict:
         fleet = self.operator_dashboard_fleet()
@@ -1827,6 +1883,11 @@ class HypervisorService:
                 if self._owner_wallet is not None
                 else None
             ),
+            operator_onboarding=(
+                OperatorOnboardingSnapshot(**self._operator_onboarding)
+                if self._operator_onboarding is not None
+                else None
+            ),
             wallet_usage_events=[
                 WalletUsageSnapshot(**event)
                 for event in self._wallet_usage_events
@@ -1864,6 +1925,11 @@ class HypervisorService:
         self._owner_wallet = (
             snapshot.owner_wallet.model_dump(mode="json")
             if snapshot.owner_wallet is not None
+            else None
+        )
+        self._operator_onboarding = (
+            snapshot.operator_onboarding.model_dump(mode="json")
+            if snapshot.operator_onboarding is not None
             else None
         )
         self._wallet_usage_events = []

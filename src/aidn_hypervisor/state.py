@@ -225,6 +225,24 @@ class OwnerWalletSnapshot(BaseModel):
     imported: bool = False
 
 
+class OperatorOnboardingStepSnapshot(BaseModel):
+    key: str
+    status: str
+    label: str
+    workspace: str
+    completed_at: str | None = None
+
+
+class OperatorOnboardingSnapshot(BaseModel):
+    completed: bool = False
+    completed_at: str | None = None
+    completed_via: str | None = None
+    current_step: str = "configure_wallet"
+    last_workspace: str = "home"
+    transition_history: list[str] = Field(default_factory=list)
+    steps: list[OperatorOnboardingStepSnapshot] = Field(default_factory=list)
+
+
 class EndpointSessionSnapshot(EndpointSession):
     pass
 
@@ -275,6 +293,7 @@ class HypervisorStateSnapshot(BaseModel):
         default_factory=list
     )
     owner_wallet: OwnerWalletSnapshot | None = None
+    operator_onboarding: OperatorOnboardingSnapshot | None = None
     endpoints: list[EndpointManifestSnapshot] = Field(default_factory=list)
     endpoint_configuration_snapshots: list[EndpointConfigurationSnapshotRecord] = Field(
         default_factory=list
