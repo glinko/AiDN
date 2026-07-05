@@ -2200,6 +2200,18 @@
       };
     }
 
+    function renderOnboardingStepChips(steps) {
+      return (steps || [])
+        .map(
+          (step) => `
+            <span class="chip ${
+              step.status === "active" ? "good" : step.status === "complete" ? "" : ""
+            }">${step.label}</span>
+          `
+        )
+        .join("");
+    }
+
     function bundleRecommendedAction(summary, items, bundle) {
       if (!items.length) {
         return {
@@ -3046,6 +3058,7 @@
       const home = state.payloads.home || {};
       const fleet = state.payloads.fleet || {};
       const bootstrap = home.bootstrap || {};
+      const onboarding = home.onboarding || {};
       const ownerWallet = bootstrap.owner_wallet || {};
       const nodeIdentity = bootstrap.node_identity || {};
       const firstEndpoint = bootstrap.first_endpoint_candidate || {};
@@ -3055,7 +3068,8 @@
       const candidate = selectedMarketCandidate();
       const queueSummary = fleet.queue || { queued: 0, active: 0, completed: 0, failed: 0 };
       const actions = (home.operator_controls?.actions || []).map((action) => `<span class="chip">${action}</span>`).join("");
-      const recommendation = homeRecommendedAction(bootstrap);
+      const recommendation = onboarding.recommended_action || homeRecommendedAction(bootstrap);
+      const currentStep = onboarding.current_step || "configure_wallet";
       const visibleMarketCandidateCount = Math.max(
         Number(home.market_preview?.candidate_count || 0),
         marketCandidateCount()
@@ -3123,6 +3137,25 @@
                   </div>
                   <div class="row-number">${formatCount(((state.payloads.market || {}).candidates || []).filter((item) => item.supports_queue).length)}</div>
                 </div>
+              </div>
+            </section>
+            <section class="subpanel">
+              <div class="panel-heading">Onboarding Progress</div>
+              <div class="notice" style="margin-top: 14px;">
+                <strong>Current Guided Step</strong>
+                <span style="display: block; margin-top: 4px;">${formatMaybe(currentStep, "configure_wallet")}</span>
+              </div>
+              <div class="chip-row" style="margin-top: 14px;">
+                ${renderOnboardingStepChips(onboarding.steps)}
+              </div>
+              <div class="wallet-inline-actions" style="margin-top: 14px;">
+                <button class="secondary-button" type="button" data-screen-jump="providers">Open Providers</button>
+                <button class="secondary-button" type="button" data-screen-jump="bundles">Open Bundles</button>
+                <button class="secondary-button" type="button" data-screen-jump="endpoints">Open Endpoints</button>
+              </div>
+              <div class="notice" style="margin-top: 14px;">
+                Onboarding completes when the first local endpoint is published.
+                <span style="display: block; margin-top: 4px;">Validation stays optional and does not block completion.</span>
               </div>
             </section>
             <section class="subpanel">
@@ -6351,6 +6384,8 @@
           capabilities: [candidate.workload_type || candidate.model_id || "generic"],
           publication,
         });
+        state.selectedEndpointDraftId = created.endpoint.endpoint_id;
+        state.screen = "endpoints";
         state.bootstrapMessage = {
           kind: "good",
           text: `Endpoint ${created.endpoint.endpoint_id} created for ${created.endpoint.bundle_id}.`,
@@ -6523,6 +6558,7 @@
             phase: null,
           };
         }
+        state.screen = "home";
         await refreshBootstrapPayloads();
       } catch (error) {
         state.bootstrapMessage = { kind: "bad", text: String(error) };

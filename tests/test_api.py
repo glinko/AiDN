@@ -2021,6 +2021,22 @@ def test_operator_dashboard_shell_route_exposes_wallet_and_endpoint_controls() -
     assert "/operators/endpoints/bootstrap" not in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_guided_onboarding_sections() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Onboarding Progress" in response.text
+    assert "Current Guided Step" in response.text
+    assert "Onboarding completes when the first local endpoint is published." in response.text
+    assert "Validation stays optional and does not block completion." in response.text
+    assert 'data-screen-jump="providers"' in response.text
+    assert 'data-screen-jump="bundles"' in response.text
+    assert 'data-screen-jump="endpoints"' in response.text
+    assert 'state.screen = "home";' in response.text
+
+
 def test_operator_dashboard_home_market_preview_matches_market_candidates() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     registry = RegistryService()
