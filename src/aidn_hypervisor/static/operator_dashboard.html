@@ -1809,6 +1809,19 @@
       return endpointDrafts().find((item) => item.endpoint_id === endpointId) || null;
     }
 
+    function homeActionEndpointDraft() {
+      const homePrimaryEndpointId =
+        state.payloads.home?.endpoint_pipeline?.primary_endpoint_id;
+      if (state.screen === "home" && homePrimaryEndpointId) {
+        const targeted = endpointDraftById(homePrimaryEndpointId);
+        if (targeted) {
+          state.selectedEndpointDraftId = targeted.endpoint_id;
+          return targeted;
+        }
+      }
+      return selectedEndpointDraft();
+    }
+
     function sessionOpenableEndpoints() {
       return endpointDrafts().filter(
         (item) => Number(item?.session?.minimum_deposit || 0) > 0
@@ -6401,7 +6414,7 @@
     }
 
     async function updateSelectedEndpointViaApi(payload, successText) {
-      const selected = selectedEndpointDraft();
+      const selected = homeActionEndpointDraft();
       if (!selected?.endpoint_id) {
         return false;
       }
@@ -6504,7 +6517,7 @@
     }
 
     async function publishBootstrapEndpointDraft() {
-      const draft = selectedEndpointDraft();
+      const draft = homeActionEndpointDraft();
       if (!draft) {
         return;
       }
@@ -6570,7 +6583,7 @@
     }
 
     async function requestBootstrapEndpointValidation() {
-      const draft = selectedEndpointDraft();
+      const draft = homeActionEndpointDraft();
       if (!draft) {
         return;
       }

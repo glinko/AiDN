@@ -2159,6 +2159,81 @@ def test_operator_dashboard_home_shell_highlights_publish_configuration_recommen
     assert 'recommendation.action === "publish-configuration" ? "action-focus" : ""' in response.text
 
 
+def test_operator_dashboard_home_targets_drifted_endpoint_over_older_in_sync_endpoint(
+) -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    older_in_sync = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Older In Sync",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    publication_service.publish_configuration(
+        endpoint_id=older_in_sync.endpoint.endpoint_id,
+        owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+        node_id=hypervisor.node_id,
+        wallet_private_key=hypervisor.owner_wallet_private_key(),
+    )
+    newer_drifted = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Newer Drifted",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+        )
+    )
+    publication_service.publish_configuration(
+        endpoint_id=newer_drifted.endpoint.endpoint_id,
+        owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+        node_id=hypervisor.node_id,
+        wallet_private_key=hypervisor.owner_wallet_private_key(),
+    )
+    endpoint_service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=newer_drifted.endpoint.endpoint_id,
+            runtime={"streaming": True},
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+        )
+    )
+
+    home = client.get("/operators/dashboard/home")
+
+    assert home.status_code == 200
+    payload = home.json()
+    assert payload["endpoint_pipeline"]["state"] == "published_drifted"
+    assert payload["endpoint_pipeline"]["primary_endpoint_id"] == newer_drifted.endpoint.endpoint_id
+    assert payload["endpoint_pipeline"]["primary_endpoint_id"] != older_in_sync.endpoint.endpoint_id
+
+
+def test_operator_dashboard_home_shell_uses_endpoint_pipeline_primary_endpoint_id_for_home_actions(
+) -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "state.payloads.home?.endpoint_pipeline?.primary_endpoint_id" in response.text
+    assert "function homeActionEndpointDraft()" in response.text
+
+
 def test_create_endpoint_api_refreshes_onboarding_state() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
