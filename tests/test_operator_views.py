@@ -262,10 +262,13 @@ def test_home_payload_endpoint_pipeline_ignores_persisted_completed_onboarding_w
         market_candidates=[],
     )
 
-    assert payload["onboarding"]["completed"] is True
+    assert payload["onboarding"]["completed"] is False
     assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
     assert payload["endpoint_pipeline"]["recommended_action"]["action"] != "open-home"
     assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create-endpoint"
+    assert payload["onboarding"]["current_step"] == "create_endpoint"
+    assert payload["onboarding"]["workspace"] == "bundles"
+    assert payload["onboarding"]["recommended_action"]["action"] == "create-endpoint"
 
 
 def test_home_payload_surfaces_endpoint_pipeline_for_first_draft(
@@ -350,6 +353,16 @@ def test_home_payload_surfaces_drifted_publication_as_the_primary_attention_stat
         payload["endpoint_pipeline"]["publication_sync_status"]
         == "local_changes_not_published"
     )
+    assert (
+        payload["bootstrap"]["next_step"]
+        == "Publish your updated endpoint configuration to sync the live endpoint"
+    )
+    assert payload["onboarding"]["current_step"] == "publish_endpoint"
+    assert payload["onboarding"]["workspace"] == "endpoints"
+    assert (
+        payload["onboarding"]["recommended_action"]["action"]
+        == "publish-configuration"
+    )
 
 
 def test_home_payload_surfaces_in_sync_publication_as_operating_state(
@@ -389,6 +402,7 @@ def test_home_payload_surfaces_in_sync_publication_as_operating_state(
         == created.endpoint.endpoint_id
     )
     assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "endpoints"
+    assert payload["onboarding"]["recommended_action"]["action"] == "endpoints"
 
 
 def test_home_payload_prioritizes_drifted_endpoint_over_in_sync_endpoint(

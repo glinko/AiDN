@@ -2,7 +2,7 @@ from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
 )
-from aidn_hypervisor.operator_onboarding import build_onboarding_payload
+from aidn_hypervisor.operator_onboarding import ONBOARDING_STEPS, build_onboarding_payload
 
 
 def _execution_payload_for_manifest(manifest) -> dict:
@@ -143,6 +143,178 @@ def _home_no_endpoint_recommended_action(
     }
 
 
+def _home_bootstrap_next_step(
+    *,
+    endpoint_pipeline: dict,
+    first_endpoint_candidate: dict | None,
+    fallback_next_step: str | None,
+) -> str:
+    state = endpoint_pipeline.get("state")
+    action = endpoint_pipeline.get("recommended_action", {}).get("action")
+    if state == "wallet_required":
+        return "Create or import a wallet"
+    if state == "no_endpoint":
+        if action == "providers":
+            return "Attach a provider or install a model"
+        if action == "bundles":
+            return "Prepare a bundle or finish model setup before creating the first endpoint"
+        bundle_id = (first_endpoint_candidate or {}).get("bundle_id")
+        if bundle_id:
+            return f"Create your first endpoint from {bundle_id}"
+        return "Create your first endpoint from a ready local bundle"
+    if state == "draft_exists":
+        return "Review your configured endpoint and publish it"
+    if state == "published_drifted":
+        return "Publish your updated endpoint configuration to sync the live endpoint"
+    if state == "published_in_sync":
+        return "Manage your published endpoint and request validation when ready"
+    return fallback_next_step or "Attach a provider or install a model"
+
+
+def _home_onboarding_steps(
+    *,
+    current_step: str,
+    completed: bool,
+    completed_at: str | None,
+) -> list[dict]:
+    step_index = {
+        key: index for index, (key, _label, _workspace) in enumerate(ONBOARDING_STEPS)
+    }
+    current_index = step_index[current_step]
+    steps = []
+    for index, (key, label, workspace) in enumerate(ONBOARDING_STEPS):
+        if key == current_step:
+            status = "active"
+        elif index < current_index or (completed and current_step == "operate"):
+            status = "complete"
+        else:
+            status = "upcoming"
+        steps.append(
+            {
+                "key": key,
+                "label": label,
+                "workspace": workspace,
+                "status": status,
+                "completed_at": completed_at if status == "complete" else None,
+            }
+        )
+    return steps
+
+
+def _normalized_home_onboarding_action(
+    *,
+    endpoint_pipeline: dict,
+    first_endpoint_candidate: dict | None,
+) -> dict:
+    state = endpoint_pipeline.get("state")
+    recommended = endpoint_pipeline.get("recommended_action", {})
+    action = recommended.get("action")
+    if state == "wallet_required":
+        return {
+            "label": "Create Wallet",
+            "detail": "Create or import a wallet before any publish or network-facing step.",
+            "type": "bootstrap",
+            "action": "create-wallet",
+        }
+    if state == "no_endpoint":
+        if action == "providers":
+            return {
+                "label": "Open Providers",
+                "detail": "Attach a provider so the dashboard can surface a local execution path.",
+                "type": "screen",
+                "action": "providers",
+            }
+        if action == "bundles":
+            return {
+                "label": "Open Bundles",
+                "detail": "Prepare a bundle or finish model setup before creating the first endpoint.",
+                "type": "screen",
+                "action": "bundles",
+            }
+        bundle_id = (first_endpoint_candidate or {}).get("bundle_id")
+        return {
+            "label": "Create First Endpoint",
+            "detail": (
+                f"Bundle {bundle_id} is ready to become the first endpoint."
+                if bundle_id
+                else "Create the first endpoint from a ready local bundle."
+            ),
+            "type": "endpoint",
+            "action": "create-endpoint",
+        }
+    if state == "published_drifted":
+        return {
+            "label": "Publish Configuration",
+            "detail": "Local endpoint changes exist. Publish the updated configuration so the live endpoint is back in sync.",
+            "type": "endpoint",
+            "action": "publish-configuration",
+        }
+    return {
+        "label": recommended.get("label", "Open Endpoints"),
+        "detail": (
+            "Review the endpoint draft and publish it from Endpoints."
+            if state == "draft_exists"
+            else "Open Endpoints to manage the published endpoint, configuration, and validation state."
+        ),
+        "type": "screen",
+        "action": recommended.get("action", "endpoints"),
+    }
+
+
+def _normalize_home_onboarding(
+    *,
+    onboarding: dict,
+    endpoint_pipeline: dict,
+    first_endpoint_candidate: dict | None,
+) -> dict:
+    normalized = {
+        **onboarding,
+        "recommended_action": _normalized_home_onboarding_action(
+            endpoint_pipeline=endpoint_pipeline,
+            first_endpoint_candidate=first_endpoint_candidate,
+        ),
+    }
+    state = endpoint_pipeline.get("state")
+    if state == "wallet_required":
+        current_step = "configure_wallet"
+        workspace = "home"
+        completed = False
+    elif state == "no_endpoint":
+        action = endpoint_pipeline.get("recommended_action", {}).get("action")
+        current_step = {
+            "providers": "attach_provider",
+            "bundles": "prepare_bundle",
+            "create-endpoint": "create_endpoint",
+        }.get(action, "create_endpoint")
+        workspace = {
+            "providers": "providers",
+            "bundles": "bundles",
+            "create-endpoint": "bundles",
+        }.get(action, "bundles")
+        completed = False
+    elif state == "draft_exists":
+        current_step = "publish_endpoint"
+        workspace = "endpoints"
+        completed = False
+    elif state == "published_drifted":
+        current_step = "publish_endpoint"
+        workspace = "endpoints"
+        completed = False
+    else:
+        current_step = normalized.get("current_step", "operate")
+        workspace = normalized.get("workspace", "home")
+        completed = normalized.get("completed", False)
+    normalized["completed"] = completed
+    normalized["current_step"] = current_step
+    normalized["workspace"] = workspace
+    normalized["steps"] = _home_onboarding_steps(
+        current_step=current_step,
+        completed=completed,
+        completed_at=normalized.get("completed_at"),
+    )
+    return normalized
+
+
 def _home_endpoint_pipeline(
     *,
     endpoint_items: list[dict],
@@ -277,12 +449,23 @@ def build_operator_home_payload(
         bundle_count=bootstrap_facts.get("bundle_count", 0),
         first_endpoint_candidate=bootstrap_facts.get("first_endpoint_candidate"),
     )
+    onboarding = _normalize_home_onboarding(
+        onboarding=onboarding,
+        endpoint_pipeline=endpoint_pipeline,
+        first_endpoint_candidate=bootstrap_facts.get("first_endpoint_candidate"),
+    )
+    bootstrap = _build_operator_home_bootstrap_payload(
+        service=service,
+        endpoint_items=endpoints_payload["items"],
+        fallback_bootstrap=bootstrap_facts,
+    )
+    bootstrap["next_step"] = _home_bootstrap_next_step(
+        endpoint_pipeline=endpoint_pipeline,
+        first_endpoint_candidate=bootstrap_facts.get("first_endpoint_candidate"),
+        fallback_next_step=bootstrap.get("next_step"),
+    )
     return {
-        "bootstrap": _build_operator_home_bootstrap_payload(
-            service=service,
-            endpoint_items=endpoints_payload["items"],
-            fallback_bootstrap=bootstrap_facts,
-        ),
+        "bootstrap": bootstrap,
         "endpoint_pipeline": endpoint_pipeline,
         "onboarding": onboarding,
         "publish": {
