@@ -96,6 +96,7 @@ def build_app(
     app.include_router(
         build_endpoint_router(
             resolved_endpoint_service,
+            hypervisor_service=resolved_service,
             remote_endpoint_service=resolved_remote_endpoint_service,
             session_service=resolved_session_service,
             validation_service=resolved_validation_service,

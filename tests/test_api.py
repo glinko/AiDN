@@ -2096,6 +2096,29 @@ def test_operator_dashboard_home_bootstrap_prefers_endpoint_service_state() -> N
     assert home.json()["bootstrap"]["next_step"] == "Review your configured endpoint and publish it"
 
 
+def test_create_endpoint_api_refreshes_onboarding_state() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    client = TestClient(build_app(service=hypervisor, endpoint_service=endpoint_service))
+
+    response = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": hypervisor.owner_wallet_state()["wallet_id"],
+            "bundle_id": "whisper-a",
+            "bundle_hash": "whisper-a",
+            "display_name": "Operator STT",
+            "model_class": "speech.stt",
+            "capabilities": ["speech.stt"],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["data"]["onboarding"]["current_step"] == "publish_endpoint"
+    assert hypervisor.operator_onboarding_state()["current_step"] == "publish_endpoint"
+
+
 def test_operator_dashboard_home_route_uses_operator_view_payload(
     monkeypatch,
 ) -> None:
@@ -3278,6 +3301,44 @@ def test_publish_configuration_endpoint_returns_signed_record() -> None:
         body["data"]["validation_summary"]["configuration_hash"]
         == created.endpoint.configuration_hash
     )
+
+
+def test_publish_configuration_endpoint_refreshes_onboarding_completion() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Operator STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["onboarding"]["completed"] is True
+    assert response.json()["data"]["onboarding"]["current_step"] == "operate"
+    home = client.get("/operators/dashboard/home")
+    assert home.json()["onboarding"]["completed"] is True
+    assert home.json()["onboarding"]["current_step"] == "operate"
 
 
 def test_endpoint_proof_returns_live_configuration_hash() -> None:

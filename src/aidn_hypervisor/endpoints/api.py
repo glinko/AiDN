@@ -17,6 +17,7 @@ class OpenSessionRequest(BaseModel):
 
 def build_endpoint_router(
     service,
+    hypervisor_service=None,
     remote_endpoint_service=None,
     session_service=None,
     validation_service=None,
@@ -51,10 +52,23 @@ def build_endpoint_router(
     @router.post("", status_code=201)
     async def create_endpoint(command: CreateEndpointCommand) -> JSONResponse:
         created = service.create_endpoint(command)
+        onboarding = None
+        if hypervisor_service is not None:
+            onboarding = hypervisor_service.sync_operator_onboarding_state(
+                endpoint_items=[
+                    {
+                        "endpoint_id": created.endpoint.endpoint_id,
+                        "bundle_id": created.endpoint.bundle_id,
+                        "publication_status": "configured",
+                        "visibility": created.endpoint.publication.visibility,
+                    }
+                ]
+            )
         return _ok(
             {
                 "endpoint": created.endpoint.model_dump(mode="json"),
                 "snapshot": created.snapshot.model_dump(mode="json"),
+                "onboarding": onboarding,
             },
             status_code=201,
         )

@@ -1085,10 +1085,19 @@ def build_api_router(
                 endpoint_id,
                 configuration_hash=endpoint.configuration_hash,
             )
+        onboarding = service.sync_operator_onboarding_state(
+            endpoint_items=_operator_dashboard_endpoints_payload(
+                service=service,
+                endpoint_service=endpoint_service,
+                endpoint_publication_service=endpoint_publication_service,
+                validation_service=validation_service,
+            )["items"]
+        )
         return _ok(
             {
                 "publication": record.model_dump(mode="json"),
                 "validation_summary": validation_summary,
+                "onboarding": onboarding,
             }
         )
 
