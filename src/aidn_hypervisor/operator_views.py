@@ -2,6 +2,7 @@ from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
 )
+from aidn_hypervisor.operator_onboarding import build_onboarding_payload
 
 
 def _execution_payload_for_manifest(manifest) -> dict:
@@ -149,12 +150,23 @@ def build_operator_home_payload(
         endpoint_publication_service=endpoint_publication_service,
         validation_service=validation_service,
     )
+    onboarding = build_onboarding_payload(
+        wallet_ready=service.owner_wallet_state()["configured"],
+        provider_count=service_payload.get("bootstrap", {}).get("provider_count", 0),
+        bundle_count=service_payload.get("bootstrap", {}).get("bundle_count", 0),
+        endpoint_items=endpoints_payload["items"],
+        first_endpoint_candidate=service_payload.get("bootstrap", {}).get(
+            "first_endpoint_candidate"
+        ),
+        persisted=service.operator_onboarding_state(),
+    )
     return {
         "bootstrap": _build_operator_home_bootstrap_payload(
             service=service,
             endpoint_items=endpoints_payload["items"],
             fallback_bootstrap=service_payload.get("bootstrap", {}),
         ),
+        "onboarding": onboarding,
         "publish": {
             "draft_offer_count": service_summary.get("bundle_total", 0),
             "install_pending_count": service_summary.get("pending_install_total", 0),
@@ -224,6 +236,16 @@ def build_operator_providers_payload(*, service) -> dict:
     return {
         "owner_wallet": fleet["owner_wallet"],
         "node_identity": fleet["node_identity"],
+        "onboarding": build_onboarding_payload(
+            wallet_ready=fleet["owner_wallet"]["configured"],
+            provider_count=len(items),
+            bundle_count=len(bundles),
+            endpoint_items=[],
+            first_endpoint_candidate=service.operator_dashboard_home()["bootstrap"].get(
+                "first_endpoint_candidate"
+            ),
+            persisted=service.operator_onboarding_state(),
+        ),
         "summary": {
             "total": len(items),
             "bundles": len(bundles),
@@ -259,6 +281,14 @@ def build_operator_bundles_payload(*, service) -> dict:
     return {
         "owner_wallet": fleet["owner_wallet"],
         "node_identity": fleet["node_identity"],
+        "onboarding": build_onboarding_payload(
+            wallet_ready=fleet["owner_wallet"]["configured"],
+            provider_count=len(service.plugins.list()),
+            bundle_count=len(items),
+            endpoint_items=[],
+            first_endpoint_candidate=candidate,
+            persisted=service.operator_onboarding_state(),
+        ),
         "summary": {
             "total": len(items),
             "enabled": sum(1 for item in items if item["enabled"]),
@@ -329,11 +359,41 @@ def build_operator_endpoints_payload(
     validation_service=None,
 ) -> dict:
     if endpoint_service is None:
-        return service.operator_dashboard_endpoints()
+        payload = service.operator_dashboard_endpoints()
+        payload["onboarding"] = build_onboarding_payload(
+            wallet_ready=service.owner_wallet_state()["configured"],
+            provider_count=service.operator_dashboard_home()["bootstrap"].get(
+                "provider_count", 0
+            ),
+            bundle_count=service.operator_dashboard_home()["bootstrap"].get(
+                "bundle_count", 0
+            ),
+            endpoint_items=payload["items"],
+            first_endpoint_candidate=service.operator_dashboard_home()["bootstrap"].get(
+                "first_endpoint_candidate"
+            ),
+            persisted=service.operator_onboarding_state(),
+        )
+        return payload
 
     manifests = list(endpoint_service.list_endpoints())
     if not manifests:
-        return service.operator_dashboard_endpoints()
+        payload = service.operator_dashboard_endpoints()
+        payload["onboarding"] = build_onboarding_payload(
+            wallet_ready=service.owner_wallet_state()["configured"],
+            provider_count=service.operator_dashboard_home()["bootstrap"].get(
+                "provider_count", 0
+            ),
+            bundle_count=service.operator_dashboard_home()["bootstrap"].get(
+                "bundle_count", 0
+            ),
+            endpoint_items=payload["items"],
+            first_endpoint_candidate=service.operator_dashboard_home()["bootstrap"].get(
+                "first_endpoint_candidate"
+            ),
+            persisted=service.operator_onboarding_state(),
+        )
+        return payload
 
     items = []
     for manifest in manifests:
@@ -467,6 +527,20 @@ def build_operator_endpoints_payload(
     return {
         "owner_wallet": service.owner_wallet_state(),
         "node_identity": service.node_identity(),
+        "onboarding": build_onboarding_payload(
+            wallet_ready=service.owner_wallet_state()["configured"],
+            provider_count=service.operator_dashboard_home()["bootstrap"].get(
+                "provider_count", 0
+            ),
+            bundle_count=service.operator_dashboard_home()["bootstrap"].get(
+                "bundle_count", 0
+            ),
+            endpoint_items=items,
+            first_endpoint_candidate=service.operator_dashboard_home()["bootstrap"].get(
+                "first_endpoint_candidate"
+            ),
+            persisted=service.operator_onboarding_state(),
+        ),
         "summary": summary,
         "policy": {
             "publish_requires_validation": False,

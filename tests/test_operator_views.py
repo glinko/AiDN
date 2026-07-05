@@ -169,6 +169,22 @@ def test_home_payload_prefers_first_endpoint_candidate_after_wallet_setup(
     assert payload["bootstrap"]["next_step"] == "Create your first endpoint from whisper-a"
 
 
+def test_home_payload_exposes_onboarding_progress(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+) -> None:
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=None,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["onboarding"]["current_step"] == "configure_wallet"
+    assert payload["onboarding"]["recommended_action"]["action"] == "create-wallet"
+
+
 def test_home_payload_rebuilds_operator_shell_blocks_from_factual_service_summary(
     tmp_path: Path,
 ) -> None:
@@ -281,6 +297,18 @@ def test_bundles_payload_marks_first_endpoint_candidate(
     )
     assert candidate["bundle_id"] == "whisper-a"
     assert candidate["endpoint_action"]["recommended"] == "create_endpoint"
+
+
+def test_bundles_payload_marks_current_onboarding_workspace(
+    service: HypervisorService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+
+    payload = build_operator_bundles_payload(service=service)
+
+    assert payload["onboarding"]["workspace"] == "bundles"
+    assert payload["onboarding"]["current_step"] == "create_endpoint"
+    assert "steps" in payload["onboarding"]
 
 
 def test_installs_payload_exposes_ready_to_register_completed_jobs(
