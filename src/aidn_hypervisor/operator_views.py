@@ -118,14 +118,40 @@ def _primary_endpoint_for_home(endpoint_items: list[dict]) -> dict | None:
     )[0]
 
 
+def _home_no_endpoint_recommended_action(
+    *,
+    provider_count: int,
+    bundle_count: int,
+    first_endpoint_candidate: dict | None,
+) -> dict:
+    if provider_count <= 0:
+        return {
+            "action": "providers",
+            "label": "Open Providers",
+            "workspace": "providers",
+        }
+    if bundle_count <= 0 or first_endpoint_candidate is None:
+        return {
+            "action": "bundles",
+            "label": "Open Bundles",
+            "workspace": "bundles",
+        }
+    return {
+        "action": "create-endpoint",
+        "label": "Create First Endpoint",
+        "workspace": "bundles",
+    }
+
+
 def _home_endpoint_pipeline(
     *,
     endpoint_items: list[dict],
     wallet_ready: bool,
-    onboarding: dict | None = None,
+    provider_count: int,
+    bundle_count: int,
+    first_endpoint_candidate: dict | None,
 ) -> dict:
     primary = _primary_endpoint_for_home(endpoint_items)
-    onboarding = onboarding or {}
     if not wallet_ready:
         return {
             "state": "wallet_required",
@@ -142,16 +168,11 @@ def _home_endpoint_pipeline(
             "state": "no_endpoint",
             "primary_endpoint_id": None,
             "publication_sync_status": None,
-            "recommended_action": {
-                **onboarding.get(
-                    "recommended_action",
-                    {
-                        "action": "open-bundles",
-                        "label": "Open Bundles",
-                    },
-                ),
-                "workspace": onboarding.get("workspace", "bundles"),
-            },
+            "recommended_action": _home_no_endpoint_recommended_action(
+                provider_count=provider_count,
+                bundle_count=bundle_count,
+                first_endpoint_candidate=first_endpoint_candidate,
+            ),
         }
     if primary["publication_sync_status"] == "local_changes_not_published":
         return {
@@ -170,7 +191,7 @@ def _home_endpoint_pipeline(
             "primary_endpoint_id": primary["endpoint_id"],
             "publication_sync_status": primary["publication_sync_status"],
             "recommended_action": {
-                "action": "open-endpoints",
+                "action": "endpoints",
                 "label": "Open Endpoints",
                 "workspace": "endpoints",
             },
@@ -180,7 +201,7 @@ def _home_endpoint_pipeline(
         "primary_endpoint_id": primary["endpoint_id"],
         "publication_sync_status": primary["publication_sync_status"],
         "recommended_action": {
-            "action": "open-endpoints",
+            "action": "endpoints",
             "label": "Open Live Endpoint",
             "workspace": "endpoints",
         },
@@ -231,6 +252,7 @@ def build_operator_home_payload(
 ) -> dict:
     service_payload = service.operator_dashboard_home()
     service_summary = service_payload.get("summary", {})
+    bootstrap_facts = service_payload.get("bootstrap", {})
     wallet_ready = service.owner_wallet_state()["configured"]
     endpoints_payload = build_operator_endpoints_payload(
         service=service,
@@ -251,13 +273,15 @@ def build_operator_home_payload(
     endpoint_pipeline = _home_endpoint_pipeline(
         endpoint_items=endpoints_payload["items"],
         wallet_ready=wallet_ready,
-        onboarding=onboarding,
+        provider_count=bootstrap_facts.get("provider_count", 0),
+        bundle_count=bootstrap_facts.get("bundle_count", 0),
+        first_endpoint_candidate=bootstrap_facts.get("first_endpoint_candidate"),
     )
     return {
         "bootstrap": _build_operator_home_bootstrap_payload(
             service=service,
             endpoint_items=endpoints_payload["items"],
-            fallback_bootstrap=service_payload.get("bootstrap", {}),
+            fallback_bootstrap=bootstrap_facts,
         ),
         "endpoint_pipeline": endpoint_pipeline,
         "onboarding": onboarding,

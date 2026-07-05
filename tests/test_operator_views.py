@@ -104,6 +104,24 @@ def _empty_service() -> HypervisorService:
     )
 
 
+def _provider_only_service() -> HypervisorService:
+    return HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(
+                cpu_cores=8.0,
+                ram_mb=16384,
+                gpu_devices=["gpu0"],
+                vram_mb={"gpu0": 8192},
+            )
+        ),
+        bundles=[],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+    )
+
+
 @pytest.fixture
 def service() -> HypervisorService:
     return HypervisorService(
@@ -209,6 +227,47 @@ def test_home_payload_endpoint_pipeline_aligns_with_provider_setup_when_wallet_r
     assert payload["endpoint_pipeline"]["recommended_action"]["workspace"] == "providers"
 
 
+def test_home_payload_endpoint_pipeline_aligns_with_bundle_setup_when_provider_exists_but_no_bundles(
+) -> None:
+    service = _provider_only_service()
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=EndpointService(EndpointStore()),
+        endpoint_publication_service=None,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["onboarding"]["current_step"] == "prepare_bundle"
+    assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "bundles"
+    assert payload["endpoint_pipeline"]["recommended_action"]["workspace"] == "bundles"
+
+
+def test_home_payload_endpoint_pipeline_ignores_persisted_completed_onboarding_when_no_endpoints_exist(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    service.sync_operator_onboarding_state(
+        endpoint_items=[{"publication_status": "published"}]
+    )
+
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=None,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["onboarding"]["completed"] is True
+    assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] != "open-home"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create-endpoint"
+
+
 def test_home_payload_surfaces_endpoint_pipeline_for_first_draft(
     service: HypervisorService,
     endpoint_service: EndpointService,
@@ -238,10 +297,7 @@ def test_home_payload_surfaces_endpoint_pipeline_for_first_draft(
         payload["endpoint_pipeline"]["primary_endpoint_id"]
         == created.endpoint.endpoint_id
     )
-    assert (
-        payload["endpoint_pipeline"]["recommended_action"]["action"]
-        == "open-endpoints"
-    )
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "endpoints"
     assert (
         payload["bootstrap"]["next_step"]
         == "Review your configured endpoint and publish it"
@@ -332,6 +388,64 @@ def test_home_payload_surfaces_in_sync_publication_as_operating_state(
         payload["endpoint_pipeline"]["primary_endpoint_id"]
         == created.endpoint.endpoint_id
     )
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "endpoints"
+
+
+def test_home_payload_prioritizes_drifted_endpoint_over_in_sync_endpoint(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+    endpoint_publication_service: EndpointPublicationService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    drifted = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Drifted Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+        )
+    )
+    endpoint_publication_service.publish_configuration(
+        endpoint_id=drifted.endpoint.endpoint_id,
+        owner_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+    endpoint_service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=drifted.endpoint.endpoint_id,
+            runtime={"streaming": True},
+        )
+    )
+    in_sync = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="In Sync STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    endpoint_publication_service.publish_configuration(
+        endpoint_id=in_sync.endpoint.endpoint_id,
+        owner_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=endpoint_publication_service,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["endpoint_pipeline"]["state"] == "published_drifted"
+    assert payload["endpoint_pipeline"]["primary_endpoint_id"] == drifted.endpoint.endpoint_id
 
 
 def test_home_payload_exposes_onboarding_progress(
