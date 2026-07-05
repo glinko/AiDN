@@ -5,7 +5,7 @@ import pytest
 from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
-from aidn_hypervisor.endpoints.models import CreateEndpointCommand
+from aidn_hypervisor.endpoints.models import CreateEndpointCommand, UpdateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.model_store import FileModelStore
@@ -167,6 +167,93 @@ def test_home_payload_prefers_first_endpoint_candidate_after_wallet_setup(
     assert payload["bootstrap"]["wallet_ready"] is True
     assert payload["bootstrap"]["first_endpoint_candidate"]["bundle_id"] == "whisper-a"
     assert payload["bootstrap"]["next_step"] == "Create your first endpoint from whisper-a"
+
+
+def test_home_payload_surfaces_endpoint_pipeline_for_first_draft(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Operator STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=None,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["endpoint_pipeline"]["state"] == "draft_exists"
+    assert (
+        payload["endpoint_pipeline"]["primary_endpoint_id"]
+        == created.endpoint.endpoint_id
+    )
+    assert (
+        payload["endpoint_pipeline"]["recommended_action"]["action"]
+        == "open-endpoints"
+    )
+    assert (
+        payload["bootstrap"]["next_step"]
+        == "Review your configured endpoint and publish it"
+    )
+
+
+def test_home_payload_surfaces_drifted_publication_as_the_primary_attention_state(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+    endpoint_publication_service: EndpointPublicationService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Published Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+        )
+    )
+    endpoint_publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+    endpoint_service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=created.endpoint.endpoint_id,
+            runtime={"streaming": True},
+        )
+    )
+
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=endpoint_publication_service,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["endpoint_pipeline"]["state"] == "published_drifted"
+    assert (
+        payload["endpoint_pipeline"]["recommended_action"]["action"]
+        == "publish-configuration"
+    )
+    assert (
+        payload["endpoint_pipeline"]["publication_sync_status"]
+        == "local_changes_not_published"
+    )
 
 
 def test_home_payload_exposes_onboarding_progress(
