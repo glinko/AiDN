@@ -137,7 +137,7 @@ def _home_no_endpoint_recommended_action(
             "workspace": "bundles",
         }
     return {
-        "action": "create-endpoint",
+        "action": "create",
         "label": "Create First Endpoint",
         "workspace": "bundles",
     }
@@ -240,7 +240,7 @@ def _normalized_home_onboarding_action(
                 else "Create the first endpoint from a ready local bundle."
             ),
             "type": "endpoint",
-            "action": "create-endpoint",
+            "action": "create",
         }
     if state == "published_drifted":
         return {
@@ -284,12 +284,12 @@ def _normalize_home_onboarding(
         current_step = {
             "providers": "attach_provider",
             "bundles": "prepare_bundle",
-            "create-endpoint": "create_endpoint",
+            "create": "create_endpoint",
         }.get(action, "create_endpoint")
         workspace = {
             "providers": "providers",
             "bundles": "bundles",
-            "create-endpoint": "bundles",
+            "create": "bundles",
         }.get(action, "bundles")
         completed = False
     elif state == "draft_exists":
@@ -305,6 +305,9 @@ def _normalize_home_onboarding(
         workspace = normalized.get("workspace", "home")
         completed = normalized.get("completed", False)
     normalized["completed"] = completed
+    if not completed:
+        normalized["completed_at"] = None
+        normalized["completed_via"] = None
     normalized["current_step"] = current_step
     normalized["workspace"] = workspace
     normalized["steps"] = _home_onboarding_steps(

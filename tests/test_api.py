@@ -2112,6 +2112,21 @@ def test_operator_dashboard_home_bootstrap_prefers_endpoint_service_state() -> N
     assert home.json()["bootstrap"]["next_step"] == "Review your configured endpoint and publish it"
 
 
+def test_operator_dashboard_home_exposes_endpoint_pipeline_create_action() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    client = TestClient(build_app(service=hypervisor))
+
+    home = client.get("/operators/dashboard/home")
+
+    assert home.status_code == 200
+    payload = home.json()
+    assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
+    assert payload["endpoint_pipeline"]["primary_endpoint_id"] is None
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create"
+    assert payload["onboarding"]["recommended_action"]["action"] == "create"
+
+
 def test_create_endpoint_api_refreshes_onboarding_state() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")

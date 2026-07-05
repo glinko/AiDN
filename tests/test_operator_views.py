@@ -205,7 +205,7 @@ def test_home_payload_prefers_first_endpoint_candidate_after_wallet_setup(
     assert payload["bootstrap"]["next_step"] == "Create your first endpoint from whisper-a"
     assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
     assert payload["endpoint_pipeline"]["primary_endpoint_id"] is None
-    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create-endpoint"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create"
 
 
 def test_home_payload_endpoint_pipeline_aligns_with_provider_setup_when_wallet_ready_but_no_inventory(
@@ -263,12 +263,14 @@ def test_home_payload_endpoint_pipeline_ignores_persisted_completed_onboarding_w
     )
 
     assert payload["onboarding"]["completed"] is False
+    assert payload["onboarding"]["completed_at"] is None
+    assert payload["onboarding"]["completed_via"] is None
     assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
     assert payload["endpoint_pipeline"]["recommended_action"]["action"] != "open-home"
-    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create-endpoint"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create"
     assert payload["onboarding"]["current_step"] == "create_endpoint"
     assert payload["onboarding"]["workspace"] == "bundles"
-    assert payload["onboarding"]["recommended_action"]["action"] == "create-endpoint"
+    assert payload["onboarding"]["recommended_action"]["action"] == "create"
 
 
 def test_home_payload_surfaces_endpoint_pipeline_for_first_draft(
