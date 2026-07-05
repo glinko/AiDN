@@ -1616,6 +1616,29 @@ def test_operator_dashboard_shell_route_returns_terminal_layout_markup() -> None
     assert 'data-role="operations-band"' in response.text
 
 
+def test_operator_services_route_returns_canonical_service_inventory() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/services")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["services"][0]["kind"] == "compute"
+    assert "capabilities" in body
+    assert "runtimes" in body
+
+
+def test_operator_dashboard_shell_mentions_compute_service_overlay() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Compute Service" in response.text
+    assert "Capability Runtimes" in response.text
+    assert "Bundles remain a transitional local supply layer." in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_market_terminal_controls() -> None:
     client = TestClient(build_app(service=_service()))
 

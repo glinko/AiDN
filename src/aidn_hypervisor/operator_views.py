@@ -166,6 +166,7 @@ def build_operator_home_payload(
             endpoint_items=endpoints_payload["items"],
             fallback_bootstrap=service_payload.get("bootstrap", {}),
         ),
+        "canonical_overlay": service.canonical_overlay_inventory(),
         "onboarding": onboarding,
         "publish": {
             "draft_offer_count": service_summary.get("bundle_total", 0),

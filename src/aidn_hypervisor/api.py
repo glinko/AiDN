@@ -875,6 +875,10 @@ def build_api_router(
     async def operator_dashboard_fleet() -> dict:
         return service.operator_dashboard_fleet()
 
+    @router.get("/operators/services")
+    async def operator_services() -> dict:
+        return service.canonical_overlay_inventory()
+
     @router.get("/operators/dashboard/providers")
     async def operator_dashboard_providers() -> dict:
         return build_operator_providers_payload(service=service)

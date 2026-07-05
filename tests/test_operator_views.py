@@ -18,7 +18,7 @@ from aidn_hypervisor.operator_views import (
 )
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
-from aidn_hypervisor.process_manager import ProviderProcessManager
+from aidn_hypervisor.process_manager import ProviderProcessManager, RuntimeHandle
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.scheduler import Scheduler
@@ -183,6 +183,36 @@ def test_home_payload_exposes_onboarding_progress(
 
     assert payload["onboarding"]["current_step"] == "configure_wallet"
     assert payload["onboarding"]["recommended_action"]["action"] == "create-wallet"
+
+
+def test_home_payload_exposes_canonical_service_overlay(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+) -> None:
+    service.runtimes = [
+        RuntimeHandle(
+            runtime_id="rt-1",
+            command=["whisper"],
+            status="running",
+            bundle_id="whisper-a",
+            health_status="healthy",
+        )
+    ]
+
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=None,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["canonical_overlay"]["services"][0]["kind"] == "compute"
+    assert payload["canonical_overlay"]["runtimes"][0]["capability_id"] == "speech.stt"
+    assert (
+        payload["canonical_overlay"]["compatibility"][0]["legacy_bundle_id"]
+        == "whisper-a"
+    )
 
 
 def test_home_payload_rebuilds_operator_shell_blocks_from_factual_service_summary(
