@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-07-03`
+Last updated: `2026-07-04`
 
 This is the main public roadmap for the repository.
 
@@ -41,11 +41,11 @@ The distributed registry is a target architecture, not the first milestone.
 
 ## Current Stage
 
-Status: `M2 complete, M3 complete, M4 complete, M5 planned`
+Status: `M2 complete, M3 complete, M4 complete, M5 in progress`
 
 Product alignment summary:
 - the repo now has a strong local hypervisor and operator-dashboard foundation;
-- the next product-critical gap is the operator bootstrap loop from install -> wallet -> provider -> model -> first endpoint;
+- the next product-critical gap is no longer the bare first-run bootstrap loop itself, but finishing the operator-shell migration and trust/reputation layers on top of that loop;
 - endpoint publication is now a first trust layer, and paid consumption now has a working first Session contract;
 - validation economics and maintenance-validation policy are now defined at the product level, but the protocol and registry trust layer are still incomplete;
 - validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
@@ -68,6 +68,7 @@ We already have a working local hypervisor foundation:
 - the operator dashboard now also includes a first `Endpoints` workspace, so visibility, publication, and validation can be reviewed as separate operator decisions instead of being folded into bundle or market views;
 - a parallel endpoint-first package now exists with snapshot-backed manifest storage, lifecycle service methods, and a versioned `/api/v1/endpoints` API on the main app surface;
 - the `Endpoints` dashboard workspace can now prefer the endpoint-first service and versioned API for visibility, publication, and validation actions, while legacy bootstrap routes remain as transition fallback;
+- guided dashboard onboarding now persists operator bootstrap state, derives a canonical onboarding read model, advances through wallet/provider/bundle/endpoint milestones, and returns to `Home` after the first published local Endpoint;
 - wallet-signed endpoint configuration publication now exists as a first trust layer with publish/revoke/export APIs, registry-visible current configuration hashes, and live proof comparison surfaces;
 - the operator dashboard `Endpoints` workspace now exposes local-vs-published configuration sync state, so operators can see whether local edits have drifted from the last published network-visible claim;
 - basic node pricing publication in registry discovery;
@@ -97,9 +98,9 @@ What is still missing in the current stage:
 - decision on whether adapter-declared `usage_contract` becomes an enforced runtime gate, plus a first non-token pricing unit for `whisper`-class workloads;
 - rating publication, reputation policy, and validation economics implementation;
 - network-visible custom model onboarding workflow.
-- first-class wallet ownership onboarding and node identity flow in the operator experience;
+- final onboarding polish across the remaining operator workspaces, so the new guided layer feels native outside `Home` and handoffs stay consistent across `Providers / Bundles / Endpoints`;
 - full endpoint-first persistence and API beyond the current bootstrap/dashboard slice, so privacy, sharing, publication, and validation remain distinct all the way through the service contract;
-- complete dashboard migration of `Home` bootstrap and remaining bundle-centric endpoint affordances onto the new endpoint service and `/api/v1/endpoints` contract;
+- complete dashboard migration of older bundle-centric affordances onto the endpoint-first trust layer, so bootstrap fallback logic can eventually be removed cleanly;
 - remote endpoint and proxy endpoint workflows framed as operator routing tools, not only discovery data.
 - full client-facing payment confirmation and paid-session workflow polish across bootstrap, remote/proxy, and future marketplace paths.
 
