@@ -43,7 +43,13 @@ Node selection should depend on:
 - latency
 - price
 
-### 4. Model Agnostic
+### 4. Capability And Runtime Driven
+
+The network should expose capabilities and runtimes as its canonical execution model.
+
+Provider stacks such as `llama.cpp`, `vLLM`, `Ollama`, `Whisper`, and future adapters remain implementation details behind capability runtimes rather than primary public protocol objects.
+
+### 5. Model Agnostic
 
 The network should support multiple provider stacks behind one interface, including:
 - `llama.cpp`
@@ -54,11 +60,11 @@ The network should support multiple provider stacks behind one interface, includ
 - `TTS`
 - `Video`
 
-### 5. Verification First
+### 6. Verification First
 
 Every advertised model or capability should be verifiable.
 
-### 6. Hypervisor As Product
+### 7. Hypervisor As Product
 
 The Hypervisor is not only infrastructure.
 

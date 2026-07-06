@@ -56,6 +56,10 @@ def _node_payload(
                 "supports_queue": True,
             }
         ],
+        "canonical_services": [],
+        "canonical_capability_runtimes": [],
+        "canonical_compute_compatibility": [],
+        "canonical_advertisements": [],
     }
 
 
@@ -150,6 +154,62 @@ def test_registry_discovery_endpoint_returns_flattened_candidates(monkeypatch) -
             "supports_queue": True,
         }
     ]
+
+
+def test_registry_discovery_endpoint_returns_canonical_candidates(monkeypatch) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    payload = _node_payload("node-a", heartbeat_at="2026-07-05T14:00:00+00:00")
+    payload["canonical_services"] = [
+        {
+            "service_id": "compute",
+            "kind": "compute",
+            "enabled": True,
+            "derived_roles": ["compute_provider"],
+            "responsibilities": ["endpoint_hosting"],
+        }
+    ]
+    payload["canonical_capability_runtimes"] = [
+        {
+            "runtime_id": "runtime-phi4-local",
+            "capability_id": "llm.chat",
+            "runtime_version": "legacy.bundle.v1",
+            "protocol_version": "runtime.v1",
+            "location_kind": "local_process",
+            "health_status": "healthy",
+            "supported_features": ["legacy_bundle_compatibility"],
+        }
+    ]
+    payload["canonical_compute_compatibility"] = [
+        {
+            "compatibility_id": "bundle:phi4-local",
+            "legacy_bundle_id": "phi4-local",
+            "legacy_plugin_id": "llama.cpp",
+            "legacy_provider_type": "llama.cpp",
+            "canonical_capability_id": "llm.chat",
+            "canonical_runtime_id": "runtime-phi4-local",
+        }
+    ]
+    payload["canonical_advertisements"] = [
+        {
+            "advertisement_id": "adv-endpoint-1",
+            "resource_type": "endpoint",
+            "owner_wallet": "wallet-a",
+            "hypervisor_id": "node-a",
+            "capability_id": "llm.chat",
+            "visibility": "public",
+            "signature_scope": "configuration_publication",
+        }
+    ]
+    service.upsert_node(RegistryNodeAdvertisement(**payload))
+    client = TestClient(build_registry_app(service=service))
+
+    response = client.get("/registry/discovery", params={"capability_id": "llm.chat"})
+
+    assert response.status_code == 200
+    assert "canonical_candidates" in response.json()
+    assert response.json()["canonical_candidates"][0]["capability_id"] == "llm.chat"
 
 
 def test_registry_discovery_endpoint_filters_candidates_by_execution_flags(

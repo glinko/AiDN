@@ -1117,12 +1117,17 @@ class HypervisorService:
         ]
 
     def node_advertisement(self, *, heartbeat_at: str | None = None) -> dict:
+        from aidn_hypervisor.canonical_projection import (
+            project_canonical_advertisements,
+        )
+
         timestamp = heartbeat_at or datetime.now(timezone.utc).isoformat()
         resources = (
             self.resources.summary()
             if self.resources is not None
             else _empty_resource_summary()
         )
+        canonical_overlay = self.canonical_overlay_inventory()
         publication_service = getattr(self, "endpoint_publication_service", None)
         current_publication_records = []
         if publication_service is not None:
@@ -1175,6 +1180,14 @@ class HypervisorService:
                 )
                 for record in current_publication_records
             ],
+            canonical_services=canonical_overlay.get("services", []),
+            canonical_capability_runtimes=canonical_overlay.get("runtimes", []),
+            canonical_compute_compatibility=canonical_overlay.get(
+                "compatibility", []
+            ),
+            canonical_advertisements=project_canonical_advertisements(
+                current_publication_records
+            ),
         )
         return advertisement.model_dump(mode="json")
 
@@ -1244,6 +1257,40 @@ class HypervisorService:
             "owner_wallet_id": owner["wallet_id"],
             "ownership_configured": owner["configured"],
             "can_host_custom_model": self.can_host_custom_model,
+        }
+
+    def registry_enabled(self) -> bool:
+        return False
+
+    def validation_enabled(self) -> bool:
+        return False
+
+    def canonical_overlay_inventory(self) -> dict:
+        from aidn_hypervisor.canonical_projection import (
+            project_capability_runtimes,
+            project_compute_compatibility,
+            project_protocol_services,
+        )
+
+        runtimes = project_capability_runtimes(self)
+        compatibility = project_compute_compatibility(self)
+        capability_ids = sorted({runtime.capability_id for runtime in runtimes})
+        return {
+            "services": [
+                record.model_dump(mode="json")
+                for record in project_protocol_services(self)
+            ],
+            "capabilities": [
+                {
+                    "capability_id": capability_id,
+                    "source": "legacy_compute_overlay",
+                }
+                for capability_id in capability_ids
+            ],
+            "runtimes": [record.model_dump(mode="json") for record in runtimes],
+            "compatibility": [
+                record.model_dump(mode="json") for record in compatibility
+            ],
         }
 
     def configure_owner_wallet(

@@ -468,6 +468,7 @@ def build_operator_home_payload(
     return {
         "bootstrap": bootstrap,
         "endpoint_pipeline": endpoint_pipeline,
+        "canonical_overlay": service.canonical_overlay_inventory(),
         "onboarding": onboarding,
         "publish": {
             "draft_offer_count": service_summary.get("bundle_total", 0),

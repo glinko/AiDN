@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 import dashboard_seed_preview
 from aidn_hypervisor.bundle_registry import FileBundleRegistry
+from aidn_hypervisor.dashboard import build_market_payload
 from aidn_hypervisor.domain.models import (
     AllocationRequest,
     BundleConfig,
@@ -1365,6 +1366,237 @@ def test_operator_dashboard_market_endpoint_includes_published_endpoint_counts()
     assert external["published_endpoint_count"] == 1
 
 
+def test_operator_dashboard_market_endpoint_includes_canonical_candidates() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    registry = RegistryService()
+    registry.upsert_node(RegistryNodeAdvertisement(**hypervisor.node_advertisement()))
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-canonical",
+            operator_id="operator-c",
+            base_url="https://canonical.example",
+            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={
+                "unit": "q_per_1kk_tokens",
+                "input": 7,
+                "output": 11,
+                "fixed_request": 1,
+            },
+            rating={
+                "score": 0.98,
+                "tier": "A",
+                "updated_at": "2026-06-20T11:55:00Z",
+            },
+            bundles=[],
+            canonical_services=[
+                {
+                    "service_id": "compute",
+                    "kind": "compute",
+                    "enabled": True,
+                    "derived_roles": ["compute_provider"],
+                    "responsibilities": ["endpoint_hosting"],
+                }
+            ],
+            canonical_capability_runtimes=[
+                {
+                    "runtime_id": "runtime-canonical-text",
+                    "capability_id": "llm.chat",
+                    "runtime_version": "runtime.v2",
+                    "protocol_version": "runtime.v1",
+                    "location_kind": "local_process",
+                    "health_status": "healthy",
+                    "supported_features": ["native_canonical_runtime"],
+                }
+            ],
+            canonical_compute_compatibility=[],
+            canonical_advertisements=[
+                {
+                    "advertisement_id": "adv-canonical-text",
+                    "resource_type": "endpoint",
+                    "owner_wallet": "wallet-canonical",
+                    "hypervisor_id": "node-canonical",
+                    "capability_id": "llm.chat",
+                    "visibility": "public",
+                    "signature_scope": "configuration_publication",
+                }
+            ],
+        )
+    )
+    client = TestClient(build_app(service=hypervisor, registry_service=registry))
+
+    response = client.get("/operators/dashboard/market")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "canonical_candidates" in body
+    assert "canonical_summary" in body
+    assert body["canonical_candidates"][0]["capability_id"] == "llm.chat"
+    assert body["canonical_candidates"][0]["origin"] == "external"
+
+
+def test_operator_dashboard_market_endpoint_includes_local_canonical_publication_identity() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Public STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            publication={
+                "visibility": "public",
+                "discoverable": True,
+                "accepts_external_requests": True,
+            },
+        )
+    )
+    publication = publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+        node_id=hypervisor.node_id,
+        wallet_private_key=hypervisor.owner_wallet_private_key(),
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+        )
+    )
+
+    response = client.get("/operators/dashboard/market")
+
+    assert response.status_code == 200
+    body = response.json()
+    candidate = next(
+        item
+        for item in body["canonical_candidates"]
+        if item["advertisement_id"] == f"adv-{publication.publication_id}"
+    )
+    assert candidate["origin"] == "own"
+    assert candidate["node_id"] == hypervisor.node_id
+    assert candidate["owner_wallet"] == publication.owner_wallet
+    assert candidate["visibility"] == "public"
+    assert candidate["capability_id"] == "speech.stt"
+    assert candidate["published_endpoint_count"] == 1
+    assert body["canonical_summary"]["endpoint_advertisement_count"] == 1
+
+
+def test_operator_dashboard_market_payload_builds_canonical_summary() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+
+    payload = build_market_payload(service=hypervisor, registry_service=None)
+
+    assert payload["canonical_summary"]["service_kinds"] == ["compute"]
+    assert "speech.stt" in payload["canonical_summary"]["capability_ids"]
+    assert payload["canonical_summary"]["runtime_count"] >= 1
+
+
+def test_operator_dashboard_market_payload_registry_backed_summary_ignores_unpublished_canonical_overlay(
+) -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    registry = RegistryService()
+    registry.upsert_node(RegistryNodeAdvertisement(**hypervisor.node_advertisement()))
+
+    payload = build_market_payload(service=hypervisor, registry_service=registry)
+
+    assert payload["canonical_candidates"] == []
+    assert payload["canonical_summary"] == {
+        "service_kinds": [],
+        "capability_ids": [],
+        "runtime_count": 0,
+        "endpoint_advertisement_count": 0,
+    }
+
+
+def test_operator_dashboard_market_payload_excludes_non_market_nodes_from_canonical_summary(
+) -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    registry = RegistryService()
+    registry.upsert_node(RegistryNodeAdvertisement(**hypervisor.node_advertisement()))
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-stale-canonical",
+            operator_id="operator-stale",
+            base_url="https://stale.example",
+            heartbeat_at="2026-06-01T00:00:00+00:00",
+            heartbeat_ttl_seconds=30,
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={
+                "unit": "q_per_1kk_tokens",
+                "input": 7,
+                "output": 11,
+                "fixed_request": 1,
+            },
+            rating={
+                "score": 0.98,
+                "tier": "A",
+                "updated_at": "2026-06-20T11:55:00Z",
+            },
+            bundles=[],
+            canonical_services=[
+                {
+                    "service_id": "validation",
+                    "kind": "validation",
+                    "enabled": True,
+                    "derived_roles": ["validator"],
+                    "responsibilities": ["endpoint_validation"],
+                }
+            ],
+            canonical_capability_runtimes=[
+                {
+                    "runtime_id": "runtime-stale",
+                    "capability_id": "vision.generate",
+                    "runtime_version": "runtime.v2",
+                    "protocol_version": "runtime.v1",
+                    "location_kind": "local_process",
+                    "health_status": "healthy",
+                    "supported_features": ["native_canonical_runtime"],
+                }
+            ],
+            canonical_compute_compatibility=[],
+            canonical_advertisements=[
+                {
+                    "advertisement_id": "adv-stale",
+                    "resource_type": "endpoint",
+                    "owner_wallet": "wallet-stale",
+                    "hypervisor_id": "node-stale-canonical",
+                    "capability_id": "vision.generate",
+                    "visibility": "public",
+                    "signature_scope": "configuration_publication",
+                }
+            ],
+        )
+    )
+
+    payload = build_market_payload(service=hypervisor, registry_service=registry)
+
+    assert payload["canonical_summary"] == {
+        "service_kinds": [],
+        "capability_ids": [],
+        "runtime_count": 0,
+        "endpoint_advertisement_count": 0,
+    }
+
+
 def test_operator_dashboard_remote_endpoints_route_returns_discovered_and_attached_items() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     registry = RegistryService()
@@ -1614,6 +1846,29 @@ def test_operator_dashboard_shell_route_returns_terminal_layout_markup() -> None
     assert 'data-role="workspace"' in response.text
     assert 'data-role="inspector"' in response.text
     assert 'data-role="operations-band"' in response.text
+
+
+def test_operator_services_route_returns_canonical_service_inventory() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/services")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["services"][0]["kind"] == "compute"
+    assert "capabilities" in body
+    assert "runtimes" in body
+
+
+def test_operator_dashboard_shell_mentions_compute_service_overlay() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Compute Service" in response.text
+    assert "Capability Runtimes" in response.text
+    assert "Bundles remain a transitional local supply layer." in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_market_terminal_controls() -> None:

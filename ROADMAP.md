@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-07-04`
+Last updated: `2026-07-05`
 
 This is the main public roadmap for the repository.
 
@@ -44,6 +44,9 @@ The distributed registry is a target architecture, not the first milestone.
 Status: `M2 complete, M3 complete, M4 complete, M5 in progress`
 
 Product alignment summary:
+- the new RFC set is now authoritative for service, capability, runtime, registry, marketplace, verification, reputation, ledger, and settlement architecture;
+- the current repo is introducing a compatibility-first overlay so existing bundle/provider execution keeps working while canonical service/capability/runtime models become the primary public contract;
+- future registry, marketplace, verification, reputation, and epoch work should build on canonical advertisements and service/runtime records rather than deepening bundle-centric contracts;
 - the repo now has a strong local hypervisor and operator-dashboard foundation;
 - the next product-critical gap is no longer the bare first-run bootstrap loop itself, but finishing the operator-shell migration and trust/reputation layers on top of that loop;
 - endpoint publication is now a first trust layer, and paid consumption now has a working first Session contract;
@@ -103,6 +106,11 @@ What is still missing in the current stage:
 - complete dashboard migration of older bundle-centric affordances onto the endpoint-first trust layer, so bootstrap fallback logic can eventually be removed cleanly;
 - remote endpoint and proxy endpoint workflows framed as operator routing tools, not only discovery data.
 - full client-facing payment confirmation and paid-session workflow polish across bootstrap, remote/proxy, and future marketplace paths.
+
+Immediate priorities:
+1. Land the canonical `service / capability / runtime` overlay in code and operator/API payloads.
+2. Reframe current `bundle / provider` machinery as compute compatibility internals rather than public protocol primitives.
+3. Build registry, marketplace, verification, reputation, settlement, and epoch work on top of canonical advertisements and service/runtime records.
 
 ## Milestones
 

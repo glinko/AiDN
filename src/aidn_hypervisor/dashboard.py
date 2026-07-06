@@ -11,12 +11,20 @@ def load_dashboard_html() -> str:
 def build_market_payload(*, service, registry_service) -> dict:
     if registry_service is None:
         advertisement = service.node_advertisement()
+        canonical_candidates = _canonical_candidates_from_node(advertisement)
         return {
             "nodes": [advertisement],
             "candidates": [
                 _local_candidate_from_advertisement(advertisement, bundle)
                 for bundle in advertisement["bundles"]
             ],
+            "canonical_candidates": [
+                {**candidate, "origin": "own"} for candidate in canonical_candidates
+            ],
+            "canonical_summary": _canonical_market_summary(
+                nodes=[advertisement],
+                canonical_candidates=canonical_candidates,
+            ),
         }
 
     discovery = registry_service.discover(RegistryDiscoveryQuery())
@@ -33,10 +41,34 @@ def build_market_payload(*, service, registry_service) -> dict:
             node.get("published_endpoints", [])
         )
         candidates.append(enriched)
+    canonical_candidates = []
+    canonical_market_nodes: dict[str, dict] = {}
+    for node in registry_service.list_nodes():
+        if node["status"] != "ready":
+            continue
+        node_candidates = _canonical_candidates_from_node(node)
+        if not node_candidates:
+            continue
+        canonical_market_nodes[node["node_id"]] = node
+        for candidate in node_candidates:
+            canonical_candidates.append(
+                {
+                    **candidate,
+                    "origin": "own" if candidate["node_id"] == service.node_id else "external",
+                }
+            )
     return {
         "query": discovery["query"],
         "nodes": discovery["nodes"],
         "candidates": candidates,
+        "canonical_candidates": sorted(
+            canonical_candidates,
+            key=_canonical_market_candidate_sort_key,
+        ),
+        "canonical_summary": _canonical_market_summary(
+            nodes=list(canonical_market_nodes.values()),
+            canonical_candidates=canonical_candidates,
+        ),
     }
 
 
@@ -113,3 +145,201 @@ def _aggregate_market_trust(published_endpoints: list[dict]) -> dict:
         "validation_by_status": validation_by_status,
         "publication_by_status": publication_by_status,
     }
+
+
+def _canonical_candidates_from_node(advertisement: dict) -> list[dict]:
+    candidates: list[dict] = []
+    runtimes_by_id: dict[str, dict] = {}
+    runtimes_by_capability: dict[str, list[dict]] = {}
+    for runtime in advertisement.get("canonical_capability_runtimes", []):
+        runtimes_by_id[runtime["runtime_id"]] = runtime
+        runtimes_by_capability.setdefault(runtime["capability_id"], []).append(runtime)
+    compatibility_by_capability: dict[str, list[dict]] = {}
+    compatibility_by_runtime_id: dict[str, list[dict]] = {}
+    for item in advertisement.get("canonical_compute_compatibility", []):
+        compatibility_by_capability.setdefault(item["canonical_capability_id"], []).append(item)
+        compatibility_by_runtime_id.setdefault(item["canonical_runtime_id"], []).append(item)
+
+    for item in advertisement.get("canonical_advertisements", []):
+        service_id = _service_id_for_resource_type(item.get("resource_type"))
+        capability_id = item.get("capability_id")
+        runtime_rows = (
+            runtimes_by_capability.get(capability_id, [])
+            if capability_id is not None
+            else []
+        )
+        emitted = False
+        for runtime in runtime_rows:
+            compatibility_rows = compatibility_by_runtime_id.get(runtime["runtime_id"]) or [None]
+            for compatibility in compatibility_rows:
+                candidates.append(
+                    _canonical_candidate_row(
+                        advertisement=advertisement,
+                        candidate_advertisement=item,
+                        service_id=service_id,
+                        capability_id=capability_id,
+                        runtime=runtime,
+                        compatibility=compatibility,
+                    )
+                )
+            emitted = True
+        if emitted:
+            continue
+
+        compatibility_rows = (
+            compatibility_by_capability.get(capability_id, [])
+            if capability_id is not None
+            else []
+        )
+        for compatibility in compatibility_rows:
+            candidates.append(
+                _canonical_candidate_row(
+                    advertisement=advertisement,
+                    candidate_advertisement=item,
+                    service_id=service_id,
+                    capability_id=capability_id,
+                    runtime=runtimes_by_id.get(compatibility.get("canonical_runtime_id"), {}),
+                    compatibility=compatibility,
+                )
+            )
+            emitted = True
+
+        if not emitted:
+            candidates.append(
+                _canonical_candidate_row(
+                    advertisement=advertisement,
+                    candidate_advertisement=item,
+                    service_id=service_id,
+                    capability_id=capability_id,
+                    runtime={},
+                    compatibility=None,
+                )
+            )
+    return candidates
+
+
+def _canonical_candidate_row(
+    *,
+    advertisement: dict,
+    candidate_advertisement: dict,
+    service_id: str,
+    capability_id: str | None,
+    runtime: dict,
+    compatibility: dict | None,
+) -> dict:
+    runtime_id = runtime.get("runtime_id")
+    if runtime_id is None and compatibility is not None:
+        runtime_id = compatibility.get("canonical_runtime_id")
+    return {
+        "node_id": advertisement["node_id"],
+        "operator_id": advertisement["operator_id"],
+        "base_url": advertisement["base_url"],
+        "status": advertisement["status"],
+        "service_id": service_id,
+        "capability_id": capability_id,
+        "runtime_id": runtime_id,
+        "advertisement_id": candidate_advertisement["advertisement_id"],
+        "resource_type": candidate_advertisement["resource_type"],
+        "visibility": candidate_advertisement["visibility"],
+        "owner_wallet": candidate_advertisement.get("owner_wallet"),
+        "pricing": advertisement["pricing"],
+        "rating": advertisement["rating"],
+        "can_host_custom_model": advertisement["can_host_custom_model"],
+        "published_endpoint_count": len(advertisement.get("published_endpoints", [])),
+        "trust_summary": _aggregate_market_trust(
+            advertisement.get("published_endpoints", [])
+        ),
+        "legacy_bundle_id": (
+            compatibility.get("legacy_bundle_id") if compatibility is not None else None
+        ),
+        "legacy_plugin_id": (
+            compatibility.get("legacy_plugin_id") if compatibility is not None else None
+        ),
+        "legacy_provider_type": (
+            compatibility.get("legacy_provider_type")
+            if compatibility is not None
+            else None
+        ),
+    }
+
+
+def _service_id_for_resource_type(resource_type: str | None) -> str:
+    if resource_type == "registry_service":
+        return "registry"
+    if resource_type == "validation_service":
+        return "validation"
+    if resource_type == "consensus_service":
+        return "consensus"
+    return "compute"
+
+
+def _canonical_market_summary(*, nodes: list[dict], canonical_candidates: list[dict]) -> dict:
+    enabled_service_kinds = sorted(
+        {
+            service["kind"]
+            for node in nodes
+            for service in node.get("canonical_services", [])
+            if service.get("enabled")
+        }
+    )
+    capability_ids = sorted(
+        {
+            capability_id
+            for capability_id in (
+                *[
+                    runtime.get("capability_id")
+                    for node in nodes
+                    for runtime in node.get("canonical_capability_runtimes", [])
+                ],
+                *[
+                    candidate.get("capability_id")
+                    for candidate in canonical_candidates
+                ],
+            )
+            if capability_id
+        }
+    )
+    runtime_ids = {
+        runtime.get("runtime_id")
+        for node in nodes
+        for runtime in node.get("canonical_capability_runtimes", [])
+        if runtime.get("runtime_id")
+    }
+    runtime_ids.update(
+        {
+            candidate.get("runtime_id")
+            for candidate in canonical_candidates
+            if candidate.get("runtime_id")
+        }
+    )
+    endpoint_advertisement_count = sum(
+        1
+        for node in nodes
+        for item in node.get("canonical_advertisements", [])
+        if item.get("resource_type") == "endpoint"
+    )
+    if endpoint_advertisement_count == 0:
+        endpoint_advertisement_count = sum(
+            1
+            for candidate in canonical_candidates
+            if candidate.get("resource_type") == "endpoint"
+        )
+    return {
+        "service_kinds": enabled_service_kinds,
+        "capability_ids": capability_ids,
+        "runtime_count": len(runtime_ids),
+        "endpoint_advertisement_count": endpoint_advertisement_count,
+    }
+
+
+def _canonical_market_candidate_sort_key(candidate: dict) -> tuple:
+    return (
+        {"ready": 0, "stale": 1, "offline": 2}[candidate["status"]],
+        -candidate["rating"]["score"],
+        candidate["pricing"]["input"],
+        candidate["pricing"]["output"],
+        candidate["node_id"],
+        candidate["advertisement_id"],
+        candidate.get("runtime_id") or "",
+        candidate.get("legacy_bundle_id") or "",
+    )
