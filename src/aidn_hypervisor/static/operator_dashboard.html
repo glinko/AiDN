@@ -6846,6 +6846,7 @@
       if (!draft) {
         return;
       }
+      const proxyGuidedFlow = activeProxyGuidedFlow(draft);
       state.bootstrapPending = "request-validation";
       state.bootstrapMessage = null;
       render();
@@ -6862,6 +6863,13 @@
         );
         if (!requested) {
           throw new Error("Select an endpoint before requesting validation.");
+        }
+        if (proxyGuidedFlow?.phase === "validate_optional") {
+          clearGuidedProxyFlow();
+          state.bootstrapMessage = {
+            kind: "good",
+            text: `Validation requested for ${draft.endpoint_id}. Guided proxy flow completed; endpoint controls remain available for further edits.`,
+          };
         }
       } catch (error) {
         state.bootstrapMessage = { kind: "bad", text: String(error) };
@@ -7975,16 +7983,6 @@
               bindInteractiveElements();
               return;
             case "request-validation":
-              if (activeProxyGuidedFlow(draft)?.phase === "validate_optional") {
-                state.bootstrapMessage = {
-                  kind: "good",
-                  text: `Validation remains optional for ${draft.endpoint_id}. Open the validation controls when you are ready to request it.`,
-                };
-                clearGuidedProxyFlow();
-                render();
-                bindInteractiveElements();
-                return;
-              }
               void requestBootstrapEndpointValidation();
               return;
             case "finish-guided-flow":
