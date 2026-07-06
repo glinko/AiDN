@@ -2109,7 +2109,6 @@
     }
 
     function guidedProxyPrimaryAction(phase) {
-      // phase: "validate_optional" is reserved for a later guided-flow task.
       switch (phase) {
         case "bootstrap":
           return { action: "create-endpoint", label: "Create Endpoint" };
@@ -2122,6 +2121,50 @@
         default:
           return null;
       }
+    }
+
+    function renderGuidedProxyPanel({
+      proxyGuidedFlow,
+      proxyGuidedPhase,
+      proxyGuidedSteps,
+      proxyGuidedPrimaryAction,
+      suggestedCopy,
+    }) {
+      if (!proxyGuidedFlow) {
+        return "";
+      }
+      return `
+        <div class="panel-heading" style="margin-top: 16px;">Guided Route Flow</div>
+        <div class="list" style="margin-top: 12px;">
+          ${proxyGuidedSteps
+            .map(
+              (step) => `
+                <div class="list-row">
+                  <div>
+                    <strong>${step.title}</strong>
+                    <span>${step.detail}</span>
+                  </div>
+                  <span class="chip">${guidedProxyStepState(proxyGuidedPhase, step.key)}</span>
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+        <div class="notice" style="margin-top: 12px;">
+          <strong>Suggested Guided Step</strong>
+          <span style="display: block; margin-top: 4px;">${suggestedCopy}</span>
+        </div>
+        <div class="wallet-inline-actions" style="margin-top: 12px;">
+          <button class="primary-button action-focus" type="button" data-endpoint-action="${proxyGuidedPrimaryAction.action}">
+            ${proxyGuidedPrimaryAction.label}
+          </button>
+          ${
+            proxyGuidedPhase === "validate_optional"
+              ? `<button class="secondary-button" type="button" data-endpoint-action="finish-guided-flow">Finish Guided Flow</button>`
+              : ""
+          }
+        </div>
+      `;
     }
 
     function endpointNextSteps(item) {
@@ -3785,6 +3828,7 @@
         activeProxyGuidedFlow(selected) || (!selected?.endpoint_id ? guidedFallbackFlow : null);
       const proxyGuidedPhase = guidedProxyPhase(proxyGuidedFlow, selected);
       const proxyGuidedPrimaryAction = guidedProxyPrimaryAction(proxyGuidedPhase);
+      const proxyGuidedStepList = guidedProxySteps(proxyGuidedPhase);
 
       return `
         <div class="workspace-header">
@@ -3934,40 +3978,13 @@
                         <span style="display: block; margin-top: 4px;">${endpointRecommendedActionLabel(endpointRecommendedAction(selected))}. The highlighted control matches the current step above.</span>
                       </div>
                       ${
-                        proxyGuidedFlow
-                          ? `
-                            <div class="panel-heading" style="margin-top: 16px;">Guided Route Flow</div>
-                            <div class="list" style="margin-top: 12px;">
-                              ${guidedProxySteps(proxyGuidedPhase)
-                                .map(
-                                  (step) => `
-                                    <div class="list-row">
-                                      <div>
-                                        <strong>${step.title}</strong>
-                                        <span>${step.detail}</span>
-                                      </div>
-                                      <span class="chip">${guidedProxyStepState(proxyGuidedPhase, step.key)}</span>
-                                    </div>
-                                  `
-                                )
-                                .join("")}
-                            </div>
-                            <div class="notice" style="margin-top: 12px;">
-                              <strong>Suggested Guided Step</strong>
-                              <span style="display: block; margin-top: 4px;">${proxyGuidedPrimaryAction?.label || "No guided action"} keeps the route handoff moving while the full endpoint controls remain available below.</span>
-                            </div>
-                            <div class="wallet-inline-actions" style="margin-top: 12px;">
-                              <button class="primary-button action-focus" type="button" data-endpoint-action="${guidedProxyPrimaryAction(guidedProxyPhase(proxyGuidedFlow, selected)).action}">
-                                ${guidedProxyPrimaryAction(guidedProxyPhase(proxyGuidedFlow, selected)).label}
-                              </button>
-                              ${
-                                guidedProxyPhase(proxyGuidedFlow, selected) === "validate_optional"
-                                  ? `<button class="secondary-button" type="button" data-endpoint-action="finish-guided-flow">Finish Guided Flow</button>`
-                                  : ""
-                              }
-                            </div>
-                          `
-                          : ""
+                        renderGuidedProxyPanel({
+                          proxyGuidedFlow,
+                          proxyGuidedPhase,
+                          proxyGuidedSteps: proxyGuidedStepList,
+                          proxyGuidedPrimaryAction,
+                          suggestedCopy: `${proxyGuidedPrimaryAction?.label || "No guided action"} keeps the route handoff moving while the full endpoint controls remain available below.`,
+                        })
                       }
                       <div class="panel-heading" style="margin-top: 16px;">Endpoint Policy Editor</div>
                       <div class="wallet-form-grid" style="margin-top: 12px;">
@@ -4057,40 +4074,13 @@
                         <span style="display: block; margin-top: 4px;">${endpointRecommendedActionLabel(endpointRecommendedAction())}. The highlighted control matches the current step above.</span>
                       </div>
                       ${
-                        proxyGuidedFlow
-                          ? `
-                            <div class="panel-heading" style="margin-top: 16px;">Guided Route Flow</div>
-                            <div class="list" style="margin-top: 12px;">
-                              ${guidedProxySteps(proxyGuidedPhase)
-                                .map(
-                                  (step) => `
-                                    <div class="list-row">
-                                      <div>
-                                        <strong>${step.title}</strong>
-                                        <span>${step.detail}</span>
-                                      </div>
-                                      <span class="chip">${guidedProxyStepState(proxyGuidedPhase, step.key)}</span>
-                                    </div>
-                                  `
-                                )
-                                .join("")}
-                            </div>
-                            <div class="notice" style="margin-top: 12px;">
-                              <strong>Suggested Guided Step</strong>
-                              <span style="display: block; margin-top: 4px;">${proxyGuidedPrimaryAction?.label || "No guided action"} keeps the route handoff available even before the endpoint is selected.</span>
-                            </div>
-                            <div class="wallet-inline-actions" style="margin-top: 12px;">
-                              <button class="primary-button action-focus" type="button" data-endpoint-action="${guidedProxyPrimaryAction(guidedProxyPhase(proxyGuidedFlow, selected)).action}">
-                                ${guidedProxyPrimaryAction(guidedProxyPhase(proxyGuidedFlow, selected)).label}
-                              </button>
-                              ${
-                                guidedProxyPhase(proxyGuidedFlow, selected) === "validate_optional"
-                                  ? `<button class="secondary-button" type="button" data-endpoint-action="finish-guided-flow">Finish Guided Flow</button>`
-                                  : ""
-                              }
-                            </div>
-                          `
-                          : ""
+                        renderGuidedProxyPanel({
+                          proxyGuidedFlow,
+                          proxyGuidedPhase,
+                          proxyGuidedSteps: proxyGuidedStepList,
+                          proxyGuidedPrimaryAction,
+                          suggestedCopy: `${proxyGuidedPrimaryAction?.label || "No guided action"} keeps the route handoff available even before the endpoint is selected.`,
+                        })
                       }
                       <div class="panel-heading">Endpoint Policy Editor</div>
                       <div class="panel-heading" style="margin-top: 16px;">Endpoint Runtime Editor</div>
@@ -6970,15 +6960,11 @@
       state.bootstrapMessage = null;
       render();
       try {
-        let proxySourceLabel =
-          draft.proxy_target?.source_endpoint_id || proxyGuidedFlow.remoteEndpointId;
         if (proxyGuidedFlow.phase === "attach") {
-          const proxyResult = await postJson(
+          await postJson(
             endpointProxyTargetPath(draft.endpoint_id),
             { remote_endpoint_id: proxyGuidedFlow.remoteEndpointId }
           );
-          proxySourceLabel =
-            proxyResult.data.endpoint.proxy_target.source_endpoint_id || proxySourceLabel;
         }
 
         await patchJson(`${endpointApiBase}/${draft.endpoint_id}`, {
