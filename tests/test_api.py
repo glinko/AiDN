@@ -1916,6 +1916,16 @@ def test_operator_dashboard_shell_route_exposes_market_offer_configuration_hando
     assert "remoteSelectionKeyForDiscovered" in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_market_shortcut_for_attached_proxy_staging() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "prepareEndpointProxyHandoff" in response.text
+    assert "discovered?.already_attached" in response.text
+
+
 def test_operator_dashboard_shell_route_prefers_payload_recommendations_for_market_and_remote() -> None:
     client = TestClient(build_app(service=_service()))
 
@@ -1964,6 +1974,16 @@ def test_operator_dashboard_shell_route_exposes_remote_proxy_handoff_controls() 
     assert 'button.dataset.remoteAction === "stage-proxy"' in response.text
     assert 'state.screen = "endpoints"' in response.text
     assert 'state.endpointProxyDraft = {' in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_attach_to_endpoint_proxy_handoff() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "prepareEndpointProxyHandoff(result.data.remote_endpoint" in response.text
+    assert "Proxy draft preserved for the next local endpoint." in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_wallet_drawer_controls() -> None:

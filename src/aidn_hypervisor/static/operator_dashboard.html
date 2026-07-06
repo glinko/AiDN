@@ -6346,6 +6346,7 @@
         };
         state.selectedRemoteEndpointKey = `attached:${result.data.remote_endpoint.remote_endpoint_id}`;
         await refreshRemotePayload();
+        prepareEndpointProxyHandoff(result.data.remote_endpoint);
       } catch (error) {
         state.remoteAttachPending = null;
         state.remoteMessage = { kind: "bad", text: String(error) };
@@ -6353,6 +6354,58 @@
       } finally {
         state.remoteAttachPending = null;
       }
+    }
+
+    function prepareEndpointProxyHandoff(remote) {
+      const remoteEndpointId = remote?.remote_endpoint_id || "";
+      const remoteLabel =
+        remote?.alias ||
+        remote?.source_endpoint_id ||
+        remote?.endpoint_id ||
+        remoteEndpointId ||
+        "remote endpoint";
+      if (!remoteEndpointId) {
+        state.bootstrapMessage = {
+          kind: "bad",
+          text: "Attach a preferred remote endpoint before staging it as a proxy target.",
+        };
+        render();
+        bindInteractiveElements();
+        return false;
+      }
+      const endpoint = selectedEndpointDraft();
+      state.screen = "endpoints";
+      state.endpointProxyDraft = {
+        endpointId: endpoint?.endpoint_id || null,
+        remoteEndpointId,
+      };
+      if (!endpoint?.endpoint_id) {
+        state.proxyGuidedFlow = {
+          endpointId: null,
+          remoteEndpointId,
+          phase: "attach",
+        };
+        state.bootstrapMessage = {
+          kind: "good",
+          text: `Remote endpoint ${remoteLabel} is attached. Proxy draft preserved for the next local endpoint. Create a local endpoint to continue.`,
+        };
+        render();
+        bindInteractiveElements();
+        return false;
+      }
+      state.selectedEndpointDraftId = endpoint.endpoint_id;
+      state.proxyGuidedFlow = {
+        endpointId: endpoint.endpoint_id,
+        remoteEndpointId,
+        phase: "attach",
+      };
+      state.bootstrapMessage = {
+        kind: "good",
+        text: `Proxy draft staged for ${endpoint.endpoint_id} using ${remoteLabel}. Review the endpoint policy, then attach the proxy route.`,
+      };
+      render();
+      bindInteractiveElements();
+      return true;
     }
 
     function stageSelectedRemoteProxy() {
@@ -6366,33 +6419,7 @@
         bindInteractiveElements();
         return;
       }
-      const endpoint = selectedEndpointDraft();
-      state.screen = "endpoints";
-      if (!endpoint?.endpoint_id) {
-        state.bootstrapMessage = {
-          kind: "bad",
-          text: `Remote endpoint ${remote.alias || remote.source_endpoint_id} is attached. Create a local endpoint before staging a proxy route.`,
-        };
-        render();
-        bindInteractiveElements();
-        return;
-      }
-      state.selectedEndpointDraftId = endpoint.endpoint_id;
-      state.endpointProxyDraft = {
-        endpointId: endpoint.endpoint_id,
-        remoteEndpointId: remote.remote_endpoint_id,
-      };
-      state.proxyGuidedFlow = {
-        endpointId: endpoint.endpoint_id,
-        remoteEndpointId: remote.remote_endpoint_id,
-        phase: "attach",
-      };
-      state.bootstrapMessage = {
-        kind: "good",
-        text: `Proxy draft staged for ${endpoint.endpoint_id} using ${remote.alias || remote.source_endpoint_id}. Review the endpoint policy, then attach the proxy route.`,
-      };
-      render();
-      bindInteractiveElements();
+      prepareEndpointProxyHandoff(remote);
     }
 
     async function createBootstrapWallet() {
@@ -6470,10 +6497,23 @@
           publication,
         });
         state.selectedEndpointDraftId = created.endpoint.endpoint_id;
+        state.endpointProxyDraft = {
+          endpointId: created.endpoint.endpoint_id,
+          remoteEndpointId: state.endpointProxyDraft.remoteEndpointId || "",
+        };
+        if (state.endpointProxyDraft.remoteEndpointId) {
+          state.proxyGuidedFlow = {
+            endpointId: created.endpoint.endpoint_id,
+            remoteEndpointId: state.endpointProxyDraft.remoteEndpointId,
+            phase: "attach",
+          };
+        }
         state.screen = "endpoints";
         state.bootstrapMessage = {
           kind: "good",
-          text: `Endpoint ${created.endpoint.endpoint_id} created for ${created.endpoint.bundle_id}.`,
+          text: state.endpointProxyDraft.remoteEndpointId
+            ? `Endpoint ${created.endpoint.endpoint_id} created for ${created.endpoint.bundle_id}. Proxy draft preserved for the next local endpoint. Attach the staged remote route next.`
+            : `Endpoint ${created.endpoint.endpoint_id} created for ${created.endpoint.bundle_id}.`,
         };
         await refreshBootstrapPayloads();
       } catch (error) {
@@ -7571,6 +7611,18 @@
           if (button.dataset.marketAction === "configure-offer") {
             const candidate = selectedMarketCandidate();
             const discovered = discoveredRemoteForMarketCandidate(candidate);
+            const attached = discovered?.already_attached
+              ? attachedRemoteCatalogue().find(
+                  (item) =>
+                    item.source_node_id === discovered.node_id &&
+                    item.source_endpoint_id === discovered.endpoint_id
+                ) || null
+              : null;
+            if (attached) {
+              state.selectedRemoteEndpointKey = `attached:${attached.remote_endpoint_id}`;
+              prepareEndpointProxyHandoff(attached);
+              return;
+            }
             state.screen = "remote";
             state.remoteMessage = discovered
               ? {
