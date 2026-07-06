@@ -3109,7 +3109,7 @@
           <div>
             <div class="panel-heading">Operator Overview</div>
             <h1 class="workspace-title">Home</h1>
-            <p class="workspace-copy">Publish, compare, and attach flows stay in one terminal so the operator can triage capacity and market options without leaving the main surface.</p>
+            <p class="workspace-copy">Providers prepare execution supply. Bundles prepare endpoint candidates. Publication, proof, privacy, proxy routing, and validation converge in Endpoints.</p>
           </div>
           <div class="toolbar">
             <button type="button" class="${state.policyStrictAccounting ? "active" : ""}" data-policy-toggle="strict">Strict Accounting</button>
@@ -3135,6 +3135,15 @@
               <div class="summary-copy">${formatCount(queueSummary.queued)} queued, ${formatCount(queueSummary.active)} active, ${formatCount(queueSummary.completed)} completed tasks on this node.</div>
             </section>
           </div>
+          <section class="subpanel">
+            <div class="panel-heading">Endpoint Pipeline</div>
+            <div class="notice" style="margin-top: 14px;">
+              <strong>Endpoints are the primary operator workspace.</strong>
+              <span style="display: block; margin-top: 4px;">
+                Providers prepare execution supply. Bundles prepare endpoint candidates.
+              </span>
+            </div>
+          </section>
           <div class="home-columns">
             <section class="subpanel">
               <div class="panel-heading">Execution Market</div>
@@ -3406,7 +3415,7 @@
           <div>
             <div class="panel-heading">Execution Backends</div>
             <h1 class="workspace-title">Providers</h1>
-            <p class="workspace-copy">Provider plugins stay separate from endpoint publication so the operator can inspect raw execution capacity, bundle density, and install pressure before exposing anything to the network.</p>
+            <p class="workspace-copy">This screen prepares execution supply for endpoint creation. Once a provider yields usable local bundles, the dominant handoff is into Endpoints.</p>
           </div>
           <div class="toolbar">
             <button type="button" class="active">Installed Plugins</button>
@@ -3483,7 +3492,7 @@
           <div>
             <div class="panel-heading">Local Inventory</div>
             <h1 class="workspace-title">Bundles</h1>
-            <p class="workspace-copy">This view isolates local models and runtimes from the publish layer so the operator can spot the best first-endpoint candidate before worrying about visibility, pricing, or validation.</p>
+            <p class="workspace-copy">This screen prepares endpoint candidates from local inventory. Once a bundle has an endpoint relationship, the operator should continue lifecycle decisions in Endpoints.</p>
           </div>
           <div class="toolbar">
             <button type="button" class="active">Local Bundles</button>
@@ -3653,7 +3662,7 @@
           <div>
             <div class="panel-heading">Endpoint Control Plane</div>
             <h1 class="workspace-title">Endpoints</h1>
-            <p class="workspace-copy">Publishing, visibility, and validation stay separate so the operator can expose services without surrendering control over trust posture.</p>
+            <p class="workspace-copy">Endpoints is the canonical operator control plane for privacy, signed publication, proof sync, proxy routing, sessions, and optional validation.</p>
           </div>
           <div class="toolbar">
             <button type="button" class="${policy.validation_optional ? "active" : ""}">Validation Optional</button>

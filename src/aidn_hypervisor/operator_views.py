@@ -415,6 +415,28 @@ def _build_operator_home_bootstrap_payload(
     }
 
 
+def _bundle_relationships(endpoint_items: list[dict]) -> dict[str, dict]:
+    relationships: dict[str, dict] = {}
+    for item in endpoint_items:
+        bundle_id = item.get("bundle_id")
+        if not bundle_id:
+            continue
+        state = (
+            "published_endpoint_exists"
+            if item.get("publication_status") == "published"
+            else "draft_endpoint_exists"
+        )
+        existing = relationships.get(bundle_id)
+        if existing is not None and existing.get("state") == "published_endpoint_exists":
+            continue
+        relationships[bundle_id] = {
+            "state": state,
+            "endpoint_id": item.get("endpoint_id"),
+            "publication_sync_status": item.get("publication_sync_status"),
+        }
+    return relationships
+
+
 def build_operator_home_payload(
     *,
     service,
@@ -503,10 +525,25 @@ def build_operator_home_payload(
     }
 
 
-def build_operator_providers_payload(*, service) -> dict:
+def build_operator_providers_payload(
+    *,
+    service,
+    endpoint_service=None,
+    endpoint_publication_service=None,
+    validation_service=None,
+) -> dict:
     fleet = service.operator_dashboard_fleet()
     bundles = fleet["bundles"]
     installs = fleet["installs"]
+    endpoint_items = []
+    if endpoint_service is not None:
+        endpoint_items = build_operator_endpoints_payload(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            validation_service=validation_service,
+        )["items"]
+    relationships = _bundle_relationships(endpoint_items)
     items = []
     for plugin in service.plugins.list():
         description = plugin.describe()
@@ -539,6 +576,11 @@ def build_operator_providers_payload(*, service) -> dict:
     return {
         "owner_wallet": fleet["owner_wallet"],
         "node_identity": fleet["node_identity"],
+        "recommended_action": {
+            "action": "bundles" if bundles else "providers",
+            "label": "Open Bundles" if bundles else "Attach Provider",
+            "workspace": "bundles" if bundles else "providers",
+        },
         "onboarding": build_onboarding_payload(
             wallet_ready=fleet["owner_wallet"]["configured"],
             provider_count=len(items),
@@ -553,30 +595,57 @@ def build_operator_providers_payload(*, service) -> dict:
             "total": len(items),
             "bundles": len(bundles),
             "installs": len(installs),
+            "endpoint_ready_bundles": sum(
+                1 for bundle in bundles if bundle["bundle_id"] not in relationships
+            ),
         },
         "items": items,
     }
 
 
-def build_operator_bundles_payload(*, service) -> dict:
+def build_operator_bundles_payload(
+    *,
+    service,
+    endpoint_service=None,
+    endpoint_publication_service=None,
+    validation_service=None,
+) -> dict:
     fleet = service.operator_dashboard_fleet()
     bundles = fleet["bundles"]
     candidate = service.operator_dashboard_home()["bootstrap"].get(
         "first_endpoint_candidate"
     )
     candidate_id = candidate.get("bundle_id") if candidate is not None else None
+    endpoint_items = []
+    if endpoint_service is not None:
+        endpoint_items = build_operator_endpoints_payload(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            validation_service=validation_service,
+        )["items"]
+    relationships = _bundle_relationships(endpoint_items)
     items = []
     for bundle in bundles:
         is_first_endpoint_candidate = bundle["bundle_id"] == candidate_id
+        relationship = relationships.get(
+            bundle["bundle_id"],
+            {
+                "state": "no_endpoint",
+                "endpoint_id": None,
+                "publication_sync_status": None,
+            },
+        )
         items.append(
             {
                 **bundle,
                 "is_first_endpoint_candidate": is_first_endpoint_candidate,
+                "endpoint_relationship": relationship,
                 "endpoint_action": {
                     "recommended": (
-                        "create_endpoint"
-                        if is_first_endpoint_candidate
-                        else "inspect_bundle"
+                        "open_endpoint"
+                        if relationship["endpoint_id"] is not None
+                        else "create_endpoint"
                     )
                 },
             }
@@ -601,6 +670,11 @@ def build_operator_bundles_payload(*, service) -> dict:
             "first_endpoint_candidates": sum(
                 1 for item in items if item["is_first_endpoint_candidate"]
             ),
+        },
+        "recommended_action": {
+            "action": "endpoints" if endpoint_items else "bundles",
+            "label": "Open Endpoints" if endpoint_items else "Create Endpoint",
+            "workspace": "endpoints" if endpoint_items else "bundles",
         },
         "items": items,
     }
@@ -661,6 +735,21 @@ def build_operator_endpoints_payload(
     endpoint_publication_service=None,
     validation_service=None,
 ) -> dict:
+    def _with_endpoint_workspace_defaults(payload: dict) -> dict:
+        summary = payload.get("summary", {})
+        payload["workspace_role"] = "primary_control_plane"
+        payload["recommended_action"] = {
+            "action": "select_endpoint" if summary.get("total", 0) else "create_endpoint",
+            "label": "Open Endpoint Controls" if summary.get("total", 0) else "Create Endpoint",
+            "workspace": "endpoints",
+        }
+        payload["policy"] = {
+            "publish_requires_validation": False,
+            "validation_optional": True,
+            "execution_privacy": "endpoint implementation remains private",
+        }
+        return payload
+
     if endpoint_service is None:
         payload = service.operator_dashboard_endpoints()
         payload["onboarding"] = build_onboarding_payload(
@@ -677,7 +766,7 @@ def build_operator_endpoints_payload(
             ),
             persisted=service.operator_onboarding_state(),
         )
-        return payload
+        return _with_endpoint_workspace_defaults(payload)
 
     manifests = list(endpoint_service.list_endpoints())
     if not manifests:
@@ -696,7 +785,7 @@ def build_operator_endpoints_payload(
             ),
             persisted=service.operator_onboarding_state(),
         )
-        return payload
+        return _with_endpoint_workspace_defaults(payload)
 
     items = []
     for manifest in manifests:
@@ -827,7 +916,7 @@ def build_operator_endpoints_payload(
         "shared": sum(1 for item in items if item["visibility"] == "shared"),
         "public": sum(1 for item in items if item["visibility"] == "public"),
     }
-    return {
+    return _with_endpoint_workspace_defaults({
         "owner_wallet": service.owner_wallet_state(),
         "node_identity": service.node_identity(),
         "onboarding": build_onboarding_payload(
@@ -845,10 +934,5 @@ def build_operator_endpoints_payload(
             persisted=service.operator_onboarding_state(),
         ),
         "summary": summary,
-        "policy": {
-            "publish_requires_validation": False,
-            "validation_optional": True,
-            "execution_privacy": "endpoint implementation remains private",
-        },
         "items": items,
-    }
+    })

@@ -881,11 +881,21 @@ def build_api_router(
 
     @router.get("/operators/dashboard/providers")
     async def operator_dashboard_providers() -> dict:
-        return build_operator_providers_payload(service=service)
+        return build_operator_providers_payload(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            validation_service=validation_service,
+        )
 
     @router.get("/operators/dashboard/bundles")
     async def operator_dashboard_bundles() -> dict:
-        return build_operator_bundles_payload(service=service)
+        return build_operator_bundles_payload(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            validation_service=validation_service,
+        )
 
     @router.get("/operators/dashboard/installs")
     async def operator_dashboard_installs() -> dict:

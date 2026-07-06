@@ -2059,6 +2059,18 @@ def test_operator_dashboard_shell_route_exposes_bundle_endpoint_creation_control
     assert "action-focus" in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_endpoint_pipeline_copy() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Endpoint Pipeline" in response.text
+    assert "Endpoints are the primary operator workspace." in response.text
+    assert "Providers prepare execution supply. Bundles prepare endpoint candidates." in response.text
+    assert 'data-screen-jump="endpoints"' in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_controls() -> None:
     client = TestClient(build_app(service=_service()))
 
@@ -2599,6 +2611,7 @@ def test_operator_dashboard_providers_route_returns_workspace_payload(
     monkeypatch,
 ) -> None:
     hypervisor = _service()
+    endpoint_service = EndpointService(EndpointStore())
     expected_payload = {
         "summary": {"total": 1},
         "items": [{"plugin_id": "fake-managed"}],
@@ -2613,19 +2626,23 @@ def test_operator_dashboard_providers_route_returns_workspace_payload(
         "aidn_hypervisor.api.build_operator_providers_payload",
         fake_build_operator_providers_payload,
     )
-    client = TestClient(build_app(service=hypervisor))
+    client = TestClient(build_app(service=hypervisor, endpoint_service=endpoint_service))
 
     response = client.get("/operators/dashboard/providers")
 
     assert response.status_code == 200
     assert response.json() == expected_payload
     assert captured["view_args"]["service"] is hypervisor
+    assert captured["view_args"]["endpoint_service"] is endpoint_service
+    assert "endpoint_publication_service" in captured["view_args"]
+    assert "validation_service" in captured["view_args"]
 
 
 def test_operator_dashboard_bundles_route_returns_workspace_payload(
     monkeypatch,
 ) -> None:
     hypervisor = _service()
+    endpoint_service = EndpointService(EndpointStore())
     expected_payload = {
         "summary": {"total": 2},
         "items": [{"bundle_id": "whisper-a"}],
@@ -2640,13 +2657,16 @@ def test_operator_dashboard_bundles_route_returns_workspace_payload(
         "aidn_hypervisor.api.build_operator_bundles_payload",
         fake_build_operator_bundles_payload,
     )
-    client = TestClient(build_app(service=hypervisor))
+    client = TestClient(build_app(service=hypervisor, endpoint_service=endpoint_service))
 
     response = client.get("/operators/dashboard/bundles")
 
     assert response.status_code == 200
     assert response.json() == expected_payload
     assert captured["view_args"]["service"] is hypervisor
+    assert captured["view_args"]["endpoint_service"] is endpoint_service
+    assert "endpoint_publication_service" in captured["view_args"]
+    assert "validation_service" in captured["view_args"]
 
 
 def test_operator_dashboard_installs_route_returns_actionable_install_state(

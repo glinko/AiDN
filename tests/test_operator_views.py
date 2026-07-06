@@ -581,6 +581,22 @@ def test_endpoints_payload_includes_publication_sync_and_validation_summary(
     )
 
 
+def test_endpoints_payload_marks_workspace_as_primary_control_plane(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+) -> None:
+    payload = build_operator_endpoints_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=None,
+        validation_service=None,
+    )
+
+    assert payload["workspace_role"] == "primary_control_plane"
+    assert payload["recommended_action"]["workspace"] == "endpoints"
+    assert payload["policy"]["validation_optional"] is True
+
+
 def test_providers_payload_summarizes_plugins_and_bundle_state(
     service: HypervisorService,
 ) -> None:
@@ -610,6 +626,24 @@ def test_providers_payload_matches_install_aliases_from_bundle_provider_type(
     assert payload["items"][0]["install_count"] == 1
 
 
+def test_providers_payload_prefers_endpoint_handoff_once_local_supply_is_usable(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+
+    payload = build_operator_providers_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=None,
+        validation_service=None,
+    )
+
+    assert payload["summary"]["endpoint_ready_bundles"] == 2
+    assert payload["recommended_action"]["action"] == "bundles"
+    assert payload["recommended_action"]["workspace"] == "bundles"
+
+
 def test_bundles_payload_marks_first_endpoint_candidate(
     service: HypervisorService,
 ) -> None:
@@ -634,6 +668,38 @@ def test_bundles_payload_marks_current_onboarding_workspace(
     assert payload["onboarding"]["workspace"] == "bundles"
     assert payload["onboarding"]["current_step"] == "create_endpoint"
     assert "steps" in payload["onboarding"]
+
+
+def test_bundles_payload_exposes_endpoint_relationship_states(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Operator STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+
+    payload = build_operator_bundles_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=None,
+        validation_service=None,
+    )
+
+    whisper = next(item for item in payload["items"] if item["bundle_id"] == "whisper-a")
+    text = next(item for item in payload["items"] if item["bundle_id"] == "text-a")
+    assert whisper["endpoint_relationship"]["state"] == "draft_endpoint_exists"
+    assert whisper["endpoint_relationship"]["endpoint_id"] == created.endpoint.endpoint_id
+    assert whisper["endpoint_action"]["recommended"] == "open_endpoint"
+    assert text["endpoint_relationship"]["state"] == "no_endpoint"
+    assert text["endpoint_action"]["recommended"] == "create_endpoint"
 
 
 def test_installs_payload_exposes_ready_to_register_completed_jobs(
