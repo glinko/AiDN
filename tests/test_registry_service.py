@@ -39,6 +39,10 @@ def _node(
     node_id: str,
     *,
     bundles: list[dict] | None = None,
+    canonical_services: list[dict] | None = None,
+    canonical_capability_runtimes: list[dict] | None = None,
+    canonical_compute_compatibility: list[dict] | None = None,
+    canonical_advertisements: list[dict] | None = None,
     rating_score: float = 0.91,
     input_price: int = 12,
     output_price: int = 18,
@@ -69,7 +73,17 @@ def _node(
             "tier": "A",
             "updated_at": "2026-06-19T18:25:00+00:00",
         },
-        bundles=bundles or [_bundle("phi4-local")],
+        bundles=[_bundle("phi4-local")] if bundles is None else bundles,
+        canonical_services=[] if canonical_services is None else canonical_services,
+        canonical_capability_runtimes=(
+            [] if canonical_capability_runtimes is None else canonical_capability_runtimes
+        ),
+        canonical_compute_compatibility=(
+            [] if canonical_compute_compatibility is None else canonical_compute_compatibility
+        ),
+        canonical_advertisements=(
+            [] if canonical_advertisements is None else canonical_advertisements
+        ),
     )
 
 
@@ -348,6 +362,472 @@ def test_registry_service_discovery_returns_flattened_candidates(monkeypatch) ->
             "supports_queue": True,
         }
     ]
+
+
+def test_registry_service_discovery_returns_canonical_candidates(monkeypatch) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-a",
+            bundles=[_bundle("phi4-local")],
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_services=[
+                {
+                    "service_id": "compute",
+                    "kind": "compute",
+                    "enabled": True,
+                    "derived_roles": ["compute_provider"],
+                    "responsibilities": ["endpoint_hosting"],
+                }
+            ],
+            canonical_capability_runtimes=[
+                {
+                    "runtime_id": "runtime-phi4-local",
+                    "capability_id": "llm.chat",
+                    "runtime_version": "legacy.bundle.v1",
+                    "protocol_version": "runtime.v1",
+                    "location_kind": "local_process",
+                    "health_status": "healthy",
+                    "supported_features": ["legacy_bundle_compatibility"],
+                }
+            ],
+            canonical_compute_compatibility=[
+                {
+                    "compatibility_id": "bundle:phi4-local",
+                    "legacy_bundle_id": "phi4-local",
+                    "legacy_plugin_id": "llama.cpp",
+                    "legacy_provider_type": "llama.cpp",
+                    "canonical_capability_id": "llm.chat",
+                    "canonical_runtime_id": "runtime-phi4-local",
+                }
+            ],
+            canonical_advertisements=[
+                {
+                    "advertisement_id": "adv-endpoint-1",
+                    "resource_type": "endpoint",
+                    "owner_wallet": "wallet-a",
+                    "hypervisor_id": "node-a",
+                    "capability_id": "llm.chat",
+                    "visibility": "public",
+                    "signature_scope": "configuration_publication",
+                }
+            ],
+        )
+    )
+
+    result = service.discover(RegistryDiscoveryQuery(capability_id="llm.chat"))
+
+    assert result["canonical_candidates"][0]["capability_id"] == "llm.chat"
+    assert result["canonical_candidates"][0]["legacy_bundle_id"] == "phi4-local"
+
+
+def test_registry_service_combined_legacy_and_canonical_filters_require_both(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-legacy-only",
+            bundles=[_bundle("phi4-local", workload_type="llm_text")],
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+        )
+    )
+    service.upsert_node(
+        _node(
+            "node-canonical-only",
+            bundles=[],
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_services=[
+                {
+                    "service_id": "compute",
+                    "kind": "compute",
+                    "enabled": True,
+                    "derived_roles": ["compute_provider"],
+                    "responsibilities": ["endpoint_hosting"],
+                }
+            ],
+            canonical_capability_runtimes=[
+                {
+                    "runtime_id": "runtime-canonical-only",
+                    "capability_id": "llm.chat",
+                    "runtime_version": "runtime.v2",
+                    "protocol_version": "runtime.v1",
+                    "location_kind": "local_process",
+                    "health_status": "healthy",
+                    "supported_features": ["native_canonical_runtime"],
+                }
+            ],
+            canonical_advertisements=[
+                {
+                    "advertisement_id": "adv-canonical-only",
+                    "resource_type": "endpoint",
+                    "owner_wallet": "wallet-canonical-only",
+                    "hypervisor_id": "node-canonical-only",
+                    "capability_id": "llm.chat",
+                    "visibility": "public",
+                    "signature_scope": "configuration_publication",
+                }
+            ],
+        )
+    )
+    service.upsert_node(
+        _node(
+            "node-both",
+            bundles=[_bundle("phi4-both", workload_type="llm_text")],
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_services=[
+                {
+                    "service_id": "compute",
+                    "kind": "compute",
+                    "enabled": True,
+                    "derived_roles": ["compute_provider"],
+                    "responsibilities": ["endpoint_hosting"],
+                }
+            ],
+            canonical_capability_runtimes=[
+                {
+                    "runtime_id": "runtime-both",
+                    "capability_id": "llm.chat",
+                    "runtime_version": "legacy.bundle.v1",
+                    "protocol_version": "runtime.v1",
+                    "location_kind": "local_process",
+                    "health_status": "healthy",
+                    "supported_features": ["legacy_bundle_compatibility"],
+                }
+            ],
+            canonical_compute_compatibility=[
+                {
+                    "compatibility_id": "bundle:phi4-both",
+                    "legacy_bundle_id": "phi4-both",
+                    "legacy_plugin_id": "llama.cpp",
+                    "legacy_provider_type": "llama.cpp",
+                    "canonical_capability_id": "llm.chat",
+                    "canonical_runtime_id": "runtime-both",
+                }
+            ],
+            canonical_advertisements=[
+                {
+                    "advertisement_id": "adv-both",
+                    "resource_type": "endpoint",
+                    "owner_wallet": "wallet-both",
+                    "hypervisor_id": "node-both",
+                    "capability_id": "llm.chat",
+                    "visibility": "public",
+                    "signature_scope": "configuration_publication",
+                }
+            ],
+        )
+    )
+
+    result = service.discover(
+        RegistryDiscoveryQuery(workload_type="llm_text", capability_id="llm.chat")
+    )
+
+    assert [node["node_id"] for node in result["nodes"]] == ["node-both"]
+    assert [candidate["node_id"] for candidate in result["candidates"]] == ["node-both"]
+    assert [candidate["node_id"] for candidate in result["canonical_candidates"]] == [
+        "node-both"
+    ]
+
+
+def test_registry_service_canonical_candidates_keep_runtime_without_legacy_bridge(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-runtime-only",
+            bundles=[],
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_services=[
+                {
+                    "service_id": "compute",
+                    "kind": "compute",
+                    "enabled": True,
+                    "derived_roles": ["compute_provider"],
+                    "responsibilities": ["endpoint_hosting"],
+                }
+            ],
+            canonical_capability_runtimes=[
+                {
+                    "runtime_id": "runtime-canonical-direct",
+                    "capability_id": "llm.chat",
+                    "runtime_version": "runtime.v2",
+                    "protocol_version": "runtime.v1",
+                    "location_kind": "local_process",
+                    "health_status": "healthy",
+                    "supported_features": ["native_canonical_runtime"],
+                }
+            ],
+            canonical_compute_compatibility=[],
+            canonical_advertisements=[
+                {
+                    "advertisement_id": "adv-runtime-direct",
+                    "resource_type": "endpoint",
+                    "owner_wallet": "wallet-runtime",
+                    "hypervisor_id": "node-runtime-only",
+                    "capability_id": "llm.chat",
+                    "visibility": "public",
+                    "signature_scope": "configuration_publication",
+                }
+            ],
+        )
+    )
+
+    result = service.discover(RegistryDiscoveryQuery(capability_id="llm.chat"))
+
+    assert result["canonical_candidates"][0]["runtime_id"] == "runtime-canonical-direct"
+    assert result["canonical_candidates"][0]["legacy_bundle_id"] is None
+
+
+def test_registry_service_canonical_candidates_keep_native_runtime_when_capability_is_mixed(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-mixed-runtime",
+            bundles=[],
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_services=[
+                {
+                    "service_id": "compute",
+                    "kind": "compute",
+                    "enabled": True,
+                    "derived_roles": ["compute_provider"],
+                    "responsibilities": ["endpoint_hosting"],
+                }
+            ],
+            canonical_capability_runtimes=[
+                {
+                    "runtime_id": "runtime-bridged",
+                    "capability_id": "llm.chat",
+                    "runtime_version": "legacy.bundle.v1",
+                    "protocol_version": "runtime.v1",
+                    "location_kind": "local_process",
+                    "health_status": "healthy",
+                    "supported_features": ["legacy_bundle_compatibility"],
+                },
+                {
+                    "runtime_id": "runtime-native",
+                    "capability_id": "llm.chat",
+                    "runtime_version": "runtime.v2",
+                    "protocol_version": "runtime.v1",
+                    "location_kind": "local_process",
+                    "health_status": "healthy",
+                    "supported_features": ["native_canonical_runtime"],
+                },
+            ],
+            canonical_compute_compatibility=[
+                {
+                    "compatibility_id": "bundle:phi4-bridged",
+                    "legacy_bundle_id": "phi4-bridged",
+                    "legacy_plugin_id": "llama.cpp",
+                    "legacy_provider_type": "llama.cpp",
+                    "canonical_capability_id": "llm.chat",
+                    "canonical_runtime_id": "runtime-bridged",
+                }
+            ],
+            canonical_advertisements=[
+                {
+                    "advertisement_id": "adv-mixed-runtime",
+                    "resource_type": "endpoint",
+                    "owner_wallet": "wallet-mixed",
+                    "hypervisor_id": "node-mixed-runtime",
+                    "capability_id": "llm.chat",
+                    "visibility": "public",
+                    "signature_scope": "configuration_publication",
+                }
+            ],
+        )
+    )
+
+    result = service.discover(RegistryDiscoveryQuery(capability_id="llm.chat"))
+
+    assert [candidate["runtime_id"] for candidate in result["canonical_candidates"]] == [
+        "runtime-bridged",
+        "runtime-native",
+    ]
+    assert result["canonical_candidates"][0]["legacy_bundle_id"] == "phi4-bridged"
+    assert result["canonical_candidates"][1]["legacy_bundle_id"] is None
+
+
+def test_registry_service_canonical_candidates_preserve_multiple_legacy_bridges_per_runtime(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-multi-bridge",
+            bundles=[],
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_services=[
+                {
+                    "service_id": "compute",
+                    "kind": "compute",
+                    "enabled": True,
+                    "derived_roles": ["compute_provider"],
+                    "responsibilities": ["endpoint_hosting"],
+                }
+            ],
+            canonical_capability_runtimes=[
+                {
+                    "runtime_id": "runtime-shared",
+                    "capability_id": "llm.chat",
+                    "runtime_version": "runtime.v2",
+                    "protocol_version": "runtime.v1",
+                    "location_kind": "local_process",
+                    "health_status": "healthy",
+                    "supported_features": ["native_canonical_runtime"],
+                }
+            ],
+            canonical_compute_compatibility=[
+                {
+                    "compatibility_id": "bundle:phi4-a",
+                    "legacy_bundle_id": "phi4-a",
+                    "legacy_plugin_id": "llama.cpp",
+                    "legacy_provider_type": "llama.cpp",
+                    "canonical_capability_id": "llm.chat",
+                    "canonical_runtime_id": "runtime-shared",
+                },
+                {
+                    "compatibility_id": "bundle:phi4-b",
+                    "legacy_bundle_id": "phi4-b",
+                    "legacy_plugin_id": "ollama",
+                    "legacy_provider_type": "ollama",
+                    "canonical_capability_id": "llm.chat",
+                    "canonical_runtime_id": "runtime-shared",
+                },
+            ],
+            canonical_advertisements=[
+                {
+                    "advertisement_id": "adv-multi-bridge",
+                    "resource_type": "endpoint",
+                    "owner_wallet": "wallet-multi",
+                    "hypervisor_id": "node-multi-bridge",
+                    "capability_id": "llm.chat",
+                    "visibility": "public",
+                    "signature_scope": "configuration_publication",
+                }
+            ],
+        )
+    )
+
+    result = service.discover(RegistryDiscoveryQuery(capability_id="llm.chat"))
+
+    assert [candidate["legacy_bundle_id"] for candidate in result["canonical_candidates"]] == [
+        "phi4-a",
+        "phi4-b",
+    ]
+    assert [candidate["runtime_id"] for candidate in result["canonical_candidates"]] == [
+        "runtime-shared",
+        "runtime-shared",
+    ]
+
+
+def test_registry_service_canonical_candidates_map_service_id_from_resource_type(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-registry-service",
+            bundles=[],
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_services=[
+                {
+                    "service_id": "registry",
+                    "kind": "registry",
+                    "enabled": True,
+                    "derived_roles": ["registry_operator"],
+                    "responsibilities": ["ledger_storage"],
+                }
+            ],
+            canonical_capability_runtimes=[],
+            canonical_compute_compatibility=[],
+            canonical_advertisements=[
+                {
+                    "advertisement_id": "adv-registry-service",
+                    "resource_type": "registry_service",
+                    "owner_wallet": "wallet-registry",
+                    "hypervisor_id": "node-registry-service",
+                    "capability_id": None,
+                    "visibility": "public",
+                    "signature_scope": "configuration_publication",
+                }
+            ],
+        )
+    )
+
+    result = service.discover(
+        RegistryDiscoveryQuery(advertisement_resource_type="registry_service")
+    )
+
+    assert result["canonical_candidates"][0]["service_id"] == "registry"
+
+
+def test_registry_service_legacy_discovery_does_not_include_canonical_only_nodes(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-canonical",
+            bundles=[],
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_services=[
+                {
+                    "service_id": "compute",
+                    "kind": "compute",
+                    "enabled": True,
+                    "derived_roles": ["compute_provider"],
+                    "responsibilities": ["endpoint_hosting"],
+                }
+            ],
+            canonical_capability_runtimes=[
+                {
+                    "runtime_id": "runtime-canonical-only",
+                    "capability_id": "llm.chat",
+                    "runtime_version": "legacy.bundle.v1",
+                    "protocol_version": "runtime.v1",
+                    "location_kind": "local_process",
+                    "health_status": "healthy",
+                    "supported_features": ["legacy_bundle_compatibility"],
+                }
+            ],
+            canonical_compute_compatibility=[],
+            canonical_advertisements=[
+                {
+                    "advertisement_id": "adv-endpoint-canonical-only",
+                    "resource_type": "endpoint",
+                    "owner_wallet": "wallet-a",
+                    "hypervisor_id": "node-canonical",
+                    "capability_id": "llm.chat",
+                    "visibility": "public",
+                    "signature_scope": "configuration_publication",
+                }
+            ],
+        )
+    )
+
+    result = service.discover(RegistryDiscoveryQuery())
+
+    assert result["nodes"] == []
+    assert result["candidates"] == []
 
 
 def test_registry_service_filters_and_orders_candidates_by_execution_readiness(
