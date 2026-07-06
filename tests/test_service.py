@@ -983,7 +983,84 @@ def test_service_node_advertisement_keeps_published_endpoints_alongside_canonica
     payload = service.node_advertisement(heartbeat_at="2026-07-05T14:00:00+00:00")
 
     assert payload["published_endpoints"][0]["endpoint_id"] == created.endpoint.endpoint_id
+    assert payload["canonical_advertisements"] == [
+        {
+            "advertisement_id": f"adv-{payload['published_endpoints'][0]['current_publication_id']}",
+            "resource_type": "endpoint",
+            "owner_wallet": service.owner_wallet_state()["wallet_id"],
+            "hypervisor_id": service.node_id,
+            "capability_id": "llm.chat",
+            "visibility": "private",
+            "signature_scope": "configuration_publication",
+        }
+    ]
     assert payload["canonical_services"][0]["kind"] == "compute"
+
+
+def test_service_node_advertisement_excludes_superseded_and_revoked_canonical_advertisements() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        bundles=[_bundle("text-a", "llm_text")],
+        node_id="node-local",
+    )
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Text Endpoint",
+            model_class="llm_text",
+            capabilities=["llm.chat", "llm.embed"],
+            publication={"visibility": "public"},
+        )
+    )
+    first = publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+    second = publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+    service.endpoint_publication_service = publication_service
+
+    payload = service.node_advertisement(heartbeat_at="2026-07-05T14:00:00+00:00")
+
+    assert first.publication_id != second.publication_id
+    assert [item["current_publication_id"] for item in payload["published_endpoints"]] == [
+        second.publication_id
+    ]
+    assert payload["canonical_advertisements"] == [
+        {
+            "advertisement_id": f"adv-{second.publication_id}",
+            "resource_type": "endpoint",
+            "owner_wallet": service.owner_wallet_state()["wallet_id"],
+            "hypervisor_id": service.node_id,
+            "capability_id": "llm.chat",
+            "visibility": "public",
+            "signature_scope": "configuration_publication",
+        }
+    ]
+
+    publication_service.revoke_publication(created.endpoint.endpoint_id)
+
+    revoked_payload = service.node_advertisement(
+        heartbeat_at="2026-07-05T14:05:00+00:00"
+    )
+
+    assert revoked_payload["published_endpoints"] == []
+    assert revoked_payload["canonical_advertisements"] == []
 
 
 def test_service_dashboard_fleet_reports_node_resources_bundles_and_installs(
