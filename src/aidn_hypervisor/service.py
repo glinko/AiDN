@@ -1123,6 +1123,7 @@ class HypervisorService:
             if self.resources is not None
             else _empty_resource_summary()
         )
+        canonical_overlay = self.canonical_overlay_inventory()
         publication_service = getattr(self, "endpoint_publication_service", None)
         current_publication_records = []
         if publication_service is not None:
@@ -1175,6 +1176,12 @@ class HypervisorService:
                 )
                 for record in current_publication_records
             ],
+            canonical_services=canonical_overlay.get("services", []),
+            canonical_capability_runtimes=canonical_overlay.get("runtimes", []),
+            canonical_compute_compatibility=canonical_overlay.get(
+                "compatibility", []
+            ),
+            canonical_advertisements=[],
         )
         return advertisement.model_dump(mode="json")
 

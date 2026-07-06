@@ -108,6 +108,101 @@ def test_registry_service_upserts_and_returns_node_advertisements() -> None:
     assert service.list_nodes()[0]["operator_id"] == "operator-a"
 
 
+def test_registry_node_advertisement_accepts_dual_payload_fields() -> None:
+    payload = RegistryNodeAdvertisement(
+        node_id="node-a",
+        operator_id="operator-a",
+        base_url="https://node-a.example",
+        heartbeat_at="2026-07-05T14:00:00+00:00",
+        resources={
+            "total": {"cpu": 8.0, "ram_mb": 16384, "vram_mb": 8192},
+            "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+            "free": {"cpu": 6.0, "ram_mb": 12000, "vram_mb": 6144},
+        },
+        providers=["llama.cpp"],
+        can_host_custom_model=True,
+        pricing={
+            "unit": "q_per_1kk_tokens",
+            "input": 12,
+            "output": 18,
+            "fixed_request": None,
+        },
+        rating={
+            "score": 0.91,
+            "tier": "A",
+            "updated_at": "2026-07-05T13:55:00+00:00",
+        },
+        bundles=[],
+        canonical_services=[
+            {
+                "service_id": "compute",
+                "kind": "compute",
+                "enabled": True,
+                "derived_roles": ["compute_provider"],
+                "responsibilities": ["endpoint_hosting"],
+            }
+        ],
+        canonical_capability_runtimes=[],
+        canonical_compute_compatibility=[],
+        canonical_advertisements=[],
+    )
+
+    assert payload.canonical_services[0].kind == "compute"
+
+
+def test_registry_service_discovery_preserves_legacy_candidates_for_m2_v2_nodes(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-a",
+            operator_id="operator-a",
+            registry_version="m2.v2",
+            base_url="https://node-a.example",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            resources={
+                "total": {"cpu": 8.0, "ram_mb": 16384, "vram_mb": 8192},
+                "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+                "free": {"cpu": 6.0, "ram_mb": 12000, "vram_mb": 6144},
+            },
+            providers=["llama.cpp"],
+            can_host_custom_model=True,
+            pricing={
+                "unit": "q_per_1kk_tokens",
+                "input": 12,
+                "output": 18,
+                "fixed_request": None,
+            },
+            rating={
+                "score": 0.91,
+                "tier": "A",
+                "updated_at": "2026-07-05T13:55:00+00:00",
+            },
+            bundles=[_bundle("phi4-local")],
+            canonical_services=[
+                {
+                    "service_id": "compute",
+                    "kind": "compute",
+                    "enabled": True,
+                    "derived_roles": ["compute_provider"],
+                    "responsibilities": ["endpoint_hosting"],
+                }
+            ],
+            canonical_capability_runtimes=[],
+            canonical_compute_compatibility=[],
+            canonical_advertisements=[],
+        )
+    )
+
+    result = service.discover(RegistryDiscoveryQuery(workload_type="llm_text"))
+
+    assert result["nodes"][0]["registry_version"] == "m2.v2"
+    assert result["candidates"][0]["bundle_id"] == "phi4-local"
+
+
 def test_registry_service_marks_nodes_stale_and_offline(monkeypatch) -> None:
     current_time = [1000.0]
     monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: current_time[0])

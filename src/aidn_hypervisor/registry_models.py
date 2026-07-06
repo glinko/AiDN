@@ -1,5 +1,12 @@
 from pydantic import BaseModel, Field
 
+from aidn_hypervisor.canonical_models import (
+    CanonicalAdvertisementRecord,
+    CanonicalCapabilityRuntimeRecord,
+    CanonicalComputeCompatibilityRecord,
+    CanonicalProtocolServiceRecord,
+)
+
 
 class RegistryPricing(BaseModel):
     unit: str = "q_per_1kk_tokens"
@@ -48,7 +55,7 @@ class RegistryPublishedEndpointSummary(BaseModel):
 class RegistryNodeAdvertisement(BaseModel):
     node_id: str
     operator_id: str
-    registry_version: str = "m2.v1"
+    registry_version: str = "m2.v2"
     base_url: str
     heartbeat_at: str
     heartbeat_ttl_seconds: int = 30
@@ -60,6 +67,16 @@ class RegistryNodeAdvertisement(BaseModel):
     rating: RegistryRating
     bundles: list[RegistryBundleAdvertisement]
     published_endpoints: list[RegistryPublishedEndpointSummary] = Field(
+        default_factory=list
+    )
+    canonical_services: list[CanonicalProtocolServiceRecord] = Field(default_factory=list)
+    canonical_capability_runtimes: list[CanonicalCapabilityRuntimeRecord] = Field(
+        default_factory=list
+    )
+    canonical_compute_compatibility: list[CanonicalComputeCompatibilityRecord] = Field(
+        default_factory=list
+    )
+    canonical_advertisements: list[CanonicalAdvertisementRecord] = Field(
         default_factory=list
     )
 
