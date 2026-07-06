@@ -2037,6 +2037,92 @@
       return proxyGuidedFlow;
     }
 
+    function clearGuidedProxyFlow() {
+      state.proxyGuidedFlow = {
+        endpointId: null,
+        remoteEndpointId: "",
+        phase: null,
+      };
+    }
+
+    function guidedProxyPhase(flow, selected) {
+      if (!flow?.remoteEndpointId) {
+        return null;
+      }
+      if (!selected?.endpoint_id) {
+        return "bootstrap";
+      }
+      return flow.phase || "attach";
+    }
+
+    function guidedProxySteps(phase) {
+      return [
+        {
+          key: "attach",
+          title: "Attach Proxy Route",
+          detail:
+            phase === "bootstrap"
+              ? "Create a local endpoint first, then bind the staged remote route as its proxy target."
+              : "Bind the staged remote route to this endpoint before publishing the new configuration.",
+        },
+        {
+          key: "publish",
+          title: "Publish Configuration",
+          detail:
+            "Publish the endpoint after proxy binding so the new execution route becomes the signed snapshot.",
+        },
+        {
+          key: "validate_optional",
+          title: "Request Validation (Optional)",
+          detail:
+            "Validation stays explicit and optional after the proxy-backed configuration is published.",
+        },
+      ];
+    }
+
+    function guidedProxyStepState(phase, stepKey) {
+      const order = ["bootstrap", "attach", "publish", "validate_optional", "done"];
+      const stepOrder = ["attach", "publish", "validate_optional"];
+      if (phase === "bootstrap" && stepKey === "attach") {
+        return "Current";
+      }
+      if (phase === "done") {
+        return stepKey === "validate_optional" ? "Done" : "Done";
+      }
+      const currentIndex = stepOrder.indexOf(phase);
+      const stepIndex = stepOrder.indexOf(stepKey);
+      if (stepKey === "validate_optional") {
+        if (phase === "validate_optional") {
+          return "Optional";
+        }
+      }
+      if (currentIndex === -1) {
+        return "Waiting";
+      }
+      if (stepIndex < currentIndex) {
+        return "Done";
+      }
+      if (stepIndex === currentIndex) {
+        return "Current";
+      }
+      return "Waiting";
+    }
+
+    function guidedProxyPrimaryAction(phase) {
+      switch (phase) {
+        case "bootstrap":
+          return { action: "create-endpoint", label: "Create Endpoint" };
+        case "attach":
+          return { action: "attach-proxy-target", label: "Attach Proxy Route" };
+        case "publish":
+          return { action: "complete-guided-proxy-publish", label: "Publish Configuration" };
+        case "validate_optional":
+          return { action: "request-validation", label: "Request Validation" };
+        default:
+          return null;
+      }
+    }
+
     function endpointNextSteps(item) {
       if (!item) {
         return [
@@ -3689,12 +3775,11 @@
       const config = syncEndpointConfigDraft(selected);
       const proxyDraft = syncEndpointProxyDraft(selected);
       const attachedRemotes = attachedRemoteCatalogue();
-      const proxyGuidedFlow = activeProxyGuidedFlow(selected);
-      const stagedRemote = proxyGuidedFlow
-        ? attachedRemotes.find(
-            (item) => item.remote_endpoint_id === proxyGuidedFlow.remoteEndpointId
-          ) || null
-        : null;
+      const proxyGuidedFlow =
+        activeProxyGuidedFlow(selected) ||
+        (state.proxyGuidedFlow?.remoteEndpointId ? state.proxyGuidedFlow : null);
+      const proxyGuidedPhase = guidedProxyPhase(proxyGuidedFlow, selected);
+      const proxyGuidedPrimaryAction = guidedProxyPrimaryAction(proxyGuidedPhase);
 
       return `
         <div class="workspace-header">
@@ -3846,16 +3931,24 @@
                       ${
                         proxyGuidedFlow
                           ? `
-                            <div class="notice" style="margin-top: 12px;">
-                              <strong>Guided Proxy Flow</strong>
-                              <span style="display: block; margin-top: 4px;">
-                                ${proxyGuidedFlow.phase === "attach"
-                                  ? `Stage the remote route ${stagedRemote?.alias || stagedRemote?.source_endpoint_id || proxyGuidedFlow.remoteEndpointId} on ${selected.endpoint_id}, then attach it before publishing the updated configuration.`
-                                  : `Proxy route ${stagedRemote?.alias || stagedRemote?.source_endpoint_id || proxyGuidedFlow.remoteEndpointId} is attached to ${selected.endpoint_id}. Publish configuration next so the new execution path becomes the signed snapshot.`}
-                              </span>
+                            <div class="panel-heading" style="margin-top: 16px;">Guided Route Flow</div>
+                            <div class="list" style="margin-top: 12px;">
+                              ${guidedProxySteps(proxyGuidedPhase)
+                                .map(
+                                  (step) => `
+                                    <div class="list-row">
+                                      <div>
+                                        <strong>${step.title}</strong>
+                                        <span>${step.detail}</span>
+                                      </div>
+                                      <span class="chip">${guidedProxyStepState(proxyGuidedPhase, step.key)}</span>
+                                    </div>
+                                  `
+                                )
+                                .join("")}
                             </div>
                             <div class="wallet-inline-actions" style="margin-top: 12px;">
-                              <button class="primary-button action-focus" type="button" data-endpoint-action="complete-guided-proxy-publish">${state.bootstrapPending === "guided-proxy-publish" ? "Completing..." : "Complete Guided Proxy Publish"}</button>
+                              <button class="primary-button action-focus" type="button" data-endpoint-action="${proxyGuidedPrimaryAction?.action || "complete-guided-proxy-publish"}">${proxyGuidedPrimaryAction?.action === "create-endpoint" ? "Create Endpoint" : proxyGuidedPrimaryAction?.action === "attach-proxy-target" ? state.bootstrapPending === "attach-proxy-target" ? "Attaching..." : "Attach Proxy Route" : proxyGuidedPrimaryAction?.action === "request-validation" ? state.bootstrapPending === "request-validation" ? "Requesting..." : "Request Validation" : state.bootstrapPending === "guided-proxy-publish" ? "Completing..." : "Publish Configuration"}</button>
                             </div>
                           `
                           : ""
@@ -6677,11 +6770,7 @@
               : `Configuration ${result.data.publication.configuration_hash} published for ${draft.endpoint_id}.`,
         };
         if (proxyGuidedFlow?.phase === "publish") {
-          state.proxyGuidedFlow = {
-            endpointId: null,
-            remoteEndpointId: "",
-            phase: null,
-          };
+          clearGuidedProxyFlow();
         }
         state.screen = "home";
         await refreshBootstrapPayloads();
@@ -6849,9 +6938,9 @@
           {}
         );
         state.proxyGuidedFlow = {
-          endpointId: null,
-          remoteEndpointId: "",
-          phase: null,
+          endpointId: draft.endpoint_id,
+          remoteEndpointId: proxyGuidedFlow.remoteEndpointId,
+          phase: "validate_optional",
         };
         state.bootstrapMessage = {
           kind: "good",
@@ -7793,7 +7882,10 @@
 
       document.querySelectorAll("[data-endpoint-action]").forEach((button) => {
         button.addEventListener("click", () => {
-          if (button.dataset.endpointAction === "create") {
+          if (
+            button.dataset.endpointAction === "create" ||
+            button.dataset.endpointAction === "create-endpoint"
+          ) {
             void createBootstrapEndpointDraft();
           } else if (button.dataset.endpointAction === "save-policy") {
             void saveSelectedEndpointPolicy();
@@ -7860,11 +7952,7 @@
               state.proxyGuidedFlow.endpointId === state.endpointProxyDraft.endpointId &&
               !control.value
             ) {
-              state.proxyGuidedFlow = {
-                endpointId: null,
-                remoteEndpointId: "",
-                phase: null,
-              };
+              clearGuidedProxyFlow();
             }
           }
         });
