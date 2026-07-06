@@ -2669,6 +2669,75 @@ def test_operator_dashboard_bundles_route_returns_workspace_payload(
     assert "validation_service" in captured["view_args"]
 
 
+def test_operator_dashboard_market_route_uses_operator_view_payload(
+    monkeypatch,
+) -> None:
+    hypervisor = _service()
+    registry = RegistryService()
+    expected_payload = {
+        "nodes": [],
+        "candidates": [],
+        "canonical_candidates": [],
+        "canonical_summary": {},
+    }
+    captured: dict[str, object] = {}
+
+    def fake_build_operator_market_payload(**kwargs) -> dict:
+        captured["view_args"] = kwargs
+        return expected_payload
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.api.build_operator_market_payload",
+        fake_build_operator_market_payload,
+    )
+    client = TestClient(build_app(service=hypervisor, registry_service=registry))
+
+    response = client.get("/operators/dashboard/market")
+
+    assert response.status_code == 200
+    assert response.json() == expected_payload
+    assert captured["view_args"]["service"] is hypervisor
+    assert captured["view_args"]["registry_service"] is registry
+
+
+def test_operator_dashboard_remote_endpoints_route_uses_operator_view_payload(
+    monkeypatch,
+) -> None:
+    hypervisor = _service()
+    registry = RegistryService()
+    remote_endpoint_service = RemoteEndpointService(RemoteEndpointStore())
+    expected_payload = {
+        "summary": {"attached": 0, "discovered": 0},
+        "attached": [],
+        "discovered": [],
+    }
+    captured: dict[str, object] = {}
+
+    def fake_build_operator_remote_endpoints_payload(**kwargs) -> dict:
+        captured["view_args"] = kwargs
+        return expected_payload
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.api.build_operator_remote_endpoints_payload",
+        fake_build_operator_remote_endpoints_payload,
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            registry_service=registry,
+            remote_endpoint_service=remote_endpoint_service,
+        )
+    )
+
+    response = client.get("/operators/dashboard/remote-endpoints")
+
+    assert response.status_code == 200
+    assert response.json() == expected_payload
+    assert captured["view_args"]["service"] is hypervisor
+    assert captured["view_args"]["registry_service"] is registry
+    assert captured["view_args"]["remote_endpoint_service"] is remote_endpoint_service
+
+
 def test_operator_dashboard_installs_route_returns_actionable_install_state(
     monkeypatch,
 ) -> None:

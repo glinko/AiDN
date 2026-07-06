@@ -14,12 +14,18 @@ from aidn_hypervisor.operator_views import (
     build_operator_endpoints_payload,
     build_operator_home_payload,
     build_operator_installs_payload,
+    build_operator_market_payload,
     build_operator_providers_payload,
+    build_operator_remote_endpoints_payload,
 )
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager, RuntimeHandle
 from aidn_hypervisor.queue import InMemoryTaskQueue
+from aidn_hypervisor.registry_models import RegistryNodeAdvertisement
+from aidn_hypervisor.registry_service import RegistryService
+from aidn_hypervisor.remote_endpoints.service import RemoteEndpointService
+from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
@@ -721,6 +727,83 @@ def test_installs_payload_exposes_ready_to_register_completed_jobs(
     assert payload["items"][0]["install_id"] == install["install_id"]
     assert payload["items"][0]["can_register_bundle"] is True
     assert payload["items"][0]["next_action"] == "register_bundle"
+
+
+def test_market_payload_builder_preserves_candidate_surfaces(
+    service: HypervisorService,
+) -> None:
+    payload = build_operator_market_payload(service=service, registry_service=None)
+
+    assert "nodes" in payload
+    assert "candidates" in payload
+    assert "canonical_candidates" in payload
+    assert "canonical_summary" in payload
+
+
+def test_remote_endpoints_payload_summarizes_attached_and_discovered_routes(
+    service: HypervisorService,
+) -> None:
+    registry = RegistryService()
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-remote",
+            operator_id="operator-remote",
+            base_url="https://remote.example",
+            heartbeat_at="2026-07-06T12:00:00+00:00",
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+                "free": {"cpu": 10.0, "ram_mb": 28672, "vram_mb": 12288},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 7, "output": 11, "fixed_request": 1},
+            rating={"score": 0.98, "tier": "A", "updated_at": "2026-07-06T11:55:00+00:00"},
+            bundles=[],
+            published_endpoints=[
+                {
+                    "endpoint_id": "endpoint-remote",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-remote",
+                    "current_publication_id": "pub-remote",
+                    "current_configuration_hash": "cfg-remote",
+                    "published_at": "2026-07-06T11:50:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                    "publication_sync_status": "in_sync",
+                    "published_validation_summary": {"validation_status": "validated"},
+                    "live_validation_summary": {"validation_status": "validated"},
+                }
+            ],
+        )
+    )
+    remote_endpoint_service = RemoteEndpointService(RemoteEndpointStore())
+    remote_endpoint_service.attach_remote_endpoint(
+        source_node_id="node-remote",
+        source_endpoint_id="endpoint-remote",
+        source_owner_wallet="wallet-remote",
+        source_publication_id="pub-remote",
+        source_configuration_hash="cfg-remote",
+        source_visibility="public",
+        source_model_class="llm_text",
+        source_status="published",
+        source_base_url="https://remote.example",
+        operator_id="operator-remote",
+        pricing={"unit": "q_per_1kk_tokens", "input": 7, "output": 11},
+        rating={"score": 0.98, "tier": "A", "updated_at": "2026-07-06T11:55:00+00:00"},
+    )
+
+    payload = build_operator_remote_endpoints_payload(
+        service=service,
+        registry_service=registry,
+        remote_endpoint_service=remote_endpoint_service,
+    )
+
+    assert payload["summary"]["attached"] == 1
+    assert payload["summary"]["discovered"] == 1
+    assert payload["policy"]["proxy_ready"] is True
+    assert payload["discovered"][0]["publication_sync_status"] == "in_sync"
 
 
 def test_api_uses_only_public_operator_view_builders() -> None:
