@@ -1117,6 +1117,10 @@ class HypervisorService:
         ]
 
     def node_advertisement(self, *, heartbeat_at: str | None = None) -> dict:
+        from aidn_hypervisor.canonical_projection import (
+            project_canonical_advertisements,
+        )
+
         timestamp = heartbeat_at or datetime.now(timezone.utc).isoformat()
         resources = (
             self.resources.summary()
@@ -1181,7 +1185,9 @@ class HypervisorService:
             canonical_compute_compatibility=canonical_overlay.get(
                 "compatibility", []
             ),
-            canonical_advertisements=[],
+            canonical_advertisements=project_canonical_advertisements(
+                current_publication_records
+            ),
         )
         return advertisement.model_dump(mode="json")
 

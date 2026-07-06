@@ -1,4 +1,5 @@
 from aidn_hypervisor.canonical_models import (
+    CanonicalAdvertisementRecord,
     CanonicalCapabilityRuntimeRecord,
     CanonicalComputeCompatibilityRecord,
     CanonicalProtocolServiceRecord,
@@ -94,6 +95,27 @@ def project_compute_compatibility(service) -> list[CanonicalComputeCompatibility
                 legacy_provider_type=bundle.provider_type,
                 canonical_capability_id=_capability_id_for_bundle(bundle),
                 canonical_runtime_id=f"runtime-{bundle.bundle_id}",
+            )
+        )
+    return records
+
+
+def project_canonical_advertisements(
+    publication_records,
+) -> list[CanonicalAdvertisementRecord]:
+    records: list[CanonicalAdvertisementRecord] = []
+    for publication in publication_records:
+        if publication.status != "published":
+            continue
+        records.append(
+            CanonicalAdvertisementRecord(
+                advertisement_id=f"adv-{publication.publication_id}",
+                resource_type="endpoint",
+                owner_wallet=publication.owner_wallet,
+                hypervisor_id=publication.node_id,
+                capability_id=(publication.capabilities[0] if publication.capabilities else None),
+                visibility=publication.publication.get("visibility", "private"),
+                signature_scope="configuration_publication",
             )
         )
     return records

@@ -1440,6 +1440,61 @@ def test_operator_dashboard_market_endpoint_includes_canonical_candidates() -> N
     assert body["canonical_candidates"][0]["origin"] == "external"
 
 
+def test_operator_dashboard_market_endpoint_includes_local_canonical_publication_identity() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Public STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            publication={
+                "visibility": "public",
+                "discoverable": True,
+                "accepts_external_requests": True,
+            },
+        )
+    )
+    publication = publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+        node_id=hypervisor.node_id,
+        wallet_private_key=hypervisor.owner_wallet_private_key(),
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+        )
+    )
+
+    response = client.get("/operators/dashboard/market")
+
+    assert response.status_code == 200
+    body = response.json()
+    candidate = next(
+        item
+        for item in body["canonical_candidates"]
+        if item["advertisement_id"] == f"adv-{publication.publication_id}"
+    )
+    assert candidate["origin"] == "own"
+    assert candidate["node_id"] == hypervisor.node_id
+    assert candidate["owner_wallet"] == publication.owner_wallet
+    assert candidate["visibility"] == "public"
+    assert candidate["capability_id"] == "speech.stt"
+    assert candidate["published_endpoint_count"] == 1
+    assert body["canonical_summary"]["endpoint_advertisement_count"] == 1
+
+
 def test_operator_dashboard_market_payload_builds_canonical_summary() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
 
