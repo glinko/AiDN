@@ -7944,6 +7944,7 @@
           const draft = selectedEndpointDraft();
           switch (action) {
             case "create":
+            case "create-endpoint":
               void createBootstrapEndpointDraft();
               return;
             case "save-policy":

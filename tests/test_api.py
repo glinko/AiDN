@@ -2307,6 +2307,7 @@ def test_operator_dashboard_shell_route_exposes_guided_proxy_step_rail() -> None
     assert "Create Endpoint" in response.text
     assert "Attach Proxy Route" in response.text
     assert "Publish Configuration" in response.text
+    assert 'case "create-endpoint":' in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_guided_proxy_finish_action() -> None:
