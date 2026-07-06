@@ -2332,6 +2332,7 @@ def test_operator_dashboard_shell_route_exposes_guided_proxy_phase_transitions()
     assert 'phase: "validate_optional"' in response.text
     assert "clearGuidedProxyFlow" in response.text
     assert "Open the validation controls when you are ready to request it." not in response.text
+    assert '`${endpointApiBase}/${draft.endpoint_id}/request-validation`' in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_wallet_and_endpoint_controls() -> None:

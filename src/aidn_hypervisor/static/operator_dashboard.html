@@ -6843,7 +6843,7 @@
 
     async function requestBootstrapEndpointValidation() {
       const draft = homeActionEndpointDraft();
-      if (!draft) {
+      if (!draft?.endpoint_id) {
         return;
       }
       const proxyGuidedFlow = activeProxyGuidedFlow(draft);
@@ -6851,26 +6851,23 @@
       state.bootstrapMessage = null;
       render();
       try {
-        const requested = await updateSelectedEndpointViaApi(
-          {
-            validation: {
-              enabled: true,
-              model_class_supported: true,
-              verification_status: "pending",
-            },
-          },
-          (endpoint) => `Validation requested for ${endpoint.endpoint_id} without changing publication state.`
+        await postJson(
+          `${endpointApiBase}/${draft.endpoint_id}/request-validation`,
+          {}
         );
-        if (!requested) {
-          throw new Error("Select an endpoint before requesting validation.");
-        }
         if (proxyGuidedFlow?.phase === "validate_optional") {
           clearGuidedProxyFlow();
           state.bootstrapMessage = {
             kind: "good",
             text: `Validation requested for ${draft.endpoint_id}. Guided proxy flow completed; endpoint controls remain available for further edits.`,
           };
+        } else {
+          state.bootstrapMessage = {
+            kind: "good",
+            text: `Validation requested for ${draft.endpoint_id} without changing publication state.`,
+          };
         }
+        await refreshBootstrapPayloads();
       } catch (error) {
         state.bootstrapMessage = { kind: "bad", text: String(error) };
       } finally {
