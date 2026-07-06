@@ -157,3 +157,17 @@ def test_project_canonical_advertisements_filters_unpublished_and_defaults_visib
     assert records[0].visibility == "shared"
     assert records[1].visibility == "private"
     assert records[1].capability_id is None
+
+
+def test_project_canonical_advertisements_uses_first_stored_capability_as_primary() -> None:
+    records = canonical_projection.project_canonical_advertisements(
+        [
+            _publication(
+                "pub-ordered",
+                capabilities=["speech.translate", "speech.stt"],
+            )
+        ]
+    )
+
+    assert len(records) == 1
+    assert records[0].capability_id == "speech.translate"
