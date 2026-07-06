@@ -2109,6 +2109,7 @@
     }
 
     function guidedProxyPrimaryAction(phase) {
+      // phase: "validate_optional" is reserved for a later guided-flow task.
       switch (phase) {
         case "bootstrap":
           return { action: "create-endpoint", label: "Create Endpoint" };
@@ -3779,7 +3780,6 @@
         activeProxyGuidedFlow(selected) ||
         (state.proxyGuidedFlow?.remoteEndpointId ? state.proxyGuidedFlow : null);
       const proxyGuidedPhase = guidedProxyPhase(proxyGuidedFlow, selected);
-      const proxyGuidedPrimaryAction = guidedProxyPrimaryAction(proxyGuidedPhase);
 
       return `
         <div class="workspace-header">
@@ -3948,7 +3948,7 @@
                                 .join("")}
                             </div>
                             <div class="wallet-inline-actions" style="margin-top: 12px;">
-                              <button class="primary-button action-focus" type="button" data-endpoint-action="${proxyGuidedPrimaryAction?.action || "complete-guided-proxy-publish"}">${proxyGuidedPrimaryAction?.action === "create-endpoint" ? "Create Endpoint" : proxyGuidedPrimaryAction?.action === "attach-proxy-target" ? state.bootstrapPending === "attach-proxy-target" ? "Attaching..." : "Attach Proxy Route" : proxyGuidedPrimaryAction?.action === "request-validation" ? state.bootstrapPending === "request-validation" ? "Requesting..." : "Request Validation" : state.bootstrapPending === "guided-proxy-publish" ? "Completing..." : "Publish Configuration"}</button>
+                              <button class="primary-button action-focus" type="button" data-endpoint-action="complete-guided-proxy-publish">${state.bootstrapPending === "guided-proxy-publish" ? "Completing..." : "Complete Guided Proxy Publish"}</button>
                             </div>
                           `
                           : ""
@@ -6937,11 +6937,7 @@
           endpointPublishConfigurationPath(draft.endpoint_id),
           {}
         );
-        state.proxyGuidedFlow = {
-          endpointId: draft.endpoint_id,
-          remoteEndpointId: proxyGuidedFlow.remoteEndpointId,
-          phase: "validate_optional",
-        };
+        clearGuidedProxyFlow();
         state.bootstrapMessage = {
           kind: "good",
           text: `Proxy route ${proxySourceLabel} attached and configuration ${result.data.publication.configuration_hash} published for ${draft.endpoint_id}.`,
@@ -7882,10 +7878,7 @@
 
       document.querySelectorAll("[data-endpoint-action]").forEach((button) => {
         button.addEventListener("click", () => {
-          if (
-            button.dataset.endpointAction === "create" ||
-            button.dataset.endpointAction === "create-endpoint"
-          ) {
+          if (button.dataset.endpointAction === "create") {
             void createBootstrapEndpointDraft();
           } else if (button.dataset.endpointAction === "save-policy") {
             void saveSelectedEndpointPolicy();
