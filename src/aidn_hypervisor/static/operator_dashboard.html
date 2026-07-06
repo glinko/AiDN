@@ -2109,15 +2109,31 @@
     }
 
     function guidedProxyPrimaryAction(phase) {
+      if (phase === "bootstrap") {
+        const recommendation = homeRecommendedAction(state.payloads.home?.bootstrap || {});
+        if (recommendation?.type === "endpoint" && recommendation.action === "create") {
+          return { kind: "endpoint-action", action: "create-endpoint", label: "Create Endpoint" };
+        }
+        if (recommendation?.type === "screen" && recommendation.action) {
+          return {
+            kind: "screen-jump",
+            action: recommendation.action,
+            label: recommendation.label || "Open Blocker",
+          };
+        }
+        return { kind: "screen-jump", action: "home", label: "Open Wallet Setup" };
+      }
       switch (phase) {
-        case "bootstrap":
-          return { action: "create-endpoint", label: "Create Endpoint" };
         case "attach":
-          return { action: "attach-proxy-target", label: "Attach Proxy Route" };
+          return { kind: "endpoint-action", action: "attach-proxy-target", label: "Attach Proxy Route" };
         case "publish":
-          return { action: "complete-guided-proxy-publish", label: "Publish Configuration" };
+          return {
+            kind: "endpoint-action",
+            action: "complete-guided-proxy-publish",
+            label: "Publish Configuration",
+          };
         case "validate_optional":
-          return { action: "request-validation", label: "Request Validation" };
+          return { kind: "endpoint-action", action: "request-validation", label: "Request Validation" };
         default:
           return null;
       }
@@ -2133,6 +2149,10 @@
       if (!proxyGuidedFlow) {
         return "";
       }
+      const primaryActionBinding =
+        proxyGuidedPrimaryAction?.kind === "screen-jump"
+          ? `data-screen-jump="${proxyGuidedPrimaryAction.action}"`
+          : `data-endpoint-action="${proxyGuidedPrimaryAction.action}"`;
       return `
         <div class="panel-heading" style="margin-top: 16px;">Guided Route Flow</div>
         <div class="list" style="margin-top: 12px;">
@@ -2155,7 +2175,7 @@
           <span style="display: block; margin-top: 4px;">${suggestedCopy}</span>
         </div>
         <div class="wallet-inline-actions" style="margin-top: 12px;">
-          <button class="primary-button action-focus" type="button" data-endpoint-action="${proxyGuidedPrimaryAction.action}">
+          <button class="primary-button action-focus" type="button" ${primaryActionBinding}>
             ${proxyGuidedPrimaryAction.label}
           </button>
           ${
@@ -6820,7 +6840,7 @@
             text: `Configuration ${result.data.publication.configuration_hash} published for ${draft.endpoint_id}.`,
           };
         }
-        state.screen = "home";
+        state.screen = proxyGuidedFlow?.phase === "publish" ? "endpoints" : "home";
         await refreshBootstrapPayloads();
       } catch (error) {
         state.bootstrapMessage = { kind: "bad", text: String(error) };

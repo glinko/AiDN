@@ -2286,8 +2286,9 @@ def test_operator_dashboard_shell_route_exposes_one_click_guided_proxy_publish_a
     assert response.status_code == 200
     assert "function renderGuidedProxyPanel(" in response.text
     assert (
-        'return { action: "complete-guided-proxy-publish", label: "Publish Configuration" };'
-        in response.text
+        'action: "complete-guided-proxy-publish",' in response.text
+        and 'label: "Publish Configuration",' in response.text
+        and 'kind: "endpoint-action",' in response.text
     )
     assert 'case "complete-guided-proxy-publish":' in response.text
     assert 'state.endpointInspectorView = "signed-publication";' in response.text
@@ -2305,6 +2306,19 @@ def test_operator_dashboard_shell_route_exposes_guided_proxy_step_rail() -> None
     assert "Attach Proxy Route" in response.text
     assert "Publish Configuration" in response.text
     assert 'case "create-endpoint":' in response.text
+
+
+def test_operator_dashboard_shell_route_guided_bootstrap_cta_uses_shell_readiness() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'const recommendation = homeRecommendedAction(state.payloads.home?.bootstrap || {});' in response.text
+    assert 'return { kind: "screen-jump", action: "home", label: "Open Wallet Setup" };' in response.text
+    assert 'action: recommendation.action,' in response.text
+    assert 'data-screen-jump="${proxyGuidedPrimaryAction.action}"' in response.text
+    assert 'return { kind: "endpoint-action", action: "create-endpoint", label: "Create Endpoint" };' in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_guided_proxy_finish_action() -> None:
@@ -2328,6 +2342,7 @@ def test_operator_dashboard_shell_route_exposes_guided_proxy_phase_transitions()
     assert 'phase: "publish"' in response.text
     assert 'phase: "validate_optional"' in response.text
     assert "clearGuidedProxyFlow" in response.text
+    assert 'state.screen = proxyGuidedFlow?.phase === "publish" ? "endpoints" : "home";' in response.text
     assert "Open the validation controls when you are ready to request it." not in response.text
     assert '`${endpointApiBase}/${draft.endpoint_id}/request-validation`' in response.text
 
@@ -2373,7 +2388,7 @@ def test_operator_dashboard_shell_route_exposes_guided_onboarding_sections() -> 
     assert 'data-screen-jump="providers"' in response.text
     assert 'data-screen-jump="bundles"' in response.text
     assert 'data-screen-jump="endpoints"' in response.text
-    assert 'state.screen = "home";' in response.text
+    assert 'state.screen = proxyGuidedFlow?.phase === "publish" ? "endpoints" : "home";' in response.text
 
 
 def test_operator_dashboard_home_market_preview_matches_market_candidates() -> None:
