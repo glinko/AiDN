@@ -2284,9 +2284,15 @@ def test_operator_dashboard_shell_route_exposes_one_click_guided_proxy_publish_a
     response = client.get("/operators/dashboard")
 
     assert response.status_code == 200
-    assert "Complete Guided Proxy Publish" in response.text
-    assert 'data-endpoint-action="complete-guided-proxy-publish"' in response.text
-    assert 'button.dataset.endpointAction === "complete-guided-proxy-publish"' in response.text
+    assert (
+        'data-endpoint-action="${guidedProxyPrimaryAction(guidedProxyPhase(proxyGuidedFlow, selected)).action}"'
+        in response.text
+    )
+    assert (
+        "${guidedProxyPrimaryAction(guidedProxyPhase(proxyGuidedFlow, selected)).label}"
+        in response.text
+    )
+    assert 'case "complete-guided-proxy-publish":' in response.text
     assert 'state.endpointInspectorView = "signed-publication";' in response.text
 
 

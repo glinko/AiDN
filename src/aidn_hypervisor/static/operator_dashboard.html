@@ -3954,7 +3954,17 @@
                             </div>
                             <div class="notice" style="margin-top: 12px;">
                               <strong>Suggested Guided Step</strong>
-                              <span style="display: block; margin-top: 4px;">${proxyGuidedPrimaryAction?.label || "No guided action"} remains intentional here; use the existing endpoint controls below when you are ready to continue.</span>
+                              <span style="display: block; margin-top: 4px;">${proxyGuidedPrimaryAction?.label || "No guided action"} keeps the route handoff moving while the full endpoint controls remain available below.</span>
+                            </div>
+                            <div class="wallet-inline-actions" style="margin-top: 12px;">
+                              <button class="primary-button action-focus" type="button" data-endpoint-action="${guidedProxyPrimaryAction(guidedProxyPhase(proxyGuidedFlow, selected)).action}">
+                                ${guidedProxyPrimaryAction(guidedProxyPhase(proxyGuidedFlow, selected)).label}
+                              </button>
+                              ${
+                                guidedProxyPhase(proxyGuidedFlow, selected) === "validate_optional"
+                                  ? `<button class="secondary-button" type="button" data-endpoint-action="finish-guided-flow">Finish Guided Flow</button>`
+                                  : ""
+                              }
                             </div>
                           `
                           : ""
@@ -4067,7 +4077,17 @@
                             </div>
                             <div class="notice" style="margin-top: 12px;">
                               <strong>Suggested Guided Step</strong>
-                              <span style="display: block; margin-top: 4px;">${proxyGuidedPrimaryAction?.label || "No guided action"} remains display-only in this rail.</span>
+                              <span style="display: block; margin-top: 4px;">${proxyGuidedPrimaryAction?.label || "No guided action"} keeps the route handoff available even before the endpoint is selected.</span>
+                            </div>
+                            <div class="wallet-inline-actions" style="margin-top: 12px;">
+                              <button class="primary-button action-focus" type="button" data-endpoint-action="${guidedProxyPrimaryAction(guidedProxyPhase(proxyGuidedFlow, selected)).action}">
+                                ${guidedProxyPrimaryAction(guidedProxyPhase(proxyGuidedFlow, selected)).label}
+                              </button>
+                              ${
+                                guidedProxyPhase(proxyGuidedFlow, selected) === "validate_optional"
+                                  ? `<button class="secondary-button" type="button" data-endpoint-action="finish-guided-flow">Finish Guided Flow</button>`
+                                  : ""
+                              }
                             </div>
                           `
                           : ""
@@ -6794,15 +6814,21 @@
           endpointPublishConfigurationPath(draft.endpoint_id),
           {}
         );
-        state.bootstrapMessage = {
-          kind: "good",
-          text:
-            proxyGuidedFlow?.phase === "publish"
-              ? `Proxy route configuration ${result.data.publication.configuration_hash} published for ${draft.endpoint_id}.`
-              : `Configuration ${result.data.publication.configuration_hash} published for ${draft.endpoint_id}.`,
-        };
         if (proxyGuidedFlow?.phase === "publish") {
-          clearGuidedProxyFlow();
+          state.proxyGuidedFlow = {
+            endpointId: draft.endpoint_id,
+            remoteEndpointId: proxyGuidedFlow.remoteEndpointId,
+            phase: "validate_optional",
+          };
+          state.bootstrapMessage = {
+            kind: "good",
+            text: `Configuration published for ${draft.endpoint_id}. Validation is optional; request it now or finish the guided flow.`,
+          };
+        } else {
+          state.bootstrapMessage = {
+            kind: "good",
+            text: `Configuration ${result.data.publication.configuration_hash} published for ${draft.endpoint_id}.`,
+          };
         }
         state.screen = "home";
         await refreshBootstrapPayloads();
@@ -6903,7 +6929,7 @@
         };
         state.bootstrapMessage = {
           kind: "good",
-          text: `Proxy target ${result.data.endpoint.proxy_target.source_endpoint_id} attached to ${draft.endpoint_id}. Publish configuration next to sign the new proxy route.`,
+          text: `Proxy route attached to ${draft.endpoint_id}. Publish configuration next so the new execution path becomes the signed snapshot.`,
         };
         await refreshBootstrapPayloads();
       } catch (error) {
@@ -6969,10 +6995,14 @@
           endpointPublishConfigurationPath(draft.endpoint_id),
           {}
         );
-        clearGuidedProxyFlow();
+        state.proxyGuidedFlow = {
+          endpointId: draft.endpoint_id,
+          remoteEndpointId: proxyGuidedFlow.remoteEndpointId,
+          phase: "validate_optional",
+        };
         state.bootstrapMessage = {
           kind: "good",
-          text: `Proxy route ${proxySourceLabel} attached and configuration ${result.data.publication.configuration_hash} published for ${draft.endpoint_id}.`,
+          text: `Configuration published for ${draft.endpoint_id}. Validation is optional; request it now or finish the guided flow.`,
         };
         await refreshBootstrapPayloads();
         state.endpointInspectorView = "signed-publication";
@@ -7910,31 +7940,63 @@
 
       document.querySelectorAll("[data-endpoint-action]").forEach((button) => {
         button.addEventListener("click", () => {
-          if (button.dataset.endpointAction === "create") {
-            void createBootstrapEndpointDraft();
-          } else if (button.dataset.endpointAction === "save-policy") {
-            void saveSelectedEndpointPolicy();
-          } else if (button.dataset.endpointAction === "save-config") {
-            void saveSelectedEndpointConfig();
-          } else if (
-            button.dataset.endpointAction === "publish" ||
-            button.dataset.endpointAction === "publish-configuration"
-          ) {
-            void publishBootstrapEndpointDraft();
-          } else if (button.dataset.endpointAction === "attach-proxy-target") {
-            void attachSelectedEndpointProxyTarget();
-          } else if (button.dataset.endpointAction === "complete-guided-proxy-publish") {
-            void completeGuidedProxyPublish();
-          } else if (button.dataset.endpointAction === "revoke-publication") {
-            void revokeBootstrapEndpointPublication();
-          } else if (button.dataset.endpointAction === "view-signed-publication") {
-            viewSignedEndpointPublication();
-          } else if (button.dataset.endpointAction === "view-endpoint-summary") {
-            state.endpointInspectorView = "overview";
-            renderInspector();
-            bindInteractiveElements();
-          } else if (button.dataset.endpointAction === "request-validation") {
-            void requestBootstrapEndpointValidation();
+          const action = button.dataset.endpointAction;
+          const draft = selectedEndpointDraft();
+          switch (action) {
+            case "create":
+              void createBootstrapEndpointDraft();
+              return;
+            case "save-policy":
+              void saveSelectedEndpointPolicy();
+              return;
+            case "save-config":
+              void saveSelectedEndpointConfig();
+              return;
+            case "publish":
+            case "publish-configuration":
+              void publishBootstrapEndpointDraft();
+              return;
+            case "attach-proxy-target":
+              void attachSelectedEndpointProxyTarget();
+              return;
+            case "complete-guided-proxy-publish":
+              void completeGuidedProxyPublish();
+              return;
+            case "revoke-publication":
+              void revokeBootstrapEndpointPublication();
+              return;
+            case "view-signed-publication":
+              viewSignedEndpointPublication();
+              return;
+            case "view-endpoint-summary":
+              state.endpointInspectorView = "overview";
+              renderInspector();
+              bindInteractiveElements();
+              return;
+            case "request-validation":
+              if (activeProxyGuidedFlow(draft)?.phase === "validate_optional") {
+                state.bootstrapMessage = {
+                  kind: "good",
+                  text: `Validation remains optional for ${draft.endpoint_id}. Open the validation controls when you are ready to request it.`,
+                };
+                clearGuidedProxyFlow();
+                render();
+                bindInteractiveElements();
+                return;
+              }
+              void requestBootstrapEndpointValidation();
+              return;
+            case "finish-guided-flow":
+              clearGuidedProxyFlow();
+              state.bootstrapMessage = {
+                kind: "good",
+                text: `Guided proxy flow completed for ${draft.endpoint_id}. Endpoint controls remain available for further edits.`,
+              };
+              render();
+              bindInteractiveElements();
+              return;
+            default:
+              return;
           }
         });
       });
