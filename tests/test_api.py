@@ -2290,6 +2290,42 @@ def test_operator_dashboard_shell_route_exposes_one_click_guided_proxy_publish_a
     assert 'state.endpointInspectorView = "signed-publication";' in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_guided_proxy_step_rail() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Guided Route Flow" in response.text
+    assert "Request Validation (Optional)" in response.text
+    assert "Create Endpoint" in response.text
+    assert "Attach Proxy Route" in response.text
+    assert "Publish Configuration" in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_guided_proxy_finish_action() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Finish Guided Flow" in response.text
+    assert 'data-endpoint-action="finish-guided-flow"' in response.text
+    assert 'case "finish-guided-flow":' in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_guided_proxy_phase_transitions() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'phase: "attach"' in response.text
+    assert 'phase: "publish"' in response.text
+    assert 'phase: "validate_optional"' in response.text
+    assert "clearGuidedProxyFlow" in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_wallet_and_endpoint_controls() -> None:
     client = TestClient(build_app(service=_service()))
 
