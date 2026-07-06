@@ -3776,10 +3776,15 @@
       const config = syncEndpointConfigDraft(selected);
       const proxyDraft = syncEndpointProxyDraft(selected);
       const attachedRemotes = attachedRemoteCatalogue();
+      const guidedFallbackFlow =
+        state.proxyGuidedFlow?.remoteEndpointId &&
+        (!selected?.endpoint_id || state.proxyGuidedFlow.endpointId === selected.endpoint_id)
+          ? state.proxyGuidedFlow
+          : null;
       const proxyGuidedFlow =
-        activeProxyGuidedFlow(selected) ||
-        (state.proxyGuidedFlow?.remoteEndpointId ? state.proxyGuidedFlow : null);
+        activeProxyGuidedFlow(selected) || (!selected?.endpoint_id ? guidedFallbackFlow : null);
       const proxyGuidedPhase = guidedProxyPhase(proxyGuidedFlow, selected);
+      const proxyGuidedPrimaryAction = guidedProxyPrimaryAction(proxyGuidedPhase);
 
       return `
         <div class="workspace-header">
@@ -3947,8 +3952,9 @@
                                 )
                                 .join("")}
                             </div>
-                            <div class="wallet-inline-actions" style="margin-top: 12px;">
-                              <button class="primary-button action-focus" type="button" data-endpoint-action="complete-guided-proxy-publish">${state.bootstrapPending === "guided-proxy-publish" ? "Completing..." : "Complete Guided Proxy Publish"}</button>
+                            <div class="notice" style="margin-top: 12px;">
+                              <strong>Suggested Guided Step</strong>
+                              <span style="display: block; margin-top: 4px;">${proxyGuidedPrimaryAction?.label || "No guided action"} remains intentional here; use the existing endpoint controls below when you are ready to continue.</span>
                             </div>
                           `
                           : ""
@@ -4040,6 +4046,32 @@
                         <strong>Recommended Action</strong>
                         <span style="display: block; margin-top: 4px;">${endpointRecommendedActionLabel(endpointRecommendedAction())}. The highlighted control matches the current step above.</span>
                       </div>
+                      ${
+                        proxyGuidedFlow
+                          ? `
+                            <div class="panel-heading" style="margin-top: 16px;">Guided Route Flow</div>
+                            <div class="list" style="margin-top: 12px;">
+                              ${guidedProxySteps(proxyGuidedPhase)
+                                .map(
+                                  (step) => `
+                                    <div class="list-row">
+                                      <div>
+                                        <strong>${step.title}</strong>
+                                        <span>${step.detail}</span>
+                                      </div>
+                                      <span class="chip">${guidedProxyStepState(proxyGuidedPhase, step.key)}</span>
+                                    </div>
+                                  `
+                                )
+                                .join("")}
+                            </div>
+                            <div class="notice" style="margin-top: 12px;">
+                              <strong>Suggested Guided Step</strong>
+                              <span style="display: block; margin-top: 4px;">${proxyGuidedPrimaryAction?.label || "No guided action"} remains display-only in this rail.</span>
+                            </div>
+                          `
+                          : ""
+                      }
                       <div class="panel-heading">Endpoint Policy Editor</div>
                       <div class="panel-heading" style="margin-top: 16px;">Endpoint Runtime Editor</div>
                       <div class="empty-state">Select an endpoint to edit visibility, allowlist, and validation posture.</div>
