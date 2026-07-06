@@ -1916,6 +1916,16 @@ def test_operator_dashboard_shell_route_exposes_market_offer_configuration_hando
     assert "remoteSelectionKeyForDiscovered" in response.text
 
 
+def test_operator_dashboard_shell_route_prefers_payload_recommendations_for_market_and_remote() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "marketPayload().recommended_action" in response.text
+    assert "remotePayload().recommended_action" in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_fleet_guided_handoff_controls() -> None:
     client = TestClient(build_app(service=_service()))
 
@@ -2736,6 +2746,58 @@ def test_operator_dashboard_remote_endpoints_route_uses_operator_view_payload(
     assert captured["view_args"]["service"] is hypervisor
     assert captured["view_args"]["registry_service"] is registry
     assert captured["view_args"]["remote_endpoint_service"] is remote_endpoint_service
+
+
+def test_operator_dashboard_market_payload_includes_endpoint_first_recommended_action() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+
+    payload = build_market_payload(service=hypervisor, registry_service=None)
+
+    assert payload["recommended_action"]["action"] == "publish_local_endpoint"
+    assert payload["recommended_action"]["workspace"] == "endpoints"
+
+
+def test_operator_dashboard_remote_endpoints_route_includes_recommended_action() -> None:
+    service = _service()
+    registry = RegistryService()
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-remote",
+            operator_id="operator-remote",
+            base_url="https://remote.example",
+            heartbeat_at="2026-07-06T12:00:00+00:00",
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+                "free": {"cpu": 10.0, "ram_mb": 28672, "vram_mb": 12288},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 7, "output": 11, "fixed_request": 1},
+            rating={"score": 0.98, "tier": "A", "updated_at": "2026-07-06T11:55:00+00:00"},
+            bundles=[],
+            published_endpoints=[
+                {
+                    "endpoint_id": "endpoint-remote",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-remote",
+                    "current_publication_id": "pub-remote",
+                    "current_configuration_hash": "cfg-remote",
+                    "published_at": "2026-07-06T11:50:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                }
+            ],
+        )
+    )
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    response = client.get("/operators/dashboard/remote-endpoints")
+
+    assert response.status_code == 200
+    assert response.json()["recommended_action"]["action"] == "attach_remote_endpoint"
+    assert response.json()["recommended_action"]["workspace"] == "remote"
 
 
 def test_operator_dashboard_installs_route_returns_actionable_install_state(

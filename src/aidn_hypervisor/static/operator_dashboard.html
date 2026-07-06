@@ -2382,27 +2382,66 @@
     }
 
     function marketRecommendedAction(candidates, candidate) {
-      if (!candidates.length) {
+      const payloadRecommendation = marketPayload().recommended_action;
+      const fallbackAction = !candidates.length
+        ? {
+            label: "Open Endpoints",
+            detail: "Open Endpoints and publish local supply before relying on remote market capacity.",
+            type: "screen",
+            action: "endpoints",
+          }
+        : candidate
+          ? {
+              label: "Check Local Capacity",
+              detail: "Compare the selected offer against local capacity before routing work outward.",
+              type: "screen",
+              action: "fleet",
+            }
+          : {
+              label: "Inspect Offer",
+              detail: "Select a market offer, then compare it against local capacity before routing work outward.",
+              type: "screen",
+              action: "fleet",
+            };
+      if (payloadRecommendation) {
         return {
-          label: "Open Endpoints",
-          detail: "Open Endpoints and publish local supply before relying on remote market capacity.",
+          label: payloadRecommendation.label || fallbackAction.label,
+          detail: payloadRecommendation.detail || fallbackAction.detail,
           type: "screen",
-          action: "endpoints",
+          action:
+            payloadRecommendation.workspace ||
+            fallbackAction.action,
+          intent: payloadRecommendation.action || fallbackAction.action,
         };
       }
+      if (!candidates.length) {
+        return fallbackAction;
+      }
       if (candidate) {
+        return fallbackAction;
+      }
+      return fallbackAction;
+    }
+
+    function remoteRecommendedAction() {
+      const payloadRecommendation = remotePayload().recommended_action;
+      if (payloadRecommendation) {
         return {
-          label: "Check Local Capacity",
-          detail: "Compare the selected offer against local capacity before routing work outward.",
+          label: payloadRecommendation.label || "Open Market",
+          detail:
+            payloadRecommendation.detail ||
+            "Browse remote supply in the market before attaching or proxying endpoints.",
           type: "screen",
-          action: "fleet",
+          action: payloadRecommendation.workspace || "market",
+          intent: payloadRecommendation.action || "review_market_supply",
         };
       }
       return {
-        label: "Inspect Offer",
-        detail: "Select a market offer, then compare it against local capacity before routing work outward.",
+        label: "Open Market",
+        detail: "Browse remote supply in the market before attaching or proxying endpoints.",
         type: "screen",
-        action: "fleet",
+        action: "market",
+        intent: "review_market_supply",
       };
     }
 
@@ -5772,10 +5811,18 @@
     function renderRemoteInspector() {
       const selected = selectedRemoteEndpoint();
       if (!selected) {
+        const recommendation = remoteRecommendedAction();
         return `
           <div class="panel-heading">Remote Endpoint</div>
           <div class="inspector-title">No Remote Route Selected</div>
           <div class="inspector-copy">Choose a preferred or discovered remote endpoint to inspect its trust and routing posture.</div>
+          <div class="notice" style="margin-top: 10px;">
+            <strong>Recommended Next Action</strong>
+            <span style="display: block; margin-top: 4px;">${recommendation.detail}</span>
+          </div>
+          <div class="inspector-actions">
+            <button class="secondary-button action-focus" type="button" data-screen-jump="${recommendation.action}">${recommendation.label}</button>
+          </div>
         `;
       }
       const attached = Boolean(selected.remote_endpoint_id);

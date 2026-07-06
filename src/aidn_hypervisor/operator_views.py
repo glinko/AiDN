@@ -794,7 +794,7 @@ def build_operator_remote_endpoints_payload(
             item["endpoint_id"],
         )
     )
-    return {
+    payload = {
         "owner_wallet": service.owner_wallet_state(),
         "node_identity": service.node_identity(),
         "summary": {
@@ -810,6 +810,32 @@ def build_operator_remote_endpoints_payload(
         },
         "attached": attached,
         "discovered": discovered,
+    }
+    payload["recommended_action"] = _remote_endpoints_recommended_action(payload)
+    return payload
+
+
+def _remote_endpoints_recommended_action(payload: dict) -> dict:
+    summary = payload.get("summary", {})
+    if summary.get("attached", 0):
+        return {
+            "action": "stage_proxy_route",
+            "label": "Open Endpoints",
+            "workspace": "endpoints",
+            "detail": "Use attached remote capacity to stage a proxy endpoint route.",
+        }
+    if summary.get("discovered", 0):
+        return {
+            "action": "attach_remote_endpoint",
+            "label": "Attach Remote Endpoint",
+            "workspace": "remote",
+            "detail": "Add a discovered remote endpoint to the local catalogue before routing through it.",
+        }
+    return {
+        "action": "review_market_supply",
+        "label": "Open Market",
+        "workspace": "market",
+        "detail": "Browse remote supply in the market before attaching or proxying endpoints.",
     }
 
 

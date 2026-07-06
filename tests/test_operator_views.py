@@ -738,6 +738,7 @@ def test_market_payload_builder_preserves_candidate_surfaces(
     assert "candidates" in payload
     assert "canonical_candidates" in payload
     assert "canonical_summary" in payload
+    assert payload["recommended_action"]["workspace"] == "endpoints"
 
 
 def test_remote_endpoints_payload_summarizes_attached_and_discovered_routes(
@@ -804,6 +805,56 @@ def test_remote_endpoints_payload_summarizes_attached_and_discovered_routes(
     assert payload["summary"]["discovered"] == 1
     assert payload["policy"]["proxy_ready"] is True
     assert payload["discovered"][0]["publication_sync_status"] == "in_sync"
+    assert payload["recommended_action"]["action"] == "stage_proxy_route"
+    assert payload["recommended_action"]["workspace"] == "endpoints"
+
+
+def test_remote_endpoints_payload_prefers_attachment_when_only_discovered_routes_exist(
+    service: HypervisorService,
+) -> None:
+    registry = RegistryService()
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-remote",
+            operator_id="operator-remote",
+            base_url="https://remote.example",
+            heartbeat_at="2026-07-06T12:00:00+00:00",
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+                "free": {"cpu": 10.0, "ram_mb": 28672, "vram_mb": 12288},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 7, "output": 11, "fixed_request": 1},
+            rating={"score": 0.98, "tier": "A", "updated_at": "2026-07-06T11:55:00+00:00"},
+            bundles=[],
+            published_endpoints=[
+                {
+                    "endpoint_id": "endpoint-remote",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-remote",
+                    "current_publication_id": "pub-remote",
+                    "current_configuration_hash": "cfg-remote",
+                    "published_at": "2026-07-06T11:50:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                }
+            ],
+        )
+    )
+
+    payload = build_operator_remote_endpoints_payload(
+        service=service,
+        registry_service=registry,
+        remote_endpoint_service=RemoteEndpointService(RemoteEndpointStore()),
+    )
+
+    assert payload["summary"]["attached"] == 0
+    assert payload["summary"]["discovered"] == 1
+    assert payload["recommended_action"]["action"] == "attach_remote_endpoint"
+    assert payload["recommended_action"]["workspace"] == "remote"
 
 
 def test_api_uses_only_public_operator_view_builders() -> None:
