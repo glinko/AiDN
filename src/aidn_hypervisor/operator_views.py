@@ -202,6 +202,17 @@ def _home_onboarding_steps(
     return steps
 
 
+def _canonical_endpoint_workspace_action(*, label: str, detail: str | None = None) -> dict:
+    payload = {
+        "action": "endpoints",
+        "label": label,
+        "workspace": "endpoints",
+    }
+    if detail is not None:
+        payload["detail"] = detail
+    return payload
+
+
 def _normalized_home_onboarding_action(
     *,
     endpoint_pipeline: dict,
@@ -245,20 +256,16 @@ def _normalized_home_onboarding_action(
         }
     if state == "published_drifted":
         return {
-            "label": "Publish Configuration",
-            "detail": "Local endpoint changes exist. Publish the updated configuration so the live endpoint is back in sync.",
-            "type": "endpoint",
-            "action": "publish-configuration",
+            "label": "Republish In Endpoints",
+            "detail": "Open Endpoints and publish the updated configuration so the live service is back in sync.",
+            "type": "screen",
+            "action": "endpoints",
         }
     return {
-        "label": recommended.get("label", "Open Endpoints"),
-        "detail": (
-            "Review the endpoint draft and publish it from Endpoints."
-            if state == "draft_exists"
-            else "Open Endpoints to manage the published endpoint, configuration, and validation state."
-        ),
+        "label": "Manage Endpoint",
+        "detail": "Open Endpoints to manage draft, publication, privacy, proxy, sessions, and validation state.",
         "type": "screen",
-        "action": recommended.get("action", "endpoints"),
+        "action": "endpoints",
     }
 
 
@@ -353,32 +360,29 @@ def _home_endpoint_pipeline(
             "state": "published_drifted",
             "primary_endpoint_id": primary["endpoint_id"],
             "publication_sync_status": primary["publication_sync_status"],
-            "recommended_action": {
-                "action": "publish-configuration",
-                "label": "Publish Configuration",
-                "workspace": "endpoints",
-            },
+            "recommended_action": _canonical_endpoint_workspace_action(
+                label="Republish In Endpoints",
+                detail="Open Endpoints and publish the updated configuration so the live service is back in sync.",
+            ),
         }
     if primary["publication_status"] in {"configured", "draft"}:
         return {
             "state": "draft_exists",
             "primary_endpoint_id": primary["endpoint_id"],
             "publication_sync_status": primary["publication_sync_status"],
-            "recommended_action": {
-                "action": "endpoints",
-                "label": "Open Endpoints",
-                "workspace": "endpoints",
-            },
+            "recommended_action": _canonical_endpoint_workspace_action(
+                label="Open Endpoints",
+                detail="Open Endpoints to review the draft and publish it when ready.",
+            ),
         }
     return {
         "state": "published_in_sync",
         "primary_endpoint_id": primary["endpoint_id"],
         "publication_sync_status": primary["publication_sync_status"],
-        "recommended_action": {
-            "action": "endpoints",
-            "label": "Open Live Endpoint",
-            "workspace": "endpoints",
-        },
+        "recommended_action": _canonical_endpoint_workspace_action(
+            label="Manage Endpoint",
+            detail="Open Endpoints to manage draft, publication, privacy, proxy, sessions, and validation state.",
+        ),
     }
 
 
@@ -433,9 +437,92 @@ def _bundle_relationships(endpoint_items: list[dict]) -> dict[str, dict]:
         relationships[bundle_id] = {
             "state": state,
             "endpoint_id": item.get("endpoint_id"),
+            "publication_status": item.get("publication_status"),
             "publication_sync_status": item.get("publication_sync_status"),
         }
     return relationships
+
+
+def _provider_endpoint_readiness(*, provider: dict, endpoint_items: list[dict]) -> dict:
+    if not provider.get("plugin_id"):
+        return {
+            "state": "not_attached",
+            "recommended_action": {
+                "action": "providers",
+                "label": "Open Providers",
+                "workspace": "providers",
+            },
+        }
+    if int(provider.get("bundle_count", 0) or 0) <= 0:
+        return {
+            "state": "attached_no_usable_supply",
+            "recommended_action": {
+                "action": "providers",
+                "label": "Inspect Provider",
+                "workspace": "providers",
+            },
+        }
+    related = [
+        item
+        for item in endpoint_items
+        if item.get("bundle", {}).get("provider_type") == provider.get("plugin_id")
+    ]
+    if related:
+        return {
+            "state": "already_backing_endpoint_supply",
+            "recommended_action": {
+                "action": "open_endpoint",
+                "label": "Open Endpoint",
+                "workspace": "endpoints",
+                "endpoint_id": related[0].get("endpoint_id"),
+            },
+        }
+    return {
+        "state": "ready_for_endpoint_creation",
+        "recommended_action": {
+            "action": "create_endpoint",
+            "label": "Create Endpoint",
+            "workspace": "endpoints",
+        },
+    }
+
+
+def _bundle_endpoint_relationship(*, bundle: dict, relationship: dict | None) -> dict:
+    if relationship is None:
+        return {
+            "state": "no_endpoint",
+            "recommended_action": {
+                "action": "create_endpoint",
+                "label": "Create Endpoint",
+                "workspace": "endpoints",
+                "bundle_id": bundle.get("bundle_id"),
+            },
+        }
+    publication_sync_status = relationship.get("publication_sync_status")
+    endpoint_id = relationship.get("endpoint_id")
+    if publication_sync_status == "local_changes_not_published":
+        return {
+            "state": "published_drifted",
+            "recommended_action": {
+                "action": "open_endpoint",
+                "label": "Republish In Endpoints",
+                "workspace": "endpoints",
+                "endpoint_id": endpoint_id,
+            },
+        }
+    if relationship.get("publication_status") == "published":
+        state = "published_endpoint"
+    else:
+        state = "draft_endpoint"
+    return {
+        "state": state,
+        "recommended_action": {
+            "action": "open_endpoint",
+            "label": "Open Endpoint",
+            "workspace": "endpoints",
+            "endpoint_id": endpoint_id,
+        },
+    }
 
 
 def build_operator_home_payload(
@@ -544,7 +631,6 @@ def build_operator_providers_payload(
             endpoint_publication_service=endpoint_publication_service,
             validation_service=validation_service,
         )["items"]
-    relationships = _bundle_relationships(endpoint_items)
     items = []
     for plugin in service.plugins.list():
         description = plugin.describe()
@@ -559,29 +645,46 @@ def build_operator_providers_payload(
             for install in installs
             if install["provider_type"] in provider_type_aliases
         ]
-        items.append(
-            {
-                **description,
-                "bundle_count": len(provider_bundles),
-                "active_bundle_count": sum(
-                    1 for bundle in provider_bundles if bundle["enabled"]
-                ),
-                "install_count": len(provider_installs),
-                "pending_install_count": sum(
-                    1
-                    for install in provider_installs
-                    if install["install_status"] in {"pending", "running"}
-                ),
-            }
+        provider_item = {
+            **description,
+            "bundle_count": len(provider_bundles),
+            "active_bundle_count": sum(
+                1 for bundle in provider_bundles if bundle["enabled"]
+            ),
+            "install_count": len(provider_installs),
+            "pending_install_count": sum(
+                1
+                for install in provider_installs
+                if install["install_status"] in {"pending", "running"}
+            ),
+        }
+        provider_item["endpoint_readiness"] = _provider_endpoint_readiness(
+            provider=provider_item,
+            endpoint_items=endpoint_items,
         )
+        items.append(provider_item)
+    summary_recommended_action = {
+        "action": "providers",
+        "label": "Attach Provider",
+        "workspace": "providers",
+    }
+    endpoint_ready_provider = next(
+        (
+            item
+            for item in items
+            if item["endpoint_readiness"]["state"]
+            in {"ready_for_endpoint_creation", "already_backing_endpoint_supply"}
+        ),
+        None,
+    )
+    if endpoint_ready_provider is not None:
+        summary_recommended_action = endpoint_ready_provider["endpoint_readiness"][
+            "recommended_action"
+        ]
     return {
         "owner_wallet": fleet["owner_wallet"],
         "node_identity": fleet["node_identity"],
-        "recommended_action": {
-            "action": "bundles" if bundles else "providers",
-            "label": "Open Bundles" if bundles else "Attach Provider",
-            "workspace": "bundles" if bundles else "providers",
-        },
+        "recommended_action": summary_recommended_action,
         "onboarding": build_onboarding_payload(
             wallet_ready=fleet["owner_wallet"]["configured"],
             provider_count=len(items),
@@ -597,8 +700,11 @@ def build_operator_providers_payload(
             "bundles": len(bundles),
             "installs": len(installs),
             "endpoint_ready_bundles": sum(
-                1 for bundle in bundles if bundle["bundle_id"] not in relationships
+                1
+                for item in items
+                if item["endpoint_readiness"]["state"] == "ready_for_endpoint_creation"
             ),
+            "recommended_action": summary_recommended_action,
         },
         "items": items,
     }
@@ -629,28 +735,41 @@ def build_operator_bundles_payload(
     items = []
     for bundle in bundles:
         is_first_endpoint_candidate = bundle["bundle_id"] == candidate_id
-        relationship = relationships.get(
-            bundle["bundle_id"],
-            {
-                "state": "no_endpoint",
-                "endpoint_id": None,
-                "publication_sync_status": None,
-            },
+        relationship = relationships.get(bundle["bundle_id"])
+        endpoint_relationship = _bundle_endpoint_relationship(
+            bundle=bundle,
+            relationship=relationship,
         )
+        relationship_action = endpoint_relationship["recommended_action"]
         items.append(
             {
                 **bundle,
                 "is_first_endpoint_candidate": is_first_endpoint_candidate,
-                "endpoint_relationship": relationship,
+                "endpoint_relationship": endpoint_relationship,
                 "endpoint_action": {
-                    "recommended": (
-                        "open_endpoint"
-                        if relationship["endpoint_id"] is not None
-                        else "create_endpoint"
-                    )
+                    "recommended": relationship_action["action"]
                 },
             }
         )
+    bundles_recommended_action = {
+        "action": "create_endpoint",
+        "label": "Create Endpoint",
+        "workspace": "endpoints",
+    }
+    first_endpoint_action = next(
+        (
+            item["endpoint_relationship"]["recommended_action"]
+            for item in items
+            if item["is_first_endpoint_candidate"]
+        ),
+        None,
+    )
+    if first_endpoint_action is not None:
+        bundles_recommended_action = first_endpoint_action
+    elif items:
+        bundles_recommended_action = items[0]["endpoint_relationship"][
+            "recommended_action"
+        ]
     return {
         "owner_wallet": fleet["owner_wallet"],
         "node_identity": fleet["node_identity"],
@@ -671,12 +790,9 @@ def build_operator_bundles_payload(
             "first_endpoint_candidates": sum(
                 1 for item in items if item["is_first_endpoint_candidate"]
             ),
+            "recommended_action": bundles_recommended_action,
         },
-        "recommended_action": {
-            "action": "endpoints" if endpoint_items else "bundles",
-            "label": "Open Endpoints" if endpoint_items else "Create Endpoint",
-            "workspace": "endpoints" if endpoint_items else "bundles",
-        },
+        "recommended_action": bundles_recommended_action,
         "items": items,
     }
 
