@@ -2126,6 +2126,16 @@ def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_contr
     assert "function providerRecommendedAction" in response.text
 
 
+def test_operator_dashboard_shell_route_uses_payload_driven_provider_and_bundle_handoff_copy() -> None:
+    response = TestClient(build_app(service=_service())).get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "selectedProvider()?.endpoint_readiness" in response.text
+    assert "selectedFleetBundle()?.endpoint_relationship" in response.text
+    assert "This screen prepares execution supply for endpoint creation." in response.text
+    assert "This screen tracks bundle-to-endpoint relationship state." in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> None:
     client = TestClient(build_app(service=_service()))
 
@@ -2481,6 +2491,68 @@ def test_operator_dashboard_home_exposes_endpoint_pipeline_create_action() -> No
     assert payload["onboarding"]["recommended_action"]["action"] == "create"
 
 
+def test_operator_dashboard_home_endpoint_pipeline_uses_endpoints_for_draft_follow_up() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Draft STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    client = TestClient(build_app(service=hypervisor, endpoint_service=endpoint_service))
+
+    payload = client.get("/operators/dashboard/home").json()
+
+    assert payload["endpoint_pipeline"]["state"] == "draft_exists"
+    assert payload["endpoint_pipeline"]["recommended_action"]["workspace"] == "endpoints"
+    assert payload["onboarding"]["recommended_action"]["action"] == "endpoints"
+
+
+def test_operator_dashboard_home_endpoint_pipeline_uses_endpoints_for_in_sync_management() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Published STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+        node_id=hypervisor.node_id,
+        wallet_private_key=hypervisor.owner_wallet_private_key(),
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+        )
+    )
+
+    payload = client.get("/operators/dashboard/home").json()
+
+    assert payload["endpoint_pipeline"]["state"] == "published_in_sync"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "endpoints"
+    assert payload["endpoint_pipeline"]["recommended_action"]["workspace"] == "endpoints"
+
+
 def test_operator_dashboard_home_preserves_completion_history_while_recommending_create(
 ) -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
@@ -2725,6 +2797,24 @@ def test_operator_dashboard_providers_route_returns_workspace_payload(
     assert "validation_service" in captured["view_args"]
 
 
+def test_operator_dashboard_providers_payload_prefers_endpoint_handoff_when_supply_is_ready() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    client = TestClient(build_app(service=hypervisor))
+
+    payload = client.get("/operators/dashboard/providers").json()
+
+    assert payload["summary"]["recommended_action"]["workspace"] == "endpoints"
+    assert payload["summary"]["recommended_action"]["action"] in {
+        "create_endpoint",
+        "open_endpoint",
+    }
+    assert payload["items"][0]["endpoint_readiness"]["state"] in {
+        "ready_for_endpoint_creation",
+        "already_backing_endpoint_supply",
+    }
+
+
 def test_operator_dashboard_bundles_route_returns_workspace_payload(
     monkeypatch,
 ) -> None:
@@ -2754,6 +2844,19 @@ def test_operator_dashboard_bundles_route_returns_workspace_payload(
     assert captured["view_args"]["endpoint_service"] is endpoint_service
     assert "endpoint_publication_service" in captured["view_args"]
     assert "validation_service" in captured["view_args"]
+
+
+def test_operator_dashboard_bundles_payload_exposes_endpoint_relationship_contract() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    client = TestClient(build_app(service=hypervisor))
+
+    payload = client.get("/operators/dashboard/bundles").json()
+    first = payload["items"][0]
+
+    assert first["endpoint_relationship"]["state"] == "no_endpoint"
+    assert first["endpoint_relationship"]["recommended_action"]["workspace"] == "endpoints"
+    assert first["endpoint_relationship"]["recommended_action"]["action"] == "create_endpoint"
 
 
 def test_operator_dashboard_market_route_uses_operator_view_payload(
