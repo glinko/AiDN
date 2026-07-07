@@ -1916,6 +1916,26 @@ def test_operator_dashboard_shell_route_exposes_market_offer_configuration_hando
     assert "remoteSelectionKeyForDiscovered" in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_market_shortcut_for_attached_proxy_staging() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "prepareEndpointProxyHandoff" in response.text
+    assert "discovered?.already_attached" in response.text
+
+
+def test_operator_dashboard_shell_route_prefers_payload_recommendations_for_market_and_remote() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "marketPayload().recommended_action" in response.text
+    assert "remotePayload().recommended_action" in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_fleet_guided_handoff_controls() -> None:
     client = TestClient(build_app(service=_service()))
 
@@ -1954,6 +1974,16 @@ def test_operator_dashboard_shell_route_exposes_remote_proxy_handoff_controls() 
     assert 'button.dataset.remoteAction === "stage-proxy"' in response.text
     assert 'state.screen = "endpoints"' in response.text
     assert 'state.endpointProxyDraft = {' in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_attach_to_endpoint_proxy_handoff() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "prepareEndpointProxyHandoff(result.data.remote_endpoint" in response.text
+    assert "Proxy draft preserved for the next local endpoint." in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_wallet_drawer_controls() -> None:
@@ -2057,6 +2087,18 @@ def test_operator_dashboard_shell_route_exposes_bundle_endpoint_creation_control
     assert "Select a first-endpoint candidate, then create an endpoint from local inventory without leaving this workspace." in response.text
     assert "function bundleRecommendedAction" in response.text
     assert "action-focus" in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_endpoint_pipeline_copy() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Endpoint Pipeline" in response.text
+    assert "Endpoints are the primary operator workspace." in response.text
+    assert "Providers prepare execution supply. Bundles prepare endpoint candidates." in response.text
+    assert 'data-screen-jump="endpoints"' in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_controls() -> None:
@@ -2242,10 +2284,67 @@ def test_operator_dashboard_shell_route_exposes_one_click_guided_proxy_publish_a
     response = client.get("/operators/dashboard")
 
     assert response.status_code == 200
-    assert "Complete Guided Proxy Publish" in response.text
-    assert 'data-endpoint-action="complete-guided-proxy-publish"' in response.text
-    assert 'button.dataset.endpointAction === "complete-guided-proxy-publish"' in response.text
+    assert "function renderGuidedProxyPanel(" in response.text
+    assert (
+        'action: "complete-guided-proxy-publish",' in response.text
+        and 'label: "Publish Configuration",' in response.text
+        and 'kind: "endpoint-action",' in response.text
+    )
+    assert 'case "complete-guided-proxy-publish":' in response.text
     assert 'state.endpointInspectorView = "signed-publication";' in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_guided_proxy_step_rail() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Guided Route Flow" in response.text
+    assert "Request Validation (Optional)" in response.text
+    assert "Create Endpoint" in response.text
+    assert "Attach Proxy Route" in response.text
+    assert "Publish Configuration" in response.text
+    assert 'case "create-endpoint":' in response.text
+
+
+def test_operator_dashboard_shell_route_guided_bootstrap_cta_uses_shell_readiness() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'const recommendation = homeRecommendedAction(state.payloads.home?.bootstrap || {});' in response.text
+    assert 'return { kind: "screen-jump", action: "home", label: "Open Wallet Setup" };' in response.text
+    assert 'action: recommendation.action,' in response.text
+    assert 'data-screen-jump="${proxyGuidedPrimaryAction.action}"' in response.text
+    assert 'return { kind: "endpoint-action", action: "create-endpoint", label: "Create Endpoint" };' in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_guided_proxy_finish_action() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Finish Guided Flow" in response.text
+    assert 'data-endpoint-action="finish-guided-flow"' in response.text
+    assert 'case "finish-guided-flow":' in response.text
+
+
+def test_operator_dashboard_shell_route_exposes_guided_proxy_phase_transitions() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'phase: "attach"' in response.text
+    assert 'phase: "publish"' in response.text
+    assert 'phase: "validate_optional"' in response.text
+    assert "clearGuidedProxyFlow" in response.text
+    assert 'state.screen = proxyGuidedFlow?.phase === "publish" ? "endpoints" : "home";' in response.text
+    assert "Open the validation controls when you are ready to request it." not in response.text
+    assert '`${endpointApiBase}/${draft.endpoint_id}/request-validation`' in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_wallet_and_endpoint_controls() -> None:
@@ -2289,7 +2388,7 @@ def test_operator_dashboard_shell_route_exposes_guided_onboarding_sections() -> 
     assert 'data-screen-jump="providers"' in response.text
     assert 'data-screen-jump="bundles"' in response.text
     assert 'data-screen-jump="endpoints"' in response.text
-    assert 'state.screen = "home";' in response.text
+    assert 'state.screen = proxyGuidedFlow?.phase === "publish" ? "endpoints" : "home";' in response.text
 
 
 def test_operator_dashboard_home_market_preview_matches_market_candidates() -> None:
@@ -2365,6 +2464,128 @@ def test_operator_dashboard_home_bootstrap_prefers_endpoint_service_state() -> N
     assert home.json()["bootstrap"]["endpoint_count"] == 1
     assert home.json()["bootstrap"]["items"][0]["endpoint_id"] == created.endpoint.endpoint_id
     assert home.json()["bootstrap"]["next_step"] == "Review your configured endpoint and publish it"
+
+
+def test_operator_dashboard_home_exposes_endpoint_pipeline_create_action() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    client = TestClient(build_app(service=hypervisor))
+
+    home = client.get("/operators/dashboard/home")
+
+    assert home.status_code == 200
+    payload = home.json()
+    assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
+    assert payload["endpoint_pipeline"]["primary_endpoint_id"] is None
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create"
+    assert payload["onboarding"]["recommended_action"]["action"] == "create"
+
+
+def test_operator_dashboard_home_preserves_completion_history_while_recommending_create(
+) -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    hypervisor.sync_operator_onboarding_state(
+        endpoint_items=[{"publication_status": "published"}]
+    )
+    client = TestClient(build_app(service=hypervisor))
+
+    home = client.get("/operators/dashboard/home")
+
+    assert home.status_code == 200
+    payload = home.json()
+    assert payload["onboarding"]["completed"] is True
+    assert payload["onboarding"]["completed_at"] is not None
+    assert payload["onboarding"]["completed_via"] == "first_local_endpoint_published"
+    assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create"
+    assert payload["onboarding"]["recommended_action"]["action"] == "create"
+
+
+def test_operator_dashboard_home_shell_highlights_publish_configuration_recommendation(
+) -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'recommendation.action === "create" ? "action-focus" : ""' in response.text
+    assert 'recommendation.action === "publish-configuration" ? "action-focus" : ""' in response.text
+
+
+def test_operator_dashboard_home_targets_drifted_endpoint_over_older_in_sync_endpoint(
+) -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    older_in_sync = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Older In Sync",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    publication_service.publish_configuration(
+        endpoint_id=older_in_sync.endpoint.endpoint_id,
+        owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+        node_id=hypervisor.node_id,
+        wallet_private_key=hypervisor.owner_wallet_private_key(),
+    )
+    newer_drifted = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Newer Drifted",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+        )
+    )
+    publication_service.publish_configuration(
+        endpoint_id=newer_drifted.endpoint.endpoint_id,
+        owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+        node_id=hypervisor.node_id,
+        wallet_private_key=hypervisor.owner_wallet_private_key(),
+    )
+    endpoint_service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=newer_drifted.endpoint.endpoint_id,
+            runtime={"streaming": True},
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+        )
+    )
+
+    home = client.get("/operators/dashboard/home")
+
+    assert home.status_code == 200
+    payload = home.json()
+    assert payload["endpoint_pipeline"]["state"] == "published_drifted"
+    assert payload["endpoint_pipeline"]["primary_endpoint_id"] == newer_drifted.endpoint.endpoint_id
+    assert payload["endpoint_pipeline"]["primary_endpoint_id"] != older_in_sync.endpoint.endpoint_id
+
+
+def test_operator_dashboard_home_shell_uses_endpoint_pipeline_primary_endpoint_id_for_home_actions(
+) -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "state.payloads.home?.endpoint_pipeline?.primary_endpoint_id" in response.text
+    assert "function homeActionEndpointDraft()" in response.text
 
 
 def test_create_endpoint_api_refreshes_onboarding_state() -> None:
@@ -2477,6 +2698,7 @@ def test_operator_dashboard_providers_route_returns_workspace_payload(
     monkeypatch,
 ) -> None:
     hypervisor = _service()
+    endpoint_service = EndpointService(EndpointStore())
     expected_payload = {
         "summary": {"total": 1},
         "items": [{"plugin_id": "fake-managed"}],
@@ -2491,19 +2713,23 @@ def test_operator_dashboard_providers_route_returns_workspace_payload(
         "aidn_hypervisor.api.build_operator_providers_payload",
         fake_build_operator_providers_payload,
     )
-    client = TestClient(build_app(service=hypervisor))
+    client = TestClient(build_app(service=hypervisor, endpoint_service=endpoint_service))
 
     response = client.get("/operators/dashboard/providers")
 
     assert response.status_code == 200
     assert response.json() == expected_payload
     assert captured["view_args"]["service"] is hypervisor
+    assert captured["view_args"]["endpoint_service"] is endpoint_service
+    assert "endpoint_publication_service" in captured["view_args"]
+    assert "validation_service" in captured["view_args"]
 
 
 def test_operator_dashboard_bundles_route_returns_workspace_payload(
     monkeypatch,
 ) -> None:
     hypervisor = _service()
+    endpoint_service = EndpointService(EndpointStore())
     expected_payload = {
         "summary": {"total": 2},
         "items": [{"bundle_id": "whisper-a"}],
@@ -2518,13 +2744,137 @@ def test_operator_dashboard_bundles_route_returns_workspace_payload(
         "aidn_hypervisor.api.build_operator_bundles_payload",
         fake_build_operator_bundles_payload,
     )
-    client = TestClient(build_app(service=hypervisor))
+    client = TestClient(build_app(service=hypervisor, endpoint_service=endpoint_service))
 
     response = client.get("/operators/dashboard/bundles")
 
     assert response.status_code == 200
     assert response.json() == expected_payload
     assert captured["view_args"]["service"] is hypervisor
+    assert captured["view_args"]["endpoint_service"] is endpoint_service
+    assert "endpoint_publication_service" in captured["view_args"]
+    assert "validation_service" in captured["view_args"]
+
+
+def test_operator_dashboard_market_route_uses_operator_view_payload(
+    monkeypatch,
+) -> None:
+    hypervisor = _service()
+    registry = RegistryService()
+    expected_payload = {
+        "nodes": [],
+        "candidates": [],
+        "canonical_candidates": [],
+        "canonical_summary": {},
+    }
+    captured: dict[str, object] = {}
+
+    def fake_build_operator_market_payload(**kwargs) -> dict:
+        captured["view_args"] = kwargs
+        return expected_payload
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.api.build_operator_market_payload",
+        fake_build_operator_market_payload,
+    )
+    client = TestClient(build_app(service=hypervisor, registry_service=registry))
+
+    response = client.get("/operators/dashboard/market")
+
+    assert response.status_code == 200
+    assert response.json() == expected_payload
+    assert captured["view_args"]["service"] is hypervisor
+    assert captured["view_args"]["registry_service"] is registry
+
+
+def test_operator_dashboard_remote_endpoints_route_uses_operator_view_payload(
+    monkeypatch,
+) -> None:
+    hypervisor = _service()
+    registry = RegistryService()
+    remote_endpoint_service = RemoteEndpointService(RemoteEndpointStore())
+    expected_payload = {
+        "summary": {"attached": 0, "discovered": 0},
+        "attached": [],
+        "discovered": [],
+    }
+    captured: dict[str, object] = {}
+
+    def fake_build_operator_remote_endpoints_payload(**kwargs) -> dict:
+        captured["view_args"] = kwargs
+        return expected_payload
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.api.build_operator_remote_endpoints_payload",
+        fake_build_operator_remote_endpoints_payload,
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            registry_service=registry,
+            remote_endpoint_service=remote_endpoint_service,
+        )
+    )
+
+    response = client.get("/operators/dashboard/remote-endpoints")
+
+    assert response.status_code == 200
+    assert response.json() == expected_payload
+    assert captured["view_args"]["service"] is hypervisor
+    assert captured["view_args"]["registry_service"] is registry
+    assert captured["view_args"]["remote_endpoint_service"] is remote_endpoint_service
+
+
+def test_operator_dashboard_market_payload_includes_endpoint_first_recommended_action() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+
+    payload = build_market_payload(service=hypervisor, registry_service=None)
+
+    assert payload["recommended_action"]["action"] == "publish_local_endpoint"
+    assert payload["recommended_action"]["workspace"] == "endpoints"
+
+
+def test_operator_dashboard_remote_endpoints_route_includes_recommended_action() -> None:
+    service = _service()
+    registry = RegistryService()
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-remote",
+            operator_id="operator-remote",
+            base_url="https://remote.example",
+            heartbeat_at="2026-07-06T12:00:00+00:00",
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+                "free": {"cpu": 10.0, "ram_mb": 28672, "vram_mb": 12288},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 7, "output": 11, "fixed_request": 1},
+            rating={"score": 0.98, "tier": "A", "updated_at": "2026-07-06T11:55:00+00:00"},
+            bundles=[],
+            published_endpoints=[
+                {
+                    "endpoint_id": "endpoint-remote",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-remote",
+                    "current_publication_id": "pub-remote",
+                    "current_configuration_hash": "cfg-remote",
+                    "published_at": "2026-07-06T11:50:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                }
+            ],
+        )
+    )
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    response = client.get("/operators/dashboard/remote-endpoints")
+
+    assert response.status_code == 200
+    assert response.json()["recommended_action"]["action"] == "attach_remote_endpoint"
+    assert response.json()["recommended_action"]["workspace"] == "remote"
 
 
 def test_operator_dashboard_installs_route_returns_actionable_install_state(

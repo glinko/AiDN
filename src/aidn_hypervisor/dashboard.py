@@ -12,7 +12,7 @@ def build_market_payload(*, service, registry_service) -> dict:
     if registry_service is None:
         advertisement = service.node_advertisement()
         canonical_candidates = _canonical_candidates_from_node(advertisement)
-        return {
+        payload = {
             "nodes": [advertisement],
             "candidates": [
                 _local_candidate_from_advertisement(advertisement, bundle)
@@ -26,6 +26,8 @@ def build_market_payload(*, service, registry_service) -> dict:
                 canonical_candidates=canonical_candidates,
             ),
         }
+        payload["recommended_action"] = _market_recommended_action(payload)
+        return payload
 
     discovery = registry_service.discover(RegistryDiscoveryQuery())
     nodes_by_id = {node["node_id"]: node for node in discovery["nodes"]}
@@ -57,7 +59,7 @@ def build_market_payload(*, service, registry_service) -> dict:
                     "origin": "own" if candidate["node_id"] == service.node_id else "external",
                 }
             )
-    return {
+    payload = {
         "query": discovery["query"],
         "nodes": discovery["nodes"],
         "candidates": candidates,
@@ -69,6 +71,47 @@ def build_market_payload(*, service, registry_service) -> dict:
             nodes=list(canonical_market_nodes.values()),
             canonical_candidates=canonical_candidates,
         ),
+    }
+    payload["recommended_action"] = _market_recommended_action(payload)
+    return payload
+
+
+def _market_recommended_action(payload: dict) -> dict:
+    nodes = payload.get("nodes", [])
+    candidates = payload.get("candidates", [])
+    canonical_candidates = payload.get("canonical_candidates", [])
+    own_published = sum(
+        len(node.get("published_endpoints", []))
+        for node in nodes
+        if node.get("origin") == "own" or len(nodes) == 1
+    )
+    has_external_supply = any(
+        candidate.get("origin") == "external"
+        and (
+            candidate.get("published_endpoint_count", 0)
+            or candidate.get("resource_type") == "endpoint"
+        )
+        for candidate in [*candidates, *canonical_candidates]
+    )
+    if own_published <= 0:
+        return {
+            "action": "publish_local_endpoint",
+            "label": "Open Endpoints",
+            "workspace": "endpoints",
+            "detail": "Publish a local endpoint before routing marketplace demand through remote supply.",
+        }
+    if has_external_supply:
+        return {
+            "action": "configure_remote_route",
+            "label": "Open Remote Endpoints",
+            "workspace": "remote",
+            "detail": "Attach a remote endpoint and stage a proxy route from the endpoint workspace.",
+        }
+    return {
+        "action": "review_market_supply",
+        "label": "Review Market Supply",
+        "workspace": "market",
+        "detail": "Compare local and remote supply before changing endpoint routing.",
     }
 
 

@@ -1,8 +1,9 @@
+from aidn_hypervisor.dashboard import build_market_payload
 from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
 )
-from aidn_hypervisor.operator_onboarding import build_onboarding_payload
+from aidn_hypervisor.operator_onboarding import ONBOARDING_STEPS, build_onboarding_payload
 
 
 def _execution_payload_for_manifest(manifest) -> dict:
@@ -100,6 +101,287 @@ def _configuration_hash_for_publication_record(
     return None
 
 
+def _primary_endpoint_for_home(endpoint_items: list[dict]) -> dict | None:
+    priority = {
+        "local_changes_not_published": 0,
+        "never_published": 1,
+        "in_sync": 2,
+    }
+    if not endpoint_items:
+        return None
+    return sorted(
+        endpoint_items,
+        key=lambda item: (
+            priority.get(item.get("publication_sync_status"), 99),
+            item.get("publication_status") != "published",
+            item.get("endpoint_id") or "",
+        ),
+    )[0]
+
+
+def _home_no_endpoint_recommended_action(
+    *,
+    provider_count: int,
+    bundle_count: int,
+    first_endpoint_candidate: dict | None,
+) -> dict:
+    if provider_count <= 0:
+        return {
+            "action": "providers",
+            "label": "Open Providers",
+            "workspace": "providers",
+        }
+    if bundle_count <= 0 or first_endpoint_candidate is None:
+        return {
+            "action": "bundles",
+            "label": "Open Bundles",
+            "workspace": "bundles",
+        }
+    return {
+        "action": "create",
+        "label": "Create First Endpoint",
+        "workspace": "bundles",
+    }
+
+
+def _home_bootstrap_next_step(
+    *,
+    endpoint_pipeline: dict,
+    first_endpoint_candidate: dict | None,
+    fallback_next_step: str | None,
+) -> str:
+    state = endpoint_pipeline.get("state")
+    action = endpoint_pipeline.get("recommended_action", {}).get("action")
+    if state == "wallet_required":
+        return "Create or import a wallet"
+    if state == "no_endpoint":
+        if action == "providers":
+            return "Attach a provider or install a model"
+        if action == "bundles":
+            return "Prepare a bundle or finish model setup before creating the first endpoint"
+        bundle_id = (first_endpoint_candidate or {}).get("bundle_id")
+        if bundle_id:
+            return f"Create your first endpoint from {bundle_id}"
+        return "Create your first endpoint from a ready local bundle"
+    if state == "draft_exists":
+        return "Review your configured endpoint and publish it"
+    if state == "published_drifted":
+        return "Publish your updated endpoint configuration to sync the live endpoint"
+    if state == "published_in_sync":
+        return "Manage your published endpoint and request validation when ready"
+    return fallback_next_step or "Attach a provider or install a model"
+
+
+def _home_onboarding_steps(
+    *,
+    current_step: str,
+    completed: bool,
+    completed_at: str | None,
+) -> list[dict]:
+    step_index = {
+        key: index for index, (key, _label, _workspace) in enumerate(ONBOARDING_STEPS)
+    }
+    current_index = step_index[current_step]
+    steps = []
+    for index, (key, label, workspace) in enumerate(ONBOARDING_STEPS):
+        if key == current_step:
+            status = "active"
+        elif index < current_index or (completed and current_step == "operate"):
+            status = "complete"
+        else:
+            status = "upcoming"
+        steps.append(
+            {
+                "key": key,
+                "label": label,
+                "workspace": workspace,
+                "status": status,
+                "completed_at": completed_at if status == "complete" else None,
+            }
+        )
+    return steps
+
+
+def _normalized_home_onboarding_action(
+    *,
+    endpoint_pipeline: dict,
+    first_endpoint_candidate: dict | None,
+) -> dict:
+    state = endpoint_pipeline.get("state")
+    recommended = endpoint_pipeline.get("recommended_action", {})
+    action = recommended.get("action")
+    if state == "wallet_required":
+        return {
+            "label": "Create Wallet",
+            "detail": "Create or import a wallet before any publish or network-facing step.",
+            "type": "bootstrap",
+            "action": "create-wallet",
+        }
+    if state == "no_endpoint":
+        if action == "providers":
+            return {
+                "label": "Open Providers",
+                "detail": "Attach a provider so the dashboard can surface a local execution path.",
+                "type": "screen",
+                "action": "providers",
+            }
+        if action == "bundles":
+            return {
+                "label": "Open Bundles",
+                "detail": "Prepare a bundle or finish model setup before creating the first endpoint.",
+                "type": "screen",
+                "action": "bundles",
+            }
+        bundle_id = (first_endpoint_candidate or {}).get("bundle_id")
+        return {
+            "label": "Create First Endpoint",
+            "detail": (
+                f"Bundle {bundle_id} is ready to become the first endpoint."
+                if bundle_id
+                else "Create the first endpoint from a ready local bundle."
+            ),
+            "type": "endpoint",
+            "action": "create",
+        }
+    if state == "published_drifted":
+        return {
+            "label": "Publish Configuration",
+            "detail": "Local endpoint changes exist. Publish the updated configuration so the live endpoint is back in sync.",
+            "type": "endpoint",
+            "action": "publish-configuration",
+        }
+    return {
+        "label": recommended.get("label", "Open Endpoints"),
+        "detail": (
+            "Review the endpoint draft and publish it from Endpoints."
+            if state == "draft_exists"
+            else "Open Endpoints to manage the published endpoint, configuration, and validation state."
+        ),
+        "type": "screen",
+        "action": recommended.get("action", "endpoints"),
+    }
+
+
+def _normalize_home_onboarding(
+    *,
+    onboarding: dict,
+    endpoint_pipeline: dict,
+    first_endpoint_candidate: dict | None,
+) -> dict:
+    historical_completed = bool(onboarding.get("completed"))
+    normalized = {
+        **onboarding,
+        "recommended_action": _normalized_home_onboarding_action(
+            endpoint_pipeline=endpoint_pipeline,
+            first_endpoint_candidate=first_endpoint_candidate,
+        ),
+    }
+    state = endpoint_pipeline.get("state")
+    if state == "wallet_required":
+        current_step = "configure_wallet"
+        workspace = "home"
+        completed = historical_completed
+    elif state == "no_endpoint":
+        action = endpoint_pipeline.get("recommended_action", {}).get("action")
+        current_step = {
+            "providers": "attach_provider",
+            "bundles": "prepare_bundle",
+            "create": "create_endpoint",
+        }.get(action, "create_endpoint")
+        workspace = {
+            "providers": "providers",
+            "bundles": "bundles",
+            "create": "bundles",
+        }.get(action, "bundles")
+        completed = historical_completed
+    elif state == "draft_exists":
+        current_step = "publish_endpoint"
+        workspace = "endpoints"
+        completed = historical_completed
+    elif state == "published_drifted":
+        current_step = "publish_endpoint"
+        workspace = "endpoints"
+        completed = historical_completed
+    else:
+        current_step = normalized.get("current_step", "operate")
+        workspace = normalized.get("workspace", "home")
+        completed = normalized.get("completed", False)
+    normalized["completed"] = completed
+    normalized["current_step"] = current_step
+    normalized["workspace"] = workspace
+    normalized["steps"] = _home_onboarding_steps(
+        current_step=current_step,
+        completed=completed,
+        completed_at=normalized.get("completed_at"),
+    )
+    return normalized
+
+
+def _home_endpoint_pipeline(
+    *,
+    endpoint_items: list[dict],
+    wallet_ready: bool,
+    provider_count: int,
+    bundle_count: int,
+    first_endpoint_candidate: dict | None,
+) -> dict:
+    primary = _primary_endpoint_for_home(endpoint_items)
+    if not wallet_ready:
+        return {
+            "state": "wallet_required",
+            "primary_endpoint_id": None,
+            "publication_sync_status": None,
+            "recommended_action": {
+                "action": "create-wallet",
+                "label": "Create Wallet",
+                "workspace": "home",
+            },
+        }
+    if primary is None:
+        return {
+            "state": "no_endpoint",
+            "primary_endpoint_id": None,
+            "publication_sync_status": None,
+            "recommended_action": _home_no_endpoint_recommended_action(
+                provider_count=provider_count,
+                bundle_count=bundle_count,
+                first_endpoint_candidate=first_endpoint_candidate,
+            ),
+        }
+    if primary["publication_sync_status"] == "local_changes_not_published":
+        return {
+            "state": "published_drifted",
+            "primary_endpoint_id": primary["endpoint_id"],
+            "publication_sync_status": primary["publication_sync_status"],
+            "recommended_action": {
+                "action": "publish-configuration",
+                "label": "Publish Configuration",
+                "workspace": "endpoints",
+            },
+        }
+    if primary["publication_status"] in {"configured", "draft"}:
+        return {
+            "state": "draft_exists",
+            "primary_endpoint_id": primary["endpoint_id"],
+            "publication_sync_status": primary["publication_sync_status"],
+            "recommended_action": {
+                "action": "endpoints",
+                "label": "Open Endpoints",
+                "workspace": "endpoints",
+            },
+        }
+    return {
+        "state": "published_in_sync",
+        "primary_endpoint_id": primary["endpoint_id"],
+        "publication_sync_status": primary["publication_sync_status"],
+        "recommended_action": {
+            "action": "endpoints",
+            "label": "Open Live Endpoint",
+            "workspace": "endpoints",
+        },
+    }
+
+
 def _build_operator_home_bootstrap_payload(
     *,
     service,
@@ -134,6 +416,28 @@ def _build_operator_home_bootstrap_payload(
     }
 
 
+def _bundle_relationships(endpoint_items: list[dict]) -> dict[str, dict]:
+    relationships: dict[str, dict] = {}
+    for item in endpoint_items:
+        bundle_id = item.get("bundle_id")
+        if not bundle_id:
+            continue
+        state = (
+            "published_endpoint_exists"
+            if item.get("publication_status") == "published"
+            else "draft_endpoint_exists"
+        )
+        existing = relationships.get(bundle_id)
+        if existing is not None and existing.get("state") == "published_endpoint_exists":
+            continue
+        relationships[bundle_id] = {
+            "state": state,
+            "endpoint_id": item.get("endpoint_id"),
+            "publication_sync_status": item.get("publication_sync_status"),
+        }
+    return relationships
+
+
 def build_operator_home_payload(
     *,
     service,
@@ -144,6 +448,8 @@ def build_operator_home_payload(
 ) -> dict:
     service_payload = service.operator_dashboard_home()
     service_summary = service_payload.get("summary", {})
+    bootstrap_facts = service_payload.get("bootstrap", {})
+    wallet_ready = service.owner_wallet_state()["configured"]
     endpoints_payload = build_operator_endpoints_payload(
         service=service,
         endpoint_service=endpoint_service,
@@ -151,7 +457,7 @@ def build_operator_home_payload(
         validation_service=validation_service,
     )
     onboarding = build_onboarding_payload(
-        wallet_ready=service.owner_wallet_state()["configured"],
+        wallet_ready=wallet_ready,
         provider_count=service_payload.get("bootstrap", {}).get("provider_count", 0),
         bundle_count=service_payload.get("bootstrap", {}).get("bundle_count", 0),
         endpoint_items=endpoints_payload["items"],
@@ -160,12 +466,31 @@ def build_operator_home_payload(
         ),
         persisted=service.operator_onboarding_state(),
     )
+    endpoint_pipeline = _home_endpoint_pipeline(
+        endpoint_items=endpoints_payload["items"],
+        wallet_ready=wallet_ready,
+        provider_count=bootstrap_facts.get("provider_count", 0),
+        bundle_count=bootstrap_facts.get("bundle_count", 0),
+        first_endpoint_candidate=bootstrap_facts.get("first_endpoint_candidate"),
+    )
+    onboarding = _normalize_home_onboarding(
+        onboarding=onboarding,
+        endpoint_pipeline=endpoint_pipeline,
+        first_endpoint_candidate=bootstrap_facts.get("first_endpoint_candidate"),
+    )
+    bootstrap = _build_operator_home_bootstrap_payload(
+        service=service,
+        endpoint_items=endpoints_payload["items"],
+        fallback_bootstrap=bootstrap_facts,
+    )
+    bootstrap["next_step"] = _home_bootstrap_next_step(
+        endpoint_pipeline=endpoint_pipeline,
+        first_endpoint_candidate=bootstrap_facts.get("first_endpoint_candidate"),
+        fallback_next_step=bootstrap.get("next_step"),
+    )
     return {
-        "bootstrap": _build_operator_home_bootstrap_payload(
-            service=service,
-            endpoint_items=endpoints_payload["items"],
-            fallback_bootstrap=service_payload.get("bootstrap", {}),
-        ),
+        "bootstrap": bootstrap,
+        "endpoint_pipeline": endpoint_pipeline,
         "canonical_overlay": service.canonical_overlay_inventory(),
         "onboarding": onboarding,
         "publish": {
@@ -201,10 +526,25 @@ def build_operator_home_payload(
     }
 
 
-def build_operator_providers_payload(*, service) -> dict:
+def build_operator_providers_payload(
+    *,
+    service,
+    endpoint_service=None,
+    endpoint_publication_service=None,
+    validation_service=None,
+) -> dict:
     fleet = service.operator_dashboard_fleet()
     bundles = fleet["bundles"]
     installs = fleet["installs"]
+    endpoint_items = []
+    if endpoint_service is not None:
+        endpoint_items = build_operator_endpoints_payload(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            validation_service=validation_service,
+        )["items"]
+    relationships = _bundle_relationships(endpoint_items)
     items = []
     for plugin in service.plugins.list():
         description = plugin.describe()
@@ -237,6 +577,11 @@ def build_operator_providers_payload(*, service) -> dict:
     return {
         "owner_wallet": fleet["owner_wallet"],
         "node_identity": fleet["node_identity"],
+        "recommended_action": {
+            "action": "bundles" if bundles else "providers",
+            "label": "Open Bundles" if bundles else "Attach Provider",
+            "workspace": "bundles" if bundles else "providers",
+        },
         "onboarding": build_onboarding_payload(
             wallet_ready=fleet["owner_wallet"]["configured"],
             provider_count=len(items),
@@ -251,30 +596,57 @@ def build_operator_providers_payload(*, service) -> dict:
             "total": len(items),
             "bundles": len(bundles),
             "installs": len(installs),
+            "endpoint_ready_bundles": sum(
+                1 for bundle in bundles if bundle["bundle_id"] not in relationships
+            ),
         },
         "items": items,
     }
 
 
-def build_operator_bundles_payload(*, service) -> dict:
+def build_operator_bundles_payload(
+    *,
+    service,
+    endpoint_service=None,
+    endpoint_publication_service=None,
+    validation_service=None,
+) -> dict:
     fleet = service.operator_dashboard_fleet()
     bundles = fleet["bundles"]
     candidate = service.operator_dashboard_home()["bootstrap"].get(
         "first_endpoint_candidate"
     )
     candidate_id = candidate.get("bundle_id") if candidate is not None else None
+    endpoint_items = []
+    if endpoint_service is not None:
+        endpoint_items = build_operator_endpoints_payload(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            validation_service=validation_service,
+        )["items"]
+    relationships = _bundle_relationships(endpoint_items)
     items = []
     for bundle in bundles:
         is_first_endpoint_candidate = bundle["bundle_id"] == candidate_id
+        relationship = relationships.get(
+            bundle["bundle_id"],
+            {
+                "state": "no_endpoint",
+                "endpoint_id": None,
+                "publication_sync_status": None,
+            },
+        )
         items.append(
             {
                 **bundle,
                 "is_first_endpoint_candidate": is_first_endpoint_candidate,
+                "endpoint_relationship": relationship,
                 "endpoint_action": {
                     "recommended": (
-                        "create_endpoint"
-                        if is_first_endpoint_candidate
-                        else "inspect_bundle"
+                        "open_endpoint"
+                        if relationship["endpoint_id"] is not None
+                        else "create_endpoint"
                     )
                 },
             }
@@ -299,6 +671,11 @@ def build_operator_bundles_payload(*, service) -> dict:
             "first_endpoint_candidates": sum(
                 1 for item in items if item["is_first_endpoint_candidate"]
             ),
+        },
+        "recommended_action": {
+            "action": "endpoints" if endpoint_items else "bundles",
+            "label": "Open Endpoints" if endpoint_items else "Create Endpoint",
+            "workspace": "endpoints" if endpoint_items else "bundles",
         },
         "items": items,
     }
@@ -352,6 +729,116 @@ def build_operator_installs_payload(*, service) -> dict:
     }
 
 
+def build_operator_market_payload(*, service, registry_service) -> dict:
+    return build_market_payload(service=service, registry_service=registry_service)
+
+
+def build_operator_remote_endpoints_payload(
+    *,
+    service,
+    registry_service=None,
+    remote_endpoint_service=None,
+) -> dict:
+    attached = (
+        [
+            record.model_dump(mode="json")
+            for record in remote_endpoint_service.list_remote_endpoints()
+        ]
+        if remote_endpoint_service is not None
+        else []
+    )
+    attached_keys = {
+        (item["source_node_id"], item["source_endpoint_id"]) for item in attached
+    }
+    discovered: list[dict] = []
+    if registry_service is not None:
+        for node in registry_service.list_nodes():
+            if node["node_id"] == service.node_id:
+                continue
+            for endpoint in node.get("published_endpoints", []):
+                discovered.append(
+                    {
+                        "node_id": node["node_id"],
+                        "operator_id": node["operator_id"],
+                        "base_url": node["base_url"],
+                        "status": node["status"],
+                        "pricing": node["pricing"],
+                        "rating": node["rating"],
+                        "can_host_custom_model": node["can_host_custom_model"],
+                        "endpoint_id": endpoint["endpoint_id"],
+                        "owner_wallet": endpoint["owner_wallet"],
+                        "publication_id": endpoint["current_publication_id"],
+                        "configuration_hash": endpoint["current_configuration_hash"],
+                        "published_at": endpoint["published_at"],
+                        "visibility": endpoint["visibility"],
+                        "model_class": endpoint["model_class"],
+                        "publication_sync_status": endpoint.get(
+                            "publication_sync_status"
+                        ),
+                        "published_validation_summary": endpoint.get(
+                            "published_validation_summary"
+                        ),
+                        "live_validation_summary": endpoint.get(
+                            "live_validation_summary"
+                        ),
+                        "already_attached": (
+                            (node["node_id"], endpoint["endpoint_id"]) in attached_keys
+                        ),
+                    }
+                )
+    discovered.sort(
+        key=lambda item: (
+            -float(item["rating"].get("score", 0.0)),
+            float(item["pricing"].get("input", 0)),
+            item["node_id"],
+            item["endpoint_id"],
+        )
+    )
+    payload = {
+        "owner_wallet": service.owner_wallet_state(),
+        "node_identity": service.node_identity(),
+        "summary": {
+            "attached": len(attached),
+            "discovered": len(discovered),
+            "remote_nodes": len({item["node_id"] for item in discovered}),
+            "model_classes": len({item["model_class"] for item in discovered}),
+        },
+        "policy": {
+            "local_catalogue": True,
+            "proxy_ready": True,
+            "execution_privacy": "underlying execution topology remains private",
+        },
+        "attached": attached,
+        "discovered": discovered,
+    }
+    payload["recommended_action"] = _remote_endpoints_recommended_action(payload)
+    return payload
+
+
+def _remote_endpoints_recommended_action(payload: dict) -> dict:
+    summary = payload.get("summary", {})
+    if summary.get("attached", 0):
+        return {
+            "action": "stage_proxy_route",
+            "label": "Open Endpoints",
+            "workspace": "endpoints",
+            "detail": "Use attached remote capacity to stage a proxy endpoint route.",
+        }
+    if summary.get("discovered", 0):
+        return {
+            "action": "attach_remote_endpoint",
+            "label": "Attach Remote Endpoint",
+            "workspace": "remote",
+            "detail": "Add a discovered remote endpoint to the local catalogue before routing through it.",
+        }
+    return {
+        "action": "review_market_supply",
+        "label": "Open Market",
+        "workspace": "market",
+        "detail": "Browse remote supply in the market before attaching or proxying endpoints.",
+    }
+
+
 def build_operator_endpoints_payload(
     *,
     service,
@@ -359,6 +846,21 @@ def build_operator_endpoints_payload(
     endpoint_publication_service=None,
     validation_service=None,
 ) -> dict:
+    def _with_endpoint_workspace_defaults(payload: dict) -> dict:
+        summary = payload.get("summary", {})
+        payload["workspace_role"] = "primary_control_plane"
+        payload["recommended_action"] = {
+            "action": "select_endpoint" if summary.get("total", 0) else "create_endpoint",
+            "label": "Open Endpoint Controls" if summary.get("total", 0) else "Create Endpoint",
+            "workspace": "endpoints",
+        }
+        payload["policy"] = {
+            "publish_requires_validation": False,
+            "validation_optional": True,
+            "execution_privacy": "endpoint implementation remains private",
+        }
+        return payload
+
     if endpoint_service is None:
         payload = service.operator_dashboard_endpoints()
         payload["onboarding"] = build_onboarding_payload(
@@ -375,7 +877,7 @@ def build_operator_endpoints_payload(
             ),
             persisted=service.operator_onboarding_state(),
         )
-        return payload
+        return _with_endpoint_workspace_defaults(payload)
 
     manifests = list(endpoint_service.list_endpoints())
     if not manifests:
@@ -394,7 +896,7 @@ def build_operator_endpoints_payload(
             ),
             persisted=service.operator_onboarding_state(),
         )
-        return payload
+        return _with_endpoint_workspace_defaults(payload)
 
     items = []
     for manifest in manifests:
@@ -525,7 +1027,7 @@ def build_operator_endpoints_payload(
         "shared": sum(1 for item in items if item["visibility"] == "shared"),
         "public": sum(1 for item in items if item["visibility"] == "public"),
     }
-    return {
+    return _with_endpoint_workspace_defaults({
         "owner_wallet": service.owner_wallet_state(),
         "node_identity": service.node_identity(),
         "onboarding": build_onboarding_payload(
@@ -543,10 +1045,5 @@ def build_operator_endpoints_payload(
             persisted=service.operator_onboarding_state(),
         ),
         "summary": summary,
-        "policy": {
-            "publish_requires_validation": False,
-            "validation_optional": True,
-            "execution_privacy": "endpoint implementation remains private",
-        },
         "items": items,
-    }
+    })

@@ -5,7 +5,7 @@ import pytest
 from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
-from aidn_hypervisor.endpoints.models import CreateEndpointCommand
+from aidn_hypervisor.endpoints.models import CreateEndpointCommand, UpdateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.model_store import FileModelStore
@@ -14,12 +14,18 @@ from aidn_hypervisor.operator_views import (
     build_operator_endpoints_payload,
     build_operator_home_payload,
     build_operator_installs_payload,
+    build_operator_market_payload,
     build_operator_providers_payload,
+    build_operator_remote_endpoints_payload,
 )
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager, RuntimeHandle
 from aidn_hypervisor.queue import InMemoryTaskQueue
+from aidn_hypervisor.registry_models import RegistryNodeAdvertisement
+from aidn_hypervisor.registry_service import RegistryService
+from aidn_hypervisor.remote_endpoints.service import RemoteEndpointService
+from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
@@ -83,6 +89,42 @@ def _service_with_model_store(tmp_path: Path) -> HypervisorService:
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
         model_store=FileModelStore(tmp_path),
+    )
+
+
+def _empty_service() -> HypervisorService:
+    return HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(
+                cpu_cores=8.0,
+                ram_mb=16384,
+                gpu_devices=["gpu0"],
+                vram_mb={"gpu0": 8192},
+            )
+        ),
+        bundles=[],
+        plugins=PluginRegistry(),
+        runtimes=ProviderProcessManager(),
+    )
+
+
+def _provider_only_service() -> HypervisorService:
+    return HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(
+                cpu_cores=8.0,
+                ram_mb=16384,
+                gpu_devices=["gpu0"],
+                vram_mb={"gpu0": 8192},
+            )
+        ),
+        bundles=[],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
     )
 
 
@@ -167,6 +209,265 @@ def test_home_payload_prefers_first_endpoint_candidate_after_wallet_setup(
     assert payload["bootstrap"]["wallet_ready"] is True
     assert payload["bootstrap"]["first_endpoint_candidate"]["bundle_id"] == "whisper-a"
     assert payload["bootstrap"]["next_step"] == "Create your first endpoint from whisper-a"
+    assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
+    assert payload["endpoint_pipeline"]["primary_endpoint_id"] is None
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create"
+
+
+def test_home_payload_endpoint_pipeline_aligns_with_provider_setup_when_wallet_ready_but_no_inventory(
+) -> None:
+    service = _empty_service()
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=EndpointService(EndpointStore()),
+        endpoint_publication_service=None,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["bootstrap"]["next_step"] == "Attach a provider or install a model"
+    assert payload["onboarding"]["current_step"] == "attach_provider"
+    assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "providers"
+    assert payload["endpoint_pipeline"]["recommended_action"]["workspace"] == "providers"
+
+
+def test_home_payload_endpoint_pipeline_aligns_with_bundle_setup_when_provider_exists_but_no_bundles(
+) -> None:
+    service = _provider_only_service()
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=EndpointService(EndpointStore()),
+        endpoint_publication_service=None,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["onboarding"]["current_step"] == "prepare_bundle"
+    assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "bundles"
+    assert payload["endpoint_pipeline"]["recommended_action"]["workspace"] == "bundles"
+
+
+def test_home_payload_endpoint_pipeline_ignores_persisted_completed_onboarding_when_no_endpoints_exist(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    service.sync_operator_onboarding_state(
+        endpoint_items=[{"publication_status": "published"}]
+    )
+
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=None,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["onboarding"]["completed"] is True
+    assert payload["onboarding"]["completed_at"] is not None
+    assert payload["onboarding"]["completed_via"] == "first_local_endpoint_published"
+    assert payload["endpoint_pipeline"]["state"] == "no_endpoint"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] != "open-home"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "create"
+    assert payload["onboarding"]["current_step"] == "create_endpoint"
+    assert payload["onboarding"]["workspace"] == "bundles"
+    assert payload["onboarding"]["recommended_action"]["action"] == "create"
+
+
+def test_home_payload_surfaces_endpoint_pipeline_for_first_draft(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Operator STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=None,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["endpoint_pipeline"]["state"] == "draft_exists"
+    assert (
+        payload["endpoint_pipeline"]["primary_endpoint_id"]
+        == created.endpoint.endpoint_id
+    )
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "endpoints"
+    assert (
+        payload["bootstrap"]["next_step"]
+        == "Review your configured endpoint and publish it"
+    )
+
+
+def test_home_payload_surfaces_drifted_publication_as_the_primary_attention_state(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+    endpoint_publication_service: EndpointPublicationService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Published Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+        )
+    )
+    endpoint_publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+    endpoint_service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=created.endpoint.endpoint_id,
+            runtime={"streaming": True},
+        )
+    )
+
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=endpoint_publication_service,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["endpoint_pipeline"]["state"] == "published_drifted"
+    assert (
+        payload["endpoint_pipeline"]["recommended_action"]["action"]
+        == "publish-configuration"
+    )
+    assert (
+        payload["endpoint_pipeline"]["publication_sync_status"]
+        == "local_changes_not_published"
+    )
+    assert (
+        payload["bootstrap"]["next_step"]
+        == "Publish your updated endpoint configuration to sync the live endpoint"
+    )
+    assert payload["onboarding"]["current_step"] == "publish_endpoint"
+    assert payload["onboarding"]["workspace"] == "endpoints"
+    assert (
+        payload["onboarding"]["recommended_action"]["action"]
+        == "publish-configuration"
+    )
+
+
+def test_home_payload_surfaces_in_sync_publication_as_operating_state(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+    endpoint_publication_service: EndpointPublicationService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Published Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+        )
+    )
+    endpoint_publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=endpoint_publication_service,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["endpoint_pipeline"]["state"] == "published_in_sync"
+    assert (
+        payload["endpoint_pipeline"]["primary_endpoint_id"]
+        == created.endpoint.endpoint_id
+    )
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "endpoints"
+    assert payload["onboarding"]["recommended_action"]["action"] == "endpoints"
+
+
+def test_home_payload_prioritizes_drifted_endpoint_over_in_sync_endpoint(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+    endpoint_publication_service: EndpointPublicationService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    drifted = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Drifted Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+        )
+    )
+    endpoint_publication_service.publish_configuration(
+        endpoint_id=drifted.endpoint.endpoint_id,
+        owner_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+    endpoint_service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=drifted.endpoint.endpoint_id,
+            runtime={"streaming": True},
+        )
+    )
+    in_sync = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="In Sync STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    endpoint_publication_service.publish_configuration(
+        endpoint_id=in_sync.endpoint.endpoint_id,
+        owner_wallet=service.owner_wallet_state()["wallet_id"],
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+
+    payload = build_operator_home_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=endpoint_publication_service,
+        validation_service=None,
+        market_candidates=[],
+    )
+
+    assert payload["endpoint_pipeline"]["state"] == "published_drifted"
+    assert payload["endpoint_pipeline"]["primary_endpoint_id"] == drifted.endpoint.endpoint_id
 
 
 def test_home_payload_exposes_onboarding_progress(
@@ -286,6 +587,22 @@ def test_endpoints_payload_includes_publication_sync_and_validation_summary(
     )
 
 
+def test_endpoints_payload_marks_workspace_as_primary_control_plane(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+) -> None:
+    payload = build_operator_endpoints_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=None,
+        validation_service=None,
+    )
+
+    assert payload["workspace_role"] == "primary_control_plane"
+    assert payload["recommended_action"]["workspace"] == "endpoints"
+    assert payload["policy"]["validation_optional"] is True
+
+
 def test_providers_payload_summarizes_plugins_and_bundle_state(
     service: HypervisorService,
 ) -> None:
@@ -315,6 +632,24 @@ def test_providers_payload_matches_install_aliases_from_bundle_provider_type(
     assert payload["items"][0]["install_count"] == 1
 
 
+def test_providers_payload_prefers_endpoint_handoff_once_local_supply_is_usable(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+
+    payload = build_operator_providers_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=None,
+        validation_service=None,
+    )
+
+    assert payload["summary"]["endpoint_ready_bundles"] == 2
+    assert payload["recommended_action"]["action"] == "bundles"
+    assert payload["recommended_action"]["workspace"] == "bundles"
+
+
 def test_bundles_payload_marks_first_endpoint_candidate(
     service: HypervisorService,
 ) -> None:
@@ -341,6 +676,38 @@ def test_bundles_payload_marks_current_onboarding_workspace(
     assert "steps" in payload["onboarding"]
 
 
+def test_bundles_payload_exposes_endpoint_relationship_states(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Operator STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+
+    payload = build_operator_bundles_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=None,
+        validation_service=None,
+    )
+
+    whisper = next(item for item in payload["items"] if item["bundle_id"] == "whisper-a")
+    text = next(item for item in payload["items"] if item["bundle_id"] == "text-a")
+    assert whisper["endpoint_relationship"]["state"] == "draft_endpoint_exists"
+    assert whisper["endpoint_relationship"]["endpoint_id"] == created.endpoint.endpoint_id
+    assert whisper["endpoint_action"]["recommended"] == "open_endpoint"
+    assert text["endpoint_relationship"]["state"] == "no_endpoint"
+    assert text["endpoint_action"]["recommended"] == "create_endpoint"
+
+
 def test_installs_payload_exposes_ready_to_register_completed_jobs(
     tmp_path: Path,
 ) -> None:
@@ -360,6 +727,134 @@ def test_installs_payload_exposes_ready_to_register_completed_jobs(
     assert payload["items"][0]["install_id"] == install["install_id"]
     assert payload["items"][0]["can_register_bundle"] is True
     assert payload["items"][0]["next_action"] == "register_bundle"
+
+
+def test_market_payload_builder_preserves_candidate_surfaces(
+    service: HypervisorService,
+) -> None:
+    payload = build_operator_market_payload(service=service, registry_service=None)
+
+    assert "nodes" in payload
+    assert "candidates" in payload
+    assert "canonical_candidates" in payload
+    assert "canonical_summary" in payload
+    assert payload["recommended_action"]["workspace"] == "endpoints"
+
+
+def test_remote_endpoints_payload_summarizes_attached_and_discovered_routes(
+    service: HypervisorService,
+) -> None:
+    registry = RegistryService()
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-remote",
+            operator_id="operator-remote",
+            base_url="https://remote.example",
+            heartbeat_at="2026-07-06T12:00:00+00:00",
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+                "free": {"cpu": 10.0, "ram_mb": 28672, "vram_mb": 12288},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 7, "output": 11, "fixed_request": 1},
+            rating={"score": 0.98, "tier": "A", "updated_at": "2026-07-06T11:55:00+00:00"},
+            bundles=[],
+            published_endpoints=[
+                {
+                    "endpoint_id": "endpoint-remote",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-remote",
+                    "current_publication_id": "pub-remote",
+                    "current_configuration_hash": "cfg-remote",
+                    "published_at": "2026-07-06T11:50:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                    "publication_sync_status": "in_sync",
+                    "published_validation_summary": {"validation_status": "validated"},
+                    "live_validation_summary": {"validation_status": "validated"},
+                }
+            ],
+        )
+    )
+    remote_endpoint_service = RemoteEndpointService(RemoteEndpointStore())
+    remote_endpoint_service.attach_remote_endpoint(
+        source_node_id="node-remote",
+        source_endpoint_id="endpoint-remote",
+        source_owner_wallet="wallet-remote",
+        source_publication_id="pub-remote",
+        source_configuration_hash="cfg-remote",
+        source_visibility="public",
+        source_model_class="llm_text",
+        source_status="published",
+        source_base_url="https://remote.example",
+        operator_id="operator-remote",
+        pricing={"unit": "q_per_1kk_tokens", "input": 7, "output": 11},
+        rating={"score": 0.98, "tier": "A", "updated_at": "2026-07-06T11:55:00+00:00"},
+    )
+
+    payload = build_operator_remote_endpoints_payload(
+        service=service,
+        registry_service=registry,
+        remote_endpoint_service=remote_endpoint_service,
+    )
+
+    assert payload["summary"]["attached"] == 1
+    assert payload["summary"]["discovered"] == 1
+    assert payload["policy"]["proxy_ready"] is True
+    assert payload["discovered"][0]["publication_sync_status"] == "in_sync"
+    assert payload["recommended_action"]["action"] == "stage_proxy_route"
+    assert payload["recommended_action"]["workspace"] == "endpoints"
+
+
+def test_remote_endpoints_payload_prefers_attachment_when_only_discovered_routes_exist(
+    service: HypervisorService,
+) -> None:
+    registry = RegistryService()
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-remote",
+            operator_id="operator-remote",
+            base_url="https://remote.example",
+            heartbeat_at="2026-07-06T12:00:00+00:00",
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+                "free": {"cpu": 10.0, "ram_mb": 28672, "vram_mb": 12288},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 7, "output": 11, "fixed_request": 1},
+            rating={"score": 0.98, "tier": "A", "updated_at": "2026-07-06T11:55:00+00:00"},
+            bundles=[],
+            published_endpoints=[
+                {
+                    "endpoint_id": "endpoint-remote",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-remote",
+                    "current_publication_id": "pub-remote",
+                    "current_configuration_hash": "cfg-remote",
+                    "published_at": "2026-07-06T11:50:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                }
+            ],
+        )
+    )
+
+    payload = build_operator_remote_endpoints_payload(
+        service=service,
+        registry_service=registry,
+        remote_endpoint_service=RemoteEndpointService(RemoteEndpointStore()),
+    )
+
+    assert payload["summary"]["attached"] == 0
+    assert payload["summary"]["discovered"] == 1
+    assert payload["recommended_action"]["action"] == "attach_remote_endpoint"
+    assert payload["recommended_action"]["workspace"] == "remote"
 
 
 def test_api_uses_only_public_operator_view_builders() -> None:

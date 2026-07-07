@@ -24,7 +24,9 @@ from aidn_hypervisor.operator_views import (
     build_operator_endpoints_payload,
     build_operator_home_payload,
     build_operator_installs_payload,
+    build_operator_market_payload,
     build_operator_providers_payload,
+    build_operator_remote_endpoints_payload,
 )
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
@@ -463,87 +465,6 @@ class ValidationEpochCreateRequest(BaseModel):
     seed: str
     validator_entries: list[dict]
 
-
-def _operator_dashboard_remote_endpoints_payload(
-    *,
-    service: HypervisorService,
-    registry_service=None,
-    remote_endpoint_service=None,
-) -> dict:
-    attached = (
-        [
-            record.model_dump(mode="json")
-            for record in remote_endpoint_service.list_remote_endpoints()
-        ]
-        if remote_endpoint_service is not None
-        else []
-    )
-    attached_keys = {
-        (item["source_node_id"], item["source_endpoint_id"]) for item in attached
-    }
-    discovered: list[dict] = []
-    if registry_service is not None:
-        for node in registry_service.list_nodes():
-            if node["node_id"] == service.node_id:
-                continue
-            for endpoint in node.get("published_endpoints", []):
-                discovered.append(
-                    {
-                        "node_id": node["node_id"],
-                        "operator_id": node["operator_id"],
-                        "base_url": node["base_url"],
-                        "status": node["status"],
-                        "pricing": node["pricing"],
-                        "rating": node["rating"],
-                        "can_host_custom_model": node["can_host_custom_model"],
-                        "endpoint_id": endpoint["endpoint_id"],
-                        "owner_wallet": endpoint["owner_wallet"],
-                        "publication_id": endpoint["current_publication_id"],
-                        "configuration_hash": endpoint["current_configuration_hash"],
-                        "published_at": endpoint["published_at"],
-                        "visibility": endpoint["visibility"],
-                        "model_class": endpoint["model_class"],
-                        "publication_sync_status": endpoint.get(
-                            "publication_sync_status"
-                        ),
-                        "published_validation_summary": endpoint.get(
-                            "published_validation_summary"
-                        ),
-                        "live_validation_summary": endpoint.get(
-                            "live_validation_summary"
-                        ),
-                        "already_attached": (
-                            (node["node_id"], endpoint["endpoint_id"]) in attached_keys
-                        ),
-                    }
-                )
-    discovered.sort(
-        key=lambda item: (
-            -float(item["rating"].get("score", 0.0)),
-            float(item["pricing"].get("input", 0)),
-            item["node_id"],
-            item["endpoint_id"],
-        )
-    )
-    return {
-        "owner_wallet": service.owner_wallet_state(),
-        "node_identity": service.node_identity(),
-        "summary": {
-            "attached": len(attached),
-            "discovered": len(discovered),
-            "remote_nodes": len({item["node_id"] for item in discovered}),
-            "model_classes": len({item["model_class"] for item in discovered}),
-        },
-        "policy": {
-            "local_catalogue": True,
-            "proxy_ready": True,
-            "execution_privacy": "underlying execution topology remains private",
-        },
-        "attached": attached,
-        "discovered": discovered,
-    }
-
-
 def build_api_router(
     service: HypervisorService,
     *,
@@ -881,11 +802,21 @@ def build_api_router(
 
     @router.get("/operators/dashboard/providers")
     async def operator_dashboard_providers() -> dict:
-        return build_operator_providers_payload(service=service)
+        return build_operator_providers_payload(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            validation_service=validation_service,
+        )
 
     @router.get("/operators/dashboard/bundles")
     async def operator_dashboard_bundles() -> dict:
-        return build_operator_bundles_payload(service=service)
+        return build_operator_bundles_payload(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            validation_service=validation_service,
+        )
 
     @router.get("/operators/dashboard/installs")
     async def operator_dashboard_installs() -> dict:
@@ -1361,14 +1292,14 @@ def build_api_router(
 
     @router.get("/operators/dashboard/market")
     async def operator_dashboard_market() -> dict:
-        return build_market_payload(
+        return build_operator_market_payload(
             service=service,
             registry_service=registry_service,
         )
 
     @router.get("/operators/dashboard/remote-endpoints")
     async def operator_dashboard_remote_endpoints() -> dict:
-        return _operator_dashboard_remote_endpoints_payload(
+        return build_operator_remote_endpoints_payload(
             service=service,
             registry_service=registry_service,
             remote_endpoint_service=remote_endpoint_service,
