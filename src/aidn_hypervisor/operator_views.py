@@ -443,7 +443,12 @@ def _bundle_relationships(endpoint_items: list[dict]) -> dict[str, dict]:
     return relationships
 
 
-def _provider_endpoint_readiness(*, provider: dict, endpoint_items: list[dict]) -> dict:
+def _provider_endpoint_readiness(
+    *,
+    provider: dict,
+    provider_bundle_ids: set[str],
+    endpoint_items: list[dict],
+) -> dict:
     if not provider.get("plugin_id"):
         return {
             "state": "not_attached",
@@ -465,7 +470,7 @@ def _provider_endpoint_readiness(*, provider: dict, endpoint_items: list[dict]) 
     related = [
         item
         for item in endpoint_items
-        if item.get("bundle", {}).get("provider_type") == provider.get("plugin_id")
+        if item.get("bundle_id") in provider_bundle_ids
     ]
     if related:
         return {
@@ -631,6 +636,7 @@ def build_operator_providers_payload(
             endpoint_publication_service=endpoint_publication_service,
             validation_service=validation_service,
         )["items"]
+    relationships = _bundle_relationships(endpoint_items)
     items = []
     for plugin in service.plugins.list():
         description = plugin.describe()
@@ -638,6 +644,9 @@ def build_operator_providers_payload(
         provider_bundles = [
             bundle for bundle in bundles if bundle["plugin_id"] == plugin_id
         ]
+        provider_bundle_ids = {
+            bundle["bundle_id"] for bundle in provider_bundles if bundle.get("bundle_id")
+        }
         provider_type_aliases = {bundle["provider_type"] for bundle in provider_bundles}
         provider_type_aliases.add(plugin_id)
         provider_installs = [
@@ -660,6 +669,7 @@ def build_operator_providers_payload(
         }
         provider_item["endpoint_readiness"] = _provider_endpoint_readiness(
             provider=provider_item,
+            provider_bundle_ids=provider_bundle_ids,
             endpoint_items=endpoint_items,
         )
         items.append(provider_item)
@@ -700,9 +710,7 @@ def build_operator_providers_payload(
             "bundles": len(bundles),
             "installs": len(installs),
             "endpoint_ready_bundles": sum(
-                1
-                for item in items
-                if item["endpoint_readiness"]["state"] == "ready_for_endpoint_creation"
+                1 for bundle in bundles if bundle["bundle_id"] not in relationships
             ),
             "recommended_action": summary_recommended_action,
         },

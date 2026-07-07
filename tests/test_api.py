@@ -2815,6 +2815,74 @@ def test_operator_dashboard_providers_payload_prefers_endpoint_handoff_when_supp
     }
 
 
+def test_operator_dashboard_providers_payload_marks_provider_as_backing_existing_endpoint() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Endpoint-backed STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    client = TestClient(build_app(service=hypervisor, endpoint_service=endpoint_service))
+
+    payload = client.get("/operators/dashboard/providers").json()
+    first = payload["items"][0]
+
+    assert first["endpoint_readiness"]["state"] == "already_backing_endpoint_supply"
+    assert first["endpoint_readiness"]["recommended_action"]["action"] == "open_endpoint"
+    assert (
+        first["endpoint_readiness"]["recommended_action"]["endpoint_id"]
+        == created.endpoint.endpoint_id
+    )
+
+
+def test_operator_dashboard_providers_payload_counts_endpoint_ready_bundles() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(
+                cpu_cores=8.0,
+                ram_mb=16384,
+                gpu_devices=["gpu0"],
+                vram_mb={"gpu0": 8192},
+            )
+        ),
+        bundles=[
+            _bundle("whisper-a", "speech_to_text"),
+            _bundle("text-a", "llm_text"),
+            _bundle("text-b", "llm_text"),
+        ],
+        plugins=PluginRegistry(),
+        runtimes=[],
+    )
+    service.plugins.register(FakeManagedPlugin())
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Published STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    client = TestClient(build_app(service=service, endpoint_service=endpoint_service))
+
+    payload = client.get("/operators/dashboard/providers").json()
+
+    assert payload["summary"]["bundles"] == 3
+    assert payload["summary"]["endpoint_ready_bundles"] == 2
+
+
 def test_operator_dashboard_bundles_route_returns_workspace_payload(
     monkeypatch,
 ) -> None:
