@@ -472,6 +472,18 @@ def _provider_endpoint_readiness(
         for item in endpoint_items
         if item.get("bundle_id") in provider_bundle_ids
     ]
+    related_bundle_ids = {item.get("bundle_id") for item in related if item.get("bundle_id")}
+    unclaimed_bundle_ids = provider_bundle_ids - related_bundle_ids
+    if related and unclaimed_bundle_ids:
+        return {
+            "state": "mixed_endpoint_supply",
+            "recommended_action": {
+                "action": "create_endpoint",
+                "label": "Create Endpoint",
+                "workspace": "endpoints",
+                "bundle_id": sorted(unclaimed_bundle_ids)[0],
+            },
+        }
     if related:
         return {
             "state": "already_backing_endpoint_supply",
@@ -683,7 +695,11 @@ def build_operator_providers_payload(
             item
             for item in items
             if item["endpoint_readiness"]["state"]
-            in {"ready_for_endpoint_creation", "already_backing_endpoint_supply"}
+            in {
+                "mixed_endpoint_supply",
+                "ready_for_endpoint_creation",
+                "already_backing_endpoint_supply",
+            }
         ),
         None,
     )
