@@ -169,3 +169,13 @@ def test_endpoint_validation_state_rejects_contradictory_certification_pair() ->
             certification_status="certified_with_issues",
             validation_status="unvalidated",
         )
+
+
+def test_endpoint_validation_state_requires_request_for_validated_status() -> None:
+    with pytest.raises(ValidationError):
+        EndpointValidationState(
+            certification_status="certified",
+            validation_status="validated",
+            latest_request_id=None,
+            latest_report_id="report-1",
+        )

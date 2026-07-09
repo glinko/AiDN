@@ -116,6 +116,10 @@ class EndpointValidationState(BaseModel):
             raise ValueError(
                 "validation_status must be consistent with certification_status"
             )
+        if self.validation_status == "validated" and not (
+            self.latest_request_id and self.latest_request_id.strip()
+        ):
+            raise ValueError("validated status requires latest_request_id")
         return self
 
 
