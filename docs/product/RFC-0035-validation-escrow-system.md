@@ -10,6 +10,7 @@ Depends on:
 - `RFC-0036 Ledger State Machine`
 - `ECO-0000 Economic Principles`
 - `ECO-0003 Validation Economics`
+- `RFC-0057 Validation Report Specification`
 
 ## 1. Purpose
 
@@ -22,6 +23,12 @@ It provides:
 - validation assignment;
 - validation capacity management;
 - Session authorization.
+
+Validation tasks assign production of Validation Reports.
+
+Validation Sessions execute ordinary Session traffic.
+
+Validators publish reports after execution.
 
 Validation Escrow is a protocol service.
 
@@ -190,6 +197,8 @@ The Validator generates:
 - benchmark results;
 - protocol signature.
 
+The Validator publishes the report after execution.
+
 The Report is submitted to the Ledger.
 
 The Endpoint remains unaware of Validator identity.
@@ -212,7 +221,7 @@ Reward distribution is independent of Endpoint pricing.
 
 At the end of every Epoch:
 
-- completed Validation are verified;
+- completed Validation Reports are verified;
 - Validator Rewards are generated;
 - Escrow balances are released.
 
@@ -275,6 +284,7 @@ Future protocol revisions may introduce:
 - Validation capacity is proportional to committed Validation Shares.
 - Endpoint pricing cannot prevent Validation.
 - Validation Sessions are indistinguishable from ordinary Sessions.
+- Validation tasks produce Validation Reports.
 - Escrow never owns Validator funds.
 - Every honest node derives identical Validation assignments.
 - Validation Escrow is a protocol service coordinating trust, not a financial account.

@@ -18,6 +18,8 @@ Wallet cryptographic identity, ownership semantics, and the separation between W
 
 Validation economics, maintenance revalidation, and Validator incentives are defined separately in [ECO-0003 Validation Economics](./ECO-0003-validation-economics.md).
 
+Validation report structure and certification recommendation semantics are defined separately in [RFC-0057 Validation Report Specification](./RFC-0057-validation-report-specification.md).
+
 Validator-side Session guarantees, anonymous assignment flow, and Validation Escrow coordination are defined separately in [RFC-0035 Validation Escrow System](./RFC-0035-validation-escrow-system.md).
 
 ## 1. Core Philosophy
@@ -204,6 +206,12 @@ Publishing an Endpoint SHALL NOT automatically request validation.
 
 Validation remains optional.
 
+Validation is an operational certification flow.
+
+Validation does not attempt to prove objective model identity.
+
+The primary output of Validation is a published Validation Report.
+
 An operator may permanently operate unvalidated Endpoints.
 
 Validation is intended for operators wishing to provide publicly trusted services.
@@ -238,13 +246,15 @@ The operator decides when the Endpoint is ready for re-validation.
 
 ## 14. Validators
 
-Only qualified Validators may validate Endpoints.
+Only qualified Validators may participate in validation.
 
 Validators must satisfy the competency requirements defined for the corresponding Model Class and Capability.
 
-For LLMs, Validator models are expected to be approximately equivalent to or stronger than the validated Model Class.
+For LLMs, Validator models are expected to be approximately equivalent to or stronger than the subject Model Class.
 
 Equivalent competency frameworks will be defined for speech, image, and video Capabilities.
+
+Validators act as protocol inspectors.
 
 ## 15. Remote Endpoints
 
@@ -304,7 +314,9 @@ Operators may:
 
 - discover public Endpoints;
 - compare pricing;
-- compare validation status;
+- compare certification status;
+- compare validation history;
+- compare published reports;
 - compare reputation;
 - bookmark Endpoints;
 - connect Endpoints to local workflows.
@@ -317,6 +329,7 @@ A newly installed Hypervisor should provide immediate value even before publishi
 - Publishing and validation are independent actions.
 - Validation is always optional.
 - Validation traffic is indistinguishable from production traffic.
+- Validation produces published reports.
 - Endpoint implementation remains private.
 - Operators retain full control over when validation is requested.
 - Local, remote, and proxy execution are treated as equal execution strategies.
