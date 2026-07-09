@@ -22,6 +22,8 @@ This document complements [UX-0001 Hypervisor Operator Journey](./UX-0001-hyperv
 
 Validator anonymity, validation Session guarantees, assignment capacity, and shared Escrow semantics are defined separately in [RFC-0035 Validation Escrow System](./RFC-0035-validation-escrow-system.md).
 
+Validation report structure and certification recommendation semantics are defined separately in [RFC-0057 Validation Report Specification](./RFC-0057-validation-report-specification.md).
+
 ## 1. Design Goals
 
 The Validation Economy SHALL:
@@ -61,15 +63,9 @@ Changing the Endpoint configuration creates a new Configuration Snapshot and req
 
 ## 4. Validation Result
 
-Validation may produce one of two outcomes.
+Validation produces a Validation Report.
 
-`PASS`
-
-The Endpoint receives Validation Status.
-
-`FAIL`
-
-The Endpoint receives a Validation Report.
+Certification is derived from published reports.
 
 The operator may correct the Endpoint and request validation again.
 
@@ -77,7 +73,7 @@ The operator may correct the Endpoint and request validation again.
 
 Validators are rewarded for performing validation work.
 
-Validation Reward does not depend on `PASS` or `FAIL`.
+Validation Reward does not depend on certification recommendation.
 
 Useful work consists of:
 
@@ -90,7 +86,7 @@ The Validator is rewarded for honest work, not for a particular outcome.
 
 ## 6. Validation Status
 
-Validation Status is the primary reward received by the Endpoint.
+The primary reward for the Endpoint is Certification Status, increased trust, and increased discoverability.
 
 Validation increases:
 
@@ -173,7 +169,7 @@ The Bond is therefore recovered quickly at first, while a small portion remains 
 
 If a validated Endpoint fails any Maintenance Validation:
 
-- Validation Status is revoked;
+- Certification Status is revoked;
 - the remaining Validation Bond is permanently forfeited;
 - a Validation Report is published.
 
@@ -263,7 +259,9 @@ These extensions SHALL remain compatible with the principles defined in this doc
 - Validation is optional.
 - Validation is never automatic.
 - Validators are paid for work, not outcomes.
-- Validation Status is the primary reward for Endpoint operators.
+- Validation Reward does not depend on certification recommendation.
+- Certification is derived from published reports.
+- The primary reward for Endpoint operators is Certification Status, increased trust, and increased discoverability.
 - Validation Bonds encourage long-term reliability.
 - Maintenance Validation continuously protects network trust.
 - Economic incentives shall always favor honest long-term participation over short-term exploitation.
