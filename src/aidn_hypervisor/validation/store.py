@@ -173,6 +173,22 @@ class ValidationStore:
         matching.sort(key=lambda item: item.created_at)
         return matching[-1]
 
+    def latest_report_for_snapshot(
+        self,
+        endpoint_id: str,
+        configuration_hash: str,
+    ) -> ValidationReport:
+        matching = [
+            item
+            for item in self._reports.values()
+            if item.endpoint_id == endpoint_id
+            and item.configuration_hash == configuration_hash
+        ]
+        if not matching:
+            raise KeyError((endpoint_id, configuration_hash))
+        matching.sort(key=lambda item: item.created_at)
+        return matching[-1]
+
     def _flush(self) -> None:
         if self._state_store is None:
             return

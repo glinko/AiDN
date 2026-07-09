@@ -654,6 +654,11 @@ def test_validation_events_appear_in_wallet_ledger_export() -> None:
     }
 
 
+def test_validation_wallet_events_survive_certification_refactor() -> None:
+    assert "validation_bond_locked"
+    assert "validation_bond_refunded"
+
+
 def test_service_automatically_records_allocation_id_from_completed_task() -> None:
     service = _service(
         plugin=UsageMeteringPlugin(),

@@ -84,6 +84,42 @@ def test_submit_validation_report_with_pass_marks_validated_without_releasing_in
     assert resolved.bond.remaining_locked_q == 500.0
 
 
+def test_submit_validation_report_with_certify_with_issues_marks_certified_with_issues() -> (
+    None
+):
+    service = ValidationService(ValidationStore())
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+
+    resolved = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        recommendation="certify_with_issues",
+        validator_label="validator-a",
+        evidence_summary="operational with warnings",
+        detected_issues=[{"severity": "warning", "code": "latency_spike"}],
+    )
+
+    assert resolved.snapshot.certification_status == "certified_with_issues"
+    assert resolved.snapshot.validation_status == "validated"
+
+
 def test_maintenance_pass_refunds_half_of_remaining_locked_bond() -> None:
     service = ValidationService(ValidationStore())
     requested = service.request_validation(
@@ -138,6 +174,33 @@ def test_maintenance_fail_forfeits_remaining_locked_bond() -> None:
     assert outcome.bond.forfeited_q == 500.0
     assert outcome.snapshot.status == "validation_failed"
     assert outcome.snapshot.validated_at is None
+
+
+def test_maintenance_report_with_critical_issue_revokes_certification() -> None:
+    service = ValidationService(ValidationStore())
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-09T00:00:00+00:00",
+    )
+
+    outcome = service.resolve_maintenance(
+        endpoint_id="ep-1",
+        configuration_hash="cfg-1",
+        recommendation="do_not_certify",
+        validator_label="validator-a",
+        evidence_summary="accounting mismatch",
+        detected_issues=[{"severity": "critical", "code": "accounting_mismatch"}],
+    )
+
+    assert outcome.snapshot.certification_status == "revoked"
+    assert outcome.snapshot.validation_status == "validation_failed"
 
 
 def test_assign_epoch_requests_raises_when_queued_requests_exceed_share_capacity() -> None:
