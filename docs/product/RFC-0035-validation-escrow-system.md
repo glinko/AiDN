@@ -10,7 +10,6 @@ Depends on:
 - `RFC-0036 Ledger State Machine`
 - `ECO-0000 Economic Principles`
 - `ECO-0003 Validation Economics`
-- `RFC-0057 Validation Report Specification`
 
 ## 1. Purpose
 
@@ -25,6 +24,8 @@ It provides:
 - Session authorization.
 
 Validation tasks assign production of Validation Reports.
+
+The report specification in [RFC-0057 Validation Report Specification](./RFC-0057-validation-report-specification.md) describes the artifact produced by these tasks.
 
 Validation Sessions execute ordinary Session traffic.
 
@@ -197,9 +198,7 @@ The Validator generates:
 - benchmark results;
 - protocol signature.
 
-The Validator publishes the report after execution.
-
-The Report is submitted to the Ledger.
+The Validator publishes the report after execution, and that publication is the protocol step that submits the report to the Ledger.
 
 The Endpoint remains unaware of Validator identity.
 

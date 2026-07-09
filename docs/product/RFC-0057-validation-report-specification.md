@@ -13,7 +13,9 @@ Depends on:
 
 Validation Reports are the canonical trust artifacts of AiDN validation.
 
-They record observable endpoint behavior, protocol compliance, accounting verification, detected issues, and certification recommendation.
+They record observable endpoint behavior, protocol compliance, accounting-related protocol observations relevant to settlement compatibility, detected issues, and certification recommendation.
+
+Certification Status is derived at the protocol level from published Validation Reports and their history for the relevant Endpoint configuration snapshot.
 
 ## 2. Design Invariants
 
