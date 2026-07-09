@@ -209,7 +209,7 @@ Validation Sessions SHALL NOT generate revenue for the Endpoint.
 
 The economic reward for successful Initial Validation is:
 
-- Validation Status;
+- Certification Status;
 - increased trust;
 - increased discoverability.
 

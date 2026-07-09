@@ -75,6 +75,8 @@ Validators are rewarded for performing validation work.
 
 Validation Reward does not depend on certification recommendation.
 
+Validators are rewarded for producing valid Validation Reports.
+
 Useful work consists of:
 
 - generating validation requests;
@@ -84,7 +86,7 @@ Useful work consists of:
 
 The Validator is rewarded for honest work, not for a particular outcome.
 
-## 6. Validation Status
+## 6. Certification Status
 
 The primary reward for the Endpoint is Certification Status, increased trust, and increased discoverability.
 
