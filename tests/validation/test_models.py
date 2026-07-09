@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from aidn_hypervisor.validation.models import (
     ValidationBond,
+    ValidationReport,
     ValidationStatusSnapshot,
 )
 
@@ -74,7 +75,7 @@ def test_validation_status_snapshot_requires_request_for_validated_status() -> N
         ValidationStatusSnapshot(
             endpoint_id="ep-1",
             configuration_hash="cfg-1",
-            status="validated",
+            validation_status="validated",
             latest_request_id=None,
             latest_report_id="report-1",
         )
@@ -85,7 +86,39 @@ def test_validation_status_snapshot_rejects_blank_request_for_validated_status()
         ValidationStatusSnapshot(
             endpoint_id="ep-1",
             configuration_hash="cfg-1",
-            status="validated",
+            validation_status="validated",
             latest_request_id="",
             latest_report_id="report-1",
         )
+
+
+def test_validation_status_snapshot_accepts_certified_with_issues() -> None:
+    snapshot = ValidationStatusSnapshot(
+        endpoint_id="ep-1",
+        configuration_hash="cfg-1",
+        certification_status="certified_with_issues",
+        latest_request_id="req-1",
+        latest_report_id="report-1",
+    )
+
+    assert snapshot.certification_status == "certified_with_issues"
+    assert snapshot.validation_status == "validated"
+
+
+def test_validation_report_requires_recommendation_and_issue_counts() -> None:
+    report = ValidationReport(
+        report_id="report-1",
+        request_id="req-1",
+        endpoint_id="ep-1",
+        configuration_hash="cfg-1",
+        report_kind="initial",
+        validator_label="validator-a",
+        recommendation="certify_with_issues",
+        critical_issue_count=0,
+        warning_issue_count=2,
+        evidence_summary="operational with warnings",
+        created_at="2026-07-09T00:00:00+00:00",
+    )
+
+    assert report.recommendation == "certify_with_issues"
+    assert report.warning_issue_count == 2

@@ -16,15 +16,20 @@ ValidationRequestStatus = Literal[
     "revoked",
     "forfeited",
 ]
+CertificationStatus = Literal[
+    "uncertified",
+    "pending_initial",
+    "certified",
+    "certified_with_issues",
+    "maintenance_due",
+    "maintenance_in_progress",
+    "revoked",
+    "superseded",
+]
 ValidationSnapshotStatus = Literal[
     "unvalidated",
     "pending_initial",
     "validated",
-    "maintenance_due",
-    "maintenance_in_progress",
-    "validation_failed",
-    "revoked",
-    "superseded",
 ]
 ValidationRequestKind = Literal["initial", "maintenance"]
 ValidationBondStatus = Literal[
@@ -33,7 +38,11 @@ ValidationBondStatus = Literal[
     "released",
     "forfeited",
 ]
-ValidationReportOutcome = Literal["pass", "fail"]
+ValidationReportRecommendation = Literal[
+    "certify",
+    "certify_with_issues",
+    "do_not_certify",
+]
 ValidationEpochStatus = Literal["open", "assigned", "closed"]
 ValidationAuthorizationStatus = Literal["issued", "consumed", "expired"]
 
@@ -88,9 +97,21 @@ class ValidationReport(BaseModel):
     request_id: str
     endpoint_id: str
     configuration_hash: str
-    outcome: ValidationReportOutcome
     report_kind: ValidationRequestKind
+    validator_id: str | None = None
     validator_label: str
+    capability_id: str | None = None
+    test_description: str | None = None
+    request_summary: str | None = None
+    response_summary: str | None = None
+    observations: list[str] = Field(default_factory=list)
+    measured_metrics: dict = Field(default_factory=dict)
+    protocol_compliance: dict = Field(default_factory=dict)
+    accounting_verification: dict = Field(default_factory=dict)
+    detected_issues: list[dict] = Field(default_factory=list)
+    critical_issue_count: int = Field(default=0, ge=0)
+    warning_issue_count: int = Field(default=0, ge=0)
+    recommendation: ValidationReportRecommendation
     evidence_summary: str
     signed_payload: dict = Field(default_factory=dict)
     created_at: str
@@ -99,16 +120,23 @@ class ValidationReport(BaseModel):
 class ValidationStatusSnapshot(BaseModel):
     endpoint_id: str
     configuration_hash: str
-    status: ValidationSnapshotStatus
+    certification_status: CertificationStatus = "uncertified"
+    validation_status: ValidationSnapshotStatus = "unvalidated"
     latest_request_id: str | None = None
     latest_report_id: str | None = None
+    latest_report_at: str | None = None
     validated_at: str | None = None
     superseded_at: str | None = None
     maintenance_count: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _validate_validated_status(self):
-        if self.status == "validated" and not (
+        if self.validation_status == "unvalidated":
+            if self.certification_status == "pending_initial":
+                self.validation_status = "pending_initial"
+            elif self.certification_status != "uncertified":
+                self.validation_status = "validated"
+        if self.validation_status == "validated" and not (
             self.latest_request_id and self.latest_request_id.strip()
         ):
             raise ValueError("validated status requires latest_request_id")

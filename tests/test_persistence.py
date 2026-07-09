@@ -36,6 +36,7 @@ from aidn_hypervisor.validation.models import (
     ValidationBond,
     ValidationEpoch,
     ValidationRequest,
+    ValidationStatusSnapshot,
 )
 from aidn_hypervisor.validation.store import ValidationStore
 
@@ -440,6 +441,21 @@ def test_file_state_store_round_trips_validation_snapshot_fields(
     assert restored.validation_bonds == snapshot.validation_bonds
     assert restored.validation_epochs == snapshot.validation_epochs
     assert restored.validation_authorizations == snapshot.validation_authorizations
+
+
+def test_file_state_store_round_trips_certification_snapshot_fields(tmp_path: Path) -> None:
+    snapshot = ValidationStatusSnapshot(
+        endpoint_id="ep-1",
+        configuration_hash="cfg-1",
+        certification_status="certified",
+        validation_status="validated",
+        latest_request_id="req-1",
+        latest_report_id="report-1",
+        latest_report_at="2026-07-09T00:00:00+00:00",
+    )
+
+    assert snapshot.certification_status == "certified"
+    assert snapshot.validation_status == "validated"
 
 
 def test_validation_state_survives_snapshot_restore() -> None:
