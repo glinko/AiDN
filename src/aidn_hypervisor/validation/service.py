@@ -166,7 +166,7 @@ class ValidationService:
         return ValidationRequestOutcome(
             request=request,
             bond=bond,
-            snapshot=self._project_snapshot(snapshot),
+            snapshot=snapshot,
         )
 
     def assign_epoch_requests(
@@ -338,7 +338,7 @@ class ValidationService:
         return ValidationReportOutcome(
             request=updated_request,
             bond=bond,
-            snapshot=self._project_snapshot(updated_snapshot),
+            snapshot=updated_snapshot,
             report=report,
         )
 
@@ -445,7 +445,7 @@ class ValidationService:
                 current_snapshot.superseded_at if current_snapshot is not None else None
             ),
             "current_snapshot": (
-                self._project_snapshot(current_snapshot).model_dump(mode="json")
+                current_snapshot.model_dump(mode="json")
                 if current_snapshot is not None
                 else None
             ),
@@ -629,7 +629,7 @@ class ValidationService:
         return ValidationRequestOutcome(
             request=updated_request,
             bond=bond,
-            snapshot=self._project_snapshot(updated_snapshot),
+            snapshot=updated_snapshot,
         )
 
     def resolve_maintenance(
@@ -779,7 +779,7 @@ class ValidationService:
         return ValidationReportOutcome(
             request=updated_request,
             bond=updated_bond,
-            snapshot=self._project_snapshot(updated_snapshot),
+            snapshot=updated_snapshot,
             report=report,
         )
 
@@ -828,18 +828,6 @@ class ValidationService:
         severity: str,
     ) -> int:
         return sum(1 for item in detected_issues if item.severity == severity)
-
-    def _project_snapshot(
-        self,
-        snapshot: ValidationStatusSnapshot,
-    ) -> ValidationStatusSnapshot:
-        projected = snapshot.model_copy(deep=True)
-        compat_validation_status = _compat_validation_status_for(
-            projected.certification_status
-        )
-        object.__setattr__(projected, "validation_status", compat_validation_status)
-        object.__setattr__(projected, "status", compat_validation_status)
-        return projected
 
     def _emit(
         self,

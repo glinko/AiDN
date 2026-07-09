@@ -30,7 +30,7 @@ def test_request_validation_locks_operator_bond_and_sets_pending_status() -> Non
     assert result.request.status == "queued"
     assert result.bond.amount_q == 500.0
     assert result.bond.remaining_locked_q == 500.0
-    assert result.snapshot.status == "pending_initial"
+    assert result.snapshot.validation_status == "pending_initial"
 
 
 def test_request_validation_rejects_negative_session_deposit_before_locking_bond() -> None:
@@ -80,7 +80,7 @@ def test_submit_validation_report_with_pass_marks_validated_without_releasing_in
     )
 
     assert resolved.request.status == "passed"
-    assert resolved.snapshot.status == "validated"
+    assert resolved.snapshot.validation_status == "validated"
     assert resolved.bond.remaining_locked_q == 500.0
 
 
@@ -144,7 +144,7 @@ def test_maintenance_pass_refunds_half_of_remaining_locked_bond() -> None:
 
     assert outcome.bond.remaining_locked_q == 250.0
     assert outcome.bond.released_q == 250.0
-    assert outcome.snapshot.status == "validated"
+    assert outcome.snapshot.validation_status == "validated"
 
 
 def test_maintenance_fail_forfeits_remaining_locked_bond() -> None:
@@ -172,7 +172,8 @@ def test_maintenance_fail_forfeits_remaining_locked_bond() -> None:
     assert outcome.bond.status == "forfeited"
     assert outcome.bond.remaining_locked_q == 0.0
     assert outcome.bond.forfeited_q == 500.0
-    assert outcome.snapshot.status == "validation_failed"
+    assert outcome.snapshot.certification_status == "revoked"
+    assert outcome.snapshot.validation_status == "validated"
     assert outcome.snapshot.validated_at is None
 
 
@@ -198,9 +199,14 @@ def test_maintenance_report_with_critical_issue_revokes_certification() -> None:
         evidence_summary="accounting mismatch",
         detected_issues=[{"severity": "critical", "code": "accounting_mismatch"}],
     )
+    summary = service.validation_summary("ep-1", configuration_hash="cfg-1")
 
     assert outcome.snapshot.certification_status == "revoked"
-    assert outcome.snapshot.validation_status == "validation_failed"
+    assert outcome.snapshot.validation_status == "validated"
+    assert summary["validation_status"] == "validation_failed"
+    assert summary["current_snapshot"]["certification_status"] == "revoked"
+    assert summary["current_snapshot"]["validation_status"] == "validated"
+    assert "status" not in summary["current_snapshot"]
 
 
 def test_assign_epoch_requests_raises_when_queued_requests_exceed_share_capacity() -> None:
