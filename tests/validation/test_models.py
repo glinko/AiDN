@@ -106,6 +106,17 @@ def test_validation_status_snapshot_accepts_certified_with_issues() -> None:
     assert snapshot.validation_status == "validated"
 
 
+def test_validation_status_snapshot_rejects_contradictory_certification_pair() -> None:
+    with pytest.raises(ValidationError):
+        ValidationStatusSnapshot(
+            endpoint_id="ep-1",
+            configuration_hash="cfg-1",
+            certification_status="certified",
+            validation_status="pending_initial",
+            latest_request_id="req-1",
+        )
+
+
 def test_validation_report_requires_recommendation_and_issue_counts() -> None:
     report = ValidationReport(
         report_id="report-1",
@@ -125,10 +136,36 @@ def test_validation_report_requires_recommendation_and_issue_counts() -> None:
     assert report.warning_issue_count == 2
 
 
+def test_validation_report_rejects_unstructured_issue_rows() -> None:
+    with pytest.raises(ValidationError):
+        ValidationReport(
+            report_id="report-1",
+            request_id="req-1",
+            endpoint_id="ep-1",
+            configuration_hash="cfg-1",
+            report_kind="initial",
+            validator_label="validator-a",
+            recommendation="certify_with_issues",
+            critical_issue_count=0,
+            warning_issue_count=1,
+            detected_issues=[{"issue_id": "issue-1", "details": {"nested": {"bad": "nope"}}}],
+            evidence_summary="operational with warnings",
+            created_at="2026-07-09T00:00:00+00:00",
+        )
+
+
 def test_endpoint_validation_state_rejects_unknown_certification_fields() -> None:
     with pytest.raises(ValidationError):
         EndpointValidationState(
             certification_status="maybe",
             validation_status="half_validated",
             latest_recommendation="shrug",
+        )
+
+
+def test_endpoint_validation_state_rejects_contradictory_certification_pair() -> None:
+    with pytest.raises(ValidationError):
+        EndpointValidationState(
+            certification_status="certified_with_issues",
+            validation_status="unvalidated",
         )

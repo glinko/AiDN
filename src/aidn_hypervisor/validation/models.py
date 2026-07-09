@@ -45,6 +45,18 @@ ValidationReportRecommendation = Literal[
 ]
 ValidationEpochStatus = Literal["open", "assigned", "closed"]
 ValidationAuthorizationStatus = Literal["issued", "consumed", "expired"]
+EvidenceScalar = str | int | float | bool | None
+EvidenceMap = dict[str, EvidenceScalar]
+
+
+def expected_validation_status_for(
+    certification_status: CertificationStatus,
+) -> ValidationSnapshotStatus:
+    if certification_status == "uncertified":
+        return "unvalidated"
+    if certification_status == "pending_initial":
+        return "pending_initial"
+    return "validated"
 
 
 class ValidationRequest(BaseModel):
@@ -92,6 +104,13 @@ class ValidationBond(BaseModel):
         return self
 
 
+class ValidationDetectedIssue(BaseModel):
+    issue_id: str
+    severity: str | None = None
+    summary: str | None = None
+    details: EvidenceMap = Field(default_factory=dict)
+
+
 class ValidationReport(BaseModel):
     report_id: str
     request_id: str
@@ -105,15 +124,15 @@ class ValidationReport(BaseModel):
     request_summary: str | None = None
     response_summary: str | None = None
     observations: list[str] = Field(default_factory=list)
-    measured_metrics: dict = Field(default_factory=dict)
-    protocol_compliance: dict = Field(default_factory=dict)
-    accounting_verification: dict = Field(default_factory=dict)
-    detected_issues: list[dict] = Field(default_factory=list)
+    measured_metrics: EvidenceMap = Field(default_factory=dict)
+    protocol_compliance: EvidenceMap = Field(default_factory=dict)
+    accounting_verification: EvidenceMap = Field(default_factory=dict)
+    detected_issues: list[ValidationDetectedIssue] = Field(default_factory=list)
     critical_issue_count: int = Field(default=0, ge=0)
     warning_issue_count: int = Field(default=0, ge=0)
     recommendation: ValidationReportRecommendation
     evidence_summary: str
-    signed_payload: dict = Field(default_factory=dict)
+    signed_payload: EvidenceMap = Field(default_factory=dict)
     created_at: str
 
 
@@ -131,11 +150,13 @@ class ValidationStatusSnapshot(BaseModel):
 
     @model_validator(mode="after")
     def _validate_validated_status(self):
-        if self.validation_status == "unvalidated":
-            if self.certification_status == "pending_initial":
-                self.validation_status = "pending_initial"
-            elif self.certification_status != "uncertified":
-                self.validation_status = "validated"
+        expected_status = expected_validation_status_for(self.certification_status)
+        if "validation_status" not in self.model_fields_set:
+            self.validation_status = expected_status
+        elif self.validation_status != expected_status:
+            raise ValueError(
+                "validation_status must be consistent with certification_status"
+            )
         if self.validation_status == "validated" and not (
             self.latest_request_id and self.latest_request_id.strip()
         ):

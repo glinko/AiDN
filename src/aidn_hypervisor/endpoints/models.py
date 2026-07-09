@@ -6,6 +6,7 @@ from aidn_hypervisor.validation.models import (
     CertificationStatus,
     ValidationReportRecommendation,
     ValidationSnapshotStatus,
+    expected_validation_status_for,
 )
 
 EndpointStatus = Literal["created", "stopped", "active", "suspended", "deleted"]
@@ -105,6 +106,17 @@ class EndpointValidationState(BaseModel):
     report_count: int = 0
     validated_configuration_hash: str | None = None
     validated_at: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_certification_pair(self):
+        expected_status = expected_validation_status_for(self.certification_status)
+        if "validation_status" not in self.model_fields_set:
+            self.validation_status = expected_status
+        elif self.validation_status != expected_status:
+            raise ValueError(
+                "validation_status must be consistent with certification_status"
+            )
+        return self
 
 
 class EndpointProxyTarget(BaseModel):

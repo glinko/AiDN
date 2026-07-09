@@ -463,9 +463,11 @@ def test_file_state_store_round_trips_certification_snapshot_fields(tmp_path: Pa
 
     restored_snapshot = restored.validation_status_snapshots[0]
 
-    assert restored_snapshot.certification_status == "certified_with_issues"
-    assert restored_snapshot.validation_status == "validated"
-    assert restored_snapshot.latest_report_id == "report-1"
+    assert restored_snapshot == certification_snapshot
+    assert (
+        restored_snapshot.certification_status,
+        restored_snapshot.validation_status,
+    ) == ("certified_with_issues", "validated")
     assert restored_snapshot.latest_report_at == "2026-07-09T00:00:00+00:00"
 
 
