@@ -444,18 +444,29 @@ def test_file_state_store_round_trips_validation_snapshot_fields(
 
 
 def test_file_state_store_round_trips_certification_snapshot_fields(tmp_path: Path) -> None:
-    snapshot = ValidationStatusSnapshot(
+    state_path = tmp_path / "hypervisor-state.json"
+    store = FileStateStore(state_path)
+    certification_snapshot = ValidationStatusSnapshot(
         endpoint_id="ep-1",
         configuration_hash="cfg-1",
-        certification_status="certified",
-        validation_status="validated",
+        certification_status="certified_with_issues",
         latest_request_id="req-1",
         latest_report_id="report-1",
         latest_report_at="2026-07-09T00:00:00+00:00",
     )
+    snapshot = HypervisorStateSnapshot(
+        validation_status_snapshots=[certification_snapshot]
+    )
 
-    assert snapshot.certification_status == "certified"
-    assert snapshot.validation_status == "validated"
+    store.save(snapshot)
+    restored = store.load()
+
+    restored_snapshot = restored.validation_status_snapshots[0]
+
+    assert restored_snapshot.certification_status == "certified_with_issues"
+    assert restored_snapshot.validation_status == "validated"
+    assert restored_snapshot.latest_report_id == "report-1"
+    assert restored_snapshot.latest_report_at == "2026-07-09T00:00:00+00:00"
 
 
 def test_validation_state_survives_snapshot_restore() -> None:

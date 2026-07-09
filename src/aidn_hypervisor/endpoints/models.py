@@ -2,6 +2,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from aidn_hypervisor.validation.models import (
+    CertificationStatus,
+    ValidationReportRecommendation,
+    ValidationSnapshotStatus,
+)
+
 EndpointStatus = Literal["created", "stopped", "active", "suspended", "deleted"]
 EndpointVisibility = Literal["public", "private", "shared"]
 EndpointValidationMode = Literal["enabled", "disabled"]
@@ -90,12 +96,12 @@ class EndpointValidationState(BaseModel):
     model_class_supported: bool = False
     verification_status: EndpointVerificationStatus = "unsupported"
     validation_profile: str | None = None
-    certification_status: str = "uncertified"
-    validation_status: str = "unvalidated"
+    certification_status: CertificationStatus = "uncertified"
+    validation_status: ValidationSnapshotStatus = "unvalidated"
     latest_request_id: str | None = None
     latest_report_id: str | None = None
     latest_report_at: str | None = None
-    latest_recommendation: str | None = None
+    latest_recommendation: ValidationReportRecommendation | None = None
     report_count: int = 0
     validated_configuration_hash: str | None = None
     validated_at: str | None = None

@@ -1,6 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
+from aidn_hypervisor.endpoints.models import EndpointValidationState
 from aidn_hypervisor.validation.models import (
     ValidationBond,
     ValidationReport,
@@ -122,3 +123,12 @@ def test_validation_report_requires_recommendation_and_issue_counts() -> None:
 
     assert report.recommendation == "certify_with_issues"
     assert report.warning_issue_count == 2
+
+
+def test_endpoint_validation_state_rejects_unknown_certification_fields() -> None:
+    with pytest.raises(ValidationError):
+        EndpointValidationState(
+            certification_status="maybe",
+            validation_status="half_validated",
+            latest_recommendation="shrug",
+        )
