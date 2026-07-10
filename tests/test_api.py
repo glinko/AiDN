@@ -2268,6 +2268,17 @@ def test_operator_dashboard_shell_route_exposes_remote_proxy_handoff_controls() 
     assert 'state.endpointProxyDraft = {' in response.text
 
 
+def test_operator_dashboard_shell_route_exposes_detach_remote_endpoint_action() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'data-remote-action="detach"' in response.text
+    assert "Detach Remote Endpoint" in response.text
+    assert '"/operators/remote-endpoints/' in response.text
+
+
 def test_operator_dashboard_shell_route_exposes_attach_to_endpoint_proxy_handoff() -> None:
     client = TestClient(build_app(service=_service()))
 

@@ -1497,6 +1497,7 @@
       sessionMessage: null,
       remoteMessage: null,
       remoteAttachPending: null,
+      remoteDetachPending: null,
       requestPolicyPending: false,
       sessionActionPending: null,
       installActionPending: null,
@@ -6173,7 +6174,10 @@
         <div class="inspector-actions">
           ${
             attached
-              ? `<button class="primary-button action-focus" type="button" data-remote-action="stage-proxy">Open Endpoints And Stage Proxy</button>`
+              ? `
+                <button class="primary-button action-focus" type="button" data-remote-action="stage-proxy" ${state.remoteDetachPending === selected.remote_endpoint_id ? "disabled" : ""}>Open Endpoints And Stage Proxy</button>
+                <button class="secondary-button" type="button" data-remote-action="detach" ${state.remoteDetachPending === selected.remote_endpoint_id ? "disabled" : ""}>${state.remoteDetachPending === selected.remote_endpoint_id ? "Detaching..." : "Detach Remote Endpoint"}</button>
+              `
               : `<button class="primary-button" type="button" data-remote-action="attach" data-node-id="${selected.node_id}" data-endpoint-id="${selected.endpoint_id}" ${selected.already_attached || state.remoteAttachPending === `${selected.node_id}:${selected.endpoint_id}` ? "disabled" : ""}>${selected.already_attached ? "Attached" : state.remoteAttachPending === `${selected.node_id}:${selected.endpoint_id}` ? "Attaching..." : "Attach Remote Endpoint"}</button>`
           }
           <button class="secondary-button" type="button" data-screen-jump="endpoints">Open Endpoints</button>
@@ -6610,7 +6614,11 @@
       const contentType = response.headers.get("content-type") || "";
       const body = contentType.includes("application/json") ? await response.json() : await response.text();
       if (!response.ok) {
-        throw new Error(extractErrorMessage(body));
+        const error = new Error(extractErrorMessage(body));
+        error.status = response.status;
+        error.body = body;
+        error.code = body?.error?.code || null;
+        throw error;
       }
       return body;
     }
@@ -6705,6 +6713,47 @@
         return;
       }
       prepareEndpointProxyHandoff(remote);
+    }
+
+    async function detachSelectedRemoteEndpoint() {
+      const remote = selectedRemoteEndpoint();
+      if (!remote?.remote_endpoint_id) {
+        state.remoteMessage = {
+          kind: "bad",
+          text: "Select an attached remote endpoint before detaching it from the preferred catalogue.",
+        };
+        render();
+        bindInteractiveElements();
+        return;
+      }
+      state.remoteDetachPending = remote.remote_endpoint_id;
+      state.remoteMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        await deleteJson(`/operators/remote-endpoints/${remote.remote_endpoint_id}`);
+        if (state.selectedRemoteEndpointKey === remoteSelectionKeyForAttached(remote)) {
+          state.selectedRemoteEndpointKey = null;
+        }
+        state.remoteMessage = {
+          kind: "good",
+          text: `Remote endpoint ${remote.source_endpoint_id || remote.remote_endpoint_id} detached from the preferred catalogue.`,
+        };
+        await refreshRemotePayload();
+      } catch (error) {
+        const dependentEndpointIds = error?.body?.error?.details?.dependent_endpoint_ids;
+        state.remoteMessage =
+          error?.code === "remote_endpoint_in_use" && Array.isArray(dependentEndpointIds)
+            ? {
+                kind: "bad",
+                text: `Remote endpoint is still backing local endpoints: ${dependentEndpointIds.join(", ")}. Detach those proxy routes before removing this preferred route.`,
+              }
+            : { kind: "bad", text: String(error) };
+      } finally {
+        state.remoteDetachPending = null;
+        render();
+        bindInteractiveElements();
+      }
     }
 
     async function createBootstrapWallet() {
@@ -7914,6 +7963,9 @@
         button.addEventListener("click", () => {
           if (button.dataset.remoteAction === "attach") {
             void attachRemoteEndpoint(button.dataset.nodeId, button.dataset.endpointId);
+          }
+          if (button.dataset.remoteAction === "detach") {
+            void detachSelectedRemoteEndpoint();
           }
           if (button.dataset.remoteAction === "stage-proxy") {
             stageSelectedRemoteProxy();
