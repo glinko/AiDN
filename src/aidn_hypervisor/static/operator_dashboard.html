@@ -2433,15 +2433,24 @@
           action: "providers",
         };
       }
-      if (bundle?.endpoint) {
+      const relationship = selectedFleetBundle()?.endpoint_relationship;
+      if (relationship?.state === "published_drifted") {
         return {
           label: "Open Endpoints",
-          detail: "This bundle already has an endpoint. Continue in Endpoints for publication and validation.",
+          detail: "This bundle already backs a published endpoint with unpublished local changes. Continue in Endpoints to republish the signed configuration.",
           type: "screen",
           action: "endpoints",
         };
       }
-      if (bundle) {
+      if (relationship?.state === "published_endpoint" || relationship?.state === "draft_endpoint") {
+        return {
+          label: "Open Endpoints",
+          detail: "This bundle already has an endpoint relationship. Continue in Endpoints for publication, proxy, sessions, and validation decisions.",
+          type: "screen",
+          action: "endpoints",
+        };
+      }
+      if (relationship?.state === "no_endpoint" && bundle) {
         return {
           label: "Create Endpoint From Bundle",
           detail: "This bundle is ready to become an endpoint. Create it here, then continue in Endpoints.",
@@ -2472,6 +2481,23 @@
           detail: "Attach a provider or import its manifest before bundle wiring or installs can begin.",
           type: "none",
           action: null,
+        };
+      }
+      const readiness = selectedProvider()?.endpoint_readiness;
+      if (readiness?.state === "ready_for_endpoint_creation" || readiness?.state === "mixed_endpoint_supply") {
+        return {
+          label: "Open Endpoints",
+          detail: "This provider now yields endpoint-ready supply. Continue in Endpoints to create the next endpoint from the prepared bundle inventory.",
+          type: "screen",
+          action: "endpoints",
+        };
+      }
+      if (readiness?.state === "already_backing_endpoint_supply") {
+        return {
+          label: "Open Endpoints",
+          detail: "This provider is already backing endpoint supply. Continue in Endpoints to manage the existing endpoint lifecycle.",
+          type: "screen",
+          action: "endpoints",
         };
       }
       if (provider?.pending_install_count) {
@@ -3728,7 +3754,7 @@
           <div>
             <div class="panel-heading">Local Inventory</div>
             <h1 class="workspace-title">Bundles</h1>
-            <p class="workspace-copy">This screen prepares endpoint candidates from local inventory. Once a bundle has an endpoint relationship, the operator should continue lifecycle decisions in Endpoints.</p>
+            <p class="workspace-copy">This screen tracks bundle-to-endpoint relationship state. Once a bundle has an endpoint relationship, the operator should continue lifecycle decisions in Endpoints.</p>
           </div>
           <div class="toolbar">
             <button type="button" class="active">Local Bundles</button>
