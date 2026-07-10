@@ -266,7 +266,27 @@ Exit criteria:
 - a node can explicitly declare whether it accepts custom model onboarding;
 - the registry can expose that capability to agents or operators.
 
-### M7: Federated Or Distributed Registry
+### M7: CometBFT Consensus And Ledger Finality
+
+Goal: move from local-first protocol state to finalized canonical network state ordered by CometBFT and interpreted by the AiDN Ledger State Machine.
+
+Status: `Target architecture`
+
+Checkpoints:
+- [ ] Deterministic Ledger Operation envelope with `operation_id`, protocol version, wallet sender, and sender sequence
+- [ ] AiDN ABCI application boundary for admission, proposal validation, finalization, and state commitment
+- [ ] Consensus Service as an optional Hypervisor service with local configuration and keys
+- [ ] Finalized state commitment and snapshot synchronization model
+- [ ] Consensus Validator role, stake, and validator-set activation boundaries
+- [ ] Non-validator submission, inclusion monitoring, and safe resubmission flow
+- [ ] Epoch-task integration through explicit finalized Ledger Operations
+
+Exit criteria:
+- canonical protocol state is derived only from finalized ordered operations rather than local mutation alone;
+- honest consensus services derive the same application state hash from the same chain data;
+- non-consensus hypervisors can still submit signed operations and verify finalization without running a validator.
+
+### M8: Federated Or Distributed Registry
 
 Goal: move from a single registry service to a federated or distributed discovery layer.
 
@@ -294,6 +314,7 @@ Order of work right now:
 5. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
 6. Finish the remaining `M3/M4` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
 7. Define `M5` rating, validation economics, and `M6` custom model onboarding contracts around the endpoint-centric operator experience
+8. Introduce the `M7` consensus boundary cleanly, so future ledger, epoch, validator, and registry work land on finalized protocol state instead of local-only mutation
 
 ## Source Documents
 
