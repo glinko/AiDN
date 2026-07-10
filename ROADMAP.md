@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-07-06`
+Last updated: `2026-07-10`
 
 This is the main public roadmap for the repository.
 
@@ -49,9 +49,9 @@ Product alignment summary:
 - future registry, marketplace, verification, reputation, and epoch work should build on canonical advertisements and service/runtime records rather than deepening bundle-centric contracts;
 - the repo now has a strong local hypervisor and operator-dashboard foundation;
 - guided onboarding now lands operators inside a working endpoint-first bootstrap loop;
-- the current shell slice is migrating `Home`, `Providers`, and `Bundles` to hand work explicitly into `Endpoints`;
-- the next product layer after this migration is trust-and-market depth on top of the canonical endpoint workspace;
-- the next product-critical gap is no longer the bare first-run bootstrap loop itself, but finishing the operator-shell migration and trust/reputation layers on top of that loop;
+- `Home`, `Providers`, and `Bundles` now behave as endpoint-first agenda and preparation surfaces that hand deep lifecycle control into `Endpoints`;
+- the next product layer after this shell consolidation is trust, rating, validation publication, and richer market depth on top of the canonical endpoint workspace;
+- the next product-critical gap is no longer the bare first-run bootstrap loop or shell ownership ambiguity, but trust/reputation publication and endpoint lifecycle depth on top of the consolidated operator surface;
 - endpoint publication is now a first trust layer, and paid consumption now has a working first Session contract;
 - validation economics and maintenance-validation policy are now defined at the product level, but the protocol and registry trust layer are still incomplete;
 - validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
@@ -111,9 +111,9 @@ What is still missing in the current stage:
 - full client-facing payment confirmation and paid-session workflow polish across bootstrap, remote/proxy, and future marketplace paths.
 
 Immediate priorities:
-1. Finish the endpoint-first shell migration so `Home`, `Providers`, and `Bundles` all hand off into `Endpoints`.
-2. Expand endpoint lifecycle controls across remote/proxy and marketplace routing.
-3. Implement `M5` rating, validation, and trust publication on top of the canonical endpoint workspace.
+1. Expand endpoint lifecycle controls across remote/proxy and marketplace routing.
+2. Implement `M5` rating, validation, and trust publication on top of the canonical endpoint workspace.
+3. Propagate those trust signals cleanly through discovery, market selection, and the operator shell.
 
 ## Milestones
 

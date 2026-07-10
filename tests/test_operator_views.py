@@ -353,9 +353,10 @@ def test_home_payload_surfaces_drifted_publication_as_the_primary_attention_stat
     )
 
     assert payload["endpoint_pipeline"]["state"] == "published_drifted"
+    assert payload["endpoint_pipeline"]["recommended_action"]["action"] == "endpoints"
     assert (
-        payload["endpoint_pipeline"]["recommended_action"]["action"]
-        == "publish-configuration"
+        payload["endpoint_pipeline"]["recommended_action"]["workspace"]
+        == "endpoints"
     )
     assert (
         payload["endpoint_pipeline"]["publication_sync_status"]
@@ -367,10 +368,7 @@ def test_home_payload_surfaces_drifted_publication_as_the_primary_attention_stat
     )
     assert payload["onboarding"]["current_step"] == "publish_endpoint"
     assert payload["onboarding"]["workspace"] == "endpoints"
-    assert (
-        payload["onboarding"]["recommended_action"]["action"]
-        == "publish-configuration"
-    )
+    assert payload["onboarding"]["recommended_action"]["action"] == "endpoints"
 
 
 def test_home_payload_surfaces_in_sync_publication_as_operating_state(
@@ -655,8 +653,8 @@ def test_providers_payload_prefers_endpoint_handoff_once_local_supply_is_usable(
     )
 
     assert payload["summary"]["endpoint_ready_bundles"] == 2
-    assert payload["recommended_action"]["action"] == "bundles"
-    assert payload["recommended_action"]["workspace"] == "bundles"
+    assert payload["recommended_action"]["action"] == "create_endpoint"
+    assert payload["recommended_action"]["workspace"] == "endpoints"
 
 
 def test_bundles_payload_marks_first_endpoint_candidate(
@@ -710,8 +708,11 @@ def test_bundles_payload_exposes_endpoint_relationship_states(
 
     whisper = next(item for item in payload["items"] if item["bundle_id"] == "whisper-a")
     text = next(item for item in payload["items"] if item["bundle_id"] == "text-a")
-    assert whisper["endpoint_relationship"]["state"] == "draft_endpoint_exists"
-    assert whisper["endpoint_relationship"]["endpoint_id"] == created.endpoint.endpoint_id
+    assert whisper["endpoint_relationship"]["state"] == "draft_endpoint"
+    assert (
+        whisper["endpoint_relationship"]["recommended_action"]["endpoint_id"]
+        == created.endpoint.endpoint_id
+    )
     assert whisper["endpoint_action"]["recommended"] == "open_endpoint"
     assert text["endpoint_relationship"]["state"] == "no_endpoint"
     assert text["endpoint_action"]["recommended"] == "create_endpoint"
