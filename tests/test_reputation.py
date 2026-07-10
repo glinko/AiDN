@@ -1,3 +1,4 @@
+from aidn_hypervisor import reputation as reputation_module
 from aidn_hypervisor.reputation import build_reputation_profile
 
 
@@ -75,7 +76,15 @@ def test_build_reputation_profile_penalizes_stale_and_drifted_nodes() -> None:
     assert healthy["components"]["publication_integrity"] > degraded["components"]["publication_integrity"]
 
 
-def test_build_reputation_profile_uses_unrated_tier_when_no_signal_exists() -> None:
+def test_build_reputation_profile_uses_unrated_tier_when_no_signal_exists(monkeypatch) -> None:
+    observed: dict[str, tuple] = {}
+
+    def _spy_signal_present(*values):
+        observed["values"] = values
+        return False
+
+    monkeypatch.setattr(reputation_module, "_signal_present", _spy_signal_present)
+
     profile = build_reputation_profile(
         node_status="offline",
         heartbeat_fresh=False,
@@ -90,12 +99,27 @@ def test_build_reputation_profile_uses_unrated_tier_when_no_signal_exists() -> N
             "drift_count": 0,
         },
         operational_stats={"total_tasks": 0, "successful_tasks": 0, "failed_tasks": 0},
-        baseline_rating={"score": 0.0, "tier": "unrated", "updated_at": "2026-07-10T00:00:00+00:00"},
+        baseline_rating={"score": 0.87, "tier": "B", "updated_at": "2026-07-10T00:00:00+00:00"},
         updated_at="2026-07-10T09:15:00+00:00",
     )
 
     assert profile["score"] == 0.0
     assert profile["tier"] == "unrated"
+    assert observed["values"] == (
+        "offline",
+        False,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
     assert profile["components"]["freshness"] == 0.0
     assert profile["components"]["publication_integrity"] == 0.0
     assert profile["components"]["validation_posture"] == 0.0

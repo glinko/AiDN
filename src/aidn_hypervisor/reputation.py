@@ -66,7 +66,6 @@ def build_reputation_profile(
         total_tasks,
         successful_tasks,
         failed_tasks,
-        baseline_rating.get("score", 0.0) if baseline_rating else 0.0,
     )
     if not has_signal:
         return {
