@@ -44,7 +44,8 @@ class RemoteEndpointService:
             for manifest in endpoint_service.store.list_manifests():
                 proxy_target = manifest.proxy_target
                 if (
-                    proxy_target is not None
+                    manifest.status != "deleted"
+                    and proxy_target is not None
                     and proxy_target.remote_endpoint_id == remote_endpoint_id
                 ):
                     dependent_endpoint_ids.append(manifest.endpoint_id)
