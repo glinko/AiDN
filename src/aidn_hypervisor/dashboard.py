@@ -425,7 +425,18 @@ def _market_candidate_sort_key(candidate: dict) -> tuple:
 
 
 def _reputation_block(source: dict) -> dict:
-    return source.get("reputation") or source.get("rating") or {}
+    rating = dict(source.get("rating") or {})
+    reputation = dict(source.get("reputation") or {})
+    if not reputation:
+        return rating
+    for key in ("score", "tier", "updated_at"):
+        if reputation.get(key) is None and rating.get(key) is not None:
+            reputation[key] = rating[key]
+    if reputation.get("components") is None:
+        reputation["components"] = {}
+    if reputation.get("evidence") is None:
+        reputation["evidence"] = {}
+    return reputation
 
 
 def _candidate_score(candidate: dict) -> float:

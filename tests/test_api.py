@@ -1558,6 +1558,88 @@ def test_operator_dashboard_market_payload_includes_reputation_block() -> None:
     assert canonical_candidate["reputation"] == candidate["reputation"]
 
 
+def test_operator_dashboard_market_payload_uses_field_level_reputation_fallback_for_sorting() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    registry = RegistryService()
+    heartbeat_at = datetime.now(timezone.utc).isoformat()
+    common_bundle = [
+        {
+            "bundle_id": "remote-text",
+            "plugin_id": "fake-managed",
+            "workload_type": "llm_text",
+            "provider_type": "fake",
+            "model_id": "remote-text-model",
+            "endpoint": "https://remote.example/runtimes/remote-text",
+            "enabled": True,
+            "status": "ready",
+            "launch_mode": "attached_service",
+            "device_affinity": "cpu",
+            "max_parallel_requests": 2,
+            "supports_allocation": True,
+            "supports_queue": True,
+        }
+    ]
+    common_resources = {
+        "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+        "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
+    }
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-partial-reputation",
+            operator_id="operator-a",
+            base_url="https://node-partial-reputation.example",
+            heartbeat_at=heartbeat_at,
+            resources=common_resources,
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 7, "output": 10},
+            rating={"score": 0.94, "tier": "A", "updated_at": "2026-07-06T11:55:00+00:00"},
+            reputation={
+                "score": 0.73,
+                "tier": "B",
+                "updated_at": "2026-07-06T11:55:00+00:00",
+                "components": {"freshness": 0.82},
+                "evidence": {"node_status": "ready"},
+            },
+            bundles=common_bundle,
+        )
+    )
+    registry._nodes["node-partial-reputation"]["reputation"].pop("score")
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-lower-score",
+            operator_id="operator-b",
+            base_url="https://node-lower-score.example",
+            heartbeat_at=heartbeat_at,
+            resources=common_resources,
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 6, "output": 9},
+            rating={"score": 0.45, "tier": "C", "updated_at": "2026-07-06T11:55:00+00:00"},
+            reputation={
+                "score": 0.61,
+                "tier": "C",
+                "updated_at": "2026-07-06T11:55:00+00:00",
+                "components": {"freshness": 0.61},
+                "evidence": {"node_status": "ready"},
+            },
+            bundles=common_bundle,
+        )
+    )
+
+    payload = build_market_payload(service=hypervisor, registry_service=registry)
+
+    assert [candidate["node_id"] for candidate in payload["candidates"][:2]] == [
+        "node-partial-reputation",
+        "node-lower-score",
+    ]
+    candidate = payload["candidates"][0]
+    assert candidate["reputation"]["score"] == 0.94
+    assert candidate["reputation"]["tier"] == "B"
+    assert candidate["reputation"]["components"]["freshness"] == 0.82
+    assert candidate["rating"]["score"] == 0.94
+
+
 def test_operator_dashboard_market_payload_registry_backed_summary_ignores_unpublished_canonical_overlay(
 ) -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
@@ -1953,6 +2035,17 @@ def test_operator_dashboard_shell_renders_reputation_breakdown() -> None:
     assert "Publication Integrity" in response.text
     assert "Validation Posture" in response.text
     assert "Operational Reliability" in response.text
+
+
+def test_operator_dashboard_shell_reputation_breakdown_uses_placeholder_for_missing_components() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "function renderReputationBreakdown(candidate)" in response.text
+    assert "value == null ? \"-\" : formatRating(value)" in response.text
+    assert "formatRating(Number(value ?? 0))" not in response.text
 
 
 def test_operator_dashboard_shell_route_keeps_home_market_preview_in_sync() -> None:

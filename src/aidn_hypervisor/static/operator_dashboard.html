@@ -1703,6 +1703,10 @@
       return candidateReputation(candidate).score;
     }
 
+    function formatOptionalRating(value) {
+      return value == null ? "-" : formatRating(value);
+    }
+
     function renderReputationBreakdown(candidate) {
       const reputation = candidateReputation(candidate);
       const components = reputation.components || {};
@@ -1719,7 +1723,7 @@
               <div class="trust-lane">
                 <div class="trust-lane-head">
                   <span class="trust-lane-label">${label}</span>
-                  <span>${formatRating(Number(value ?? 0))}</span>
+                  <span>${formatOptionalRating(value)}</span>
                 </div>
               </div>
             `)
