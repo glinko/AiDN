@@ -2117,6 +2117,18 @@
       };
     }
 
+    function clearDetachedRemoteProxyState(remoteEndpointId) {
+      if (state.endpointProxyDraft.remoteEndpointId === remoteEndpointId) {
+        state.endpointProxyDraft = {
+          endpointId: state.endpointProxyDraft.endpointId,
+          remoteEndpointId: "",
+        };
+      }
+      if (state.proxyGuidedFlow?.remoteEndpointId === remoteEndpointId) {
+        clearGuidedProxyFlow();
+      }
+    }
+
     function guidedProxyPhase(flow, selected) {
       if (!flow?.remoteEndpointId) {
         return null;
@@ -6735,6 +6747,7 @@
         if (state.selectedRemoteEndpointKey === remoteSelectionKeyForAttached(remote)) {
           state.selectedRemoteEndpointKey = null;
         }
+        clearDetachedRemoteProxyState(remote.remote_endpoint_id);
         state.remoteMessage = {
           kind: "good",
           text: `Remote endpoint ${remote.source_endpoint_id || remote.remote_endpoint_id} detached from the preferred catalogue.`,

@@ -2277,6 +2277,12 @@ def test_operator_dashboard_shell_route_exposes_detach_remote_endpoint_action() 
     assert 'data-remote-action="detach"' in response.text
     assert "Detach Remote Endpoint" in response.text
     assert '"/operators/remote-endpoints/' in response.text
+    assert "function clearDetachedRemoteProxyState(remoteEndpointId)" in response.text
+    assert "state.endpointProxyDraft.remoteEndpointId === remoteEndpointId" in response.text
+    assert 'state.endpointProxyDraft = {' in response.text
+    assert "state.proxyGuidedFlow?.remoteEndpointId === remoteEndpointId" in response.text
+    assert "clearGuidedProxyFlow();" in response.text
+    assert "clearDetachedRemoteProxyState(remote.remote_endpoint_id);" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_attach_to_endpoint_proxy_handoff() -> None:
