@@ -1,8 +1,7 @@
-from aidn_hypervisor import reputation as reputation_module
 from aidn_hypervisor.reputation import build_reputation_profile
 
 
-def test_build_reputation_profile_returns_score_tier_components_and_evidence() -> None:
+def test_build_reputation_profile_returns_exact_contract_for_healthy_node() -> None:
     profile = build_reputation_profile(
         node_status="ready",
         heartbeat_fresh=True,
@@ -25,14 +24,29 @@ def test_build_reputation_profile_returns_score_tier_components_and_evidence() -
         updated_at="2026-07-10T09:15:00+00:00",
     )
 
-    assert profile["score"] > 0.0
-    assert profile["tier"] in {"A", "B", "C", "D", "unrated"}
-    assert profile["components"]["freshness"] > 0.0
-    assert profile["components"]["publication_integrity"] > 0.0
-    assert profile["components"]["validation_posture"] > 0.0
-    assert profile["components"]["operational_reliability"] > 0.0
-    assert profile["evidence"]["node_status"] == "ready"
-    assert profile["evidence"]["published_endpoint_count"] == 4
+    assert profile["score"] == 1.0
+    assert profile["tier"] == "A"
+    assert profile["updated_at"] == "2026-07-10T09:15:00+00:00"
+    assert profile["components"] == {
+        "freshness": 1.0,
+        "publication_integrity": 1.0,
+        "validation_posture": 1.0,
+        "operational_reliability": 1.0,
+    }
+    assert profile["evidence"] == {
+        "node_status": "ready",
+        "published_endpoint_count": 4,
+        "in_sync_count": 3,
+        "drift_count": 1,
+        "certified_count": 2,
+        "certified_with_issues_count": 1,
+        "validated_count": 3,
+        "pending_count": 1,
+        "attention_count": 0,
+        "total_tasks": 20,
+        "successful_tasks": 18,
+        "failed_tasks": 2,
+    }
 
 
 def test_build_reputation_profile_penalizes_stale_and_drifted_nodes() -> None:
@@ -72,19 +86,23 @@ def test_build_reputation_profile_penalizes_stale_and_drifted_nodes() -> None:
     )
 
     assert healthy["score"] > degraded["score"]
-    assert healthy["components"]["freshness"] > degraded["components"]["freshness"]
-    assert healthy["components"]["publication_integrity"] > degraded["components"]["publication_integrity"]
+    assert healthy["tier"] == "A"
+    assert degraded["tier"] == "D"
+    assert healthy["components"] == {
+        "freshness": 1.0,
+        "publication_integrity": 1.0,
+        "validation_posture": 0.7,
+        "operational_reliability": 1.0,
+    }
+    assert degraded["components"] == {
+        "freshness": 0.55,
+        "publication_integrity": 0.0,
+        "validation_posture": 0.25,
+        "operational_reliability": 0.7,
+    }
 
 
-def test_build_reputation_profile_uses_unrated_tier_when_no_signal_exists(monkeypatch) -> None:
-    observed: dict[str, tuple] = {}
-
-    def _spy_signal_present(*values):
-        observed["values"] = values
-        return False
-
-    monkeypatch.setattr(reputation_module, "_signal_present", _spy_signal_present)
-
+def test_build_reputation_profile_uses_baseline_timestamp_for_no_signal_when_updated_at_is_missing() -> None:
     profile = build_reputation_profile(
         node_status="offline",
         heartbeat_fresh=False,
@@ -100,27 +118,14 @@ def test_build_reputation_profile_uses_unrated_tier_when_no_signal_exists(monkey
         },
         operational_stats={"total_tasks": 0, "successful_tasks": 0, "failed_tasks": 0},
         baseline_rating={"score": 0.87, "tier": "B", "updated_at": "2026-07-10T00:00:00+00:00"},
-        updated_at="2026-07-10T09:15:00+00:00",
     )
 
     assert profile["score"] == 0.0
     assert profile["tier"] == "unrated"
-    assert observed["values"] == (
-        "offline",
-        False,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-    )
-    assert profile["components"]["freshness"] == 0.0
-    assert profile["components"]["publication_integrity"] == 0.0
-    assert profile["components"]["validation_posture"] == 0.0
-    assert profile["components"]["operational_reliability"] == 0.0
+    assert profile["updated_at"] == "2026-07-10T00:00:00+00:00"
+    assert profile["components"] == {
+        "freshness": 0.0,
+        "publication_integrity": 0.0,
+        "validation_posture": 0.0,
+        "operational_reliability": 0.0,
+    }

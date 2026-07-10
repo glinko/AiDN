@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+DEFAULT_UPDATED_AT = "1970-01-01T00:00:00+00:00"
 
 
 def reputation_tier_for(score: float) -> str:
@@ -51,6 +51,11 @@ def build_reputation_profile(
     total_tasks = int(operational_stats.get("total_tasks", 0) or 0)
     successful_tasks = int(operational_stats.get("successful_tasks", 0) or 0)
     failed_tasks = int(operational_stats.get("failed_tasks", 0) or 0)
+    resolved_updated_at = (
+        updated_at
+        or (baseline_rating or {}).get("updated_at")
+        or DEFAULT_UPDATED_AT
+    )
 
     has_signal = _signal_present(
         node_status,
@@ -71,7 +76,7 @@ def build_reputation_profile(
         return {
             "score": 0.0,
             "tier": "unrated",
-            "updated_at": updated_at or datetime.now(timezone.utc).isoformat(),
+            "updated_at": resolved_updated_at,
             "components": {
                 "freshness": 0.0,
                 "publication_integrity": 0.0,
@@ -132,7 +137,7 @@ def build_reputation_profile(
     return {
         "score": score,
         "tier": tier,
-        "updated_at": updated_at or datetime.now(timezone.utc).isoformat(),
+        "updated_at": resolved_updated_at,
         "components": {
             "freshness": freshness,
             "publication_integrity": publication_integrity,
