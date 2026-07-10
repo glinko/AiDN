@@ -1933,7 +1933,7 @@
       return summary?.validation_status || fallback;
     }
 
-    function trustStatusLabel(status) {
+    function trustStatusLabel(status, { legacyValidation = false } = {}) {
       switch (status) {
         case "certified":
           return "Certified";
@@ -1954,7 +1954,7 @@
         case "validation_failed":
           return "Validation Failed";
         case "revoked":
-          return "Attention Required";
+          return legacyValidation ? "Revoked" : "Attention Required";
         case "forfeited":
           return "Forfeited";
         case "local_changes_not_published":
@@ -1972,6 +1972,13 @@
             .replaceAll("_", " ")
             .replace(/\b\w/g, (letter) => letter.toUpperCase());
       }
+    }
+
+    function publishedTrustStatusLabel(summary) {
+      if (summary?.certification_status) {
+        return trustStatusLabel(summary.certification_status);
+      }
+      return trustStatusLabel(validationStatus(summary), { legacyValidation: true });
     }
 
     function validationTrustTone(summary) {
@@ -4706,7 +4713,7 @@
                                 trust
                                   ? `
                                     <div class="chip-row" style="margin-top: 10px;">
-                                      <span class="chip ${validationTrustTone(trust.published_validation_summary)}">${trustStatusLabel(certificationStatus(trust.published_validation_summary))}</span>
+                                      <span class="chip ${validationTrustTone(trust.published_validation_summary)}">${publishedTrustStatusLabel(trust.published_validation_summary)}</span>
                                       <span class="chip ${publicationTrustTone(trust.publication_sync_status)}">${trustStatusLabel(trust.publication_sync_status)}</span>
                                     </div>
                                   `
@@ -4739,7 +4746,7 @@
                                 <span class="chip ${item.already_attached ? "good" : ""}">${item.model_class}</span>
                               </div>
                               <div class="chip-row" style="margin-top: 10px;">
-                                <span class="chip ${validationTrustTone(item.published_validation_summary)}">${trustStatusLabel(certificationStatus(item.published_validation_summary))}</span>
+                                <span class="chip ${validationTrustTone(item.published_validation_summary)}">${publishedTrustStatusLabel(item.published_validation_summary)}</span>
                                 <span class="chip ${publicationTrustTone(item.publication_sync_status)}">${trustStatusLabel(item.publication_sync_status || "unknown")}</span>
                               </div>
                               <div class="request-row-bottom">
@@ -6041,7 +6048,7 @@
         <div class="trust-grid">
           ${renderTrustLane(
             "Validation Trust",
-            trustStatusLabel(certificationStatus(trust?.published_validation_summary)),
+            publishedTrustStatusLabel(trust?.published_validation_summary),
             validationTrustTone(trust?.published_validation_summary),
             "Remote validation trust follows the published snapshot currently advertised by this endpoint."
           )}
@@ -6077,7 +6084,7 @@
           </div>
           <div class="inspector-stat">
             <strong>Validation Trust</strong>
-            <span>${trustStatusLabel(certificationStatus(trust?.published_validation_summary))}</span>
+            <span>${publishedTrustStatusLabel(trust?.published_validation_summary)}</span>
           </div>
           <div class="inspector-stat">
             <strong>Publication Trust</strong>

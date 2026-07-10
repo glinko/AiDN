@@ -5170,6 +5170,7 @@ def test_operator_dashboard_market_payload_includes_certification_counts() -> No
     )
     assert item["trust_summary"]["certified_count"] == 1
     assert item["trust_summary"]["certified_with_issues_count"] == 1
+    assert item["trust_summary"]["validated_count"] == 2
     assert item["trust_summary"]["validation_by_status"]["validated"] == 2
 
 
@@ -5290,16 +5291,19 @@ def test_operator_dashboard_remote_endpoints_payload_surfaces_certification_stat
     assert item["published_validation_summary"]["validation_status"] == "validated"
 
 
-def test_operator_dashboard_shell_preserves_legacy_validation_fallback_in_certification_helper() -> None:
+def test_operator_dashboard_shell_preserves_legacy_validation_labels_for_published_trust() -> None:
     client = TestClient(build_app(service=_service()))
 
     response = client.get("/operators/dashboard")
 
     assert response.status_code == 200
+    assert "function publishedTrustStatusLabel(summary)" in response.text
+    assert "return trustStatusLabel(summary.certification_status);" in response.text
     assert (
-        'return summary?.certification_status || summary?.validation_status || "unvalidated";'
+        'return trustStatusLabel(validationStatus(summary), { legacyValidation: true });'
         in response.text
     )
+    assert 'return legacyValidation ? "Revoked" : "Attention Required";' in response.text
 
 
 def test_operator_dashboard_shell_exposes_publication_sync_copy() -> None:
