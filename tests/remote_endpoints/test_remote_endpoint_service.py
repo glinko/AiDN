@@ -1,4 +1,12 @@
-from aidn_hypervisor.remote_endpoints.service import RemoteEndpointService
+import pytest
+
+from aidn_hypervisor.endpoints.models import CreateEndpointCommand
+from aidn_hypervisor.endpoints.service import EndpointService
+from aidn_hypervisor.endpoints.store import EndpointStore
+from aidn_hypervisor.remote_endpoints.service import (
+    RemoteEndpointDependencyError,
+    RemoteEndpointService,
+)
 from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
 
 
@@ -96,3 +104,67 @@ def test_attach_remote_endpoint_persists_session_policy_snapshot() -> None:
 
     assert attached.session_policy["minimum_deposit"] == 10.0
     assert service.list_remote_endpoints()[0].session_policy["recommended_deposit"] == 25.0
+
+
+def test_detach_remote_endpoint_removes_catalog_entry() -> None:
+    service = RemoteEndpointService(RemoteEndpointStore())
+    attached = service.attach_remote_endpoint(
+        source_node_id="node-remote",
+        source_endpoint_id="ep-remote",
+        source_owner_wallet="wallet-remote",
+        source_publication_id="pub-remote",
+        source_configuration_hash="cfg-remote",
+        source_visibility="public",
+        source_model_class="llm_text",
+        source_status="published",
+        source_base_url="https://remote.example",
+        operator_id="operator-remote",
+        pricing={"unit": "q_per_1kk_tokens", "input": 8, "output": 12},
+        rating={"score": 0.96, "tier": "A", "updated_at": "2026-06-30T00:00:00+00:00"},
+        alias="Primary Remote",
+    )
+
+    detached = service.detach_remote_endpoint(attached.remote_endpoint_id)
+
+    assert detached.remote_endpoint_id == attached.remote_endpoint_id
+    assert service.list_remote_endpoints() == []
+
+
+def test_detach_remote_endpoint_rejects_active_proxy_dependencies() -> None:
+    remote_service = RemoteEndpointService(RemoteEndpointStore())
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Proxy Worker",
+            model_class="llm_text",
+            capabilities=["chat"],
+        )
+    )
+    attached = remote_service.attach_remote_endpoint(
+        source_node_id="node-remote",
+        source_endpoint_id="ep-remote",
+        source_owner_wallet="wallet-remote",
+        source_publication_id="pub-remote",
+        source_configuration_hash="cfg-remote",
+        source_visibility="public",
+        source_model_class="llm_text",
+        source_status="published",
+        source_base_url="https://remote.example",
+        operator_id="operator-remote",
+        pricing={"unit": "q_per_1kk_tokens", "input": 8, "output": 12},
+        rating={"score": 0.96, "tier": "A", "updated_at": "2026-06-30T00:00:00+00:00"},
+    )
+    endpoint_service.attach_proxy_target(created.endpoint.endpoint_id, attached)
+
+    with pytest.raises(RemoteEndpointDependencyError) as error:
+        remote_service.detach_remote_endpoint(
+            attached.remote_endpoint_id,
+            endpoint_service=endpoint_service,
+        )
+
+    assert error.value.remote_endpoint_id == attached.remote_endpoint_id
+    assert error.value.dependent_endpoint_ids == [created.endpoint.endpoint_id]
+    assert remote_service.list_remote_endpoints()[0].remote_endpoint_id == attached.remote_endpoint_id

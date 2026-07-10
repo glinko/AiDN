@@ -7,6 +7,19 @@ from aidn_hypervisor.remote_endpoints.models import (
 )
 
 
+class RemoteEndpointDependencyError(RuntimeError):
+    def __init__(
+        self,
+        remote_endpoint_id: str,
+        dependent_endpoint_ids: list[str],
+    ) -> None:
+        super().__init__(
+            f"remote endpoint {remote_endpoint_id} is still used by local endpoints"
+        )
+        self.remote_endpoint_id = remote_endpoint_id
+        self.dependent_endpoint_ids = dependent_endpoint_ids
+
+
 class RemoteEndpointService:
     def __init__(self, store) -> None:
         self.store = store
@@ -19,6 +32,35 @@ class RemoteEndpointService:
             if record.remote_endpoint_id == remote_endpoint_id:
                 return record
         raise KeyError(remote_endpoint_id)
+
+    def detach_remote_endpoint(
+        self,
+        remote_endpoint_id: str,
+        endpoint_service=None,
+    ) -> RemoteEndpointReference:
+        detached = self.get_remote_endpoint(remote_endpoint_id)
+        dependent_endpoint_ids: list[str] = []
+        if endpoint_service is not None:
+            for manifest in endpoint_service.store.list_manifests():
+                proxy_target = manifest.proxy_target
+                if (
+                    proxy_target is not None
+                    and proxy_target.remote_endpoint_id == remote_endpoint_id
+                ):
+                    dependent_endpoint_ids.append(manifest.endpoint_id)
+        if dependent_endpoint_ids:
+            raise RemoteEndpointDependencyError(
+                remote_endpoint_id=remote_endpoint_id,
+                dependent_endpoint_ids=dependent_endpoint_ids,
+            )
+        self.store.replace_records(
+            [
+                item
+                for item in self.store.list_records()
+                if item.remote_endpoint_id != remote_endpoint_id
+            ]
+        )
+        return detached
 
     def attach_remote_endpoint(
         self,
