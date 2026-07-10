@@ -204,6 +204,7 @@ def test_maintenance_report_with_critical_issue_revokes_certification() -> None:
     assert outcome.snapshot.certification_status == "revoked"
     assert outcome.snapshot.validation_status == "validated"
     assert summary["validation_status"] == "validation_failed"
+    assert summary["failed_request_count"] == 1
     assert summary["current_snapshot"]["certification_status"] == "revoked"
     assert summary["current_snapshot"]["validation_status"] == "validated"
     assert "status" not in summary["current_snapshot"]
@@ -386,6 +387,54 @@ def test_supersede_configuration_marks_old_snapshot_superseded_and_new_hash_unva
     assert new_summary["validation_status"] == "unvalidated"
     assert new_summary["latest_request_id"] is None
     assert new_summary["bond_state"] is None
+
+
+def test_validation_summary_for_current_pending_configuration_does_not_leak_previous_report_fields() -> (
+    None
+):
+    service = ValidationService(ValidationStore())
+    first = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    service.submit_validation_report(
+        request_id=first.request.request_id,
+        recommendation="certify_with_issues",
+        validator_label="validator-a",
+        evidence_summary="operational with warnings",
+        detected_issues=[{"severity": "warning", "code": "latency_spike"}],
+    )
+    second = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-2",
+        minimum_session_deposit_q=30.0,
+    )
+
+    summary = service.validation_summary("ep-1")
+
+    assert summary["configuration_hash"] == "cfg-2"
+    assert summary["latest_request_id"] == second.request.request_id
+    assert summary["latest_report_id"] is None
+    assert summary["latest_report_at"] is None
+    assert summary["latest_recommendation"] is None
+    assert summary["critical_issue_count"] == 0
+    assert summary["warning_issue_count"] == 0
 
 
 def test_authorization_hides_validator_wallet_and_share_count() -> None:

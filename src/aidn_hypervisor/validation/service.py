@@ -366,7 +366,6 @@ class ValidationService:
             ],
             key=lambda item: item.created_at,
         )
-        request_ids = {item.request_id for item in requests}
         snapshots = [
             item
             for item in self.store.list_snapshots()
@@ -386,9 +385,26 @@ class ValidationService:
             if latest_request is not None
             else None
         )
+        scoped_requests = [
+            item
+            for item in requests
+            if resolved_configuration_hash is None
+            or item.configuration_hash == resolved_configuration_hash
+        ]
+        scoped_reports = [
+            item
+            for item in reports
+            if resolved_configuration_hash is None
+            or item.configuration_hash == resolved_configuration_hash
+        ]
+        latest_request_for_configuration = (
+            scoped_requests[-1] if scoped_requests else None
+        )
+        latest_report_for_configuration = scoped_reports[-1] if scoped_reports else None
+        scoped_request_ids = {request.request_id for request in scoped_requests}
         latest_bond = (
-            self.store.get_bond(latest_request.bond_id)
-            if latest_request is not None
+            self.store.get_bond(latest_request_for_configuration.bond_id)
+            if latest_request_for_configuration is not None
             else None
         )
         return {
@@ -407,8 +423,8 @@ class ValidationService:
             "latest_request_id": (
                 current_snapshot.latest_request_id
                 if current_snapshot is not None
-                else latest_request.request_id
-                if latest_request is not None
+                else latest_request_for_configuration.request_id
+                if latest_request_for_configuration is not None
                 else None
             ),
             "latest_report_id": (
@@ -422,16 +438,22 @@ class ValidationService:
                 else None
             ),
             "latest_recommendation": (
-                latest_report.recommendation if latest_report is not None else None
+                latest_report_for_configuration.recommendation
+                if latest_report_for_configuration is not None
+                else None
             ),
             "critical_issue_count": (
-                latest_report.critical_issue_count if latest_report is not None else 0
+                latest_report_for_configuration.critical_issue_count
+                if latest_report_for_configuration is not None
+                else 0
             ),
             "warning_issue_count": (
-                latest_report.warning_issue_count if latest_report is not None else 0
+                latest_report_for_configuration.warning_issue_count
+                if latest_report_for_configuration is not None
+                else 0
             ),
             "maintenance_report_count": sum(
-                1 for item in reports if item.report_kind == "maintenance"
+                1 for item in scoped_reports if item.report_kind == "maintenance"
             ),
             "bond_state": (
                 latest_bond.model_dump(mode="json")
@@ -449,31 +471,31 @@ class ValidationService:
                 if current_snapshot is not None
                 else None
             ),
-            "request_count": len(requests),
-            "report_count": len(reports),
+            "request_count": len(scoped_requests),
+            "report_count": len(scoped_reports),
             "assigned_request_count": sum(
-                1 for item in requests if item.assignment_id is not None
+                1 for item in scoped_requests if item.assignment_id is not None
             ),
             "validated_request_count": sum(
-                1 for item in requests if item.status == "passed"
+                1 for item in scoped_requests if item.status == "passed"
             ),
             "failed_request_count": sum(
-                1 for item in requests if item.status == "failed"
+                1 for item in scoped_requests if item.status in {"failed", "revoked"}
             ),
             "active_request_ids": [
                 item.request_id
-                for item in requests
+                for item in scoped_requests
                 if item.status in {"queued", "authorization_issued"}
             ],
             "assignment_count": sum(
                 1
                 for item in self.store.list_assignments()
-                if item.request_id in request_ids
+                if item.request_id in scoped_request_ids
             ),
             "authorization_count": sum(
                 1
                 for item in self.store.list_authorizations()
-                if item.request_id in request_ids
+                if item.request_id in scoped_request_ids
             ),
         }
 

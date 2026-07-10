@@ -680,9 +680,16 @@ def test_validation_wallet_events_survive_certification_refactor() -> None:
 
     ledger = service.export_wallet_ledger_events(limit=20)
     event_types = [item["event_type"] for item in ledger["items"]]
+    maintenance_event = next(
+        item
+        for item in ledger["items"]
+        if item["event_type"] == "maintenance_validation_passed"
+    )
 
     assert "validation_bond_locked" in event_types
     assert "validation_bond_refunded" in event_types
+    assert maintenance_event["payload"]["details"]["recommendation"] == "certify"
+    assert maintenance_event["payload"]["details"]["validation_status"] == "validated"
 
 
 def test_service_automatically_records_allocation_id_from_completed_task() -> None:
