@@ -99,6 +99,7 @@ We already have a working local hypervisor foundation:
 - the operator dashboard now includes a dedicated `Sessions` workspace with reservation composer, session control actions, session-bound task launch, activity timeline, and settlement preview telemetry;
 - wallet exports now include a unified replay-safe ledger stream that stitches session settlement events together with usage and allocation-family wallet events;
 - proxy-backed paid Sessions now preserve upstream session policy snapshots, lazily broker remote Session opens, propagate remote Session close on manual and idle-driven release, and expose proxy-session bindings through task and operator-session APIs;
+- endpoint lifecycle now supports symmetric proxy attach and detach actions, so operators can revert a proxied Endpoint back to local execution without editing manifests manually;
 
 What is still missing in the current stage:
 - decision on whether adapter-declared `usage_contract` becomes an enforced runtime gate, plus a first non-token pricing unit for `whisper`-class workloads;
@@ -227,7 +228,7 @@ Exit criteria:
 
 Goal: publish trust, validation, and quality signals for node selection.
 
-Status: `Planned`
+Status: `In progress`
 
 Checkpoints:
 - [ ] Rating model for nodes

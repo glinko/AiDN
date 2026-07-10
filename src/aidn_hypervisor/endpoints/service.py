@@ -197,6 +197,46 @@ class EndpointService:
         self.store.save_manifest(updated)
         return UpdateEndpointResult(endpoint=updated, snapshot=snapshot)
 
+    def detach_proxy_target(self, endpoint_id: str) -> UpdateEndpointResult:
+        current = self.store.get_manifest(endpoint_id)
+        detached_at = datetime.now(timezone.utc).isoformat()
+        execution_config = self._execution_config(
+            current.runtime,
+            current.publication,
+            current.session,
+            execution_strategy="local",
+            proxy_target=None,
+        )
+        configuration_hash = self._configuration_hash(
+            bundle_hash=current.bundle_hash,
+            runtime=current.runtime,
+            publication=current.publication,
+            session=current.session,
+            proxy_target=None,
+            execution_config=execution_config,
+        )
+        snapshot = EndpointConfigurationSnapshot(
+            configuration_hash=configuration_hash,
+            endpoint_id=current.endpoint_id,
+            bundle_hash=current.bundle_hash,
+            created_at=detached_at,
+            runtime=current.runtime,
+            publication=current.publication,
+            session=current.session,
+            proxy_target=None,
+            execution_config=execution_config,
+        )
+        self.store.save_configuration_snapshot(snapshot)
+        updated = current.model_copy(
+            update={
+                "execution_strategy": "local",
+                "proxy_target": None,
+                "configuration_hash": configuration_hash,
+            }
+        )
+        self.store.save_manifest(updated)
+        return UpdateEndpointResult(endpoint=updated, snapshot=snapshot)
+
     def start_endpoint(self, endpoint_id: str) -> EndpointResult:
         return self._transition(
             endpoint_id,

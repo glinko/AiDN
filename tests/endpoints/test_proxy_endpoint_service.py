@@ -48,3 +48,31 @@ def test_attach_proxy_target_rotates_endpoint_configuration() -> None:
     assert updated.endpoint.proxy_target is not None
     assert updated.endpoint.proxy_target.remote_endpoint_id == "remote-1"
     assert len(service.list_configuration_snapshots(created.endpoint.endpoint_id)) == 2
+
+
+def test_detach_proxy_target_reverts_endpoint_to_local_strategy() -> None:
+    service = EndpointService(EndpointStore())
+    created = service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Operator STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    proxied = service.attach_proxy_target(
+        created.endpoint.endpoint_id,
+        _remote_reference(),
+    )
+
+    detached = service.detach_proxy_target(created.endpoint.endpoint_id)
+
+    assert detached.endpoint.execution_strategy == "local"
+    assert detached.endpoint.proxy_target is None
+    assert detached.endpoint.configuration_hash != proxied.endpoint.configuration_hash
+    assert len(service.list_configuration_snapshots(created.endpoint.endpoint_id)) == 3
+    assert detached.snapshot is not None
+    assert detached.snapshot.proxy_target is None
+    assert detached.snapshot.execution_config["execution_strategy"] == "local"

@@ -1965,6 +1965,57 @@ def test_attach_proxy_target_route_updates_endpoint_to_proxy_strategy() -> None:
     assert body["snapshot"]["proxy_target"]["remote_endpoint_id"] == attached.remote_endpoint_id
 
 
+def test_detach_proxy_target_route_reverts_endpoint_to_local_strategy() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Shared STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    remote_endpoint_service = RemoteEndpointService(RemoteEndpointStore())
+    attached = remote_endpoint_service.attach_remote_endpoint(
+        source_node_id="node-external",
+        source_endpoint_id="ep-remote",
+        source_owner_wallet="wallet-remote",
+        source_publication_id="pub-remote",
+        source_configuration_hash="cfg-remote",
+        source_visibility="public",
+        source_model_class="llm_text",
+        source_status="published",
+        source_base_url="https://remote.example",
+        operator_id="operator-b",
+        pricing={"unit": "q_per_1kk_tokens", "input": 9, "output": 15, "fixed_request": 1},
+        rating={"score": 0.97, "tier": "A", "updated_at": "2026-06-20T11:55:00Z"},
+        alias="Primary Remote",
+    )
+    proxied = endpoint_service.attach_proxy_target(created.endpoint.endpoint_id, attached)
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            remote_endpoint_service=remote_endpoint_service,
+        )
+    )
+
+    response = client.delete(
+        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/proxy-target"
+    )
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["endpoint"]["configuration_hash"] != proxied.endpoint.configuration_hash
+    assert body["endpoint"]["execution_strategy"] == "local"
+    assert body["endpoint"]["proxy_target"] is None
+    assert body["snapshot"]["proxy_target"] is None
+
+
 def test_operator_dashboard_shell_route_returns_terminal_layout_markup() -> None:
     client = TestClient(build_app(service=_service()))
 
@@ -2445,6 +2496,17 @@ def test_operator_dashboard_shell_route_exposes_guided_proxy_publish_flow() -> N
     assert 'return "attach-proxy-target";' in response.text
     assert 'case "attach-proxy-target":' in response.text
     assert "proxyGuidedFlow" in response.text
+
+
+def test_operator_dashboard_shell_exposes_detach_proxy_route_action() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'data-endpoint-action="detach-proxy-target"' in response.text
+    assert 'case "detach-proxy-target":' in response.text
+    assert "Detach Proxy Route" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_one_click_guided_proxy_publish_action() -> None:

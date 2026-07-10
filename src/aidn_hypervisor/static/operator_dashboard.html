@@ -2405,6 +2405,8 @@
       switch (action) {
         case "attach-proxy-target":
           return "Attach Proxy Route";
+        case "detach-proxy-target":
+          return "Detach Proxy Route";
         case "publish":
           return "Publish Endpoint";
         case "request-validation":
@@ -4172,6 +4174,7 @@
                         <button class="primary-button" type="button" data-endpoint-action="save-policy">${state.bootstrapPending === "save-endpoint-policy" ? "Saving..." : "Save Policy"}</button>
                         <button class="primary-button" type="button" data-endpoint-action="save-config">${state.bootstrapPending === "save-endpoint-config" ? "Saving..." : "Save Runtime"}</button>
                         <button class="primary-button ${endpointRecommendedAction(selected) === "attach-proxy-target" ? "action-focus" : ""}" type="button" data-endpoint-action="attach-proxy-target" ${attachedRemotes.length ? "" : "disabled"}>${state.bootstrapPending === "attach-proxy-target" ? "Attaching..." : "Attach Proxy Route"}</button>
+                        <button class="secondary-button" type="button" data-endpoint-action="detach-proxy-target" ${selected.execution_strategy === "proxy" ? "" : "disabled"}>${state.bootstrapPending === "detach-proxy-target" ? "Detaching..." : "Detach Proxy Route"}</button>
                         <button class="secondary-button ${endpointRecommendedAction(selected) === "publish" ? "action-focus" : ""}" type="button" data-endpoint-action="publish">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Endpoint"}</button>
                         <button class="secondary-button ${endpointRecommendedAction(selected) === "publish-configuration" ? "action-focus" : ""}" type="button" data-endpoint-action="publish-configuration">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Configuration"}</button>
                         <button class="secondary-button" type="button" data-endpoint-action="revoke-publication">${state.bootstrapPending === "revoke-publication" ? "Revoking..." : "Revoke Publication"}</button>
@@ -6600,6 +6603,18 @@
       return body;
     }
 
+    async function deleteJson(url) {
+      const response = await fetch(url, {
+        method: "DELETE",
+      });
+      const contentType = response.headers.get("content-type") || "";
+      const body = contentType.includes("application/json") ? await response.json() : await response.text();
+      if (!response.ok) {
+        throw new Error(extractErrorMessage(body));
+      }
+      return body;
+    }
+
     async function attachRemoteEndpoint(nodeId, endpointId) {
       state.remoteAttachPending = `${nodeId}:${endpointId}`;
       state.remoteMessage = null;
@@ -7060,6 +7075,33 @@
         state.bootstrapMessage = {
           kind: "good",
           text: `Proxy route attached to ${draft.endpoint_id}. Publish configuration next so the new execution path becomes the signed snapshot.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.bootstrapMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.bootstrapPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function detachSelectedEndpointProxyTarget() {
+      const draft = selectedEndpointDraft();
+      if (!draft?.endpoint_id || draft.execution_strategy !== "proxy") {
+        return;
+      }
+      state.bootstrapPending = "detach-proxy-target";
+      state.bootstrapMessage = null;
+      render();
+      try {
+        await deleteJson(endpointProxyTargetPath(draft.endpoint_id));
+        if (state.proxyGuidedFlow?.endpointId === draft.endpoint_id) {
+          clearGuidedProxyFlow();
+        }
+        state.bootstrapMessage = {
+          kind: "good",
+          text: `Proxy route detached from ${draft.endpoint_id}. Endpoint now runs locally until you attach another remote target.`,
         };
         await refreshBootstrapPayloads();
       } catch (error) {
@@ -8085,6 +8127,9 @@
               return;
             case "attach-proxy-target":
               void attachSelectedEndpointProxyTarget();
+              return;
+            case "detach-proxy-target":
+              void detachSelectedEndpointProxyTarget();
               return;
             case "complete-guided-proxy-publish":
               void completeGuidedProxyPublish();

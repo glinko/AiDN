@@ -163,6 +163,35 @@ def build_endpoint_router(
             }
         )
 
+    @router.delete("/{endpoint_id}/proxy-target")
+    async def detach_proxy_target(endpoint_id: str) -> JSONResponse:
+        try:
+            current = service.get_endpoint(endpoint_id).endpoint
+            updated = service.detach_proxy_target(endpoint_id)
+        except KeyError:
+            return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        if (
+            validation_service is not None
+            and updated.snapshot is not None
+            and current.configuration_hash != updated.endpoint.configuration_hash
+        ):
+            validation_service.supersede_configuration(
+                endpoint_id=endpoint_id,
+                previous_configuration_hash=current.configuration_hash,
+                replacement_configuration_hash=updated.endpoint.configuration_hash,
+                superseded_at=updated.snapshot.created_at,
+            )
+        return _ok(
+            {
+                "endpoint": updated.endpoint.model_dump(mode="json"),
+                "snapshot": (
+                    updated.snapshot.model_dump(mode="json")
+                    if updated.snapshot is not None
+                    else None
+                ),
+            }
+        )
+
     @router.post("/{endpoint_id}/sessions", status_code=201)
     async def open_session(
         endpoint_id: str,
