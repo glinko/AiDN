@@ -145,6 +145,8 @@ def _local_candidate_from_advertisement(advertisement: dict, bundle: dict) -> di
 def _aggregate_market_trust(published_endpoints: list[dict]) -> dict:
     validation_by_status: dict[str, int] = {}
     publication_by_status: dict[str, int] = {}
+    certified_count = 0
+    certified_with_issues_count = 0
     validated_count = 0
     pending_count = 0
     attention_count = 0
@@ -152,9 +154,9 @@ def _aggregate_market_trust(published_endpoints: list[dict]) -> dict:
     drift_count = 0
 
     for item in published_endpoints:
-        validation_status = (
-            item.get("published_validation_summary", {}) or {}
-        ).get("validation_status", "unknown")
+        validation_summary = item.get("published_validation_summary", {}) or {}
+        certification_status = validation_summary.get("certification_status")
+        validation_status = validation_summary.get("validation_status", "unknown")
         publication_status = item.get("publication_sync_status") or "unknown"
         validation_by_status[validation_status] = (
             validation_by_status.get(validation_status, 0) + 1
@@ -163,7 +165,20 @@ def _aggregate_market_trust(published_endpoints: list[dict]) -> dict:
             publication_by_status.get(publication_status, 0) + 1
         )
 
-        if validation_status == "validated":
+        if certification_status == "certified":
+            certified_count += 1
+        elif certification_status == "certified_with_issues":
+            certified_with_issues_count += 1
+        elif certification_status in {
+            "pending_initial",
+            "maintenance_in_progress",
+            "maintenance_due",
+            "uncertified",
+        }:
+            pending_count += 1
+        elif certification_status not in {None, "superseded"}:
+            attention_count += 1
+        elif validation_status == "validated":
             validated_count += 1
         elif validation_status in {"pending_initial", "pending_maintenance", "unvalidated"}:
             pending_count += 1
@@ -180,7 +195,9 @@ def _aggregate_market_trust(published_endpoints: list[dict]) -> dict:
 
     return {
         "total_endpoints": len(published_endpoints),
-        "validated_count": validated_count,
+        "certified_count": certified_count,
+        "certified_with_issues_count": certified_with_issues_count,
+        "validated_count": certified_count + certified_with_issues_count + validated_count,
         "pending_count": pending_count,
         "attention_count": attention_count,
         "in_sync_count": in_sync_count,

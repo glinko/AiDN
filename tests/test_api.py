@@ -5076,6 +5076,103 @@ def test_operator_dashboard_market_payload_includes_trust_summary() -> None:
     assert item["trust_summary"]["drift_count"] == 1
 
 
+def test_operator_dashboard_market_payload_includes_certification_counts() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    registry = RegistryService()
+    registry.upsert_node(RegistryNodeAdvertisement(**hypervisor.node_advertisement()))
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-external",
+            operator_id="operator-b",
+            base_url="https://remote.example",
+            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={
+                "unit": "q_per_1kk_tokens",
+                "input": 9,
+                "output": 15,
+                "fixed_request": 1,
+            },
+            rating={
+                "score": 0.97,
+                "tier": "A",
+                "updated_at": "2026-06-20T11:55:00Z",
+            },
+            bundles=[
+                {
+                    "bundle_id": "remote-text",
+                    "plugin_id": "fake-managed",
+                    "workload_type": "llm_text",
+                    "provider_type": "fake",
+                    "model_id": "remote-text-model",
+                    "endpoint": "https://remote.example/runtimes/remote-text",
+                    "enabled": True,
+                    "status": "ready",
+                    "launch_mode": "attached_service",
+                    "device_affinity": "cpu",
+                    "max_parallel_requests": 2,
+                    "supports_allocation": True,
+                    "supports_queue": True,
+                }
+            ],
+            published_endpoints=[
+                {
+                    "endpoint_id": "ep-remote-a",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-external",
+                    "current_publication_id": "pub-remote-a",
+                    "current_configuration_hash": "cfg-remote-a",
+                    "published_at": "2026-06-30T00:00:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                    "publication_sync_status": "in_sync",
+                    "published_validation_summary": {
+                        "certification_status": "certified",
+                        "validation_status": "validated",
+                        "configuration_hash": "cfg-remote-a",
+                    },
+                },
+                {
+                    "endpoint_id": "ep-remote-b",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-external",
+                    "current_publication_id": "pub-remote-b",
+                    "current_configuration_hash": "cfg-remote-b",
+                    "published_at": "2026-06-30T00:00:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                    "publication_sync_status": "published_configuration_not_served",
+                    "published_validation_summary": {
+                        "certification_status": "certified_with_issues",
+                        "validation_status": "validated",
+                        "configuration_hash": "cfg-remote-b",
+                    },
+                },
+            ],
+        )
+    )
+    client = TestClient(build_app(service=hypervisor, registry_service=registry))
+
+    response = client.get("/operators/dashboard/market")
+
+    assert response.status_code == 200
+    item = next(
+        candidate
+        for candidate in response.json()["candidates"]
+        if candidate["node_id"] == "node-external"
+    )
+    assert item["trust_summary"]["certified_count"] == 1
+    assert item["trust_summary"]["certified_with_issues_count"] == 1
+    assert item["trust_summary"]["validation_by_status"]["validated"] == 2
+
+
 def test_operator_dashboard_remote_endpoints_payload_includes_trust_fields() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     registry = RegistryService()
@@ -5131,6 +5228,65 @@ def test_operator_dashboard_remote_endpoints_payload_includes_trust_fields() -> 
     assert response.status_code == 200
     item = response.json()["discovered"][0]
     assert item["publication_sync_status"] == "published_configuration_not_served"
+    assert item["published_validation_summary"]["validation_status"] == "validated"
+
+
+def test_operator_dashboard_remote_endpoints_payload_surfaces_certification_status() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    registry = RegistryService()
+    registry.upsert_node(RegistryNodeAdvertisement(**hypervisor.node_advertisement()))
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-external",
+            operator_id="operator-b",
+            base_url="https://remote.example",
+            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={
+                "unit": "q_per_1kk_tokens",
+                "input": 9,
+                "output": 15,
+                "fixed_request": 1,
+            },
+            rating={
+                "score": 0.97,
+                "tier": "A",
+                "updated_at": "2026-06-20T11:55:00Z",
+            },
+            bundles=[],
+            published_endpoints=[
+                {
+                    "endpoint_id": "ep-remote",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-external",
+                    "current_publication_id": "pub-remote",
+                    "current_configuration_hash": "cfg-remote",
+                    "published_at": "2026-06-30T00:00:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                    "publication_sync_status": "published_configuration_not_served",
+                    "published_validation_summary": {
+                        "certification_status": "certified_with_issues",
+                        "validation_status": "validated",
+                        "configuration_hash": "cfg-remote",
+                    },
+                }
+            ],
+        )
+    )
+    client = TestClient(build_app(service=hypervisor, registry_service=registry))
+
+    response = client.get("/operators/dashboard/remote-endpoints")
+
+    assert response.status_code == 200
+    item = response.json()["discovered"][0]
+    assert item["published_validation_summary"]["certification_status"] == "certified_with_issues"
     assert item["published_validation_summary"]["validation_status"] == "validated"
 
 
