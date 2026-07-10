@@ -113,10 +113,57 @@ def _validation_summary_for(
 ) -> dict | None:
     if validation_service is None or configuration_hash is None:
         return None
-    return validation_service.validation_summary(
-        endpoint_id,
-        configuration_hash=configuration_hash,
+    return _expanded_validation_summary(
+        validation_service.validation_summary(
+            endpoint_id,
+            configuration_hash=configuration_hash,
+        )
     )
+
+
+def _certification_status_from_validation_status(validation_status: str) -> str:
+    return {
+        "validated": "certified",
+        "pending_initial": "pending_initial",
+        "revoked": "revoked",
+        "superseded": "superseded",
+        "validation_failed": "uncertified",
+        "unvalidated": "uncertified",
+    }.get(validation_status, "uncertified")
+
+
+def _validation_status_from_certification_status(certification_status: str) -> str:
+    return {
+        "certified": "validated",
+        "certified_with_issues": "validated",
+        "pending_initial": "pending_initial",
+        "revoked": "revoked",
+        "superseded": "superseded",
+        "uncertified": "unvalidated",
+    }.get(certification_status, "unvalidated")
+
+
+def _expanded_validation_summary(summary: dict) -> dict:
+    expanded = dict(summary)
+    certification_status = expanded.get("certification_status")
+    validation_status = expanded.get("validation_status")
+    if certification_status is None and validation_status is not None:
+        certification_status = _certification_status_from_validation_status(
+            str(validation_status)
+        )
+    if validation_status is None and certification_status is not None:
+        validation_status = _validation_status_from_certification_status(
+            str(certification_status)
+        )
+    expanded["certification_status"] = certification_status or "uncertified"
+    expanded["validation_status"] = validation_status or "unvalidated"
+    expanded["latest_recommendation"] = expanded.get("latest_recommendation")
+    expanded["critical_issue_count"] = int(expanded.get("critical_issue_count", 0))
+    expanded["warning_issue_count"] = int(expanded.get("warning_issue_count", 0))
+    expanded["maintenance_report_count"] = int(
+        expanded.get("maintenance_report_count", 0)
+    )
+    return expanded
 
 
 def _snapshot_publication_configuration_hash(manifest, snapshot) -> str:
@@ -1142,12 +1189,20 @@ def build_api_router(
                     f"Unknown endpoint: {endpoint_id}",
                 )
             return _ok(
-                validation_service.validation_summary(
-                    endpoint_id,
-                    configuration_hash=endpoint.configuration_hash,
+                _expanded_validation_summary(
+                    validation_service.validation_summary(
+                        endpoint_id,
+                        configuration_hash=endpoint.configuration_hash,
+                    )
                 )
             )
-        return _ok(validation_service.validation_summary(endpoint_id))
+        return _ok(
+            _expanded_validation_summary(
+                validation_service.validation_summary(
+                    endpoint_id,
+                )
+            )
+        )
 
     @router.get("/api/v1/endpoints/{endpoint_id}/validation/history")
     async def endpoint_validation_history(endpoint_id: str) -> JSONResponse:

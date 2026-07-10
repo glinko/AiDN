@@ -4292,6 +4292,60 @@ def test_validation_summary_endpoint_returns_certification_status_and_compatibil
     assert payload["superseded_at"] is None
 
 
+def test_validation_summary_endpoint_expands_legacy_service_payload() -> None:
+    class LegacyValidationService:
+        def validation_summary(
+            self,
+            endpoint_id: str,
+            *,
+            configuration_hash: str | None = None,
+        ) -> dict:
+            return {
+                "endpoint_id": endpoint_id,
+                "configuration_hash": configuration_hash,
+                "validation_status": "validated",
+                "latest_request_id": "request-1",
+                "latest_report_id": "report-1",
+                "bond_state": None,
+                "validated_at": "2026-07-10T00:00:00+00:00",
+                "superseded_at": None,
+            }
+
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Validated Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=_service(),
+            endpoint_service=endpoint_service,
+            validation_service=LegacyValidationService(),
+        )
+    )
+
+    response = client.get(
+        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/validation"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["endpoint_id"] == created.endpoint.endpoint_id
+    assert payload["certification_status"] == "certified"
+    assert payload["validation_status"] == "validated"
+    assert payload["latest_recommendation"] is None
+    assert payload["critical_issue_count"] == 0
+    assert payload["warning_issue_count"] == 0
+    assert payload["maintenance_report_count"] == 0
+
+
 def test_submit_validation_report_endpoint_accepts_recommendation_payload() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())
