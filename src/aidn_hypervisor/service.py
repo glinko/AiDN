@@ -1262,12 +1262,24 @@ class HypervisorService:
         configuration_hash: str | None,
     ) -> dict | None:
         validation_service = getattr(self, "validation_service", None)
-        if validation_service is None or configuration_hash is None:
+        if validation_service is None:
             return None
-        return validation_service.validation_summary(
+        if configuration_hash is None:
+            return validation_service.validation_summary(endpoint_id)
+        summary = validation_service.validation_summary(
             endpoint_id,
             configuration_hash=configuration_hash,
         )
+        if (
+            summary.get("validation_status") == "unvalidated"
+            and summary.get("certification_status") == "uncertified"
+        ):
+            fallback = validation_service.validation_summary(endpoint_id)
+            if fallback.get("validation_status") != "unvalidated" or fallback.get(
+                "certification_status"
+            ) != "uncertified":
+                return fallback
+        return summary
 
     def _operational_reputation_stats(self) -> dict[str, int]:
         successful_tasks = 0

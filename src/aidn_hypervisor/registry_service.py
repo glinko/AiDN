@@ -18,6 +18,8 @@ class RegistryService:
 
     def get_node(self, node_id: str) -> dict:
         record = dict(self._nodes[node_id])
+        if record.get("reputation") is None:
+            record.pop("reputation", None)
         record["status"] = self._status_for(record)
         return record
 
@@ -110,7 +112,6 @@ class RegistryService:
                         "can_host_custom_model": node["can_host_custom_model"],
                         "pricing": node["pricing"],
                         "rating": node["rating"],
-                        "reputation": node.get("reputation"),
                         "bundle_id": bundle["bundle_id"],
                         "plugin_id": bundle["plugin_id"],
                         "provider_type": bundle["provider_type"],
@@ -122,6 +123,8 @@ class RegistryService:
                         "supports_queue": bundle["supports_queue"],
                     }
                 )
+                if node.get("reputation") is not None:
+                    candidates[-1]["reputation"] = node["reputation"]
         candidates.sort(key=self._candidate_sort_key)
         return candidates
 
@@ -263,7 +266,7 @@ class RegistryService:
         runtime_id = runtime.get("runtime_id")
         if runtime_id is None and compatibility is not None:
             runtime_id = compatibility.get("canonical_runtime_id")
-        return {
+        row = {
             "node_id": node["node_id"],
             "operator_id": node["operator_id"],
             "base_url": node["base_url"],
@@ -277,7 +280,6 @@ class RegistryService:
             "owner_wallet": advertisement.get("owner_wallet"),
             "pricing": node["pricing"],
             "rating": node["rating"],
-            "reputation": node.get("reputation"),
             "can_host_custom_model": node["can_host_custom_model"],
             "published_endpoint_count": len(node.get("published_endpoints", [])),
             "trust_summary": self._canonical_trust_summary(node),
@@ -293,6 +295,9 @@ class RegistryService:
                 else None
             ),
         }
+        if node.get("reputation") is not None:
+            row["reputation"] = node["reputation"]
+        return row
 
     def _service_id_for_advertisement(self, *, advertisement: dict) -> str:
         resource_type = advertisement.get("resource_type")
