@@ -1926,7 +1926,7 @@
     }
 
     function certificationStatus(summary) {
-      return summary?.certification_status || "uncertified";
+      return summary?.certification_status || summary?.validation_status || "unvalidated";
     }
 
     function validationStatusOr(summary, fallback = "unvalidated") {

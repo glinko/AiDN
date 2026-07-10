@@ -5290,6 +5290,18 @@ def test_operator_dashboard_remote_endpoints_payload_surfaces_certification_stat
     assert item["published_validation_summary"]["validation_status"] == "validated"
 
 
+def test_operator_dashboard_shell_preserves_legacy_validation_fallback_in_certification_helper() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert (
+        'return summary?.certification_status || summary?.validation_status || "unvalidated";'
+        in response.text
+    )
+
+
 def test_operator_dashboard_shell_exposes_publication_sync_copy() -> None:
     client = TestClient(build_app(service=_service()))
 
