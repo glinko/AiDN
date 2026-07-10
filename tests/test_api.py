@@ -4404,6 +4404,7 @@ def test_submit_validation_report_endpoint_accepts_recommendation_payload() -> N
         response.json()["data"]["snapshot"]["certification_status"]
         == "certified_with_issues"
     )
+    assert response.json()["data"]["snapshot"]["status"] == "validated"
 
 
 def test_submit_validation_report_endpoint_accepts_valid_legacy_outcome_payload() -> None:

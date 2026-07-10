@@ -144,6 +144,21 @@ def _validation_status_from_certification_status(certification_status: str) -> s
     }.get(certification_status, "unvalidated")
 
 
+def _compat_validation_status_from_certification_status(
+    certification_status: str,
+) -> str:
+    return {
+        "uncertified": "unvalidated",
+        "pending_initial": "pending_initial",
+        "maintenance_due": "pending_maintenance",
+        "maintenance_in_progress": "pending_maintenance",
+        "certified": "validated",
+        "certified_with_issues": "validated",
+        "revoked": "validation_failed",
+        "superseded": "superseded",
+    }.get(certification_status, "unvalidated")
+
+
 def _expanded_validation_summary(summary: dict) -> dict:
     expanded = dict(summary)
     certification_status = expanded.get("certification_status")
@@ -165,6 +180,15 @@ def _expanded_validation_summary(summary: dict) -> dict:
         expanded.get("maintenance_report_count", 0)
     )
     return expanded
+
+
+def _response_validation_snapshot(snapshot) -> dict:
+    payload = _expanded_validation_summary(snapshot.model_dump(mode="json"))
+    payload["validation_status"] = _compat_validation_status_from_certification_status(
+        str(payload["certification_status"])
+    )
+    payload["status"] = payload["validation_status"]
+    return payload
 
 
 def _snapshot_publication_configuration_hash(manifest, snapshot) -> str:
@@ -1133,13 +1157,11 @@ def build_api_router(
             configuration_hash=endpoint.configuration_hash,
             minimum_session_deposit_q=endpoint.session.minimum_deposit,
         )
-        snapshot = _expanded_validation_summary(result.snapshot.model_dump(mode="json"))
-        snapshot["status"] = snapshot["validation_status"]
         return _ok(
             {
                 "request": result.request.model_dump(mode="json"),
                 "bond": result.bond.model_dump(mode="json"),
-                "snapshot": snapshot,
+                "snapshot": _response_validation_snapshot(result.snapshot),
             }
         )
 
@@ -1323,7 +1345,7 @@ def build_api_router(
         return _ok(
             {
                 "request": result.request.model_dump(mode="json"),
-                "snapshot": result.snapshot.model_dump(mode="json"),
+                "snapshot": _response_validation_snapshot(result.snapshot),
                 "report": result.report.model_dump(mode="json"),
             }
         )
@@ -1360,7 +1382,7 @@ def build_api_router(
             {
                 "request": result.request.model_dump(mode="json"),
                 "bond": result.bond.model_dump(mode="json"),
-                "snapshot": result.snapshot.model_dump(mode="json"),
+                "snapshot": _response_validation_snapshot(result.snapshot),
                 "report": result.report.model_dump(mode="json"),
             }
         )
