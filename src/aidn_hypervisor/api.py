@@ -30,6 +30,7 @@ from aidn_hypervisor.operator_views import (
     build_operator_remote_endpoints_payload,
 )
 from aidn_hypervisor.process_manager import RuntimeHandle
+from aidn_hypervisor.remote_endpoints.service import RemoteEndpointDependencyError
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
 from aidn_hypervisor.state import HypervisorStateSnapshot
 from aidn_hypervisor.wallet_models import (
@@ -54,12 +55,22 @@ def _ok(data: dict, *, status_code: int = 200) -> JSONResponse:
     )
 
 
-def _error(status_code: int, code: str, message: str) -> JSONResponse:
+def _error(
+    status_code: int,
+    code: str,
+    message: str,
+    *,
+    details: dict | None = None,
+) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content={
             "data": None,
-            "error": {"code": code, "message": message},
+            "error": {
+                "code": code,
+                "message": message,
+                **({"details": details} if details is not None else {}),
+            },
             "correlation_id": str(uuid4()),
         },
     )
@@ -1518,6 +1529,36 @@ def build_api_router(
             {"remote_endpoint": attached.model_dump(mode="json")},
             status_code=201,
         )
+
+    @router.delete("/operators/remote-endpoints/{remote_endpoint_id}")
+    async def detach_remote_endpoint(remote_endpoint_id: str) -> JSONResponse:
+        if remote_endpoint_service is None:
+            return _error(
+                status.HTTP_409_CONFLICT,
+                "registry_unavailable",
+                "registry-backed remote endpoint discovery is not configured",
+            )
+        try:
+            detached = remote_endpoint_service.detach_remote_endpoint(
+                remote_endpoint_id,
+                endpoint_service=endpoint_service,
+            )
+        except KeyError:
+            return _error(
+                status.HTTP_404_NOT_FOUND,
+                "remote_endpoint_not_found",
+                f"unknown remote endpoint: {remote_endpoint_id}",
+            )
+        except RemoteEndpointDependencyError as error:
+            return _error(
+                status.HTTP_409_CONFLICT,
+                "remote_endpoint_in_use",
+                f"remote endpoint {remote_endpoint_id} is still used by local endpoints",
+                details={
+                    "dependent_endpoint_ids": error.dependent_endpoint_ids,
+                },
+            )
+        return _ok({"remote_endpoint": detached.model_dump(mode="json")})
 
     @router.get("/operators/node/identity")
     async def operator_node_identity() -> dict:

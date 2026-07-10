@@ -1874,6 +1874,88 @@ def test_attach_remote_endpoint_route_persists_preferred_catalogue_entry() -> No
     assert remote_endpoint_service.list_remote_endpoints()[0].source_endpoint_id == "ep-remote"
 
 
+def test_detach_remote_endpoint_route_removes_preferred_catalogue_entry() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    remote_endpoint_service = RemoteEndpointService(RemoteEndpointStore())
+    attached = remote_endpoint_service.attach_remote_endpoint(
+        source_node_id="node-external",
+        source_endpoint_id="ep-remote",
+        source_owner_wallet="wallet-remote",
+        source_publication_id="pub-remote",
+        source_configuration_hash="cfg-remote",
+        source_visibility="public",
+        source_model_class="llm_text",
+        source_status="published",
+        source_base_url="https://remote.example",
+        operator_id="operator-b",
+        pricing={"unit": "q_per_1kk_tokens", "input": 9, "output": 15, "fixed_request": 1},
+        rating={"score": 0.97, "tier": "A", "updated_at": "2026-06-20T11:55:00Z"},
+        alias="Primary Remote",
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            remote_endpoint_service=remote_endpoint_service,
+        )
+    )
+
+    response = client.delete(
+        f"/operators/remote-endpoints/{attached.remote_endpoint_id}"
+    )
+
+    assert response.status_code == 200
+    body = response.json()["data"]["remote_endpoint"]
+    assert body["remote_endpoint_id"] == attached.remote_endpoint_id
+    assert remote_endpoint_service.list_remote_endpoints() == []
+
+
+def test_detach_remote_endpoint_route_rejects_proxy_dependencies() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Proxy Worker",
+            model_class="llm_text",
+            capabilities=["chat"],
+        )
+    )
+    remote_endpoint_service = RemoteEndpointService(RemoteEndpointStore())
+    attached = remote_endpoint_service.attach_remote_endpoint(
+        source_node_id="node-external",
+        source_endpoint_id="ep-remote",
+        source_owner_wallet="wallet-remote",
+        source_publication_id="pub-remote",
+        source_configuration_hash="cfg-remote",
+        source_visibility="public",
+        source_model_class="llm_text",
+        source_status="published",
+        source_base_url="https://remote.example",
+        operator_id="operator-b",
+        pricing={"unit": "q_per_1kk_tokens", "input": 9, "output": 15, "fixed_request": 1},
+        rating={"score": 0.97, "tier": "A", "updated_at": "2026-06-20T11:55:00Z"},
+    )
+    endpoint_service.attach_proxy_target(created.endpoint.endpoint_id, attached)
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            remote_endpoint_service=remote_endpoint_service,
+        )
+    )
+
+    response = client.delete(
+        f"/operators/remote-endpoints/{attached.remote_endpoint_id}"
+    )
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["error"]["code"] == "remote_endpoint_in_use"
+    assert body["error"]["details"]["dependent_endpoint_ids"] == [created.endpoint.endpoint_id]
+
+
 def test_attach_proxy_target_route_updates_endpoint_to_proxy_strategy() -> None:
     service = _service(whisper_endpoint="http://127.0.0.1:9000")
     service.configure_owner_wallet(mode="create", label="Primary Wallet")
