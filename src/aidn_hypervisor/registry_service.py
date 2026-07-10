@@ -37,7 +37,7 @@ class RegistryService:
                 and node["can_host_custom_model"] != query.can_host_custom_model
             ):
                 continue
-            if query.min_rating is not None and node["rating"]["score"] < query.min_rating:
+            if query.min_rating is not None and self._node_rating_score(node) < query.min_rating:
                 continue
             if (
                 query.max_input_price_q_per_1kk is not None
@@ -78,7 +78,7 @@ class RegistryService:
         matched_nodes.sort(
             key=lambda node: (
                 {"ready": 0, "stale": 1, "offline": 2}[node["status"]],
-                -node["rating"]["score"],
+                -self._node_rating_score(node),
                 node["pricing"]["input"],
                 node["pricing"]["output"],
                 -datetime.fromisoformat(node["heartbeat_at"]).timestamp(),
@@ -110,6 +110,7 @@ class RegistryService:
                         "can_host_custom_model": node["can_host_custom_model"],
                         "pricing": node["pricing"],
                         "rating": node["rating"],
+                        "reputation": node.get("reputation"),
                         "bundle_id": bundle["bundle_id"],
                         "plugin_id": bundle["plugin_id"],
                         "provider_type": bundle["provider_type"],
@@ -276,6 +277,7 @@ class RegistryService:
             "owner_wallet": advertisement.get("owner_wallet"),
             "pricing": node["pricing"],
             "rating": node["rating"],
+            "reputation": node.get("reputation"),
             "can_host_custom_model": node["can_host_custom_model"],
             "published_endpoint_count": len(node.get("published_endpoints", [])),
             "trust_summary": self._canonical_trust_summary(node),
@@ -397,7 +399,7 @@ class RegistryService:
             0 if candidate["endpoint_ready"] else 1,
             0 if candidate["supports_allocation"] else 1,
             0 if candidate["supports_queue"] else 1,
-            -candidate["rating"]["score"],
+            -self._node_rating_score(candidate),
             candidate["pricing"]["input"],
             candidate["pricing"]["output"],
             candidate["node_id"],
@@ -407,9 +409,16 @@ class RegistryService:
     def _canonical_candidate_sort_key(self, candidate: dict) -> tuple:
         return (
             {"ready": 0, "stale": 1, "offline": 2}[candidate["status"]],
-            -candidate["rating"]["score"],
+            -self._node_rating_score(candidate),
             candidate["pricing"]["input"],
             candidate["pricing"]["output"],
             candidate["node_id"],
             candidate["advertisement_id"],
         )
+
+    def _node_rating_score(self, item: dict) -> float:
+        reputation = item.get("reputation") or {}
+        if reputation.get("score") is not None:
+            return float(reputation.get("score") or 0)
+        rating = item.get("rating") or {}
+        return float(rating.get("score") or 0)

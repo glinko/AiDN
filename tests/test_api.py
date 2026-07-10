@@ -5222,6 +5222,64 @@ def test_registry_advertisement_includes_dual_layer_trust_fields() -> None:
     assert item["live_validation_summary"]["validation_status"] == "validated"
 
 
+def test_node_advertisement_includes_computed_reputation() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.rating = {
+        "score": 0.31,
+        "tier": "D",
+        "updated_at": "2026-07-06T11:55:00+00:00",
+    }
+    hypervisor._task_results = {
+        "task-1": {"ok": True},
+        "task-2": {"error": "boom"},
+    }
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Trusty STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+        node_id=hypervisor.node_id,
+        wallet_private_key=hypervisor.owner_wallet_private_key(),
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=0.0,
+    )
+    validation_service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-03T00:00:00+00:00",
+    )
+    hypervisor.endpoint_publication_service = publication_service
+    hypervisor.bind_validation_service(validation_service)
+
+    advertisement = hypervisor.node_advertisement()
+
+    assert advertisement["rating"]["score"] == 0.31
+    assert advertisement["reputation"]["score"] > advertisement["rating"]["score"]
+    assert advertisement["reputation"]["tier"] == "B"
+    assert advertisement["reputation"]["evidence"]["published_endpoint_count"] == 1
+    assert advertisement["reputation"]["evidence"]["successful_tasks"] == 1
+    assert advertisement["reputation"]["evidence"]["failed_tasks"] == 1
+
+
 def test_operator_dashboard_endpoints_payload_reports_publication_sync_state() -> None:
     service = _service(whisper_endpoint="http://127.0.0.1:9000")
     service.configure_owner_wallet(mode="create", label="Primary Wallet")
@@ -5804,6 +5862,108 @@ def test_hypervisor_advertisement_can_be_registered_and_discovered() -> None:
 
     assert result["nodes"][0]["node_id"] == "node-a"
     assert result["nodes"][0]["bundles"][0]["bundle_id"] == "whisper-a"
+
+
+def test_registry_discovery_orders_ready_nodes_by_reputation_then_price() -> None:
+    registry = RegistryService()
+    heartbeat_at = datetime.now(timezone.utc).isoformat()
+    common_bundle = [
+        {
+            "bundle_id": "remote-text",
+            "plugin_id": "fake-managed",
+            "workload_type": "llm_text",
+            "provider_type": "fake",
+            "model_id": "remote-text-model",
+            "endpoint": "https://remote.example/runtimes/remote-text",
+            "enabled": True,
+            "status": "ready",
+            "launch_mode": "attached_service",
+            "device_affinity": "cpu",
+            "max_parallel_requests": 2,
+            "supports_allocation": True,
+            "supports_queue": True,
+        }
+    ]
+    common_resources = {
+        "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+        "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
+    }
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-low-price",
+            operator_id="operator-a",
+            base_url="https://node-low-price.example",
+            heartbeat_at=heartbeat_at,
+            resources=common_resources,
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 5, "output": 9},
+            rating={"score": 0.99, "tier": "A", "updated_at": "2026-07-06T11:55:00+00:00"},
+            reputation={
+                "score": 0.64,
+                "tier": "C",
+                "updated_at": "2026-07-06T11:55:00+00:00",
+                "components": {},
+                "evidence": {},
+            },
+            bundles=common_bundle,
+        )
+    )
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-high-reputation-cheaper",
+            operator_id="operator-b",
+            base_url="https://node-high-reputation-cheaper.example",
+            heartbeat_at=heartbeat_at,
+            resources=common_resources,
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 7, "output": 10},
+            rating={"score": 0.40, "tier": "D", "updated_at": "2026-07-06T11:55:00+00:00"},
+            reputation={
+                "score": 0.93,
+                "tier": "A",
+                "updated_at": "2026-07-06T11:55:00+00:00",
+                "components": {},
+                "evidence": {},
+            },
+            bundles=common_bundle,
+        )
+    )
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-high-reputation-pricier",
+            operator_id="operator-c",
+            base_url="https://node-high-reputation-pricier.example",
+            heartbeat_at=heartbeat_at,
+            resources=common_resources,
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 8, "output": 11},
+            rating={"score": 0.10, "tier": "D", "updated_at": "2026-07-06T11:55:00+00:00"},
+            reputation={
+                "score": 0.93,
+                "tier": "A",
+                "updated_at": "2026-07-06T11:55:00+00:00",
+                "components": {},
+                "evidence": {},
+            },
+            bundles=common_bundle,
+        )
+    )
+
+    result = registry.discover(
+        RegistryDiscoveryQuery(workload_type="llm_text", min_rating=0.9)
+    )
+
+    assert [node["node_id"] for node in result["nodes"]] == [
+        "node-high-reputation-cheaper",
+        "node-high-reputation-pricier",
+    ]
+    assert [candidate["node_id"] for candidate in result["candidates"]] == [
+        "node-high-reputation-cheaper",
+        "node-high-reputation-pricier",
+    ]
 
 
 def test_agent_capabilities_endpoint_reports_ready_bundle_catalog() -> None:

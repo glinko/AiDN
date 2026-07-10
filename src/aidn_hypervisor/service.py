@@ -11,13 +11,16 @@ from pydantic import ValidationError
 from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, ResourceProfile, TaskRequest
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.queue import InMemoryTaskQueue, QueuedTask
+from aidn_hypervisor.reputation import build_reputation_profile
 from aidn_hypervisor.registry_models import (
     RegistryBundleAdvertisement,
     RegistryNodeAdvertisement,
     RegistryPricing,
     RegistryPublishedEndpointSummary,
+    RegistryReputation,
     RegistryRating,
 )
+from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.state import (
@@ -1136,6 +1139,49 @@ class HypervisorService:
                 for record in publication_service.list_publications()
                 if record.status == "published"
             ]
+        published_endpoints = [
+            RegistryPublishedEndpointSummary(
+                endpoint_id=record.endpoint_id,
+                owner_wallet=record.owner_wallet,
+                node_id=record.node_id,
+                current_publication_id=record.publication_id,
+                current_configuration_hash=record.configuration_hash,
+                published_at=record.published_at,
+                status=record.status,
+                visibility=record.publication.get("visibility", "private"),
+                model_class=record.model_class,
+                publication_sync_status=self._publication_sync_status(
+                    local_configuration_hash=record.configuration_hash,
+                    published_configuration_hash=record.configuration_hash,
+                ),
+                published_validation_summary=self._validation_summary_for(
+                    endpoint_id=record.endpoint_id,
+                    configuration_hash=record.configuration_hash,
+                ),
+                live_validation_summary=self._validation_summary_for(
+                    endpoint_id=record.endpoint_id,
+                    configuration_hash=record.configuration_hash,
+                ),
+            )
+            for record in current_publication_records
+        ]
+        trust_summary = RegistryService()._canonical_trust_summary(
+            {
+                "published_endpoints": [
+                    item.model_dump(mode="json") for item in published_endpoints
+                ]
+            }
+        )
+        reputation = RegistryReputation(
+            **build_reputation_profile(
+                node_status="ready",
+                heartbeat_fresh=True,
+                trust_summary=trust_summary,
+                operational_stats=self._operational_reputation_stats(),
+                baseline_rating=self.rating,
+                updated_at=timestamp,
+            )
+        )
         advertisement = RegistryNodeAdvertisement(
             node_id=self.node_id,
             operator_id=self.operator_id,
@@ -1148,6 +1194,7 @@ class HypervisorService:
             can_host_custom_model=self.can_host_custom_model,
             pricing=self._pricing,
             rating=self._rating,
+            reputation=reputation,
             bundles=[
                 RegistryBundleAdvertisement(
                     bundle_id=bundle.bundle_id,
@@ -1166,20 +1213,7 @@ class HypervisorService:
                 )
                 for bundle in self.bundles
             ],
-            published_endpoints=[
-                RegistryPublishedEndpointSummary(
-                    endpoint_id=record.endpoint_id,
-                    owner_wallet=record.owner_wallet,
-                    node_id=record.node_id,
-                    current_publication_id=record.publication_id,
-                    current_configuration_hash=record.configuration_hash,
-                    published_at=record.published_at,
-                    status=record.status,
-                    visibility=record.publication.get("visibility", "private"),
-                    model_class=record.model_class,
-                )
-                for record in current_publication_records
-            ],
+            published_endpoints=published_endpoints,
             canonical_services=canonical_overlay.get("services", []),
             canonical_capability_runtimes=canonical_overlay.get("runtimes", []),
             canonical_compute_compatibility=canonical_overlay.get(
@@ -1190,6 +1224,50 @@ class HypervisorService:
             ),
         )
         return advertisement.model_dump(mode="json")
+
+    def _publication_sync_status(
+        self,
+        *,
+        local_configuration_hash: str | None,
+        published_configuration_hash: str | None,
+    ) -> str:
+        if published_configuration_hash is None:
+            return "never_published"
+        if local_configuration_hash == published_configuration_hash:
+            return "in_sync"
+        return "local_changes_not_published"
+
+    def _validation_summary_for(
+        self,
+        *,
+        endpoint_id: str,
+        configuration_hash: str | None,
+    ) -> dict | None:
+        validation_service = getattr(self, "validation_service", None)
+        if validation_service is None or configuration_hash is None:
+            return None
+        return validation_service.validation_summary(
+            endpoint_id,
+            configuration_hash=configuration_hash,
+        )
+
+    def _operational_reputation_stats(self) -> dict[str, int]:
+        total_tasks = len(self._task_results)
+        successful_tasks = 0
+        failed_tasks = 0
+        for result in self._task_results.values():
+            if not isinstance(result, dict):
+                continue
+            if result.get("ok") is True and result.get("error") in {None, ""}:
+                successful_tasks += 1
+                continue
+            if result.get("error") not in {None, ""} or result.get("ok") is False:
+                failed_tasks += 1
+        return {
+            "total_tasks": total_tasks,
+            "successful_tasks": successful_tasks,
+            "failed_tasks": failed_tasks,
+        }
 
     def capability_catalog(
         self,
@@ -2618,6 +2696,9 @@ class HypervisorService:
         return float(pricing.get("input") or 0)
 
     def _operator_candidate_rating(self, candidate: dict) -> float:
+        reputation = candidate.get("reputation") or {}
+        if reputation.get("score") is not None:
+            return float(reputation.get("score") or 0)
         rating = candidate.get("rating") or {}
         return float(rating.get("score") or 0)
 

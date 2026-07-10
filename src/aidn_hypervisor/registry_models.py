@@ -21,6 +21,14 @@ class RegistryRating(BaseModel):
     updated_at: str
 
 
+class RegistryReputation(BaseModel):
+    score: float = Field(ge=0.0, le=1.0)
+    tier: str
+    updated_at: str
+    components: dict[str, float] = Field(default_factory=dict)
+    evidence: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+
+
 class RegistryBundleAdvertisement(BaseModel):
     bundle_id: str
     plugin_id: str
@@ -65,6 +73,7 @@ class RegistryNodeAdvertisement(BaseModel):
     can_host_custom_model: bool
     pricing: RegistryPricing
     rating: RegistryRating
+    reputation: RegistryReputation | None = None
     bundles: list[RegistryBundleAdvertisement]
     published_endpoints: list[RegistryPublishedEndpointSummary] = Field(
         default_factory=list
