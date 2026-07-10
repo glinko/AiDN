@@ -100,6 +100,7 @@ We already have a working local hypervisor foundation:
 - wallet exports now include a unified replay-safe ledger stream that stitches session settlement events together with usage and allocation-family wallet events;
 - proxy-backed paid Sessions now preserve upstream session policy snapshots, lazily broker remote Session opens, propagate remote Session close on manual and idle-driven release, and expose proxy-session bindings through task and operator-session APIs;
 - endpoint lifecycle now supports symmetric proxy attach and detach actions, so operators can revert a proxied Endpoint back to local execution without editing manifests manually;
+- preferred remote routes can now be detached explicitly, but live local proxy endpoints still protect their upstream dependency until the operator detaches the proxy route first;
 
 What is still missing in the current stage:
 - decision on whether adapter-declared `usage_contract` becomes an enforced runtime gate, plus a first non-token pricing unit for `whisper`-class workloads;

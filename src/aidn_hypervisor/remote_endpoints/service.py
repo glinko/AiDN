@@ -36,19 +36,19 @@ class RemoteEndpointService:
     def detach_remote_endpoint(
         self,
         remote_endpoint_id: str,
-        endpoint_service=None,
+        *,
+        endpoint_service,
     ) -> RemoteEndpointReference:
         detached = self.get_remote_endpoint(remote_endpoint_id)
         dependent_endpoint_ids: list[str] = []
-        if endpoint_service is not None:
-            for manifest in endpoint_service.store.list_manifests():
-                proxy_target = manifest.proxy_target
-                if (
-                    manifest.status != "deleted"
-                    and proxy_target is not None
-                    and proxy_target.remote_endpoint_id == remote_endpoint_id
-                ):
-                    dependent_endpoint_ids.append(manifest.endpoint_id)
+        for manifest in endpoint_service.store.list_manifests():
+            proxy_target = manifest.proxy_target
+            if (
+                manifest.status != "deleted"
+                and proxy_target is not None
+                and proxy_target.remote_endpoint_id == remote_endpoint_id
+            ):
+                dependent_endpoint_ids.append(manifest.endpoint_id)
         if dependent_endpoint_ids:
             raise RemoteEndpointDependencyError(
                 remote_endpoint_id=remote_endpoint_id,

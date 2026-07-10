@@ -108,6 +108,7 @@ def test_attach_remote_endpoint_persists_session_policy_snapshot() -> None:
 
 def test_detach_remote_endpoint_removes_catalog_entry() -> None:
     service = RemoteEndpointService(RemoteEndpointStore())
+    endpoint_service = EndpointService(EndpointStore())
     attached = service.attach_remote_endpoint(
         source_node_id="node-remote",
         source_endpoint_id="ep-remote",
@@ -124,7 +125,10 @@ def test_detach_remote_endpoint_removes_catalog_entry() -> None:
         alias="Primary Remote",
     )
 
-    detached = service.detach_remote_endpoint(attached.remote_endpoint_id)
+    detached = service.detach_remote_endpoint(
+        attached.remote_endpoint_id,
+        endpoint_service=endpoint_service,
+    )
 
     assert detached.remote_endpoint_id == attached.remote_endpoint_id
     assert service.list_remote_endpoints() == []
