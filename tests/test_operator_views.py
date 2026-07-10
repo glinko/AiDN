@@ -543,7 +543,7 @@ def test_home_payload_rebuilds_operator_shell_blocks_from_factual_service_summar
     assert "Publish Offer" in payload["operator_controls"]["actions"]
 
 
-def test_endpoints_payload_includes_publication_sync_and_validation_summary(
+def test_endpoints_payload_includes_certification_status_and_legacy_validation_status(
     service: HypervisorService,
     endpoint_service: EndpointService,
     endpoint_publication_service: EndpointPublicationService,
@@ -567,6 +567,11 @@ def test_endpoints_payload_includes_publication_sync_and_validation_summary(
         configuration_hash=created.endpoint.configuration_hash,
         minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
     )
+    validation_service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-10T00:00:00+00:00",
+    )
 
     payload = build_operator_endpoints_payload(
         service=service,
@@ -578,8 +583,12 @@ def test_endpoints_payload_includes_publication_sync_and_validation_summary(
     assert payload["summary"]["total"] == 1
     assert payload["items"][0]["publication_sync_status"] == "never_published"
     assert (
+        payload["items"][0]["validation_summary"]["certification_status"]
+        == "certified"
+    )
+    assert (
         payload["items"][0]["validation_summary"]["validation_status"]
-        == "pending_initial"
+        == "validated"
     )
     assert (
         payload["items"][0]["validation_summary"]["bond_state"]["bond_id"]

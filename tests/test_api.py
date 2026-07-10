@@ -4225,7 +4225,7 @@ def test_create_validation_epoch_endpoint_returns_assignments_and_authorizations
     assert response.json()["data"]["assignments"][0]["request_id"] == requested.request.request_id
 
 
-def test_validation_summary_endpoint_returns_spec_required_fields() -> None:
+def test_validation_summary_endpoint_returns_certification_status_and_compatibility_fields() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())
     validation_service = ValidationService(ValidationStore())
@@ -4246,6 +4246,25 @@ def test_validation_summary_endpoint_returns_spec_required_fields() -> None:
         configuration_hash=created.endpoint.configuration_hash,
         minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
     )
+    validation_service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    validation_service.submit_validation_report(
+        request_id=requested.request.request_id,
+        recommendation="certify",
+        validator_label="validator-a",
+        evidence_summary="validated",
+    )
     client = TestClient(
         build_app(
             service=service,
@@ -4262,15 +4281,18 @@ def test_validation_summary_endpoint_returns_spec_required_fields() -> None:
     payload = response.json()["data"]
     assert payload["endpoint_id"] == created.endpoint.endpoint_id
     assert payload["configuration_hash"] == created.endpoint.configuration_hash
-    assert payload["validation_status"] == "pending_initial"
+    assert payload["certification_status"] == "certified"
+    assert payload["validation_status"] == "validated"
     assert payload["latest_request_id"] == requested.request.request_id
-    assert payload["latest_report_id"] is None
+    assert payload["latest_report_id"] is not None
+    assert payload["latest_recommendation"] == "certify"
+    assert payload["critical_issue_count"] == 0
     assert payload["bond_state"]["bond_id"] == requested.bond.bond_id
-    assert payload["validated_at"] is None
+    assert payload["validated_at"] is not None
     assert payload["superseded_at"] is None
 
 
-def test_submit_validation_report_endpoint_marks_request_passed() -> None:
+def test_submit_validation_report_endpoint_accepts_recommendation_payload() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())
     validation_service = ValidationService(ValidationStore())
@@ -4315,15 +4337,19 @@ def test_submit_validation_report_endpoint_marks_request_passed() -> None:
     response = client.post(
         f"/api/v1/validation/requests/{requested.request.request_id}/reports",
         json={
-            "outcome": "pass",
+            "recommendation": "certify_with_issues",
             "validator_label": "validator-a",
-            "evidence_summary": "ok",
+            "evidence_summary": "operational with warnings",
+            "detected_issues": [{"severity": "warning", "code": "latency_spike"}],
         },
     )
 
     assert response.status_code == 200
     assert response.json()["data"]["request"]["status"] == "passed"
-    assert response.json()["data"]["snapshot"]["status"] == "validated"
+    assert (
+        response.json()["data"]["snapshot"]["certification_status"]
+        == "certified_with_issues"
+    )
 
 
 def test_operator_dashboard_endpoints_payload_includes_validation_summary() -> None:

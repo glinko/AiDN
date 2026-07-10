@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from aidn_hypervisor.dashboard import build_market_payload, load_dashboard_html
 from aidn_hypervisor.domain.models import (
@@ -464,6 +464,34 @@ class ValidationEpochCreateRequest(BaseModel):
     epoch_id: str
     seed: str
     validator_entries: list[dict]
+
+
+class ValidationReportSubmitRequest(BaseModel):
+    recommendation: str | None = None
+    outcome: str | None = None
+    validator_label: str
+    evidence_summary: str
+    detected_issues: list[dict] = Field(default_factory=list)
+    observations: list[str] = Field(default_factory=list)
+    measured_metrics: dict = Field(default_factory=dict)
+    protocol_compliance: dict = Field(default_factory=dict)
+    accounting_verification: dict = Field(default_factory=dict)
+
+
+class ValidationMaintenanceSubmitRequest(ValidationReportSubmitRequest):
+    pass
+
+
+def _recommendation_from_request(
+    request: ValidationReportSubmitRequest,
+) -> str | None:
+    recommendation = request.recommendation
+    if recommendation is None and request.outcome is not None:
+        recommendation = (
+            "certify" if request.outcome == "pass" else "do_not_certify"
+        )
+    return recommendation
+
 
 def build_api_router(
     service: HypervisorService,
@@ -1210,7 +1238,7 @@ def build_api_router(
     @router.post("/api/v1/validation/requests/{request_id}/reports")
     async def submit_validation_report(
         request_id: str,
-        payload: dict,
+        request: ValidationReportSubmitRequest,
     ) -> JSONResponse:
         if validation_service is None:
             return _error(
@@ -1221,9 +1249,11 @@ def build_api_router(
         try:
             result = validation_service.submit_validation_report(
                 request_id=request_id,
-                outcome=str(payload["outcome"]),
-                validator_label=str(payload["validator_label"]),
-                evidence_summary=str(payload["evidence_summary"]),
+                recommendation=_recommendation_from_request(request),
+                outcome=request.outcome,
+                validator_label=request.validator_label,
+                evidence_summary=request.evidence_summary,
+                detected_issues=request.detected_issues,
             )
         except KeyError:
             return _error(
@@ -1244,7 +1274,7 @@ def build_api_router(
     @router.post("/api/v1/validation/requests/{request_id}/maintenance")
     async def resolve_validation_maintenance(
         request_id: str,
-        payload: dict,
+        request: ValidationMaintenanceSubmitRequest,
     ) -> JSONResponse:
         if validation_service is None:
             return _error(
@@ -1255,9 +1285,11 @@ def build_api_router(
         try:
             result = validation_service.resolve_maintenance_by_request(
                 request_id=request_id,
-                outcome=str(payload["outcome"]),
-                validator_label=str(payload["validator_label"]),
-                evidence_summary=str(payload["evidence_summary"]),
+                recommendation=_recommendation_from_request(request),
+                outcome=request.outcome,
+                validator_label=request.validator_label,
+                evidence_summary=request.evidence_summary,
+                detected_issues=request.detected_issues,
             )
         except KeyError:
             return _error(
