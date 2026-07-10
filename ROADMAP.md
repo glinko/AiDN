@@ -328,6 +328,7 @@ Order of work right now:
 - Validation escrow system: [docs/product/RFC-0035-validation-escrow-system.md](./docs/product/RFC-0035-validation-escrow-system.md)
 - Ledger state machine: [docs/product/RFC-0036-aidn-ledger-state-machine.md](./docs/product/RFC-0036-aidn-ledger-state-machine.md)
 - CometBFT consensus integration: [docs/product/RFC-0047-cometbft-consensus-integration.md](./docs/product/RFC-0047-cometbft-consensus-integration.md)
+- Validation report specification: [docs/product/RFC-0057-validation-report-specification.md](./docs/product/RFC-0057-validation-report-specification.md)
 - M5 validation bond and escrow design: [docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md](./docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md)
 - Current hypervisor execution plan: [docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md](./docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md)
 - Network architecture spec: [docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md](./docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md)
