@@ -4406,6 +4406,172 @@ def test_submit_validation_report_endpoint_accepts_recommendation_payload() -> N
     )
 
 
+def test_submit_validation_report_endpoint_accepts_valid_legacy_outcome_payload() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Validated Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            validation_service=validation_service,
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/validation/requests/{requested.request.request_id}/reports",
+        json={
+            "outcome": "pass",
+            "validator_label": "validator-a",
+            "evidence_summary": "operational",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["snapshot"]["certification_status"] == "certified"
+
+
+def test_submit_validation_report_endpoint_rejects_unimplemented_structured_evidence_fields() -> (
+    None
+):
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Validated Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            validation_service=validation_service,
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/validation/requests/{requested.request.request_id}/reports",
+        json={
+            "recommendation": "certify",
+            "validator_label": "validator-a",
+            "evidence_summary": "operational",
+            "observations": ["not yet supported"],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_submit_validation_report_endpoint_rejects_invalid_legacy_outcome() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Validated Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            validation_service=validation_service,
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/validation/requests/{requested.request.request_id}/reports",
+        json={
+            "outcome": "garbage",
+            "validator_label": "validator-a",
+            "evidence_summary": "operational",
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_operator_dashboard_endpoints_payload_includes_validation_summary() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())

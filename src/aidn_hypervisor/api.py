@@ -1,10 +1,11 @@
 from collections.abc import Iterable
 from datetime import datetime
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from aidn_hypervisor.dashboard import build_market_payload, load_dashboard_html
 from aidn_hypervisor.domain.models import (
@@ -514,15 +515,13 @@ class ValidationEpochCreateRequest(BaseModel):
 
 
 class ValidationReportSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     recommendation: str | None = None
-    outcome: str | None = None
+    outcome: Literal["pass", "fail"] | None = None
     validator_label: str
     evidence_summary: str
     detected_issues: list[dict] = Field(default_factory=list)
-    observations: list[str] = Field(default_factory=list)
-    measured_metrics: dict = Field(default_factory=dict)
-    protocol_compliance: dict = Field(default_factory=dict)
-    accounting_verification: dict = Field(default_factory=dict)
 
 
 class ValidationMaintenanceSubmitRequest(ValidationReportSubmitRequest):
@@ -534,9 +533,10 @@ def _recommendation_from_request(
 ) -> str | None:
     recommendation = request.recommendation
     if recommendation is None and request.outcome is not None:
-        recommendation = (
-            "certify" if request.outcome == "pass" else "do_not_certify"
-        )
+        if request.outcome == "pass":
+            recommendation = "certify"
+        elif request.outcome == "fail":
+            recommendation = "do_not_certify"
     return recommendation
 
 
