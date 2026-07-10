@@ -14,13 +14,17 @@ def build_market_payload(*, service, registry_service) -> dict:
         canonical_candidates = _canonical_candidates_from_node(advertisement)
         payload = {
             "nodes": [advertisement],
-            "candidates": [
-                _local_candidate_from_advertisement(advertisement, bundle)
-                for bundle in advertisement["bundles"]
-            ],
-            "canonical_candidates": [
-                {**candidate, "origin": "own"} for candidate in canonical_candidates
-            ],
+            "candidates": sorted(
+                [
+                    _local_candidate_from_advertisement(advertisement, bundle)
+                    for bundle in advertisement["bundles"]
+                ],
+                key=_market_candidate_sort_key,
+            ),
+            "canonical_candidates": sorted(
+                [{**candidate, "origin": "own"} for candidate in canonical_candidates],
+                key=_canonical_market_candidate_sort_key,
+            ),
             "canonical_summary": _canonical_market_summary(
                 nodes=[advertisement],
                 canonical_candidates=canonical_candidates,
@@ -38,6 +42,7 @@ def build_market_payload(*, service, registry_service) -> dict:
         enriched["origin"] = (
             "own" if enriched["node_id"] == service.node_id else "external"
         )
+        enriched["reputation"] = _reputation_block(enriched)
         enriched["published_endpoint_count"] = len(node.get("published_endpoints", []))
         enriched["trust_summary"] = _aggregate_market_trust(
             node.get("published_endpoints", [])
@@ -62,7 +67,7 @@ def build_market_payload(*, service, registry_service) -> dict:
     payload = {
         "query": discovery["query"],
         "nodes": discovery["nodes"],
-        "candidates": candidates,
+        "candidates": sorted(candidates, key=_market_candidate_sort_key),
         "canonical_candidates": sorted(
             canonical_candidates,
             key=_canonical_market_candidate_sort_key,
@@ -126,6 +131,7 @@ def _local_candidate_from_advertisement(advertisement: dict, bundle: dict) -> di
         "can_host_custom_model": advertisement["can_host_custom_model"],
         "pricing": advertisement["pricing"],
         "rating": advertisement["rating"],
+        "reputation": _reputation_block(advertisement),
         "bundle_id": bundle["bundle_id"],
         "plugin_id": bundle["plugin_id"],
         "provider_type": bundle["provider_type"],
@@ -304,6 +310,7 @@ def _canonical_candidate_row(
         "owner_wallet": candidate_advertisement.get("owner_wallet"),
         "pricing": advertisement["pricing"],
         "rating": advertisement["rating"],
+        "reputation": _reputation_block(advertisement),
         "can_host_custom_model": advertisement["can_host_custom_model"],
         "published_endpoint_count": len(advertisement.get("published_endpoints", [])),
         "trust_summary": _aggregate_market_trust(
@@ -395,7 +402,7 @@ def _canonical_market_summary(*, nodes: list[dict], canonical_candidates: list[d
 def _canonical_market_candidate_sort_key(candidate: dict) -> tuple:
     return (
         {"ready": 0, "stale": 1, "offline": 2}[candidate["status"]],
-        -candidate["rating"]["score"],
+        -_candidate_score(candidate),
         candidate["pricing"]["input"],
         candidate["pricing"]["output"],
         candidate["node_id"],
@@ -403,3 +410,23 @@ def _canonical_market_candidate_sort_key(candidate: dict) -> tuple:
         candidate.get("runtime_id") or "",
         candidate.get("legacy_bundle_id") or "",
     )
+
+
+def _market_candidate_sort_key(candidate: dict) -> tuple:
+    return (
+        {"ready": 0, "stale": 1, "offline": 2}.get(candidate.get("status"), 3),
+        -_candidate_score(candidate),
+        candidate.get("pricing", {}).get("input", 0),
+        candidate.get("pricing", {}).get("output", 0),
+        candidate.get("node_id", ""),
+        candidate.get("bundle_id", ""),
+        candidate.get("model_id", ""),
+    )
+
+
+def _reputation_block(source: dict) -> dict:
+    return source.get("reputation") or source.get("rating") or {}
+
+
+def _candidate_score(candidate: dict) -> float:
+    return float(_reputation_block(candidate).get("score") or 0.0)

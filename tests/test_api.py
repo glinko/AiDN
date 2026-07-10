@@ -1505,6 +1505,59 @@ def test_operator_dashboard_market_payload_builds_canonical_summary() -> None:
     assert payload["canonical_summary"]["runtime_count"] >= 1
 
 
+def test_operator_dashboard_market_payload_includes_reputation_block() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.rating = {
+        "score": 0.31,
+        "tier": "D",
+        "updated_at": "2026-07-06T11:55:00+00:00",
+    }
+    completed = hypervisor.queue.enqueue(
+        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "ok.wav"})
+    )
+    hypervisor.queue.transition_status(completed.task_id, "completed")
+    failed = hypervisor.queue.enqueue(
+        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "fail.wav"})
+    )
+    hypervisor.queue.transition_status(failed.task_id, "failed")
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Trusty STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    publication = publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
+        node_id=hypervisor.node_id,
+        wallet_private_key=hypervisor.owner_wallet_private_key(),
+    )
+    hypervisor.endpoint_publication_service = publication_service
+
+    payload = build_market_payload(service=hypervisor, registry_service=None)
+
+    candidate = payload["candidates"][0]
+    canonical_candidate = next(
+        item
+        for item in payload["canonical_candidates"]
+        if item["advertisement_id"] == f"adv-{publication.publication_id}"
+    )
+    assert candidate["rating"]["score"] == 0.31
+    assert candidate["reputation"]["score"] > candidate["rating"]["score"]
+    assert candidate["reputation"]["components"]["operational_reliability"] == 0.5
+    assert canonical_candidate["reputation"] == candidate["reputation"]
+
+
 def test_operator_dashboard_market_payload_registry_backed_summary_ignores_unpublished_canonical_overlay(
 ) -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
@@ -1887,6 +1940,19 @@ def test_operator_dashboard_shell_route_exposes_market_terminal_controls() -> No
     assert "Open Endpoints and publish local supply before relying on remote market capacity." in response.text
     assert "Compare the selected offer against local capacity before routing work outward." in response.text
     assert "function marketRecommendedAction" in response.text
+
+
+def test_operator_dashboard_shell_renders_reputation_breakdown() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "function candidateReputation(candidate)" in response.text
+    assert "Freshness" in response.text
+    assert "Publication Integrity" in response.text
+    assert "Validation Posture" in response.text
+    assert "Operational Reliability" in response.text
 
 
 def test_operator_dashboard_shell_route_keeps_home_market_preview_in_sync() -> None:

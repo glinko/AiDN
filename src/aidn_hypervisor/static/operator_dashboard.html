@@ -1690,8 +1690,42 @@
       `;
     }
 
+    function candidateReputation(candidate) {
+      const score = Number(candidate?.reputation?.score ?? candidate?.rating?.score ?? 0);
+      return {
+        score,
+        tier: candidate?.reputation?.tier || candidate?.rating?.tier || "unrated",
+        components: candidate?.reputation?.components || {},
+      };
+    }
+
     function candidateRating(candidate) {
-      return Number(candidate?.rating?.score || 0);
+      return candidateReputation(candidate).score;
+    }
+
+    function renderReputationBreakdown(candidate) {
+      const reputation = candidateReputation(candidate);
+      const components = reputation.components || {};
+      const items = [
+        ["Freshness", components.freshness],
+        ["Publication Integrity", components.publication_integrity],
+        ["Validation Posture", components.validation_posture],
+        ["Operational Reliability", components.operational_reliability],
+      ];
+      return `
+        <div class="trust-grid compact">
+          ${items
+            .map(([label, value]) => `
+              <div class="trust-lane">
+                <div class="trust-lane-head">
+                  <span class="trust-lane-label">${label}</span>
+                  <span>${formatRating(Number(value ?? 0))}</span>
+                </div>
+              </div>
+            `)
+            .join("")}
+        </div>
+      `;
     }
 
     function candidateFreeResource(candidate, key) {
@@ -4220,9 +4254,9 @@
               <div class="summary-copy">Offers currently visible after active market filters.</div>
             </section>
             <section class="summary-card">
-              <div class="panel-heading">Median Rating</div>
+              <div class="panel-heading">Median Reputation</div>
               <div class="summary-value">${formatRating(median(candidates.map(candidateRating)))}</div>
-              <div class="summary-copy">Price selection should stay balanced with trust and readiness, not cost alone.</div>
+              <div class="summary-copy">Price selection should stay balanced with reputation, trust, and readiness, not cost alone.</div>
             </section>
             <section class="summary-card">
               <div class="panel-heading">Attach Ready</div>
@@ -4247,7 +4281,7 @@
             <div class="table-shell" style="margin-top: 14px;">
               <div class="table-head">
                 <div>Node / Bundle</div>
-                <div>Rating</div>
+                <div>Reputation</div>
                 <div>Price</div>
                 <div>Capacity</div>
                 <div>Queue</div>
@@ -4262,6 +4296,7 @@
                         const active = candidate.bundle_id === state.selectedMarketCandidateId;
                         const validationChip = marketValidationTrustChip(candidate);
                         const publicationChip = marketPublicationTrustChip(candidate);
+                        const reputation = candidateReputation(candidate);
                         return `
                           <div class="table-row ${active ? "active" : ""}" data-market-bundle="${candidate.bundle_id}">
                             <div>
@@ -4269,8 +4304,8 @@
                               <span class="row-copy">${candidate.node_id} / ${candidate.model_id} / ${candidate.origin}</span>
                             </div>
                             <div>
-                              <div class="row-number">${formatRating(candidateRating(candidate))}</div>
-                              <div class="row-meta">${formatMaybe(candidate.rating?.tier, "unrated")}</div>
+                              <div class="row-number">${formatRating(reputation.score)}</div>
+                              <div class="row-meta">${formatMaybe(reputation.tier, "unrated")}</div>
                             </div>
                             <div>
                               <div class="row-number">${formatQ(candidate.pricing?.input || 0)}</div>
@@ -5398,10 +5433,11 @@
             <div class="inspector-metric">${formatQ(candidate.pricing?.input || 0)}</div>
           </div>
           <div class="inspector-card">
-            <strong>Rating</strong>
+            <strong>Reputation</strong>
             <div class="inspector-metric">${formatRating(candidateRating(candidate))}</div>
           </div>
         </div>
+        ${renderReputationBreakdown(candidate)}
         <div class="stack">
           <div class="inspector-stat">
             <strong>Publish Actions</strong>
@@ -5991,10 +6027,11 @@
             <div class="inspector-metric">${formatQ(candidate.pricing?.input || 0)}</div>
           </div>
           <div class="inspector-card">
-            <strong>Rating</strong>
+            <strong>Reputation</strong>
             <div class="inspector-metric">${formatRating(candidateRating(candidate))}</div>
           </div>
         </div>
+        ${renderReputationBreakdown(candidate)}
         <div class="stack">
           <div class="inspector-stat">
             <strong>Node</strong>
@@ -6060,7 +6097,7 @@
       const modelClass = attached ? selected.source_model_class : selected.model_class;
       const publicationId = attached ? selected.source_publication_id : selected.publication_id;
       const configurationHash = attached ? selected.source_configuration_hash : selected.configuration_hash;
-      const ratingScore = Number(selected.rating?.score || 0);
+      const reputation = candidateReputation(selected);
       const trust = remoteTrustSource(selected);
       return `
         <div class="panel-heading">Remote Endpoint</div>
@@ -6087,14 +6124,15 @@
         </div>
         <div class="inspector-grid">
           <div class="inspector-card">
-            <strong>Rating</strong>
-            <div class="inspector-metric">${ratingScore.toFixed(2)}</div>
+            <strong>Reputation</strong>
+            <div class="inspector-metric">${formatRating(reputation.score)}</div>
           </div>
           <div class="inspector-card">
             <strong>Price</strong>
             <div class="inspector-metric">${formatQ(selected.pricing?.input || 0)}</div>
           </div>
         </div>
+        ${renderReputationBreakdown(selected)}
         <div class="stack">
           <div class="inspector-stat">
             <strong>Base URL</strong>
