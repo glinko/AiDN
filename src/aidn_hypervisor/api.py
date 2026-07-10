@@ -1133,11 +1133,13 @@ def build_api_router(
             configuration_hash=endpoint.configuration_hash,
             minimum_session_deposit_q=endpoint.session.minimum_deposit,
         )
+        snapshot = _expanded_validation_summary(result.snapshot.model_dump(mode="json"))
+        snapshot["status"] = snapshot["validation_status"]
         return _ok(
             {
                 "request": result.request.model_dump(mode="json"),
                 "bond": result.bond.model_dump(mode="json"),
-                "snapshot": result.snapshot.model_dump(mode="json"),
+                "snapshot": snapshot,
             }
         )
 
