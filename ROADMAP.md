@@ -53,7 +53,7 @@ Product alignment summary:
 - the next product layer after this shell consolidation is trust, rating, validation publication, and richer market depth on top of the canonical endpoint workspace;
 - the next product-critical gap is no longer the bare first-run bootstrap loop or shell ownership ambiguity, but trust/reputation publication and endpoint lifecycle depth on top of the consolidated operator surface;
 - endpoint publication is now a first trust layer, and paid consumption now has a working first Session contract;
-- validation economics and maintenance-validation policy are now defined at the product level, but the protocol and registry trust layer are still incomplete;
+- validation economics and maintenance-validation policy are now defined at the product level, and the first computed reputation publication layer now projects trust through registry, discovery, and operator market surfaces;
 - validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
 
 We already have a working local hypervisor foundation:
@@ -112,8 +112,8 @@ What is still missing in the current stage:
 
 Immediate priorities:
 1. Expand endpoint lifecycle controls across remote/proxy and marketplace routing.
-2. Implement `M5` rating, validation, and trust publication on top of the canonical endpoint workspace.
-3. Propagate those trust signals cleanly through discovery, market selection, and the operator shell.
+2. Deepen `M5` trust with richer remote/proxy lifecycle and later persisted reputation inputs.
+3. Expand endpoint lifecycle controls across remote/proxy and marketplace routing with the new reputation layer available to routing decisions.
 
 ## Milestones
 
