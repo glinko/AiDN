@@ -4225,7 +4225,7 @@ def test_create_validation_epoch_endpoint_returns_assignments_and_authorizations
     assert response.json()["data"]["assignments"][0]["request_id"] == requested.request.request_id
 
 
-def test_validation_summary_endpoint_returns_spec_required_fields() -> None:
+def test_validation_summary_endpoint_returns_certification_status_and_compatibility_fields() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())
     validation_service = ValidationService(ValidationStore())
@@ -4246,6 +4246,25 @@ def test_validation_summary_endpoint_returns_spec_required_fields() -> None:
         configuration_hash=created.endpoint.configuration_hash,
         minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
     )
+    validation_service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    validation_service.submit_validation_report(
+        request_id=requested.request.request_id,
+        recommendation="certify",
+        validator_label="validator-a",
+        evidence_summary="validated",
+    )
     client = TestClient(
         build_app(
             service=service,
@@ -4262,15 +4281,133 @@ def test_validation_summary_endpoint_returns_spec_required_fields() -> None:
     payload = response.json()["data"]
     assert payload["endpoint_id"] == created.endpoint.endpoint_id
     assert payload["configuration_hash"] == created.endpoint.configuration_hash
-    assert payload["validation_status"] == "pending_initial"
+    assert payload["certification_status"] == "certified"
+    assert payload["validation_status"] == "validated"
     assert payload["latest_request_id"] == requested.request.request_id
-    assert payload["latest_report_id"] is None
+    assert payload["latest_report_id"] is not None
+    assert payload["latest_recommendation"] == "certify"
+    assert payload["critical_issue_count"] == 0
     assert payload["bond_state"]["bond_id"] == requested.bond.bond_id
-    assert payload["validated_at"] is None
+    assert payload["validated_at"] is not None
     assert payload["superseded_at"] is None
 
 
-def test_submit_validation_report_endpoint_marks_request_passed() -> None:
+def test_validation_summary_endpoint_expands_legacy_service_payload() -> None:
+    class LegacyValidationService:
+        def validation_summary(
+            self,
+            endpoint_id: str,
+            *,
+            configuration_hash: str | None = None,
+        ) -> dict:
+            return {
+                "endpoint_id": endpoint_id,
+                "configuration_hash": configuration_hash,
+                "validation_status": "validated",
+                "latest_request_id": "request-1",
+                "latest_report_id": "report-1",
+                "bond_state": None,
+                "validated_at": "2026-07-10T00:00:00+00:00",
+                "superseded_at": None,
+            }
+
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Validated Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=_service(),
+            endpoint_service=endpoint_service,
+            validation_service=LegacyValidationService(),
+        )
+    )
+
+    response = client.get(
+        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/validation"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["endpoint_id"] == created.endpoint.endpoint_id
+    assert payload["certification_status"] == "certified"
+    assert payload["validation_status"] == "validated"
+    assert payload["latest_recommendation"] is None
+    assert payload["critical_issue_count"] == 0
+    assert payload["warning_issue_count"] == 0
+    assert payload["maintenance_report_count"] == 0
+
+
+def test_submit_validation_report_endpoint_accepts_recommendation_payload() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Validated Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            validation_service=validation_service,
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/validation/requests/{requested.request.request_id}/reports",
+        json={
+            "recommendation": "certify_with_issues",
+            "validator_label": "validator-a",
+            "evidence_summary": "operational with warnings",
+            "detected_issues": [{"severity": "warning", "code": "latency_spike"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["request"]["status"] == "passed"
+    assert (
+        response.json()["data"]["snapshot"]["certification_status"]
+        == "certified_with_issues"
+    )
+    assert response.json()["data"]["snapshot"]["status"] == "validated"
+
+
+def test_submit_validation_report_endpoint_accepts_valid_legacy_outcome_payload() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())
     validation_service = ValidationService(ValidationStore())
@@ -4317,13 +4454,123 @@ def test_submit_validation_report_endpoint_marks_request_passed() -> None:
         json={
             "outcome": "pass",
             "validator_label": "validator-a",
-            "evidence_summary": "ok",
+            "evidence_summary": "operational",
         },
     )
 
     assert response.status_code == 200
-    assert response.json()["data"]["request"]["status"] == "passed"
-    assert response.json()["data"]["snapshot"]["status"] == "validated"
+    assert response.json()["data"]["snapshot"]["certification_status"] == "certified"
+
+
+def test_submit_validation_report_endpoint_rejects_unimplemented_structured_evidence_fields() -> (
+    None
+):
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Validated Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            validation_service=validation_service,
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/validation/requests/{requested.request.request_id}/reports",
+        json={
+            "recommendation": "certify",
+            "validator_label": "validator-a",
+            "evidence_summary": "operational",
+            "observations": ["not yet supported"],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_submit_validation_report_endpoint_rejects_invalid_legacy_outcome() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="text-a",
+            display_name="Validated Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            session={"minimum_deposit": 25.0},
+        )
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            validation_service=validation_service,
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/validation/requests/{requested.request.request_id}/reports",
+        json={
+            "outcome": "garbage",
+            "validator_label": "validator-a",
+            "evidence_summary": "operational",
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_operator_dashboard_endpoints_payload_includes_validation_summary() -> None:
@@ -4830,6 +5077,104 @@ def test_operator_dashboard_market_payload_includes_trust_summary() -> None:
     assert item["trust_summary"]["drift_count"] == 1
 
 
+def test_operator_dashboard_market_payload_includes_certification_counts() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    registry = RegistryService()
+    registry.upsert_node(RegistryNodeAdvertisement(**hypervisor.node_advertisement()))
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-external",
+            operator_id="operator-b",
+            base_url="https://remote.example",
+            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={
+                "unit": "q_per_1kk_tokens",
+                "input": 9,
+                "output": 15,
+                "fixed_request": 1,
+            },
+            rating={
+                "score": 0.97,
+                "tier": "A",
+                "updated_at": "2026-06-20T11:55:00Z",
+            },
+            bundles=[
+                {
+                    "bundle_id": "remote-text",
+                    "plugin_id": "fake-managed",
+                    "workload_type": "llm_text",
+                    "provider_type": "fake",
+                    "model_id": "remote-text-model",
+                    "endpoint": "https://remote.example/runtimes/remote-text",
+                    "enabled": True,
+                    "status": "ready",
+                    "launch_mode": "attached_service",
+                    "device_affinity": "cpu",
+                    "max_parallel_requests": 2,
+                    "supports_allocation": True,
+                    "supports_queue": True,
+                }
+            ],
+            published_endpoints=[
+                {
+                    "endpoint_id": "ep-remote-a",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-external",
+                    "current_publication_id": "pub-remote-a",
+                    "current_configuration_hash": "cfg-remote-a",
+                    "published_at": "2026-06-30T00:00:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                    "publication_sync_status": "in_sync",
+                    "published_validation_summary": {
+                        "certification_status": "certified",
+                        "validation_status": "validated",
+                        "configuration_hash": "cfg-remote-a",
+                    },
+                },
+                {
+                    "endpoint_id": "ep-remote-b",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-external",
+                    "current_publication_id": "pub-remote-b",
+                    "current_configuration_hash": "cfg-remote-b",
+                    "published_at": "2026-06-30T00:00:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                    "publication_sync_status": "published_configuration_not_served",
+                    "published_validation_summary": {
+                        "certification_status": "certified_with_issues",
+                        "validation_status": "validated",
+                        "configuration_hash": "cfg-remote-b",
+                    },
+                },
+            ],
+        )
+    )
+    client = TestClient(build_app(service=hypervisor, registry_service=registry))
+
+    response = client.get("/operators/dashboard/market")
+
+    assert response.status_code == 200
+    item = next(
+        candidate
+        for candidate in response.json()["candidates"]
+        if candidate["node_id"] == "node-external"
+    )
+    assert item["trust_summary"]["certified_count"] == 1
+    assert item["trust_summary"]["certified_with_issues_count"] == 1
+    assert item["trust_summary"]["validated_count"] == 2
+    assert item["trust_summary"]["validation_by_status"]["validated"] == 2
+
+
 def test_operator_dashboard_remote_endpoints_payload_includes_trust_fields() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     registry = RegistryService()
@@ -4886,6 +5231,80 @@ def test_operator_dashboard_remote_endpoints_payload_includes_trust_fields() -> 
     item = response.json()["discovered"][0]
     assert item["publication_sync_status"] == "published_configuration_not_served"
     assert item["published_validation_summary"]["validation_status"] == "validated"
+
+
+def test_operator_dashboard_remote_endpoints_payload_surfaces_certification_status() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    registry = RegistryService()
+    registry.upsert_node(RegistryNodeAdvertisement(**hypervisor.node_advertisement()))
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-external",
+            operator_id="operator-b",
+            base_url="https://remote.example",
+            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            resources={
+                "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+                "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
+            },
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={
+                "unit": "q_per_1kk_tokens",
+                "input": 9,
+                "output": 15,
+                "fixed_request": 1,
+            },
+            rating={
+                "score": 0.97,
+                "tier": "A",
+                "updated_at": "2026-06-20T11:55:00Z",
+            },
+            bundles=[],
+            published_endpoints=[
+                {
+                    "endpoint_id": "ep-remote",
+                    "owner_wallet": "wallet-remote",
+                    "node_id": "node-external",
+                    "current_publication_id": "pub-remote",
+                    "current_configuration_hash": "cfg-remote",
+                    "published_at": "2026-06-30T00:00:00+00:00",
+                    "status": "published",
+                    "visibility": "public",
+                    "model_class": "llm_text",
+                    "publication_sync_status": "published_configuration_not_served",
+                    "published_validation_summary": {
+                        "certification_status": "certified_with_issues",
+                        "validation_status": "validated",
+                        "configuration_hash": "cfg-remote",
+                    },
+                }
+            ],
+        )
+    )
+    client = TestClient(build_app(service=hypervisor, registry_service=registry))
+
+    response = client.get("/operators/dashboard/remote-endpoints")
+
+    assert response.status_code == 200
+    item = response.json()["discovered"][0]
+    assert item["published_validation_summary"]["certification_status"] == "certified_with_issues"
+    assert item["published_validation_summary"]["validation_status"] == "validated"
+
+
+def test_operator_dashboard_shell_preserves_legacy_validation_labels_for_published_trust() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "function publishedTrustStatusLabel(summary)" in response.text
+    assert "return trustStatusLabel(summary.certification_status);" in response.text
+    assert (
+        'return trustStatusLabel(validationStatus(summary), { legacyValidation: true });'
+        in response.text
+    )
+    assert 'return legacyValidation ? "Revoked" : "Attention Required";' in response.text
 
 
 def test_operator_dashboard_shell_exposes_publication_sync_copy() -> None:

@@ -654,6 +654,44 @@ def test_validation_events_appear_in_wallet_ledger_export() -> None:
     }
 
 
+def test_validation_wallet_events_survive_certification_refactor() -> None:
+    service = _service()
+    validation_service = ValidationService(ValidationStore())
+    service.bind_validation_service(validation_service)
+    requested = validation_service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    validation_service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-09T00:00:00+00:00",
+    )
+    validation_service.resolve_maintenance(
+        endpoint_id="ep-1",
+        configuration_hash="cfg-1",
+        recommendation="certify",
+        validator_label="validator-a",
+        evidence_summary="healthy",
+        detected_issues=[],
+    )
+
+    ledger = service.export_wallet_ledger_events(limit=20)
+    event_types = [item["event_type"] for item in ledger["items"]]
+    maintenance_event = next(
+        item
+        for item in ledger["items"]
+        if item["event_type"] == "maintenance_validation_passed"
+    )
+
+    assert "validation_bond_locked" in event_types
+    assert "validation_bond_refunded" in event_types
+    assert maintenance_event["payload"]["details"]["recommendation"] == "certify"
+    assert maintenance_event["payload"]["details"]["validation_status"] == "validated"
+
+
 def test_service_automatically_records_allocation_id_from_completed_task() -> None:
     service = _service(
         plugin=UsageMeteringPlugin(),

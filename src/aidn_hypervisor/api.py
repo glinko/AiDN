@@ -1,10 +1,11 @@
 from collections.abc import Iterable
 from datetime import datetime
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from aidn_hypervisor.dashboard import build_market_payload, load_dashboard_html
 from aidn_hypervisor.domain.models import (
@@ -113,10 +114,81 @@ def _validation_summary_for(
 ) -> dict | None:
     if validation_service is None or configuration_hash is None:
         return None
-    return validation_service.validation_summary(
-        endpoint_id,
-        configuration_hash=configuration_hash,
+    return _expanded_validation_summary(
+        validation_service.validation_summary(
+            endpoint_id,
+            configuration_hash=configuration_hash,
+        )
     )
+
+
+def _certification_status_from_validation_status(validation_status: str) -> str:
+    return {
+        "validated": "certified",
+        "pending_initial": "pending_initial",
+        "revoked": "revoked",
+        "superseded": "superseded",
+        "validation_failed": "uncertified",
+        "unvalidated": "uncertified",
+    }.get(validation_status, "uncertified")
+
+
+def _validation_status_from_certification_status(certification_status: str) -> str:
+    return {
+        "certified": "validated",
+        "certified_with_issues": "validated",
+        "pending_initial": "pending_initial",
+        "revoked": "revoked",
+        "superseded": "superseded",
+        "uncertified": "unvalidated",
+    }.get(certification_status, "unvalidated")
+
+
+def _compat_validation_status_from_certification_status(
+    certification_status: str,
+) -> str:
+    return {
+        "uncertified": "unvalidated",
+        "pending_initial": "pending_initial",
+        "maintenance_due": "pending_maintenance",
+        "maintenance_in_progress": "pending_maintenance",
+        "certified": "validated",
+        "certified_with_issues": "validated",
+        "revoked": "validation_failed",
+        "superseded": "superseded",
+    }.get(certification_status, "unvalidated")
+
+
+def _expanded_validation_summary(summary: dict) -> dict:
+    expanded = dict(summary)
+    certification_status = expanded.get("certification_status")
+    validation_status = expanded.get("validation_status")
+    if certification_status is None and validation_status is not None:
+        certification_status = _certification_status_from_validation_status(
+            str(validation_status)
+        )
+    if validation_status is None and certification_status is not None:
+        validation_status = _validation_status_from_certification_status(
+            str(certification_status)
+        )
+    expanded["certification_status"] = certification_status or "uncertified"
+    expanded["validation_status"] = validation_status or "unvalidated"
+    expanded["latest_recommendation"] = expanded.get("latest_recommendation")
+    expanded["critical_issue_count"] = int(expanded.get("critical_issue_count", 0))
+    expanded["warning_issue_count"] = int(expanded.get("warning_issue_count", 0))
+    expanded["maintenance_report_count"] = int(
+        expanded.get("maintenance_report_count", 0)
+    )
+    return expanded
+
+
+def _response_validation_snapshot(snapshot) -> dict:
+    payload = _expanded_validation_summary(snapshot.model_dump(mode="json"))
+    payload["validation_status"] = _compat_validation_status_from_certification_status(
+        str(payload["certification_status"])
+    )
+    payload["status"] = payload["validation_status"]
+    return payload
 
 
 def _snapshot_publication_configuration_hash(manifest, snapshot) -> str:
@@ -464,6 +536,33 @@ class ValidationEpochCreateRequest(BaseModel):
     epoch_id: str
     seed: str
     validator_entries: list[dict]
+
+
+class ValidationReportSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recommendation: str | None = None
+    outcome: Literal["pass", "fail"] | None = None
+    validator_label: str
+    evidence_summary: str
+    detected_issues: list[dict] = Field(default_factory=list)
+
+
+class ValidationMaintenanceSubmitRequest(ValidationReportSubmitRequest):
+    pass
+
+
+def _recommendation_from_request(
+    request: ValidationReportSubmitRequest,
+) -> str | None:
+    recommendation = request.recommendation
+    if recommendation is None and request.outcome is not None:
+        if request.outcome == "pass":
+            recommendation = "certify"
+        elif request.outcome == "fail":
+            recommendation = "do_not_certify"
+    return recommendation
+
 
 def build_api_router(
     service: HypervisorService,
@@ -1062,7 +1161,7 @@ def build_api_router(
             {
                 "request": result.request.model_dump(mode="json"),
                 "bond": result.bond.model_dump(mode="json"),
-                "snapshot": result.snapshot.model_dump(mode="json"),
+                "snapshot": _response_validation_snapshot(result.snapshot),
             }
         )
 
@@ -1114,12 +1213,20 @@ def build_api_router(
                     f"Unknown endpoint: {endpoint_id}",
                 )
             return _ok(
-                validation_service.validation_summary(
-                    endpoint_id,
-                    configuration_hash=endpoint.configuration_hash,
+                _expanded_validation_summary(
+                    validation_service.validation_summary(
+                        endpoint_id,
+                        configuration_hash=endpoint.configuration_hash,
+                    )
                 )
             )
-        return _ok(validation_service.validation_summary(endpoint_id))
+        return _ok(
+            _expanded_validation_summary(
+                validation_service.validation_summary(
+                    endpoint_id,
+                )
+            )
+        )
 
     @router.get("/api/v1/endpoints/{endpoint_id}/validation/history")
     async def endpoint_validation_history(endpoint_id: str) -> JSONResponse:
@@ -1210,7 +1317,7 @@ def build_api_router(
     @router.post("/api/v1/validation/requests/{request_id}/reports")
     async def submit_validation_report(
         request_id: str,
-        payload: dict,
+        request: ValidationReportSubmitRequest,
     ) -> JSONResponse:
         if validation_service is None:
             return _error(
@@ -1221,9 +1328,11 @@ def build_api_router(
         try:
             result = validation_service.submit_validation_report(
                 request_id=request_id,
-                outcome=str(payload["outcome"]),
-                validator_label=str(payload["validator_label"]),
-                evidence_summary=str(payload["evidence_summary"]),
+                recommendation=_recommendation_from_request(request),
+                outcome=request.outcome,
+                validator_label=request.validator_label,
+                evidence_summary=request.evidence_summary,
+                detected_issues=request.detected_issues,
             )
         except KeyError:
             return _error(
@@ -1236,7 +1345,7 @@ def build_api_router(
         return _ok(
             {
                 "request": result.request.model_dump(mode="json"),
-                "snapshot": result.snapshot.model_dump(mode="json"),
+                "snapshot": _response_validation_snapshot(result.snapshot),
                 "report": result.report.model_dump(mode="json"),
             }
         )
@@ -1244,7 +1353,7 @@ def build_api_router(
     @router.post("/api/v1/validation/requests/{request_id}/maintenance")
     async def resolve_validation_maintenance(
         request_id: str,
-        payload: dict,
+        request: ValidationMaintenanceSubmitRequest,
     ) -> JSONResponse:
         if validation_service is None:
             return _error(
@@ -1255,9 +1364,11 @@ def build_api_router(
         try:
             result = validation_service.resolve_maintenance_by_request(
                 request_id=request_id,
-                outcome=str(payload["outcome"]),
-                validator_label=str(payload["validator_label"]),
-                evidence_summary=str(payload["evidence_summary"]),
+                recommendation=_recommendation_from_request(request),
+                outcome=request.outcome,
+                validator_label=request.validator_label,
+                evidence_summary=request.evidence_summary,
+                detected_issues=request.detected_issues,
             )
         except KeyError:
             return _error(
@@ -1271,7 +1382,7 @@ def build_api_router(
             {
                 "request": result.request.model_dump(mode="json"),
                 "bond": result.bond.model_dump(mode="json"),
-                "snapshot": result.snapshot.model_dump(mode="json"),
+                "snapshot": _response_validation_snapshot(result.snapshot),
                 "report": result.report.model_dump(mode="json"),
             }
         )

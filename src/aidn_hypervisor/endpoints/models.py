@@ -2,6 +2,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from aidn_hypervisor.validation.models import (
+    CertificationStatus,
+    ValidationReportRecommendation,
+    ValidationSnapshotStatus,
+    expected_validation_status_for,
+)
+
 EndpointStatus = Literal["created", "stopped", "active", "suspended", "deleted"]
 EndpointVisibility = Literal["public", "private", "shared"]
 EndpointValidationMode = Literal["enabled", "disabled"]
@@ -90,11 +97,30 @@ class EndpointValidationState(BaseModel):
     model_class_supported: bool = False
     verification_status: EndpointVerificationStatus = "unsupported"
     validation_profile: str | None = None
-    validation_status: str = "unvalidated"
+    certification_status: CertificationStatus = "uncertified"
+    validation_status: ValidationSnapshotStatus = "unvalidated"
     latest_request_id: str | None = None
     latest_report_id: str | None = None
+    latest_report_at: str | None = None
+    latest_recommendation: ValidationReportRecommendation | None = None
+    report_count: int = 0
     validated_configuration_hash: str | None = None
     validated_at: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_certification_pair(self):
+        expected_status = expected_validation_status_for(self.certification_status)
+        if "validation_status" not in self.model_fields_set:
+            self.validation_status = expected_status
+        elif self.validation_status != expected_status:
+            raise ValueError(
+                "validation_status must be consistent with certification_status"
+            )
+        if self.validation_status == "validated" and not (
+            self.latest_request_id and self.latest_request_id.strip()
+        ):
+            raise ValueError("validated status requires latest_request_id")
+        return self
 
 
 class EndpointProxyTarget(BaseModel):

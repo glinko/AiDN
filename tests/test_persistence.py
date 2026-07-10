@@ -36,6 +36,7 @@ from aidn_hypervisor.validation.models import (
     ValidationBond,
     ValidationEpoch,
     ValidationRequest,
+    ValidationStatusSnapshot,
 )
 from aidn_hypervisor.validation.store import ValidationStore
 
@@ -440,6 +441,34 @@ def test_file_state_store_round_trips_validation_snapshot_fields(
     assert restored.validation_bonds == snapshot.validation_bonds
     assert restored.validation_epochs == snapshot.validation_epochs
     assert restored.validation_authorizations == snapshot.validation_authorizations
+
+
+def test_file_state_store_round_trips_certification_snapshot_fields(tmp_path: Path) -> None:
+    state_path = tmp_path / "hypervisor-state.json"
+    store = FileStateStore(state_path)
+    certification_snapshot = ValidationStatusSnapshot(
+        endpoint_id="ep-1",
+        configuration_hash="cfg-1",
+        certification_status="certified_with_issues",
+        latest_request_id="req-1",
+        latest_report_id="report-1",
+        latest_report_at="2026-07-09T00:00:00+00:00",
+    )
+    snapshot = HypervisorStateSnapshot(
+        validation_status_snapshots=[certification_snapshot]
+    )
+
+    store.save(snapshot)
+    restored = store.load()
+
+    restored_snapshot = restored.validation_status_snapshots[0]
+
+    assert restored_snapshot == certification_snapshot
+    assert (
+        restored_snapshot.certification_status,
+        restored_snapshot.validation_status,
+    ) == ("certified_with_issues", "validated")
+    assert restored_snapshot.latest_report_at == "2026-07-09T00:00:00+00:00"
 
 
 def test_validation_state_survives_snapshot_restore() -> None:

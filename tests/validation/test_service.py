@@ -30,7 +30,7 @@ def test_request_validation_locks_operator_bond_and_sets_pending_status() -> Non
     assert result.request.status == "queued"
     assert result.bond.amount_q == 500.0
     assert result.bond.remaining_locked_q == 500.0
-    assert result.snapshot.status == "pending_initial"
+    assert result.snapshot.validation_status == "pending_initial"
 
 
 def test_request_validation_rejects_negative_session_deposit_before_locking_bond() -> None:
@@ -80,8 +80,44 @@ def test_submit_validation_report_with_pass_marks_validated_without_releasing_in
     )
 
     assert resolved.request.status == "passed"
-    assert resolved.snapshot.status == "validated"
+    assert resolved.snapshot.validation_status == "validated"
     assert resolved.bond.remaining_locked_q == 500.0
+
+
+def test_submit_validation_report_with_certify_with_issues_marks_certified_with_issues() -> (
+    None
+):
+    service = ValidationService(ValidationStore())
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+
+    resolved = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        recommendation="certify_with_issues",
+        validator_label="validator-a",
+        evidence_summary="operational with warnings",
+        detected_issues=[{"severity": "warning", "code": "latency_spike"}],
+    )
+
+    assert resolved.snapshot.certification_status == "certified_with_issues"
+    assert resolved.snapshot.validation_status == "validated"
 
 
 def test_maintenance_pass_refunds_half_of_remaining_locked_bond() -> None:
@@ -108,7 +144,7 @@ def test_maintenance_pass_refunds_half_of_remaining_locked_bond() -> None:
 
     assert outcome.bond.remaining_locked_q == 250.0
     assert outcome.bond.released_q == 250.0
-    assert outcome.snapshot.status == "validated"
+    assert outcome.snapshot.validation_status == "validated"
 
 
 def test_maintenance_fail_forfeits_remaining_locked_bond() -> None:
@@ -136,8 +172,42 @@ def test_maintenance_fail_forfeits_remaining_locked_bond() -> None:
     assert outcome.bond.status == "forfeited"
     assert outcome.bond.remaining_locked_q == 0.0
     assert outcome.bond.forfeited_q == 500.0
-    assert outcome.snapshot.status == "validation_failed"
+    assert outcome.snapshot.certification_status == "revoked"
+    assert outcome.snapshot.validation_status == "validated"
     assert outcome.snapshot.validated_at is None
+
+
+def test_maintenance_report_with_critical_issue_revokes_certification() -> None:
+    service = ValidationService(ValidationStore())
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-09T00:00:00+00:00",
+    )
+
+    outcome = service.resolve_maintenance(
+        endpoint_id="ep-1",
+        configuration_hash="cfg-1",
+        recommendation="do_not_certify",
+        validator_label="validator-a",
+        evidence_summary="accounting mismatch",
+        detected_issues=[{"severity": "critical", "code": "accounting_mismatch"}],
+    )
+    summary = service.validation_summary("ep-1", configuration_hash="cfg-1")
+
+    assert outcome.snapshot.certification_status == "revoked"
+    assert outcome.snapshot.validation_status == "validated"
+    assert summary["validation_status"] == "validation_failed"
+    assert summary["failed_request_count"] == 1
+    assert summary["current_snapshot"]["certification_status"] == "revoked"
+    assert summary["current_snapshot"]["validation_status"] == "validated"
+    assert "status" not in summary["current_snapshot"]
 
 
 def test_assign_epoch_requests_raises_when_queued_requests_exceed_share_capacity() -> None:
@@ -317,6 +387,54 @@ def test_supersede_configuration_marks_old_snapshot_superseded_and_new_hash_unva
     assert new_summary["validation_status"] == "unvalidated"
     assert new_summary["latest_request_id"] is None
     assert new_summary["bond_state"] is None
+
+
+def test_validation_summary_for_current_pending_configuration_does_not_leak_previous_report_fields() -> (
+    None
+):
+    service = ValidationService(ValidationStore())
+    first = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    service.submit_validation_report(
+        request_id=first.request.request_id,
+        recommendation="certify_with_issues",
+        validator_label="validator-a",
+        evidence_summary="operational with warnings",
+        detected_issues=[{"severity": "warning", "code": "latency_spike"}],
+    )
+    second = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-2",
+        minimum_session_deposit_q=30.0,
+    )
+
+    summary = service.validation_summary("ep-1")
+
+    assert summary["configuration_hash"] == "cfg-2"
+    assert summary["latest_request_id"] == second.request.request_id
+    assert summary["latest_report_id"] is None
+    assert summary["latest_report_at"] is None
+    assert summary["latest_recommendation"] is None
+    assert summary["critical_issue_count"] == 0
+    assert summary["warning_issue_count"] == 0
 
 
 def test_authorization_hides_validator_wallet_and_share_count() -> None:

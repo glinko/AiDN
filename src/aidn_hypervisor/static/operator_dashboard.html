@@ -1925,12 +1925,24 @@
       return summary?.validation_status || "unvalidated";
     }
 
+    function certificationStatus(summary) {
+      return summary?.certification_status || summary?.validation_status || "unvalidated";
+    }
+
     function validationStatusOr(summary, fallback = "unvalidated") {
       return summary?.validation_status || fallback;
     }
 
-    function trustStatusLabel(status) {
+    function trustStatusLabel(status, { legacyValidation = false } = {}) {
       switch (status) {
+        case "certified":
+          return "Certified";
+        case "certified_with_issues":
+          return "Certified With Issues";
+        case "maintenance_in_progress":
+          return "Maintenance In Progress";
+        case "maintenance_due":
+          return "Maintenance Due";
         case "validated":
           return "Validated";
         case "pending_initial":
@@ -1942,7 +1954,7 @@
         case "validation_failed":
           return "Validation Failed";
         case "revoked":
-          return "Revoked";
+          return legacyValidation ? "Revoked" : "Attention Required";
         case "forfeited":
           return "Forfeited";
         case "local_changes_not_published":
@@ -1962,7 +1974,28 @@
       }
     }
 
+    function publishedTrustStatusLabel(summary) {
+      if (summary?.certification_status) {
+        return trustStatusLabel(summary.certification_status);
+      }
+      return trustStatusLabel(validationStatus(summary), { legacyValidation: true });
+    }
+
     function validationTrustTone(summary) {
+      switch (certificationStatus(summary)) {
+        case "certified":
+          return "good";
+        case "certified_with_issues":
+        case "pending_initial":
+        case "maintenance_in_progress":
+        case "maintenance_due":
+          return "warn";
+        case "revoked":
+        case "forfeited":
+          return "bad";
+        default:
+          break;
+      }
       switch (validationStatus(summary)) {
         case "validated":
           return "good";
@@ -2599,6 +2632,8 @@
       return (
         candidate?.trust_summary || {
           total_endpoints: 0,
+          certified_count: 0,
+          certified_with_issues_count: 0,
           validated_count: 0,
           pending_count: 0,
           attention_count: 0,
@@ -2617,6 +2652,18 @@
         return {
           label: `${formatCount(trust.attention_count)} attention / ${formatCount(trust.total_endpoints)}`,
           tone: "bad",
+        };
+      }
+      if (trust.certified_with_issues_count) {
+        return {
+          label: `${formatCount(trust.certified_with_issues_count)} certified with issues / ${formatCount(trust.total_endpoints)}`,
+          tone: "warn",
+        };
+      }
+      if (trust.certified_count) {
+        return {
+          label: `${formatCount(trust.certified_count)} certified / ${formatCount(trust.total_endpoints)}`,
+          tone: "good",
         };
       }
       if (trust.validated_count) {
@@ -4666,7 +4713,7 @@
                                 trust
                                   ? `
                                     <div class="chip-row" style="margin-top: 10px;">
-                                      <span class="chip ${validationTrustTone(trust.published_validation_summary)}">${trustStatusLabel(validationStatus(trust.published_validation_summary))}</span>
+                                      <span class="chip ${validationTrustTone(trust.published_validation_summary)}">${publishedTrustStatusLabel(trust.published_validation_summary)}</span>
                                       <span class="chip ${publicationTrustTone(trust.publication_sync_status)}">${trustStatusLabel(trust.publication_sync_status)}</span>
                                     </div>
                                   `
@@ -4699,7 +4746,7 @@
                                 <span class="chip ${item.already_attached ? "good" : ""}">${item.model_class}</span>
                               </div>
                               <div class="chip-row" style="margin-top: 10px;">
-                                <span class="chip ${validationTrustTone(item.published_validation_summary)}">${trustStatusLabel(validationStatus(item.published_validation_summary))}</span>
+                                <span class="chip ${validationTrustTone(item.published_validation_summary)}">${publishedTrustStatusLabel(item.published_validation_summary)}</span>
                                 <span class="chip ${publicationTrustTone(item.publication_sync_status)}">${trustStatusLabel(item.publication_sync_status || "unknown")}</span>
                               </div>
                               <div class="request-row-bottom">
@@ -6001,7 +6048,7 @@
         <div class="trust-grid">
           ${renderTrustLane(
             "Validation Trust",
-            trustStatusLabel(validationStatusOr(trust?.published_validation_summary, "unknown")),
+            publishedTrustStatusLabel(trust?.published_validation_summary),
             validationTrustTone(trust?.published_validation_summary),
             "Remote validation trust follows the published snapshot currently advertised by this endpoint."
           )}
@@ -6037,7 +6084,7 @@
           </div>
           <div class="inspector-stat">
             <strong>Validation Trust</strong>
-            <span>${trustStatusLabel(validationStatusOr(trust?.published_validation_summary, "unknown"))}</span>
+            <span>${publishedTrustStatusLabel(trust?.published_validation_summary)}</span>
           </div>
           <div class="inspector-stat">
             <strong>Publication Trust</strong>

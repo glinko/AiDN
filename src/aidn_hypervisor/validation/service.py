@@ -10,6 +10,7 @@ from aidn_hypervisor.validation.models import (
     ValidationAssignment,
     ValidationAuthorization,
     ValidationBond,
+    ValidationDetectedIssue,
     ValidationEpoch,
     ValidationReport,
     ValidationRequest,
@@ -19,6 +20,44 @@ from aidn_hypervisor.validation.models import (
 
 
 DEFAULT_VALIDATION_BOND_Q = 500.0
+
+
+def _compat_validation_status_for(certification_status: str) -> str:
+    return {
+        "uncertified": "unvalidated",
+        "pending_initial": "pending_initial",
+        "maintenance_due": "pending_maintenance",
+        "maintenance_in_progress": "pending_maintenance",
+        "certified": "validated",
+        "certified_with_issues": "validated",
+        "revoked": "validation_failed",
+        "superseded": "superseded",
+    }[certification_status]
+
+
+def _canonical_validation_status_for(certification_status: str) -> str:
+    compat = _compat_validation_status_for(certification_status)
+    return {
+        "unvalidated": "unvalidated",
+        "pending_initial": "pending_initial",
+        "pending_maintenance": "validated",
+        "validated": "validated",
+        "validation_failed": "validated",
+        "superseded": "validated",
+    }[compat]
+
+
+def _derive_certification_status(
+    *,
+    request_kind: str,
+    recommendation: str,
+    critical_issue_count: int,
+) -> str:
+    if recommendation == "do_not_certify" or critical_issue_count > 0:
+        return "revoked" if request_kind == "maintenance" else "uncertified"
+    if recommendation == "certify_with_issues":
+        return "certified_with_issues"
+    return "certified"
 
 
 @dataclass(frozen=True)
@@ -106,7 +145,8 @@ class ValidationService:
         snapshot = ValidationStatusSnapshot(
             endpoint_id=endpoint_id,
             configuration_hash=configuration_hash,
-            status="pending_initial",
+            certification_status="pending_initial",
+            validation_status="pending_initial",
             latest_request_id=request_id,
         )
         self.store.save_request(request)
@@ -123,7 +163,11 @@ class ValidationService:
                 "amount_q": lock.amount_q,
             },
         )
-        return ValidationRequestOutcome(request=request, bond=bond, snapshot=snapshot)
+        return ValidationRequestOutcome(
+            request=request,
+            bond=bond,
+            snapshot=snapshot,
+        )
 
     def assign_epoch_requests(
         self,
@@ -210,9 +254,11 @@ class ValidationService:
         self,
         *,
         request_id: str,
-        outcome: str,
+        recommendation: str | None = None,
         validator_label: str,
         evidence_summary: str,
+        detected_issues: list[dict | ValidationDetectedIssue] | None = None,
+        outcome: str | None = None,
     ) -> ValidationReportOutcome:
         request = self.store.get_request(request_id)
         if request.status in {"passed", "failed", "forfeited", "revoked", "superseded"}:
@@ -222,39 +268,63 @@ class ValidationService:
                 f"Request must be authorization_issued before report submission: {request_id}"
             )
         bond = self.store.get_bond(request.bond_id)
+        resolved_recommendation = self._normalize_recommendation(
+            recommendation=recommendation,
+            outcome=outcome,
+        )
+        resolved_detected_issues = self._normalize_detected_issues(detected_issues)
         report = ValidationReport(
             report_id=self._new_id("report"),
             request_id=request.request_id,
             endpoint_id=request.endpoint_id,
             configuration_hash=request.configuration_hash,
-            outcome=outcome,
             report_kind="initial",
             validator_label=validator_label,
+            detected_issues=resolved_detected_issues,
+            critical_issue_count=self._count_issues(
+                resolved_detected_issues, severity="critical"
+            ),
+            warning_issue_count=self._count_issues(
+                resolved_detected_issues, severity="warning"
+            ),
+            recommendation=resolved_recommendation,
             evidence_summary=evidence_summary,
             created_at=self._now(),
         )
-        request_status = "passed" if outcome == "pass" else "failed"
-        snapshot_status = "validated" if outcome == "pass" else "validation_failed"
-        validated_at = report.created_at if outcome == "pass" else None
+        certification_status = _derive_certification_status(
+            request_kind="initial",
+            recommendation=report.recommendation,
+            critical_issue_count=report.critical_issue_count,
+        )
+        request_status = (
+            "passed" if certification_status != "uncertified" else "failed"
+        )
+        snapshot_status = _canonical_validation_status_for(certification_status)
+        validated_at = (
+            report.created_at if certification_status != "uncertified" else None
+        )
         updated_request = request.model_copy(update={"status": request_status})
         updated_snapshot = self.store.get_snapshot(
             request.endpoint_id,
             request.configuration_hash,
         ).model_copy(
             update={
-                "status": snapshot_status,
+                "certification_status": certification_status,
+                "validation_status": snapshot_status,
                 "latest_request_id": request.request_id,
                 "latest_report_id": report.report_id,
+                "latest_report_at": report.created_at,
                 "validated_at": validated_at,
             }
         )
         self.store.save_report(report)
         self.store.save_request(updated_request)
         self.store.save_snapshot(updated_snapshot)
+        compat_validation_status = _compat_validation_status_for(certification_status)
         self._emit(
             event_type=(
                 "validation_request_passed"
-                if outcome == "pass"
+                if compat_validation_status == "validated"
                 else "validation_request_failed"
             ),
             message="validation report submitted",
@@ -262,7 +332,7 @@ class ValidationService:
                 "request_id": request.request_id,
                 "report_id": report.report_id,
                 "endpoint_id": request.endpoint_id,
-                "outcome": outcome,
+                "recommendation": report.recommendation,
             },
         )
         return ValidationReportOutcome(
@@ -296,7 +366,6 @@ class ValidationService:
             ],
             key=lambda item: item.created_at,
         )
-        request_ids = {item.request_id for item in requests}
         snapshots = [
             item
             for item in self.store.list_snapshots()
@@ -308,6 +377,7 @@ class ValidationService:
         ]
         current_snapshot = snapshots[-1] if snapshots else None
         latest_request = requests[-1] if requests else None
+        latest_report = reports[-1] if reports else None
         resolved_configuration_hash = configuration_hash or (
             current_snapshot.configuration_hash
             if current_snapshot is not None
@@ -315,30 +385,75 @@ class ValidationService:
             if latest_request is not None
             else None
         )
+        scoped_requests = [
+            item
+            for item in requests
+            if resolved_configuration_hash is None
+            or item.configuration_hash == resolved_configuration_hash
+        ]
+        scoped_reports = [
+            item
+            for item in reports
+            if resolved_configuration_hash is None
+            or item.configuration_hash == resolved_configuration_hash
+        ]
+        latest_request_for_configuration = (
+            scoped_requests[-1] if scoped_requests else None
+        )
+        latest_report_for_configuration = scoped_reports[-1] if scoped_reports else None
+        scoped_request_ids = {request.request_id for request in scoped_requests}
         latest_bond = (
-            self.store.get_bond(latest_request.bond_id)
-            if latest_request is not None
+            self.store.get_bond(latest_request_for_configuration.bond_id)
+            if latest_request_for_configuration is not None
             else None
         )
         return {
             "endpoint_id": endpoint_id,
             "configuration_hash": resolved_configuration_hash,
+            "certification_status": (
+                current_snapshot.certification_status
+                if current_snapshot is not None
+                else "uncertified"
+            ),
             "validation_status": (
-                current_snapshot.status
+                _compat_validation_status_for(current_snapshot.certification_status)
                 if current_snapshot is not None
                 else "unvalidated"
             ),
             "latest_request_id": (
                 current_snapshot.latest_request_id
                 if current_snapshot is not None
-                else latest_request.request_id
-                if latest_request is not None
+                else latest_request_for_configuration.request_id
+                if latest_request_for_configuration is not None
                 else None
             ),
             "latest_report_id": (
                 current_snapshot.latest_report_id
                 if current_snapshot is not None
                 else None
+            ),
+            "latest_report_at": (
+                current_snapshot.latest_report_at
+                if current_snapshot is not None
+                else None
+            ),
+            "latest_recommendation": (
+                latest_report_for_configuration.recommendation
+                if latest_report_for_configuration is not None
+                else None
+            ),
+            "critical_issue_count": (
+                latest_report_for_configuration.critical_issue_count
+                if latest_report_for_configuration is not None
+                else 0
+            ),
+            "warning_issue_count": (
+                latest_report_for_configuration.warning_issue_count
+                if latest_report_for_configuration is not None
+                else 0
+            ),
+            "maintenance_report_count": sum(
+                1 for item in scoped_reports if item.report_kind == "maintenance"
             ),
             "bond_state": (
                 latest_bond.model_dump(mode="json")
@@ -356,31 +471,31 @@ class ValidationService:
                 if current_snapshot is not None
                 else None
             ),
-            "request_count": len(requests),
-            "report_count": len(reports),
+            "request_count": len(scoped_requests),
+            "report_count": len(scoped_reports),
             "assigned_request_count": sum(
-                1 for item in requests if item.assignment_id is not None
+                1 for item in scoped_requests if item.assignment_id is not None
             ),
             "validated_request_count": sum(
-                1 for item in requests if item.status == "passed"
+                1 for item in scoped_requests if item.status == "passed"
             ),
             "failed_request_count": sum(
-                1 for item in requests if item.status == "failed"
+                1 for item in scoped_requests if item.status in {"failed", "revoked"}
             ),
             "active_request_ids": [
                 item.request_id
-                for item in requests
+                for item in scoped_requests
                 if item.status in {"queued", "authorization_issued"}
             ],
             "assignment_count": sum(
                 1
                 for item in self.store.list_assignments()
-                if item.request_id in request_ids
+                if item.request_id in scoped_request_ids
             ),
             "authorization_count": sum(
                 1
                 for item in self.store.list_authorizations()
-                if item.request_id in request_ids
+                if item.request_id in scoped_request_ids
             ),
         }
 
@@ -403,7 +518,8 @@ class ValidationService:
             return
         updated_snapshot = snapshot.model_copy(
             update={
-                "status": "superseded",
+                "certification_status": "superseded",
+                "validation_status": _canonical_validation_status_for("superseded"),
                 "superseded_at": superseded_at,
             }
         )
@@ -490,17 +606,21 @@ class ValidationService:
         self,
         *,
         request_id: str,
-        outcome: str,
+        recommendation: str | None = None,
         validator_label: str,
         evidence_summary: str,
+        detected_issues: list[dict | ValidationDetectedIssue] | None = None,
+        outcome: str | None = None,
     ) -> ValidationReportOutcome:
         request = self.store.get_request(request_id)
         return self.resolve_maintenance(
             endpoint_id=request.endpoint_id,
             configuration_hash=request.configuration_hash,
+            recommendation=recommendation,
             outcome=outcome,
             validator_label=validator_label,
             evidence_summary=evidence_summary,
+            detected_issues=detected_issues,
         )
 
     def force_mark_validated(
@@ -517,9 +637,11 @@ class ValidationService:
             request.configuration_hash,
         ).model_copy(
             update={
-                "status": "validated",
+                "certification_status": "certified",
+                "validation_status": _canonical_validation_status_for("certified"),
                 "latest_request_id": request_id,
                 "latest_report_id": report_id,
+                "latest_report_at": validated_at,
                 "validated_at": validated_at,
             }
         )
@@ -537,30 +659,53 @@ class ValidationService:
         *,
         endpoint_id: str,
         configuration_hash: str,
-        outcome: str,
+        recommendation: str | None = None,
         validator_label: str,
         evidence_summary: str,
+        detected_issues: list[dict | ValidationDetectedIssue] | None = None,
+        outcome: str | None = None,
     ) -> ValidationReportOutcome:
         snapshot = self.store.get_snapshot(endpoint_id, configuration_hash)
         request = self.store.latest_request_for_snapshot(endpoint_id, configuration_hash)
-        if snapshot.status != "validated" or request.status != "passed":
+        if (
+            snapshot.certification_status not in {"certified", "certified_with_issues"}
+            or request.status != "passed"
+        ):
             raise ValueError(
                 "Maintenance resolution requires a validated snapshot and passed request"
             )
         bond = self.store.get_bond(request.bond_id)
+        resolved_recommendation = self._normalize_recommendation(
+            recommendation=recommendation,
+            outcome=outcome,
+        )
+        resolved_detected_issues = self._normalize_detected_issues(detected_issues)
         report = ValidationReport(
             report_id=self._new_id("report"),
             request_id=request.request_id,
             endpoint_id=endpoint_id,
             configuration_hash=configuration_hash,
-            outcome=outcome,
             report_kind="maintenance",
             validator_label=validator_label,
+            detected_issues=resolved_detected_issues,
+            critical_issue_count=self._count_issues(
+                resolved_detected_issues, severity="critical"
+            ),
+            warning_issue_count=self._count_issues(
+                resolved_detected_issues, severity="warning"
+            ),
+            recommendation=resolved_recommendation,
             evidence_summary=evidence_summary,
             created_at=self._now(),
         )
         self.store.save_report(report)
-        if outcome == "pass":
+        certification_status = _derive_certification_status(
+            request_kind="maintenance",
+            recommendation=report.recommendation,
+            critical_issue_count=report.critical_issue_count,
+        )
+        compat_validation_status = _compat_validation_status_for(certification_status)
+        if certification_status != "revoked":
             refund_q = round(bond.remaining_locked_q * 0.5, 6)
             self.bond_escrow.refund_bond(bond.bond_id, refund_q)
             remaining_locked_q = round(bond.remaining_locked_q - refund_q, 6)
@@ -577,9 +722,13 @@ class ValidationService:
             )
             updated_snapshot = snapshot.model_copy(
                 update={
-                    "status": "validated",
+                    "certification_status": certification_status,
+                    "validation_status": _canonical_validation_status_for(
+                        certification_status
+                    ),
                     "latest_request_id": request.request_id,
                     "latest_report_id": report.report_id,
+                    "latest_report_at": report.created_at,
                     "maintenance_count": snapshot.maintenance_count + 1,
                     "validated_at": report.created_at,
                 }
@@ -610,14 +759,18 @@ class ValidationService:
             )
             updated_snapshot = snapshot.model_copy(
                 update={
-                    "status": "validation_failed",
+                    "certification_status": certification_status,
+                    "validation_status": _canonical_validation_status_for(
+                        certification_status
+                    ),
                     "latest_request_id": request.request_id,
                     "latest_report_id": report.report_id,
+                    "latest_report_at": report.created_at,
                     "maintenance_count": snapshot.maintenance_count + 1,
                     "validated_at": None,
                 }
             )
-            updated_request = request.model_copy(update={"status": "failed"})
+            updated_request = request.model_copy(update={"status": "revoked"})
             event_type = "maintenance_validation_failed"
             self._emit(
                 event_type="validation_bond_forfeited",
@@ -641,7 +794,8 @@ class ValidationService:
                 "report_id": report.report_id,
                 "endpoint_id": endpoint_id,
                 "owner_wallet": bond.owner_wallet,
-                "outcome": outcome,
+                "recommendation": report.recommendation,
+                "validation_status": compat_validation_status,
             },
         )
         return ValidationReportOutcome(
@@ -650,6 +804,52 @@ class ValidationService:
             snapshot=updated_snapshot,
             report=report,
         )
+
+    def _normalize_recommendation(
+        self,
+        *,
+        recommendation: str | None,
+        outcome: str | None,
+    ) -> str:
+        if recommendation is not None:
+            return recommendation
+        if outcome == "pass":
+            return "certify"
+        if outcome == "fail":
+            return "do_not_certify"
+        raise ValueError("recommendation or outcome is required")
+
+    def _normalize_detected_issues(
+        self,
+        detected_issues: list[dict | ValidationDetectedIssue] | None,
+    ) -> list[ValidationDetectedIssue]:
+        normalized: list[ValidationDetectedIssue] = []
+        for item in detected_issues or []:
+            if isinstance(item, ValidationDetectedIssue):
+                normalized.append(item)
+                continue
+            details = {
+                key: value
+                for key, value in item.items()
+                if key not in {"issue_id", "severity", "summary"}
+            }
+            normalized.append(
+                ValidationDetectedIssue(
+                    issue_id=str(item.get("issue_id") or self._new_id("issue")),
+                    severity=item.get("severity"),
+                    summary=item.get("summary") or item.get("code"),
+                    details=details,
+                )
+            )
+        return normalized
+
+    def _count_issues(
+        self,
+        detected_issues: list[ValidationDetectedIssue],
+        *,
+        severity: str,
+    ) -> int:
+        return sum(1 for item in detected_issues if item.severity == severity)
 
     def _emit(
         self,
