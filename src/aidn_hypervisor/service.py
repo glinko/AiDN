@@ -1172,10 +1172,14 @@ class HypervisorService:
                 ]
             }
         )
+        node_status = self._node_advertisement_status(
+            heartbeat_at=timestamp,
+            heartbeat_ttl_seconds=self.heartbeat_ttl_seconds,
+        )
         reputation = RegistryReputation(
             **build_reputation_profile(
-                node_status="ready",
-                heartbeat_fresh=True,
+                node_status=node_status,
+                heartbeat_fresh=node_status == "ready",
                 trust_summary=trust_summary,
                 operational_stats=self._operational_reputation_stats(),
                 baseline_rating=self.rating,
@@ -1188,7 +1192,7 @@ class HypervisorService:
             base_url=self.base_url,
             heartbeat_at=timestamp,
             heartbeat_ttl_seconds=self.heartbeat_ttl_seconds,
-            status="ready",
+            status=node_status,
             resources=resources,
             providers=sorted({bundle.provider_type for bundle in self.bundles}),
             can_host_custom_model=self.can_host_custom_model,
@@ -1225,6 +1229,20 @@ class HypervisorService:
         )
         return advertisement.model_dump(mode="json")
 
+    def _node_advertisement_status(
+        self,
+        *,
+        heartbeat_at: str,
+        heartbeat_ttl_seconds: int,
+    ) -> str:
+        heartbeat = datetime.fromisoformat(heartbeat_at).timestamp()
+        age = time.time() - heartbeat
+        if age <= heartbeat_ttl_seconds:
+            return "ready"
+        if age <= heartbeat_ttl_seconds + RegistryService().stale_grace_seconds:
+            return "stale"
+        return "offline"
+
     def _publication_sync_status(
         self,
         *,
@@ -1252,17 +1270,15 @@ class HypervisorService:
         )
 
     def _operational_reputation_stats(self) -> dict[str, int]:
-        total_tasks = len(self._task_results)
         successful_tasks = 0
         failed_tasks = 0
-        for result in self._task_results.values():
-            if not isinstance(result, dict):
-                continue
-            if result.get("ok") is True and result.get("error") in {None, ""}:
+        for task in self.queue.snapshot():
+            if task.status == "completed":
                 successful_tasks += 1
                 continue
-            if result.get("error") not in {None, ""} or result.get("ok") is False:
+            if task.status == "failed":
                 failed_tasks += 1
+        total_tasks = successful_tasks + failed_tasks
         return {
             "total_tasks": total_tasks,
             "successful_tasks": successful_tasks,

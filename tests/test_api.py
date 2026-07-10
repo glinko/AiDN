@@ -5229,10 +5229,14 @@ def test_node_advertisement_includes_computed_reputation() -> None:
         "tier": "D",
         "updated_at": "2026-07-06T11:55:00+00:00",
     }
-    hypervisor._task_results = {
-        "task-1": {"ok": True},
-        "task-2": {"error": "boom"},
-    }
+    completed = hypervisor.queue.enqueue(
+        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "ok.wav"})
+    )
+    hypervisor.queue.transition_status(completed.task_id, "completed")
+    failed = hypervisor.queue.enqueue(
+        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "fail.wav"})
+    )
+    hypervisor.queue.transition_status(failed.task_id, "failed")
     hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
     endpoint_service = EndpointService(EndpointStore())
     publication_service = EndpointPublicationService(
@@ -5278,6 +5282,19 @@ def test_node_advertisement_includes_computed_reputation() -> None:
     assert advertisement["reputation"]["evidence"]["published_endpoint_count"] == 1
     assert advertisement["reputation"]["evidence"]["successful_tasks"] == 1
     assert advertisement["reputation"]["evidence"]["failed_tasks"] == 1
+    assert advertisement["reputation"]["components"]["operational_reliability"] == 0.5
+
+
+def test_node_advertisement_uses_stale_heartbeat_for_reputation_freshness() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+
+    advertisement = hypervisor.node_advertisement(
+        heartbeat_at=(datetime.now(timezone.utc) - timedelta(seconds=35)).isoformat()
+    )
+
+    assert advertisement["status"] == "stale"
+    assert advertisement["reputation"]["evidence"]["node_status"] == "stale"
+    assert advertisement["reputation"]["components"]["freshness"] == 0.55
 
 
 def test_operator_dashboard_endpoints_payload_reports_publication_sync_state() -> None:
@@ -5963,6 +5980,69 @@ def test_registry_discovery_orders_ready_nodes_by_reputation_then_price() -> Non
     assert [candidate["node_id"] for candidate in result["candidates"]] == [
         "node-high-reputation-cheaper",
         "node-high-reputation-pricier",
+    ]
+
+
+def test_registry_discovery_falls_back_to_legacy_rating_when_reputation_absent() -> None:
+    registry = RegistryService()
+    heartbeat_at = datetime.now(timezone.utc).isoformat()
+    common_bundle = [
+        {
+            "bundle_id": "remote-text",
+            "plugin_id": "fake-managed",
+            "workload_type": "llm_text",
+            "provider_type": "fake",
+            "model_id": "remote-text-model",
+            "endpoint": "https://remote.example/runtimes/remote-text",
+            "enabled": True,
+            "status": "ready",
+            "launch_mode": "attached_service",
+            "device_affinity": "cpu",
+            "max_parallel_requests": 2,
+            "supports_allocation": True,
+            "supports_queue": True,
+        }
+    ]
+    common_resources = {
+        "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
+        "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
+    }
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-high-rating",
+            operator_id="operator-a",
+            base_url="https://node-high-rating.example",
+            heartbeat_at=heartbeat_at,
+            resources=common_resources,
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 9, "output": 12},
+            rating={"score": 0.94, "tier": "A", "updated_at": "2026-07-06T11:55:00+00:00"},
+            bundles=common_bundle,
+        )
+    )
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-low-rating",
+            operator_id="operator-b",
+            base_url="https://node-low-rating.example",
+            heartbeat_at=heartbeat_at,
+            resources=common_resources,
+            providers=["fake"],
+            can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 5, "output": 8},
+            rating={"score": 0.72, "tier": "B", "updated_at": "2026-07-06T11:55:00+00:00"},
+            bundles=common_bundle,
+        )
+    )
+
+    result = registry.discover(
+        RegistryDiscoveryQuery(workload_type="llm_text", min_rating=0.9)
+    )
+
+    assert [node["node_id"] for node in result["nodes"]] == ["node-high-rating"]
+    assert [candidate["node_id"] for candidate in result["candidates"]] == [
+        "node-high-rating"
     ]
 
 
