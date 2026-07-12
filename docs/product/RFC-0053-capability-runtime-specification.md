@@ -464,6 +464,16 @@ The Hypervisor SHALL:
 
 A Runtime MAY proxy an external or remote service.
 
+Proxy Runtime behavior MAY include:
+
+- `DIRECT_EXTERNAL_PROXY`;
+- `AIDN_ENDPOINT_PROXY`;
+- `AGGREGATING_PROXY`;
+- `FAILOVER_PROXY`;
+- `TRANSFORMING_PROXY`;
+- `AGENT_PROXY`;
+- `CHAINED_PROXY`.
+
 When upstream usage is unavailable, the Runtime SHALL declare:
 
 `PROXY_OPAQUE`
@@ -479,6 +489,16 @@ Proxy-Opaque billing SHALL use:
 - other units accepted under `RFC-0051`.
 
 Estimated tokens MAY be reported only as non-authoritative metadata.
+
+The Endpoint operator remains the Consumer-facing protocol counterparty and remains responsible for:
+
+- published pricing;
+- result delivery;
+- Usage Reporting;
+- upstream failure handling;
+- retry and failover behavior;
+- data-handling disclosure;
+- maximum-charge compliance.
 
 ## 26. Runtime Health Ownership
 

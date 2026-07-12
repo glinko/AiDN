@@ -557,6 +557,9 @@ A Proxy-Opaque Usage Report SHOULD include:
 usage_report:
   accounting_mode: proxy_opaque
   upstream_usage_available: false
+  upstream_usage_source: unavailable
+  authoritative_input_tokens: null
+  authoritative_output_tokens: null
   observed_usage:
     completed_requests:
     active_execution_seconds:
@@ -569,11 +572,20 @@ usage_report:
     estimated_output_tokens:
     estimator_id:
     billable: false
+  observable_billable_units:
+  request_class:
+  active_execution_time:
+  delivered_artifacts:
+  completion_status:
 ```
 
 Unknown values SHALL be represented as unknown or omitted according to schema.
 
 They SHALL NOT be represented as zero.
+
+Estimated values MAY support diagnostics, anomaly detection, or statistical comparison.
+
+They SHALL NOT be billed as authoritative upstream usage.
 
 ## 24. Cumulative Usage
 

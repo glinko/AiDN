@@ -248,6 +248,7 @@ The Endpoint must complete a new Validation before its Certification can continu
 This state MAY result from:
 
 - significant configuration change;
+- material Proxy-policy change;
 - unresolved report conflict;
 - policy-version change;
 - prolonged lack of Maintenance Validation;

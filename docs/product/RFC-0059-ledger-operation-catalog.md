@@ -734,6 +734,10 @@ accounting_contract_hash:
 session_policy_hash:
 visibility:
 access_policy_hash:
+proxy_policy_hash:
+retry_policy_hash:
+failover_policy_hash:
+data_handling_policy_hash:
 metadata_hash:
 ```
 
@@ -771,6 +775,7 @@ Required Fields
 - expected Endpoint version;
 - changed policy or configuration references;
 - new hashes.
+- Proxy policy hashes MAY include `proxy_policy_hash`, `retry_policy_hash`, `failover_policy_hash`, and `data_handling_policy_hash`.
 
 State Changes
 
@@ -785,6 +790,14 @@ If the execution configuration hash changes:
 - previous Certification no longer applies;
 - state becomes `UNCERTIFIED` or `VALIDATION_PENDING`;
 - Maintenance history remains visible.
+
+Material Proxy-policy changes through `ENDPOINT_UPDATE` SHALL be treated as execution-relevant changes when they alter:
+
+- retry behavior;
+- failover behavior;
+- data handling;
+- upstream-selection behavior;
+- transformation behavior.
 
 If only pricing or commercial policy changes:
 

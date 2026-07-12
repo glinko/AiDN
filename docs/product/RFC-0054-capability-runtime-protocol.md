@@ -1165,6 +1165,10 @@ proxy_opaque_status:
   billable_estimates: false
   observable_units:
   upstream_status:
+  upstream_disclosure_mode:
+  upstream_switching_possible:
+  retry_policy_hash:
+  failover_policy_hash:
 ```
 
 Unknown upstream usage SHALL not be represented as zero.
@@ -1185,6 +1189,19 @@ The verification result MAY include:
 - mismatch fields;
 - measurement version;
 - evidence hash.
+
+Proxy-specific Runtime events MAY additionally include:
+
+- `UPSTREAM_AVAILABLE`
+- `UPSTREAM_DEGRADED`
+- `UPSTREAM_UNAVAILABLE`
+- `UPSTREAM_AUTH_EXPIRED`
+- `UPSTREAM_RATE_LIMITED`
+- `UPSTREAM_QUOTA_EXHAUSTED`
+- `UPSTREAM_SWITCHED`
+- `PROXY_RETRY_STARTED`
+- `PROXY_RETRY_COMPLETED`
+- `PROXY_RETRY_FAILED`
 
 The Consumer-side Hypervisor may use another Runtime or verifier to perform independent verification.
 

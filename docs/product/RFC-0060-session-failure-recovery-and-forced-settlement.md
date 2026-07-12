@@ -798,13 +798,14 @@ A Proxy Endpoint remains responsible for upstream failures.
 
 Possible upstream failures include:
 
-- OAuth expiration;
-- rate limit;
-- subscription limit;
-- upstream outage;
-- upstream cancellation;
-- unavailable result;
-- upstream protocol change.
+- `UPSTREAM_AUTH_EXPIRED`;
+- `UPSTREAM_RATE_LIMITED`;
+- `UPSTREAM_QUOTA_EXHAUSTED`;
+- `UPSTREAM_UNAVAILABLE`;
+- `UPSTREAM_TASK_CANCELLED`;
+- `UPSTREAM_INVALID_RESPONSE`;
+- `UPSTREAM_PROTOCOL_CHANGED`;
+- `UPSTREAM_UNKNOWN_FAILURE`.
 
 The upstream service has no direct obligation to the Consumer.
 
