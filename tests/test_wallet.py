@@ -1,5 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
+from aidn_hypervisor.accounting.models import (
+    UsageAcknowledgement,
+    UsageReport,
+    usage_acknowledgement_hash,
+    usage_report_hash,
+)
 from aidn_hypervisor.bundle_registry import FileBundleRegistry
 from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
@@ -456,6 +462,36 @@ def test_service_attaches_usage_report_to_paid_session_task_result() -> None:
     assert result["usage_report"]["cumulative_usage"]["input_tokens"] == 250_000
     assert result["usage_acknowledgement"]["verification_status"] == "accepted_unverified"
     assert result["usage_acknowledgement"]["sequence"] == 1
+    expected_report_head = UsageReport.model_validate(result["usage_report"]).model_dump(
+        mode="json"
+    )
+    expected_acknowledgement_head = UsageAcknowledgement.model_validate(
+        result["usage_acknowledgement"]
+    ).model_dump(mode="json")
+    accepted_charge_q = session_service.get_session(opened.session.session_id).deposit.consumed_q
+    assert result["session_accounting"] == {
+        "session_id": opened.session.session_id,
+        "status": "open",
+        "checkpoint": {
+            "last_report_sequence": 1,
+            "last_report_hash": usage_report_hash(
+                UsageReport.model_validate(result["usage_report"])
+            ),
+            "last_ack_sequence": 1,
+            "last_ack_hash": usage_acknowledgement_hash(
+                UsageAcknowledgement.model_validate(result["usage_acknowledgement"])
+            ),
+            "last_accepted_report_sequence": 1,
+            "last_accepted_report_hash": usage_report_hash(
+                UsageReport.model_validate(result["usage_report"])
+            ),
+            "last_accepted_usage_charged_q": accepted_charge_q,
+            "mismatch_open": False,
+            "ack_deadline_at": None,
+        },
+        "report_head": expected_report_head,
+        "acknowledgement_head": expected_acknowledgement_head,
+    }
 
 
 def test_operator_wallet_session_export_reports_economic_events() -> None:

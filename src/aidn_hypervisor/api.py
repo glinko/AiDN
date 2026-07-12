@@ -403,6 +403,7 @@ def _operator_dashboard_sessions_payload(
         if session_id is None:
             continue
         task_id = str(task.task_id)
+        task_result = service.task_result(task_id)
         serialized = {
             "task_id": task_id,
             "created_at": task.created_at,
@@ -413,13 +414,11 @@ def _operator_dashboard_sessions_payload(
             "endpoint_id": task.request.constraints.get("endpoint_id"),
             "input_preview": _task_input_preview(task.request),
             "usage": (
-                service.task_result(task_id).get("usage")
-                if isinstance(service.task_result(task_id), dict)
-                else None
+                task_result.get("usage") if isinstance(task_result, dict) else None
             ),
             "session_accounting": (
-                service.task_result(task_id).get("session_accounting")
-                if isinstance(service.task_result(task_id), dict)
+                task_result.get("session_accounting")
+                if isinstance(task_result, dict)
                 else None
             ),
         }
@@ -550,6 +549,16 @@ class OperatorSessionCloseActionRequest(BaseModel):
 
 class OperatorSessionSweepIdleActionRequest(BaseModel):
     now: str | None = None
+
+
+class SessionUsageReportRecordRequest(BaseModel):
+    usage_report: dict
+    acknowledgement_timeout_seconds: int = Field(ge=0)
+
+
+class SessionUsageAcknowledgementRecordRequest(BaseModel):
+    usage_acknowledgement: dict
+    accepted_charge_q: float = Field(ge=0.0)
 
 
 class ValidationEpochCreateRequest(BaseModel):
@@ -1071,6 +1080,104 @@ def build_api_router(
                     if result.settlement is not None
                     else None
                 ),
+            }
+        )
+
+    @router.post("/api/v1/sessions/{session_id}/usage-reports")
+    async def record_session_usage_report(
+        session_id: str,
+        request: SessionUsageReportRecordRequest,
+    ) -> JSONResponse:
+        if session_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            updated_session = session_service.record_usage_report(
+                session_id,
+                usage_report=request.usage_report,
+                acknowledgement_timeout_seconds=request.acknowledgement_timeout_seconds,
+            )
+        except KeyError:
+            return _error(
+                404,
+                "session_not_found",
+                f"Unknown session: {session_id}",
+            )
+        except ValueError as error:
+            return _error(
+                409,
+                "session_accounting_conflict",
+                str(error),
+            )
+        return _ok(
+            {
+                "session_accounting": service._build_session_accounting_view(
+                    updated_session
+                )
+            }
+        )
+
+    @router.post("/api/v1/sessions/{session_id}/usage-acknowledgements")
+    async def record_session_usage_acknowledgement(
+        session_id: str,
+        request: SessionUsageAcknowledgementRecordRequest,
+    ) -> JSONResponse:
+        if session_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            updated_session = session_service.record_usage_acknowledgement(
+                session_id,
+                usage_acknowledgement=request.usage_acknowledgement,
+                accepted_charge_q=request.accepted_charge_q,
+            )
+        except KeyError:
+            return _error(
+                404,
+                "session_not_found",
+                f"Unknown session: {session_id}",
+            )
+        except ValueError as error:
+            return _error(
+                409,
+                "session_accounting_conflict",
+                str(error),
+            )
+        return _ok(
+            {
+                "session_accounting": service._build_session_accounting_view(
+                    updated_session
+                )
+            }
+        )
+
+    @router.get("/api/v1/sessions/{session_id}/accounting")
+    async def get_session_accounting(session_id: str) -> JSONResponse:
+        if session_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            result = session_service.get_session(session_id)
+        except KeyError:
+            return _error(
+                404,
+                "session_not_found",
+                f"Unknown session: {session_id}",
+            )
+        return _ok(
+            {
+                "session_accounting": service._build_session_accounting_view(
+                    result.session
+                )
             }
         )
 

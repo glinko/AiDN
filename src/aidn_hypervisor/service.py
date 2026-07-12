@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from aidn_hypervisor.accounting.models import (
     AccountingContract,
     AccountingUnitContract,
+    SessionAccountingCheckpoint,
     UsageReport,
 )
 from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, ResourceProfile, TaskRequest
@@ -4314,11 +4315,14 @@ class HypervisorService:
         except ValueError as error:
             result = self._task_results.get(task_id)
             if isinstance(result, dict):
-                result["session_accounting"] = {
-                    "status": "blocked",
-                    "reason": str(error),
-                    "charged_q": amount_q,
-                }
+                try:
+                    session = session_service.get_session(str(session_id)).session
+                except Exception:
+                    session = None
+                if session is not None:
+                    result["session_accounting"] = self._build_session_accounting_view(
+                        session
+                    )
             self.record_event(
                 event_type="session.charge_blocked",
                 message="session usage charge blocked",
@@ -4335,6 +4339,25 @@ class HypervisorService:
     def _provider_usage_contract_for_bundle(self, bundle: BundleConfig) -> dict:
         plugin = self.plugins.get(bundle.plugin_id)
         return plugin.usage_contract()
+
+    def _build_session_accounting_view(self, session) -> dict:
+        checkpoint_payload = dict(session.accounting_checkpoint or {})
+        checkpoint = SessionAccountingCheckpoint.model_validate(
+            checkpoint_payload
+            or {
+                "last_accepted_report_sequence": session.last_accepted_report_sequence,
+                "last_accepted_usage_charged_q": session.last_accepted_usage_charged_q,
+            }
+        )
+        return {
+            "session_id": session.session_id,
+            "status": session.accounting_status,
+            "checkpoint": checkpoint.model_dump(mode="json"),
+            "report_head": dict(session.last_usage_report_snapshot or {}),
+            "acknowledgement_head": dict(
+                session.last_usage_acknowledgement_snapshot or {}
+            ),
+        }
 
     def _attach_usage_report_to_task_result(
         self,
@@ -4435,6 +4458,9 @@ class HypervisorService:
         if isinstance(result, dict):
             result["usage_acknowledgement"] = dict(
                 updated_session.last_usage_acknowledgement_snapshot
+            )
+            result["session_accounting"] = self._build_session_accounting_view(
+                updated_session
             )
 
     def accounting_contract_for_endpoint(self, endpoint) -> dict:
