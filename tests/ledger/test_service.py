@@ -1,5 +1,13 @@
+from datetime import datetime, timezone
+
 import pytest
 
+from aidn_hypervisor.accounting.models import (
+    UsageAcknowledgement,
+    UsageReport,
+    usage_acknowledgement_hash,
+    usage_report_hash,
+)
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand, UpdateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
@@ -150,6 +158,238 @@ def test_session_open_and_settle_record_canonical_ledger_operations() -> None:
     assert service.list_ledger_operations()[0]["sender_wallet"] == "wallet-client"
     assert service.list_ledger_operations()[0]["fee_class"] == "session"
     assert service.list_ledger_operations()[1]["origin_type"] == "multi_party"
+
+
+def test_session_accounting_report_and_acknowledgement_record_canonical_ledger_operations() -> None:
+    service = _hypervisor()
+    session_service = service.session_service
+    opened = session_service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-client",
+        provider_wallet="wallet-provider",
+        node_id="node-a",
+        deposit_q=25.0,
+        session_policy={
+            "minimum_deposit": 10.0,
+            "recommended_deposit": 25.0,
+            "idle_fee_per_minute": 1.0,
+            "idle_timeout_seconds": 600,
+            "max_concurrent_sessions": 1,
+            "maximum_session_duration_seconds": 3600,
+            "queue_policy": "busy",
+            "minimum_session_fee": 2.0,
+        },
+        accounting_contract={"contract_version": "acct-v1"},
+    )
+    usage_report = UsageReport(
+        report_id="report-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id=opened.session.endpoint_id,
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 250_000},
+        measurement_sources={"input_tokens": "provider_api"},
+        created_at="2026-07-12T12:00:00+00:00",
+        signature="local:report-1",
+    )
+
+    pending = session_service.record_usage_report(
+        opened.session.session_id,
+        usage_report=usage_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=30,
+    )
+    usage_acknowledgement = UsageAcknowledgement(
+        session_id=opened.session.session_id,
+        sequence=1,
+        provider_report_hash=pending.accounting_checkpoint["last_report_hash"],
+        verification_status="accepted_unverified",
+        signature="local-ack:report-1",
+    )
+    session_service.record_usage_acknowledgement(
+        opened.session.session_id,
+        usage_acknowledgement=usage_acknowledgement.model_dump(mode="json"),
+        accepted_charge_q=4.0,
+    )
+
+    operations = service.list_ledger_operations()
+    report_operation = next(
+        item for item in operations if item["operation_type"] == "SESSION_USAGE_REPORT"
+    )
+    acknowledgement_operation = next(
+        item
+        for item in operations
+        if item["operation_type"] == "SESSION_USAGE_ACKNOWLEDGEMENT"
+    )
+    checkpoint_operation = next(
+        item for item in operations if item["operation_type"] == "SESSION_CHECKPOINT_ACCEPT"
+    )
+
+    assert report_operation["origin_type"] == "multi_party"
+    assert report_operation["fee_class"] == "session"
+    assert report_operation["payload"] == {
+        "session_id": opened.session.session_id,
+        "endpoint_id": opened.session.endpoint_id,
+        "sequence": 1,
+        "report_hash": usage_report_hash(usage_report),
+        "previous_report_hash": None,
+        "accounting_contract_version": "acct-v1",
+        "accepted_checkpoint_sequence": None,
+        "accepted_usage_charged_q": 0.0,
+    }
+    assert acknowledgement_operation["payload"] == {
+        "session_id": opened.session.session_id,
+        "endpoint_id": opened.session.endpoint_id,
+        "sequence": 1,
+        "report_hash": usage_report_hash(usage_report),
+        "ack_hash": usage_acknowledgement_hash(usage_acknowledgement),
+        "accepted_checkpoint_sequence": 1,
+        "accepted_usage_charged_q": 4.0,
+        "verification_status": "accepted_unverified",
+    }
+    assert checkpoint_operation["payload"] == {
+        "session_id": opened.session.session_id,
+        "endpoint_id": opened.session.endpoint_id,
+        "accepted_checkpoint_sequence": 1,
+        "report_hash": usage_report_hash(usage_report),
+        "accepted_usage_charged_q": 4.0,
+    }
+
+
+def test_session_accounting_replays_do_not_duplicate_ledger_operations() -> None:
+    service = _hypervisor()
+    session_service = service.session_service
+    opened = session_service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-client",
+        provider_wallet="wallet-provider",
+        node_id="node-a",
+        deposit_q=25.0,
+        session_policy={
+            "minimum_deposit": 10.0,
+            "recommended_deposit": 25.0,
+            "idle_fee_per_minute": 1.0,
+            "idle_timeout_seconds": 600,
+            "max_concurrent_sessions": 1,
+            "maximum_session_duration_seconds": 3600,
+            "queue_policy": "busy",
+            "minimum_session_fee": 2.0,
+        },
+        accounting_contract={"contract_version": "acct-v1"},
+    )
+    usage_report = UsageReport(
+        report_id="report-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id=opened.session.endpoint_id,
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 250_000},
+        measurement_sources={"input_tokens": "provider_api"},
+        created_at="2026-07-12T12:00:00+00:00",
+        signature="local:report-1",
+    )
+
+    pending = session_service.record_usage_report(
+        opened.session.session_id,
+        usage_report=usage_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=30,
+    )
+    session_service.record_usage_report(
+        opened.session.session_id,
+        usage_report=usage_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=30,
+    )
+    usage_acknowledgement = UsageAcknowledgement(
+        session_id=opened.session.session_id,
+        sequence=1,
+        provider_report_hash=pending.accounting_checkpoint["last_report_hash"],
+        verification_status="accepted_unverified",
+        signature="local-ack:report-1",
+    )
+    session_service.record_usage_acknowledgement(
+        opened.session.session_id,
+        usage_acknowledgement=usage_acknowledgement.model_dump(mode="json"),
+        accepted_charge_q=4.0,
+    )
+    session_service.record_usage_acknowledgement(
+        opened.session.session_id,
+        usage_acknowledgement=usage_acknowledgement.model_dump(mode="json"),
+        accepted_charge_q=4.0,
+    )
+
+    operation_types = [item["operation_type"] for item in service.list_ledger_operations()]
+
+    assert operation_types.count("SESSION_USAGE_REPORT") == 1
+    assert operation_types.count("SESSION_USAGE_ACKNOWLEDGEMENT") == 1
+    assert operation_types.count("SESSION_CHECKPOINT_ACCEPT") == 1
+
+
+def test_session_accounting_timeout_records_force_settlement_required_operation() -> None:
+    service = _hypervisor()
+    session_service = service.session_service
+    opened = session_service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-client",
+        provider_wallet="wallet-provider",
+        node_id="node-a",
+        deposit_q=25.0,
+        session_policy={
+            "minimum_deposit": 10.0,
+            "recommended_deposit": 25.0,
+            "idle_fee_per_minute": 1.0,
+            "idle_timeout_seconds": 600,
+            "max_concurrent_sessions": 1,
+            "maximum_session_duration_seconds": 3600,
+            "queue_policy": "busy",
+            "minimum_session_fee": 2.0,
+        },
+        accounting_contract={"contract_version": "acct-v1"},
+    )
+    usage_report = UsageReport(
+        report_id="report-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id=opened.session.endpoint_id,
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 250_000},
+        measurement_sources={"input_tokens": "provider_api"},
+        created_at="2026-07-12T12:00:00+00:00",
+        signature="local:report-1",
+    )
+    report_hash = usage_report_hash(usage_report)
+
+    session_service.record_usage_report(
+        opened.session.session_id,
+        usage_report=usage_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=30,
+    )
+    session_service.expire_usage_acknowledgement(
+        opened.session.session_id,
+        now=datetime(2026, 7, 12, 12, 0, 31, tzinfo=timezone.utc),
+    )
+
+    operation = service.list_ledger_operations()[-1]
+
+    assert operation["operation_type"] == "SESSION_ACCOUNTING_FORCE_SETTLE_REQUIRED"
+    assert operation["payload"] == {
+        "session_id": opened.session.session_id,
+        "endpoint_id": opened.session.endpoint_id,
+        "last_report_sequence": 1,
+        "last_report_hash": report_hash,
+        "accepted_checkpoint_sequence": None,
+        "accepted_usage_charged_q": 0.0,
+    }
 
 
 def test_ledger_operations_are_snapshotted_and_restored() -> None:

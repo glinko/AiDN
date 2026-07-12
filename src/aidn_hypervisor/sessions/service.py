@@ -48,6 +48,28 @@ class SessionService:
             details=dict(details or {}),
         )
 
+    def _record_accounting_operation(
+        self,
+        *,
+        operation_type: str,
+        session: EndpointSession,
+        payload: dict,
+        created_at: str | None,
+        emitted_events: list[str] | None = None,
+    ) -> None:
+        if self.operation_recorder is None:
+            return
+        self.operation_recorder(
+            operation_type=operation_type,
+            origin_type="multi_party",
+            fee_class="session",
+            initiator_id=session.session_id,
+            fee_payer=session.client_wallet,
+            payload=dict(payload),
+            created_at=created_at,
+            emitted_events=list(emitted_events or []),
+        )
+
     def list_sessions(self) -> list[EndpointSession]:
         return self.store.list_sessions()
 
@@ -477,6 +499,23 @@ class SessionService:
                 "ack_deadline_at": next_checkpoint.ack_deadline_at,
             },
         )
+        if accounting_status != "mismatch":
+            self._record_accounting_operation(
+                operation_type="SESSION_USAGE_REPORT",
+                session=updated,
+                payload={
+                    "session_id": session_id,
+                    "endpoint_id": updated.endpoint_id,
+                    "sequence": report.sequence,
+                    "report_hash": report_hash,
+                    "previous_report_hash": report.previous_report_hash,
+                    "accounting_contract_version": report.accounting_contract_version,
+                    "accepted_checkpoint_sequence": updated.last_accepted_report_sequence,
+                    "accepted_usage_charged_q": updated.last_accepted_usage_charged_q,
+                },
+                created_at=report.created_at,
+                emitted_events=["SessionUsageReportRecorded"],
+            )
         return updated
 
     def record_usage_acknowledgement(
@@ -562,6 +601,49 @@ class SessionService:
                 "accepted_charge_q": updated.last_accepted_usage_charged_q,
             },
         )
+        operation_created_at = (
+            str(current.last_usage_report_snapshot.get("created_at"))
+            if current.last_usage_report_snapshot.get("created_at") is not None
+            else None
+        )
+        self._record_accounting_operation(
+            operation_type="SESSION_USAGE_ACKNOWLEDGEMENT",
+            session=updated,
+            payload={
+                "session_id": session_id,
+                "endpoint_id": updated.endpoint_id,
+                "sequence": acknowledgement.sequence,
+                "report_hash": acknowledgement.provider_report_hash,
+                "ack_hash": acknowledgement_hash,
+                "accepted_checkpoint_sequence": updated.last_accepted_report_sequence,
+                "accepted_usage_charged_q": updated.last_accepted_usage_charged_q,
+                "verification_status": acknowledgement.verification_status,
+            },
+            created_at=operation_created_at,
+            emitted_events=["SessionUsageAcknowledgementRecorded"],
+        )
+        if (
+            updated.last_accepted_report_sequence != checkpoint.last_accepted_report_sequence
+            or updated.accounting_checkpoint.get("last_accepted_report_hash")
+            != checkpoint.last_accepted_report_hash
+            or updated.last_accepted_usage_charged_q
+            != checkpoint.last_accepted_usage_charged_q
+        ):
+            self._record_accounting_operation(
+                operation_type="SESSION_CHECKPOINT_ACCEPT",
+                session=updated,
+                payload={
+                    "session_id": session_id,
+                    "endpoint_id": updated.endpoint_id,
+                    "accepted_checkpoint_sequence": updated.last_accepted_report_sequence,
+                    "report_hash": updated.accounting_checkpoint.get(
+                        "last_accepted_report_hash"
+                    ),
+                    "accepted_usage_charged_q": updated.last_accepted_usage_charged_q,
+                },
+                created_at=operation_created_at,
+                emitted_events=["SessionCheckpointAccepted"],
+            )
         return updated
 
     def expire_usage_acknowledgement(
@@ -595,6 +677,22 @@ class SessionService:
                 "session_id": session_id,
                 "ack_deadline_at": checkpoint.ack_deadline_at,
             },
+        )
+        self._record_accounting_operation(
+            operation_type="SESSION_ACCOUNTING_FORCE_SETTLE_REQUIRED",
+            session=updated,
+            payload={
+                "session_id": session_id,
+                "endpoint_id": updated.endpoint_id,
+                "last_report_sequence": updated.accounting_checkpoint.get(
+                    "last_report_sequence"
+                ),
+                "last_report_hash": updated.accounting_checkpoint.get("last_report_hash"),
+                "accepted_checkpoint_sequence": updated.last_accepted_report_sequence,
+                "accepted_usage_charged_q": updated.last_accepted_usage_charged_q,
+            },
+            created_at=checkpoint.ack_deadline_at or current_time.isoformat(),
+            emitted_events=["SessionAccountingForceSettlementRequired"],
         )
         return updated
 
