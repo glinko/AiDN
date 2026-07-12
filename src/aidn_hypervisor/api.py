@@ -77,6 +77,28 @@ def _error(
     )
 
 
+def _public_usage_acknowledgement_snapshot(snapshot: dict | None) -> dict:
+    return {
+        key: value
+        for key, value in dict(snapshot or {}).items()
+        if not str(key).startswith("_")
+    }
+
+
+def _public_session_payload(session) -> dict:
+    payload = session.model_dump(mode="json")
+    payload["last_usage_acknowledgement_snapshot"] = _public_usage_acknowledgement_snapshot(
+        payload.get("last_usage_acknowledgement_snapshot")
+    )
+    payload["usage_acknowledgement_chain"] = [
+        _public_usage_acknowledgement_snapshot(item)
+        if isinstance(item, dict)
+        else item
+        for item in payload.get("usage_acknowledgement_chain", [])
+    ]
+    return payload
+
+
 def _execution_payload_for_manifest(manifest) -> dict:
     if manifest.execution_strategy != "proxy" or manifest.proxy_target is None:
         return {"strategy": manifest.execution_strategy}
@@ -1049,10 +1071,7 @@ def build_api_router(
             )
         return _ok(
             {
-                "items": [
-                    session.model_dump(mode="json")
-                    for session in session_service.list_sessions()
-                ]
+                "items": [_public_session_payload(session) for session in session_service.list_sessions()]
             }
         )
 
@@ -1074,7 +1093,7 @@ def build_api_router(
             )
         return _ok(
             {
-                "session": result.session.model_dump(mode="json"),
+                "session": _public_session_payload(result.session),
                 "deposit": result.deposit.model_dump(mode="json"),
                 "settlement": (
                     result.settlement.model_dump(mode="json")

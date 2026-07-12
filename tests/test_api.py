@@ -5197,6 +5197,89 @@ def test_get_session_accounting_returns_canonical_read_model() -> None:
     }
 
 
+def test_session_endpoints_do_not_expose_internal_accounting_replay_metadata() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    service.endpoint_service = endpoint_service
+    service.session_service = session_service
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            pricing={"billing_unit": "token", "input_price": 12.0},
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=25.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+        accounting_contract=service.accounting_contract_for_endpoint(created.endpoint),
+    )
+    usage_report = {
+        "report_id": "report-1",
+        "report_version": "0.1",
+        "session_id": opened.session.session_id,
+        "endpoint_id": created.endpoint.endpoint_id,
+        "capability_id": "llm_text.generate",
+        "pricing_version": "pricing-v1",
+        "accounting_contract_version": "acct-v1",
+        "accounting_modes": {"input_tokens": "provider_metered"},
+        "sequence": 1,
+        "cumulative_usage": {"input_tokens": 250_000},
+        "measurement_sources": {"input_tokens": "provider_api"},
+        "created_at": "2026-07-12T12:00:00+00:00",
+        "signature": "local:report-1",
+    }
+    session_service.record_usage_report(
+        opened.session.session_id,
+        usage_report=usage_report,
+        acknowledgement_timeout_seconds=30,
+    )
+    session_service.record_usage_acknowledgement(
+        opened.session.session_id,
+        usage_acknowledgement={
+            "session_id": opened.session.session_id,
+            "sequence": 1,
+            "provider_report_hash": "sha256:wrong",
+            "verification_status": "mismatch",
+            "signature": "local-ack:report-1",
+        },
+        accepted_charge_q=3.5,
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    detail_response = client.get(f"/api/v1/sessions/{opened.session.session_id}")
+    list_response = client.get("/api/v1/sessions")
+
+    assert detail_response.status_code == 200
+    assert list_response.status_code == 200
+    detail_session = detail_response.json()["data"]["session"]
+    listed_session = list_response.json()["data"]["items"][0]
+    assert "_accepted_charge_q" not in detail_session["last_usage_acknowledgement_snapshot"]
+    assert "_accepted_charge_q" not in listed_session["last_usage_acknowledgement_snapshot"]
+    assert "_accepted_charge_q" not in detail_session["usage_acknowledgement_chain"][0]
+    assert "_accepted_charge_q" not in listed_session["usage_acknowledgement_chain"][0]
+
+
 def test_operator_dashboard_session_sweep_action_closes_idle_sessions() -> None:
     service = _service(whisper_endpoint="http://127.0.0.1:9000")
     service.configure_owner_wallet(mode="create", label="Primary Wallet")
