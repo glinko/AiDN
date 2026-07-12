@@ -122,6 +122,29 @@ class SessionService:
         self.store.save_session(updated)
         return updated
 
+    def _validate_usage_report_identity(
+        self,
+        *,
+        current: EndpointSession,
+        session_id: str,
+        report: UsageReport,
+    ) -> None:
+        if report.session_id != session_id:
+            raise ValueError("usage report session_id does not match target session")
+        if report.endpoint_id != current.endpoint_id:
+            raise ValueError("usage report endpoint_id does not match target session")
+
+    def _validate_usage_acknowledgement_identity(
+        self,
+        *,
+        session_id: str,
+        acknowledgement: UsageAcknowledgement,
+    ) -> None:
+        if acknowledgement.session_id != session_id:
+            raise ValueError(
+                "usage acknowledgement session_id does not match target session"
+            )
+
     def require_active_session(
         self,
         *,
@@ -382,9 +405,27 @@ class SessionService:
     ) -> EndpointSession:
         current = self.store.get_session(session_id)
         report = UsageReport.model_validate(usage_report)
+        self._validate_usage_report_identity(
+            current=current,
+            session_id=session_id,
+            report=report,
+        )
         checkpoint = self._checkpoint_from_session(current)
         report_hash = usage_report_hash(report)
-        expected_sequence = 1 if checkpoint.last_report_sequence is None else checkpoint.last_report_sequence + 1
+        if (
+            report.sequence == checkpoint.last_report_sequence
+            and report_hash == checkpoint.last_report_hash
+        ):
+            return current
+        expected_sequence = (
+            1
+            if checkpoint.last_report_sequence is None
+            else checkpoint.last_report_sequence + 1
+        )
+        same_sequence_different_hash = (
+            report.sequence == checkpoint.last_report_sequence
+            and report_hash != checkpoint.last_report_hash
+        )
         chain_continuity_ok = (
             report.sequence == expected_sequence
             and (
@@ -393,21 +434,24 @@ class SessionService:
             )
         )
         next_checkpoint = checkpoint.model_copy(deep=True)
-        next_checkpoint.last_report_sequence = report.sequence
-        next_checkpoint.last_report_hash = report_hash
         try:
             report_created_at = datetime.fromisoformat(report.created_at)
         except ValueError:
             report_created_at = datetime.now(timezone.utc)
-        next_checkpoint.ack_deadline_at = (
-            report_created_at + timedelta(seconds=max(0, acknowledgement_timeout_seconds))
-        ).isoformat()
         report_chain = list(current.usage_report_chain or [])
         report_chain.append(report.model_dump(mode="json"))
         accounting_status = "ack_pending"
-        if not chain_continuity_ok:
+        if same_sequence_different_hash or not chain_continuity_ok:
             accounting_status = "mismatch"
             next_checkpoint.mismatch_open = True
+        else:
+            next_checkpoint.last_report_sequence = report.sequence
+            next_checkpoint.last_report_hash = report_hash
+            next_checkpoint.mismatch_open = False
+            next_checkpoint.ack_deadline_at = (
+                report_created_at
+                + timedelta(seconds=max(0, acknowledgement_timeout_seconds))
+            ).isoformat()
         updated = self._replace_accounting_state(
             current,
             report_chain=report_chain,
@@ -444,6 +488,10 @@ class SessionService:
     ) -> EndpointSession:
         current = self.store.get_session(session_id)
         acknowledgement = UsageAcknowledgement.model_validate(usage_acknowledgement)
+        self._validate_usage_acknowledgement_identity(
+            session_id=session_id,
+            acknowledgement=acknowledgement,
+        )
         checkpoint = self._checkpoint_from_session(current)
         next_checkpoint = checkpoint.model_copy(deep=True)
         acknowledgement_hash = usage_acknowledgement_hash(acknowledgement)
@@ -455,7 +503,12 @@ class SessionService:
             checkpoint.last_report_sequence == acknowledgement.sequence
             and checkpoint.last_report_hash == acknowledgement.provider_report_hash
         )
-        if acknowledgement.verification_status == "mismatch" or not valid_current_head:
+        ack_eligible_head = current.accounting_status == "ack_pending" and not checkpoint.mismatch_open
+        if (
+            acknowledgement.verification_status == "mismatch"
+            or not valid_current_head
+            or not ack_eligible_head
+        ):
             next_checkpoint.mismatch_open = True
             accounting_status = "mismatch"
         elif acknowledgement.verification_status in {

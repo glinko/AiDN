@@ -461,6 +461,207 @@ def test_expire_usage_acknowledgement_marks_force_settle_required_without_advanc
     assert expired.accounting_checkpoint["ack_deadline_at"] == "2026-07-10T00:02:00+00:00"
 
 
+def test_invalid_chain_acknowledgement_does_not_advance_accepted_baseline() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(minimum_session_fee=0.0),
+    )
+    first_charge = service.record_usage_charge(opened.session.session_id, amount_q=6.5)
+    first_report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+    accepted = service.record_usage_checkpoint(
+        opened.session.session_id,
+        usage_report=first_report.model_dump(mode="json"),
+        accepted_charge_q=first_charge.deposit.consumed_q,
+    )
+    second_charge = service.record_usage_charge(opened.session.session_id, amount_q=5.5)
+    invalid_report = UsageReport(
+        report_id="rep-2",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=2,
+        cumulative_usage={"input_tokens": 180, "output_tokens": 80},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        previous_report_hash="sha256:not-the-real-previous-hash",
+        created_at="2026-07-10T00:01:00+00:00",
+        signature="sig-2",
+    )
+
+    mismatched = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=invalid_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+    current = service.get_session(opened.session.session_id).session
+    acknowledgement = UsageAcknowledgement(
+        session_id=opened.session.session_id,
+        sequence=2,
+        provider_report_hash=current.accounting_checkpoint["last_report_hash"],
+        verification_status="verified",
+        signature="ack-2",
+    )
+
+    updated = service.record_usage_acknowledgement(
+        opened.session.session_id,
+        usage_acknowledgement=acknowledgement.model_dump(mode="json"),
+        accepted_charge_q=second_charge.deposit.consumed_q,
+    )
+
+    assert accepted.last_accepted_report_sequence == 1
+    assert mismatched.accounting_status == "mismatch"
+    assert updated.accounting_status == "mismatch"
+    assert updated.last_accepted_report_sequence == 1
+    assert updated.last_accepted_usage_charged_q == 6.5
+    assert updated.accounting_checkpoint["last_accepted_report_sequence"] == 1
+    assert updated.accounting_checkpoint["last_accepted_usage_charged_q"] == 6.5
+
+
+def test_record_usage_report_duplicate_retry_is_idempotent() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+
+    first = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+    retried = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+
+    assert retried == first
+    assert len(retried.usage_report_chain) == 1
+    assert retried.accounting_status == "ack_pending"
+    assert retried.accounting_checkpoint == first.accounting_checkpoint
+
+
+def test_record_usage_report_rejects_mismatched_payload_session_id() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id="sess-other",
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+
+    with pytest.raises(ValueError, match="session_id"):
+        service.record_usage_report(
+            opened.session.session_id,
+            usage_report=report.model_dump(mode="json"),
+            acknowledgement_timeout_seconds=120,
+        )
+
+
+def test_record_usage_acknowledgement_rejects_mismatched_payload_session_id() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+    pending = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+    acknowledgement = UsageAcknowledgement(
+        session_id="sess-other",
+        sequence=1,
+        provider_report_hash=pending.accounting_checkpoint["last_report_hash"],
+        verification_status="verified",
+        signature="ack-1",
+    )
+
+    with pytest.raises(ValueError, match="session_id"):
+        service.record_usage_acknowledgement(
+            opened.session.session_id,
+            usage_acknowledgement=acknowledgement.model_dump(mode="json"),
+            accepted_charge_q=6.5,
+        )
+
+
 def test_close_session_preserves_last_accepted_checkpoint_when_newer_report_is_unacknowledged() -> None:
     service = _session_service()
     opened = service.open_session(
