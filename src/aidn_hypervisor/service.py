@@ -4349,14 +4349,17 @@ class HypervisorService:
                 "last_accepted_usage_charged_q": session.last_accepted_usage_charged_q,
             }
         )
+        acknowledgement_head = {
+            key: value
+            for key, value in dict(session.last_usage_acknowledgement_snapshot or {}).items()
+            if not str(key).startswith("_")
+        }
         return {
             "session_id": session.session_id,
             "status": session.accounting_status,
             "checkpoint": checkpoint.model_dump(mode="json"),
             "report_head": dict(session.last_usage_report_snapshot or {}),
-            "acknowledgement_head": dict(
-                session.last_usage_acknowledgement_snapshot or {}
-            ),
+            "acknowledgement_head": acknowledgement_head,
         }
 
     def _attach_usage_report_to_task_result(
@@ -4457,7 +4460,13 @@ class HypervisorService:
         result = self._task_results.get(task_id)
         if isinstance(result, dict):
             result["usage_acknowledgement"] = dict(
-                updated_session.last_usage_acknowledgement_snapshot
+                {
+                    key: value
+                    for key, value in dict(
+                        updated_session.last_usage_acknowledgement_snapshot
+                    ).items()
+                    if not str(key).startswith("_")
+                }
             )
             result["session_accounting"] = self._build_session_accounting_view(
                 updated_session

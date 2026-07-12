@@ -167,6 +167,16 @@ class SessionService:
                 "usage acknowledgement session_id does not match target session"
             )
 
+    def _stored_acknowledgement_snapshot(
+        self,
+        acknowledgement: UsageAcknowledgement,
+        *,
+        accepted_charge_q: float,
+    ) -> dict:
+        snapshot = acknowledgement.model_dump(mode="json")
+        snapshot["_accepted_charge_q"] = max(0.0, float(accepted_charge_q))
+        return snapshot
+
     def require_active_session(
         self,
         *,
@@ -542,23 +552,30 @@ class SessionService:
         checkpoint = self._checkpoint_from_session(current)
         next_checkpoint = checkpoint.model_copy(deep=True)
         acknowledgement_hash = usage_acknowledgement_hash(acknowledgement)
+        normalized_accepted_charge_q = max(0.0, float(accepted_charge_q))
+        stored_acknowledgement_charge_q = current.last_usage_acknowledgement_snapshot.get(
+            "_accepted_charge_q"
+        )
         if (
             acknowledgement.sequence == checkpoint.last_ack_sequence
             and acknowledgement_hash == checkpoint.last_ack_hash
         ):
-            if current.accounting_status == "mismatch":
-                return current
-            normalized_accepted_charge_q = max(0.0, float(accepted_charge_q))
-            if (
-                checkpoint.last_accepted_usage_charged_q
-                != normalized_accepted_charge_q
-            ):
+            comparison_charge_q = (
+                stored_acknowledgement_charge_q
+                if stored_acknowledgement_charge_q is not None
+                else checkpoint.last_accepted_usage_charged_q
+            )
+            if comparison_charge_q != normalized_accepted_charge_q:
                 raise ValueError(
                     "usage acknowledgement replay conflicts with accepted charge"
                 )
             return current
+        acknowledgement_snapshot = self._stored_acknowledgement_snapshot(
+            acknowledgement,
+            accepted_charge_q=normalized_accepted_charge_q,
+        )
         acknowledgement_chain = list(current.usage_acknowledgement_chain or [])
-        acknowledgement_chain.append(acknowledgement.model_dump(mode="json"))
+        acknowledgement_chain.append(acknowledgement_snapshot)
         next_checkpoint.last_ack_sequence = acknowledgement.sequence
         next_checkpoint.last_ack_hash = acknowledgement_hash
         valid_current_head = (
@@ -580,7 +597,7 @@ class SessionService:
         }:
             next_checkpoint.last_accepted_report_sequence = acknowledgement.sequence
             next_checkpoint.last_accepted_report_hash = acknowledgement.provider_report_hash
-            next_checkpoint.last_accepted_usage_charged_q = max(0.0, float(accepted_charge_q))
+            next_checkpoint.last_accepted_usage_charged_q = normalized_accepted_charge_q
             next_checkpoint.mismatch_open = False
             next_checkpoint.ack_deadline_at = None
             accounting_status = "open"
