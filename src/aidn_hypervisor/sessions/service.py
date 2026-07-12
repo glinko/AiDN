@@ -495,6 +495,11 @@ class SessionService:
         checkpoint = self._checkpoint_from_session(current)
         next_checkpoint = checkpoint.model_copy(deep=True)
         acknowledgement_hash = usage_acknowledgement_hash(acknowledgement)
+        if (
+            acknowledgement.sequence == checkpoint.last_ack_sequence
+            and acknowledgement_hash == checkpoint.last_ack_hash
+        ):
+            return current
         acknowledgement_chain = list(current.usage_acknowledgement_chain or [])
         acknowledgement_chain.append(acknowledgement.model_dump(mode="json"))
         next_checkpoint.last_ack_sequence = acknowledgement.sequence

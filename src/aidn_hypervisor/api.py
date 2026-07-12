@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from aidn_hypervisor.accounting.models import UsageAcknowledgement, UsageReport
 from aidn_hypervisor.dashboard import build_market_payload, load_dashboard_html
 from aidn_hypervisor.domain.models import (
     AllocationRequest,
@@ -552,12 +553,12 @@ class OperatorSessionSweepIdleActionRequest(BaseModel):
 
 
 class SessionUsageReportRecordRequest(BaseModel):
-    usage_report: dict
+    usage_report: UsageReport
     acknowledgement_timeout_seconds: int = Field(ge=0)
 
 
 class SessionUsageAcknowledgementRecordRequest(BaseModel):
-    usage_acknowledgement: dict
+    usage_acknowledgement: UsageAcknowledgement
     accepted_charge_q: float = Field(ge=0.0)
 
 
@@ -1097,7 +1098,7 @@ def build_api_router(
         try:
             updated_session = session_service.record_usage_report(
                 session_id,
-                usage_report=request.usage_report,
+                usage_report=request.usage_report.model_dump(mode="json"),
                 acknowledgement_timeout_seconds=request.acknowledgement_timeout_seconds,
             )
         except KeyError:
@@ -1138,7 +1139,7 @@ def build_api_router(
         try:
             updated_session = session_service.record_usage_acknowledgement(
                 session_id,
-                usage_acknowledgement=request.usage_acknowledgement,
+                usage_acknowledgement=request.usage_acknowledgement.model_dump(mode="json"),
                 accepted_charge_q=request.accepted_charge_q,
             )
         except KeyError:
