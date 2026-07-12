@@ -499,6 +499,14 @@ class SessionService:
             acknowledgement.sequence == checkpoint.last_ack_sequence
             and acknowledgement_hash == checkpoint.last_ack_hash
         ):
+            normalized_accepted_charge_q = max(0.0, float(accepted_charge_q))
+            if (
+                checkpoint.last_accepted_usage_charged_q
+                != normalized_accepted_charge_q
+            ):
+                raise ValueError(
+                    "usage acknowledgement replay conflicts with accepted charge"
+                )
             return current
         acknowledgement_chain = list(current.usage_acknowledgement_chain or [])
         acknowledgement_chain.append(acknowledgement.model_dump(mode="json"))
