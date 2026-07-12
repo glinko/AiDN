@@ -708,10 +708,14 @@ An upgrade definition includes:
 - activation height or Epoch;
 - required migration identifier;
 - compatibility requirements.
+- upgrade activation reference;
+- resulting post-migration state root where applicable.
 
 Consensus Services SHALL reject blocks produced under an incompatible application version after activation.
 
 Upgrade logic SHALL be deterministic.
+
+The activation block or activation reference SHALL remain part of canonical finalized history once finalized.
 
 Emergency upgrades are outside the MVP unless required to address a critical network vulnerability.
 
@@ -742,6 +746,10 @@ Consensus Halt
 Hypervisors MAY continue local computation.
 
 New canonical Ledger transitions and Settlements remain pending until consensus resumes.
+
+Recovery from ordinary halt SHALL restart from the last finalized height and state root.
+
+If the last Validator Set cannot finalize the recovery path, continuation becomes an explicit Network Revision continuity event rather than an ordinary canonical restart.
 
 ## 37. Security Requirements
 

@@ -1940,11 +1940,28 @@ The MVP SHALL implement at minimum:
 - `REWARD_MINT`;
 - `CONSENSUS_VALIDATOR_SET_UPDATE`;
 - `SNAPSHOT_COMMIT`;
+- `PROTOCOL_UPGRADE_PROPOSE`;
+- `PROTOCOL_UPGRADE_AUTHORIZE`;
+- `PROTOCOL_UPGRADE_SCHEDULE`;
+- `PROTOCOL_READINESS_SIGNAL`;
+- `PROTOCOL_READINESS_WITHDRAW`;
+- `PROTOCOL_UPGRADE_POSTPONE`;
+- `PROTOCOL_UPGRADE_CANCEL`;
+- `PROTOCOL_UPGRADE_ACTIVATE`;
+- `EMERGENCY_ACTION_AUTHORIZE`;
+- `EMERGENCY_ACTION_ACTIVATE`;
+- `EMERGENCY_ACTION_EXTEND`;
+- `EMERGENCY_ACTION_END`;
+- `STATE_REPAIR_COMMIT`;
+- `STATE_REPAIR_APPLY`;
+- `NETWORK_RECOVERY_MANIFEST_COMMIT`;
 - `PARTICIPANT_SUSPEND`;
 - `PARTICIPANT_REINSTATE`;
 - `PENALTY_APPLY`.
 
 `SESSION_FORCE_SETTLE` remains explicitly bound to the failure evidence, timeout, checkpoint, and forced-settlement rules defined in [RFC-0060 Session Failure, Recovery and Forced Settlement](./RFC-0060-session-failure-recovery-and-forced-settlement.md).
+
+Upgrade, emergency-recovery, and state-repair semantics for these operations are defined by [RFC-0066 Protocol Upgrade and Emergency Recovery](./RFC-0066-protocol-upgrade-and-emergency-recovery.md).
 
 ## 72. Deferred Operations
 

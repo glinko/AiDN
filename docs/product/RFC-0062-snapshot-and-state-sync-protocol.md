@@ -234,6 +234,7 @@ snapshot_manifest:
   snapshot_format_version:
   network_id:
   chain_id:
+  network_revision:
   protocol_version:
   application_version:
   state_schema_version:
@@ -556,6 +557,7 @@ A Trust Anchor identifies a finalized canonical point known independently by the
 trusted_checkpoint:
   network_id:
   chain_id:
+  network_revision:
   block_height:
   block_hash:
   application_state_hash:

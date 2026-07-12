@@ -55,6 +55,17 @@ Examples include:
 - Session state
 - Validation state
 
+Canonical state SHALL also track active network-version coordinates, including:
+
+- `protocol_version`
+- `application_version`
+- `operation_set_version`
+- `state_schema_version`
+- `consensus_adapter_version`
+- `registry_profile_version`
+- `runtime_protocol_version`
+- `network_revision`
+
 The Ledger SHALL NOT store temporary runtime information.
 
 GPU utilization, RAM usage, and Provider internals are outside Ledger scope.

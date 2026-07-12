@@ -705,6 +705,17 @@ Actual Mint SHALL NOT exceed:
 
 `NewEpochRewardBudget(t) + AuthorizedCarryovers(t)`
 
+An authorized emergency pause MAY temporarily stop Reward Mint or Faucet payment finalization.
+
+Such a pause does not by itself redefine:
+
+- `NewEpochRewardBudget(t)`;
+- `AuthorizedCarryovers(t)`;
+- `RecycleBacklog(t)`;
+- Faucet carryover rules.
+
+Budget treatment during and after the pause SHALL follow the separately authorized recovery or continuation rule.
+
 ## 47. Supply Accounting
 
 The network SHALL publish:
