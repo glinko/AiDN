@@ -54,6 +54,10 @@ Examples include:
 - Reputation
 - Session state
 - Validation state
+- Governance Proposals
+- Governance Votes
+- Chamber Snapshots
+- Authorization Certificates
 
 Canonical state SHALL also track active network-version coordinates, including:
 

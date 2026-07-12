@@ -1955,6 +1955,25 @@ The MVP SHALL implement at minimum:
 - `STATE_REPAIR_COMMIT`;
 - `STATE_REPAIR_APPLY`;
 - `NETWORK_RECOVERY_MANIFEST_COMMIT`;
+- `GOVERNANCE_PROPOSAL_SUBMIT`;
+- `GOVERNANCE_PROPOSAL_WITHDRAW`;
+- `GOVERNANCE_PROPOSAL_SPONSOR`;
+- `GOVERNANCE_PROPOSAL_UNSPONSOR`;
+- `GOVERNANCE_REVIEW_OPEN`;
+- `GOVERNANCE_VOTING_OPEN`;
+- `GOVERNANCE_VOTE`;
+- `GOVERNANCE_VOTE_WITHDRAW`;
+- `GOVERNANCE_VOTING_FINALIZE`;
+- `GOVERNANCE_ECONOMIC_SIGNAL`;
+- `GOVERNANCE_ECONOMIC_SIGNAL_WITHDRAW`;
+- `GOVERNANCE_AUTHORIZATION_COMMIT`;
+- `GOVERNANCE_PROPOSAL_REJECT`;
+- `GOVERNANCE_PROPOSAL_EXPIRE`;
+- `GOVERNANCE_PROPOSAL_CANCEL`;
+- `GOVERNANCE_COUNCIL_UPDATE`;
+- `GOVERNANCE_MODE_TRANSITION`;
+- `GOVERNANCE_SHORT_SAFETY_PAUSE`;
+- `GOVERNANCE_EMERGENCY_AUTHORIZE`;
 - `PARTICIPANT_SUSPEND`;
 - `PARTICIPANT_REINSTATE`;
 - `PENALTY_APPLY`.
@@ -1962,6 +1981,8 @@ The MVP SHALL implement at minimum:
 `SESSION_FORCE_SETTLE` remains explicitly bound to the failure evidence, timeout, checkpoint, and forced-settlement rules defined in [RFC-0060 Session Failure, Recovery and Forced Settlement](./RFC-0060-session-failure-recovery-and-forced-settlement.md).
 
 Upgrade, emergency-recovery, and state-repair semantics for these operations are defined by [RFC-0066 Protocol Upgrade and Emergency Recovery](./RFC-0066-protocol-upgrade-and-emergency-recovery.md).
+
+Governance proposal, sponsorship, voting, chamber-snapshot, and authorization-certificate semantics for the governance operations are defined by [RFC-0067 Protocol Governance and Authorization Policy](./RFC-0067-protocol-governance-and-authorization-policy.md).
 
 ## 72. Deferred Operations
 

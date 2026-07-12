@@ -303,6 +303,10 @@ CometBFT implementation MAY use another equal integer value where required.
 
 All active Validators SHALL receive the same amount.
 
+Governance use of the Active Validator Set MAY reuse the same frozen set snapshot for Consensus Chamber eligibility.
+
+Such governance votes are not Consensus votes, do not finalize blocks by themselves, and do not alter CometBFT finality rules.
+
 ## 18. Known Control Group Limit
 
 The MVP SHOULD allow no more than:

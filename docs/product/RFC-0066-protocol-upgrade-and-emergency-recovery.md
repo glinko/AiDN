@@ -500,7 +500,9 @@ Supported policy classes MAY include:
 - `GOVERNANCE_DECISION`
 - `COMBINED_AUTHORIZATION`
 
-The exact production governance mechanism is outside the scope of this document.
+The active authorization policy SHALL produce or require a governance-grade Authorization Certificate where governance is available under `RFC-0067`.
+
+Bootstrap and recovery exceptions SHALL remain explicit.
 
 This document defines how an authorized decision becomes a deterministic protocol transition.
 

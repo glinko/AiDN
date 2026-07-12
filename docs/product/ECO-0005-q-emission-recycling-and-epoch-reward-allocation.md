@@ -767,6 +767,8 @@ The following are versioned protocol parameters:
 - rounding precision;
 - reward finalization delay.
 
+Material increases in emission authority, Faucet allocation authority, or arbitrary Mint flexibility SHALL be treated as high-impact monetary-policy changes under governance rules such as the Monetary Policy Protection path defined by `RFC-0067`.
+
 These parameters SHALL NOT be scattered across unrelated components.
 
 ## 50. Parameter Changes

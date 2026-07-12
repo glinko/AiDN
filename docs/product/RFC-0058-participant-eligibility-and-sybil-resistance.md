@@ -329,6 +329,12 @@ Provable links MAY include:
 
 Known Control Groups SHALL be used where protocol rules require reward or voting-power aggregation.
 
+They SHALL also be used where governance rules require:
+
+- one Infrastructure Chamber voting unit per known control group;
+- aggregation of multiple Service identities into one Infrastructure governance participant;
+- detection of conflicts where one operator attempts to multiply governance influence through additional Service registrations.
+
 Detailed reward-pool aggregation and concentration formulas are defined separately by `ECO-0004`.
 
 ## 22. Unknown Common Ownership
