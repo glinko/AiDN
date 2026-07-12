@@ -331,6 +331,161 @@ def test_session_accounting_replays_do_not_duplicate_ledger_operations() -> None
     assert operation_types.count("SESSION_CHECKPOINT_ACCEPT") == 1
 
 
+def test_session_accounting_conflicting_report_replay_is_operation_silent() -> None:
+    service = _hypervisor()
+    session_service = service.session_service
+    opened = session_service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-client",
+        provider_wallet="wallet-provider",
+        node_id="node-a",
+        deposit_q=25.0,
+        session_policy={
+            "minimum_deposit": 10.0,
+            "recommended_deposit": 25.0,
+            "idle_fee_per_minute": 1.0,
+            "idle_timeout_seconds": 600,
+            "max_concurrent_sessions": 1,
+            "maximum_session_duration_seconds": 3600,
+            "queue_policy": "busy",
+            "minimum_session_fee": 2.0,
+        },
+        accounting_contract={"contract_version": "acct-v1"},
+    )
+    first_report = UsageReport(
+        report_id="report-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id=opened.session.endpoint_id,
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 250_000},
+        measurement_sources={"input_tokens": "provider_api"},
+        created_at="2026-07-12T12:00:00+00:00",
+        signature="local:report-1",
+    )
+    session_service.record_usage_report(
+        opened.session.session_id,
+        usage_report=first_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=30,
+    )
+    conflicting_report = UsageReport(
+        report_id="report-2",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id=opened.session.endpoint_id,
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=2,
+        previous_report_hash="sha256:wrong",
+        cumulative_usage={"input_tokens": 500_000},
+        measurement_sources={"input_tokens": "provider_api"},
+        created_at="2026-07-12T12:01:00+00:00",
+        signature="local:report-2",
+    )
+
+    mismatched = session_service.record_usage_report(
+        opened.session.session_id,
+        usage_report=conflicting_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=30,
+    )
+    replayed = session_service.record_usage_report(
+        opened.session.session_id,
+        usage_report=conflicting_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=30,
+    )
+
+    operation_types = [item["operation_type"] for item in service.list_ledger_operations()]
+    mismatch_events = [
+        event for event in service.event_journal() if event.event_type == "session.accounting_mismatch"
+    ]
+
+    assert mismatched.accounting_status == "mismatch"
+    assert replayed.accounting_status == "mismatch"
+    assert len(replayed.usage_report_chain) == 2
+    assert operation_types.count("SESSION_USAGE_REPORT") == 2
+    assert mismatch_events == [mismatch_events[0]]
+
+
+def test_session_accounting_mismatched_acknowledgement_replay_is_operation_silent() -> None:
+    service = _hypervisor()
+    session_service = service.session_service
+    opened = session_service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-client",
+        provider_wallet="wallet-provider",
+        node_id="node-a",
+        deposit_q=25.0,
+        session_policy={
+            "minimum_deposit": 10.0,
+            "recommended_deposit": 25.0,
+            "idle_fee_per_minute": 1.0,
+            "idle_timeout_seconds": 600,
+            "max_concurrent_sessions": 1,
+            "maximum_session_duration_seconds": 3600,
+            "queue_policy": "busy",
+            "minimum_session_fee": 2.0,
+        },
+        accounting_contract={"contract_version": "acct-v1"},
+    )
+    usage_report = UsageReport(
+        report_id="report-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id=opened.session.endpoint_id,
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 250_000},
+        measurement_sources={"input_tokens": "provider_api"},
+        created_at="2026-07-12T12:00:00+00:00",
+        signature="local:report-1",
+    )
+    pending = session_service.record_usage_report(
+        opened.session.session_id,
+        usage_report=usage_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=30,
+    )
+    mismatched_acknowledgement = UsageAcknowledgement(
+        session_id=opened.session.session_id,
+        sequence=1,
+        provider_report_hash="sha256:wrong",
+        verification_status="mismatch",
+        signature="local-ack:report-1",
+    )
+
+    mismatched = session_service.record_usage_acknowledgement(
+        opened.session.session_id,
+        usage_acknowledgement=mismatched_acknowledgement.model_dump(mode="json"),
+        accepted_charge_q=3.5,
+    )
+    replayed = session_service.record_usage_acknowledgement(
+        opened.session.session_id,
+        usage_acknowledgement=mismatched_acknowledgement.model_dump(mode="json"),
+        accepted_charge_q=3.5,
+    )
+
+    operation_types = [item["operation_type"] for item in service.list_ledger_operations()]
+    mismatch_events = [
+        event for event in service.event_journal() if event.event_type == "session.accounting_mismatch"
+    ]
+
+    assert pending.accounting_status == "ack_pending"
+    assert mismatched.accounting_status == "mismatch"
+    assert replayed.accounting_status == "mismatch"
+    assert len(replayed.usage_acknowledgement_chain) == 1
+    assert operation_types.count("SESSION_USAGE_ACKNOWLEDGEMENT") == 1
+    assert operation_types.count("SESSION_CHECKPOINT_ACCEPT") == 0
+    assert mismatch_events == [mismatch_events[0]]
+
+
 def test_session_accounting_timeout_records_force_settlement_required_operation() -> None:
     service = _hypervisor()
     session_service = service.session_service

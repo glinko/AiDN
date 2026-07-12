@@ -439,6 +439,15 @@ class SessionService:
             and report_hash == checkpoint.last_report_hash
         ):
             return current
+        if (
+            current.accounting_status == "mismatch"
+            and current.last_usage_report_snapshot.get("sequence") == report.sequence
+            and usage_report_hash(
+                UsageReport.model_validate(current.last_usage_report_snapshot)
+            )
+            == report_hash
+        ):
+            return current
         expected_sequence = (
             1
             if checkpoint.last_report_sequence is None
@@ -499,23 +508,22 @@ class SessionService:
                 "ack_deadline_at": next_checkpoint.ack_deadline_at,
             },
         )
-        if accounting_status != "mismatch":
-            self._record_accounting_operation(
-                operation_type="SESSION_USAGE_REPORT",
-                session=updated,
-                payload={
-                    "session_id": session_id,
-                    "endpoint_id": updated.endpoint_id,
-                    "sequence": report.sequence,
-                    "report_hash": report_hash,
-                    "previous_report_hash": report.previous_report_hash,
-                    "accounting_contract_version": report.accounting_contract_version,
-                    "accepted_checkpoint_sequence": updated.last_accepted_report_sequence,
-                    "accepted_usage_charged_q": updated.last_accepted_usage_charged_q,
-                },
-                created_at=report.created_at,
-                emitted_events=["SessionUsageReportRecorded"],
-            )
+        self._record_accounting_operation(
+            operation_type="SESSION_USAGE_REPORT",
+            session=updated,
+            payload={
+                "session_id": session_id,
+                "endpoint_id": updated.endpoint_id,
+                "sequence": report.sequence,
+                "report_hash": report_hash,
+                "previous_report_hash": report.previous_report_hash,
+                "accounting_contract_version": report.accounting_contract_version,
+                "accepted_checkpoint_sequence": updated.last_accepted_report_sequence,
+                "accepted_usage_charged_q": updated.last_accepted_usage_charged_q,
+            },
+            created_at=report.created_at,
+            emitted_events=["SessionUsageReportRecorded"],
+        )
         return updated
 
     def record_usage_acknowledgement(
@@ -538,6 +546,8 @@ class SessionService:
             acknowledgement.sequence == checkpoint.last_ack_sequence
             and acknowledgement_hash == checkpoint.last_ack_hash
         ):
+            if current.accounting_status == "mismatch":
+                return current
             normalized_accepted_charge_q = max(0.0, float(accepted_charge_q))
             if (
                 checkpoint.last_accepted_usage_charged_q
