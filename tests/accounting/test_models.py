@@ -155,11 +155,26 @@ def test_session_accounting_checkpoint_rejects_accepted_hash_without_sequence() 
         )
 
 
+def test_session_accounting_checkpoint_rejects_report_hash_without_sequence() -> None:
+    with pytest.raises(ValidationError):
+        SessionAccountingCheckpoint(
+            last_report_hash="sha256:report",
+        )
+
+
 def test_session_accounting_checkpoint_rejects_ack_hash_without_sequence() -> None:
     with pytest.raises(ValidationError):
         SessionAccountingCheckpoint(
             last_report_sequence=2,
             last_ack_hash="sha256:ack",
+        )
+
+
+def test_session_accounting_checkpoint_rejects_ack_sequence_ahead_of_report_head() -> None:
+    with pytest.raises(ValidationError):
+        SessionAccountingCheckpoint(
+            last_report_sequence=2,
+            last_ack_sequence=3,
         )
 
 
@@ -214,4 +229,28 @@ def test_endpoint_session_exposes_usage_chains_and_checkpoint_fields() -> None:
 
     assert session.usage_report_chain == []
     assert session.usage_acknowledgement_chain == []
-    assert session.accounting_checkpoint.last_report_sequence is None
+    assert session.accounting_checkpoint == {}
+
+
+def test_endpoint_session_accounting_checkpoint_remains_dict_shaped() -> None:
+    session = EndpointSession(
+        session_id="sess-4",
+        endpoint_id="ep-1",
+        client_wallet="wallet-client",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        status="active",
+        created_at="2026-07-10T00:00:00+00:00",
+        expires_at="2026-07-10T01:00:00+00:00",
+        idle_deadline_at="2026-07-10T00:30:00+00:00",
+        deposit_locked_q=12.5,
+        queue_policy_snapshot="fifo",
+        accounting_checkpoint={
+            "last_report_sequence": 2,
+            "last_report_hash": "sha256:report",
+        },
+    )
+
+    assert isinstance(session.accounting_checkpoint, dict)
+    assert session.accounting_checkpoint["last_report_sequence"] == 2
+    assert session.accounting_checkpoint["last_report_hash"] == "sha256:report"

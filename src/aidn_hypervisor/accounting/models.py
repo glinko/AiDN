@@ -100,6 +100,8 @@ class SessionAccountingCheckpoint(BaseModel):
 
     @model_validator(mode="after")
     def _validate_checkpoint(self):
+        if self.last_report_hash is not None and self.last_report_sequence is None:
+            raise ValueError("last_report_hash requires last_report_sequence")
         if self.last_accepted_report_hash is not None and self.last_accepted_report_sequence is None:
             raise ValueError("last_accepted_report_hash requires last_accepted_report_sequence")
         if self.last_ack_hash is not None and self.last_ack_sequence is None:
@@ -110,4 +112,10 @@ class SessionAccountingCheckpoint(BaseModel):
             and self.last_accepted_report_sequence > self.last_report_sequence
         ):
             raise ValueError("last_accepted_report_sequence cannot exceed last_report_sequence")
+        if (
+            self.last_report_sequence is not None
+            and self.last_ack_sequence is not None
+            and self.last_ack_sequence > self.last_report_sequence
+        ):
+            raise ValueError("last_ack_sequence cannot exceed last_report_sequence")
         return self

@@ -2,9 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from aidn_hypervisor.accounting.models import SessionAccountingCheckpoint
-
-
 SessionStatus = Literal["queued", "active", "closed"]
 DepositStatus = Literal["locked", "released"]
 SessionAccountingStatus = Literal["open", "ack_pending", "mismatch", "force_settle_required"]
@@ -41,7 +38,7 @@ class EndpointSession(BaseModel):
     accounting_status: SessionAccountingStatus = "open"
     usage_report_chain: list[dict] = Field(default_factory=list)
     usage_acknowledgement_chain: list[dict] = Field(default_factory=list)
-    accounting_checkpoint: SessionAccountingCheckpoint = Field(default_factory=SessionAccountingCheckpoint)
+    accounting_checkpoint: dict = Field(default_factory=dict)
     last_accepted_report_sequence: int | None = Field(default=None, ge=1)
     last_accepted_usage_charged_q: float = Field(default=0.0, ge=0.0)
     close_reason: str | None = None
