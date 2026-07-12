@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from aidn_hypervisor.accounting.models import UsageReport, usage_report_hash
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.main import build_app
@@ -202,3 +203,89 @@ def test_endpoint_publication_api_records_advertisement_operations() -> None:
     assert body[-2]["payload"]["resource_id"] == endpoint_id
     assert body[-1]["operation_type"] == "ADVERTISEMENT_WITHDRAW"
     assert body[-1]["payload"]["resource_id"] == endpoint_id
+
+
+def test_session_accounting_api_records_ledger_operations_via_build_app_wiring() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    service.endpoint_service = endpoint_service
+    service.session_service = session_service
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="text-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            pricing={"billing_unit": "token", "input_price": 12.0},
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=25.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+        accounting_contract={"contract_version": "acct-v1"},
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+    usage_report = {
+        "report_id": "report-1",
+        "report_version": "0.1",
+        "session_id": opened.session.session_id,
+        "endpoint_id": created.endpoint.endpoint_id,
+        "capability_id": "llm_text.generate",
+        "pricing_version": "pricing-v1",
+        "accounting_contract_version": "acct-v1",
+        "accounting_modes": {"input_tokens": "provider_metered"},
+        "sequence": 1,
+        "cumulative_usage": {"input_tokens": 250_000},
+        "measurement_sources": {"input_tokens": "provider_api"},
+        "created_at": "2026-07-12T12:00:00+00:00",
+        "signature": "local:report-1",
+    }
+    usage_acknowledgement = {
+        "session_id": opened.session.session_id,
+        "sequence": 1,
+        "provider_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
+        "verification_status": "accepted_unverified",
+        "signature": "local-ack:report-1",
+    }
+
+    report_response = client.post(
+        f"/api/v1/sessions/{opened.session.session_id}/usage-reports",
+        json={
+            "usage_report": usage_report,
+            "acknowledgement_timeout_seconds": 30,
+        },
+    )
+    acknowledgement_response = client.post(
+        f"/api/v1/sessions/{opened.session.session_id}/usage-acknowledgements",
+        json={
+            "usage_acknowledgement": usage_acknowledgement,
+            "accepted_charge_q": 3.5,
+        },
+    )
+    ledger_response = client.get("/operators/ledger/operations")
+
+    assert report_response.status_code == 200
+    assert acknowledgement_response.status_code == 200
+    assert ledger_response.status_code == 200
+    operation_types = [item["operation_type"] for item in ledger_response.json()]
+    assert "SESSION_USAGE_REPORT" in operation_types
+    assert "SESSION_USAGE_ACKNOWLEDGEMENT" in operation_types
+    assert "SESSION_CHECKPOINT_ACCEPT" in operation_types

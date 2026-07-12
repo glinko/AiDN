@@ -2,7 +2,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from aidn_hypervisor.accounting.models import AccountingContract, UsageReport
+from aidn_hypervisor.accounting.models import (
+    AccountingContract,
+    UsageAcknowledgement,
+    UsageReport,
+)
 from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
@@ -313,6 +317,502 @@ def test_record_usage_checkpoint_creates_acknowledgement_and_updates_accepted_st
     assert updated.last_accepted_report_sequence == 1
     assert updated.last_accepted_usage_charged_q == 6.5
     assert updated.last_usage_acknowledgement_snapshot["verification_status"] == "accepted_unverified"
+
+
+def test_record_usage_report_moves_session_to_ack_pending() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+
+    updated = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+
+    assert updated.accounting_status == "ack_pending"
+    assert updated.last_usage_report_snapshot["report_id"] == "rep-1"
+    assert updated.last_usage_acknowledgement_snapshot == {}
+    assert updated.accounting_checkpoint["last_report_sequence"] == 1
+    assert updated.accounting_checkpoint["last_report_hash"].startswith("sha256:")
+    assert updated.accounting_checkpoint["last_accepted_report_sequence"] is None
+    assert updated.accounting_checkpoint["last_accepted_usage_charged_q"] == 0.0
+    assert updated.accounting_checkpoint["ack_deadline_at"] == "2026-07-10T00:02:00+00:00"
+
+
+def test_record_usage_acknowledgement_advances_last_accepted_checkpoint_and_reopens_session() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+    pending = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+    acknowledgement = UsageAcknowledgement(
+        session_id=opened.session.session_id,
+        sequence=1,
+        provider_report_hash=pending.accounting_checkpoint["last_report_hash"],
+        verification_status="verified",
+        signature="ack-1",
+    )
+
+    updated = service.record_usage_acknowledgement(
+        opened.session.session_id,
+        usage_acknowledgement=acknowledgement.model_dump(mode="json"),
+        accepted_charge_q=6.5,
+    )
+
+    assert updated.accounting_status == "open"
+    assert updated.last_usage_acknowledgement_snapshot["verification_status"] == "verified"
+    assert updated.last_accepted_report_sequence == 1
+    assert updated.last_accepted_usage_charged_q == 6.5
+    assert updated.accounting_checkpoint["last_ack_sequence"] == 1
+    assert updated.accounting_checkpoint["last_accepted_report_sequence"] == 1
+    assert updated.accounting_checkpoint["last_accepted_report_hash"] == pending.accounting_checkpoint["last_report_hash"]
+    assert updated.accounting_checkpoint["last_accepted_usage_charged_q"] == 6.5
+    assert updated.accounting_checkpoint["ack_deadline_at"] is None
+
+
+def test_expire_usage_acknowledgement_marks_force_settle_required_without_advancing_baseline() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+    service.record_usage_report(
+        opened.session.session_id,
+        usage_report=report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+
+    expired = service.expire_usage_acknowledgement(
+        opened.session.session_id,
+        now=datetime(2026, 7, 10, 0, 2, 0, tzinfo=timezone.utc),
+    )
+
+    assert expired.accounting_status == "force_settle_required"
+    assert expired.last_accepted_report_sequence is None
+    assert expired.last_accepted_usage_charged_q == 0.0
+    assert expired.accounting_checkpoint["last_report_sequence"] == 1
+    assert expired.accounting_checkpoint["last_accepted_report_sequence"] is None
+    assert expired.accounting_checkpoint["last_accepted_usage_charged_q"] == 0.0
+    assert expired.accounting_checkpoint["ack_deadline_at"] == "2026-07-10T00:02:00+00:00"
+
+
+def test_invalid_chain_acknowledgement_does_not_advance_accepted_baseline() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(minimum_session_fee=0.0),
+    )
+    first_charge = service.record_usage_charge(opened.session.session_id, amount_q=6.5)
+    first_report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+    accepted = service.record_usage_checkpoint(
+        opened.session.session_id,
+        usage_report=first_report.model_dump(mode="json"),
+        accepted_charge_q=first_charge.deposit.consumed_q,
+    )
+    second_charge = service.record_usage_charge(opened.session.session_id, amount_q=5.5)
+    invalid_report = UsageReport(
+        report_id="rep-2",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=2,
+        cumulative_usage={"input_tokens": 180, "output_tokens": 80},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        previous_report_hash="sha256:not-the-real-previous-hash",
+        created_at="2026-07-10T00:01:00+00:00",
+        signature="sig-2",
+    )
+
+    mismatched = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=invalid_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+    current = service.get_session(opened.session.session_id).session
+    acknowledgement = UsageAcknowledgement(
+        session_id=opened.session.session_id,
+        sequence=2,
+        provider_report_hash=current.accounting_checkpoint["last_report_hash"],
+        verification_status="verified",
+        signature="ack-2",
+    )
+
+    updated = service.record_usage_acknowledgement(
+        opened.session.session_id,
+        usage_acknowledgement=acknowledgement.model_dump(mode="json"),
+        accepted_charge_q=second_charge.deposit.consumed_q,
+    )
+
+    assert accepted.last_accepted_report_sequence == 1
+    assert mismatched.accounting_status == "mismatch"
+    assert updated.accounting_status == "mismatch"
+    assert updated.last_accepted_report_sequence == 1
+    assert updated.last_accepted_usage_charged_q == 6.5
+    assert updated.accounting_checkpoint["last_accepted_report_sequence"] == 1
+    assert updated.accounting_checkpoint["last_accepted_usage_charged_q"] == 6.5
+
+
+def test_record_usage_report_duplicate_retry_is_idempotent() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+
+    first = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+    retried = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+
+    assert retried == first
+    assert len(retried.usage_report_chain) == 1
+    assert retried.accounting_status == "ack_pending"
+    assert retried.accounting_checkpoint == first.accounting_checkpoint
+
+
+def test_record_usage_report_conflicting_same_sequence_sets_mismatch() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    first_report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+    conflicting_report = first_report.model_copy(
+        update={
+            "report_id": "rep-1-conflict",
+            "cumulative_usage": {"input_tokens": 999, "output_tokens": 40},
+            "signature": "sig-1-conflict",
+        }
+    )
+
+    first = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=first_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+    mismatched = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=conflicting_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+
+    assert first.accounting_status == "ack_pending"
+    assert mismatched.accounting_status == "mismatch"
+    assert mismatched.accounting_checkpoint["mismatch_open"] is True
+    assert mismatched.accounting_checkpoint["last_report_hash"] == first.accounting_checkpoint["last_report_hash"]
+    assert len(mismatched.usage_report_chain) == 2
+
+
+def test_record_usage_report_rejects_mismatched_payload_session_id() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id="sess-other",
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+
+    with pytest.raises(ValueError, match="session_id"):
+        service.record_usage_report(
+            opened.session.session_id,
+            usage_report=report.model_dump(mode="json"),
+            acknowledgement_timeout_seconds=120,
+        )
+
+
+def test_record_usage_report_rejects_mismatched_payload_endpoint_id() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-other",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+
+    with pytest.raises(ValueError, match="endpoint_id"):
+        service.record_usage_report(
+            opened.session.session_id,
+            usage_report=report.model_dump(mode="json"),
+            acknowledgement_timeout_seconds=120,
+        )
+
+
+def test_record_usage_acknowledgement_rejects_mismatched_payload_session_id() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+    pending = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+    acknowledgement = UsageAcknowledgement(
+        session_id="sess-other",
+        sequence=1,
+        provider_report_hash=pending.accounting_checkpoint["last_report_hash"],
+        verification_status="verified",
+        signature="ack-1",
+    )
+
+    with pytest.raises(ValueError, match="session_id"):
+        service.record_usage_acknowledgement(
+            opened.session.session_id,
+            usage_acknowledgement=acknowledgement.model_dump(mode="json"),
+            accepted_charge_q=6.5,
+        )
+
+
+def test_close_session_preserves_last_accepted_checkpoint_when_newer_report_is_unacknowledged() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(minimum_session_fee=0.0),
+    )
+    first_charge = service.record_usage_charge(opened.session.session_id, amount_q=6.5)
+    first_report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+    accepted = service.record_usage_checkpoint(
+        opened.session.session_id,
+        usage_report=first_report.model_dump(mode="json"),
+        accepted_charge_q=first_charge.deposit.consumed_q,
+    )
+    second_charge = service.record_usage_charge(opened.session.session_id, amount_q=5.5)
+    second_report = UsageReport(
+        report_id="rep-2",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=2,
+        cumulative_usage={"input_tokens": 180, "output_tokens": 80},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        previous_report_hash=accepted.accounting_checkpoint["last_accepted_report_hash"],
+        created_at="2026-07-10T00:01:00+00:00",
+        signature="sig-2",
+    )
+    pending = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=second_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+
+    closed = service.close_session(opened.session.session_id)
+
+    assert pending.accounting_status == "ack_pending"
+    assert pending.last_accepted_report_sequence == 1
+    assert pending.last_accepted_usage_charged_q == 6.5
+    assert second_charge.deposit.consumed_q == 12.0
+    assert closed.deposit.consumed_q == 6.51
+    assert closed.deposit.refunded_q == 13.49
+    assert closed.settlement is not None
+    assert closed.settlement.usage_charged_q == 6.5
+    assert closed.settlement.network_fee_q == 0.01
+    assert closed.settlement.charged_q == 6.51
 
 
 def test_close_session_uses_last_accepted_checkpoint_when_later_usage_mismatches() -> None:

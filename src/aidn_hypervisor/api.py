@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from aidn_hypervisor.accounting.models import UsageAcknowledgement, UsageReport
 from aidn_hypervisor.dashboard import build_market_payload, load_dashboard_html
 from aidn_hypervisor.domain.models import (
     AllocationRequest,
@@ -74,6 +75,28 @@ def _error(
             "correlation_id": str(uuid4()),
         },
     )
+
+
+def _public_usage_acknowledgement_snapshot(snapshot: dict | None) -> dict:
+    return {
+        key: value
+        for key, value in dict(snapshot or {}).items()
+        if not str(key).startswith("_")
+    }
+
+
+def _public_session_payload(session) -> dict:
+    payload = session.model_dump(mode="json")
+    payload["last_usage_acknowledgement_snapshot"] = _public_usage_acknowledgement_snapshot(
+        payload.get("last_usage_acknowledgement_snapshot")
+    )
+    payload["usage_acknowledgement_chain"] = [
+        _public_usage_acknowledgement_snapshot(item)
+        if isinstance(item, dict)
+        else item
+        for item in payload.get("usage_acknowledgement_chain", [])
+    ]
+    return payload
 
 
 def _execution_payload_for_manifest(manifest) -> dict:
@@ -403,6 +426,7 @@ def _operator_dashboard_sessions_payload(
         if session_id is None:
             continue
         task_id = str(task.task_id)
+        task_result = service.task_result(task_id)
         serialized = {
             "task_id": task_id,
             "created_at": task.created_at,
@@ -413,13 +437,11 @@ def _operator_dashboard_sessions_payload(
             "endpoint_id": task.request.constraints.get("endpoint_id"),
             "input_preview": _task_input_preview(task.request),
             "usage": (
-                service.task_result(task_id).get("usage")
-                if isinstance(service.task_result(task_id), dict)
-                else None
+                task_result.get("usage") if isinstance(task_result, dict) else None
             ),
             "session_accounting": (
-                service.task_result(task_id).get("session_accounting")
-                if isinstance(service.task_result(task_id), dict)
+                task_result.get("session_accounting")
+                if isinstance(task_result, dict)
                 else None
             ),
         }
@@ -550,6 +572,16 @@ class OperatorSessionCloseActionRequest(BaseModel):
 
 class OperatorSessionSweepIdleActionRequest(BaseModel):
     now: str | None = None
+
+
+class SessionUsageReportRecordRequest(BaseModel):
+    usage_report: UsageReport
+    acknowledgement_timeout_seconds: int = Field(ge=0)
+
+
+class SessionUsageAcknowledgementRecordRequest(BaseModel):
+    usage_acknowledgement: UsageAcknowledgement
+    accepted_charge_q: float = Field(ge=0.0)
 
 
 class ValidationEpochCreateRequest(BaseModel):
@@ -1039,10 +1071,7 @@ def build_api_router(
             )
         return _ok(
             {
-                "items": [
-                    session.model_dump(mode="json")
-                    for session in session_service.list_sessions()
-                ]
+                "items": [_public_session_payload(session) for session in session_service.list_sessions()]
             }
         )
 
@@ -1064,13 +1093,119 @@ def build_api_router(
             )
         return _ok(
             {
-                "session": result.session.model_dump(mode="json"),
+                "session": _public_session_payload(result.session),
                 "deposit": result.deposit.model_dump(mode="json"),
                 "settlement": (
                     result.settlement.model_dump(mode="json")
                     if result.settlement is not None
                     else None
                 ),
+            }
+        )
+
+    @router.post("/api/v1/sessions/{session_id}/usage-reports")
+    async def record_session_usage_report(
+        session_id: str,
+        request: SessionUsageReportRecordRequest,
+    ) -> JSONResponse:
+        if session_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            updated_session = session_service.record_usage_report(
+                session_id,
+                usage_report=request.usage_report.model_dump(mode="json"),
+                acknowledgement_timeout_seconds=request.acknowledgement_timeout_seconds,
+            )
+        except KeyError:
+            return _error(
+                404,
+                "session_not_found",
+                f"Unknown session: {session_id}",
+            )
+        except ValueError as error:
+            return _error(
+                409,
+                "session_accounting_conflict",
+                str(error),
+            )
+        session_accounting = service._build_session_accounting_view(updated_session)
+        if updated_session.accounting_status == "mismatch":
+            return _error(
+                409,
+                "session_accounting_conflict",
+                "Session accounting mismatch recorded",
+                details={"session_accounting": session_accounting},
+            )
+        return _ok(
+            {"session_accounting": session_accounting}
+        )
+
+    @router.post("/api/v1/sessions/{session_id}/usage-acknowledgements")
+    async def record_session_usage_acknowledgement(
+        session_id: str,
+        request: SessionUsageAcknowledgementRecordRequest,
+    ) -> JSONResponse:
+        if session_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            updated_session = session_service.record_usage_acknowledgement(
+                session_id,
+                usage_acknowledgement=request.usage_acknowledgement.model_dump(mode="json"),
+                accepted_charge_q=request.accepted_charge_q,
+            )
+        except KeyError:
+            return _error(
+                404,
+                "session_not_found",
+                f"Unknown session: {session_id}",
+            )
+        except ValueError as error:
+            return _error(
+                409,
+                "session_accounting_conflict",
+                str(error),
+            )
+        session_accounting = service._build_session_accounting_view(updated_session)
+        if updated_session.accounting_status == "mismatch":
+            return _error(
+                409,
+                "session_accounting_conflict",
+                "Session accounting mismatch recorded",
+                details={"session_accounting": session_accounting},
+            )
+        return _ok(
+            {"session_accounting": session_accounting}
+        )
+
+    @router.get("/api/v1/sessions/{session_id}/accounting")
+    async def get_session_accounting(session_id: str) -> JSONResponse:
+        if session_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            result = session_service.get_session(session_id)
+        except KeyError:
+            return _error(
+                404,
+                "session_not_found",
+                f"Unknown session: {session_id}",
+            )
+        return _ok(
+            {
+                "session_accounting": service._build_session_accounting_view(
+                    result.session
+                )
             }
         )
 

@@ -2,10 +2,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-
 SessionStatus = Literal["queued", "active", "closed"]
 DepositStatus = Literal["locked", "released"]
-SessionAccountingStatus = Literal["open", "mismatch"]
+SessionAccountingStatus = Literal["open", "ack_pending", "mismatch", "force_settle_required"]
 ProxySessionBindingStatus = Literal[
     "pending_open",
     "active",
@@ -37,6 +36,9 @@ class EndpointSession(BaseModel):
     last_usage_report_snapshot: dict = Field(default_factory=dict)
     last_usage_acknowledgement_snapshot: dict = Field(default_factory=dict)
     accounting_status: SessionAccountingStatus = "open"
+    usage_report_chain: list[dict] = Field(default_factory=list)
+    usage_acknowledgement_chain: list[dict] = Field(default_factory=list)
+    accounting_checkpoint: dict = Field(default_factory=dict)
     last_accepted_report_sequence: int | None = Field(default=None, ge=1)
     last_accepted_usage_charged_q: float = Field(default=0.0, ge=0.0)
     close_reason: str | None = None
