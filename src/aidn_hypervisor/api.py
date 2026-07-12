@@ -1112,12 +1112,16 @@ def build_api_router(
                 "session_accounting_conflict",
                 str(error),
             )
+        session_accounting = service._build_session_accounting_view(updated_session)
+        if updated_session.accounting_status == "mismatch":
+            return _error(
+                409,
+                "session_accounting_conflict",
+                "Session accounting mismatch recorded",
+                details={"session_accounting": session_accounting},
+            )
         return _ok(
-            {
-                "session_accounting": service._build_session_accounting_view(
-                    updated_session
-                )
-            }
+            {"session_accounting": session_accounting}
         )
 
     @router.post("/api/v1/sessions/{session_id}/usage-acknowledgements")
@@ -1149,12 +1153,16 @@ def build_api_router(
                 "session_accounting_conflict",
                 str(error),
             )
+        session_accounting = service._build_session_accounting_view(updated_session)
+        if updated_session.accounting_status == "mismatch":
+            return _error(
+                409,
+                "session_accounting_conflict",
+                "Session accounting mismatch recorded",
+                details={"session_accounting": session_accounting},
+            )
         return _ok(
-            {
-                "session_accounting": service._build_session_accounting_view(
-                    updated_session
-                )
-            }
+            {"session_accounting": session_accounting}
         )
 
     @router.get("/api/v1/sessions/{session_id}/accounting")
