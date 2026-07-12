@@ -3,7 +3,14 @@ import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from aidn_hypervisor.accounting.models import UsageAcknowledgement, UsageReport, VerificationStatus
+from aidn_hypervisor.accounting.models import (
+    SessionAccountingCheckpoint,
+    UsageAcknowledgement,
+    UsageReport,
+    VerificationStatus,
+    usage_acknowledgement_hash,
+    usage_report_hash,
+)
 from aidn_hypervisor.sessions.models import (
     EndpointSession,
     LockedDeposit,
@@ -62,6 +69,58 @@ class SessionService:
     ) -> ProxySessionBinding:
         self.store.save_proxy_session_binding(binding)
         return binding
+
+    def _checkpoint_from_session(
+        self,
+        session: EndpointSession,
+    ) -> SessionAccountingCheckpoint:
+        checkpoint_payload = dict(session.accounting_checkpoint or {})
+        if checkpoint_payload:
+            return SessionAccountingCheckpoint.model_validate(checkpoint_payload)
+        return SessionAccountingCheckpoint(
+            last_accepted_report_sequence=session.last_accepted_report_sequence,
+            last_accepted_usage_charged_q=session.last_accepted_usage_charged_q,
+        )
+
+    def _replace_accounting_state(
+        self,
+        current: EndpointSession,
+        *,
+        report_chain: list[dict] | None = None,
+        acknowledgement_chain: list[dict] | None = None,
+        checkpoint: SessionAccountingCheckpoint,
+        accounting_status: str,
+    ) -> EndpointSession:
+        next_report_chain = (
+            list(report_chain)
+            if report_chain is not None
+            else list(current.usage_report_chain or [])
+        )
+        next_acknowledgement_chain = (
+            list(acknowledgement_chain)
+            if acknowledgement_chain is not None
+            else list(current.usage_acknowledgement_chain or [])
+        )
+        updated = current.model_copy(
+            update={
+                "usage_report_chain": next_report_chain,
+                "usage_acknowledgement_chain": next_acknowledgement_chain,
+                "last_usage_report_snapshot": (
+                    next_report_chain[-1] if next_report_chain else {}
+                ),
+                "last_usage_acknowledgement_snapshot": (
+                    next_acknowledgement_chain[-1]
+                    if next_acknowledgement_chain
+                    else {}
+                ),
+                "accounting_status": accounting_status,
+                "accounting_checkpoint": checkpoint.model_dump(mode="json"),
+                "last_accepted_report_sequence": checkpoint.last_accepted_report_sequence,
+                "last_accepted_usage_charged_q": checkpoint.last_accepted_usage_charged_q,
+            }
+        )
+        self.store.save_session(updated)
+        return updated
 
     def require_active_session(
         self,
@@ -295,53 +354,180 @@ class SessionService:
         accepted_charge_q: float,
         verification_status: VerificationStatus = "accepted_unverified",
     ) -> EndpointSession:
-        current = self.store.get_session(session_id)
         report = UsageReport.model_validate(usage_report)
-        report_hash = hashlib.sha256(
-            json.dumps(report.model_dump(mode="json"), sort_keys=True).encode("utf-8")
-        ).hexdigest()
         acknowledgement = UsageAcknowledgement(
             session_id=session_id,
             sequence=report.sequence,
-            provider_report_hash=f"sha256:{report_hash}",
+            provider_report_hash=usage_report_hash(report),
             verification_status=verification_status,
             signature=f"local-ack:{report.report_id}",
         )
-        accepted_sequence = current.last_accepted_report_sequence
-        accepted_usage_charged_q = current.last_accepted_usage_charged_q
-        accounting_status = "mismatch" if verification_status == "mismatch" else "open"
-        if verification_status != "mismatch":
-            accepted_sequence = report.sequence
-            accepted_usage_charged_q = max(0.0, float(accepted_charge_q))
-        updated = current.model_copy(
-            update={
-                "last_usage_report_snapshot": report.model_dump(mode="json"),
-                "last_usage_acknowledgement_snapshot": acknowledgement.model_dump(
-                    mode="json"
-                ),
-                "accounting_status": accounting_status,
-                "last_accepted_report_sequence": accepted_sequence,
-                "last_accepted_usage_charged_q": accepted_usage_charged_q,
-            }
+        self.record_usage_report(
+            session_id,
+            usage_report=report.model_dump(mode="json"),
+            acknowledgement_timeout_seconds=0,
         )
-        self.store.save_session(updated)
+        return self.record_usage_acknowledgement(
+            session_id,
+            usage_acknowledgement=acknowledgement.model_dump(mode="json"),
+            accepted_charge_q=accepted_charge_q,
+        )
+
+    def record_usage_report(
+        self,
+        session_id: str,
+        *,
+        usage_report: dict,
+        acknowledgement_timeout_seconds: int,
+    ) -> EndpointSession:
+        current = self.store.get_session(session_id)
+        report = UsageReport.model_validate(usage_report)
+        checkpoint = self._checkpoint_from_session(current)
+        report_hash = usage_report_hash(report)
+        expected_sequence = 1 if checkpoint.last_report_sequence is None else checkpoint.last_report_sequence + 1
+        chain_continuity_ok = (
+            report.sequence == expected_sequence
+            and (
+                checkpoint.last_report_hash is None
+                or report.previous_report_hash == checkpoint.last_report_hash
+            )
+        )
+        next_checkpoint = checkpoint.model_copy(deep=True)
+        next_checkpoint.last_report_sequence = report.sequence
+        next_checkpoint.last_report_hash = report_hash
+        try:
+            report_created_at = datetime.fromisoformat(report.created_at)
+        except ValueError:
+            report_created_at = datetime.now(timezone.utc)
+        next_checkpoint.ack_deadline_at = (
+            report_created_at + timedelta(seconds=max(0, acknowledgement_timeout_seconds))
+        ).isoformat()
+        report_chain = list(current.usage_report_chain or [])
+        report_chain.append(report.model_dump(mode="json"))
+        accounting_status = "ack_pending"
+        if not chain_continuity_ok:
+            accounting_status = "mismatch"
+            next_checkpoint.mismatch_open = True
+        updated = self._replace_accounting_state(
+            current,
+            report_chain=report_chain,
+            checkpoint=next_checkpoint,
+            accounting_status=accounting_status,
+        )
         self._emit(
             event_type=(
                 "session.accounting_mismatch"
-                if verification_status == "mismatch"
-                else "session.usage_acknowledged"
+                if accounting_status == "mismatch"
+                else "session.usage_reported"
             ),
             message=(
-                "session accounting mismatch recorded"
-                if verification_status == "mismatch"
-                else "session usage checkpoint acknowledged"
+                "session usage report chain mismatch recorded"
+                if accounting_status == "mismatch"
+                else "session usage report recorded"
             ),
             details={
                 "session_id": session_id,
                 "report_id": report.report_id,
                 "sequence": report.sequence,
-                "verification_status": verification_status,
-                "accepted_charge_q": accepted_usage_charged_q,
+                "report_hash": report_hash,
+                "ack_deadline_at": next_checkpoint.ack_deadline_at,
+            },
+        )
+        return updated
+
+    def record_usage_acknowledgement(
+        self,
+        session_id: str,
+        *,
+        usage_acknowledgement: dict,
+        accepted_charge_q: float,
+    ) -> EndpointSession:
+        current = self.store.get_session(session_id)
+        acknowledgement = UsageAcknowledgement.model_validate(usage_acknowledgement)
+        checkpoint = self._checkpoint_from_session(current)
+        next_checkpoint = checkpoint.model_copy(deep=True)
+        acknowledgement_hash = usage_acknowledgement_hash(acknowledgement)
+        acknowledgement_chain = list(current.usage_acknowledgement_chain or [])
+        acknowledgement_chain.append(acknowledgement.model_dump(mode="json"))
+        next_checkpoint.last_ack_sequence = acknowledgement.sequence
+        next_checkpoint.last_ack_hash = acknowledgement_hash
+        valid_current_head = (
+            checkpoint.last_report_sequence == acknowledgement.sequence
+            and checkpoint.last_report_hash == acknowledgement.provider_report_hash
+        )
+        if acknowledgement.verification_status == "mismatch" or not valid_current_head:
+            next_checkpoint.mismatch_open = True
+            accounting_status = "mismatch"
+        elif acknowledgement.verification_status in {
+            "accepted_unverified",
+            "verified",
+            "statistically_plausible",
+        }:
+            next_checkpoint.last_accepted_report_sequence = acknowledgement.sequence
+            next_checkpoint.last_accepted_report_hash = acknowledgement.provider_report_hash
+            next_checkpoint.last_accepted_usage_charged_q = max(0.0, float(accepted_charge_q))
+            next_checkpoint.mismatch_open = False
+            next_checkpoint.ack_deadline_at = None
+            accounting_status = "open"
+        else:
+            next_checkpoint.ack_deadline_at = None
+            accounting_status = "open"
+        updated = self._replace_accounting_state(
+            current,
+            acknowledgement_chain=acknowledgement_chain,
+            checkpoint=next_checkpoint,
+            accounting_status=accounting_status,
+        )
+        self._emit(
+            event_type=(
+                "session.accounting_mismatch"
+                if accounting_status == "mismatch"
+                else "session.usage_acknowledged"
+            ),
+            message=(
+                "session accounting mismatch recorded"
+                if accounting_status == "mismatch"
+                else "session usage acknowledgement recorded"
+            ),
+            details={
+                "session_id": session_id,
+                "sequence": acknowledgement.sequence,
+                "verification_status": acknowledgement.verification_status,
+                "accepted_charge_q": updated.last_accepted_usage_charged_q,
+            },
+        )
+        return updated
+
+    def expire_usage_acknowledgement(
+        self,
+        session_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> EndpointSession:
+        current = self.store.get_session(session_id)
+        checkpoint = self._checkpoint_from_session(current)
+        if current.accounting_status != "ack_pending" or checkpoint.ack_deadline_at is None:
+            return current
+        current_time = now or datetime.now(timezone.utc)
+        try:
+            ack_deadline = datetime.fromisoformat(checkpoint.ack_deadline_at)
+        except ValueError:
+            ack_deadline = current_time
+        if ack_deadline > current_time:
+            return current
+        next_checkpoint = checkpoint.model_copy(deep=True)
+        next_checkpoint.mismatch_open = True
+        updated = self._replace_accounting_state(
+            current,
+            checkpoint=next_checkpoint,
+            accounting_status="force_settle_required",
+        )
+        self._emit(
+            event_type="session.accounting_timeout",
+            message="session usage acknowledgement expired",
+            details={
+                "session_id": session_id,
+                "ack_deadline_at": checkpoint.ack_deadline_at,
             },
         )
         return updated
