@@ -1,6 +1,8 @@
+import json
+from hashlib import sha256
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 AccountingMode = Literal[
     "deterministic",
@@ -18,6 +20,18 @@ VerificationStatus = Literal[
     "unable_to_verify_upstream_usage",
 ]
 AccountingValue = int | float | str | bool | None
+
+
+def _canonical_json(payload: BaseModel) -> str:
+    return json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+
+
+def usage_report_hash(report: "UsageReport") -> str:
+    return f"sha256:{sha256(_canonical_json(report).encode('utf-8')).hexdigest()}"
+
+
+def usage_acknowledgement_hash(ack: "UsageAcknowledgement") -> str:
+    return f"sha256:{sha256(_canonical_json(ack).encode('utf-8')).hexdigest()}"
 
 
 class AccountingUnitContract(BaseModel):
@@ -71,3 +85,29 @@ class UsageAcknowledgement(BaseModel):
     consumer_measurements: dict[str, AccountingValue] = Field(default_factory=dict)
     observations: dict[str, AccountingValue] = Field(default_factory=dict)
     signature: str = Field(min_length=1)
+
+
+class SessionAccountingCheckpoint(BaseModel):
+    last_report_sequence: int | None = Field(default=None, ge=1)
+    last_report_hash: str | None = None
+    last_ack_sequence: int | None = Field(default=None, ge=1)
+    last_ack_hash: str | None = None
+    last_accepted_report_sequence: int | None = Field(default=None, ge=1)
+    last_accepted_report_hash: str | None = None
+    last_accepted_usage_charged_q: float = Field(default=0.0, ge=0.0)
+    mismatch_open: bool = False
+    ack_deadline_at: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_checkpoint(self):
+        if self.last_accepted_report_hash is not None and self.last_accepted_report_sequence is None:
+            raise ValueError("last_accepted_report_hash requires last_accepted_report_sequence")
+        if self.last_ack_hash is not None and self.last_ack_sequence is None:
+            raise ValueError("last_ack_hash requires last_ack_sequence")
+        if (
+            self.last_report_sequence is not None
+            and self.last_accepted_report_sequence is not None
+            and self.last_accepted_report_sequence > self.last_report_sequence
+        ):
+            raise ValueError("last_accepted_report_sequence cannot exceed last_report_sequence")
+        return self
