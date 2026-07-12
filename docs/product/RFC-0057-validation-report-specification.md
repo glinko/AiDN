@@ -8,6 +8,7 @@ Depends on:
 
 - `RFC-0035 Validation Escrow System`
 - `RFC-0036 AiDN Ledger State Machine`
+- `RFC-0051 Usage Reporting and Verification Protocol`
 - `RFC-0040 Service Verification Framework`
 - `RFC-0041 Reputation Profile Engine`
 - `RFC-0044 Session Protocol`

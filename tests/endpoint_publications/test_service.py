@@ -221,3 +221,31 @@ def test_revoke_publication_marks_current_record_revoked() -> None:
     assert revoked.status == "revoked"
     assert service.current_publication(created.endpoint.endpoint_id) is None
     assert store.list_records()[0].status == "revoked"
+
+
+def test_publication_service_records_canonical_advertisement_operations() -> None:
+    endpoint_service = EndpointService(EndpointStore())
+    created = _create_endpoint(endpoint_service)
+    recorded_operations: list[dict] = []
+    service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    service.operation_recorder = lambda **payload: recorded_operations.append(payload)
+
+    published = service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet="wallet-1",
+        node_id="node-1",
+        wallet_private_key="sk-1",
+    )
+    revoked = service.revoke_publication(created.endpoint.endpoint_id)
+
+    assert published.publication_id == revoked.publication_id
+    assert recorded_operations[0]["operation_type"] == "ADVERTISEMENT_PUBLISH"
+    assert recorded_operations[0]["sender_wallet"] == "wallet-1"
+    assert recorded_operations[0]["payload"]["resource_id"] == created.endpoint.endpoint_id
+    assert recorded_operations[0]["payload"]["advertisement_id"] == published.publication_id
+    assert recorded_operations[1]["operation_type"] == "ADVERTISEMENT_WITHDRAW"
+    assert recorded_operations[1]["sender_wallet"] == "wallet-1"
+    assert recorded_operations[1]["payload"]["advertisement_id"] == published.publication_id

@@ -36,6 +36,10 @@ It only executes protocol-defined economic transitions.
 
 `RFC-0037` defines how those economic transitions are computed and applied deterministically.
 
+The concrete Ledger operations that materialize Settlement outcomes are cataloged separately in [RFC-0059 Ledger Operation Catalog](./RFC-0059-ledger-operation-catalog.md).
+
+Abnormal Session termination, recovery windows, evidence-backed forced Settlement, and timeout-driven finalization rules are specified separately in [RFC-0060 Session Failure, Recovery and Forced Settlement](./RFC-0060-session-failure-recovery-and-forced-settlement.md).
+
 ## 2. Design Principles
 
 Settlement SHALL be:
@@ -134,7 +138,7 @@ Recommended default:
 
 `0.01 Q`
 
-Network Fee is transferred to the protocol distribution mechanism.
+Network Fee is removed from immediate circulation and recorded for later protocol-defined distribution and recycling.
 
 Fee collection is independent of Endpoint pricing.
 
@@ -185,10 +189,10 @@ The process continues until the remaining Bond approaches zero.
 If an Endpoint fails any Maintenance Validation:
 
 - Validation Status is revoked;
-- the remaining Validation Bond is burned;
+- the remaining Validation Bond is removed from operator control as recyclable protocol removal unless a future rule explicitly marks it as permanent burn;
 - previously refunded amounts remain with the operator.
 
-Burning is irreversible.
+Permanent burn treatment requires an explicit protocol rule.
 
 ## 13. Validator Rewards
 
@@ -204,9 +208,9 @@ Rewards compensate Validators for completed validation work.
 
 ## 14. Registry Rewards
 
-Collected Network Fees are distributed among eligible Registry Nodes.
+Registry Rewards are settled from the finalized Epoch reward budget and eligibility results.
 
-Eligibility requirements are defined separately.
+Recycled Network Fees and other recyclable removals MAY contribute to later reward authorization, but Settlement does not pass individual Session fees directly through to Registry Nodes.
 
 Settlement only executes the resulting Ledger Operations.
 
@@ -221,6 +225,8 @@ Settlement verifies:
 - protocol fees.
 
 Successful Transfers become Ledger Operations.
+
+Their canonical operation envelope, fee handling, and replay semantics are defined in [RFC-0059 Ledger Operation Catalog](./RFC-0059-ledger-operation-catalog.md).
 
 ## 16. Escrow Release
 

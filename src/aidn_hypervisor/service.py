@@ -8,7 +8,19 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from aidn_hypervisor.accounting.models import (
+    AccountingContract,
+    AccountingUnitContract,
+    UsageReport,
+)
 from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, ResourceProfile, TaskRequest
+from aidn_hypervisor.economics.models import (
+    EpochRewardBudget,
+    EpochRewardPoolShares,
+    FaucetClaim,
+    RecyclableRemoval,
+)
+from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.queue import InMemoryTaskQueue, QueuedTask
 from aidn_hypervisor.reputation import build_reputation_profile
@@ -63,6 +75,12 @@ _DEFAULT_OPERATOR_REQUESTS_POLICY = {
     "allow_spillover": False,
     "dispatch_strategy": "local_first",
     "ready_endpoint_only": True,
+}
+_DEFAULT_EPOCH_REWARD_POOL_SHARES = {
+    "consensus": 0.3,
+    "registry": 0.3,
+    "validation": 0.3,
+    "faucet": 0.1,
 }
 
 
@@ -131,6 +149,8 @@ class HypervisorService:
         heartbeat_ttl_seconds: int = 30,
         wallet_usage_retention_limit: int | None = None,
         wallet_allocation_grace_period_seconds: int = 300,
+        base_emission_q: float = 5000.0,
+        epoch_reward_pool_shares: dict | None = None,
     ) -> None:
         self.queue = queue
         self.scheduler = scheduler
@@ -167,6 +187,10 @@ class HypervisorService:
         self.wallet_allocation_grace_period_seconds = max(
             0, int(wallet_allocation_grace_period_seconds)
         )
+        self.base_emission_q = float(base_emission_q)
+        self.epoch_reward_pool_shares = EpochRewardPoolShares(
+            **(epoch_reward_pool_shares or _DEFAULT_EPOCH_REWARD_POOL_SHARES)
+        )
         self._selected_bundles: dict[str, str] = {}
         self._task_results: dict[str, dict] = {}
         self._task_recovery_reasons: dict[str, str] = {}
@@ -183,12 +207,20 @@ class HypervisorService:
         self._next_wallet_session_sequence = 1
         self._wallet_ledger_events: list[dict] = []
         self._next_wallet_ledger_sequence = 1
+        self._wallet_economics_events: list[dict] = []
+        self._next_wallet_economics_sequence = 1
+        self._recyclable_removals: list[dict] = []
+        self._next_recyclable_removal_sequence = 1
+        self._faucet_claims: list[dict] = []
+        self._next_faucet_claim_sequence = 1
+        self._epoch_reward_budgets: list[dict] = []
         self._wallet_allocation_activation_events: list[dict] = []
         self._next_wallet_allocation_activation_sequence = 1
         self._wallet_allocation_dispute_events: list[dict] = []
         self._next_wallet_allocation_dispute_sequence = 1
         self._wallet_allocation_events: list[dict] = []
         self._next_wallet_allocation_sequence = 1
+        self._ledger_operation_service = LedgerOperationService()
         self._events: list[JournalEvent] = []
 
     @property
@@ -306,6 +338,344 @@ class HypervisorService:
             return events
         return events[-limit:]
 
+    def list_ledger_operations(self, *, limit: int | None = None) -> list[dict]:
+        return self._ledger_operation_service.list_operations(limit=limit)
+
+    def export_ledger_operations(
+        self,
+        *,
+        after_operation_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return self._ledger_operation_service.export_operations(
+            after_operation_id=after_operation_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
+    def wallet_next_operation_sequence(self, wallet_id: str) -> int:
+        return self._ledger_operation_service.wallet_next_sequence(wallet_id)
+
+    def record_ledger_operation(
+        self,
+        *,
+        operation_type: str,
+        origin_type: str,
+        fee_class: str,
+        initiator_id: str | None = None,
+        sender_wallet: str | None = None,
+        fee_payer: str | None = None,
+        payload: dict | None = None,
+        created_at: str | None = None,
+        expires_at: str | None = None,
+        target_epoch: str | None = None,
+        evidence_references: list[str] | None = None,
+        signatures: list[str] | None = None,
+        emitted_events: list[str] | None = None,
+        expected_sequence: int | None = None,
+        operation_version: str = "0.1",
+    ) -> dict:
+        operation = self._ledger_operation_service.record_operation(
+            operation_type=operation_type,
+            origin_type=origin_type,
+            fee_class=fee_class,
+            initiator_id=initiator_id,
+            sender_wallet=sender_wallet,
+            fee_payer=fee_payer,
+            payload=payload,
+            created_at=created_at,
+            expires_at=expires_at,
+            target_epoch=target_epoch,
+            evidence_references=evidence_references,
+            signatures=signatures,
+            emitted_events=emitted_events,
+            expected_sequence=expected_sequence,
+            operation_version=operation_version,
+        )
+        self._persist_state()
+        return operation
+
+    def list_recyclable_removals(self) -> list[dict]:
+        return list(self._recyclable_removals)
+
+    def list_faucet_claims(self) -> list[dict]:
+        return list(self._faucet_claims)
+
+    def list_epoch_reward_budgets(self) -> list[dict]:
+        return list(self._epoch_reward_budgets)
+
+    def _latest_epoch_reward_budget(self) -> dict | None:
+        if not self._epoch_reward_budgets:
+            return None
+        return dict(self._epoch_reward_budgets[-1])
+
+    def _active_local_endpoint_count(self) -> int:
+        endpoint_service = getattr(self, "endpoint_service", None)
+        if endpoint_service is None:
+            return 0
+        return sum(
+            1
+            for manifest in endpoint_service.list_endpoints()
+            if getattr(manifest, "status", None) == "active"
+        )
+
+    def _latest_faucet_claim(self, epoch_id: str | None) -> dict | None:
+        if epoch_id is None:
+            return None
+        for claim in reversed(self._faucet_claims):
+            if claim["epoch_id"] == epoch_id:
+                return dict(claim)
+        return None
+
+    def get_faucet_claim_preview(self) -> dict:
+        owner_wallet = self.owner_wallet_state()
+        latest_budget = self._latest_epoch_reward_budget()
+        epoch_id = (
+            str(latest_budget["epoch_id"])
+            if latest_budget is not None and latest_budget.get("epoch_id") is not None
+            else None
+        )
+        share_q = (
+            float(latest_budget["faucet_share_q"])
+            if latest_budget is not None
+            else 0.0
+        )
+        active_local_endpoint_count = self._active_local_endpoint_count()
+        claim = self._latest_faucet_claim(epoch_id)
+        claimed_q = round(float(claim["amount_q"]), 6) if claim is not None else 0.0
+        remaining_q = round(max(0.0, share_q - claimed_q), 6)
+
+        eligible = False
+        reason = "wallet_not_configured"
+        message = "Owner wallet is not configured"
+        if not owner_wallet["configured"]:
+            pass
+        elif latest_budget is None:
+            reason = "no_epoch_budget"
+            message = "No epoch reward budget has been derived yet"
+        elif active_local_endpoint_count <= 0:
+            reason = "no_active_endpoints"
+            message = "At least one active local endpoint is required for faucet eligibility"
+        elif share_q <= 0.0:
+            reason = "zero_share"
+            message = f"Faucet share is zero for epoch {epoch_id}"
+        elif claim is not None:
+            reason = "already_claimed"
+            message = f"Faucet share already claimed for epoch {epoch_id}"
+        else:
+            eligible = True
+            reason = "eligible"
+            message = f"Faucet share is available for epoch {epoch_id}"
+
+        return {
+            "eligible": eligible,
+            "reason": reason,
+            "message": message,
+            "epoch_id": epoch_id,
+            "wallet_id": owner_wallet["wallet_id"],
+            "share_q": share_q,
+            "claimed": claim is not None,
+            "claimed_q": claimed_q,
+            "remaining_q": remaining_q,
+            "active_local_endpoint_count": active_local_endpoint_count,
+            "active_hypervisor_count": (
+                int(latest_budget["active_hypervisor_count"])
+                if latest_budget is not None
+                else 0
+            ),
+            "faucet_budget_q": (
+                float(latest_budget["faucet_budget_q"])
+                if latest_budget is not None
+                else 0.0
+            ),
+            "claim": claim,
+        }
+
+    def get_wallet_economics_summary(self, *, recent_limit: int = 10) -> dict:
+        by_category: dict[str, float] = {}
+        by_epoch: dict[str, float] = {}
+        total_q = 0.0
+        latest_removed_at: str | None = None
+        for removal in self._recyclable_removals:
+            amount_q = round(float(removal["amount_q"]), 6)
+            total_q = round(total_q + amount_q, 6)
+            category = str(removal["category"])
+            by_category[category] = round(by_category.get(category, 0.0) + amount_q, 6)
+            source_epoch_id = removal.get("source_epoch_id")
+            if source_epoch_id:
+                by_epoch[source_epoch_id] = round(
+                    by_epoch.get(source_epoch_id, 0.0) + amount_q,
+                    6,
+                )
+            latest_removed_at = str(removal["removed_at"])
+        recent_count = max(0, int(recent_limit))
+        recent_removals = (
+            []
+            if recent_count == 0
+            else list(reversed(self._recyclable_removals[-recent_count:]))
+        )
+        latest_budget = self._latest_epoch_reward_budget()
+        recycling = {
+            "eligible_removed_q": float(latest_budget["eligible_removed_q"])
+            if latest_budget is not None
+            else 0.0,
+            "recycle_backlog_q": float(latest_budget["recycle_backlog_q"])
+            if latest_budget is not None
+            else 0.0,
+            "recyclable_amount_q": float(latest_budget["recyclable_amount_q"])
+            if latest_budget is not None
+            else 0.0,
+        }
+        faucet_preview = self.get_faucet_claim_preview()
+        faucet = {
+            "carryover_q": float(latest_budget["faucet_carryover_q"])
+            if latest_budget is not None
+            else 0.0,
+            "budget_q": float(latest_budget["faucet_budget_q"])
+            if latest_budget is not None
+            else 0.0,
+            "active_hypervisor_count": int(latest_budget["active_hypervisor_count"])
+            if latest_budget is not None
+            else 0,
+            "share_q": float(latest_budget["faucet_share_q"])
+            if latest_budget is not None
+            else 0.0,
+            "claimed": bool(faucet_preview["claimed"]),
+            "claimed_q": float(faucet_preview["claimed_q"]),
+            "remaining_q": float(faucet_preview["remaining_q"]),
+            "claim": faucet_preview["claim"],
+        }
+        pools = {
+            "consensus_budget_q": float(latest_budget["consensus_budget_q"])
+            if latest_budget is not None
+            else 0.0,
+            "registry_budget_q": float(latest_budget["registry_budget_q"])
+            if latest_budget is not None
+            else 0.0,
+            "validation_budget_q": float(latest_budget["validation_budget_q"])
+            if latest_budget is not None
+            else 0.0,
+            "faucet_budget_q": float(latest_budget["faucet_budget_q"])
+            if latest_budget is not None
+            else 0.0,
+        }
+        latest_budget_breakdown = {
+            "epoch_id": str(latest_budget["epoch_id"]) if latest_budget is not None else None,
+            "total_authorized_q": float(latest_budget["total_authorized_q"])
+            if latest_budget is not None
+            else 0.0,
+            "faucet_share_q": float(latest_budget["faucet_share_q"])
+            if latest_budget is not None
+            else 0.0,
+        }
+        return {
+            "base_emission_q": self.base_emission_q,
+            "pool_shares": self.epoch_reward_pool_shares.model_dump(mode="json"),
+            "removals": {
+                "count": len(self._recyclable_removals),
+                "total_q": total_q,
+                "by_category": by_category,
+                "by_epoch": by_epoch,
+                "latest_removed_at": latest_removed_at,
+            },
+            "latest_budget": latest_budget,
+            "recycling": recycling,
+            "faucet": faucet,
+            "pools": pools,
+            "latest_budget_breakdown": latest_budget_breakdown,
+            "recent_removals": recent_removals,
+        }
+
+    def claim_faucet_share(self) -> dict:
+        preview = self.get_faucet_claim_preview()
+        if not preview["eligible"]:
+            raise ValueError(str(preview["message"]))
+
+        claim = FaucetClaim(
+            sequence_id=self._next_faucet_claim_sequence,
+            claim_id=str(uuid4()),
+            epoch_id=str(preview["epoch_id"]),
+            wallet_id=str(preview["wallet_id"]),
+            node_id=self.node_id,
+            operator_id=self.operator_id,
+            amount_q=float(preview["share_q"]),
+            active_local_endpoint_count=int(preview["active_local_endpoint_count"]),
+            claimed_at=datetime.now(timezone.utc).isoformat(),
+        ).model_dump(mode="json")
+        self._faucet_claims.append(claim)
+        self._next_faucet_claim_sequence += 1
+        self._append_wallet_ledger_event(
+            stream="economics",
+            source_event={
+                "event_id": claim["claim_id"],
+                "sequence_id": claim["sequence_id"],
+                "occurred_at": claim["claimed_at"],
+                **claim,
+            },
+            event_type="faucet_claimed",
+            owner_id=str(claim["wallet_id"]),
+            status=str(claim["epoch_id"]),
+            amount_q=float(claim["amount_q"]),
+        )
+        self._append_wallet_economics_event(
+            event_type="faucet_claimed",
+            occurred_at=str(claim["claimed_at"]),
+            owner_id=str(claim["wallet_id"]),
+            status=str(claim["epoch_id"]),
+            amount_q=float(claim["amount_q"]),
+            payload=claim,
+        )
+        eligibility_snapshot_hash = hashlib.sha256(
+            json.dumps(
+                {
+                    "epoch_id": preview["epoch_id"],
+                    "wallet_id": preview["wallet_id"],
+                    "share_q": preview["share_q"],
+                    "active_local_endpoint_count": preview["active_local_endpoint_count"],
+                    "active_hypervisor_count": preview["active_hypervisor_count"],
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        self.record_ledger_operation(
+            operation_type="FAUCET_CLAIM",
+            origin_type="wallet",
+            fee_class="faucet_exempt",
+            initiator_id=str(claim["wallet_id"]),
+            sender_wallet=str(claim["wallet_id"]),
+            fee_payer=str(claim["wallet_id"]),
+            payload={
+                "hypervisor_id": self.node_id,
+                "claim_epoch": str(preview["epoch_id"]),
+                "destination_wallet": str(claim["wallet_id"]),
+                "eligibility_snapshot_hash": f"sha256:{eligibility_snapshot_hash}",
+                "claim_id": str(claim["claim_id"]),
+                "amount_q": float(claim["amount_q"]),
+            },
+            created_at=str(claim["claimed_at"]),
+            emitted_events=["FaucetClaimed"],
+        )
+        self.record_ledger_operation(
+            operation_type="REWARD_MINT",
+            origin_type="protocol",
+            fee_class="protocol_sponsored",
+            initiator_id=str(claim["claim_id"]),
+            payload={
+                "reward_id": str(claim["claim_id"]),
+                "reward_type": "faucet",
+                "reward_epoch": str(preview["epoch_id"]),
+                "recipient_wallet": str(claim["wallet_id"]),
+                "amount": float(claim["amount_q"]),
+                "pool_id": "faucet",
+                "pool_budget_reference": str(preview["epoch_id"]),
+            },
+            created_at=str(claim["claimed_at"]),
+            emitted_events=["RewardMinted"],
+        )
+        self._persist_state()
+        return self.get_faucet_claim_preview()
+
     def list_wallet_allocation_events(self, *, limit: int | None = None) -> list[dict]:
         self._reconcile_wallet_allocation_events()
         events = list(self._wallet_allocation_events)
@@ -366,6 +736,20 @@ class HypervisorService:
     ) -> dict:
         return self._export_wallet_event_stream(
             self._wallet_ledger_events,
+            after_event_id=after_event_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
+    def export_wallet_economics_events(
+        self,
+        *,
+        after_event_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return self._export_wallet_event_stream(
+            self._wallet_economics_events,
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -456,6 +840,147 @@ class HypervisorService:
         self._wallet_ledger_events.append(ledger_event)
         self._next_wallet_ledger_sequence += 1
         return ledger_event
+
+    def _append_wallet_economics_event(
+        self,
+        *,
+        event_type: str,
+        occurred_at: str,
+        owner_id: str,
+        status: str | None = None,
+        amount_q: float = 0.0,
+        payload: dict,
+    ) -> dict:
+        economics_event = WalletLedgerEvent(
+            sequence_id=self._next_wallet_economics_sequence,
+            event_id=str(uuid4()),
+            stream="economics",
+            stream_event_id=str(
+                payload.get("removal_id")
+                or payload.get("claim_id")
+                or payload.get("epoch_id")
+                or uuid4()
+            ),
+            stream_sequence_id=int(payload.get("sequence_id") or 1),
+            event_type=event_type,
+            occurred_at=occurred_at,
+            owner_id=owner_id,
+            node_id=self.node_id,
+            operator_id=self.operator_id,
+            status=status,
+            amount_q=float(amount_q),
+            payload=dict(payload),
+        ).model_dump(mode="json")
+        self._wallet_economics_events.append(economics_event)
+        self._next_wallet_economics_sequence += 1
+        return economics_event
+
+    def record_recyclable_removal(
+        self,
+        *,
+        category: str,
+        amount_q: float,
+        owner_id: str,
+        source_event_type: str,
+        source_reference: str,
+        source_epoch_id: str | None = None,
+        removed_at: str | None = None,
+    ) -> dict:
+        removal = RecyclableRemoval(
+            sequence_id=self._next_recyclable_removal_sequence,
+            removal_id=str(uuid4()),
+            category=category,
+            amount_q=float(amount_q),
+            owner_id=owner_id,
+            removed_at=removed_at or datetime.now(timezone.utc).isoformat(),
+            source_event_type=source_event_type,
+            source_reference=source_reference,
+            source_epoch_id=source_epoch_id,
+        ).model_dump(mode="json")
+        self._recyclable_removals.append(removal)
+        self._next_recyclable_removal_sequence += 1
+        self._append_wallet_ledger_event(
+            stream="economics",
+            source_event={
+                "event_id": removal["removal_id"],
+                "sequence_id": removal["sequence_id"],
+                "occurred_at": removal["removed_at"],
+                **removal,
+            },
+            event_type="recyclable_removed",
+            owner_id=str(removal["owner_id"]),
+            status=str(removal["category"]),
+            amount_q=float(removal["amount_q"]),
+        )
+        self._append_wallet_economics_event(
+            event_type="recyclable_removed",
+            occurred_at=str(removal["removed_at"]),
+            owner_id=str(removal["owner_id"]),
+            status=str(removal["category"]),
+            amount_q=float(removal["amount_q"]),
+            payload=removal,
+        )
+        self._persist_state()
+        return removal
+
+    def derive_epoch_reward_budget(
+        self,
+        *,
+        epoch_id: str,
+        source_epoch_id: str,
+        recycle_backlog_q: float = 0.0,
+        faucet_carryover_q: float = 0.0,
+        active_hypervisor_count: int = 0,
+    ) -> dict:
+        eligible_removed_q = round(
+            sum(
+                float(item["amount_q"])
+                for item in self._recyclable_removals
+                if item.get("source_epoch_id") == source_epoch_id
+            ),
+            6,
+        )
+        budget = EpochRewardBudget(
+            epoch_id=epoch_id,
+            derived_at=datetime.now(timezone.utc).isoformat(),
+            base_emission_q=self.base_emission_q,
+            eligible_removed_q=eligible_removed_q,
+            recycle_backlog_q=float(recycle_backlog_q),
+            faucet_carryover_q=float(faucet_carryover_q),
+            active_hypervisor_count=int(active_hypervisor_count),
+            pool_shares=self.epoch_reward_pool_shares,
+        ).model_dump(mode="json")
+        self._epoch_reward_budgets = [
+            item for item in self._epoch_reward_budgets if item["epoch_id"] != epoch_id
+        ]
+        self._epoch_reward_budgets.append(budget)
+        self._append_wallet_economics_event(
+            event_type="epoch_reward_budget_derived",
+            occurred_at=str(budget["derived_at"]),
+            owner_id=self.operator_id,
+            status=str(budget["epoch_id"]),
+            amount_q=float(budget["total_authorized_q"]),
+            payload=budget,
+        )
+        self.record_ledger_operation(
+            operation_type="EPOCH_TRANSITION",
+            origin_type="protocol",
+            fee_class="protocol_sponsored",
+            initiator_id=epoch_id,
+            payload={
+                "closing_epoch": source_epoch_id,
+                "opening_epoch": epoch_id,
+                "reward_budget_reference": epoch_id,
+                "eligible_removed_q": float(budget["eligible_removed_q"]),
+                "recycle_backlog_q": float(budget["recycle_backlog_q"]),
+                "total_authorized_q": float(budget["total_authorized_q"]),
+                "active_hypervisor_count": int(budget["active_hypervisor_count"]),
+            },
+            created_at=str(budget["derived_at"]),
+            emitted_events=["EpochTransitionRecorded"],
+        )
+        self._persist_state()
+        return budget
 
     def reopen_wallet_allocation_event(
         self, event_id: str, *, reason: str | None = None
@@ -1819,6 +2344,7 @@ class HypervisorService:
     def bind_validation_service(self, validation_service) -> None:
         self.validation_service = validation_service
         validation_service.event_recorder = self.record_event
+        validation_service.operation_recorder = self.record_ledger_operation
 
     def _record_wallet_session_event_from_journal(self, event: JournalEvent) -> bool:
         event_type_map = {
@@ -1869,6 +2395,7 @@ class HypervisorService:
                 deposit.refunded_q if deposit is not None else 0.0,
             )
         )
+        network_fee_q = float(event.details.get("network_fee_q", 0.0) or 0.0)
         remaining_q = float(
             event.details.get(
                 "remaining_q",
@@ -1913,6 +2440,7 @@ class HypervisorService:
             minimum_session_fee_q=float(
                 event.details.get("minimum_session_fee_q", 0.0)
             ),
+            network_fee_q=network_fee_q,
             close_reason=(
                 str(event.details["close_reason"])
                 if event.details.get("close_reason") is not None
@@ -1942,6 +2470,15 @@ class HypervisorService:
             settlement_status=str(session_event["settlement_status"]),
             amount_q=session_amount_q,
         )
+        if normalized_type == "settled" and network_fee_q > 0.0:
+            self.record_recyclable_removal(
+                category="network_fee",
+                amount_q=network_fee_q,
+                owner_id=str(session_event["owner_id"]),
+                source_event_type="session_network_fee_charged",
+                source_reference=str(session_event["session_id"]),
+                removed_at=str(session_event["occurred_at"]),
+            )
         return True
 
     def _record_wallet_validation_event_from_journal(self, event: JournalEvent) -> bool:
@@ -1976,6 +2513,22 @@ class HypervisorService:
             status=str(event.details.get("outcome") or event.details.get("status") or "recorded"),
             amount_q=float(event.details.get("amount_q", 0.0) or 0.0),
         )
+        if event.event_type == "validation_bond_forfeited":
+            amount_q = float(event.details.get("amount_q", 0.0) or 0.0)
+            if amount_q > 0.0:
+                self.record_recyclable_removal(
+                    category="validation_bond_forfeiture",
+                    amount_q=amount_q,
+                    owner_id=str(owner_id),
+                    source_event_type=event.event_type,
+                    source_reference=str(event.details.get("bond_id") or endpoint_id),
+                    source_epoch_id=(
+                        str(event.details["source_epoch_id"])
+                        if event.details.get("source_epoch_id") is not None
+                        else None
+                    ),
+                    removed_at=event.timestamp,
+                )
         return True
 
     def snapshot_state(self) -> HypervisorStateSnapshot:
@@ -2053,6 +2606,10 @@ class HypervisorService:
                 WalletLedgerSnapshot(**event)
                 for event in self._wallet_ledger_events
             ],
+            wallet_economics_events=[
+                WalletLedgerSnapshot(**event)
+                for event in self._wallet_economics_events
+            ],
             wallet_allocation_activation_events=[
                 WalletAllocationActivationSnapshot(**event)
                 for event in self._wallet_allocation_activation_events
@@ -2065,6 +2622,15 @@ class HypervisorService:
                 WalletAllocationSnapshot(**event)
                 for event in self._wallet_allocation_events
             ],
+            recyclable_removals=[
+                RecyclableRemoval(**event) for event in self._recyclable_removals
+            ],
+            faucet_claims=[FaucetClaim(**event) for event in self._faucet_claims],
+            epoch_reward_budgets=[
+                EpochRewardBudget(**event) for event in self._epoch_reward_budgets
+            ],
+            ledger_operations=self.list_ledger_operations(),
+            wallet_operation_sequences=self._ledger_operation_service.snapshot_wallet_sequences(),
             events=[event.model_copy(deep=True) for event in self._events],
         )
 
@@ -2088,9 +2654,19 @@ class HypervisorService:
         self._wallet_usage_events = []
         self._wallet_session_events = []
         self._wallet_ledger_events = []
+        self._wallet_economics_events = []
+        self._recyclable_removals = []
+        self._faucet_claims = []
+        self._epoch_reward_budgets = []
         self._wallet_allocation_activation_events = []
         self._wallet_allocation_dispute_events = []
         self._wallet_allocation_events = []
+        self._ledger_operation_service.restore(
+            operations=[
+                event.model_dump(mode="json") for event in snapshot.ledger_operations
+            ],
+            wallet_sequences=dict(snapshot.wallet_operation_sequences),
+        )
         self._bundle_states = {
             state.bundle_id: state.model_dump(mode="json")
             for state in snapshot.bundle_states
@@ -2139,6 +2715,36 @@ class HypervisorService:
             )
             + 1
         )
+        self._wallet_economics_events = [
+            event.model_dump(mode="json") for event in snapshot.wallet_economics_events
+        ]
+        self._next_wallet_economics_sequence = (
+            max(
+                (event["sequence_id"] for event in self._wallet_economics_events),
+                default=0,
+            )
+            + 1
+        )
+        self._recyclable_removals = [
+            event.model_dump(mode="json") for event in snapshot.recyclable_removals
+        ]
+        self._next_recyclable_removal_sequence = (
+            max(
+                (event["sequence_id"] for event in self._recyclable_removals),
+                default=0,
+            )
+            + 1
+        )
+        self._faucet_claims = [
+            event.model_dump(mode="json") for event in snapshot.faucet_claims
+        ]
+        self._next_faucet_claim_sequence = (
+            max((event["sequence_id"] for event in self._faucet_claims), default=0)
+            + 1
+        )
+        self._epoch_reward_budgets = [
+            event.model_dump(mode="json") for event in snapshot.epoch_reward_budgets
+        ]
         self._wallet_allocation_activation_events = [
             event.model_dump(mode="json")
             for event in snapshot.wallet_allocation_activation_events
@@ -3655,10 +4261,21 @@ class HypervisorService:
             output_tokens=measurement.output_tokens,
             fixed_request_count=measurement.fixed_request_count,
         )
-        self._record_session_usage_charge_for_task(
+        session_charge_result = self._record_session_usage_charge_for_task(
             task_id=task_id,
             task=task,
             amount_q=float(usage_quote["charges"]["total_q"]),
+        )
+        usage_report = self._attach_usage_report_to_task_result(
+            task_id=task_id,
+            task=task,
+            measurement=measurement,
+        )
+        self._record_session_usage_acknowledgement_for_task(
+            task_id=task_id,
+            task=task,
+            usage_report=usage_report,
+            session_charge_result=session_charge_result,
         )
         if owner_id is None:
             return
@@ -3682,15 +4299,15 @@ class HypervisorService:
         task_id: str,
         task: TaskRequest,
         amount_q: float,
-    ) -> None:
+    ):
         session_id = task.constraints.get("session_id")
         if session_id is None:
-            return
+            return None
         session_service = getattr(self, "session_service", None)
         if session_service is None:
-            return
+            return None
         try:
-            session_service.record_usage_charge(
+            return session_service.record_usage_charge(
                 str(session_id),
                 amount_q=amount_q,
             )
@@ -3713,10 +4330,183 @@ class HypervisorService:
                     "reason": str(error),
                 },
             )
+            return None
 
     def _provider_usage_contract_for_bundle(self, bundle: BundleConfig) -> dict:
         plugin = self.plugins.get(bundle.plugin_id)
         return plugin.usage_contract()
+
+    def _attach_usage_report_to_task_result(
+        self,
+        *,
+        task_id: str,
+        task: TaskRequest,
+        measurement: WalletUsageMeasurement,
+    ):
+        session_id = task.constraints.get("session_id")
+        endpoint_id = task.constraints.get("endpoint_id")
+        if session_id is None or endpoint_id is None:
+            return None
+        endpoint_service = getattr(self, "endpoint_service", None)
+        if endpoint_service is None:
+            return None
+        try:
+            endpoint = endpoint_service.get_endpoint(str(endpoint_id)).endpoint
+        except KeyError:
+            return None
+
+        contract = self.accounting_contract_for_endpoint(endpoint)
+        cumulative_usage = {
+            "input_tokens": measurement.input_tokens,
+            "output_tokens": measurement.output_tokens,
+            "fixed_request_count": measurement.fixed_request_count,
+        }
+        accounting_modes: dict[str, str] = {}
+        measurement_sources: dict[str, str] = {}
+        for item in contract["billable_units"]:
+            unit = str(item["unit"])
+            if unit in cumulative_usage:
+                accounting_modes[unit] = str(item["mode"])
+                measurement_sources[unit] = str(item["measurement_source"])
+        for unit in ("input_tokens", "output_tokens"):
+            if unit in cumulative_usage:
+                measurement_sources[unit] = measurement.measurement_source
+
+        sequence = 1
+        session_service = getattr(self, "session_service", None)
+        if session_service is not None:
+            try:
+                session = session_service.get_session(str(session_id)).session
+                sequence = max(1, int(session.request_count))
+            except Exception:
+                sequence = 1
+
+        report_payload = {
+            "session_id": str(session_id),
+            "endpoint_id": str(endpoint_id),
+            "task_id": task_id,
+            "sequence": sequence,
+            "cumulative_usage": cumulative_usage,
+            "measurement_sources": measurement_sources,
+        }
+        report_id = "usage-" + hashlib.sha256(
+            json.dumps(report_payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+        report = UsageReport(
+            report_id=report_id,
+            report_version="0.1",
+            session_id=str(session_id),
+            endpoint_id=str(endpoint_id),
+            capability_id=endpoint.capabilities[0] if endpoint.capabilities else None,
+            pricing_version=str(contract["pricing_version"]),
+            accounting_contract_version=str(contract["contract_version"]),
+            accounting_modes=accounting_modes,
+            sequence=sequence,
+            cumulative_usage=cumulative_usage,
+            measurement_sources=measurement_sources,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            signature=f"local:{report_id}",
+        )
+        result = self._task_results.get(task_id)
+        if isinstance(result, dict):
+            result["usage_report"] = report.model_dump(mode="json")
+        return report.model_dump(mode="json")
+
+    def _record_session_usage_acknowledgement_for_task(
+        self,
+        *,
+        task_id: str,
+        task: TaskRequest,
+        usage_report: dict | None,
+        session_charge_result,
+    ) -> None:
+        session_id = task.constraints.get("session_id")
+        if session_id is None or usage_report is None or session_charge_result is None:
+            return
+        session_service = getattr(self, "session_service", None)
+        if session_service is None:
+            return
+        updated_session = session_service.record_usage_checkpoint(
+            str(session_id),
+            usage_report=usage_report,
+            accepted_charge_q=float(session_charge_result.deposit.consumed_q),
+        )
+        result = self._task_results.get(task_id)
+        if isinstance(result, dict):
+            result["usage_acknowledgement"] = dict(
+                updated_session.last_usage_acknowledgement_snapshot
+            )
+
+    def accounting_contract_for_endpoint(self, endpoint) -> dict:
+        bundle = self._get_bundle(endpoint.bundle_id)
+        usage_contract = self._provider_usage_contract_for_bundle(bundle)
+        capability_id = endpoint.capabilities[0] if endpoint.capabilities else None
+        measurement_source = (
+            usage_contract.get("default_measurement_source")
+            or usage_contract.get("fallback_measurement_source")
+            or "provider_report"
+        )
+        pricing_version = f"pricing-{endpoint.endpoint_id}-{endpoint.configuration_hash[:8]}"
+        contract_version = f"acct-{endpoint.endpoint_id}-{endpoint.configuration_hash[:8]}"
+
+        billable_units: list[AccountingUnitContract] = []
+        if endpoint.pricing.input_price is not None:
+            billable_units.append(
+                AccountingUnitContract(
+                    unit="input_tokens",
+                    mode="provider_metered",
+                    price=float(endpoint.pricing.input_price),
+                    measurement_source=str(measurement_source),
+                    verification_method="provider_report",
+                )
+            )
+        if endpoint.pricing.output_price is not None:
+            billable_units.append(
+                AccountingUnitContract(
+                    unit="output_tokens",
+                    mode="provider_metered",
+                    price=float(endpoint.pricing.output_price),
+                    measurement_source=str(measurement_source),
+                    verification_method="provider_report",
+                )
+            )
+        if endpoint.pricing.fixed_price is not None:
+            billable_units.append(
+                AccountingUnitContract(
+                    unit="request_fee",
+                    mode="fixed_price",
+                    price=float(endpoint.pricing.fixed_price),
+                    measurement_source="endpoint_policy",
+                    verification_method="fixed_contract",
+                )
+            )
+        if endpoint.session.idle_fee_per_minute > 0.0:
+            billable_units.append(
+                AccountingUnitContract(
+                    unit="idle_minutes",
+                    mode="observable",
+                    price=float(endpoint.session.idle_fee_per_minute),
+                    measurement_source="session_activity",
+                    verification_method="session_timeline",
+                    rounding="per_minute",
+                )
+            )
+
+        contract = AccountingContract(
+            contract_version=contract_version,
+            capability_id=capability_id,
+            pricing_version=pricing_version,
+            billable_units=billable_units,
+            checkpoint_policy="per_request",
+            maximum_unreported_usage=float(endpoint.session.minimum_deposit),
+            maximum_request_charge=(
+                float(endpoint.session.recommended_deposit)
+                if endpoint.session.recommended_deposit is not None
+                else float(endpoint.session.minimum_deposit)
+            ),
+            failure_pricing_policy="reject_unpriced_usage",
+        )
+        return contract.model_dump(mode="json")
 
     def _mark_task_wallet_accounting_blocked(
         self,
@@ -3861,6 +4651,10 @@ class HypervisorService:
             raise ValueError("Session service is not configured")
         try:
             session_service.require_active_session(
+                endpoint_id=manifest.endpoint_id,
+                session_id=str(session_id),
+            )
+            session_service.require_request_budget(
                 endpoint_id=manifest.endpoint_id,
                 session_id=str(session_id),
             )

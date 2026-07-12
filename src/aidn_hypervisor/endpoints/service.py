@@ -21,8 +21,9 @@ class EndpointStateError(ValueError):
 
 
 class EndpointService:
-    def __init__(self, store) -> None:
+    def __init__(self, store, *, operation_recorder=None) -> None:
         self.store = store
+        self.operation_recorder = operation_recorder
 
     def list_endpoints(self) -> list[EndpointManifest]:
         return self.store.list_manifests()
@@ -81,6 +82,7 @@ class EndpointService:
         )
         self.store.save_manifest(manifest)
         self.store.save_configuration_snapshot(snapshot)
+        self._record_endpoint_publish(manifest)
         return CreateEndpointResult(endpoint=manifest, snapshot=snapshot)
 
     def update_endpoint(self, cmd: UpdateEndpointCommand) -> UpdateEndpointResult:
@@ -143,6 +145,11 @@ class EndpointService:
             }
         )
         self.store.save_manifest(updated)
+        self._record_endpoint_update(
+            previous=current,
+            current=updated,
+            snapshot=snapshot,
+        )
         return UpdateEndpointResult(endpoint=updated, snapshot=snapshot)
 
     def attach_proxy_target(self, endpoint_id: str, remote_endpoint) -> UpdateEndpointResult:
@@ -195,6 +202,11 @@ class EndpointService:
             }
         )
         self.store.save_manifest(updated)
+        self._record_endpoint_update(
+            previous=current,
+            current=updated,
+            snapshot=snapshot,
+        )
         return UpdateEndpointResult(endpoint=updated, snapshot=snapshot)
 
     def detach_proxy_target(self, endpoint_id: str) -> UpdateEndpointResult:
@@ -235,6 +247,11 @@ class EndpointService:
             }
         )
         self.store.save_manifest(updated)
+        self._record_endpoint_update(
+            previous=current,
+            current=updated,
+            snapshot=snapshot,
+        )
         return UpdateEndpointResult(endpoint=updated, snapshot=snapshot)
 
     def start_endpoint(self, endpoint_id: str) -> EndpointResult:
@@ -284,6 +301,60 @@ class EndpointService:
         updated = current.model_copy(update={"status": next_status})
         self.store.save_manifest(updated)
         return EndpointResult(endpoint=updated)
+
+    def _record_endpoint_publish(self, manifest: EndpointManifest) -> None:
+        if self.operation_recorder is None:
+            return
+        self.operation_recorder(
+            operation_type="ENDPOINT_PUBLISH",
+            origin_type="wallet",
+            fee_class="standard",
+            initiator_id=manifest.owner_wallet,
+            sender_wallet=manifest.owner_wallet,
+            fee_payer=manifest.owner_wallet,
+            payload={
+                "endpoint_id": manifest.endpoint_id,
+                "bundle_id": manifest.bundle_id,
+                "display_name": manifest.display_name,
+                "endpoint_configuration_hash": manifest.configuration_hash,
+                "visibility": manifest.publication.visibility,
+                "execution_strategy": manifest.execution_strategy,
+            },
+            created_at=manifest.created_at,
+            emitted_events=["EndpointPublished"],
+        )
+
+    def _record_endpoint_update(
+        self,
+        *,
+        previous: EndpointManifest,
+        current: EndpointManifest,
+        snapshot: EndpointConfigurationSnapshot | None,
+    ) -> None:
+        if self.operation_recorder is None:
+            return
+        self.operation_recorder(
+            operation_type="ENDPOINT_UPDATE",
+            origin_type="wallet",
+            fee_class="standard",
+            initiator_id=current.owner_wallet,
+            sender_wallet=current.owner_wallet,
+            fee_payer=current.owner_wallet,
+            payload={
+                "endpoint_id": current.endpoint_id,
+                "previous_configuration_hash": previous.configuration_hash,
+                "next_configuration_hash": current.configuration_hash,
+                "visibility": current.publication.visibility,
+                "execution_strategy": current.execution_strategy,
+                "status": current.status,
+            },
+            created_at=(
+                snapshot.created_at
+                if snapshot is not None
+                else datetime.now(timezone.utc).isoformat()
+            ),
+            emitted_events=["EndpointUpdated"],
+        )
 
     def _configuration_hash(
         self,

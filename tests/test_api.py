@@ -424,6 +424,74 @@ def test_submit_task_endpoint_updates_session_activity_for_paid_endpoint_session
     assert refreshed.idle_deadline_at != "2026-06-30T00:10:00+00:00"
 
 
+def test_submit_task_endpoint_rejects_when_remaining_deposit_cannot_cover_maximum_request_charge() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="whisper-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "idle_fee_per_minute": 1.0,
+                "idle_timeout_seconds": 600,
+                "max_concurrent_sessions": 1,
+                "maximum_session_duration_seconds": 3600,
+                "queue_policy": "busy",
+                "minimum_session_fee": 2.0,
+            },
+            pricing={
+                "billing_unit": "request",
+                "fixed_price": 4.0,
+            },
+        )
+    )
+    session = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=25.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+        accounting_contract={
+            "contract_version": "acct-v1",
+            "pricing_version": "pricing-v1",
+            "checkpoint_policy": "per_request",
+            "maximum_request_charge": 15.0,
+            "billable_units": [],
+        },
+    ).session
+    session_service.record_usage_charge(session.session_id, amount_q=12.0)
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.post(
+        "/tasks",
+        json={
+            "task_type": "audio.transcribe",
+            "payload": {"audio_ref": "clip.wav"},
+            "constraints": {
+                "endpoint_id": created.endpoint.endpoint_id,
+                "session_id": session.session_id,
+            },
+        },
+    )
+
+    assert response.status_code == 409
+    assert "maximum request charge" in response.json()["detail"]
+
+
 def test_get_task_endpoint_exposes_proxy_trace_for_proxy_execution() -> None:
     class StubRemoteHypervisorTransport:
         def request_json(self, method: str, url: str, payload: dict | None = None) -> dict:
@@ -2333,6 +2401,18 @@ def test_operator_dashboard_shell_route_exposes_sessions_workspace_controls() ->
     assert "/operators/dashboard/sessions" in response.text
     assert "/operators/dashboard/sessions/actions/close" in response.text
     assert "/operators/dashboard/sessions/actions/sweep-idle" in response.text
+    assert "/operators/wallet/economics" in response.text
+    assert "/operators/wallet/economics/export" in response.text
+    assert "/operators/wallet/economics/faucet" in response.text
+    assert "/operators/wallet/economics/faucet/claim" in response.text
+    assert 'data-wallet-tab="economics"' in response.text
+    assert "Faucet Pool" in response.text
+    assert "Faucet Claim" in response.text
+    assert "Claim Faucet Share" in response.text
+    assert "Faucet Mechanics" in response.text
+    assert "Reward Pools" in response.text
+    assert "Economics History" in response.text
+    assert "Recycle Backlog" in response.text
     assert "Reserve Paid Session" in response.text
     assert "Deposit Confirmation" in response.text
     assert "Confirm Deposit &amp; Open Session" in response.text
@@ -4054,8 +4134,9 @@ def test_operator_dashboard_sessions_endpoint_includes_settlement_preview() -> N
 
     assert response.status_code == 200
     assert preview["usage_charged_q"] == 3.0
+    assert preview["network_fee_q"] == 0.01
     assert preview["idle_exposure_q"] > 0.0
-    assert preview["projected_charged_q"] >= preview["usage_charged_q"]
+    assert preview["projected_charged_q"] >= 3.01
     assert preview["projected_refundable_q"] < 7.0
     assert preview["seconds_until_idle_timeout"] > 0
 
@@ -4113,7 +4194,8 @@ def test_operator_dashboard_session_close_action_closes_selected_session() -> No
     assert body["data"]["session"]["session_id"] == opened.session.session_id
     assert body["data"]["session"]["status"] == "closed"
     assert body["data"]["deposit"]["status"] == "released"
-    assert body["data"]["settlement"]["charged_q"] == 2.0
+    assert body["data"]["settlement"]["charged_q"] == 2.01
+    assert body["data"]["settlement"]["network_fee_q"] == 0.01
 
 
 def test_operator_dashboard_session_close_action_propagates_proxy_session_close() -> None:

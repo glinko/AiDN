@@ -165,22 +165,29 @@ Only finalized operations modify canonical Ledger state.
 Every operation submitted to consensus SHALL use a common envelope.
 
 ```yaml
-operation:
+ledger_operation:
   operation_id:
   operation_type:
+  operation_version:
   protocol_version:
+  origin_type:
+  initiator_id:
   sender_wallet:
   sender_sequence:
+  fee_payer:
   created_at:
   expires_at:
-  fee:
+  target_epoch:
   payload:
+  evidence_references:
   signatures:
 ```
 
 The operation envelope SHALL be deterministically serialized.
 
 The same logical operation SHALL always produce the same serialized bytes.
+
+The authoritative operation envelope and per-operation catalog are defined in [RFC-0059 Ledger Operation Catalog](./RFC-0059-ledger-operation-catalog.md). This section describes the consensus boundary, not a competing operation-schema source of truth.
 
 ## 8. Operation Identity
 
@@ -469,21 +476,21 @@ Initial requirements SHOULD include:
 
 Exact thresholds SHALL be defined in the consensus economics specification.
 
+For the MVP, that specification is `ECO-0006`.
+
 ## 23. Voting Power
 
-The MVP SHOULD avoid unlimited wealth-proportional voting power.
+The MVP SHALL avoid unlimited wealth-proportional voting power.
 
 A large Wallet balance SHALL NOT permit one operator to dominate consensus merely by depositing more `Q`.
 
-Initial voting-power models to consider include:
+For the MVP, `ECO-0006` defines equal voting power per active Consensus Validator together with Known Control Group limits and deterministic active-set selection.
 
-- equal voting power per eligible Consensus Service;
-- capped stake-weighted voting power;
-- reputation-adjusted capped voting power.
-
-The final voting-power formula remains an explicit protocol parameter.
+Future protocol versions MAY define another bounded voting-power model only through explicit economic specification and upgrade.
 
 The total voting power controlled by one Wallet or related operator group SHOULD be capped where enforceable.
+
+Participant-grouping, Reward Beneficiary aggregation, and broader Sybil-resistance principles are defined separately in [RFC-0058 Participant Eligibility and Sybil Resistance](./RFC-0058-participant-eligibility-and-sybil-resistance.md).
 
 ## 24. Consensus Stake
 
@@ -496,6 +503,8 @@ Stake SHALL NOT itself generate authority outside the configured voting-power ru
 Stake remains locked while the Consensus Service is active and for an unbonding period after voluntary exit.
 
 The exact amount and unbonding duration are defined separately.
+
+For the MVP, `ECO-0006` defines the Consensus Stake, unbonding, objective slashable misconduct, and validator-rotation rules.
 
 ## 25. Consensus Misconduct
 
@@ -618,6 +627,8 @@ Snapshot providers SHALL NOT be trusted solely by identity.
 
 Snapshot correctness SHALL be cryptographically verified against finalized consensus state.
 
+Detailed Snapshot creation, trusted-checkpoint selection, State Sync restoration, and later-block replay rules are defined by `RFC-0062`.
+
 ## 32. Snapshot Production
 
 The Snapshot Manager registers Snapshot Generation as an Epoch Task.
@@ -632,6 +643,8 @@ A Snapshot includes:
 - chunk metadata;
 - creation Epoch;
 - required verification metadata.
+
+The canonical Snapshot manifest and State Sync semantics are defined by `RFC-0062`.
 
 Consensus Services MAY retain only recent snapshots.
 

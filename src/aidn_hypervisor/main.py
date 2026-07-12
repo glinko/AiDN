@@ -80,7 +80,14 @@ def build_app(
     resolved_service.remote_endpoint_service = resolved_remote_endpoint_service
     resolved_service.session_service = resolved_session_service
     resolved_service.bind_validation_service(resolved_validation_service)
+    resolved_endpoint_service.operation_recorder = (
+        resolved_service.record_ledger_operation
+    )
+    resolved_endpoint_publication_service.operation_recorder = (
+        resolved_service.record_ledger_operation
+    )
     resolved_session_service.event_recorder = resolved_service.record_event
+    resolved_session_service.operation_recorder = resolved_service.record_ledger_operation
 
     app.include_router(
         build_api_router(

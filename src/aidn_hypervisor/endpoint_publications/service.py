@@ -9,9 +9,10 @@ from aidn_hypervisor.endpoint_publications.models import (
 
 
 class EndpointPublicationService:
-    def __init__(self, *, store, endpoint_service) -> None:
+    def __init__(self, *, store, endpoint_service, operation_recorder=None) -> None:
         self.store = store
         self.endpoint_service = endpoint_service
+        self.operation_recorder = operation_recorder
 
     def publish_configuration(
         self,
@@ -64,6 +65,12 @@ class EndpointPublicationService:
             status="published",
             wallet_signature=f"sig-{configuration_hash[:16]}-{wallet_private_key[:8]}",
         )
+        self._record_advertisement_publish(
+            record,
+            previous_publication_id=(
+                previous.publication_id if previous is not None else None
+            ),
+        )
         if previous is None:
             self.store.append(record)
             return record
@@ -113,7 +120,9 @@ class EndpointPublicationService:
             for existing in records
         ]
         self.store.replace_records(updated_records)
-        return current.model_copy(update={"status": "revoked"})
+        revoked = current.model_copy(update={"status": "revoked"})
+        self._record_advertisement_withdraw(revoked)
+        return revoked
 
     def _current_publication_from_records(
         self,
@@ -139,3 +148,57 @@ class EndpointPublicationService:
             "strategy": manifest.execution_strategy,
             "target_fingerprint": fingerprint,
         }
+
+    def _record_advertisement_publish(
+        self,
+        record: PublishedEndpointConfiguration,
+        *,
+        previous_publication_id: str | None = None,
+    ) -> None:
+        if self.operation_recorder is None:
+            return
+        self.operation_recorder(
+            operation_type="ADVERTISEMENT_PUBLISH",
+            origin_type="wallet",
+            fee_class="standard",
+            initiator_id=record.owner_wallet,
+            sender_wallet=record.owner_wallet,
+            fee_payer=record.owner_wallet,
+            payload={
+                "advertisement_id": record.publication_id,
+                "resource_type": "endpoint_configuration",
+                "resource_id": record.endpoint_id,
+                "owner_wallet": record.owner_wallet,
+                "visibility": record.publication.get("visibility", "private"),
+                "advertisement_version": record.sequence,
+                "previous_advertisement_id": previous_publication_id,
+                "content_hash": record.configuration_hash,
+                "status": record.status,
+            },
+            created_at=record.published_at,
+            emitted_events=["AdvertisementPublished"],
+        )
+
+    def _record_advertisement_withdraw(
+        self,
+        record: PublishedEndpointConfiguration,
+    ) -> None:
+        if self.operation_recorder is None:
+            return
+        self.operation_recorder(
+            operation_type="ADVERTISEMENT_WITHDRAW",
+            origin_type="wallet",
+            fee_class="standard",
+            initiator_id=record.owner_wallet,
+            sender_wallet=record.owner_wallet,
+            fee_payer=record.owner_wallet,
+            payload={
+                "advertisement_id": record.publication_id,
+                "resource_type": "endpoint_configuration",
+                "resource_id": record.endpoint_id,
+                "owner_wallet": record.owner_wallet,
+                "status": record.status,
+            },
+            created_at=datetime.now(timezone.utc).isoformat(),
+            emitted_events=["AdvertisementWithdrawn"],
+        )

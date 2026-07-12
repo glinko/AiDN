@@ -1,6 +1,9 @@
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+from aidn_hypervisor.accounting.models import UsageAcknowledgement, UsageReport, VerificationStatus
 from aidn_hypervisor.sessions.models import (
     EndpointSession,
     LockedDeposit,
@@ -11,9 +14,17 @@ from aidn_hypervisor.sessions.models import (
 
 
 class SessionService:
-    def __init__(self, store, event_recorder=None) -> None:
+    def __init__(
+        self,
+        store,
+        event_recorder=None,
+        operation_recorder=None,
+        network_fee_q: float = 0.01,
+    ) -> None:
         self.store = store
         self.event_recorder = event_recorder
+        self.operation_recorder = operation_recorder
+        self.network_fee_q = max(0.0, float(network_fee_q))
 
     def _emit(
         self,
@@ -65,6 +76,28 @@ class SessionService:
             raise ValueError(f"Session is not active: {session_id}")
         return session
 
+    def require_request_budget(
+        self,
+        *,
+        endpoint_id: str,
+        session_id: str,
+    ) -> EndpointSession:
+        session = self.require_active_session(
+            endpoint_id=endpoint_id,
+            session_id=session_id,
+        )
+        deposit = self.store.get_deposit_for_session(session_id)
+        contract = dict(session.accounting_contract_snapshot or {})
+        maximum_request_charge = contract.get("maximum_request_charge")
+        if maximum_request_charge is None:
+            return session
+        remaining_q = max(0.0, float(deposit.locked_q) - float(deposit.consumed_q))
+        if remaining_q < float(maximum_request_charge):
+            raise ValueError(
+                "remaining deposit is below the maximum request charge"
+            )
+        return session
+
     def open_session(
         self,
         *,
@@ -74,7 +107,10 @@ class SessionService:
         node_id: str,
         deposit_q: float,
         session_policy: dict,
+        accounting_contract: dict | None = None,
     ) -> SessionResult:
+        session_policy_snapshot = dict(session_policy)
+        session_policy_snapshot.setdefault("network_fee_q", self.network_fee_q)
         minimum_deposit = float(session_policy.get("minimum_deposit", 0.0) or 0.0)
         if deposit_q < minimum_deposit:
             raise ValueError("deposit is below the minimum deposit")
@@ -118,7 +154,8 @@ class SessionService:
             deposit_locked_q=deposit_q,
             reserved_slot_index=reserved_slot_index,
             queue_policy_snapshot=queue_policy,
-            session_policy_snapshot=dict(session_policy),
+            session_policy_snapshot=session_policy_snapshot,
+            accounting_contract_snapshot=dict(accounting_contract or {}),
             close_reason=("waiting_for_slot" if queued_sessions or not slot_available else None),
         )
         deposit = LockedDeposit(
@@ -132,6 +169,33 @@ class SessionService:
         )
         self.store.save_session(session)
         self.store.save_deposit(deposit)
+        if self.operation_recorder is not None:
+            session_policy_hash = hashlib.sha256(
+                json.dumps(session_policy_snapshot, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            accounting_contract_hash = hashlib.sha256(
+                json.dumps(dict(accounting_contract or {}), sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            self.operation_recorder(
+                operation_type="SESSION_OPEN",
+                origin_type="wallet",
+                fee_class="session",
+                initiator_id=client_wallet,
+                sender_wallet=client_wallet,
+                fee_payer=client_wallet,
+                payload={
+                    "session_id": session.session_id,
+                    "consumer_hypervisor_id": node_id,
+                    "provider_hypervisor_id": node_id,
+                    "endpoint_id": endpoint_id,
+                    "session_policy_hash": f"sha256:{session_policy_hash}",
+                    "accounting_contract_hash": f"sha256:{accounting_contract_hash}",
+                    "deposit_amount": deposit_q,
+                    "open_expiration": session.expires_at,
+                },
+                created_at=session.created_at,
+                emitted_events=["SessionOpened"],
+            )
         self._emit(
             event_type="session.deposit_locked",
             message="session deposit locked",
@@ -223,6 +287,65 @@ class SessionService:
         )
         return SessionResult(session=updated_session, deposit=updated_deposit)
 
+    def record_usage_checkpoint(
+        self,
+        session_id: str,
+        *,
+        usage_report: dict,
+        accepted_charge_q: float,
+        verification_status: VerificationStatus = "accepted_unverified",
+    ) -> EndpointSession:
+        current = self.store.get_session(session_id)
+        report = UsageReport.model_validate(usage_report)
+        report_hash = hashlib.sha256(
+            json.dumps(report.model_dump(mode="json"), sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        acknowledgement = UsageAcknowledgement(
+            session_id=session_id,
+            sequence=report.sequence,
+            provider_report_hash=f"sha256:{report_hash}",
+            verification_status=verification_status,
+            signature=f"local-ack:{report.report_id}",
+        )
+        accepted_sequence = current.last_accepted_report_sequence
+        accepted_usage_charged_q = current.last_accepted_usage_charged_q
+        accounting_status = "mismatch" if verification_status == "mismatch" else "open"
+        if verification_status != "mismatch":
+            accepted_sequence = report.sequence
+            accepted_usage_charged_q = max(0.0, float(accepted_charge_q))
+        updated = current.model_copy(
+            update={
+                "last_usage_report_snapshot": report.model_dump(mode="json"),
+                "last_usage_acknowledgement_snapshot": acknowledgement.model_dump(
+                    mode="json"
+                ),
+                "accounting_status": accounting_status,
+                "last_accepted_report_sequence": accepted_sequence,
+                "last_accepted_usage_charged_q": accepted_usage_charged_q,
+            }
+        )
+        self.store.save_session(updated)
+        self._emit(
+            event_type=(
+                "session.accounting_mismatch"
+                if verification_status == "mismatch"
+                else "session.usage_acknowledged"
+            ),
+            message=(
+                "session accounting mismatch recorded"
+                if verification_status == "mismatch"
+                else "session usage checkpoint acknowledged"
+            ),
+            details={
+                "session_id": session_id,
+                "report_id": report.report_id,
+                "sequence": report.sequence,
+                "verification_status": verification_status,
+                "accepted_charge_q": accepted_usage_charged_q,
+            },
+        )
+        return updated
+
     def sweep_idle_sessions(
         self,
         *,
@@ -270,6 +393,9 @@ class SessionService:
         minimum_session_fee = float(
             session.session_policy_snapshot.get("minimum_session_fee", 0.0) or 0.0
         )
+        network_fee_q = float(
+            session.session_policy_snapshot.get("network_fee_q", self.network_fee_q) or 0.0
+        )
         idle_fee_per_minute = float(
             session.session_policy_snapshot.get("idle_fee_per_minute", 0.0) or 0.0
         )
@@ -287,23 +413,46 @@ class SessionService:
                 (closed_at - last_activity_at).total_seconds() / 60.0,
             )
             idle_fee_charged_q = idle_minutes * idle_fee_per_minute
-        charged_q = min(
+        accepted_usage_charged_q = (
+            session.last_accepted_usage_charged_q
+            if session.last_accepted_report_sequence is not None
+            else deposit.consumed_q
+        )
+        payout_q = round(
+            min(
             deposit.locked_q,
-            deposit.consumed_q + idle_fee_charged_q,
+            accepted_usage_charged_q + idle_fee_charged_q,
+            ),
+            6,
         )
         minimum_session_fee_q = 0.0
         if no_request and minimum_session_fee > 0.0:
             minimum_session_fee_q = min(deposit.locked_q, minimum_session_fee)
-            charged_q = minimum_session_fee_q
+            payout_q = minimum_session_fee_q
             idle_fee_charged_q = 0.0
-        refunded_q = max(0.0, deposit.locked_q - charged_q)
+        network_fee_charged_q = round(
+            min(
+                network_fee_q,
+                max(0.0, deposit.locked_q - payout_q),
+            ),
+            6,
+        )
+        charged_q = round(
+            min(
+                deposit.locked_q,
+                payout_q + network_fee_charged_q,
+            ),
+            6,
+        )
+        refunded_q = round(max(0.0, deposit.locked_q - charged_q), 6)
         settlement = SessionSettlementSummary(
-            usage_charged_q=deposit.consumed_q,
+            usage_charged_q=accepted_usage_charged_q,
             idle_fee_charged_q=idle_fee_charged_q,
             minimum_session_fee_q=minimum_session_fee_q,
+            network_fee_q=network_fee_charged_q,
             charged_q=charged_q,
             refunded_q=refunded_q,
-            payout_q=charged_q,
+            payout_q=payout_q,
             no_request=no_request,
         )
         closed = session.model_copy(
@@ -322,6 +471,25 @@ class SessionService:
         )
         self.store.save_session(closed)
         self.store.save_deposit(released)
+        if self.operation_recorder is not None:
+            self.operation_recorder(
+                operation_type="SESSION_SETTLE",
+                origin_type="multi_party",
+                fee_class="session",
+                initiator_id=session.session_id,
+                fee_payer=session.client_wallet,
+                payload={
+                    "session_id": session.session_id,
+                    "endpoint_id": session.endpoint_id,
+                    "charged_q": settlement.charged_q,
+                    "refunded_q": settlement.refunded_q,
+                    "payout_q": settlement.payout_q,
+                    "close_reason": close_reason,
+                    "last_accepted_report_sequence": session.last_accepted_report_sequence,
+                },
+                created_at=closed_at.isoformat(),
+                emitted_events=["SessionSettled"],
+            )
         self._emit(
             event_type="session.settled",
             message="session settled and released",
@@ -334,6 +502,7 @@ class SessionService:
                 "usage_charged_q": settlement.usage_charged_q,
                 "idle_fee_charged_q": settlement.idle_fee_charged_q,
                 "minimum_session_fee_q": settlement.minimum_session_fee_q,
+                "network_fee_q": settlement.network_fee_q,
                 "no_request": settlement.no_request,
                 "close_reason": close_reason,
             },

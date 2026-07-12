@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, model_validator
 
 SessionStatus = Literal["queued", "active", "closed"]
 DepositStatus = Literal["locked", "released"]
+SessionAccountingStatus = Literal["open", "mismatch"]
 ProxySessionBindingStatus = Literal[
     "pending_open",
     "active",
@@ -32,6 +33,12 @@ class EndpointSession(BaseModel):
     reserved_slot_index: int | None = Field(default=None, ge=0)
     queue_policy_snapshot: str
     session_policy_snapshot: dict = Field(default_factory=dict)
+    accounting_contract_snapshot: dict = Field(default_factory=dict)
+    last_usage_report_snapshot: dict = Field(default_factory=dict)
+    last_usage_acknowledgement_snapshot: dict = Field(default_factory=dict)
+    accounting_status: SessionAccountingStatus = "open"
+    last_accepted_report_sequence: int | None = Field(default=None, ge=1)
+    last_accepted_usage_charged_q: float = Field(default=0.0, ge=0.0)
     close_reason: str | None = None
 
 
@@ -59,6 +66,7 @@ class SessionSettlementSummary(BaseModel):
     usage_charged_q: float = Field(default=0.0, ge=0.0)
     idle_fee_charged_q: float = Field(default=0.0, ge=0.0)
     minimum_session_fee_q: float = Field(default=0.0, ge=0.0)
+    network_fee_q: float = Field(default=0.0, ge=0.0)
     charged_q: float = Field(default=0.0, ge=0.0)
     refunded_q: float = Field(default=0.0, ge=0.0)
     payout_q: float = Field(default=0.0, ge=0.0)

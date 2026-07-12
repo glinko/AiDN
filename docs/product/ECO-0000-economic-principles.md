@@ -111,7 +111,7 @@ The Network Fee exists to:
 
 - discourage spam;
 - finance protocol infrastructure;
-- support Registry operators.
+- contribute recyclable protocol revenue for later Epoch reward allocation.
 
 ## 8. Sessions
 
@@ -175,7 +175,7 @@ The Bond demonstrates long-term commitment to maintaining a reliable Endpoint.
 
 The Bond is gradually returned through successful Maintenance Validation.
 
-Failure during Maintenance Validation permanently forfeits the remaining Bond.
+Failure during Maintenance Validation removes the remaining locked Bond from operator control and hands it to the protocol-defined forfeiture and recycling path unless a future rule explicitly marks it as permanent burn.
 
 ## 12. Validators
 
@@ -191,7 +191,7 @@ Validators are selected deterministically by the protocol.
 
 Registry operators provide storage and discovery services.
 
-Registry operators receive Network Fee distributions.
+Registry operators receive protocol reward distributions only when they satisfy the applicable service-eligibility and proof requirements.
 
 Only Registry nodes satisfying protocol requirements participate in reward distribution.
 
@@ -229,8 +229,12 @@ New `Q` may be introduced only through protocol-defined Ledger Operations.
 
 Initial supported emission sources:
 
-- Faucet;
-- Validator Rewards.
+- Faucet payments;
+- Consensus rewards;
+- Registry rewards;
+- Validation rewards.
+
+Recycled protocol removals MAY increase later Epoch reward authorization, but removal alone does not mint new `Q`.
 
 No participant may independently create `Q`.
 
@@ -240,10 +244,11 @@ No participant may independently create `Q`.
 
 Examples include:
 
-- forfeited Validation Bonds;
 - future governance decisions.
 
 Burn operations are irreversible.
+
+Unless explicitly marked as permanent, MVP protocol deductions are treated as recyclable removals rather than permanent burns.
 
 ## 18. Long-Term Incentives
 

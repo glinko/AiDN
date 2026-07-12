@@ -3,6 +3,12 @@ from pydantic import BaseModel, Field
 from aidn_hypervisor.domain.models import AllocationRequest, TaskRequest
 from aidn_hypervisor.endpoint_publications.models import PublishedEndpointConfiguration
 from aidn_hypervisor.domain.types import TaskStatus
+from aidn_hypervisor.economics.models import (
+    EpochRewardBudget,
+    FaucetClaim,
+    RecyclableRemoval,
+)
+from aidn_hypervisor.ledger.models import LedgerOperationRecord
 from aidn_hypervisor.endpoints.state import (
     EndpointConfigurationSnapshotRecord,
     EndpointManifestSnapshot,
@@ -190,6 +196,7 @@ class WalletSessionSnapshot(BaseModel):
     usage_charged_q: float = Field(ge=0.0)
     idle_fee_charged_q: float = Field(ge=0.0)
     minimum_session_fee_q: float = Field(ge=0.0)
+    network_fee_q: float = Field(ge=0.0)
     close_reason: str | None = None
 
 
@@ -285,6 +292,7 @@ class HypervisorStateSnapshot(BaseModel):
     wallet_usage_events: list[WalletUsageSnapshot] = Field(default_factory=list)
     wallet_session_events: list[WalletSessionSnapshot] = Field(default_factory=list)
     wallet_ledger_events: list[WalletLedgerSnapshot] = Field(default_factory=list)
+    wallet_economics_events: list[WalletLedgerSnapshot] = Field(default_factory=list)
     wallet_allocation_events: list[WalletAllocationSnapshot] = Field(default_factory=list)
     wallet_allocation_activation_events: list[WalletAllocationActivationSnapshot] = Field(
         default_factory=list
@@ -292,6 +300,9 @@ class HypervisorStateSnapshot(BaseModel):
     wallet_allocation_dispute_events: list[WalletAllocationDisputeSnapshot] = Field(
         default_factory=list
     )
+    recyclable_removals: list[RecyclableRemoval] = Field(default_factory=list)
+    faucet_claims: list[FaucetClaim] = Field(default_factory=list)
+    epoch_reward_budgets: list[EpochRewardBudget] = Field(default_factory=list)
     owner_wallet: OwnerWalletSnapshot | None = None
     operator_onboarding: OperatorOnboardingSnapshot | None = None
     endpoints: list[EndpointManifestSnapshot] = Field(default_factory=list)
@@ -305,4 +316,6 @@ class HypervisorStateSnapshot(BaseModel):
     endpoint_sessions: list[EndpointSessionSnapshot] = Field(default_factory=list)
     locked_deposits: list[LockedDepositSnapshot] = Field(default_factory=list)
     proxy_session_bindings: list[ProxySessionBindingSnapshot] = Field(default_factory=list)
+    ledger_operations: list[LedgerOperationRecord] = Field(default_factory=list)
+    wallet_operation_sequences: dict[str, int] = Field(default_factory=dict)
     events: list[JournalEvent] = Field(default_factory=list)

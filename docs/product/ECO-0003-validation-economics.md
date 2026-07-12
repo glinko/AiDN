@@ -172,7 +172,7 @@ The Bond is therefore recovered quickly at first, while a small portion remains 
 If a validated Endpoint fails any Maintenance Validation:
 
 - Certification Status is revoked;
-- the remaining Validation Bond is permanently forfeited;
+- the remaining Validation Bond is removed from operator control and classified as recyclable protocol removal unless a future protocol revision explicitly marks it as a permanent burn;
 - a Validation Report is published.
 
 Previously refunded amounts are never reclaimed.

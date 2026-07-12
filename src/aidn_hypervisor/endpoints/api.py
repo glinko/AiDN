@@ -208,6 +208,14 @@ def build_endpoint_router(
         except KeyError:
             return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
         try:
+            accounting_contract = None
+            if hypervisor_service is not None:
+                try:
+                    accounting_contract = hypervisor_service.accounting_contract_for_endpoint(
+                        endpoint
+                    )
+                except KeyError:
+                    accounting_contract = None
             result = session_service.open_session(
                 endpoint_id=endpoint_id,
                 client_wallet=request.client_wallet,
@@ -215,6 +223,7 @@ def build_endpoint_router(
                 node_id="node-local",
                 deposit_q=request.deposit_q,
                 session_policy=endpoint.session.model_dump(mode="json"),
+                accounting_contract=accounting_contract,
             )
         except ValueError as error:
             return _error(409, "session_open_rejected", str(error))

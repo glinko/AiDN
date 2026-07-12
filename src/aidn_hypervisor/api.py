@@ -332,6 +332,9 @@ def _operator_dashboard_sessions_payload(
         minimum_session_fee = float(
             session.session_policy_snapshot.get("minimum_session_fee", 0.0) or 0.0
         )
+        network_fee_q = float(
+            session.session_policy_snapshot.get("network_fee_q", 0.01) or 0.0
+        )
         idle_fee_per_minute = float(
             session.session_policy_snapshot.get("idle_fee_per_minute", 0.0) or 0.0
         )
@@ -361,9 +364,14 @@ def _operator_dashboard_sessions_payload(
                 max(0.0, float(deposit.locked_q) - usage_charged_q),
                 (idle_elapsed_seconds / 60.0) * idle_fee_per_minute,
             )
+        projected_payout_q = max(minimum_session_fee_q, usage_charged_q + idle_exposure_q)
+        projected_network_fee_q = min(
+            network_fee_q,
+            max(0.0, float(deposit.locked_q) - projected_payout_q),
+        )
         projected_charged_q = min(
             float(deposit.locked_q),
-            max(minimum_session_fee_q, usage_charged_q + idle_exposure_q),
+            projected_payout_q + projected_network_fee_q,
         )
         projected_refundable_q = max(
             0.0,
@@ -382,6 +390,7 @@ def _operator_dashboard_sessions_payload(
         return {
             "usage_charged_q": usage_charged_q,
             "minimum_session_fee_q": minimum_session_fee_q,
+            "network_fee_q": projected_network_fee_q,
             "idle_exposure_q": idle_exposure_q,
             "projected_charged_q": projected_charged_q,
             "projected_refundable_q": projected_refundable_q,
@@ -1583,6 +1592,49 @@ def build_api_router(
     @router.get("/operators/wallet/ledger")
     async def wallet_ledger_events(limit: int = 100) -> list[dict]:
         return service.list_wallet_ledger_events(limit=limit)
+
+    @router.get("/operators/ledger/operations")
+    async def ledger_operations(limit: int = 100) -> list[dict]:
+        return service.list_ledger_operations(limit=limit)
+
+    @router.get("/operators/ledger/operations/export")
+    async def export_ledger_operations(
+        after_operation_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return service.export_ledger_operations(
+            after_operation_id=after_operation_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
+    @router.get("/operators/wallet/economics")
+    async def wallet_economics_summary(recent_limit: int = 10) -> dict:
+        return service.get_wallet_economics_summary(recent_limit=recent_limit)
+
+    @router.get("/operators/wallet/economics/export")
+    async def export_wallet_economics_events(
+        after_event_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return service.export_wallet_economics_events(
+            after_event_id=after_event_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
+    @router.get("/operators/wallet/economics/faucet")
+    async def wallet_faucet_preview() -> dict:
+        return service.get_faucet_claim_preview()
+
+    @router.post("/operators/wallet/economics/faucet/claim")
+    async def claim_wallet_faucet_share() -> dict:
+        try:
+            return service.claim_faucet_share()
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/operators/wallet/endpoints/publications")
     async def wallet_endpoint_publications(endpoint_id: str | None = None) -> dict:

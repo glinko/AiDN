@@ -1451,6 +1451,10 @@
       usage: "/operators/wallet/usage",
       allocations: "/operators/wallet/allocations",
       disputes: "/operators/wallet/allocations/disputes",
+      economics: "/operators/wallet/economics",
+      economicsExport: "/operators/wallet/economics/export",
+      faucetPreview: "/operators/wallet/economics/faucet",
+      faucetClaim: "/operators/wallet/economics/faucet/claim",
       quote: "/operators/wallet/quote",
     };
 
@@ -1518,6 +1522,9 @@
       walletUsageEvents: [],
       walletAllocationEvents: [],
       walletDisputeEvents: [],
+      walletEconomicsSummary: null,
+      walletEconomicsHistory: [],
+      walletFaucetPreview: null,
       walletSelectedUsageId: null,
       walletSelectedAllocationId: null,
       walletSelectedDisputeId: null,
@@ -3256,6 +3263,77 @@
 
     function walletDisputeEvents() {
       return [...state.walletDisputeEvents].reverse();
+    }
+
+    function walletEconomicsSummary() {
+      return {
+        base_emission_q: Number(state.walletEconomicsSummary?.base_emission_q || 0),
+        pool_shares: state.walletEconomicsSummary?.pool_shares || {
+          consensus: 0,
+          registry: 0,
+          validation: 0,
+          faucet: 0,
+        },
+        removals: state.walletEconomicsSummary?.removals || {
+          count: 0,
+          total_q: 0,
+          by_category: {},
+          by_epoch: {},
+          latest_removed_at: null,
+        },
+        latest_budget: state.walletEconomicsSummary?.latest_budget || null,
+        recent_removals: state.walletEconomicsSummary?.recent_removals || [],
+        recycling: state.walletEconomicsSummary?.recycling || {
+          eligible_removed_q: 0,
+          recycle_backlog_q: 0,
+          recyclable_amount_q: 0,
+        },
+        faucet: state.walletEconomicsSummary?.faucet || {
+          carryover_q: 0,
+          budget_q: 0,
+          active_hypervisor_count: 0,
+          share_q: 0,
+          claimed: false,
+          claimed_q: 0,
+          remaining_q: 0,
+          claim: null,
+        },
+        pools: state.walletEconomicsSummary?.pools || {
+          consensus_budget_q: 0,
+          registry_budget_q: 0,
+          validation_budget_q: 0,
+          faucet_budget_q: 0,
+        },
+        latest_budget_breakdown: state.walletEconomicsSummary?.latest_budget_breakdown || {
+          epoch_id: null,
+          total_authorized_q: 0,
+          faucet_share_q: 0,
+        },
+      };
+    }
+
+    function walletEconomicsHistoryEvents() {
+      return [...state.walletEconomicsHistory];
+    }
+
+    function walletFaucetPreview() {
+      return (
+        state.walletFaucetPreview || {
+          eligible: false,
+          reason: "no_epoch_budget",
+          message: "No faucet preview is available yet.",
+          epoch_id: null,
+          wallet_id: null,
+          share_q: 0,
+          claimed: false,
+          claimed_q: 0,
+          remaining_q: 0,
+          active_local_endpoint_count: 0,
+          active_hypervisor_count: 0,
+          faucet_budget_q: 0,
+          claim: null,
+        }
+      );
     }
 
     function syncWalletSelections() {
@@ -4998,6 +5076,11 @@
 
     function renderWalletSummaryCards() {
       const totals = walletTotals();
+      const economics = walletEconomicsSummary();
+      const latestBudget = economics.latest_budget;
+      const recycling = economics.recycling || {};
+      const faucet = economics.faucet || {};
+      const budgetBreakdown = economics.latest_budget_breakdown || {};
       return `
         <div class="wallet-summary-grid">
           <section class="wallet-summary-card">
@@ -5019,6 +5102,26 @@
             <div class="panel-heading">Settlement Volume</div>
             <div class="wallet-summary-value">${formatQ(totals.settlementQ)}</div>
             <div class="summary-copy">q represented by allocation finalizations on this node.</div>
+          </section>
+          <section class="wallet-summary-card">
+            <div class="panel-heading">Recyclable Removed</div>
+            <div class="wallet-summary-value">${formatQ(economics.removals.total_q || 0)}</div>
+            <div class="summary-copy">${formatCount(economics.removals.count || 0)} protocol removals tracked for future epoch recycling.</div>
+          </section>
+          <section class="wallet-summary-card">
+            <div class="panel-heading">Latest Epoch Budget</div>
+            <div class="wallet-summary-value">${formatQ(latestBudget?.total_authorized_q || 0)}</div>
+            <div class="summary-copy">${latestBudget ? `${latestBudget.epoch_id} / Faucet share ${formatQ(latestBudget.faucet_share_q || 0)}` : "No epoch reward budget has been derived yet."}</div>
+          </section>
+          <section class="wallet-summary-card">
+            <div class="panel-heading">Faucet Pool</div>
+            <div class="wallet-summary-value">${formatQ(faucet.budget_q || 0)}</div>
+            <div class="summary-copy">${formatCount(faucet.active_hypervisor_count || 0)} active hypervisors / share ${formatQ(faucet.share_q || 0)}</div>
+          </section>
+          <section class="wallet-summary-card">
+            <div class="panel-heading">Recycle Backlog</div>
+            <div class="wallet-summary-value">${formatQ(recycling.recycle_backlog_q || 0)}</div>
+            <div class="summary-copy">Authorized epoch budget ${formatQ(budgetBreakdown.total_authorized_q || 0)} after recycling inputs.</div>
           </section>
         </div>
       `;
@@ -5302,6 +5405,231 @@
       `;
     }
 
+    function renderWalletEconomicsPanel() {
+      const economics = walletEconomicsSummary();
+      const history = walletEconomicsHistoryEvents();
+      const faucetPreview = walletFaucetPreview();
+      const latestBudget = economics.latest_budget;
+      const recent = economics.recent_removals || [];
+      const removalCategories = Object.entries(economics.removals.by_category || {});
+      const epochs = Object.entries(economics.removals.by_epoch || {});
+      const recycling = economics.recycling || {};
+      const faucet = economics.faucet || {};
+      const pools = economics.pools || {};
+      return `
+        <div class="wallet-body">
+          <section class="wallet-ledger">
+            <div class="panel-heading">Economics Read Model</div>
+            <div class="notice">Protocol removals, recycling totals, and the latest epoch reward budget are aggregated here for operator review.</div>
+            <div class="wallet-stat-list" style="margin-top: 16px;">
+              <div class="wallet-stat"><strong>Base Emission</strong><span>${formatQ(economics.base_emission_q)}</span></div>
+              <div class="wallet-stat"><strong>Total Removed</strong><span>${formatQ(economics.removals.total_q || 0)}</span></div>
+              <div class="wallet-stat"><strong>Removal Count</strong><span>${formatCount(economics.removals.count || 0)}</span></div>
+              <div class="wallet-stat"><strong>Latest Removal</strong><span>${formatTimestamp(economics.removals.latest_removed_at)}</span></div>
+            </div>
+            <div class="panel-heading" style="margin-top: 18px;">Recycling Inputs</div>
+            <div class="wallet-detail-grid" style="margin-top: 12px;">
+              <div class="wallet-detail-card">
+                <strong>Eligible Removed</strong>
+                <span>${formatQ(recycling.eligible_removed_q || 0)}</span>
+              </div>
+              <div class="wallet-detail-card">
+                <strong>Recycle Backlog</strong>
+                <span>${formatQ(recycling.recycle_backlog_q || 0)}</span>
+              </div>
+              <div class="wallet-detail-card">
+                <strong>Recyclable Amount</strong>
+                <span>${formatQ(recycling.recyclable_amount_q || 0)}</span>
+              </div>
+            </div>
+            <div class="panel-heading" style="margin-top: 18px;">Removal Categories</div>
+            ${
+              removalCategories.length
+                ? `
+                  <div class="wallet-list" style="margin-top: 12px;">
+                    ${removalCategories
+                      .map(
+                        ([category, amount]) => `
+                          <div class="wallet-entry">
+                            <div class="wallet-entry-top">
+                              <div>
+                                <div class="wallet-entry-title">${category}</div>
+                                <div class="wallet-entry-copy">Recyclable protocol removal</div>
+                              </div>
+                              <span class="chip">${formatQ(amount)}</span>
+                            </div>
+                          </div>
+                        `
+                      )
+                      .join("")}
+                  </div>
+                `
+                : `<div class="empty-state" style="margin-top: 12px;">No recyclable removals have been recorded yet.</div>`
+            }
+            <div class="panel-heading" style="margin-top: 18px;">Recent Removal Events</div>
+            ${
+              recent.length
+                ? `
+                  <div class="wallet-list" style="margin-top: 12px;">
+                    ${recent
+                      .map(
+                        (item) => `
+                          <div class="wallet-entry">
+                            <div class="wallet-entry-top">
+                              <div>
+                                <div class="wallet-entry-title">${item.category}</div>
+                                <div class="wallet-entry-copy">${item.owner_id} / ${item.source_reference}</div>
+                              </div>
+                              <span class="chip">${formatQ(item.amount_q || 0)}</span>
+                            </div>
+                            <div class="wallet-entry-bottom">
+                              <span>${formatTimestamp(item.removed_at)}</span>
+                              <strong>${item.source_epoch_id || "no epoch"}</strong>
+                            </div>
+                          </div>
+                        `
+                      )
+                      .join("")}
+                  </div>
+                `
+                : `<div class="empty-state" style="margin-top: 12px;">No recent removal events are available yet.</div>`
+            }
+            <div class="panel-heading" style="margin-top: 18px;">Economics History</div>
+            ${
+              history.length
+                ? `
+                  <div class="wallet-list" style="margin-top: 12px;">
+                    ${history
+                      .map(
+                        (item) => `
+                          <div class="wallet-entry">
+                            <div class="wallet-entry-top">
+                              <div>
+                                <div class="wallet-entry-title">${item.event_type}</div>
+                                <div class="wallet-entry-copy">${item.status || "recorded"} / ${item.owner_id}</div>
+                              </div>
+                              <span class="chip">${formatQ(item.amount_q || 0)}</span>
+                            </div>
+                            <div class="wallet-entry-bottom">
+                              <span>${formatTimestamp(item.occurred_at)}</span>
+                              <strong>#${formatCount(item.sequence_id || 0)}</strong>
+                            </div>
+                          </div>
+                        `
+                      )
+                      .join("")}
+                  </div>
+                `
+                : `<div class="empty-state" style="margin-top: 12px;">No economics history has been exported yet.</div>`
+            }
+          </section>
+          <section class="wallet-detail">
+            <div>
+              <div class="panel-heading">Latest Epoch Budget</div>
+              <div class="drawer-title" style="font-size:22px;">${latestBudget?.epoch_id || "No Budget Yet"}</div>
+              <div class="inspector-copy">${latestBudget ? `Derived from ${formatMaybe(latestBudget.eligible_removed_q)} q removed, plus backlog and faucet carryover.` : "Derive the first epoch reward budget to expose pool allocations, faucet share, and authorized emission totals."}</div>
+            </div>
+            ${
+              latestBudget
+                ? `
+                  <div class="wallet-detail-grid">
+                    <div class="wallet-detail-card">
+                      <strong>Total Authorized</strong>
+                      <span>${formatQ(latestBudget.total_authorized_q || 0)}</span>
+                    </div>
+                    <div class="wallet-detail-card">
+                      <strong>Recyclable Amount</strong>
+                      <span>${formatQ(latestBudget.recyclable_amount_q || 0)}</span>
+                    </div>
+                    <div class="wallet-detail-card">
+                      <strong>Faucet Budget</strong>
+                      <span>${formatQ(latestBudget.faucet_budget_q || 0)}</span>
+                    </div>
+                    <div class="wallet-detail-card">
+                      <strong>Faucet Share</strong>
+                      <span>${formatQ(latestBudget.faucet_share_q || 0)}</span>
+                    </div>
+                  </div>
+                  <div class="wallet-stat-list">
+                    <div class="wallet-stat"><strong>Eligible Removed</strong><span>${formatQ(latestBudget.eligible_removed_q || 0)}</span></div>
+                    <div class="wallet-stat"><strong>Recycle Backlog</strong><span>${formatQ(latestBudget.recycle_backlog_q || 0)}</span></div>
+                    <div class="wallet-stat"><strong>Faucet Carryover</strong><span>${formatQ(latestBudget.faucet_carryover_q || 0)}</span></div>
+                    <div class="wallet-stat"><strong>Active Hypervisors</strong><span>${formatCount(latestBudget.active_hypervisor_count || 0)}</span></div>
+                  </div>
+                  <div class="panel-heading" style="margin-top: 18px;">Reward Pools</div>
+                  <div class="wallet-detail-grid" style="margin-top: 12px;">
+                    <div class="wallet-detail-card">
+                      <strong>Consensus Pool</strong>
+                      <span>${formatQ(pools.consensus_budget_q || 0)}</span>
+                    </div>
+                    <div class="wallet-detail-card">
+                      <strong>Registry Pool</strong>
+                      <span>${formatQ(pools.registry_budget_q || 0)}</span>
+                    </div>
+                    <div class="wallet-detail-card">
+                      <strong>Validation Pool</strong>
+                      <span>${formatQ(pools.validation_budget_q || 0)}</span>
+                    </div>
+                    <div class="wallet-detail-card">
+                      <strong>Faucet Pool</strong>
+                      <span>${formatQ(pools.faucet_budget_q || 0)}</span>
+                    </div>
+                  </div>
+                  <div class="panel-heading" style="margin-top: 18px;">Faucet Claim</div>
+                  <div class="wallet-stat-list">
+                    <div class="wallet-stat"><strong>Eligibility</strong><span>${faucetPreview.eligible ? "Eligible" : faucetPreview.reason}</span></div>
+                    <div class="wallet-stat"><strong>Active Local Endpoints</strong><span>${formatCount(faucetPreview.active_local_endpoint_count || 0)}</span></div>
+                    <div class="wallet-stat"><strong>Claimed</strong><span>${faucetPreview.claimed ? formatQ(faucetPreview.claimed_q || 0) : "Not claimed"}</span></div>
+                    <div class="wallet-stat"><strong>Remaining</strong><span>${formatQ(faucetPreview.remaining_q || 0)}</span></div>
+                  </div>
+                  <div class="wallet-inline-actions" style="margin-top: 12px;">
+                    <button class="primary-button" type="button" data-wallet-action="claim-faucet" ${faucetPreview.eligible ? "" : "disabled"}>${state.walletActionPending === "claim-faucet" ? "Claiming..." : "Claim Faucet Share"}</button>
+                  </div>
+                  <div class="notice" style="margin-top: 10px;">${faucetPreview.message}</div>
+                  <div class="panel-heading" style="margin-top: 18px;">Faucet Mechanics</div>
+                  <div class="wallet-stat-list">
+                    <div class="wallet-stat"><strong>Carryover</strong><span>${formatQ(faucet.carryover_q || 0)}</span></div>
+                    <div class="wallet-stat"><strong>Current Pool</strong><span>${formatQ(faucet.budget_q || 0)}</span></div>
+                    <div class="wallet-stat"><strong>Active Hypervisors</strong><span>${formatCount(faucet.active_hypervisor_count || 0)}</span></div>
+                    <div class="wallet-stat"><strong>Current Share</strong><span>${formatQ(faucet.share_q || 0)}</span></div>
+                  </div>
+                  <div class="wallet-stat-list" style="margin-top: 12px;">
+                    <div class="wallet-stat"><strong>Consensus Pool</strong><span>${formatQ(latestBudget.consensus_budget_q || 0)}</span></div>
+                    <div class="wallet-stat"><strong>Registry Pool</strong><span>${formatQ(latestBudget.registry_budget_q || 0)}</span></div>
+                    <div class="wallet-stat"><strong>Validation Pool</strong><span>${formatQ(latestBudget.validation_budget_q || 0)}</span></div>
+                  </div>
+                  <div class="panel-heading" style="margin-top: 18px;">Removal By Source Epoch</div>
+                  ${
+                    epochs.length
+                      ? `
+                        <div class="wallet-list" style="margin-top: 12px;">
+                          ${epochs
+                            .map(
+                              ([epochId, amount]) => `
+                                <div class="wallet-entry">
+                                  <div class="wallet-entry-top">
+                                    <div>
+                                      <div class="wallet-entry-title">${epochId}</div>
+                                      <div class="wallet-entry-copy">Eligible removed q feeding later rewards</div>
+                                    </div>
+                                    <span class="chip">${formatQ(amount)}</span>
+                                  </div>
+                                </div>
+                              `
+                            )
+                            .join("")}
+                        </div>
+                      `
+                      : `<div class="empty-state" style="margin-top: 12px;">No source epoch totals are available yet.</div>`
+                  }
+                `
+                : `<div class="empty-state">No derived epoch budget is available yet.</div>`
+            }
+          </section>
+        </div>
+      `;
+    }
+
     function renderWalletDrawerBody() {
       if (state.walletLoading && !state.walletLoaded) {
         return `<div class="empty-state">Loading wallet ledger and settlement streams...</div>`;
@@ -5344,6 +5672,9 @@
             ${renderWalletDisputeDetail()}
           </div>
         `;
+      }
+      if (state.walletTab === "economics") {
+        return renderWalletEconomicsPanel();
       }
       return `
         <div class="wallet-body">
@@ -5395,6 +5726,7 @@
           <button type="button" data-wallet-tab="usage" class="${state.walletTab === "usage" ? "active" : ""}">Usage</button>
           <button type="button" data-wallet-tab="settlements" class="${state.walletTab === "settlements" ? "active" : ""}">Settlements</button>
           <button type="button" data-wallet-tab="disputes" class="${state.walletTab === "disputes" ? "active" : ""}">Disputes</button>
+          <button type="button" data-wallet-tab="economics" class="${state.walletTab === "economics" ? "active" : ""}">Economics</button>
           <button type="button" data-wallet-tab="quote" class="${state.walletTab === "quote" ? "active" : ""}">Quote</button>
         </div>
         ${state.walletMessage ? `<div class="wallet-message ${state.walletMessage.kind}">${state.walletMessage.text}</div>` : ""}
@@ -6516,17 +6848,23 @@
       state.walletError = null;
       renderWalletDrawer();
       try {
-        const [usageResponse, allocationResponse, disputeResponse] = await Promise.all([
+        const [usageResponse, allocationResponse, disputeResponse, economicsResponse, economicsExportResponse, faucetPreviewResponse] = await Promise.all([
           fetch(`${walletEndpoints.usage}?limit=100`, { cache: "no-store" }),
           fetch(`${walletEndpoints.allocations}?limit=100`, { cache: "no-store" }),
           fetch(`${walletEndpoints.disputes}?limit=100`, { cache: "no-store" }),
+          fetch(`${walletEndpoints.economics}?recent_limit=8`, { cache: "no-store" }),
+          fetch(`${walletEndpoints.economicsExport}?limit=12`, { cache: "no-store" }),
+          fetch(`${walletEndpoints.faucetPreview}`, { cache: "no-store" }),
         ]);
-        if (!usageResponse.ok || !allocationResponse.ok || !disputeResponse.ok) {
+        if (!usageResponse.ok || !allocationResponse.ok || !disputeResponse.ok || !economicsResponse.ok || !economicsExportResponse.ok || !faucetPreviewResponse.ok) {
           throw new Error("wallet endpoints returned a non-200 status");
         }
         state.walletUsageEvents = await usageResponse.json();
         state.walletAllocationEvents = await allocationResponse.json();
         state.walletDisputeEvents = await disputeResponse.json();
+        state.walletEconomicsSummary = await economicsResponse.json();
+        state.walletEconomicsHistory = (await economicsExportResponse.json()).items || [];
+        state.walletFaucetPreview = await faucetPreviewResponse.json();
         state.walletLoaded = true;
         syncWalletSelections();
       } catch (error) {
@@ -7642,6 +7980,26 @@
       }
     }
 
+    async function claimWalletFaucetShare() {
+      state.walletActionPending = "claim-faucet";
+      renderWalletDrawer();
+      bindInteractiveElements();
+      try {
+        state.walletFaucetPreview = await postJson(walletEndpoints.faucetClaim, {});
+        state.walletMessage = {
+          kind: "good",
+          text: `Faucet share claimed for ${state.walletFaucetPreview.epoch_id}.`,
+        };
+        await loadWalletData();
+      } catch (error) {
+        state.walletMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.walletActionPending = null;
+        renderWalletDrawer();
+        bindInteractiveElements();
+      }
+    }
+
     async function reopenSelectedWalletAllocation() {
       const event = selectedWalletAllocationEvent();
       if (!event) {
@@ -8143,6 +8501,8 @@
             void loadWalletData();
           } else if (button.dataset.walletAction === "quote") {
             void runWalletQuote();
+          } else if (button.dataset.walletAction === "claim-faucet") {
+            void claimWalletFaucetShare();
           } else if (button.dataset.walletAction === "reopen") {
             void reopenSelectedWalletAllocation();
           } else if (button.dataset.walletAction === "dispute") {

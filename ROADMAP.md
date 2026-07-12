@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-07-10`
+Last updated: `2026-07-11`
 
 This is the main public roadmap for the repository.
 
@@ -17,11 +17,35 @@ Paid endpoint consumption and client-facing execution economics must also stay a
 
 Network-wide economic assumptions, `Q` utility, Session deposits, Network Fees, and operator reward boundaries must also stay aligned with [docs/product/ECO-0000-economic-principles.md](./docs/product/ECO-0000-economic-principles.md).
 
+Epoch reward allocation, recyclable fee/removal handling, Faucet carryover, and service-pool competition must also stay aligned with [docs/product/ECO-0005-q-emission-recycling-and-epoch-reward-allocation.md](./docs/product/ECO-0005-q-emission-recycling-and-epoch-reward-allocation.md).
+
+Service-pool weight formulas, diversity controls, concentration caps, and deterministic reward-mint derivation must also stay aligned with [docs/product/ECO-0004-protocol-service-reward-distribution.md](./docs/product/ECO-0004-protocol-service-reward-distribution.md).
+
+Consensus Stake, active-set selection, equal voting power, validator rotation, unbonding, and objective slashing rules must also stay aligned with [docs/product/ECO-0006-consensus-economics-and-validator-eligibility.md](./docs/product/ECO-0006-consensus-economics-and-validator-eligibility.md).
+
 Wallet ownership, signing semantics, and the separation between Wallet identity and Hypervisor node identity must also stay aligned with [docs/product/RFC-0016-wallet-and-identity.md](./docs/product/RFC-0016-wallet-and-identity.md).
+
+Participant eligibility, reward-bound identity layers, Faucet anti-Sybil constraints, and future reward/voting concentration controls must also stay aligned with [docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md](./docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md).
 
 Validation-status issuance, maintenance revalidation, and Validator incentives must also stay aligned with [docs/product/ECO-0003-validation-economics.md](./docs/product/ECO-0003-validation-economics.md).
 
 Wallet balances, escrow state, validation bonds, and future on-chain settlement semantics must also stay aligned with [docs/product/RFC-0036-aidn-ledger-state-machine.md](./docs/product/RFC-0036-aidn-ledger-state-machine.md).
+
+Session settlement semantics, invoice handling, refund rules, and accounting-state transitions must also stay aligned with [docs/product/RFC-0037-settlement-engine.md](./docs/product/RFC-0037-settlement-engine.md).
+
+Session failure classification, recovery windows, disappearance handling, mismatch termination, and evidence-backed forced settlement must also stay aligned with [docs/product/RFC-0060-session-failure-recovery-and-forced-settlement.md](./docs/product/RFC-0060-session-failure-recovery-and-forced-settlement.md).
+
+Canonical Ledger operation envelopes, state-transition semantics, fees, idempotency, and replay protection must also stay aligned with [docs/product/RFC-0059-ledger-operation-catalog.md](./docs/product/RFC-0059-ledger-operation-catalog.md).
+
+Usage reporting, accounting transparency, checkpoint acknowledgement, mismatch handling, and opaque proxy billing must also stay aligned with [docs/product/RFC-0051-usage-reporting-and-verification-protocol.md](./docs/product/RFC-0051-usage-reporting-and-verification-protocol.md).
+
+Capability Runtime service boundaries, Runtime identity, Runtime ownership, and Runtime isolation rules must also stay aligned with [docs/product/RFC-0053-capability-runtime-specification.md](./docs/product/RFC-0053-capability-runtime-specification.md).
+
+Hypervisor-to-Runtime registration, Session execution, streaming, usage-report transport, health, and recovery semantics must also stay aligned with [docs/product/RFC-0054-capability-runtime-protocol.md](./docs/product/RFC-0054-capability-runtime-protocol.md).
+
+Registry peer replication, deterministic inventories, completeness manifests, and Proof of Registry challenge mechanics must also stay aligned with [docs/product/RFC-0061-registry-replication-protocol.md](./docs/product/RFC-0061-registry-replication-protocol.md).
+
+Snapshot production, commitment, trusted-checkpoint State Sync, and atomic state restoration must also stay aligned with [docs/product/RFC-0062-snapshot-and-state-sync-protocol.md](./docs/product/RFC-0062-snapshot-and-state-sync-protocol.md).
 
 Milestones still describe technical delivery order, but feature sequencing and UI priorities should preserve that operator journey whenever reasonably possible.
 
@@ -54,6 +78,15 @@ Product alignment summary:
 - the next product-critical gap is no longer the bare first-run bootstrap loop or shell ownership ambiguity, but trust/reputation publication and endpoint lifecycle depth on top of the consolidated operator surface;
 - endpoint publication is now a first trust layer, and paid consumption now has a working first Session contract;
 - validation economics and maintenance-validation policy are now defined at the product level, and the first computed reputation publication layer now projects trust through registry, discovery, and operator market surfaces;
+- epoch reward allocation, recyclable protocol removals, and Faucet carryover are now defined at the product level, so upcoming consensus/registry reward work can land on one supply model instead of mixing direct fee passthrough with pool-based issuance;
+- service-pool reward formulas are now documented in `ECO-0004`, so future Consensus, Registry, and Validation reward implementation can share one deterministic weighting, diversity, and cap model instead of embedding separate payout heuristics in each subsystem;
+- consensus validator economics are now documented in `ECO-0006`, so future Validator Set selection, equal voting-power enforcement, Stake lifecycle, downtime handling, and slashing implementation can build on one deterministic eligibility model instead of scattering security rules across consensus adapters and app logic;
+- participant identity hierarchy, Hypervisor/Service eligibility states, and anti-Sybil design constraints are now documented in `RFC-0058`, so future Faucet, Registry, Validation, and Consensus reward work can share one eligibility model instead of each inventing local heuristics;
+- the canonical Ledger operation inventory is now documented in `RFC-0059`, so future consensus, settlement, reward, Faucet, validation, and suspension work can land on one state-transition catalog instead of duplicating operation semantics across RFCs;
+- the Capability Runtime service model is now documented in `RFC-0053`, so future runtime packaging, runtime authorization, runtime replacement, and multi-runtime capability work can share one architectural contract before wire-level protocol details;
+- the Hypervisor-to-Runtime boundary is now documented in `RFC-0054`, so future execution, usage-report transport, Session recovery, and Runtime replacement work can converge on one message contract instead of continuing to grow adapter-local conventions;
+- registry replication is now documented in `RFC-0061`, so future Full Registry eligibility, anti-entropy, completeness proofs, challenge evidence, and repair synchronization can build on one deterministic storage and retrieval model instead of scattered service-local heuristics;
+- snapshot and fast State Sync are now documented in `RFC-0062`, so future node bootstrap, corruption recovery, trusted checkpoint handling, and portable state restoration can build on one verification-first protocol instead of ad hoc database-copy assumptions;
 - validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
 
 We already have a working local hypervisor foundation:
@@ -101,9 +134,11 @@ We already have a working local hypervisor foundation:
 - proxy-backed paid Sessions now preserve upstream session policy snapshots, lazily broker remote Session opens, propagate remote Session close on manual and idle-driven release, and expose proxy-session bindings through task and operator-session APIs;
 - endpoint lifecycle now supports symmetric proxy attach and detach actions, so operators can revert a proxied Endpoint back to local execution without editing manifests manually;
 - preferred remote routes can now be detached explicitly, but live local proxy endpoints still protect their upstream dependency until the operator detaches the proxy route first;
+- session failure, recovery, and forced-settlement semantics are now documented in `RFC-0060`, so the next session-hardening slice can implement `SESSION_FORCE_SETTLE` against one authoritative checkpoint, timeout, and evidence model instead of local heuristics;
 
 What is still missing in the current stage:
 - decision on whether adapter-declared `usage_contract` becomes an enforced runtime gate, plus a first non-token pricing unit for `whisper`-class workloads;
+- formal `RFC-0051` accounting contracts, signed usage-report and acknowledgement chains, Marketplace accounting-transparency publication, and mismatch-safe settlement checkpoints beyond today’s `measurement_kind` / `measurement_source` metadata;
 - rating publication, reputation policy, and validation economics implementation;
 - network-visible custom model onboarding workflow.
 - final onboarding polish across the remaining operator workspaces, so the new guided layer feels native outside `Home` and handoffs stay consistent across `Providers / Bundles / Endpoints`;
@@ -111,6 +146,34 @@ What is still missing in the current stage:
 - complete dashboard migration of older bundle-centric affordances onto the endpoint-first trust layer, so bootstrap fallback logic can eventually be removed cleanly;
 - remote endpoint and proxy endpoint workflows framed as operator routing tools, not only discovery data.
 - full client-facing payment confirmation and paid-session workflow polish across bootstrap, remote/proxy, and future marketplace paths.
+- implementation of `RFC-0060` is still pending beyond partial local scaffolding:
+  - manual close, idle timeout, queue/busy admission, remote/proxy-aware session open/close, and basic deposit settlement already exist;
+  - but there is no full forced-settlement state machine yet for `Last Accepted Checkpoint`, acknowledgement timeout, Provider disappearance, Consumer disappearance, deposit exhaustion, or accounting mismatch termination under one canonical evidence model.
+- implementation of `RFC-0058` is still pending beyond partial local scaffolding:
+  - Wallet ownership and separate Hypervisor node identity exist;
+  - local Faucet claim flow now exists at the app level;
+  - but reward beneficiary wallets, activation age, service-level eligibility states, known-control-group aggregation, concentration caps, and collateral-driven anti-Sybil enforcement are not implemented yet.
+- implementation of `ECO-0004` is still pending beyond current reward scaffolding:
+  - the repo already has epoch transition records, reward-mint records, Faucet payout flow, validation reputation inputs, and the first ledger-shaped reward stream;
+  - but there is still no deterministic service-pool calculator for Consensus, Registry, and Validation weights, no diversity-factor reduction, no capped proportional distribution by Known Control Group, and no finalized reward-calculation commitment root matching one shared economic spec.
+- implementation of `ECO-0006` is still pending beyond the current consensus scaffolding:
+  - the repo already has consensus integration architecture, validator-set update operations, stake-shaped ledger concepts, and product-level rules for consensus rewards and suspension consequences;
+  - but there is still no finalized Candidate-to-Active selection engine, no equal-voting-power active-set enforcement by Known Control Group, no deterministic downtime/suspension/unbonding pipeline, and no complete evidence-driven slashing flow matching one canonical consensus-economic spec.
+- implementation of `RFC-0061` is still pending beyond current registry and discovery scaffolding:
+  - the repo already has centralized registry advertisement, discovery APIs, freshness tracking, endpoint publication visibility, and reward-facing Registry concepts at the product layer;
+  - but there is still no authenticated Registry peer replication protocol, no deterministic Inventory Root and segment-manifest system, no completeness manifest pipeline, no formal Proof of Registry challenge/confirmation flow, and no repair/catch-up replication engine matching one canonical protocol spec.
+- implementation of `RFC-0062` is still pending beyond current snapshot mentions:
+  - the repo already has product-level Snapshot commitments, state-hash concepts, and consensus-side acknowledgment that verified Snapshots can accelerate synchronization;
+  - but there is still no portable canonical Snapshot format, no trusted-checkpoint State Sync flow, no chunked multi-source Snapshot transfer, no staging restoration pipeline, and no atomic verified activation path matching one canonical state-sync protocol.
+- implementation of `RFC-0059` is also still pending beyond partial local scaffolding:
+  - a canonical local ledger-operation stream now exists for Faucet, session, validation, endpoint lifecycle, endpoint publication, epoch transition, and faucet reward mint flows;
+  - but there is still no finalized evidence replay-protection registry, full operation-by-operation consensus execution engine, or complete `SESSION_FORCE_SETTLE` and enforcement implementation.
+- implementation of `RFC-0053` is still pending beyond current runtime abstractions:
+  - the repo already has provider adapters, subprocess-backed runtime lifecycle, endpoint/session orchestration, and local runtime health surfaces;
+  - but Runtime identity, formal one-capability-per-Runtime boundaries, explicit Runtime authorization, Runtime ownership separation, and conformance-targeted Runtime service contracts are not yet implemented as one canonical layer.
+- implementation of `RFC-0054` is still pending beyond current runtime adapters and local lifecycle hooks:
+  - the repo already has subprocess-backed runtime lifecycle, provider execution adapters, local health/status surfaces, and endpoint/session orchestration;
+  - but there is still no finalized standalone Runtime Protocol with authenticated registration, negotiated features, canonical message envelopes, reconnect/recovery handshakes, or full Hypervisor-to-Runtime streaming and usage-report contracts matching one shared RFC.
 
 Immediate priorities:
 1. Expand endpoint lifecycle controls across remote/proxy and marketplace routing.
@@ -323,12 +386,24 @@ Order of work right now:
 - Operator journey: [docs/product/UX-0001-hypervisor-operator-journey.md](./docs/product/UX-0001-hypervisor-operator-journey.md)
 - Session and payment journey: [docs/product/UX-0002-endpoint-session-and-payment-flow.md](./docs/product/UX-0002-endpoint-session-and-payment-flow.md)
 - Economic principles: [docs/product/ECO-0000-economic-principles.md](./docs/product/ECO-0000-economic-principles.md)
+- Protocol service reward distribution: [docs/product/ECO-0004-protocol-service-reward-distribution.md](./docs/product/ECO-0004-protocol-service-reward-distribution.md)
+- Emission, recycling, and epoch reward allocation: [docs/product/ECO-0005-q-emission-recycling-and-epoch-reward-allocation.md](./docs/product/ECO-0005-q-emission-recycling-and-epoch-reward-allocation.md)
+- Consensus economics and validator eligibility: [docs/product/ECO-0006-consensus-economics-and-validator-eligibility.md](./docs/product/ECO-0006-consensus-economics-and-validator-eligibility.md)
 - Wallet and identity: [docs/product/RFC-0016-wallet-and-identity.md](./docs/product/RFC-0016-wallet-and-identity.md)
 - Validation economics: [docs/product/ECO-0003-validation-economics.md](./docs/product/ECO-0003-validation-economics.md)
 - Validation escrow system: [docs/product/RFC-0035-validation-escrow-system.md](./docs/product/RFC-0035-validation-escrow-system.md)
 - Ledger state machine: [docs/product/RFC-0036-aidn-ledger-state-machine.md](./docs/product/RFC-0036-aidn-ledger-state-machine.md)
+- Settlement engine: [docs/product/RFC-0037-settlement-engine.md](./docs/product/RFC-0037-settlement-engine.md)
+- Ledger operation catalog: [docs/product/RFC-0059-ledger-operation-catalog.md](./docs/product/RFC-0059-ledger-operation-catalog.md)
+- Usage reporting and verification: [docs/product/RFC-0051-usage-reporting-and-verification-protocol.md](./docs/product/RFC-0051-usage-reporting-and-verification-protocol.md)
+- Capability runtime specification: [docs/product/RFC-0053-capability-runtime-specification.md](./docs/product/RFC-0053-capability-runtime-specification.md)
+- Capability runtime protocol: [docs/product/RFC-0054-capability-runtime-protocol.md](./docs/product/RFC-0054-capability-runtime-protocol.md)
+- Registry replication protocol: [docs/product/RFC-0061-registry-replication-protocol.md](./docs/product/RFC-0061-registry-replication-protocol.md)
+- Snapshot and State Sync protocol: [docs/product/RFC-0062-snapshot-and-state-sync-protocol.md](./docs/product/RFC-0062-snapshot-and-state-sync-protocol.md)
+- Session failure, recovery, and forced settlement: [docs/product/RFC-0060-session-failure-recovery-and-forced-settlement.md](./docs/product/RFC-0060-session-failure-recovery-and-forced-settlement.md)
 - CometBFT consensus integration: [docs/product/RFC-0047-cometbft-consensus-integration.md](./docs/product/RFC-0047-cometbft-consensus-integration.md)
 - Validation report specification: [docs/product/RFC-0057-validation-report-specification.md](./docs/product/RFC-0057-validation-report-specification.md)
+- Participant eligibility and Sybil resistance: [docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md](./docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md)
 - M5 validation bond and escrow design: [docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md](./docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md)
 - Current hypervisor execution plan: [docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md](./docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md)
 - Network architecture spec: [docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md](./docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md)

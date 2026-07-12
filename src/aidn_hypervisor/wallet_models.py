@@ -159,6 +159,7 @@ class WalletSessionEvent(BaseModel):
     usage_charged_q: float = Field(ge=0.0)
     idle_fee_charged_q: float = Field(ge=0.0)
     minimum_session_fee_q: float = Field(ge=0.0)
+    network_fee_q: float = Field(ge=0.0)
     close_reason: str | None = None
 
 
@@ -172,6 +173,7 @@ class WalletLedgerEvent(BaseModel):
         "allocation_activation",
         "allocation_dispute",
         "validation",
+        "economics",
     ]
     stream_event_id: str
     stream_sequence_id: int = Field(ge=1)

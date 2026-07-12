@@ -90,11 +90,13 @@ class ValidationService:
         bond_escrow=None,
         validator_escrow=None,
         event_recorder=None,
+        operation_recorder=None,
     ) -> None:
         self.store = store
         self.bond_escrow = bond_escrow or LocalOperatorBondEscrowAdapter()
         self.validator_escrow = validator_escrow or LocalValidatorEscrowPoolAdapter()
         self.event_recorder = event_recorder
+        self.operation_recorder = operation_recorder
 
     def request_validation(
         self,
@@ -152,6 +154,25 @@ class ValidationService:
         self.store.save_request(request)
         self.store.save_bond(bond)
         self.store.save_snapshot(snapshot)
+        if self.operation_recorder is not None:
+            self.operation_recorder(
+                operation_type="VALIDATION_REQUEST",
+                origin_type="wallet",
+                fee_class="standard",
+                initiator_id=owner_wallet,
+                sender_wallet=owner_wallet,
+                fee_payer=owner_wallet,
+                payload={
+                    "validation_request_id": request_id,
+                    "endpoint_id": endpoint_id,
+                    "endpoint_configuration_hash": configuration_hash,
+                    "validation_type": "initial",
+                    "bond_reference": bond_id,
+                    "minimum_session_deposit_q": minimum_session_deposit_q,
+                },
+                created_at=now,
+                emitted_events=["ValidationRequested"],
+            )
         self._emit(
             event_type="validation_bond_locked",
             message="validation bond locked",
@@ -320,6 +341,33 @@ class ValidationService:
         self.store.save_report(report)
         self.store.save_request(updated_request)
         self.store.save_snapshot(updated_snapshot)
+        if self.operation_recorder is not None:
+            self.operation_recorder(
+                operation_type="VALIDATION_REPORT_COMMIT",
+                origin_type="protocol",
+                fee_class="protocol_sponsored",
+                initiator_id=report.report_id,
+                payload={
+                    "report_id": report.report_id,
+                    "validation_request_id": request.request_id,
+                    "assignment_id": request.assignment_id,
+                    "endpoint_id": request.endpoint_id,
+                    "endpoint_configuration_hash": request.configuration_hash,
+                    "validator_service_id": request.assignment_id,
+                    "conclusion_summary": report.recommendation,
+                    "evidence_summary": report.evidence_summary,
+                },
+                created_at=report.created_at,
+                emitted_events=["ValidationReportCommitted"],
+            )
+            self._record_certification_state_update(
+                endpoint_id=request.endpoint_id,
+                configuration_hash=request.configuration_hash,
+                certification_status=certification_status,
+                latest_request_id=request.request_id,
+                latest_report_id=report.report_id,
+                created_at=report.created_at,
+            )
         compat_validation_status = _compat_validation_status_for(certification_status)
         self._emit(
             event_type=(
@@ -747,6 +795,31 @@ class ValidationService:
                     "remaining_locked_q": remaining_locked_q,
                 },
             )
+            if self.operation_recorder is not None:
+                self._record_certification_state_update(
+                    endpoint_id=endpoint_id,
+                    configuration_hash=configuration_hash,
+                    certification_status=certification_status,
+                    latest_request_id=request.request_id,
+                    latest_report_id=report.report_id,
+                    created_at=report.created_at,
+                )
+                self.operation_recorder(
+                    operation_type="VALIDATION_BOND_REFUND",
+                    origin_type="protocol",
+                    fee_class="protocol_sponsored",
+                    initiator_id=bond.bond_id,
+                    payload={
+                        "bond_id": bond.bond_id,
+                        "endpoint_id": endpoint_id,
+                        "configuration_hash": configuration_hash,
+                        "validation_request_id": request.request_id,
+                        "refund_q": refund_q,
+                        "report_id": report.report_id,
+                    },
+                    created_at=report.created_at,
+                    emitted_events=["ValidationBondRefunded"],
+                )
         else:
             forfeit_q = bond.remaining_locked_q
             self.bond_escrow.forfeit_bond(bond.bond_id, forfeit_q, "validator_pool")
@@ -783,6 +856,31 @@ class ValidationService:
                     "amount_q": forfeit_q,
                 },
             )
+            if self.operation_recorder is not None:
+                self._record_certification_state_update(
+                    endpoint_id=endpoint_id,
+                    configuration_hash=configuration_hash,
+                    certification_status=certification_status,
+                    latest_request_id=request.request_id,
+                    latest_report_id=report.report_id,
+                    created_at=report.created_at,
+                )
+                self.operation_recorder(
+                    operation_type="VALIDATION_BOND_FORFEIT",
+                    origin_type="evidence_triggered",
+                    fee_class="protocol_sponsored",
+                    initiator_id=bond.bond_id,
+                    payload={
+                        "bond_id": bond.bond_id,
+                        "endpoint_id": endpoint_id,
+                        "configuration_hash": configuration_hash,
+                        "validation_request_id": request.request_id,
+                        "amount_q": forfeit_q,
+                        "report_id": report.report_id,
+                    },
+                    created_at=report.created_at,
+                    emitted_events=["ValidationBondForfeited"],
+                )
         self.store.save_bond(updated_bond)
         self.store.save_request(updated_request)
         self.store.save_snapshot(updated_snapshot)
@@ -864,6 +962,34 @@ class ValidationService:
             event_type=event_type,
             message=message,
             details=details,
+        )
+
+    def _record_certification_state_update(
+        self,
+        *,
+        endpoint_id: str,
+        configuration_hash: str,
+        certification_status: str,
+        latest_request_id: str,
+        latest_report_id: str,
+        created_at: str,
+    ) -> None:
+        if self.operation_recorder is None:
+            return
+        self.operation_recorder(
+            operation_type="CERTIFICATION_STATE_UPDATE",
+            origin_type="protocol",
+            fee_class="protocol_sponsored",
+            initiator_id=endpoint_id,
+            payload={
+                "endpoint_id": endpoint_id,
+                "configuration_hash": configuration_hash,
+                "certification_status": certification_status,
+                "latest_request_id": latest_request_id,
+                "latest_report_id": latest_report_id,
+            },
+            created_at=created_at,
+            emitted_events=["CertificationStateUpdated"],
         )
 
     def _now(self) -> str:

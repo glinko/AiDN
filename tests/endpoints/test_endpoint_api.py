@@ -222,5 +222,6 @@ def test_close_endpoint_session_api_closes_session() -> None:
     assert response.status_code == 200
     assert body["data"]["session"]["status"] == "closed"
     assert body["data"]["deposit"]["status"] == "released"
-    assert body["data"]["settlement"]["charged_q"] == 2.0
-    assert body["data"]["settlement"]["refunded_q"] == 8.0
+    assert body["data"]["settlement"]["charged_q"] == 2.01
+    assert body["data"]["settlement"]["network_fee_q"] == 0.01
+    assert body["data"]["settlement"]["refunded_q"] == 7.99

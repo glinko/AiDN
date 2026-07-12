@@ -313,11 +313,12 @@ def test_service_charges_paid_session_from_completed_task_usage() -> None:
     assert service.get_task(task.task_id).status == "completed"
     assert len(usage_events) == 1
     assert usage_events[0]["quote"]["charges"]["total_q"] == 16.0
-    assert closed.deposit.consumed_q == 16.0
-    assert closed.deposit.refunded_q == 9.0
+    assert closed.deposit.consumed_q == 16.01
+    assert closed.deposit.refunded_q == 8.99
     assert closed.settlement is not None
     assert closed.settlement.no_request is False
     assert closed.settlement.usage_charged_q == 16.0
+    assert closed.settlement.network_fee_q == 0.01
 
 
 def test_service_records_wallet_session_events_from_paid_session_lifecycle() -> None:
@@ -385,9 +386,76 @@ def test_service_records_wallet_session_events_from_paid_session_lifecycle() -> 
     ]
     assert events[0]["locked_q"] == 25.0
     assert events[1]["charged_q"] == 16.0
-    assert events[2]["refunded_q"] == 9.0
+    assert events[2]["network_fee_q"] == 0.01
+    assert events[2]["refunded_q"] == 8.99
     assert events[2]["settlement_status"] == "closed"
     assert events[2]["session_id"] == opened.session.session_id
+
+
+def test_service_attaches_usage_report_to_paid_session_task_result() -> None:
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={"plugin_id": "fake-usage-metering"}
+        ),
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    service.endpoint_service = endpoint_service
+    service.session_service = session_service
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="phi4-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            pricing={
+                "billing_unit": "token",
+                "input_price": 12.0,
+                "output_price": 18.0,
+                "fixed_price": 4.0,
+            },
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+                "minimum_session_fee": 2.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=25.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+        accounting_contract=service.accounting_contract_for_endpoint(created.endpoint),
+    )
+
+    task = service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={
+                "endpoint_id": created.endpoint.endpoint_id,
+                "session_id": opened.session.session_id,
+                "wallet_owner_id": "agent-a",
+            },
+        )
+    )
+
+    result = service.task_result(task.task_id)
+
+    assert result is not None
+    assert result["usage_report"]["session_id"] == opened.session.session_id
+    assert result["usage_report"]["endpoint_id"] == created.endpoint.endpoint_id
+    assert result["usage_report"]["accounting_modes"]["input_tokens"] == "provider_metered"
+    assert result["usage_report"]["measurement_sources"]["input_tokens"] == "provider_api"
+    assert result["usage_report"]["cumulative_usage"]["input_tokens"] == 250_000
+    assert result["usage_acknowledgement"]["verification_status"] == "accepted_unverified"
+    assert result["usage_acknowledgement"]["sequence"] == 1
 
 
 def test_operator_wallet_session_export_reports_economic_events() -> None:
@@ -467,6 +535,190 @@ def test_operator_wallet_session_export_reports_economic_events() -> None:
     assert response.json()["retained_through_sequence"] == items[-1]["sequence_id"]
     assert response.json()["watermark_sequence"] == items[-1]["sequence_id"]
     assert response.json()["cursor_status"] == "ok"
+
+
+def test_operator_wallet_economics_summary_reports_removals_and_latest_budget() -> None:
+    service = _service()
+    service.record_recyclable_removal(
+        category="network_fee",
+        amount_q=12.5,
+        owner_id="wallet-1",
+        source_event_type="session_network_fee_charged",
+        source_reference="session-1",
+        source_epoch_id="epoch-20",
+    )
+    service.record_recyclable_removal(
+        category="validation_bond_forfeiture",
+        amount_q=500.0,
+        owner_id="wallet-2",
+        source_event_type="validation_bond_forfeited",
+        source_reference="bond-1",
+        source_epoch_id="epoch-20",
+    )
+    service.derive_epoch_reward_budget(
+        epoch_id="epoch-21",
+        source_epoch_id="epoch-20",
+        recycle_backlog_q=5.0,
+        faucet_carryover_q=20.0,
+        active_hypervisor_count=10,
+    )
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/wallet/economics")
+
+    assert response.status_code == 200
+    assert response.json()["base_emission_q"] == 5000.0
+    assert response.json()["removals"]["total_q"] == 512.5
+    assert response.json()["removals"]["by_category"] == {
+        "network_fee": 12.5,
+        "validation_bond_forfeiture": 500.0,
+    }
+    assert response.json()["latest_budget"]["epoch_id"] == "epoch-21"
+    assert response.json()["latest_budget"]["recyclable_amount_q"] == 517.5
+    assert response.json()["latest_budget"]["faucet_budget_q"] == 571.75
+    assert response.json()["recent_removals"][0]["category"] == "validation_bond_forfeiture"
+    assert response.json()["recycling"] == {
+        "eligible_removed_q": 512.5,
+        "recycle_backlog_q": 5.0,
+        "recyclable_amount_q": 517.5,
+    }
+    assert response.json()["faucet"] == {
+        "carryover_q": 20.0,
+        "budget_q": 571.75,
+        "active_hypervisor_count": 10,
+        "share_q": 57.175,
+        "claimed": False,
+        "claimed_q": 0.0,
+        "remaining_q": 57.175,
+        "claim": None,
+    }
+    assert response.json()["pools"] == {
+        "consensus_budget_q": 1655.25,
+        "registry_budget_q": 1655.25,
+        "validation_budget_q": 1655.25,
+        "faucet_budget_q": 571.75,
+    }
+    assert response.json()["latest_budget_breakdown"] == {
+        "epoch_id": "epoch-21",
+        "total_authorized_q": 5517.5,
+        "faucet_share_q": 57.175,
+    }
+
+
+def test_operator_wallet_economics_export_reports_cursor_metadata() -> None:
+    service = _service()
+    service.record_recyclable_removal(
+        category="network_fee",
+        amount_q=12.5,
+        owner_id="wallet-1",
+        source_event_type="session_network_fee_charged",
+        source_reference="session-1",
+        source_epoch_id="epoch-20",
+    )
+    service.derive_epoch_reward_budget(
+        epoch_id="epoch-21",
+        source_epoch_id="epoch-20",
+        recycle_backlog_q=5.0,
+        faucet_carryover_q=20.0,
+        active_hypervisor_count=10,
+    )
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/wallet/economics/export", params={"limit": 10})
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert [item["event_type"] for item in items] == [
+        "recyclable_removed",
+        "epoch_reward_budget_derived",
+    ]
+    assert response.json()["next_after_event_id"] == items[-1]["event_id"]
+    assert response.json()["next_after_sequence"] == items[-1]["sequence_id"]
+    assert response.json()["retained_from_sequence"] == items[0]["sequence_id"]
+    assert response.json()["retained_through_sequence"] == items[-1]["sequence_id"]
+    assert response.json()["watermark_sequence"] == items[-1]["sequence_id"]
+    assert response.json()["cursor_status"] == "ok"
+
+
+def test_operator_wallet_faucet_preview_and_claim_flow() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="phi4-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Faucet Endpoint",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+        )
+    )
+    endpoint_service.start_endpoint(created.endpoint.endpoint_id)
+    service.derive_epoch_reward_budget(
+        epoch_id="epoch-21",
+        source_epoch_id="epoch-20",
+        active_hypervisor_count=10,
+    )
+    client = TestClient(build_app(service=service, endpoint_service=endpoint_service))
+
+    preview_response = client.get("/operators/wallet/economics/faucet")
+    claim_response = client.post("/operators/wallet/economics/faucet/claim")
+    summary_response = client.get("/operators/wallet/economics")
+    export_response = client.get("/operators/wallet/economics/export", params={"limit": 10})
+
+    assert preview_response.status_code == 200
+    assert preview_response.json()["eligible"] is True
+    assert preview_response.json()["share_q"] == 50.0
+    assert preview_response.json()["active_local_endpoint_count"] == 1
+    assert claim_response.status_code == 200
+    assert claim_response.json()["claimed"] is True
+    assert claim_response.json()["claim"]["amount_q"] == 50.0
+    assert claim_response.json()["claim"]["wallet_id"] == service.owner_wallet_state()["wallet_id"]
+    assert summary_response.status_code == 200
+    assert summary_response.json()["faucet"]["claimed"] is True
+    assert summary_response.json()["faucet"]["claimed_q"] == 50.0
+    assert summary_response.json()["faucet"]["remaining_q"] == 0.0
+    assert export_response.status_code == 200
+    assert [item["event_type"] for item in export_response.json()["items"]] == [
+        "epoch_reward_budget_derived",
+        "faucet_claimed",
+    ]
+
+
+def test_operator_wallet_faucet_claim_rejects_duplicate_epoch_claim() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="phi4-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Faucet Endpoint",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+        )
+    )
+    endpoint_service.start_endpoint(created.endpoint.endpoint_id)
+    service.derive_epoch_reward_budget(
+        epoch_id="epoch-21",
+        source_epoch_id="epoch-20",
+        active_hypervisor_count=10,
+    )
+    client = TestClient(build_app(service=service, endpoint_service=endpoint_service))
+
+    first_claim = client.post("/operators/wallet/economics/faucet/claim")
+    second_claim = client.post("/operators/wallet/economics/faucet/claim")
+    preview_response = client.get("/operators/wallet/economics/faucet")
+
+    assert first_claim.status_code == 200
+    assert second_claim.status_code == 409
+    assert second_claim.json()["detail"] == "Faucet share already claimed for epoch epoch-21"
+    assert preview_response.status_code == 200
+    assert preview_response.json()["eligible"] is False
+    assert preview_response.json()["reason"] == "already_claimed"
+    assert preview_response.json()["claimed"] is True
 
 
 def test_wallet_ledger_export_merges_session_usage_and_allocation_streams() -> None:
@@ -1669,3 +1921,42 @@ def test_service_marks_task_unbillable_when_strict_accounting_usage_is_missing()
     assert journal_event.details["billing_status"] == "unbillable"
     assert journal_event.details["settlement_status"] == "blocked"
     assert journal_event.details["reason"] == "missing_provider_usage"
+
+
+def test_service_builds_provider_metered_accounting_contract_for_paid_endpoint() -> None:
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={"plugin_id": "fake-usage-metering"}
+        ),
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="phi4-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            pricing={
+                "billing_unit": "token",
+                "input_price": 12.0,
+                "output_price": 18.0,
+                "fixed_price": 4.0,
+            },
+            session={
+                "minimum_deposit": 10.0,
+                "recommended_deposit": 25.0,
+            },
+        )
+    )
+
+    contract = service.accounting_contract_for_endpoint(created.endpoint)
+
+    assert contract["contract_version"].startswith("acct-")
+    assert {item["unit"] for item in contract["billable_units"]} >= {
+        "input_tokens",
+        "output_tokens",
+    }
+    assert any(item["mode"] == "provider_metered" for item in contract["billable_units"])

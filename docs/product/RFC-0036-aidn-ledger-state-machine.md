@@ -24,6 +24,8 @@ The Ledger defines their meaning.
 
 Detailed economic execution semantics for deposits, invoices, refunds, fees, rewards, and bond transitions are defined separately in [RFC-0037 Settlement Engine](./RFC-0037-settlement-engine.md).
 
+The canonical operation set, per-operation authorization rules, and deterministic state-transition catalog are defined separately in [RFC-0059 Ledger Operation Catalog](./RFC-0059-ledger-operation-catalog.md).
+
 The Consensus Engine never interprets network logic.
 
 It only guarantees that every node executes the same operations in the same order.
@@ -80,10 +82,13 @@ Every state transition SHALL be represented by a Ledger Operation.
 Examples:
 
 - Faucet Reward
+- Consensus Reward
+- Registry Reward
 - Wallet Transfer
 - Session Open
 - Session Close
 - Session Settlement
+- Network Fee Removal
 - Validation Bond
 - Validation Reward
 - Validation Refund
@@ -93,6 +98,8 @@ Examples:
 - Reputation Update
 
 No other mechanism may modify network state.
+
+The complete MVP operation inventory and their exact semantics are specified in [RFC-0059 Ledger Operation Catalog](./RFC-0059-ledger-operation-catalog.md).
 
 ## 6. Operation Structure
 
@@ -138,20 +145,30 @@ Every operation SHALL produce identical results on every node.
 Initial supported operations:
 
 - Faucet Reward
+- Consensus Reward
+- Registry Reward
 - Validation Reward
 
 No node may mint `Q` independently.
 
 ## 10. Burning
 
-`Q` may only disappear through Ledger Operations.
+`Q` may only leave active supply through Ledger Operations.
 
-Examples:
+The MVP distinguishes between recyclable removals and explicit permanent burns.
+
+Examples of recyclable removals include:
 
 - Validation Bond forfeiture
-- future protocol upgrades
+- Network Fee removal
 
-Destroyed `Q` SHALL be removed from total supply.
+Examples of permanent burns include:
+
+- future protocol upgrades explicitly marked as permanent burn
+
+Only permanently burned `Q` SHALL be removed from total supply.
+
+Recyclable removals MAY later contribute to Epoch reward authorization according to protocol-defined economic rules.
 
 ## 11. Transfers
 
