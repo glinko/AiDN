@@ -616,6 +616,40 @@ def test_record_usage_report_rejects_mismatched_payload_session_id() -> None:
         )
 
 
+def test_record_usage_report_rejects_mismatched_payload_endpoint_id() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-other",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+
+    with pytest.raises(ValueError, match="endpoint_id"):
+        service.record_usage_report(
+            opened.session.session_id,
+            usage_report=report.model_dump(mode="json"),
+            acknowledgement_timeout_seconds=120,
+        )
+
+
 def test_record_usage_acknowledgement_rejects_mismatched_payload_session_id() -> None:
     service = _session_service()
     opened = service.open_session(
