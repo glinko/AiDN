@@ -582,6 +582,57 @@ def test_record_usage_report_duplicate_retry_is_idempotent() -> None:
     assert retried.accounting_checkpoint == first.accounting_checkpoint
 
 
+def test_record_usage_report_conflicting_same_sequence_sets_mismatch() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=20.0,
+        session_policy=_session_policy(),
+    )
+    first_report = UsageReport(
+        report_id="rep-1",
+        report_version="0.1",
+        session_id=opened.session.session_id,
+        endpoint_id="ep-1",
+        capability_id="llm_text.generate",
+        pricing_version="pricing-v1",
+        accounting_contract_version="acct-v1",
+        accounting_modes={"input_tokens": "provider_metered"},
+        sequence=1,
+        cumulative_usage={"input_tokens": 100, "output_tokens": 40},
+        measurement_sources={"input_tokens": "provider_api", "output_tokens": "provider_api"},
+        created_at="2026-07-10T00:00:00+00:00",
+        signature="sig-1",
+    )
+    conflicting_report = first_report.model_copy(
+        update={
+            "report_id": "rep-1-conflict",
+            "cumulative_usage": {"input_tokens": 999, "output_tokens": 40},
+            "signature": "sig-1-conflict",
+        }
+    )
+
+    first = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=first_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+    mismatched = service.record_usage_report(
+        opened.session.session_id,
+        usage_report=conflicting_report.model_dump(mode="json"),
+        acknowledgement_timeout_seconds=120,
+    )
+
+    assert first.accounting_status == "ack_pending"
+    assert mismatched.accounting_status == "mismatch"
+    assert mismatched.accounting_checkpoint["mismatch_open"] is True
+    assert mismatched.accounting_checkpoint["last_report_hash"] == first.accounting_checkpoint["last_report_hash"]
+    assert len(mismatched.usage_report_chain) == 2
+
+
 def test_record_usage_report_rejects_mismatched_payload_session_id() -> None:
     service = _session_service()
     opened = service.open_session(
