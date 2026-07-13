@@ -1225,6 +1225,45 @@ def test_registry_service_summarizes_local_store_counts_and_payload_bytes() -> N
     assert summary.integrity.payload_hash_coverage_count == 3
 
 
+def test_registry_service_local_completeness_summary_ignores_node_backed_objects() -> None:
+    service = RegistryService()
+    service.upsert_registry_object(
+        {
+            "object_id": "sha256:stored-capdef-1",
+            "object_type": "capability_definition",
+            "object_version": "1.0",
+            "namespace": "protocol",
+            "payload_hash": "sha256:stored-capdef-payload-1",
+            "payload_encoding": "canonical_json",
+            "source_reference": "capdef:llm.chat:v1",
+        }
+    )
+    service.upsert_node(
+        _node(
+            "node-a",
+            canonical_registry_objects=[
+                {
+                    "object_id": "sha256:node-pricing-1",
+                    "object_type": "pricing_policy",
+                    "object_version": "1.0",
+                    "namespace": "marketplace",
+                    "payload_hash": "sha256:node-pricing-payload-1",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "pricing:endpoint-1:v1",
+                }
+            ],
+        )
+    )
+
+    summary = service.get_local_registry_completeness_summary()
+
+    assert summary.store_totals.total_object_count == 1
+    assert summary.store_totals.payload_object_count == 0
+    assert summary.store_totals.payload_bytes_total == 0
+    assert summary.by_namespace == {"protocol": 1}
+    assert summary.by_object_type == {"capability_definition": 1}
+
+
 def test_registry_service_surfaces_missing_required_fields_in_summary_issues() -> None:
     service = RegistryService()
     service._registry_objects["sha256:broken-1"] = {
