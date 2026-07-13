@@ -96,9 +96,9 @@ Goal: turn the now-durable local Registry Object store into a clearer lifecycle 
 
 This slice should add:
 
-- explicit retention/lifecycle metadata on persisted Registry Objects;
+- local completeness-summary integrity issue detection over persisted Registry Objects;
 - first local completeness summary scaffolding now exists over the durable local object set;
-- clearer object-store verification surfaces for malformed or stale local content;
+- malformed local record rejection and restart-stable summary coverage for the local object store;
 - alignment of Registry durability docs and follow-up verification notes with current implementation evidence;
 - manifests, retention policy enforcement, and replication still remain out of scope.
 
