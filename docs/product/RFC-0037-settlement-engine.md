@@ -89,9 +89,19 @@ Locked funds remain unavailable until Settlement completes.
 
 When a Session ends, the Endpoint submits an Invoice.
 
+The Invoice is the deterministic settlement submission derived from the accepted Session evidence defined by RFC-0044 and RFC-0060, including final Usage Reports, accepted Checkpoints, close records, and termination evidence as applicable.
+
+`settlement_evidence_root` SHALL identify the exact committed evidence bundle used for settlement, including the final Usage Reports, accepted Checkpoints, close records, and termination evidence as applicable.
+
 The Invoice SHALL include:
 
 - Session ID;
+- advertisement_id;
+- offer_id where present;
+- pricing_policy_hash;
+- accounting_contract_hash;
+- session_contract_hash;
+- settlement_evidence_root;
 - usage summary;
 - total amount;
 - protocol metadata;
@@ -112,9 +122,23 @@ Settlement performs:
 5. Escrow release.
 6. Ledger update.
 
+Settlement input SHALL include the accepted Session commercial identity captured when the Session opened:
+
+- advertisement_id;
+- offer_id where present;
+- pricing_policy_hash;
+- accounting_contract_hash;
+- session_contract_hash.
+
+Settlement input SHALL also include `settlement_evidence_root` as the deterministic evidence anchor used at settlement time.
+
 Settlement SHALL either complete entirely or fail entirely.
 
 Partial Settlement is prohibited.
+
+Settlement SHALL use the Advertisement and Offer accepted when the Session opened.
+
+Later Marketplace updates SHALL NOT retroactively alter the computed outcome.
 
 ## 8. Refund
 
@@ -245,6 +269,16 @@ Settlement SHALL be idempotent.
 Repeated execution of the same Settlement Operation SHALL produce identical Ledger state.
 
 Interrupted Settlement SHALL safely resume without duplicating transfers.
+
+Failure recovery SHALL reuse the same accepted Session commercial identity:
+
+- advertisement_id;
+- offer_id where present;
+- pricing_policy_hash;
+- accounting_contract_hash;
+- session_contract_hash.
+
+Recovery SHALL NOT substitute a later Advertisement or Offer version, and later Marketplace updates SHALL NOT retroactively alter the resumed outcome.
 
 ## 18. Auditability
 

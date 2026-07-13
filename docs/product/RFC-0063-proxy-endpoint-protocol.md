@@ -14,6 +14,7 @@ Depends on:
 - `RFC-0042 Hypervisor Network Protocol`
 - `RFC-0044 Session Protocol`
 - `RFC-0045 Capability Architecture`
+- `RFC-0046 Registry Architecture`
 - `RFC-0049 Distributed Marketplace and Advertisement Registry`
 - `RFC-0051 Usage Reporting and Verification Protocol`
 - `RFC-0053 Capability Runtime Specification`
@@ -224,10 +225,12 @@ Proxy chains are permitted only under bounded and cycle-safe rules.
 
 ## 13. Proxy Declaration
 
-Every Proxy Endpoint SHALL declare:
+Every Proxy Endpoint SHALL publish a Proxy Declaration as a versioned Registry Object, or as an equivalently versioned policy object referenced by the Endpoint Advertisement.
 
 ```yaml
 proxy_declaration:
+  declaration_id:
+  declaration_version:
   proxy_endpoint_type:
   upstream_disclosure_mode:
   upstream_accounting_visibility:
@@ -238,6 +241,8 @@ proxy_declaration:
   data_handling_policy_hash:
   proxy_policy_version:
 ```
+
+The active Endpoint Advertisement SHALL bind the Proxy Declaration object version presented to Consumers.
 
 ## 14. Upstream Disclosure Modes
 
@@ -373,13 +378,15 @@ An upstream change requires a new Endpoint Configuration Hash when it may materi
 - model class;
 - failure behavior.
 
-A temporary failover already permitted by the active policy does not require a configuration update.
+A temporary failover already permitted by the active Failover Policy object bound to the active Endpoint Advertisement does not require a configuration update.
 
 ## 24. Commercial-Only Upstream Change
 
 A change to the Proxy operator's private upstream acquisition cost does not automatically change Endpoint Configuration.
 
-It may require a Pricing Policy update.
+It MAY require a Pricing Policy update and corresponding Advertisement update.
+
+Any change that alters disclosed Advertisement terms, Offer terms, Proxy Declaration terms, Failover Policy terms, or maximum charge terms for new Sessions SHALL publish updated Endpoint Advertisement content and rotate the Advertisement version before new Sessions are accepted.
 
 The Consumer-facing contract remains authoritative.
 
@@ -1500,14 +1507,16 @@ Sensitive upstream identity MAY remain concealed according to policy.
 
 ## 114. Marketplace Disclosure
 
-Marketplace presentation SHOULD include:
+Marketplace presentation SHOULD include information derived from the Endpoint Advertisement and its bound proxy policy objects, including:
 
+- Proxy Declaration reference and version;
 - Proxy status;
 - disclosure mode;
 - Accounting Mode;
 - authoritative usage availability;
 - pricing unit;
 - failover support;
+- failover policy reference or version;
 - data-handling summary;
 - Certification observations;
 - upstream variability warning;
@@ -1521,30 +1530,43 @@ Local token estimates do not qualify.
 
 ## 116. Proxy Advertisement
 
-A Proxy Advertisement SHALL include:
+A Proxy Advertisement is the Marketplace advertisement projection derived from the canonical Endpoint Advertisement and its bound proxy policy objects.
+
+It SHALL include:
 
 ```yaml
 proxy_advertisement:
   endpoint_id:
   capability_id:
+  proxy_declaration_ref:
   proxy_type:
   upstream_disclosure_mode:
   accounting_mode:
+  pricing_policy_ref:
   pricing_policy_hash:
+  failure_policy_ref:
   failure_policy_hash:
+  retry_policy_ref:
   retry_policy_hash:
+  failover_policy_ref:
   failover_policy_hash:
   data_handling_policy_hash:
   maximum_charge_policy:
   certification_reference:
 ```
 
+This surface is required advertisement content for Marketplace presentation and SHALL NOT be interpreted as a second canonical offer object independent of the Endpoint Advertisement.
+
 ## 117. Ledger Objects
 
 Proxy-specific data MAY be represented through:
 
+- Proxy Declaration;
 - Endpoint Configuration;
 - Pricing Policy;
+- Failure Policy;
+- Retry Policy;
+- Failover Policy;
 - Accounting Contract;
 - Session Policy;
 - Advertisement;

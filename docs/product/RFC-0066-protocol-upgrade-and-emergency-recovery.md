@@ -348,6 +348,12 @@ Examples include:
 
 This procedure is equivalent to an explicit hard-fork continuity decision.
 
+Marketplace activity is revision-scoped.
+
+An active Marketplace offer or Advertisement from the previous Network Revision SHALL be republished under the new Network Revision, or explicitly migrated through a defined protocol migration path, before it may open new Sessions.
+
+Old-revision Advertisements remain historical objects and SHALL NOT automatically regain active status on the recovery branch.
+
 ## 21. Upgrade Proposal
 
 Every protocol-changing upgrade SHALL begin with an Upgrade Proposal.
@@ -1453,6 +1459,10 @@ Possible rules include:
 
 The rule SHALL apply consistently.
 
+Marketplace offers and Advertisements at the recovery checkpoint SHALL follow an equally explicit recovery rule.
+
+They MAY remain queryable as historical objects, but they SHALL NOT authorize new Session opening on the new Network Revision until they are republished under that revision, or explicitly migrated through a defined protocol migration path.
+
 ## 102. Upgrade Verification Period
 
 After activation, the network SHALL enter an Upgrade Verification Period.
@@ -1870,6 +1880,7 @@ The Same Repair Manifest Produces the Same Result on Every Honest Node
 - Network Revision changes are replay-separated.
 - Multiple recovery branches may exist and must be selected through trusted policy.
 - Active Sessions receive one deterministic recovery treatment.
+- Active Marketplace offers require republish or explicit migration before new-revision Session opening.
 - Q supply remains anchored to the declared recovery State Root.
 
 ## 133. Security Invariants
@@ -1883,6 +1894,7 @@ The Same Repair Manifest Produces the Same Result on Every Honest Node
 - Emergency pauses do not grant arbitrary confiscation power.
 - Recovery manifests bind to the last finalized block.
 - Old-revision operations cannot be replayed on a new revision.
+- Old-revision Advertisements remain historical and do not silently regain active Session-opening status.
 - Registry peer majority does not choose the canonical recovery branch.
 
 ## 134. Design Invariants

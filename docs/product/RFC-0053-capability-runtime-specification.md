@@ -156,12 +156,14 @@ The Runtime is responsible for:
 
 - discovering available Providers;
 - creating Endpoint definitions;
-- updating Endpoint metadata;
-- withdrawing Endpoints.
+- updating Runtime execution metadata;
+- updating local Endpoint execution readiness and availability state.
 
-The Hypervisor publishes Endpoint advertisements to the Marketplace.
+The Hypervisor publishes Endpoint advertisements to the Marketplace, including the commercial terms selected by the Endpoint operator.
 
-The Runtime remains the authoritative owner of Endpoint metadata.
+The Runtime remains the authoritative owner of execution metadata exposed through those advertisements, but SHALL NOT directly publish Marketplace price identity.
+
+Public Endpoint publication and withdrawal remain Hypervisor-controlled lifecycle actions.
 
 ## 9. Session Handling
 
@@ -428,7 +430,7 @@ Before accepting a Session, the Runtime SHALL confirm support for:
 
 - Capability Version;
 - Endpoint Configuration Hash;
-- Accounting Contract;
+- referenced Accounting Contract;
 - Session Policy;
 - execution limits;
 - required features;
@@ -436,11 +438,15 @@ Before accepting a Session, the Runtime SHALL confirm support for:
 
 A Runtime SHALL reject Session preparation when it cannot satisfy the negotiated contract.
 
+Commercial terms, including Marketplace price identity, belong to the accepted Advertisement or Offer selected by the Endpoint operator.
+
+The Runtime executes under the accepted Session Contract and its referenced Accounting Contract.
+
 The Hypervisor SHALL NOT accept an external Session before Runtime preparation succeeds.
 
 ## 24. Usage Reporting Responsibility
 
-The Runtime SHALL generate Provider-side Usage Reports according to `RFC-0051`.
+The Runtime SHALL generate Provider-side Usage Reports according to `RFC-0051` and the Accounting Contract bound to the accepted Session Contract.
 
 The Runtime SHALL:
 
@@ -451,6 +457,8 @@ The Runtime SHALL:
 - avoid billing non-authoritative estimates;
 - support observable accounting where possible;
 - preserve request-level accounting evidence.
+
+Usage Reporting by the Runtime describes measured execution state and SHALL NOT be treated as publication of Marketplace pricing or commercial offer identity.
 
 The Hypervisor SHALL:
 

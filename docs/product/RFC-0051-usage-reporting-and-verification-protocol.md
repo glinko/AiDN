@@ -328,10 +328,12 @@ A Proxy-Opaque Endpoint SHALL NOT claim authoritative upstream token usage.
 
 ## 13. Accounting Contract
 
-Before Session acceptance, the Endpoint SHALL publish an Accounting Contract.
+Before Session acceptance, the Endpoint SHALL publish an Accounting Contract as a versioned Registry Object.
 
 ```yaml
 accounting_contract:
+  registry_object_id:
+  registry_object_version:
   contract_version:
   capability_id:
   pricing_version:
@@ -349,9 +351,13 @@ accounting_contract:
   failure_pricing_policy:
 ```
 
-The Consumer SHALL explicitly accept the Accounting Contract before execution.
+Marketplace Advertisements and Session acceptance flows SHALL reference the published Accounting Contract object by identifier and version.
 
-The accepted contract remains bound to the Session.
+Where a surrounding RFC surface is hash-bound, that canonical Accounting Contract object reference MAY be represented as an `accounting_contract_hash`.
+
+The Consumer SHALL explicitly accept the referenced Accounting Contract before execution.
+
+The accepted Accounting Contract object remains bound to the Session.
 
 Pricing changes SHALL NOT alter an active Session unless both parties explicitly accept a replacement contract.
 
@@ -1331,6 +1337,7 @@ A Validator SHALL NOT require authoritative upstream token counts when the upstr
 
 Every Endpoint Advertisement SHALL expose:
 
+- Accounting Contract object reference and version;
 - Accounting Modes;
 - measurement sources;
 - independent-verification availability;
@@ -1345,6 +1352,9 @@ Example:
 
 ```yaml
 accounting_transparency:
+  accounting_contract_ref:
+    registry_object_id:
+    registry_object_version:
   mode: proxy_opaque
   upstream_usage_available: false
   exact_token_reporting: unavailable
@@ -1355,6 +1365,8 @@ accounting_transparency:
   maximum_request_charge: 15Q
   statistical_confidence: medium
 ```
+
+Marketplace transparency and pricing disclosures SHALL derive from the referenced Accounting Contract object accepted for the advertised Session path.
 
 ## 71. Reputation Impact
 

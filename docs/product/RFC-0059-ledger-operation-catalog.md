@@ -73,7 +73,7 @@ No protocol component may directly modify:
 - Bonds;
 - Hypervisor ownership;
 - Service eligibility;
-- Endpoint publication state;
+- Endpoint advertisement, offer, and lifecycle state;
 - Session economic state;
 - Certification state;
 - Reputation Profiles;
@@ -99,7 +99,7 @@ Examples:
 
 - Wallet Transfer;
 - Hypervisor Registration;
-- Endpoint Publication;
+- Endpoint Registration;
 - Faucet Claim.
 
 ### 4.2 MULTI_PARTY
@@ -444,7 +444,7 @@ The MVP catalog contains the following categories:
 1. Hypervisor Identity Operations
 2. Service Operations
 3. Endpoint Operations
-4. Advertisement Operations
+4. Marketplace Advertisement, Offer, and Endpoint Lifecycle Operations
 5. Wallet and Economic Operations
 6. Session Operations
 7. Validation Operations
@@ -464,11 +464,15 @@ The MVP catalog contains the following categories:
 | `SERVICE_REGISTER` | Wallet | Standard |
 | `SERVICE_UPDATE` | Wallet | Standard |
 | `SERVICE_RETIRE` | Wallet | Standard |
-| `ENDPOINT_PUBLISH` | Wallet | Standard or Onboarding Exempt |
+| `ENDPOINT_REGISTER` | Wallet | Standard or Onboarding Exempt |
 | `ENDPOINT_UPDATE` | Wallet | Standard |
-| `ENDPOINT_WITHDRAW` | Wallet | Standard |
-| `ADVERTISEMENT_PUBLISH` | Wallet | Standard |
-| `ADVERTISEMENT_WITHDRAW` | Wallet | Standard |
+| `ENDPOINT_ADVERTISEMENT_PUBLISH` | Wallet | Standard |
+| `ENDPOINT_ADVERTISEMENT_WITHDRAW` | Wallet | Standard |
+| `ENDPOINT_OFFER_PUBLISH` | Wallet | Standard |
+| `ENDPOINT_OFFER_WITHDRAW` | Wallet | Standard |
+| `ENDPOINT_SUSPEND` | Evidence-triggered | Protocol Sponsored |
+| `ENDPOINT_REINSTATE` | Protocol | Protocol Sponsored |
+| `ENDPOINT_RETIRE` | Wallet or Protocol | Standard or Protocol Sponsored |
 | `WALLET_TRANSFER` | Wallet | Standard |
 | `FAUCET_CLAIM` | Wallet + Hypervisor | Faucet Exempt |
 | `STAKE_LOCK` | Wallet | Standard |
@@ -714,9 +718,9 @@ State Changes
 - preserves historical Reputation and proofs;
 - begins applicable Stake release delay.
 
-## 27. Endpoint Publication
+## 27. Endpoint Registration
 
-`ENDPOINT_PUBLISH`
+`ENDPOINT_REGISTER`
 
 Creates an Endpoint object.
 
@@ -759,7 +763,7 @@ State Changes
 
 Onboarding Exception
 
-The first Endpoint published by the first Hypervisor of a Wallet MAY use `ONBOARDING_EXEMPT`.
+The first Endpoint registered by the first Hypervisor of a Wallet MAY use `ONBOARDING_EXEMPT`.
 
 This provides a deterministic path to Faucet eligibility without requiring pre-existing `Q`.
 
@@ -804,73 +808,166 @@ If only pricing or commercial policy changes:
 - Certification MAY remain valid;
 - active Sessions retain their accepted pricing version.
 
-## 29. Endpoint Withdrawal
+## 29. Endpoint Advertisement Publication
 
-`ENDPOINT_WITHDRAW`
+`ENDPOINT_ADVERTISEMENT_PUBLISH`
 
-Removes an Endpoint from new Session availability.
+Publishes a discoverable Advertisement for an Endpoint.
 
-Preconditions
-
-- sender owns the Endpoint;
-- Endpoint is not already withdrawn.
-
-State Changes
-
-- state becomes `WITHDRAWN`;
-- new Sessions are prohibited;
-- active Sessions continue according to Session policy;
-- active Advertisements referencing the Endpoint become inactive;
-- historical records remain available.
-
-## 30. Advertisement Publication
-
-`ADVERTISEMENT_PUBLISH`
-
-Publishes a discoverable Advertisement.
+Advertisement publication creates the immutable Advertisement object or canonical reference to that object; Offer publication separately creates or activates the commercial Offer scope that references one published Advertisement.
 
 Required Payload
 
 ```yaml
 advertisement_id:
-resource_type:
-resource_id:
+endpoint_id:
 owner_wallet:
 visibility:
 advertisement_version:
 previous_advertisement_id:
+configuration_hash:
 content_hash:
+valid_from:
 expiration:
 ```
 
 Preconditions
 
-- referenced resource exists;
-- sender owns or is authorized to advertise the resource;
+- referenced Endpoint exists and is not retired;
+- sender owns or is authorized to advertise the Endpoint;
 - content signature is valid;
+- Configuration Hash matches the current Endpoint configuration;
+- referenced policy and Capability definitions are retrievable;
 - Advertisement ID is unique.
 
 State Changes
 
-- creates immutable Advertisement version;
-- updates active Advertisement pointer;
-- makes public or restricted discovery possible.
+- creates the immutable Advertisement object or canonical reference to that object;
+- records the published Advertisement for later Offer binding;
+- makes public or restricted discovery of the Advertisement object possible where policy allows.
 
 Advertisements are immutable.
 
 Updates are new publication operations referencing the previous version.
 
-## 31. Advertisement Withdrawal
+## 30. Endpoint Advertisement Withdrawal
 
-`ADVERTISEMENT_WITHDRAW`
+`ENDPOINT_ADVERTISEMENT_WITHDRAW`
 
-Marks an Advertisement inactive.
+Marks a published Advertisement inactive.
+
+Required Fields
+
+- Advertisement ID;
+- Endpoint ID;
+- effective boundary;
+- reason.
 
 State Changes
 
-- clears the active Marketplace pointer;
+- clears any active Offer bindings to the withdrawn Advertisement at the effective boundary;
 - preserves immutable Advertisement history;
-- does not withdraw the underlying Endpoint automatically.
+- does not withdraw the underlying Endpoint automatically;
+- accepted Sessions remain bound to their accepted Advertisement version.
+
+## 31. Endpoint Offer Publication and Lifecycle Operations
+
+`ENDPOINT_OFFER_PUBLISH`
+
+Publishes a distinct Offer ID and access scope for an Endpoint Advertisement.
+
+Required Payload
+
+```yaml
+offer_id:
+endpoint_id:
+advertisement_id:
+access_scope:
+pricing_policy_hash:
+accounting_contract_hash:
+session_policy_hash:
+failure_policy_hash:
+data_handling_policy_hash:
+visibility:
+```
+
+Preconditions
+
+- referenced Endpoint exists and is not suspended or retired;
+- referenced Advertisement exists for the same Endpoint;
+- Offer ID is unique within the Endpoint scope;
+- sender is authorized to publish the offer.
+
+State Changes
+
+- creates or activates the canonical commercial Offer scope for the targeted `offer_id`;
+- binds future Sessions to the published `offer_id` and `advertisement_id`;
+- preserves prior offer history.
+
+### Endpoint Offer Withdrawal
+
+`ENDPOINT_OFFER_WITHDRAW`
+
+Makes one Offer ID inactive for new Sessions without withdrawing unrelated offers on the same Endpoint.
+
+State Changes
+
+- deactivates the targeted Offer ID for new Sessions;
+- preserves historical offer references for audits and Session disputes;
+- leaves the underlying Endpoint and other offers unchanged unless separately withdrawn.
+
+### Endpoint Suspension
+
+`ENDPOINT_SUSPEND`
+
+Temporarily disables an Endpoint for new Sessions and Marketplace discovery.
+
+Preconditions
+
+- objective finalized evidence or authorized enforcement action exists;
+- the suspension scope and minimum recovery condition are defined.
+
+State Changes
+
+- sets Endpoint state to `SUSPENDED`;
+- makes active Advertisements and Offers unavailable for new Sessions;
+- preserves historical records and accepted Session references.
+
+### Endpoint Reinstatement
+
+`ENDPOINT_REINSTATE`
+
+Restores a suspended Endpoint after recovery conditions are satisfied.
+
+Preconditions
+
+- recovery conditions are satisfied;
+- required delay elapsed;
+- required verification or operator remediation completed.
+
+State Changes
+
+- removes the active suspension;
+- allows Advertisements and Offers to become active again at the defined boundary;
+- does not restore lost availability retroactively.
+
+### Endpoint Retirement
+
+`ENDPOINT_RETIRE`
+
+Voluntarily or administratively retires an Endpoint.
+
+Preconditions
+
+- owner authorization or protocol authority exists;
+- no unresolved Endpoint-specific exit constraints remain.
+
+State Changes
+
+- sets Endpoint state to `RETIRED`;
+- makes all Advertisements and Offers inactive for new Sessions;
+- preserves historical evidence and Session references;
+- ends future Endpoint reward eligibility where applicable.
 
 ## 32. Wallet Transfer
 
@@ -1790,7 +1887,7 @@ Examples:
 
 - `HypervisorRegistered`;
 - `ServiceActivated`;
-- `EndpointPublished`;
+- `EndpointAdvertisementPublished`;
 - `SessionOpened`;
 - `SessionSettled`;
 - `ValidationReportCommitted`;
@@ -1911,11 +2008,15 @@ The MVP SHALL implement at minimum:
 - `SERVICE_REGISTER`;
 - `SERVICE_UPDATE`;
 - `SERVICE_RETIRE`;
-- `ENDPOINT_PUBLISH`;
+- `ENDPOINT_REGISTER`;
 - `ENDPOINT_UPDATE`;
-- `ENDPOINT_WITHDRAW`;
-- `ADVERTISEMENT_PUBLISH`;
-- `ADVERTISEMENT_WITHDRAW`;
+- `ENDPOINT_ADVERTISEMENT_PUBLISH`;
+- `ENDPOINT_ADVERTISEMENT_WITHDRAW`;
+- `ENDPOINT_OFFER_PUBLISH`;
+- `ENDPOINT_OFFER_WITHDRAW`;
+- `ENDPOINT_SUSPEND`;
+- `ENDPOINT_REINSTATE`;
+- `ENDPOINT_RETIRE`;
 - `WALLET_TRANSFER`;
 - `FAUCET_CLAIM`;
 - `STAKE_LOCK`;

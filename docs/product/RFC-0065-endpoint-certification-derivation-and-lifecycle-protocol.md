@@ -1152,6 +1152,7 @@ The operation SHALL include:
 certification_state_update:
   certification_id:
   endpoint_id:
+  capability_id:
   endpoint_configuration_hash:
   previous_state:
   new_state:
@@ -1162,6 +1163,10 @@ certification_state_update:
   effective_epoch:
   expiration_epoch:
 ```
+
+A committed `CERTIFICATION_STATE_UPDATE` SHALL become the Marketplace-visible Certification state for the matching canonical Certification Record scope, including `endpoint_id`, `capability_id`, `endpoint_configuration_hash` and `policy_version`.
+
+Marketplace views, offer detail surfaces and Session-admission checks that reference that Configuration Hash SHALL read the latest canonical Certification Record for that exact `endpoint_id`, `capability_id`, `endpoint_configuration_hash` and `policy_version`.
 
 ## 74. Protocol-Generated Derivation
 
@@ -1217,6 +1222,10 @@ The response:
 - may reference a new configuration;
 - may request Recovery Validation.
 
+Certification updates SHALL NOT rewrite, replace or delete immutable historical Advertisement objects.
+
+Historical Advertisements remain auditable records even when later Certification changes make them stale, degraded, expired, revoked or otherwise inactive.
+
 ## 78. Certification Explanation
 
 Every Certification state SHOULD expose a human-readable derivation summary.
@@ -1244,6 +1253,10 @@ Marketplace clients SHOULD display:
 - degraded state;
 - last Maintenance Validation;
 - Validator identities after reveal.
+
+For an active Marketplace offer or Advertisement referencing a Configuration Hash, Marketplace clients SHALL display the current Certification state derived for that same Configuration Hash and the matching Certification Record scope, including capability and policy version.
+
+If a historical Advertisement reflects an older Certification state, clients MAY mark it stale or inactive, but SHALL preserve the original Advertisement object as historical evidence.
 
 Marketplace SHALL not display `CERTIFIED` as a universal guarantee of quality.
 
@@ -1491,6 +1504,8 @@ The MVP SHALL implement:
 - Recovery Validation;
 - Bond refund and forfeiture triggers;
 - Certification history;
+- Marketplace-visible Certification updates for the matching canonical Certification Record scope;
+- immutable historical Advertisement preservation;
 - Marketplace status exposure;
 - deterministic State Updates.
 
@@ -1535,6 +1550,7 @@ The following remain configurable:
 Certification applies to one Endpoint Configuration Hash
 One eligible report is normally sufficient for Standard Initial Certification
 Certification does not prove hidden model identity
+Marketplace active visibility follows the latest Certification Record for the matching canonical Certification Record scope
 Conflicting reports remain visible
 One ordinary negative Maintenance Report normally causes degradation before revocation
 Critical objective evidence may cause immediate revocation
@@ -1553,6 +1569,7 @@ Endpoint Payment does not affect Certification
 - Validators cannot directly revoke Certification.
 - One weak subjective report cannot ordinarily confiscate the Validation Bond.
 - Critical actions require objective evidence.
+- Certification updates do not rewrite immutable historical Advertisement objects.
 - Certification history cannot be erased by version changes.
 - Policy upgrades do not silently rewrite historical results.
 
