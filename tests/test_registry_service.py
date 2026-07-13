@@ -1,4 +1,8 @@
+import json
 from datetime import datetime
+from pathlib import Path
+
+import pytest
 
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
@@ -42,6 +46,7 @@ def _node(
     canonical_services: list[dict] | None = None,
     canonical_capability_runtimes: list[dict] | None = None,
     canonical_compute_compatibility: list[dict] | None = None,
+    canonical_registry_objects: list[dict] | None = None,
     canonical_advertisements: list[dict] | None = None,
     rating_score: float = 0.91,
     input_price: int = 12,
@@ -80,6 +85,9 @@ def _node(
         ),
         canonical_compute_compatibility=(
             [] if canonical_compute_compatibility is None else canonical_compute_compatibility
+        ),
+        canonical_registry_objects=(
+            [] if canonical_registry_objects is None else canonical_registry_objects
         ),
         canonical_advertisements=(
             [] if canonical_advertisements is None else canonical_advertisements
@@ -256,6 +264,36 @@ def test_registry_service_marks_nodes_stale_and_offline(monkeypatch) -> None:
     assert service.get_node("node-a")["status"] == "offline"
 
 
+def test_registry_service_get_registry_object_skips_stale_node_backed_object(
+    monkeypatch,
+) -> None:
+    stale_time = datetime.fromisoformat("2026-07-05T14:00:35+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: stale_time)
+    service = RegistryService(stale_grace_seconds=30)
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            heartbeat_ttl_seconds=10,
+            canonical_registry_objects=[
+                {
+                    "object_id": "sha256:stale-only",
+                    "object_type": "capability_definition",
+                    "object_version": "capdef.v1",
+                    "namespace": "protocol",
+                    "payload_hash": "sha256:stale-only-payload",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "llm.chat",
+                }
+            ],
+        )
+    )
+
+    assert service.list_registry_objects() == []
+    with pytest.raises(KeyError, match="sha256:stale-only"):
+        service.get_registry_object("sha256:stale-only")
+
+
 def test_registry_service_discovers_matching_bundles_by_workload_and_model(monkeypatch) -> None:
     ready_time = datetime.fromisoformat("2026-06-19T18:30:05+00:00").timestamp()
     monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
@@ -406,10 +444,16 @@ def test_registry_service_discovery_returns_canonical_candidates(monkeypatch) ->
             canonical_advertisements=[
                 {
                     "advertisement_id": "adv-endpoint-1",
+                    "offer_id": "offer-endpoint-1",
                     "resource_type": "endpoint",
                     "owner_wallet": "wallet-a",
                     "hypervisor_id": "node-a",
                     "capability_id": "llm.chat",
+                    "capability_version": "2.0.0",
+                    "capability_definition_hash": "sha256:capability",
+                    "feature_profile_hash": "sha256:feature",
+                    "limit_profile_hash": "sha256:limit",
+                    "implementation_profile_hash": "sha256:implementation",
                     "visibility": "public",
                     "signature_scope": "configuration_publication",
                 }
@@ -420,7 +464,16 @@ def test_registry_service_discovery_returns_canonical_candidates(monkeypatch) ->
     result = service.discover(RegistryDiscoveryQuery(capability_id="llm.chat"))
 
     assert result["canonical_candidates"][0]["capability_id"] == "llm.chat"
+    assert result["canonical_candidates"][0]["capability_version"] == "2.0.0"
     assert result["canonical_candidates"][0]["legacy_bundle_id"] == "phi4-local"
+    assert result["canonical_candidates"][0]["offer_id"] == "offer-endpoint-1"
+    assert result["canonical_candidates"][0]["capability_definition_hash"] == "sha256:capability"
+    assert result["canonical_candidates"][0]["feature_profile_hash"] == "sha256:feature"
+    assert result["canonical_candidates"][0]["limit_profile_hash"] == "sha256:limit"
+    assert (
+        result["canonical_candidates"][0]["implementation_profile_hash"]
+        == "sha256:implementation"
+    )
 
 
 def test_registry_service_combined_legacy_and_canonical_filters_require_both(
@@ -899,3 +952,731 @@ def test_registry_service_filters_and_orders_candidates_by_execution_readiness(
     ]
     assert unfiltered["candidates"][0]["endpoint_ready"] is True
     assert unfiltered["candidates"][-1]["endpoint_ready"] is False
+
+
+def test_registry_service_lists_deduplicated_registry_objects_with_sources(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    object_row = {
+        "object_id": "sha256:capdef-1",
+        "object_type": "capability_definition",
+        "object_version": "capdef.v1",
+        "namespace": "protocol",
+        "payload_hash": "sha256:payload-1",
+        "payload_encoding": "canonical_json",
+        "source_reference": "llm.chat",
+    }
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[object_row],
+        )
+    )
+    service.upsert_node(
+        _node(
+            "node-b",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[object_row],
+        )
+    )
+
+    objects = service.list_registry_objects()
+
+    assert len(objects) == 1
+    assert objects[0]["object_id"] == "sha256:capdef-1"
+    assert objects[0]["source_count"] == 2
+    assert [item["node_id"] for item in objects[0]["sources"]] == ["node-a", "node-b"]
+
+
+def test_registry_service_queries_registry_objects_by_object_type_and_source_reference(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                {
+                    "object_id": "sha256:feature-1",
+                    "object_type": "endpoint_feature_profile",
+                    "object_version": "feature-profile.v1",
+                    "namespace": "marketplace",
+                    "payload_hash": "sha256:feature-payload",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "adv-pub-1",
+                },
+                {
+                    "object_id": "sha256:capdef-1",
+                    "object_type": "capability_definition",
+                    "object_version": "capdef.v1",
+                    "namespace": "protocol",
+                    "payload_hash": "sha256:capdef-payload",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "llm.chat",
+                },
+            ],
+        )
+    )
+
+    objects = service.list_registry_objects(
+        query={
+            "object_type": "endpoint_feature_profile",
+            "source_reference": "adv-pub-1",
+        }
+    )
+
+    assert [item["object_id"] for item in objects] == ["sha256:feature-1"]
+
+
+def test_registry_service_get_registry_object_returns_single_deduplicated_record(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                {
+                    "object_id": "sha256:acct-1",
+                    "object_type": "accounting_contract",
+                    "object_version": "acctobj.v1",
+                    "namespace": "usage",
+                    "payload_hash": "sha256:acct-payload",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "ep-1",
+                }
+            ],
+        )
+    )
+
+    item = service.get_registry_object("sha256:acct-1")
+
+    assert item["object_type"] == "accounting_contract"
+    assert item["namespace"] == "usage"
+    assert item["sources"][0]["node_id"] == "node-a"
+
+
+def test_registry_service_includes_payload_only_when_requested(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                {
+                    "object_id": "sha256:capdef-1",
+                    "object_type": "capability_definition",
+                    "object_version": "capdef.v1",
+                    "namespace": "protocol",
+                    "payload_hash": "sha256:capdef-payload",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "llm.chat",
+                    "payload": {
+                        "capability_id": "llm.chat",
+                        "capability_version": "2.0.0",
+                    },
+                }
+            ],
+        )
+    )
+
+    without_payload = service.get_registry_object("sha256:capdef-1")
+    with_payload = service.get_registry_object("sha256:capdef-1", include_payload=True)
+    listed_with_payload = service.list_registry_objects(query={"include_payload": True})
+
+    assert "payload" not in without_payload
+    assert with_payload["payload"]["capability_id"] == "llm.chat"
+    assert listed_with_payload[0]["payload"]["capability_version"] == "2.0.0"
+
+
+def test_registry_service_lists_store_backed_objects_without_node_advertisement() -> None:
+    service = RegistryService()
+
+    service.upsert_registry_object(
+        {
+            "object_id": "sha256:stored-1",
+            "object_type": "capability_definition",
+            "object_version": "capdef.v1",
+            "namespace": "protocol",
+            "payload_hash": "sha256:stored-payload-1",
+            "payload_encoding": "canonical_json",
+            "source_reference": "llm.chat",
+        }
+    )
+
+    objects = service.list_registry_objects()
+
+    assert objects == [
+        {
+            "object_id": "sha256:stored-1",
+            "object_type": "capability_definition",
+            "object_version": "capdef.v1",
+            "namespace": "protocol",
+            "payload_hash": "sha256:stored-payload-1",
+            "payload_encoding": "canonical_json",
+            "source_reference": "llm.chat",
+            "source_count": 1,
+            "sources": [{"node_id": None, "operator_id": None, "status": "stored"}],
+        }
+    ]
+
+
+def test_registry_service_returns_empty_local_completeness_summary() -> None:
+    service = RegistryService()
+
+    summary = service.get_local_registry_completeness_summary()
+
+    assert summary.summary_version == "registry-local-completeness-summary.v1"
+    assert summary.snapshot_schema_version == "registry-object-store.v1"
+    assert summary.store_totals.total_object_count == 0
+    assert summary.store_totals.payload_object_count == 0
+    assert summary.store_totals.payload_bytes_total == 0
+    assert summary.by_namespace == {}
+    assert summary.by_object_type == {}
+    assert summary.integrity.object_count_matches_store is True
+    assert summary.integrity.all_object_ids_unique is True
+    assert summary.integrity.all_required_fields_present is True
+    assert summary.integrity.payload_hash_coverage_count == 0
+    assert summary.integrity.issues == []
+
+
+def test_registry_service_rejects_conflicting_store_and_node_backed_object(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_registry_object(
+        {
+            "object_id": "sha256:shared-1",
+            "object_type": "capability_definition",
+            "object_version": "capdef.v1",
+            "namespace": "protocol",
+            "payload_hash": "sha256:stored-payload",
+            "payload_encoding": "canonical_json",
+            "source_reference": "llm.chat",
+            "payload": {
+                "capability_id": "llm.chat",
+                "capability_version": "2.0.1",
+            },
+        }
+    )
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                {
+                    "object_id": "sha256:shared-1",
+                    "object_type": "capability_definition",
+                    "object_version": "capdef.v1",
+                    "namespace": "protocol",
+                    "payload_hash": "sha256:node-payload",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "llm.chat",
+                    "payload": {
+                        "capability_id": "llm.chat",
+                        "capability_version": "2.0.0",
+                    },
+                }
+            ],
+        )
+    )
+
+    with pytest.raises(ValueError, match="sha256:shared-1"):
+        service.get_registry_object("sha256:shared-1", include_payload=True)
+
+    with pytest.raises(ValueError, match="sha256:shared-1"):
+        service.list_registry_objects(query={"include_payload": True})
+
+
+def test_registry_service_include_payload_works_for_store_backed_objects() -> None:
+    service = RegistryService()
+    service.ingest_registry_objects(
+        [
+            {
+                "object_id": "sha256:stored-2",
+                "object_type": "endpoint_feature_profile",
+                "object_version": "feature-profile.v1",
+                "namespace": "marketplace",
+                "payload_hash": "sha256:stored-payload-2",
+                "payload_encoding": "canonical_json",
+                "source_reference": "adv-pub-1",
+                "payload": {"feature_flags": ["streaming"]},
+            }
+        ]
+    )
+
+    without_payload = service.get_registry_object("sha256:stored-2")
+    with_payload = service.get_registry_object("sha256:stored-2", include_payload=True)
+    listed_with_payload = service.list_registry_objects(query={"include_payload": True})
+
+    assert "payload" not in without_payload
+    assert with_payload["payload"] == {"feature_flags": ["streaming"]}
+    assert listed_with_payload == [
+        {
+            "object_id": "sha256:stored-2",
+            "object_type": "endpoint_feature_profile",
+            "object_version": "feature-profile.v1",
+            "namespace": "marketplace",
+            "payload_hash": "sha256:stored-payload-2",
+            "payload_encoding": "canonical_json",
+            "source_reference": "adv-pub-1",
+            "payload": {"feature_flags": ["streaming"]},
+            "source_count": 1,
+            "sources": [{"node_id": None, "operator_id": None, "status": "stored"}],
+        }
+    ]
+
+
+def test_registry_service_prefers_explicit_source_metadata_for_store_backed_objects() -> None:
+    service = RegistryService()
+    service.ingest_registry_objects(
+        [
+            {
+                "object_id": "sha256:stored-local",
+                "object_type": "capability_definition",
+                "object_version": "capdef.v1",
+                "namespace": "protocol",
+                "payload_hash": "sha256:stored-local-payload",
+                "payload_encoding": "canonical_json",
+                "source_reference": "llm.chat",
+                "_source": {
+                    "node_id": "node-local",
+                    "operator_id": "operator-local",
+                    "status": "ready",
+                },
+            }
+        ]
+    )
+
+    listed = service.list_registry_objects()
+    fetched = service.get_registry_object("sha256:stored-local")
+
+    assert listed[0]["sources"] == [
+        {"node_id": "node-local", "operator_id": "operator-local", "status": "ready"}
+    ]
+    assert fetched["sources"] == listed[0]["sources"]
+
+
+def test_registry_service_persists_store_backed_objects_across_restart(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(snapshot_path=snapshot_path)
+
+    service.upsert_registry_object(
+        {
+            "object_id": "sha256:stored-restart",
+            "object_type": "capability_definition",
+            "object_version": "capdef.v1",
+            "namespace": "protocol",
+            "payload_hash": "sha256:stored-restart-payload",
+            "payload_encoding": "canonical_json",
+            "source_reference": "llm.chat",
+            "payload": {
+                "capability_id": "llm.chat",
+                "capability_version": "2.1.0",
+            },
+            "_source": {
+                "node_id": "node-local",
+                "operator_id": "operator-local",
+                "status": "ready",
+            },
+        }
+    )
+
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    fetched = restarted.get_registry_object("sha256:stored-restart", include_payload=True)
+
+    assert fetched["payload"]["capability_version"] == "2.1.0"
+    assert fetched["sources"] == [
+        {"node_id": "node-local", "operator_id": "operator-local", "status": "ready"}
+    ]
+
+
+def test_registry_service_preserved_snapshot_conflicts_with_node_backed_duplicate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    snapshot_path = tmp_path / "registry-objects.json"
+
+    seeded = RegistryService(snapshot_path=snapshot_path)
+    seeded.upsert_registry_object(
+        {
+            "object_id": "sha256:shared-restart",
+            "object_type": "capability_definition",
+            "object_version": "capdef.v1",
+            "namespace": "protocol",
+            "payload_hash": "sha256:stored-shared-payload",
+            "payload_encoding": "canonical_json",
+            "source_reference": "llm.chat",
+            "payload": {"capability_version": "2.1.0"},
+        }
+    )
+
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    restarted.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                {
+                    "object_id": "sha256:shared-restart",
+                    "object_type": "capability_definition",
+                    "object_version": "capdef.v1",
+                    "namespace": "protocol",
+                    "payload_hash": "sha256:node-shared-payload",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "llm.chat",
+                    "payload": {"capability_version": "2.0.0"},
+                }
+            ],
+        )
+    )
+
+    with pytest.raises(ValueError, match="sha256:shared-restart"):
+        restarted.get_registry_object("sha256:shared-restart", include_payload=True)
+
+
+def test_registry_service_writes_versioned_snapshot_file_on_upsert(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(snapshot_path=snapshot_path)
+
+    service.upsert_registry_object(
+        {
+            "object_id": "sha256:stored-file",
+            "object_type": "accounting_contract",
+            "object_version": "acctobj.v1",
+            "namespace": "usage",
+            "payload_hash": "sha256:stored-file-payload",
+            "payload_encoding": "canonical_json",
+            "source_reference": "endpoint-1",
+            "payload": {"accounting_mode": "fixed_price"},
+        }
+    )
+
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+
+    assert snapshot["schema_version"] == "registry-object-store.v1"
+    assert snapshot["objects"][0]["object_id"] == "sha256:stored-file"
+    assert snapshot["objects"][0]["payload"] == {"accounting_mode": "fixed_price"}
+
+
+def test_registry_service_batch_ingest_persists_all_objects_once_per_batch(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(snapshot_path=snapshot_path)
+
+    service.ingest_registry_objects(
+        [
+            {
+                "object_id": "sha256:stored-batch-a",
+                "object_type": "capability_definition",
+                "object_version": "capdef.v1",
+                "namespace": "protocol",
+                "payload_hash": "sha256:stored-batch-a-payload",
+                "payload_encoding": "canonical_json",
+                "source_reference": "llm.chat",
+            },
+            {
+                "object_id": "sha256:stored-batch-b",
+                "object_type": "endpoint_feature_profile",
+                "object_version": "feature-profile.v1",
+                "namespace": "marketplace",
+                "payload_hash": "sha256:stored-batch-b-payload",
+                "payload_encoding": "canonical_json",
+                "source_reference": "adv-pub-1",
+            },
+        ]
+    )
+
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    listed = restarted.list_registry_objects()
+
+    assert [item["object_id"] for item in listed] == [
+        "sha256:stored-batch-a",
+        "sha256:stored-batch-b",
+    ]
+
+
+def test_registry_service_starts_empty_when_snapshot_path_does_not_exist(
+    tmp_path: Path,
+) -> None:
+    service = RegistryService(snapshot_path=tmp_path / "missing.json")
+
+    assert service.list_registry_objects() == []
+
+
+def test_registry_service_rejects_invalid_snapshot_schema_version(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    snapshot_path.write_text(
+        json.dumps({"schema_version": "registry-object-store.v999", "objects": []}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="registry-object-store.v999"):
+        RegistryService(snapshot_path=snapshot_path)
+
+
+def test_registry_service_rejects_snapshot_with_invalid_object_entry(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "registry-object-store.v1",
+                "objects": ["bad"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid object entry"):
+        RegistryService(snapshot_path=snapshot_path)
+
+
+def test_registry_service_rejects_snapshot_with_malformed_object_entry(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "registry-object-store.v1",
+                "objects": [{}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid object entry"):
+        RegistryService(snapshot_path=snapshot_path)
+
+
+def test_registry_service_rejects_malformed_snapshot_payload(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    snapshot_path.write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Malformed registry object snapshot"):
+        RegistryService(snapshot_path=snapshot_path)
+
+
+def test_registry_service_rejects_snapshot_with_non_object_root(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    snapshot_path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Registry object snapshot must be a JSON object"):
+        RegistryService(snapshot_path=snapshot_path)
+
+
+def test_registry_service_rolls_back_upsert_when_snapshot_persist_fails(
+    monkeypatch,
+) -> None:
+    service = RegistryService()
+
+    def fail_persist() -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(service, "_persist_registry_object_snapshot", fail_persist)
+
+    with pytest.raises(OSError, match="disk full"):
+        service.upsert_registry_object(
+            {
+                "object_id": "sha256:rollback-upsert",
+                "object_type": "capability_definition",
+                "object_version": "capdef.v1",
+                "namespace": "protocol",
+                "payload_hash": "sha256:rollback-upsert-payload",
+                "payload_encoding": "canonical_json",
+                "source_reference": "llm.chat",
+            }
+        )
+
+    assert service.list_registry_objects() == []
+
+
+def test_registry_service_rolls_back_batch_when_snapshot_persist_fails(
+    monkeypatch,
+) -> None:
+    service = RegistryService()
+    service.upsert_registry_object(
+        {
+            "object_id": "sha256:existing",
+            "object_type": "capability_definition",
+            "object_version": "capdef.v1",
+            "namespace": "protocol",
+            "payload_hash": "sha256:existing-payload",
+            "payload_encoding": "canonical_json",
+            "source_reference": "llm.chat.existing",
+        },
+        persist=False,
+    )
+
+    def fail_persist() -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(service, "_persist_registry_object_snapshot", fail_persist)
+
+    with pytest.raises(OSError, match="disk full"):
+        service.ingest_registry_objects(
+            [
+                {
+                    "object_id": "sha256:new-a",
+                    "object_type": "capability_definition",
+                    "object_version": "capdef.v1",
+                    "namespace": "protocol",
+                    "payload_hash": "sha256:new-a-payload",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "llm.chat.new-a",
+                },
+                {
+                    "object_id": "sha256:new-b",
+                    "object_type": "endpoint_feature_profile",
+                    "object_version": "feature-profile.v1",
+                    "namespace": "marketplace",
+                    "payload_hash": "sha256:new-b-payload",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "adv.new-b",
+                },
+            ]
+        )
+
+    assert [item["object_id"] for item in service.list_registry_objects()] == ["sha256:existing"]
+
+
+def test_registry_service_get_registry_object_looks_past_first_500_items() -> None:
+    service = RegistryService()
+    for index in range(501):
+        service.upsert_registry_object(
+            {
+                "object_id": f"sha256:stored-{index:03d}",
+                "object_type": "capability_definition",
+                "object_version": "capdef.v1",
+                "namespace": "protocol",
+                "payload_hash": f"sha256:payload-{index:03d}",
+                "payload_encoding": "canonical_json",
+                "source_reference": f"llm.chat.{index:03d}",
+            }
+        )
+
+    item = service.get_registry_object("sha256:stored-500")
+
+    assert item["object_id"] == "sha256:stored-500"
+    assert item["payload_hash"] == "sha256:payload-500"
+
+
+def test_registry_service_rejects_conflicting_node_backed_duplicate_objects(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    shared_id = "sha256:capdef-conflict"
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                {
+                    "object_id": shared_id,
+                    "object_type": "capability_definition",
+                    "object_version": "capdef.v1",
+                    "namespace": "protocol",
+                    "payload_hash": "sha256:payload-a",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "llm.chat",
+                    "payload": {"capability_version": "2.0.0"},
+                }
+            ],
+        )
+    )
+    service.upsert_node(
+        _node(
+            "node-b",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                {
+                    "object_id": shared_id,
+                    "object_type": "capability_definition",
+                    "object_version": "capdef.v2",
+                    "namespace": "protocol",
+                    "payload_hash": "sha256:payload-b",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "llm.chat",
+                    "payload": {"capability_version": "2.1.0"},
+                }
+            ],
+        )
+    )
+
+    with pytest.raises(ValueError, match=shared_id):
+        service.list_registry_objects(query={"include_payload": True})
+
+
+def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-a",
+            bundles=[_bundle("phi4-local")],
+        )
+    )
+
+    item = service.get_node("node-a")
+    item["resources"]["free"]["cpu"] = 0.0
+    item["bundles"][0]["endpoint"] = "https://mutated.example/invoke"
+
+    fresh = service.get_node("node-a")
+
+    assert fresh["resources"]["free"]["cpu"] == 6.0
+    assert fresh["bundles"][0]["endpoint"] == "https://phi4-local.example/invoke"
+
+
+def test_registry_service_get_registry_object_returns_deep_copied_payload() -> None:
+    service = RegistryService()
+    service.upsert_registry_object(
+        {
+            "object_id": "sha256:stored-copy",
+            "object_type": "capability_definition",
+            "object_version": "capdef.v1",
+            "namespace": "protocol",
+            "payload_hash": "sha256:stored-copy-payload",
+            "payload_encoding": "canonical_json",
+            "source_reference": "llm.chat",
+            "payload": {"feature_flags": ["streaming"]},
+        }
+    )
+
+    item = service.get_registry_object("sha256:stored-copy", include_payload=True)
+    item["payload"]["feature_flags"].append("mutated")
+
+    fresh = service.get_registry_object("sha256:stored-copy", include_payload=True)
+
+    assert fresh["payload"] == {"feature_flags": ["streaming"]}

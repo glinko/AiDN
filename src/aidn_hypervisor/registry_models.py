@@ -2,9 +2,14 @@ from pydantic import BaseModel, Field
 
 from aidn_hypervisor.canonical_models import (
     CanonicalAdvertisementRecord,
+    CanonicalCapabilityRecord,
     CanonicalCapabilityRuntimeRecord,
     CanonicalComputeCompatibilityRecord,
+    CanonicalEndpointFeatureProfileRecord,
+    CanonicalEndpointImplementationProfileRecord,
+    CanonicalEndpointLimitProfileRecord,
     CanonicalProtocolServiceRecord,
+    CanonicalRegistryObjectRecord,
 )
 
 
@@ -79,10 +84,23 @@ class RegistryNodeAdvertisement(BaseModel):
         default_factory=list
     )
     canonical_services: list[CanonicalProtocolServiceRecord] = Field(default_factory=list)
+    canonical_capabilities: list[CanonicalCapabilityRecord] = Field(default_factory=list)
     canonical_capability_runtimes: list[CanonicalCapabilityRuntimeRecord] = Field(
         default_factory=list
     )
     canonical_compute_compatibility: list[CanonicalComputeCompatibilityRecord] = Field(
+        default_factory=list
+    )
+    canonical_feature_profiles: list[CanonicalEndpointFeatureProfileRecord] = Field(
+        default_factory=list
+    )
+    canonical_limit_profiles: list[CanonicalEndpointLimitProfileRecord] = Field(
+        default_factory=list
+    )
+    canonical_implementation_profiles: list[
+        CanonicalEndpointImplementationProfileRecord
+    ] = Field(default_factory=list)
+    canonical_registry_objects: list[CanonicalRegistryObjectRecord] = Field(
         default_factory=list
     )
     canonical_advertisements: list[CanonicalAdvertisementRecord] = Field(
@@ -109,3 +127,44 @@ class RegistryDiscoveryQuery(BaseModel):
     min_rating: float | None = Field(default=None, ge=0.0, le=1.0)
     include_stale: bool = False
     limit: int = Field(default=20, ge=1, le=100)
+
+
+class RegistryObjectQuery(BaseModel):
+    object_type: str | None = None
+    namespace: str | None = None
+    source_reference: str | None = None
+    node_id: str | None = None
+    include_stale: bool = False
+    include_payload: bool = False
+    limit: int = Field(default=50, ge=1, le=500)
+
+
+class RegistryCompletenessIssue(BaseModel):
+    code: str
+    object_id: str | None = None
+    field: str | None = None
+    detail: str | None = None
+
+
+class RegistryCompletenessTotals(BaseModel):
+    total_object_count: int = Field(ge=0)
+    payload_object_count: int = Field(ge=0)
+    payload_bytes_total: int = Field(ge=0)
+
+
+class RegistryCompletenessIntegrity(BaseModel):
+    object_count_matches_store: bool
+    all_object_ids_unique: bool
+    all_required_fields_present: bool
+    payload_hash_coverage_count: int = Field(ge=0)
+    issues: list[RegistryCompletenessIssue] = Field(default_factory=list)
+
+
+class RegistryLocalCompletenessSummary(BaseModel):
+    summary_version: str
+    generated_at: str
+    snapshot_schema_version: str
+    store_totals: RegistryCompletenessTotals
+    by_namespace: dict[str, int] = Field(default_factory=dict)
+    by_object_type: dict[str, int] = Field(default_factory=dict)
+    integrity: RegistryCompletenessIntegrity

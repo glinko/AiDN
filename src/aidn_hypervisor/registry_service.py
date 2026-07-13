@@ -1,13 +1,46 @@
+from copy import deepcopy
 from datetime import datetime
+import json
+from pathlib import Path
 import time
 
-from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
+from aidn_hypervisor.registry_models import (
+    RegistryCompletenessIntegrity,
+    RegistryCompletenessTotals,
+    RegistryDiscoveryQuery,
+    RegistryLocalCompletenessSummary,
+    RegistryNodeAdvertisement,
+    RegistryObjectQuery,
+)
+
+
+_REGISTRY_OBJECT_SNAPSHOT_SCHEMA_VERSION = "registry-object-store.v1"
+_LOCAL_REGISTRY_COMPLETENESS_SUMMARY_VERSION = (
+    "registry-local-completeness-summary.v1"
+)
+_REQUIRED_REGISTRY_OBJECT_FIELDS = (
+    "object_id",
+    "object_type",
+    "object_version",
+    "namespace",
+    "payload_hash",
+    "payload_encoding",
+    "source_reference",
+)
 
 
 class RegistryService:
-    def __init__(self, *, stale_grace_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        *,
+        stale_grace_seconds: int = 30,
+        snapshot_path: str | Path | None = None,
+    ) -> None:
         self.stale_grace_seconds = stale_grace_seconds
         self._nodes: dict[str, dict] = {}
+        self._registry_objects: dict[str, dict] = {}
+        self._snapshot_path = Path(snapshot_path) if snapshot_path is not None else None
+        self._load_registry_object_snapshot()
 
     def upsert_node(self, payload: RegistryNodeAdvertisement) -> dict:
         self._nodes[payload.node_id] = payload.model_dump(mode="json")
@@ -17,11 +50,220 @@ class RegistryService:
         return [self.get_node(node_id) for node_id in sorted(self._nodes)]
 
     def get_node(self, node_id: str) -> dict:
-        record = dict(self._nodes[node_id])
+        record = deepcopy(self._nodes[node_id])
         if record.get("reputation") is None:
             record.pop("reputation", None)
         record["status"] = self._status_for(record)
         return record
+
+    def upsert_registry_object(self, record: dict, *, persist: bool = True) -> dict:
+        object_id = str(record["object_id"])
+        normalized = deepcopy(record)
+        existing = self._registry_objects.get(object_id)
+        if existing is not None and existing != normalized:
+            raise ValueError(f"Conflicting registry object for {object_id}")
+        self._registry_objects[object_id] = normalized
+        if persist:
+            try:
+                self._persist_registry_object_snapshot()
+            except Exception:
+                if existing is None:
+                    self._registry_objects.pop(object_id, None)
+                else:
+                    self._registry_objects[object_id] = existing
+                raise
+        return deepcopy(self._registry_objects[object_id])
+
+    def ingest_registry_objects(self, records: list[dict]) -> list[dict]:
+        previous_registry_objects = deepcopy(self._registry_objects)
+        stored: list[dict] = []
+        try:
+            for record in records:
+                stored.append(self.upsert_registry_object(record, persist=False))
+            if stored:
+                self._persist_registry_object_snapshot()
+        except Exception:
+            self._registry_objects = previous_registry_objects
+            raise
+        return stored
+
+    def list_registry_objects(
+        self, query: RegistryObjectQuery | dict | None = None
+    ) -> list[dict]:
+        if query is None:
+            query_model = RegistryObjectQuery()
+        elif isinstance(query, RegistryObjectQuery):
+            query_model = query
+        else:
+            query_model = RegistryObjectQuery(**query)
+
+        objects_by_id: dict[str, dict] = {}
+        store_backed_object_ids: set[str] = set()
+        node_backed_records: dict[str, dict] = {}
+        for object_id in sorted(self._registry_objects):
+            item = self._registry_objects[object_id]
+            source = self._registry_object_source(item)
+            if (
+                query_model.node_id is not None
+                and source.get("node_id") != query_model.node_id
+            ):
+                continue
+            if (
+                query_model.object_type is not None
+                and item.get("object_type") != query_model.object_type
+            ):
+                continue
+            if (
+                query_model.namespace is not None
+                and item.get("namespace") != query_model.namespace
+            ):
+                continue
+            if (
+                query_model.source_reference is not None
+                and item.get("source_reference") != query_model.source_reference
+            ):
+                continue
+            objects_by_id[object_id] = self._registry_object_row(
+                item=item,
+                include_payload=query_model.include_payload,
+                source=source,
+            )
+            store_backed_object_ids.add(object_id)
+
+        for node_id in self._nodes:
+            node = self.get_node(node_id)
+            if node["status"] == "offline":
+                continue
+            if node["status"] == "stale" and not query_model.include_stale:
+                continue
+            if query_model.node_id is not None and node["node_id"] != query_model.node_id:
+                continue
+            for item in node.get("canonical_registry_objects", []):
+                if (
+                    query_model.object_type is not None
+                    and item.get("object_type") != query_model.object_type
+                ):
+                    continue
+                if (
+                    query_model.namespace is not None
+                    and item.get("namespace") != query_model.namespace
+                ):
+                    continue
+                if (
+                    query_model.source_reference is not None
+                    and item.get("source_reference") != query_model.source_reference
+                ):
+                    continue
+                object_id = str(item["object_id"])
+                if object_id in store_backed_object_ids:
+                    if self._registry_object_records_conflict(
+                        self._registry_objects[object_id],
+                        item,
+                    ):
+                        raise ValueError(f"Conflicting registry object for {object_id}")
+                    continue
+                existing_item = node_backed_records.get(object_id)
+                if existing_item is None:
+                    node_backed_records[object_id] = deepcopy(item)
+                elif self._registry_object_records_conflict(existing_item, item):
+                    raise ValueError(f"Conflicting registry object for {object_id}")
+                row = objects_by_id.get(object_id)
+                source = {
+                    "node_id": node["node_id"],
+                    "operator_id": node["operator_id"],
+                    "status": node["status"],
+                }
+                if row is None:
+                    row = self._registry_object_row(
+                        item=item,
+                        include_payload=query_model.include_payload,
+                        source=source,
+                    )
+                    objects_by_id[object_id] = row
+                    continue
+                if (
+                    query_model.include_payload
+                    and "payload" not in row
+                    and item.get("payload") is not None
+                ):
+                    row["payload"] = deepcopy(item["payload"])
+                if source not in row["sources"]:
+                    row["sources"].append(source)
+                    row["source_count"] = len(row["sources"])
+
+        objects = sorted(
+            objects_by_id.values(),
+            key=lambda item: (
+                item["object_type"],
+                item["namespace"],
+                item["source_reference"],
+                item["object_id"],
+            ),
+        )
+        return objects[: query_model.limit]
+
+    def get_registry_object(self, object_id: str, *, include_payload: bool = False) -> dict:
+        stored = self._registry_objects.get(object_id)
+        item: dict | None = None
+        if stored is not None:
+            item = self._registry_object_row(
+                item=stored,
+                include_payload=include_payload,
+                source=self._registry_object_source(stored),
+            )
+        else:
+            for candidate in self.list_registry_objects(
+                query={
+                    "limit": RegistryObjectQuery.model_fields["limit"].default,
+                    "include_payload": include_payload,
+                }
+            ):
+                if candidate["object_id"] == object_id:
+                    item = candidate
+                    break
+        if item is not None:
+            if stored is None:
+                return item
+
+        # Scan node-backed compatibility objects directly so lookups are not limited by list pagination.
+        for node_id in self._nodes:
+            node = self.get_node(node_id)
+            if node["status"] == "offline":
+                continue
+            if node["status"] == "stale":
+                continue
+            for candidate in node.get("canonical_registry_objects", []):
+                if str(candidate["object_id"]) != object_id:
+                    continue
+                if stored is not None:
+                    if self._registry_object_records_conflict(stored, candidate):
+                        raise ValueError(f"Conflicting registry object for {object_id}")
+                    continue
+                source = {
+                    "node_id": node["node_id"],
+                    "operator_id": node["operator_id"],
+                    "status": node["status"],
+                }
+                if item is None:
+                    item = self._registry_object_row(
+                        item=candidate,
+                        include_payload=include_payload,
+                        source=source,
+                    )
+                    continue
+                if self._registry_object_records_conflict(
+                    self._registry_object_record_from_row(item),
+                    candidate,
+                ):
+                    raise ValueError(f"Conflicting registry object for {object_id}")
+                if include_payload and "payload" not in item and candidate.get("payload") is not None:
+                    item["payload"] = deepcopy(candidate["payload"])
+                if source not in item["sources"]:
+                    item["sources"].append(source)
+                    item["source_count"] = len(item["sources"])
+        if item is not None:
+            return item
+        raise KeyError(object_id)
 
     def discover(self, query: RegistryDiscoveryQuery) -> dict:
         matched_nodes: list[dict] = []
@@ -98,6 +340,27 @@ class RegistryService:
             "canonical_candidates": canonical_candidates,
         }
 
+    def get_local_registry_completeness_summary(self) -> RegistryLocalCompletenessSummary:
+        return RegistryLocalCompletenessSummary(
+            summary_version=_LOCAL_REGISTRY_COMPLETENESS_SUMMARY_VERSION,
+            generated_at=datetime.utcnow().isoformat() + "Z",
+            snapshot_schema_version=_REGISTRY_OBJECT_SNAPSHOT_SCHEMA_VERSION,
+            store_totals=RegistryCompletenessTotals(
+                total_object_count=len(self._registry_objects),
+                payload_object_count=0,
+                payload_bytes_total=0,
+            ),
+            by_namespace={},
+            by_object_type={},
+            integrity=RegistryCompletenessIntegrity(
+                object_count_matches_store=True,
+                all_object_ids_unique=True,
+                all_required_fields_present=True,
+                payload_hash_coverage_count=0,
+                issues=[],
+            ),
+        )
+
     def _flatten_candidates(self, nodes: list[dict]) -> list[dict]:
         candidates: list[dict] = []
         for node in nodes:
@@ -127,6 +390,113 @@ class RegistryService:
                     candidates[-1]["reputation"] = node["reputation"]
         candidates.sort(key=self._candidate_sort_key)
         return candidates
+
+    def _registry_object_row(self, *, item: dict, include_payload: bool, source: dict) -> dict:
+        row = {
+            "object_id": str(item["object_id"]),
+            "object_type": item["object_type"],
+            "object_version": item["object_version"],
+            "namespace": item["namespace"],
+            "payload_hash": item["payload_hash"],
+            "payload_encoding": item["payload_encoding"],
+            "source_reference": item["source_reference"],
+            "source_count": 1,
+            "sources": [deepcopy(source)],
+        }
+        if include_payload and item.get("payload") is not None:
+            row["payload"] = deepcopy(item["payload"])
+        return row
+
+    def _registry_object_source(self, item: dict) -> dict:
+        source = item.get("_source")
+        if isinstance(source, dict):
+            return {
+                "node_id": source.get("node_id"),
+                "operator_id": source.get("operator_id"),
+                "status": source.get("status") or "stored",
+            }
+        return {"node_id": None, "operator_id": None, "status": "stored"}
+
+    def _registry_object_record_from_row(self, row: dict) -> dict:
+        record = {
+            "object_id": row["object_id"],
+            "object_type": row["object_type"],
+            "object_version": row["object_version"],
+            "namespace": row["namespace"],
+            "payload_hash": row["payload_hash"],
+            "payload_encoding": row["payload_encoding"],
+            "source_reference": row["source_reference"],
+        }
+        if "payload" in row:
+            record["payload"] = deepcopy(row["payload"])
+        return record
+
+    def _registry_object_records_conflict(self, left: dict, right: dict) -> bool:
+        for field in (
+            "object_type",
+            "object_version",
+            "namespace",
+            "payload_hash",
+            "payload_encoding",
+            "source_reference",
+        ):
+            if left.get(field) != right.get(field):
+                return True
+        if "payload" in left and "payload" in right and left.get("payload") != right.get("payload"):
+            return True
+        return False
+
+    def _load_registry_object_snapshot(self) -> None:
+        if self._snapshot_path is None or not self._snapshot_path.exists():
+            return
+        try:
+            snapshot = json.loads(self._snapshot_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Malformed registry object snapshot: {self._snapshot_path}"
+            ) from exc
+        if not isinstance(snapshot, dict):
+            raise ValueError("Registry object snapshot must be a JSON object")
+
+        schema_version = snapshot.get("schema_version")
+        if schema_version != _REGISTRY_OBJECT_SNAPSHOT_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported registry object snapshot schema version: {schema_version}"
+            )
+
+        objects = snapshot.get("objects")
+        if not isinstance(objects, list):
+            raise ValueError("Registry object snapshot must contain an objects list")
+
+        for index, record in enumerate(objects):
+            if not isinstance(record, dict):
+                raise ValueError(
+                    f"Registry object snapshot contains invalid object entry at index {index}"
+                )
+            try:
+                self.upsert_registry_object(record, persist=False)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Registry object snapshot contains invalid object entry at index {index}"
+                ) from exc
+
+    def _persist_registry_object_snapshot(self) -> None:
+        if self._snapshot_path is None:
+            return
+        self._snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot = {
+            "schema_version": _REGISTRY_OBJECT_SNAPSHOT_SCHEMA_VERSION,
+            "objects": [
+                deepcopy(self._registry_objects[object_id])
+                for object_id in sorted(self._registry_objects)
+            ],
+        }
+        temp_path = self._snapshot_path.with_suffix(self._snapshot_path.suffix + ".tmp")
+        temp_path.write_text(
+            json.dumps(snapshot, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        temp_path.replace(self._snapshot_path)
 
     def _status_for(self, record: dict) -> str:
         heartbeat = datetime.fromisoformat(record["heartbeat_at"]).timestamp()
@@ -273,8 +643,16 @@ class RegistryService:
             "status": node["status"],
             "service_id": service_id,
             "capability_id": capability_id,
+            "capability_version": advertisement.get("capability_version"),
             "runtime_id": runtime_id,
             "advertisement_id": advertisement["advertisement_id"],
+            "offer_id": advertisement.get("offer_id"),
+            "capability_definition_hash": advertisement.get("capability_definition_hash"),
+            "feature_profile_hash": advertisement.get("feature_profile_hash"),
+            "limit_profile_hash": advertisement.get("limit_profile_hash"),
+            "implementation_profile_hash": advertisement.get(
+                "implementation_profile_hash"
+            ),
             "resource_type": advertisement["resource_type"],
             "visibility": advertisement["visibility"],
             "owner_wallet": advertisement.get("owner_wallet"),
