@@ -341,24 +341,63 @@ class RegistryService:
         }
 
     def get_local_registry_completeness_summary(self) -> RegistryLocalCompletenessSummary:
+        by_namespace: dict[str, int] = {}
+        by_object_type: dict[str, int] = {}
+        payload_object_count = 0
+        payload_bytes_total = 0
+        payload_hash_coverage_count = 0
+
+        for object_id in sorted(self._registry_objects):
+            record = self._registry_objects[object_id]
+            if not isinstance(record, dict):
+                raise ValueError(
+                    f"Registry object store contains non-object record for {object_id}"
+                )
+
+            namespace = record.get("namespace")
+            if isinstance(namespace, str) and namespace:
+                by_namespace[namespace] = by_namespace.get(namespace, 0) + 1
+
+            object_type = record.get("object_type")
+            if isinstance(object_type, str) and object_type:
+                by_object_type[object_type] = by_object_type.get(object_type, 0) + 1
+
+            payload_hash = record.get("payload_hash")
+            if isinstance(payload_hash, str) and payload_hash:
+                payload_hash_coverage_count += 1
+
+            if record.get("payload") is not None:
+                payload_object_count += 1
+                payload_bytes_total += self._payload_size_bytes(record["payload"])
+
         return RegistryLocalCompletenessSummary(
             summary_version=_LOCAL_REGISTRY_COMPLETENESS_SUMMARY_VERSION,
             generated_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             snapshot_schema_version=_REGISTRY_OBJECT_SNAPSHOT_SCHEMA_VERSION,
             store_totals=RegistryCompletenessTotals(
                 total_object_count=len(self._registry_objects),
-                payload_object_count=0,
-                payload_bytes_total=0,
+                payload_object_count=payload_object_count,
+                payload_bytes_total=payload_bytes_total,
             ),
-            by_namespace={},
-            by_object_type={},
+            by_namespace=by_namespace,
+            by_object_type=by_object_type,
             integrity=RegistryCompletenessIntegrity(
                 object_count_matches_store=True,
                 all_object_ids_unique=True,
                 all_required_fields_present=True,
-                payload_hash_coverage_count=0,
+                payload_hash_coverage_count=payload_hash_coverage_count,
                 issues=[],
             ),
+        )
+
+    def _payload_size_bytes(self, payload: object) -> int:
+        return len(
+            json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
         )
 
     def _flatten_candidates(self, nodes: list[dict]) -> list[dict]:

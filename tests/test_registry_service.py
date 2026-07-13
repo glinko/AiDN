@@ -1165,6 +1165,66 @@ def test_registry_service_returns_empty_local_completeness_summary() -> None:
     ] == []
 
 
+def test_registry_service_summarizes_local_store_counts_and_payload_bytes() -> None:
+    service = RegistryService()
+    payload_one = {"capability_id": "llm.chat", "status": "active"}
+    payload_two = {"pricing_model": "fixed", "unit_price_q": 2}
+
+    service.ingest_registry_objects(
+        [
+            {
+                "object_id": "sha256:capdef-1",
+                "object_type": "capability_definition",
+                "object_version": "1.0",
+                "namespace": "protocol",
+                "payload_hash": "sha256:payload-capdef-1",
+                "payload_encoding": "canonical_json",
+                "source_reference": "capdef:llm.chat:v1",
+                "payload": payload_one,
+            },
+            {
+                "object_id": "sha256:pricing-1",
+                "object_type": "pricing_policy",
+                "object_version": "1.0",
+                "namespace": "marketplace",
+                "payload_hash": "sha256:payload-pricing-1",
+                "payload_encoding": "canonical_json",
+                "source_reference": "pricing:endpoint-1:v1",
+                "payload": payload_two,
+            },
+            {
+                "object_id": "sha256:pricing-2",
+                "object_type": "pricing_policy",
+                "object_version": "1.0",
+                "namespace": "marketplace",
+                "payload_hash": "sha256:payload-pricing-2",
+                "payload_encoding": "canonical_json",
+                "source_reference": "pricing:endpoint-2:v1",
+            },
+        ]
+    )
+
+    summary = service.get_local_registry_completeness_summary()
+    expected_payload_bytes = sum(
+        len(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+                "utf-8"
+            )
+        )
+        for payload in (payload_one, payload_two)
+    )
+
+    assert summary.store_totals.total_object_count == 3
+    assert summary.store_totals.payload_object_count == 2
+    assert summary.store_totals.payload_bytes_total == expected_payload_bytes
+    assert summary.by_namespace == {"marketplace": 2, "protocol": 1}
+    assert summary.by_object_type == {
+        "capability_definition": 1,
+        "pricing_policy": 2,
+    }
+    assert summary.integrity.payload_hash_coverage_count == 3
+
+
 def test_registry_service_rejects_conflicting_store_and_node_backed_object(
     monkeypatch,
 ) -> None:
