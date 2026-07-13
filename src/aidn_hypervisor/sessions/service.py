@@ -274,29 +274,40 @@ class SessionService:
             "session_contract_version": "session-contract.v1",
         }
 
-    def _persist_session_contract_object(
+    def _session_contract_record(
         self,
         *,
         payload: dict,
         source_reference: str,
     ) -> dict:
         payload_hash = _hash_payload(payload)
-        return self.registry_service.upsert_registry_object(
-            {
-                "object_id": _registry_object_id(
-                    object_type="session_contract",
-                    object_version="session-contract.v1",
-                    payload_hash=payload_hash,
-                ),
-                "object_type": "session_contract",
-                "object_version": "session-contract.v1",
-                "namespace": "session",
-                "payload_hash": payload_hash,
-                "payload_encoding": "canonical_json",
-                "source_reference": source_reference,
-                "payload": payload,
-            }
-        )
+        return {
+            "object_id": _registry_object_id(
+                object_type="session_contract",
+                object_version="session-contract.v1",
+                payload_hash=payload_hash,
+            ),
+            "object_type": "session_contract",
+            "object_version": "session-contract.v1",
+            "namespace": "session",
+            "payload_hash": payload_hash,
+            "payload_encoding": "canonical_json",
+            "source_reference": source_reference,
+            "payload": payload,
+        }
+
+    def _rollback_open_session_state(self, *, session_id: str) -> None:
+        sessions = getattr(self.store, "_sessions", None)
+        deposits = getattr(self.store, "_deposits", None)
+        removed = False
+        if isinstance(sessions, dict):
+            removed = sessions.pop(session_id, None) is not None or removed
+        if isinstance(deposits, dict):
+            removed = deposits.pop(session_id, None) is not None or removed
+        if removed:
+            flush = getattr(self.store, "_flush", None)
+            if callable(flush):
+                flush()
 
     def open_session(
         self,
@@ -373,7 +384,7 @@ class SessionService:
             session_policy_snapshot=session_policy_snapshot,
             accepted_at=now.isoformat(),
         )
-        session_contract_record = self._persist_session_contract_object(
+        session_contract_record = self._session_contract_record(
             payload=session_contract_payload,
             source_reference=session_id,
         )
@@ -431,8 +442,13 @@ class SessionService:
             refunded_q=0.0,
             status="locked",
         )
-        self.store.save_session(session)
-        self.store.save_deposit(deposit)
+        try:
+            self.store.save_session(session)
+            self.store.save_deposit(deposit)
+            self.registry_service.upsert_registry_object(session_contract_record)
+        except Exception:
+            self._rollback_open_session_state(session_id=session.session_id)
+            raise
         if self.operation_recorder is not None:
             session_policy_hash = hashlib.sha256(
                 json.dumps(session_policy_snapshot, sort_keys=True).encode("utf-8")

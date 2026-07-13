@@ -1,3 +1,5 @@
+import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,6 +14,28 @@ from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
+
+
+def _canonical_hash(payload: dict) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _canonical_registry_object_id(
+    *,
+    object_type: str,
+    object_version: str,
+    payload_hash: str,
+) -> str:
+    return _canonical_hash(
+        {
+            "object_type": object_type,
+            "object_version": object_version,
+            "payload_hash": payload_hash,
+        }
+    )
 
 
 def _session_service() -> SessionService:
@@ -358,7 +382,16 @@ def test_open_session_persists_session_contract_registry_object(tmp_path: Path) 
     assert stored["object_type"] == "session_contract"
     assert stored["object_version"] == "session-contract.v1"
     assert stored["namespace"] == "session"
+    expected_payload_hash = _canonical_hash(stored["payload"])
+    expected_object_id = _canonical_registry_object_id(
+        object_type=stored["object_type"],
+        object_version=stored["object_version"],
+        payload_hash=expected_payload_hash,
+    )
+    assert stored["payload_hash"] == expected_payload_hash
+    assert stored["object_id"] == expected_object_id
     assert stored["payload_hash"] == opened.session.session_contract_hash
+    assert stored["object_id"] == opened.session.session_contract_object_id
     assert stored["payload"]["session_id"] == opened.session.session_id
     assert stored["payload"]["advertisement_id"] == "adv-ep-1-v1"
     assert stored["payload"]["offer_id"] == "offer-public"
@@ -405,6 +438,39 @@ def test_open_session_reuses_persisted_session_contract_object_after_registry_re
     assert fetched["payload_hash"] == opened.session.session_contract_hash
     assert fetched["payload"]["session_id"] == opened.session.session_id
     assert fetched["payload"]["deposit_locked_q"] == 10.0
+
+
+def test_open_session_rolls_back_session_state_when_deposit_save_fails(
+    tmp_path: Path,
+) -> None:
+    class DepositSaveFailureStore(SessionStore):
+        def save_deposit(self, deposit) -> None:
+            raise RuntimeError("deposit save failed")
+
+    registry = RegistryService(snapshot_path=tmp_path / "registry-objects.json")
+    store = DepositSaveFailureStore()
+    service = SessionService(store, registry_service=registry)
+
+    with pytest.raises(RuntimeError, match="deposit save failed"):
+        service.open_session(
+            endpoint_id="ep-1",
+            client_wallet="wallet-a",
+            provider_wallet="wallet-provider",
+            node_id="node-1",
+            deposit_q=10.0,
+            session_policy=_session_policy(),
+            accounting_contract={
+                "contract_version": "acct-v1",
+                "pricing_version": "pricing-v1",
+            },
+            advertisement_id="adv-ep-1-v1",
+            offer_id="offer-public",
+            pricing_policy_hash="sha256:pricing-v1",
+        )
+
+    assert store.list_sessions() == []
+    assert store._deposits == {}
+    assert registry.list_registry_objects(query={"include_payload": True}) == []
 
 
 def test_record_usage_checkpoint_creates_acknowledgement_and_updates_accepted_state() -> None:
