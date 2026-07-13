@@ -92,7 +92,7 @@ python -m pytest -q
 
 ### Registry Lifecycle And Manifest Slice
 
-Goal: turn the now-durable local Registry Object store into a clearer lifecycle boundary with explicit retention, completeness-manifest, and repair/replication-ready semantics.
+Goal: turn the now-durable local Registry Object store into a clearer local completeness boundary with explicit summary integrity checks, restart-stable behavior, and manifest/replication follow-up surfaces.
 
 This slice should add:
 
@@ -193,4 +193,4 @@ The documentation now converges as a protocol architecture.
 
 The implementation converges with the older local-first M3/M4 parts and partially with the new RFCs through compatibility projections. It does not yet fully implement the new network-contract layer.
 
-The right next move is not another broad rewrite. The right next move is a narrow lifecycle-and-manifest slice on top of the now-durable Registry object store, so retention policy, completeness manifests, and replication boundaries become explicit before broader verification layers are added.
+The right next move was not another broad rewrite. The right next move was a narrow local completeness slice on top of the now-durable Registry object store, so summary integrity checks, malformed-record handling, and restart-stable behavior become explicit before broader manifest, retention, and replication layers are added.
