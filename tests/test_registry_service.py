@@ -1,4 +1,5 @@
 import json
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -1138,9 +1139,14 @@ def test_registry_service_lists_store_backed_objects_without_node_advertisement(
 def test_registry_service_returns_empty_local_completeness_summary() -> None:
     service = RegistryService()
 
-    summary = service.get_local_registry_completeness_summary()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        summary = service.get_local_registry_completeness_summary()
 
     assert summary.summary_version == "registry-local-completeness-summary.v1"
+    assert summary.generated_at
+    assert summary.generated_at.endswith("Z")
+    assert datetime.fromisoformat(summary.generated_at.replace("Z", "+00:00"))
     assert summary.snapshot_schema_version == "registry-object-store.v1"
     assert summary.store_totals.total_object_count == 0
     assert summary.store_totals.payload_object_count == 0
@@ -1152,6 +1158,11 @@ def test_registry_service_returns_empty_local_completeness_summary() -> None:
     assert summary.integrity.all_required_fields_present is True
     assert summary.integrity.payload_hash_coverage_count == 0
     assert summary.integrity.issues == []
+    assert [
+        warning
+        for warning in caught
+        if issubclass(warning.category, DeprecationWarning)
+    ] == []
 
 
 def test_registry_service_rejects_conflicting_store_and_node_backed_object(

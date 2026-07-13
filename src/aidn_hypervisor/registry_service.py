@@ -1,5 +1,5 @@
 from copy import deepcopy
-from datetime import datetime
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 import time
@@ -343,7 +343,7 @@ class RegistryService:
     def get_local_registry_completeness_summary(self) -> RegistryLocalCompletenessSummary:
         return RegistryLocalCompletenessSummary(
             summary_version=_LOCAL_REGISTRY_COMPLETENESS_SUMMARY_VERSION,
-            generated_at=datetime.utcnow().isoformat() + "Z",
+            generated_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             snapshot_schema_version=_REGISTRY_OBJECT_SNAPSHOT_SCHEMA_VERSION,
             store_totals=RegistryCompletenessTotals(
                 total_object_count=len(self._registry_objects),
