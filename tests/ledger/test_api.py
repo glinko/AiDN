@@ -199,9 +199,12 @@ def test_endpoint_publication_api_records_advertisement_operations() -> None:
     assert revoke.status_code == 200
     assert ledger_response.status_code == 200
     body = ledger_response.json()
-    assert body[-2]["operation_type"] == "ADVERTISEMENT_PUBLISH"
-    assert body[-2]["payload"]["resource_id"] == endpoint_id
-    assert body[-1]["operation_type"] == "ADVERTISEMENT_WITHDRAW"
+    assert body[-3]["operation_type"] == "ENDPOINT_ADVERTISEMENT_PUBLISH"
+    assert body[-3]["payload"]["resource_id"] == endpoint_id
+    assert body[-2]["operation_type"] == "ENDPOINT_OFFER_PUBLISH"
+    assert body[-2]["payload"]["endpoint_id"] == endpoint_id
+    assert body[-2]["payload"]["advertisement_id"] == body[-3]["payload"]["advertisement_id"]
+    assert body[-1]["operation_type"] == "ENDPOINT_ADVERTISEMENT_WITHDRAW"
     assert body[-1]["payload"]["resource_id"] == endpoint_id
 
 

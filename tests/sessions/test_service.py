@@ -278,6 +278,44 @@ def test_open_session_preserves_accounting_contract_snapshot() -> None:
 
     assert opened.session.accounting_contract_snapshot["contract_version"] == "acct-v1"
     assert opened.session.accounting_contract_snapshot["maximum_request_charge"] == 25.0
+    assert opened.session.accounting_contract_object_id.startswith("sha256:")
+    assert opened.session.accounting_contract_object_version == "acctobj.v1"
+    assert opened.session.accounting_contract_namespace == "usage"
+
+
+def test_open_session_binds_accepted_marketplace_contract() -> None:
+    service = _session_service()
+    contract = AccountingContract(
+        contract_version="acct-v1",
+        capability_id="llm.chat",
+        pricing_version="pricing-v1",
+        billable_units=[],
+        checkpoint_policy="per_request",
+        maximum_request_charge=25.0,
+    )
+
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(),
+        accounting_contract=contract.model_dump(mode="json"),
+        advertisement_id="adv-ep-1-v1",
+        offer_id="offer-public",
+        pricing_policy_hash="sha256:pricing-v1",
+    )
+
+    assert opened.session.advertisement_id == "adv-ep-1-v1"
+    assert opened.session.offer_id == "offer-public"
+    assert opened.session.pricing_policy_hash == "sha256:pricing-v1"
+    assert opened.session.accounting_contract_object_id.startswith("sha256:")
+    assert opened.session.accounting_contract_object_version == "acctobj.v1"
+    assert opened.session.accounting_contract_namespace == "usage"
+    assert opened.session.accounting_contract_hash == opened.session.accounting_contract_snapshot["payload_hash"]
+    assert opened.session.session_contract_hash.startswith("sha256:")
+    assert opened.session.session_contract_hash != opened.session.accounting_contract_hash
 
 
 def test_record_usage_checkpoint_creates_acknowledgement_and_updates_accepted_state() -> None:

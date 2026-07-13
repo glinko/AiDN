@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
+import aidn_hypervisor.api as api_module
 import dashboard_seed_preview
 from aidn_hypervisor.accounting.models import (
     UsageAcknowledgement,
@@ -1267,6 +1268,104 @@ def test_operator_registry_advertisement_endpoint_returns_current_node_payload()
     assert response.status_code == 200
     assert response.json()["node_id"] == "node-local"
     assert response.json()["bundles"][0]["bundle_id"] == "whisper-a"
+
+
+def test_operator_registry_objects_endpoint_returns_local_registry_objects() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/registry/objects")
+
+    assert response.status_code == 200
+    object_types = {item["object_type"] for item in response.json()["objects"]}
+    assert "capability_definition" in object_types
+
+
+def test_operator_registry_object_endpoint_returns_object_by_id() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    advertisement = service.node_advertisement()
+    object_id = advertisement["canonical_registry_objects"][0]["object_id"]
+    client = TestClient(build_app(service=service))
+
+    response = client.get(f"/operators/registry/objects/{object_id}")
+
+    assert response.status_code == 200
+    assert response.json()["object_id"] == object_id
+    assert response.json()["sources"][0]["node_id"] == advertisement["node_id"]
+    assert response.json()["sources"][0]["operator_id"] == advertisement["operator_id"]
+    assert response.json()["sources"][0]["status"] != "stored"
+
+
+def test_operator_registry_objects_endpoint_includes_payload_when_requested() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/registry/objects?include_payload=true")
+
+    assert response.status_code == 200
+    capability_definition = next(
+        item
+        for item in response.json()["objects"]
+        if item["object_type"] == "capability_definition"
+    )
+    assert capability_definition["payload"]["capability_id"] == "llm.chat"
+
+
+def test_operator_registry_object_endpoint_includes_payload_when_requested() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    advertisement = service.node_advertisement()
+    object_id = advertisement["canonical_registry_objects"][0]["object_id"]
+    client = TestClient(build_app(service=service))
+
+    response = client.get(f"/operators/registry/objects/{object_id}?include_payload=true")
+
+    assert response.status_code == 200
+    assert response.json()["payload"]["capability_id"] == "llm.chat"
+
+
+def test_operator_registry_objects_endpoint_uses_local_registry_store_fallback(
+) -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    advertisement = service.node_advertisement()
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/registry/objects?include_payload=true")
+
+    assert response.status_code == 200
+    capability_definition = next(
+        item
+        for item in response.json()["objects"]
+        if item["object_type"] == "capability_definition"
+    )
+    assert capability_definition["payload"]["capability_id"] == "llm.chat"
+    assert capability_definition["sources"] == [
+        {
+            "node_id": advertisement["node_id"],
+            "operator_id": advertisement["operator_id"],
+            "status": "ready",
+        }
+    ]
+
+
+def test_operator_registry_object_endpoint_uses_local_registry_store_fallback(
+) -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    advertisement = service.node_advertisement()
+    object_id = advertisement["canonical_registry_objects"][0]["object_id"]
+    client = TestClient(build_app(service=service))
+
+    response = client.get(f"/operators/registry/objects/{object_id}?include_payload=true")
+
+    assert response.status_code == 200
+    assert response.json()["object_id"] == object_id
+    assert response.json()["payload"]["capability_id"] == "llm.chat"
+    assert response.json()["sources"] == [
+        {
+            "node_id": advertisement["node_id"],
+            "operator_id": advertisement["operator_id"],
+            "status": "ready",
+        }
+    ]
 
 
 def test_operator_dashboard_fleet_endpoint_returns_aggregated_payload(tmp_path) -> None:

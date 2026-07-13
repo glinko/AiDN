@@ -20,6 +20,13 @@ from aidn_hypervisor.sessions.models import (
 )
 
 
+def _hash_payload(payload: dict) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
 class SessionService:
     def __init__(
         self,
@@ -222,9 +229,27 @@ class SessionService:
         deposit_q: float,
         session_policy: dict,
         accounting_contract: dict | None = None,
+        advertisement_id: str | None = None,
+        offer_id: str | None = None,
+        pricing_policy_hash: str | None = None,
+        accounting_contract_hash: str | None = None,
     ) -> SessionResult:
         session_policy_snapshot = dict(session_policy)
         session_policy_snapshot.setdefault("network_fee_q", self.network_fee_q)
+        accounting_contract_snapshot = dict(accounting_contract or {})
+        accepted_accounting_contract_hash = accounting_contract_hash or str(
+            accounting_contract_snapshot.get("payload_hash")
+            or _hash_payload(accounting_contract_snapshot)
+        )
+        accounting_contract_object_id = accounting_contract_snapshot.get(
+            "registry_object_id"
+        )
+        accounting_contract_object_version = accounting_contract_snapshot.get(
+            "registry_object_version"
+        )
+        accounting_contract_namespace = accounting_contract_snapshot.get(
+            "registry_namespace"
+        )
         minimum_deposit = float(session_policy.get("minimum_deposit", 0.0) or 0.0)
         if deposit_q < minimum_deposit:
             raise ValueError("deposit is below the minimum deposit")
@@ -253,8 +278,24 @@ class SessionService:
         maximum_session_duration_seconds = int(
             session_policy.get("maximum_session_duration_seconds", 3600) or 3600
         )
+        session_id = f"sess-{uuid4().hex[:12]}"
+        session_contract_hash = _hash_payload(
+            {
+                "session_id": session_id,
+                "endpoint_id": endpoint_id,
+                "client_wallet": client_wallet,
+                "provider_wallet": provider_wallet,
+                "node_id": node_id,
+                "deposit_locked_q": deposit_q,
+                "advertisement_id": advertisement_id,
+                "offer_id": offer_id,
+                "pricing_policy_hash": pricing_policy_hash,
+                "accounting_contract_hash": accepted_accounting_contract_hash,
+                "session_policy": session_policy_snapshot,
+            }
+        )
         session = EndpointSession(
-            session_id=f"sess-{uuid4().hex[:12]}",
+            session_id=session_id,
             endpoint_id=endpoint_id,
             client_wallet=client_wallet,
             provider_wallet=provider_wallet,
@@ -269,7 +310,27 @@ class SessionService:
             reserved_slot_index=reserved_slot_index,
             queue_policy_snapshot=queue_policy,
             session_policy_snapshot=session_policy_snapshot,
-            accounting_contract_snapshot=dict(accounting_contract or {}),
+            accounting_contract_snapshot=accounting_contract_snapshot,
+            advertisement_id=advertisement_id,
+            offer_id=offer_id,
+            pricing_policy_hash=pricing_policy_hash,
+            accounting_contract_hash=accepted_accounting_contract_hash,
+            accounting_contract_object_id=(
+                str(accounting_contract_object_id)
+                if accounting_contract_object_id is not None
+                else None
+            ),
+            accounting_contract_object_version=(
+                str(accounting_contract_object_version)
+                if accounting_contract_object_version is not None
+                else None
+            ),
+            accounting_contract_namespace=(
+                str(accounting_contract_namespace)
+                if accounting_contract_namespace is not None
+                else None
+            ),
+            session_contract_hash=session_contract_hash,
             close_reason=("waiting_for_slot" if queued_sessions or not slot_available else None),
         )
         deposit = LockedDeposit(
@@ -287,9 +348,6 @@ class SessionService:
             session_policy_hash = hashlib.sha256(
                 json.dumps(session_policy_snapshot, sort_keys=True).encode("utf-8")
             ).hexdigest()
-            accounting_contract_hash = hashlib.sha256(
-                json.dumps(dict(accounting_contract or {}), sort_keys=True).encode("utf-8")
-            ).hexdigest()
             self.operation_recorder(
                 operation_type="SESSION_OPEN",
                 origin_type="wallet",
@@ -302,8 +360,12 @@ class SessionService:
                     "consumer_hypervisor_id": node_id,
                     "provider_hypervisor_id": node_id,
                     "endpoint_id": endpoint_id,
+                    "advertisement_id": session.advertisement_id,
+                    "offer_id": session.offer_id,
+                    "pricing_policy_hash": session.pricing_policy_hash,
                     "session_policy_hash": f"sha256:{session_policy_hash}",
-                    "accounting_contract_hash": f"sha256:{accounting_contract_hash}",
+                    "accounting_contract_hash": session.accounting_contract_hash,
+                    "session_contract_hash": session.session_contract_hash,
                     "deposit_amount": deposit_q,
                     "open_expiration": session.expires_at,
                 },
@@ -822,7 +884,36 @@ class SessionService:
             6,
         )
         refunded_q = round(max(0.0, deposit.locked_q - charged_q), 6)
+        settlement_payload = {
+            "session_id": session.session_id,
+            "endpoint_id": session.endpoint_id,
+            "advertisement_id": session.advertisement_id,
+            "offer_id": session.offer_id,
+            "session_contract_hash": session.session_contract_hash,
+            "accounting_contract_hash": session.accounting_contract_hash,
+            "pricing_policy_hash": session.pricing_policy_hash,
+            "last_accepted_report_sequence": session.last_accepted_report_sequence,
+            "last_accepted_usage_charged_q": session.last_accepted_usage_charged_q,
+            "accounting_checkpoint": dict(session.accounting_checkpoint or {}),
+            "usage_report_chain": list(session.usage_report_chain or []),
+            "usage_acknowledgement_chain": list(
+                session.usage_acknowledgement_chain or []
+            ),
+            "close_reason": close_reason,
+            "charges": {
+                "usage_charged_q": accepted_usage_charged_q,
+                "idle_fee_charged_q": idle_fee_charged_q,
+                "minimum_session_fee_q": minimum_session_fee_q,
+                "network_fee_q": network_fee_charged_q,
+                "charged_q": charged_q,
+                "refunded_q": refunded_q,
+                "payout_q": payout_q,
+                "no_request": no_request,
+            },
+        }
+        settlement_evidence_root = _hash_payload(settlement_payload)
         settlement = SessionSettlementSummary(
+            settlement_evidence_root=settlement_evidence_root,
             usage_charged_q=accepted_usage_charged_q,
             idle_fee_charged_q=idle_fee_charged_q,
             minimum_session_fee_q=minimum_session_fee_q,
@@ -858,6 +949,10 @@ class SessionService:
                 payload={
                     "session_id": session.session_id,
                     "endpoint_id": session.endpoint_id,
+                    "advertisement_id": session.advertisement_id,
+                    "offer_id": session.offer_id,
+                    "session_contract_hash": session.session_contract_hash,
+                    "settlement_evidence_root": settlement.settlement_evidence_root,
                     "charged_q": settlement.charged_q,
                     "refunded_q": settlement.refunded_q,
                     "payout_q": settlement.payout_q,

@@ -33,6 +33,14 @@ class EndpointSession(BaseModel):
     queue_policy_snapshot: str
     session_policy_snapshot: dict = Field(default_factory=dict)
     accounting_contract_snapshot: dict = Field(default_factory=dict)
+    advertisement_id: str | None = None
+    offer_id: str | None = None
+    pricing_policy_hash: str | None = None
+    accounting_contract_hash: str | None = None
+    accounting_contract_object_id: str | None = None
+    accounting_contract_object_version: str | None = None
+    accounting_contract_namespace: str | None = None
+    session_contract_hash: str | None = None
     last_usage_report_snapshot: dict = Field(default_factory=dict)
     last_usage_acknowledgement_snapshot: dict = Field(default_factory=dict)
     accounting_status: SessionAccountingStatus = "open"
@@ -65,6 +73,7 @@ class LockedDeposit(BaseModel):
 
 
 class SessionSettlementSummary(BaseModel):
+    settlement_evidence_root: str | None = None
     usage_charged_q: float = Field(default=0.0, ge=0.0)
     idle_fee_charged_q: float = Field(default=0.0, ge=0.0)
     minimum_session_fee_q: float = Field(default=0.0, ge=0.0)

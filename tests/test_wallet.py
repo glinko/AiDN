@@ -1991,6 +1991,12 @@ def test_service_builds_provider_metered_accounting_contract_for_paid_endpoint()
     contract = service.accounting_contract_for_endpoint(created.endpoint)
 
     assert contract["contract_version"].startswith("acct-")
+    assert contract["registry_object_id"].startswith("sha256:")
+    assert contract["registry_object_version"] == "acctobj.v1"
+    assert contract["registry_namespace"] == "usage"
+    assert contract["payload_hash"].startswith("sha256:")
+    assert contract["payload_encoding"] == "canonical_json"
+    assert contract["pricing_policy_reference"].startswith("sha256:")
     assert {item["unit"] for item in contract["billable_units"]} >= {
         "input_tokens",
         "output_tokens",

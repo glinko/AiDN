@@ -26,6 +26,14 @@ def _canonical_json(payload: BaseModel) -> str:
     return json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
 
 
+def _canonical_dict_json(payload: dict) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _hash_dict(payload: dict) -> str:
+    return f"sha256:{sha256(_canonical_dict_json(payload).encode('utf-8')).hexdigest()}"
+
+
 def usage_report_hash(report: "UsageReport") -> str:
     return f"sha256:{sha256(_canonical_json(report).encode('utf-8')).hexdigest()}"
 
@@ -48,6 +56,7 @@ class AccountingContract(BaseModel):
     contract_version: str = Field(min_length=1)
     capability_id: str | None = None
     pricing_version: str = Field(min_length=1)
+    pricing_policy_reference: str | None = None
     billable_units: list[AccountingUnitContract] = Field(default_factory=list)
     checkpoint_policy: str = Field(min_length=1)
     maximum_unreported_usage: float | None = Field(default=None, ge=0.0)
@@ -56,6 +65,47 @@ class AccountingContract(BaseModel):
         default="reject_unpriced_usage",
         min_length=1,
     )
+    registry_object_id: str | None = None
+    registry_object_version: str = "acctobj.v1"
+    registry_namespace: str = "usage"
+    payload_hash: str | None = None
+    payload_encoding: str = "canonical_json"
+
+    @model_validator(mode="after")
+    def _populate_registry_object_metadata(self):
+        payload = {
+            "contract_version": self.contract_version,
+            "capability_id": self.capability_id,
+            "pricing_version": self.pricing_version,
+            "pricing_policy_reference": self.pricing_policy_reference,
+            "billable_units": [
+                unit.model_dump(mode="json") for unit in self.billable_units
+            ],
+            "checkpoint_policy": self.checkpoint_policy,
+            "maximum_unreported_usage": self.maximum_unreported_usage,
+            "maximum_request_charge": self.maximum_request_charge,
+            "failure_pricing_policy": self.failure_pricing_policy,
+        }
+        expected_payload_hash = _hash_dict(payload)
+        object_identity_payload = {
+            "object_type": "accounting_contract",
+            "registry_object_version": self.registry_object_version,
+            "payload_hash": expected_payload_hash,
+        }
+        expected_registry_object_id = _hash_dict(object_identity_payload)
+        if self.payload_encoding != "canonical_json":
+            raise ValueError("payload_encoding must be canonical_json")
+        if self.payload_hash is None:
+            self.payload_hash = expected_payload_hash
+        elif self.payload_hash != expected_payload_hash:
+            raise ValueError("payload_hash does not match canonical accounting contract payload")
+        if self.registry_object_id is None:
+            self.registry_object_id = expected_registry_object_id
+        elif self.registry_object_id != expected_registry_object_id:
+            raise ValueError(
+                "registry_object_id does not match canonical accounting contract identity"
+            )
+        return self
 
 
 class UsageReport(BaseModel):

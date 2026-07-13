@@ -28,10 +28,61 @@ class CanonicalProtocolServiceRecord(BaseModel):
 
 class CanonicalCapabilityRecord(BaseModel):
     capability_id: str
-    request_schema_id: str
-    response_schema_id: str
-    accounting_rule: str
-    validation_rule: str
+    capability_version: str
+    capability_definition_hash: str
+    request_schema_hash: str
+    response_schema_hash: str
+    state_model: str
+    streaming_model: str
+    side_effect_model: str
+    input_modalities: list[str] = Field(default_factory=list)
+    output_modalities: list[str] = Field(default_factory=list)
+
+
+class CanonicalEndpointFeatureProfileRecord(BaseModel):
+    feature_profile_hash: str
+    endpoint_id: str
+    advertisement_id: str
+    configuration_hash: str
+    capability_id: str | None = None
+    supported_features: list[str] = Field(default_factory=list)
+    unsupported_features: list[str] = Field(default_factory=list)
+
+
+class CanonicalEndpointLimitProfileRecord(BaseModel):
+    limit_profile_hash: str
+    endpoint_id: str
+    advertisement_id: str
+    configuration_hash: str
+    capability_id: str | None = None
+    max_context_units: int | None = None
+    max_output_units: int | None = None
+    max_request_duration_seconds: int | None = None
+    max_session_duration_seconds: int | None = None
+
+
+class CanonicalEndpointImplementationProfileRecord(BaseModel):
+    implementation_profile_hash: str
+    endpoint_id: str
+    advertisement_id: str
+    configuration_hash: str
+    capability_id: str | None = None
+    runtime_id: str
+    execution_strategy: str
+    publication_visibility: str
+    validation_enabled: bool = False
+    session_queue_policy: str | None = None
+
+
+class CanonicalRegistryObjectRecord(BaseModel):
+    object_id: str
+    object_type: str
+    object_version: str
+    namespace: str
+    payload_hash: str
+    payload_encoding: str = "canonical_json"
+    source_reference: str
+    payload: dict | None = None
 
 
 class CanonicalCapabilityRuntimeRecord(BaseModel):
@@ -55,9 +106,15 @@ class CanonicalComputeCompatibilityRecord(BaseModel):
 
 class CanonicalAdvertisementRecord(BaseModel):
     advertisement_id: str
+    offer_id: str | None = None
     resource_type: AdvertisementResourceType
     owner_wallet: str
     hypervisor_id: str
     capability_id: str | None = None
+    capability_version: str | None = None
+    capability_definition_hash: str | None = None
+    feature_profile_hash: str | None = None
+    limit_profile_hash: str | None = None
+    implementation_profile_hash: str | None = None
     visibility: str
     signature_scope: str

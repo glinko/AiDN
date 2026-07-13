@@ -392,7 +392,15 @@ def test_service_exposes_canonical_overlay_inventory() -> None:
     assert "capabilities" in payload
     assert "runtimes" in payload
     assert "compatibility" in payload
+    assert "feature_profiles" in payload
+    assert "limit_profiles" in payload
+    assert "implementation_profiles" in payload
+    assert "registry_objects" in payload
     assert payload["services"][0]["kind"] == "compute"
+    assert payload["capabilities"][0]["capability_definition_hash"].startswith("sha256:")
+    assert {item["object_type"] for item in payload["registry_objects"]} == {
+        "capability_definition"
+    }
 
 
 def test_service_executes_task_via_proxy_endpoint_when_endpoint_constraint_is_provided() -> None:
@@ -941,12 +949,19 @@ def test_service_node_advertisement_includes_canonical_registry_sections() -> No
     payload = service.node_advertisement(heartbeat_at="2026-07-05T14:00:00+00:00")
 
     assert payload["canonical_services"][0]["kind"] == "compute"
+    assert payload["canonical_capabilities"][0]["capability_id"] == "llm.chat"
     assert payload["canonical_capability_runtimes"][0]["capability_id"] == "speech.stt"
     assert (
         payload["canonical_compute_compatibility"][0]["legacy_bundle_id"]
         == "whisper-a"
     )
     assert payload["canonical_advertisements"] == []
+    assert payload["canonical_feature_profiles"] == []
+    assert payload["canonical_limit_profiles"] == []
+    assert payload["canonical_implementation_profiles"] == []
+    assert {item["object_type"] for item in payload["canonical_registry_objects"]} == {
+        "capability_definition"
+    }
 
 
 def test_service_node_advertisement_keeps_published_endpoints_alongside_canonical_sections() -> None:
@@ -986,15 +1001,43 @@ def test_service_node_advertisement_keeps_published_endpoints_alongside_canonica
     assert payload["canonical_advertisements"] == [
         {
             "advertisement_id": f"adv-{payload['published_endpoints'][0]['current_publication_id']}",
+            "offer_id": f"offer-{payload['published_endpoints'][0]['current_publication_id']}",
             "resource_type": "endpoint",
             "owner_wallet": service.owner_wallet_state()["wallet_id"],
             "hypervisor_id": service.node_id,
             "capability_id": "llm.chat",
+            "capability_version": "2.0.0",
+            "capability_definition_hash": payload["canonical_capabilities"][0]["capability_definition_hash"],
+            "feature_profile_hash": payload["canonical_feature_profiles"][0]["feature_profile_hash"],
+            "limit_profile_hash": payload["canonical_limit_profiles"][0]["limit_profile_hash"],
+            "implementation_profile_hash": payload["canonical_implementation_profiles"][0]["implementation_profile_hash"],
             "visibility": "private",
             "signature_scope": "configuration_publication",
         }
     ]
     assert payload["canonical_services"][0]["kind"] == "compute"
+    assert payload["canonical_feature_profiles"][0]["endpoint_id"] == created.endpoint.endpoint_id
+    assert payload["canonical_limit_profiles"][0]["endpoint_id"] == created.endpoint.endpoint_id
+    assert (
+        payload["canonical_implementation_profiles"][0]["endpoint_id"]
+        == created.endpoint.endpoint_id
+    )
+    assert {
+        item["object_type"] for item in payload["canonical_registry_objects"]
+    } == {
+        "capability_definition",
+        "endpoint_feature_profile",
+        "endpoint_limit_profile",
+        "endpoint_implementation_profile",
+        "accounting_contract",
+    }
+    accounting_object = next(
+        item
+        for item in payload["canonical_registry_objects"]
+        if item["object_type"] == "accounting_contract"
+    )
+    assert accounting_object["namespace"] == "usage"
+    assert accounting_object["source_reference"] == created.endpoint.endpoint_id
 
 
 def test_service_node_advertisement_excludes_superseded_and_revoked_canonical_advertisements() -> None:
@@ -1044,10 +1087,16 @@ def test_service_node_advertisement_excludes_superseded_and_revoked_canonical_ad
     assert payload["canonical_advertisements"] == [
         {
             "advertisement_id": f"adv-{second.publication_id}",
+            "offer_id": f"offer-{second.publication_id}",
             "resource_type": "endpoint",
             "owner_wallet": service.owner_wallet_state()["wallet_id"],
             "hypervisor_id": service.node_id,
             "capability_id": "llm.chat",
+            "capability_version": "2.0.0",
+            "capability_definition_hash": payload["canonical_capabilities"][0]["capability_definition_hash"],
+            "feature_profile_hash": payload["canonical_feature_profiles"][0]["feature_profile_hash"],
+            "limit_profile_hash": payload["canonical_limit_profiles"][0]["limit_profile_hash"],
+            "implementation_profile_hash": payload["canonical_implementation_profiles"][0]["implementation_profile_hash"],
             "visibility": "public",
             "signature_scope": "configuration_publication",
         }

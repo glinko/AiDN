@@ -1,8 +1,13 @@
 from aidn_hypervisor import canonical_projection
 from aidn_hypervisor.canonical_projection import (
+    project_capability_definitions,
     project_capability_runtimes,
     project_compute_compatibility,
+    project_endpoint_feature_profiles,
+    project_endpoint_implementation_profiles,
+    project_endpoint_limit_profiles,
     project_protocol_services,
+    project_registry_objects,
 )
 from aidn_hypervisor.endpoint_publications.models import (
     PublishedEndpointConfiguration,
@@ -120,6 +125,17 @@ def test_project_compute_compatibility_preserves_legacy_bundle_identity() -> Non
     assert whisper.canonical_runtime_id == "runtime-whisper-a"
 
 
+def test_project_capability_definitions_emit_versioned_hash_bound_records() -> None:
+    records = project_capability_definitions(_service())
+
+    assert [record.capability_id for record in records] == ["llm.chat", "speech.stt"]
+    llm_chat = records[0]
+    assert llm_chat.capability_version == "2.0.0"
+    assert llm_chat.capability_definition_hash.startswith("sha256:")
+    assert llm_chat.input_modalities == ["text"]
+    assert llm_chat.output_modalities == ["text"]
+
+
 def test_project_canonical_advertisements_maps_published_records() -> None:
     records = canonical_projection.project_canonical_advertisements(
         [
@@ -134,10 +150,16 @@ def test_project_canonical_advertisements_maps_published_records() -> None:
     assert [record.model_dump() for record in records] == [
         {
             "advertisement_id": "adv-pub-1",
+            "offer_id": "offer-pub-1",
             "resource_type": "endpoint",
             "owner_wallet": "wallet-1",
             "hypervisor_id": "node-1",
             "capability_id": "llm.chat",
+            "capability_version": "2.0.0",
+            "capability_definition_hash": records[0].capability_definition_hash,
+            "feature_profile_hash": records[0].feature_profile_hash,
+            "limit_profile_hash": records[0].limit_profile_hash,
+            "implementation_profile_hash": records[0].implementation_profile_hash,
             "visibility": "public",
             "signature_scope": "configuration_publication",
         }
@@ -171,3 +193,90 @@ def test_project_canonical_advertisements_uses_first_stored_capability_as_primar
 
     assert len(records) == 1
     assert records[0].capability_id == "speech.translate"
+
+
+def test_project_canonical_advertisements_bind_projected_capability_profiles() -> None:
+    publication = _publication(
+        "pub-profiles",
+        capabilities=["llm.chat"],
+        publication={"visibility": "public", "accepts_external_requests": True},
+    ).model_copy(
+        update={
+            "runtime": {
+                "streaming": True,
+                "context_length": 8192,
+                "max_tokens": 1024,
+                "timeout": 30,
+            },
+            "session": {
+                "maximum_session_duration_seconds": 7200,
+                "queue_policy": "queue",
+            },
+            "execution": {"strategy": "local"},
+        }
+    )
+
+    feature_profiles = project_endpoint_feature_profiles([publication])
+    limit_profiles = project_endpoint_limit_profiles([publication])
+    implementation_profiles = project_endpoint_implementation_profiles([publication])
+    advertisements = canonical_projection.project_canonical_advertisements([publication])
+
+    assert len(advertisements) == 1
+    assert advertisements[0].capability_version == "2.0.0"
+    assert advertisements[0].feature_profile_hash == feature_profiles[0].feature_profile_hash
+    assert advertisements[0].limit_profile_hash == limit_profiles[0].limit_profile_hash
+    assert (
+        advertisements[0].implementation_profile_hash
+        == implementation_profiles[0].implementation_profile_hash
+    )
+
+
+def test_project_registry_objects_wraps_capability_profile_and_accounting_artifacts() -> None:
+    publication = _publication(
+        "pub-objects",
+        capabilities=["llm.chat"],
+        publication={"visibility": "public", "accepts_external_requests": True},
+    ).model_copy(
+        update={
+            "bundle_id": "text-a",
+            "runtime": {
+                "streaming": True,
+                "context_length": 8192,
+                "max_tokens": 1024,
+                "timeout": 30,
+            },
+            "pricing": {
+                "billing_unit": "request",
+                "input_price": 12.0,
+                "output_price": 18.0,
+            },
+            "session": {
+                "minimum_deposit": 5.0,
+                "recommended_deposit": 10.0,
+                "maximum_session_duration_seconds": 7200,
+                "queue_policy": "queue",
+            },
+            "execution": {"strategy": "local"},
+        }
+    )
+
+    records = project_registry_objects(_service(), [publication])
+
+    assert [record.object_type for record in records] == [
+        "capability_definition",
+        "capability_definition",
+        "accounting_contract",
+        "endpoint_feature_profile",
+        "endpoint_implementation_profile",
+        "endpoint_limit_profile",
+    ]
+    accounting_object = next(record for record in records if record.object_type == "accounting_contract")
+    assert accounting_object.namespace == "usage"
+    assert accounting_object.payload_encoding == "canonical_json"
+    assert accounting_object.source_reference == "ep-pub-objects"
+    assert accounting_object.payload["contract_version"].startswith("acct-ep-pub-objects")
+
+    capability_object = next(
+        record for record in records if record.object_type == "capability_definition"
+    )
+    assert capability_object.payload["capability_id"] == "llm.chat"

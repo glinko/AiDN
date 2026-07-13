@@ -242,10 +242,15 @@ def test_publication_service_records_canonical_advertisement_operations() -> Non
     revoked = service.revoke_publication(created.endpoint.endpoint_id)
 
     assert published.publication_id == revoked.publication_id
-    assert recorded_operations[0]["operation_type"] == "ADVERTISEMENT_PUBLISH"
+    assert recorded_operations[0]["operation_type"] == "ENDPOINT_ADVERTISEMENT_PUBLISH"
     assert recorded_operations[0]["sender_wallet"] == "wallet-1"
     assert recorded_operations[0]["payload"]["resource_id"] == created.endpoint.endpoint_id
     assert recorded_operations[0]["payload"]["advertisement_id"] == published.publication_id
-    assert recorded_operations[1]["operation_type"] == "ADVERTISEMENT_WITHDRAW"
+    assert recorded_operations[1]["operation_type"] == "ENDPOINT_OFFER_PUBLISH"
     assert recorded_operations[1]["sender_wallet"] == "wallet-1"
+    assert recorded_operations[1]["payload"]["offer_id"] == f"offer-{published.publication_id}"
     assert recorded_operations[1]["payload"]["advertisement_id"] == published.publication_id
+    assert recorded_operations[1]["payload"]["endpoint_id"] == created.endpoint.endpoint_id
+    assert recorded_operations[2]["operation_type"] == "ENDPOINT_ADVERTISEMENT_WITHDRAW"
+    assert recorded_operations[2]["sender_wallet"] == "wallet-1"
+    assert recorded_operations[2]["payload"]["advertisement_id"] == published.publication_id

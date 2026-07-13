@@ -1648,6 +1648,7 @@ class HypervisorService:
     def node_advertisement(self, *, heartbeat_at: str | None = None) -> dict:
         from aidn_hypervisor.canonical_projection import (
             project_canonical_advertisements,
+            project_registry_objects,
         )
 
         timestamp = heartbeat_at or datetime.now(timezone.utc).isoformat()
@@ -1745,9 +1746,18 @@ class HypervisorService:
             ],
             published_endpoints=published_endpoints,
             canonical_services=canonical_overlay.get("services", []),
+            canonical_capabilities=canonical_overlay.get("capabilities", []),
             canonical_capability_runtimes=canonical_overlay.get("runtimes", []),
             canonical_compute_compatibility=canonical_overlay.get(
                 "compatibility", []
+            ),
+            canonical_feature_profiles=canonical_overlay.get("feature_profiles", []),
+            canonical_limit_profiles=canonical_overlay.get("limit_profiles", []),
+            canonical_implementation_profiles=canonical_overlay.get(
+                "implementation_profiles", []
+            ),
+            canonical_registry_objects=project_registry_objects(
+                self, current_publication_records
             ),
             canonical_advertisements=project_canonical_advertisements(
                 current_publication_records
@@ -1899,29 +1909,55 @@ class HypervisorService:
 
     def canonical_overlay_inventory(self) -> dict:
         from aidn_hypervisor.canonical_projection import (
+            project_capability_definitions,
             project_capability_runtimes,
             project_compute_compatibility,
+            project_endpoint_feature_profiles,
+            project_endpoint_implementation_profiles,
+            project_endpoint_limit_profiles,
             project_protocol_services,
+            project_registry_objects,
         )
 
+        publication_service = getattr(self, "endpoint_publication_service", None)
+        current_publication_records = []
+        if publication_service is not None:
+            current_publication_records = [
+                record
+                for record in publication_service.list_publications()
+                if record.status == "published"
+            ]
+
+        capabilities = project_capability_definitions(self)
         runtimes = project_capability_runtimes(self)
         compatibility = project_compute_compatibility(self)
-        capability_ids = sorted({runtime.capability_id for runtime in runtimes})
         return {
             "services": [
                 record.model_dump(mode="json")
                 for record in project_protocol_services(self)
             ],
-            "capabilities": [
-                {
-                    "capability_id": capability_id,
-                    "source": "legacy_compute_overlay",
-                }
-                for capability_id in capability_ids
-            ],
+            "capabilities": [record.model_dump(mode="json") for record in capabilities],
             "runtimes": [record.model_dump(mode="json") for record in runtimes],
             "compatibility": [
                 record.model_dump(mode="json") for record in compatibility
+            ],
+            "feature_profiles": [
+                record.model_dump(mode="json")
+                for record in project_endpoint_feature_profiles(current_publication_records)
+            ],
+            "limit_profiles": [
+                record.model_dump(mode="json")
+                for record in project_endpoint_limit_profiles(current_publication_records)
+            ],
+            "implementation_profiles": [
+                record.model_dump(mode="json")
+                for record in project_endpoint_implementation_profiles(
+                    current_publication_records
+                )
+            ],
+            "registry_objects": [
+                record.model_dump(mode="json")
+                for record in project_registry_objects(self, current_publication_records)
             ],
         }
 
@@ -4483,6 +4519,15 @@ class HypervisorService:
         )
         pricing_version = f"pricing-{endpoint.endpoint_id}-{endpoint.configuration_hash[:8]}"
         contract_version = f"acct-{endpoint.endpoint_id}-{endpoint.configuration_hash[:8]}"
+        pricing_policy_reference = f"sha256:{hashlib.sha256(json.dumps(
+            {
+                'endpoint_id': endpoint.endpoint_id,
+                'configuration_hash': endpoint.configuration_hash,
+                'pricing': endpoint.pricing.model_dump(mode='json'),
+            },
+            sort_keys=True,
+            separators=(',', ':'),
+        ).encode('utf-8')).hexdigest()}"
 
         billable_units: list[AccountingUnitContract] = []
         if endpoint.pricing.input_price is not None:
@@ -4531,6 +4576,7 @@ class HypervisorService:
             contract_version=contract_version,
             capability_id=capability_id,
             pricing_version=pricing_version,
+            pricing_policy_reference=pricing_policy_reference,
             billable_units=billable_units,
             checkpoint_policy="per_request",
             maximum_unreported_usage=float(endpoint.session.minimum_deposit),

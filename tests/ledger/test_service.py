@@ -149,15 +149,31 @@ def test_session_open_and_settle_record_canonical_ledger_operations() -> None:
             "queue_policy": "busy",
             "minimum_session_fee": 2.0,
         },
+        accounting_contract={"contract_version": "acct-v1"},
+        advertisement_id="adv-ep-1-v1",
+        offer_id="offer-public",
+        pricing_policy_hash="sha256:pricing-v1",
     )
-    session_service.close_session(opened.session.session_id)
+    closed = session_service.close_session(opened.session.session_id)
 
-    operation_types = [item["operation_type"] for item in service.list_ledger_operations()]
+    operations = service.list_ledger_operations()
+    operation_types = [item["operation_type"] for item in operations]
 
     assert operation_types == ["SESSION_OPEN", "SESSION_SETTLE"]
-    assert service.list_ledger_operations()[0]["sender_wallet"] == "wallet-client"
-    assert service.list_ledger_operations()[0]["fee_class"] == "session"
-    assert service.list_ledger_operations()[1]["origin_type"] == "multi_party"
+    assert operations[0]["sender_wallet"] == "wallet-client"
+    assert operations[0]["fee_class"] == "session"
+    assert operations[0]["payload"]["advertisement_id"] == "adv-ep-1-v1"
+    assert operations[0]["payload"]["offer_id"] == "offer-public"
+    assert operations[0]["payload"]["pricing_policy_hash"] == "sha256:pricing-v1"
+    assert operations[0]["payload"]["accounting_contract_hash"].startswith("sha256:")
+    assert operations[0]["payload"]["session_contract_hash"] == opened.session.session_contract_hash
+    assert operations[1]["origin_type"] == "multi_party"
+    assert operations[1]["payload"]["advertisement_id"] == "adv-ep-1-v1"
+    assert operations[1]["payload"]["offer_id"] == "offer-public"
+    assert operations[1]["payload"]["session_contract_hash"] == opened.session.session_contract_hash
+    assert operations[1]["payload"]["settlement_evidence_root"].startswith("sha256:")
+    assert closed.settlement is not None
+    assert closed.settlement.settlement_evidence_root == operations[1]["payload"]["settlement_evidence_root"]
 
 
 def test_session_accounting_report_and_acknowledgement_record_canonical_ledger_operations() -> None:

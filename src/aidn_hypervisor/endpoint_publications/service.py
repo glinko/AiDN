@@ -71,6 +71,7 @@ class EndpointPublicationService:
                 previous.publication_id if previous is not None else None
             ),
         )
+        self._record_offer_publish(record)
         if previous is None:
             self.store.append(record)
             return record
@@ -158,7 +159,7 @@ class EndpointPublicationService:
         if self.operation_recorder is None:
             return
         self.operation_recorder(
-            operation_type="ADVERTISEMENT_PUBLISH",
+            operation_type="ENDPOINT_ADVERTISEMENT_PUBLISH",
             origin_type="wallet",
             fee_class="standard",
             initiator_id=record.owner_wallet,
@@ -179,6 +180,31 @@ class EndpointPublicationService:
             emitted_events=["AdvertisementPublished"],
         )
 
+    def _record_offer_publish(
+        self,
+        record: PublishedEndpointConfiguration,
+    ) -> None:
+        if self.operation_recorder is None:
+            return
+        self.operation_recorder(
+            operation_type="ENDPOINT_OFFER_PUBLISH",
+            origin_type="wallet",
+            fee_class="standard",
+            initiator_id=record.owner_wallet,
+            sender_wallet=record.owner_wallet,
+            fee_payer=record.owner_wallet,
+            payload={
+                "offer_id": f"offer-{record.publication_id}",
+                "endpoint_id": record.endpoint_id,
+                "advertisement_id": record.publication_id,
+                "access_scope": record.publication.get("visibility", "private"),
+                "configuration_hash": record.configuration_hash,
+                "status": "active",
+            },
+            created_at=record.published_at,
+            emitted_events=["EndpointOfferPublished"],
+        )
+
     def _record_advertisement_withdraw(
         self,
         record: PublishedEndpointConfiguration,
@@ -186,7 +212,7 @@ class EndpointPublicationService:
         if self.operation_recorder is None:
             return
         self.operation_recorder(
-            operation_type="ADVERTISEMENT_WITHDRAW",
+            operation_type="ENDPOINT_ADVERTISEMENT_WITHDRAW",
             origin_type="wallet",
             fee_class="standard",
             initiator_id=record.owner_wallet,

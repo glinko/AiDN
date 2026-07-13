@@ -31,6 +31,8 @@ from aidn_hypervisor.operator_views import (
     build_operator_remote_endpoints_payload,
 )
 from aidn_hypervisor.process_manager import RuntimeHandle
+from aidn_hypervisor.registry_models import RegistryNodeAdvertisement, RegistryObjectQuery
+from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointDependencyError
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
 from aidn_hypervisor.state import HypervisorStateSnapshot
@@ -628,6 +630,30 @@ def build_api_router(
 ) -> APIRouter:
     router = APIRouter()
 
+    def _effective_registry_service() -> RegistryService:
+        if registry_service is not None:
+            return registry_service
+        advertisement = RegistryNodeAdvertisement(**service.node_advertisement())
+        local_registry = RegistryService()
+        local_registry.upsert_node(advertisement)
+        local_source = local_registry.get_node(advertisement.node_id)
+        ingest_registry_objects = getattr(local_registry, "ingest_registry_objects", None)
+        if callable(ingest_registry_objects):
+            ingest_registry_objects(
+                [
+                    {
+                        **record.model_dump(mode="json"),
+                        "_source": {
+                            "node_id": local_source["node_id"],
+                            "operator_id": local_source["operator_id"],
+                            "status": local_source["status"],
+                        },
+                    }
+                    for record in advertisement.canonical_registry_objects
+                ]
+            )
+        return local_registry
+
     def _task_proxy_session_payload(task_request: TaskRequest) -> dict | None:
         if session_service is None:
             return None
@@ -928,6 +954,44 @@ def build_api_router(
             validation_service=validation_service,
         )
         return advertisement
+
+    @router.get("/operators/registry/objects")
+    async def registry_objects(
+        object_type: str | None = None,
+        namespace: str | None = None,
+        source_reference: str | None = None,
+        node_id: str | None = None,
+        include_stale: bool = False,
+        include_payload: bool = False,
+        limit: int = 50,
+    ) -> dict:
+        query = RegistryObjectQuery(
+            object_type=object_type,
+            namespace=namespace,
+            source_reference=source_reference,
+            node_id=node_id,
+            include_stale=include_stale,
+            include_payload=include_payload,
+            limit=limit,
+        )
+        registry = _effective_registry_service()
+        return {
+            "query": query.model_dump(mode="json"),
+            "objects": registry.list_registry_objects(query),
+        }
+
+    @router.get("/operators/registry/objects/{object_id}")
+    async def registry_object(object_id: str, include_payload: bool = False) -> dict:
+        registry = _effective_registry_service()
+        try:
+            return registry.get_registry_object(
+                object_id,
+                include_payload=include_payload,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404, detail=f"Unknown registry object: {object_id}"
+            ) from error
 
     @router.get("/operators/dashboard/home")
     async def operator_dashboard_home() -> dict:

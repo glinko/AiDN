@@ -42,6 +42,65 @@ def test_accounting_contract_accepts_multiple_unit_modes() -> None:
     assert contract.billable_units[1].mode == "fixed_price"
 
 
+def test_accounting_contract_derives_stable_registry_object_metadata() -> None:
+    contract_a = AccountingContract(
+        contract_version="acct-v1",
+        capability_id="llm.chat",
+        pricing_version="pricing-v1",
+        pricing_policy_reference="sha256:pricing-v1",
+        billable_units=[
+            AccountingUnitContract(
+                unit="input_tokens",
+                mode="provider_metered",
+                price=12.0,
+                measurement_source="provider_api",
+                verification_method="provider_report",
+            ),
+            AccountingUnitContract(
+                unit="output_tokens",
+                mode="provider_metered",
+                price=18.0,
+                measurement_source="provider_api",
+                verification_method="provider_report",
+            ),
+        ],
+        checkpoint_policy="per_request",
+        maximum_request_charge=25.0,
+    )
+    contract_b = AccountingContract(
+        contract_version="acct-v1",
+        capability_id="llm.chat",
+        pricing_version="pricing-v1",
+        pricing_policy_reference="sha256:pricing-v1",
+        billable_units=[
+            AccountingUnitContract(
+                unit="input_tokens",
+                mode="provider_metered",
+                price=12.0,
+                measurement_source="provider_api",
+                verification_method="provider_report",
+            ),
+            AccountingUnitContract(
+                unit="output_tokens",
+                mode="provider_metered",
+                price=18.0,
+                measurement_source="provider_api",
+                verification_method="provider_report",
+            ),
+        ],
+        checkpoint_policy="per_request",
+        maximum_request_charge=25.0,
+    )
+
+    assert contract_a.registry_namespace == "usage"
+    assert contract_a.payload_encoding == "canonical_json"
+    assert contract_a.registry_object_version == "acctobj.v1"
+    assert contract_a.registry_object_id.startswith("sha256:")
+    assert contract_a.payload_hash.startswith("sha256:")
+    assert contract_a.registry_object_id == contract_b.registry_object_id
+    assert contract_a.payload_hash == contract_b.payload_hash
+
+
 def test_usage_report_requires_positive_sequence() -> None:
     with pytest.raises(ValidationError):
         UsageReport(
