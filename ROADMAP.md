@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-07-11`
+Last updated: `2026-07-13`
 
 This is the main public roadmap for the repository.
 
@@ -129,6 +129,13 @@ We already have a working local hypervisor foundation:
 - provider contracts can now opt into `missing_usage_behavior=strict_accounting`, which keeps the task completed but marks the result `unbillable` and settlement-blocked when usage is missing or invalid;
 - settlement export now exposes monotonic `sequence_id` cursors, retention window metadata, and stale-cursor detection.
 - paid endpoint sessions now support explicit create/close lifecycle, deposit lock/release, queue-vs-busy admission, no-request minimum fee, idle timeout auto-close, and usage-linked refund settlement;
+- paid Session contracts now preserve accepted Marketplace identity through `advertisement_id`, optional `offer_id`, pricing/accounting hashes, deterministic `session_contract_hash`, and settlement evidence roots;
+- accounting contracts now ship as deterministic registry-style objects with stable object IDs, payload hashes, pricing policy references, and Session-level object-reference preservation alongside local snapshots;
+- canonical capability definitions now ship with stable definition hashes, and published endpoint advertisements now bind to projected feature, limit, and implementation profile hashes inside registry-visible canonical overlays;
+- canonical overlay and node advertisement payloads now also expose immutable local Registry Object envelopes for capability definitions, endpoint profiles, and accounting contracts, giving later persistence and replication work a stable object identity layer to build on;
+- registry-backed object views now support deduplicated `object_id` lookup, filtered listing, durable local snapshot persistence, and a versioned local completeness summary over the standalone store, while manifest identity, retention policy enforcement, and replication remain the next gaps;
+- registry-backed object views now also support opt-in canonical payload retrieval for projected capability, profile, and accounting objects, so object inspection no longer stops at envelope metadata;
+- `RegistryService` now also maintains a standalone local Registry Object store with snapshot-backed durable persistence, and local operator object routes ingest projected canonical objects into that store while preserving local node provenance for returned sources;
 - the operator dashboard now includes a dedicated `Sessions` workspace with reservation composer, session control actions, session-bound task launch, activity timeline, and settlement preview telemetry;
 - wallet exports now include a unified replay-safe ledger stream that stitches session settlement events together with usage and allocation-family wallet events;
 - proxy-backed paid Sessions now preserve upstream session policy snapshots, lazily broker remote Session opens, propagate remote Session close on manual and idle-driven release, and expose proxy-session bindings through task and operator-session APIs;
@@ -146,6 +153,12 @@ What is still missing in the current stage:
 - complete dashboard migration of older bundle-centric affordances onto the endpoint-first trust layer, so bootstrap fallback logic can eventually be removed cleanly;
 - remote endpoint and proxy endpoint workflows framed as operator routing tools, not only discovery data.
 - full client-facing payment confirmation and paid-session workflow polish across bootstrap, remote/proxy, and future marketplace paths.
+- capability/profile alignment is still partial:
+  - canonical capability definitions and endpoint profile hashes now exist in local projections and node advertisements;
+  - but they currently exist only as locally persisted projected Registry Objects, not yet as authoritative RFC-native objects validated through Service Verification or enforced as the sole Capability/Marketplace policy source.
+- registry-object alignment is still partial:
+  - the repo now has deterministic Registry Object envelopes plus registry-backed list/query/get, opt-in payload retrieval, and standalone local snapshot-backed durable object persistence for capability/profile/accounting artifacts;
+  - but it still lacks manifests, retention policy enforcement, and replication of those objects as first-class protocol data.
 - implementation of `RFC-0060` is still pending beyond partial local scaffolding:
   - manual close, idle timeout, queue/busy admission, remote/proxy-aware session open/close, and basic deposit settlement already exist;
   - but there is no full forced-settlement state machine yet for `Last Accepted Checkpoint`, acknowledgement timeout, Provider disappearance, Consumer disappearance, deposit exhaustion, or accounting mismatch termination under one canonical evidence model.
@@ -166,7 +179,7 @@ What is still missing in the current stage:
   - the repo already has product-level Snapshot commitments, state-hash concepts, and consensus-side acknowledgment that verified Snapshots can accelerate synchronization;
   - but there is still no portable canonical Snapshot format, no trusted-checkpoint State Sync flow, no chunked multi-source Snapshot transfer, no staging restoration pipeline, and no atomic verified activation path matching one canonical state-sync protocol.
 - implementation of `RFC-0059` is also still pending beyond partial local scaffolding:
-  - a canonical local ledger-operation stream now exists for Faucet, session, validation, endpoint lifecycle, endpoint publication, epoch transition, and faucet reward mint flows;
+  - a canonical local ledger-operation stream now exists for Faucet, session, validation, endpoint lifecycle, endpoint Advertisement and Offer publication, epoch transition, and faucet reward mint flows;
   - but there is still no finalized evidence replay-protection registry, full operation-by-operation consensus execution engine, or complete `SESSION_FORCE_SETTLE` and enforcement implementation.
 - implementation of `RFC-0053` is still pending beyond current runtime abstractions:
   - the repo already has provider adapters, subprocess-backed runtime lifecycle, endpoint/session orchestration, and local runtime health surfaces;

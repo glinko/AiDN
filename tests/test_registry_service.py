@@ -1225,6 +1225,70 @@ def test_registry_service_summarizes_local_store_counts_and_payload_bytes() -> N
     assert summary.integrity.payload_hash_coverage_count == 3
 
 
+def test_registry_service_surfaces_missing_required_fields_in_summary_issues() -> None:
+    service = RegistryService()
+    service._registry_objects["sha256:broken-1"] = {
+        "object_id": "sha256:broken-1",
+        "object_version": "1.0",
+        "payload_hash": "sha256:broken-payload",
+        "payload_encoding": "canonical_json",
+        "source_reference": "broken:1",
+    }
+
+    summary = service.get_local_registry_completeness_summary()
+
+    assert summary.store_totals.total_object_count == 1
+    assert summary.integrity.all_required_fields_present is False
+    assert summary.integrity.object_count_matches_store is True
+    assert summary.integrity.all_object_ids_unique is True
+    assert {(issue.code, issue.field) for issue in summary.integrity.issues} == {
+        ("missing_required_field", "namespace"),
+        ("missing_required_field", "object_type"),
+    }
+
+
+def test_registry_service_raises_for_non_mapping_store_record_in_summary() -> None:
+    service = RegistryService()
+    service._registry_objects["sha256:bad-shape"] = "not-a-dict"
+
+    with pytest.raises(
+        ValueError,
+        match="Registry object store contains non-object record for sha256:bad-shape",
+    ):
+        service.get_local_registry_completeness_summary()
+
+
+def test_registry_service_local_completeness_summary_survives_restart(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    payload = {"pricing_model": "fixed", "unit_price_q": 2}
+    seeded = RegistryService(snapshot_path=snapshot_path)
+    seeded.upsert_registry_object(
+        {
+            "object_id": "sha256:restart-summary-1",
+            "object_type": "pricing_policy",
+            "object_version": "1.0",
+            "namespace": "marketplace",
+            "payload_hash": "sha256:restart-payload-1",
+            "payload_encoding": "canonical_json",
+            "source_reference": "pricing:restart-1",
+            "payload": payload,
+        }
+    )
+
+    before = seeded.get_local_registry_completeness_summary()
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    after = restarted.get_local_registry_completeness_summary()
+
+    assert after.summary_version == before.summary_version
+    assert after.snapshot_schema_version == before.snapshot_schema_version
+    assert after.store_totals == before.store_totals
+    assert after.by_namespace == before.by_namespace
+    assert after.by_object_type == before.by_object_type
+    assert after.integrity == before.integrity
+
+
 def test_registry_service_rejects_conflicting_store_and_node_backed_object(
     monkeypatch,
 ) -> None:

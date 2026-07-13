@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 
 from aidn_hypervisor.registry_models import (
+    RegistryCompletenessIssue,
     RegistryCompletenessIntegrity,
     RegistryCompletenessTotals,
     RegistryDiscoveryQuery,
@@ -346,6 +347,7 @@ class RegistryService:
         payload_object_count = 0
         payload_bytes_total = 0
         payload_hash_coverage_count = 0
+        issues: list[RegistryCompletenessIssue] = []
 
         for object_id in sorted(self._registry_objects):
             record = self._registry_objects[object_id]
@@ -353,6 +355,10 @@ class RegistryService:
                 raise ValueError(
                     f"Registry object store contains non-object record for {object_id}"
                 )
+
+            issues.extend(
+                self._registry_object_summary_issues(object_id=object_id, record=record)
+            )
 
             namespace = record.get("namespace")
             if isinstance(namespace, str) and namespace:
@@ -384,11 +390,33 @@ class RegistryService:
             integrity=RegistryCompletenessIntegrity(
                 object_count_matches_store=True,
                 all_object_ids_unique=True,
-                all_required_fields_present=True,
+                all_required_fields_present=not any(
+                    issue.code == "missing_required_field" for issue in issues
+                ),
                 payload_hash_coverage_count=payload_hash_coverage_count,
-                issues=[],
+                issues=issues,
             ),
         )
+
+    def _registry_object_summary_issues(
+        self,
+        *,
+        object_id: str,
+        record: dict,
+    ) -> list[RegistryCompletenessIssue]:
+        issues: list[RegistryCompletenessIssue] = []
+        for field in _REQUIRED_REGISTRY_OBJECT_FIELDS:
+            value = record.get(field)
+            if value is None or (isinstance(value, str) and not value):
+                issues.append(
+                    RegistryCompletenessIssue(
+                        code="missing_required_field",
+                        object_id=object_id,
+                        field=field,
+                        detail=f"Stored record is missing required field {field}",
+                    )
+                )
+        return issues
 
     def _payload_size_bytes(self, payload: object) -> int:
         return len(
