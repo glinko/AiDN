@@ -11,6 +11,7 @@ from aidn_hypervisor.accounting.models import (
     usage_acknowledgement_hash,
     usage_report_hash,
 )
+from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.sessions.models import (
     EndpointSession,
     LockedDeposit,
@@ -27,6 +28,16 @@ def _hash_payload(payload: dict) -> str:
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
+def _registry_object_id(*, object_type: str, object_version: str, payload_hash: str) -> str:
+    return _hash_payload(
+        {
+            "object_type": object_type,
+            "object_version": object_version,
+            "payload_hash": payload_hash,
+        }
+    )
+
+
 class SessionService:
     def __init__(
         self,
@@ -34,11 +45,13 @@ class SessionService:
         event_recorder=None,
         operation_recorder=None,
         network_fee_q: float = 0.01,
+        registry_service: RegistryService | None = None,
     ) -> None:
         self.store = store
         self.event_recorder = event_recorder
         self.operation_recorder = operation_recorder
         self.network_fee_q = max(0.0, float(network_fee_q))
+        self.registry_service = registry_service or RegistryService()
 
     def _emit(
         self,
@@ -219,6 +232,72 @@ class SessionService:
             )
         return session
 
+    def _session_contract_payload(
+        self,
+        *,
+        session_id: str,
+        endpoint_id: str,
+        client_wallet: str,
+        provider_wallet: str,
+        node_id: str,
+        deposit_q: float,
+        advertisement_id: str | None,
+        offer_id: str | None,
+        pricing_policy_hash: str | None,
+        accounting_contract_hash: str,
+        accounting_contract_snapshot: dict,
+        session_policy_snapshot: dict,
+        accepted_at: str,
+    ) -> dict:
+        return {
+            "session_id": session_id,
+            "endpoint_id": endpoint_id,
+            "client_wallet": client_wallet,
+            "provider_wallet": provider_wallet,
+            "node_id": node_id,
+            "deposit_locked_q": deposit_q,
+            "advertisement_id": advertisement_id,
+            "offer_id": offer_id,
+            "pricing_policy_hash": pricing_policy_hash,
+            "accounting_contract_hash": accounting_contract_hash,
+            "accounting_contract_object_id": accounting_contract_snapshot.get(
+                "registry_object_id"
+            ),
+            "accounting_contract_object_version": accounting_contract_snapshot.get(
+                "registry_object_version"
+            ),
+            "accounting_contract_namespace": accounting_contract_snapshot.get(
+                "registry_namespace"
+            ),
+            "session_policy_snapshot": session_policy_snapshot,
+            "accepted_at": accepted_at,
+            "session_contract_version": "session-contract.v1",
+        }
+
+    def _persist_session_contract_object(
+        self,
+        *,
+        payload: dict,
+        source_reference: str,
+    ) -> dict:
+        payload_hash = _hash_payload(payload)
+        return self.registry_service.upsert_registry_object(
+            {
+                "object_id": _registry_object_id(
+                    object_type="session_contract",
+                    object_version="session-contract.v1",
+                    payload_hash=payload_hash,
+                ),
+                "object_type": "session_contract",
+                "object_version": "session-contract.v1",
+                "namespace": "session",
+                "payload_hash": payload_hash,
+                "payload_encoding": "canonical_json",
+                "source_reference": source_reference,
+                "payload": payload,
+            }
+        )
+
     def open_session(
         self,
         *,
@@ -279,21 +358,26 @@ class SessionService:
             session_policy.get("maximum_session_duration_seconds", 3600) or 3600
         )
         session_id = f"sess-{uuid4().hex[:12]}"
-        session_contract_hash = _hash_payload(
-            {
-                "session_id": session_id,
-                "endpoint_id": endpoint_id,
-                "client_wallet": client_wallet,
-                "provider_wallet": provider_wallet,
-                "node_id": node_id,
-                "deposit_locked_q": deposit_q,
-                "advertisement_id": advertisement_id,
-                "offer_id": offer_id,
-                "pricing_policy_hash": pricing_policy_hash,
-                "accounting_contract_hash": accepted_accounting_contract_hash,
-                "session_policy": session_policy_snapshot,
-            }
+        session_contract_payload = self._session_contract_payload(
+            session_id=session_id,
+            endpoint_id=endpoint_id,
+            client_wallet=client_wallet,
+            provider_wallet=provider_wallet,
+            node_id=node_id,
+            deposit_q=deposit_q,
+            advertisement_id=advertisement_id,
+            offer_id=offer_id,
+            pricing_policy_hash=pricing_policy_hash,
+            accounting_contract_hash=accepted_accounting_contract_hash,
+            accounting_contract_snapshot=accounting_contract_snapshot,
+            session_policy_snapshot=session_policy_snapshot,
+            accepted_at=now.isoformat(),
         )
+        session_contract_record = self._persist_session_contract_object(
+            payload=session_contract_payload,
+            source_reference=session_id,
+        )
+        session_contract_hash = str(session_contract_record["payload_hash"])
         session = EndpointSession(
             session_id=session_id,
             endpoint_id=endpoint_id,
@@ -330,6 +414,11 @@ class SessionService:
                 if accounting_contract_namespace is not None
                 else None
             ),
+            session_contract_object_id=str(session_contract_record["object_id"]),
+            session_contract_object_version=str(
+                session_contract_record["object_version"]
+            ),
+            session_contract_namespace=str(session_contract_record["namespace"]),
             session_contract_hash=session_contract_hash,
             close_reason=("waiting_for_slot" if queued_sessions or not slot_available else None),
         )

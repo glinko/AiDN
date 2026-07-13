@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -7,6 +8,7 @@ from aidn_hypervisor.accounting.models import (
     UsageAcknowledgement,
     UsageReport,
 )
+from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
@@ -316,6 +318,93 @@ def test_open_session_binds_accepted_marketplace_contract() -> None:
     assert opened.session.accounting_contract_hash == opened.session.accounting_contract_snapshot["payload_hash"]
     assert opened.session.session_contract_hash.startswith("sha256:")
     assert opened.session.session_contract_hash != opened.session.accounting_contract_hash
+
+
+def test_open_session_persists_session_contract_registry_object(tmp_path: Path) -> None:
+    registry = RegistryService(snapshot_path=tmp_path / "registry-objects.json")
+    service = SessionService(SessionStore(), registry_service=registry)
+    contract = AccountingContract(
+        contract_version="acct-v1",
+        capability_id="llm.chat",
+        pricing_version="pricing-v1",
+        billable_units=[],
+        checkpoint_policy="per_request",
+        maximum_request_charge=25.0,
+    )
+
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(),
+        accounting_contract=contract.model_dump(mode="json"),
+        advertisement_id="adv-ep-1-v1",
+        offer_id="offer-public",
+        pricing_policy_hash="sha256:pricing-v1",
+    )
+
+    assert opened.session.session_contract_object_id.startswith("sha256:")
+    assert opened.session.session_contract_object_version == "session-contract.v1"
+    assert opened.session.session_contract_namespace == "session"
+    assert opened.session.session_contract_hash.startswith("sha256:")
+
+    stored = registry.get_registry_object(
+        opened.session.session_contract_object_id,
+        include_payload=True,
+    )
+
+    assert stored["object_type"] == "session_contract"
+    assert stored["object_version"] == "session-contract.v1"
+    assert stored["namespace"] == "session"
+    assert stored["payload_hash"] == opened.session.session_contract_hash
+    assert stored["payload"]["session_id"] == opened.session.session_id
+    assert stored["payload"]["advertisement_id"] == "adv-ep-1-v1"
+    assert stored["payload"]["offer_id"] == "offer-public"
+    assert (
+        stored["payload"]["accounting_contract_object_id"]
+        == opened.session.accounting_contract_object_id
+    )
+
+
+def test_open_session_reuses_persisted_session_contract_object_after_registry_restart(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    contract = AccountingContract(
+        contract_version="acct-v1",
+        capability_id="llm.chat",
+        pricing_version="pricing-v1",
+        billable_units=[],
+        checkpoint_policy="per_request",
+        maximum_request_charge=25.0,
+    )
+    first_registry = RegistryService(snapshot_path=snapshot_path)
+    service = SessionService(SessionStore(), registry_service=first_registry)
+
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(),
+        accounting_contract=contract.model_dump(mode="json"),
+        advertisement_id="adv-ep-1-v1",
+        offer_id="offer-public",
+        pricing_policy_hash="sha256:pricing-v1",
+    )
+
+    restarted_registry = RegistryService(snapshot_path=snapshot_path)
+    fetched = restarted_registry.get_registry_object(
+        opened.session.session_contract_object_id,
+        include_payload=True,
+    )
+
+    assert fetched["payload_hash"] == opened.session.session_contract_hash
+    assert fetched["payload"]["session_id"] == opened.session.session_id
+    assert fetched["payload"]["deposit_locked_q"] == 10.0
 
 
 def test_record_usage_checkpoint_creates_acknowledgement_and_updates_accepted_state() -> None:

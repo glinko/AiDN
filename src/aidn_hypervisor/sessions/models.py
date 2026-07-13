@@ -40,6 +40,9 @@ class EndpointSession(BaseModel):
     accounting_contract_object_id: str | None = None
     accounting_contract_object_version: str | None = None
     accounting_contract_namespace: str | None = None
+    session_contract_object_id: str | None = None
+    session_contract_object_version: str | None = None
+    session_contract_namespace: str | None = None
     session_contract_hash: str | None = None
     last_usage_report_snapshot: dict = Field(default_factory=dict)
     last_usage_acknowledgement_snapshot: dict = Field(default_factory=dict)
