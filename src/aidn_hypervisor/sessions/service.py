@@ -299,6 +299,75 @@ class SessionService:
     def _persist_session_contract_object(self, *, record: dict) -> dict:
         return self.registry_service.upsert_registry_object(record)
 
+    def _record_open_session_operation(
+        self,
+        *,
+        session: EndpointSession,
+        node_id: str,
+        endpoint_id: str,
+        deposit_q: float,
+        session_policy_snapshot: dict,
+        client_wallet: str,
+    ) -> None:
+        if self.operation_recorder is None:
+            return
+        session_policy_hash = hashlib.sha256(
+            json.dumps(session_policy_snapshot, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        try:
+            self.operation_recorder(
+                operation_type="SESSION_OPEN",
+                origin_type="wallet",
+                fee_class="session",
+                initiator_id=client_wallet,
+                sender_wallet=client_wallet,
+                fee_payer=client_wallet,
+                payload={
+                    "session_id": session.session_id,
+                    "consumer_hypervisor_id": node_id,
+                    "provider_hypervisor_id": node_id,
+                    "endpoint_id": endpoint_id,
+                    "advertisement_id": session.advertisement_id,
+                    "offer_id": session.offer_id,
+                    "pricing_policy_hash": session.pricing_policy_hash,
+                    "session_policy_hash": f"sha256:{session_policy_hash}",
+                    "accounting_contract_hash": session.accounting_contract_hash,
+                    "session_contract_hash": session.session_contract_hash,
+                    "deposit_amount": deposit_q,
+                    "open_expiration": session.expires_at,
+                },
+                created_at=session.created_at,
+                emitted_events=["SessionOpened"],
+            )
+        except Exception:
+            return
+
+    def _emit_open_session_deposit_locked(
+        self,
+        *,
+        session: EndpointSession,
+        endpoint_id: str,
+        client_wallet: str,
+        provider_wallet: str,
+        deposit_q: float,
+        status: str,
+    ) -> None:
+        try:
+            self._emit(
+                event_type="session.deposit_locked",
+                message="session deposit locked",
+                details={
+                    "session_id": session.session_id,
+                    "endpoint_id": endpoint_id,
+                    "client_wallet": client_wallet,
+                    "provider_wallet": provider_wallet,
+                    "locked_q": deposit_q,
+                    "status": status,
+                },
+            )
+        except Exception:
+            return
+
     def open_session(
         self,
         *,
@@ -439,45 +508,21 @@ class SessionService:
         except Exception:
             self.store.discard_open_session(session.session_id)
             raise
-        if self.operation_recorder is not None:
-            session_policy_hash = hashlib.sha256(
-                json.dumps(session_policy_snapshot, sort_keys=True).encode("utf-8")
-            ).hexdigest()
-            self.operation_recorder(
-                operation_type="SESSION_OPEN",
-                origin_type="wallet",
-                fee_class="session",
-                initiator_id=client_wallet,
-                sender_wallet=client_wallet,
-                fee_payer=client_wallet,
-                payload={
-                    "session_id": session.session_id,
-                    "consumer_hypervisor_id": node_id,
-                    "provider_hypervisor_id": node_id,
-                    "endpoint_id": endpoint_id,
-                    "advertisement_id": session.advertisement_id,
-                    "offer_id": session.offer_id,
-                    "pricing_policy_hash": session.pricing_policy_hash,
-                    "session_policy_hash": f"sha256:{session_policy_hash}",
-                    "accounting_contract_hash": session.accounting_contract_hash,
-                    "session_contract_hash": session.session_contract_hash,
-                    "deposit_amount": deposit_q,
-                    "open_expiration": session.expires_at,
-                },
-                created_at=session.created_at,
-                emitted_events=["SessionOpened"],
-            )
-        self._emit(
-            event_type="session.deposit_locked",
-            message="session deposit locked",
-            details={
-                "session_id": session.session_id,
-                "endpoint_id": endpoint_id,
-                "client_wallet": client_wallet,
-                "provider_wallet": provider_wallet,
-                "locked_q": deposit_q,
-                "status": status,
-            },
+        self._record_open_session_operation(
+            session=session,
+            node_id=node_id,
+            endpoint_id=endpoint_id,
+            deposit_q=deposit_q,
+            session_policy_snapshot=session_policy_snapshot,
+            client_wallet=client_wallet,
+        )
+        self._emit_open_session_deposit_locked(
+            session=session,
+            endpoint_id=endpoint_id,
+            client_wallet=client_wallet,
+            provider_wallet=provider_wallet,
+            deposit_q=deposit_q,
+            status=status,
         )
         return SessionResult(session=session, deposit=deposit)
 

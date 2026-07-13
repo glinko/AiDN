@@ -497,6 +497,51 @@ def test_open_session_rolls_back_session_state_when_deposit_save_fails(
     assert registry.list_registry_objects(query={"include_payload": True}) == []
 
 
+def test_open_session_succeeds_when_observability_side_effects_fail(
+    tmp_path: Path,
+) -> None:
+    def failing_operation_recorder(**kwargs) -> None:
+        raise RuntimeError("operation recorder failed")
+
+    def failing_event_recorder(**kwargs) -> None:
+        raise RuntimeError("event recorder failed")
+
+    registry = RegistryService(snapshot_path=tmp_path / "registry-objects.json")
+    store = SessionStore()
+    service = SessionService(
+        store,
+        registry_service=registry,
+        operation_recorder=failing_operation_recorder,
+        event_recorder=failing_event_recorder,
+    )
+
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(),
+        accounting_contract={
+            "contract_version": "acct-v1",
+            "pricing_version": "pricing-v1",
+        },
+        advertisement_id="adv-ep-1-v1",
+        offer_id="offer-public",
+        pricing_policy_hash="sha256:pricing-v1",
+    )
+
+    assert store.get_session(opened.session.session_id).session_id == opened.session.session_id
+    assert store.get_deposit_for_session(opened.session.session_id).session_id == (
+        opened.session.session_id
+    )
+    stored = registry.get_registry_object(
+        opened.session.session_contract_object_id,
+        include_payload=True,
+    )
+    assert stored["payload"]["session_id"] == opened.session.session_id
+
+
 def test_record_usage_checkpoint_creates_acknowledgement_and_updates_accepted_state() -> None:
     service = _session_service()
     opened = service.open_session(
