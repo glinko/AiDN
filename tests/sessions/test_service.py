@@ -443,9 +443,31 @@ def test_open_session_reuses_persisted_session_contract_object_after_registry_re
 def test_open_session_rolls_back_session_state_when_deposit_save_fails(
     tmp_path: Path,
 ) -> None:
-    class DepositSaveFailureStore(SessionStore):
+    class DepositSaveFailureStore:
+        def __init__(self) -> None:
+            self.sessions_by_id: dict[str, object] = {}
+            self.deposits_by_id: dict[str, object] = {}
+            self.last_saved_session_id: str | None = None
+
+        def list_sessions(self) -> list[object]:
+            return list(self.sessions_by_id.values())
+
+        def save_session(self, session) -> None:
+            self.last_saved_session_id = session.session_id
+            self.sessions_by_id[session.session_id] = session
+
         def save_deposit(self, deposit) -> None:
             raise RuntimeError("deposit save failed")
+
+        def get_session(self, session_id: str):
+            return self.sessions_by_id[session_id]
+
+        def get_deposit_for_session(self, session_id: str):
+            return self.deposits_by_id[session_id]
+
+        def discard_open_session(self, session_id: str) -> None:
+            self.sessions_by_id.pop(session_id, None)
+            self.deposits_by_id.pop(session_id, None)
 
     registry = RegistryService(snapshot_path=tmp_path / "registry-objects.json")
     store = DepositSaveFailureStore()
@@ -469,7 +491,9 @@ def test_open_session_rolls_back_session_state_when_deposit_save_fails(
         )
 
     assert store.list_sessions() == []
-    assert store._deposits == {}
+    assert store.last_saved_session_id is not None
+    with pytest.raises(KeyError):
+        store.get_deposit_for_session(store.last_saved_session_id)
     assert registry.list_registry_objects(query={"include_payload": True}) == []
 
 

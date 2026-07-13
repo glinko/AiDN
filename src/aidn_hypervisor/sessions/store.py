@@ -47,6 +47,12 @@ class SessionStore:
         self._deposits[deposit.session_id] = deposit
         self._flush()
 
+    def discard_open_session(self, session_id: str) -> None:
+        session_removed = self._sessions.pop(session_id, None) is not None
+        deposit_removed = self._deposits.pop(session_id, None) is not None
+        if session_removed or deposit_removed:
+            self._flush()
+
     def get_deposit_for_session(self, session_id: str) -> LockedDeposit:
         return self._deposits[session_id]
 

@@ -296,18 +296,8 @@ class SessionService:
             "payload": payload,
         }
 
-    def _rollback_open_session_state(self, *, session_id: str) -> None:
-        sessions = getattr(self.store, "_sessions", None)
-        deposits = getattr(self.store, "_deposits", None)
-        removed = False
-        if isinstance(sessions, dict):
-            removed = sessions.pop(session_id, None) is not None or removed
-        if isinstance(deposits, dict):
-            removed = deposits.pop(session_id, None) is not None or removed
-        if removed:
-            flush = getattr(self.store, "_flush", None)
-            if callable(flush):
-                flush()
+    def _persist_session_contract_object(self, *, record: dict) -> dict:
+        return self.registry_service.upsert_registry_object(record)
 
     def open_session(
         self,
@@ -445,9 +435,9 @@ class SessionService:
         try:
             self.store.save_session(session)
             self.store.save_deposit(deposit)
-            self.registry_service.upsert_registry_object(session_contract_record)
+            self._persist_session_contract_object(record=session_contract_record)
         except Exception:
-            self._rollback_open_session_state(session_id=session.session_id)
+            self.store.discard_open_session(session.session_id)
             raise
         if self.operation_recorder is not None:
             session_policy_hash = hashlib.sha256(
