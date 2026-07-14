@@ -167,10 +167,19 @@ def test_session_open_and_settle_record_canonical_ledger_operations() -> None:
     assert operations[0]["payload"]["pricing_policy_hash"] == "sha256:pricing-v1"
     assert operations[0]["payload"]["accounting_contract_hash"].startswith("sha256:")
     assert operations[0]["payload"]["session_contract_hash"] == opened.session.session_contract_hash
+    assert operations[0]["payload"]["session_contract_object_id"] == (
+        opened.session.session_contract_object_id
+    )
+    assert operations[0]["payload"]["session_contract_object_id"] != (
+        opened.session.session_contract_hash
+    )
     assert operations[1]["origin_type"] == "multi_party"
     assert operations[1]["payload"]["advertisement_id"] == "adv-ep-1-v1"
     assert operations[1]["payload"]["offer_id"] == "offer-public"
     assert operations[1]["payload"]["session_contract_hash"] == opened.session.session_contract_hash
+    assert operations[1]["payload"]["session_contract_object_id"] == (
+        opened.session.session_contract_object_id
+    )
     assert operations[1]["payload"]["settlement_evidence_root"].startswith("sha256:")
     assert closed.settlement is not None
     assert closed.settlement.settlement_evidence_root == operations[1]["payload"]["settlement_evidence_root"]
