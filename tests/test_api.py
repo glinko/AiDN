@@ -1368,6 +1368,54 @@ def test_operator_registry_object_endpoint_uses_local_registry_store_fallback(
     ]
 
 
+def test_operator_registry_objects_endpoint_lists_session_contract_objects() -> None:
+    registry_service = RegistryService()
+    session_service = SessionService(SessionStore(), registry_service=registry_service)
+    service = _service(with_runtime=False, use_process_manager=True)
+    session_service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-client",
+        provider_wallet="wallet-provider",
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy={
+            "minimum_deposit": 10.0,
+            "recommended_deposit": 25.0,
+            "idle_fee_per_minute": 1.0,
+            "idle_timeout_seconds": 600,
+            "max_concurrent_sessions": 1,
+            "maximum_session_duration_seconds": 3600,
+            "queue_policy": "busy",
+            "minimum_session_fee": 2.0,
+        },
+        accounting_contract={
+            "contract_version": "acct-v1",
+            "pricing_version": "pricing-v1",
+        },
+        advertisement_id="adv-ep-1-v1",
+        offer_id="offer-public",
+        pricing_policy_hash="sha256:pricing-v1",
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            registry_service=registry_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.get("/operators/registry/objects?include_payload=true")
+
+    assert response.status_code == 200
+    session_contract = next(
+        item
+        for item in response.json()["objects"]
+        if item["object_type"] == "session_contract"
+    )
+    assert session_contract["namespace"] == "session"
+    assert session_contract["payload"]["advertisement_id"] == "adv-ep-1-v1"
+
+
 def test_operator_dashboard_fleet_endpoint_returns_aggregated_payload(tmp_path) -> None:
     service = _service(model_store=FileModelStore(tmp_path))
     client = TestClient(build_app(service=service))
@@ -5377,6 +5425,55 @@ def test_session_endpoints_do_not_expose_internal_accounting_replay_metadata() -
     assert "_accepted_charge_q" not in listed_session["last_usage_acknowledgement_snapshot"]
     assert "_accepted_charge_q" not in detail_session["usage_acknowledgement_chain"][0]
     assert "_accepted_charge_q" not in listed_session["usage_acknowledgement_chain"][0]
+
+
+def test_session_detail_exposes_session_contract_object_references() -> None:
+    registry_service = RegistryService()
+    session_service = SessionService(SessionStore(), registry_service=registry_service)
+    service = _service(with_runtime=False, use_process_manager=True)
+    client = TestClient(
+        build_app(
+            service=service,
+            registry_service=registry_service,
+            session_service=session_service,
+        )
+    )
+
+    opened = session_service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-client",
+        provider_wallet="wallet-provider",
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy={
+            "minimum_deposit": 10.0,
+            "recommended_deposit": 25.0,
+            "idle_fee_per_minute": 1.0,
+            "idle_timeout_seconds": 600,
+            "max_concurrent_sessions": 1,
+            "maximum_session_duration_seconds": 3600,
+            "queue_policy": "busy",
+            "minimum_session_fee": 2.0,
+        },
+        accounting_contract={
+            "contract_version": "acct-v1",
+            "pricing_version": "pricing-v1",
+        },
+        advertisement_id="adv-ep-1-v1",
+        offer_id="offer-public",
+        pricing_policy_hash="sha256:pricing-v1",
+    )
+
+    response = client.get(f"/api/v1/sessions/{opened.session.session_id}")
+
+    assert response.status_code == 200
+    session_payload = response.json()["data"]["session"]
+    assert (
+        session_payload["session_contract_object_id"]
+        == opened.session.session_contract_object_id
+    )
+    assert session_payload["session_contract_object_version"] == "session-contract.v1"
+    assert session_payload["session_contract_namespace"] == "session"
 
 
 def test_operator_dashboard_session_sweep_action_closes_idle_sessions() -> None:

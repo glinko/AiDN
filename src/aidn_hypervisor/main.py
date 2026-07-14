@@ -18,6 +18,7 @@ from aidn_hypervisor.plugins.whisper import WhisperPlugin
 from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.registry_api import build_registry_router
+from aidn_hypervisor.registry_models import RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointService
 from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
@@ -51,6 +52,9 @@ def build_app(
         return {"status": "ok"}
 
     state_store = _default_state_store()
+    resolved_registry_service = registry_service or _build_default_registry_service(
+        state_store=state_store
+    )
     resolved_service = service or _build_default_service(state_store=state_store)
     resolved_endpoint_service = endpoint_service or _build_default_endpoint_service(
         state_store=state_store
@@ -67,12 +71,21 @@ def build_app(
         or _build_default_remote_endpoint_service(state_store=state_store)
     )
     resolved_session_service = (
-        session_service or _build_default_session_service(state_store=state_store)
+        session_service
+        or _build_default_session_service(
+            state_store=state_store,
+            registry_service=resolved_registry_service,
+        )
     )
     resolved_validation_service = (
         validation_service
         or _build_default_validation_service(state_store=state_store)
     )
+    if registry_service is None:
+        _hydrate_local_registry_from_service(
+            registry_service=resolved_registry_service,
+            service=resolved_service,
+        )
     resolved_service.endpoint_publication_service = (
         resolved_endpoint_publication_service
     )
@@ -80,6 +93,7 @@ def build_app(
     resolved_service.remote_endpoint_service = resolved_remote_endpoint_service
     resolved_service.session_service = resolved_session_service
     resolved_service.bind_validation_service(resolved_validation_service)
+    resolved_session_service.registry_service = resolved_registry_service
     resolved_endpoint_service.operation_recorder = (
         resolved_service.record_ledger_operation
     )
@@ -92,7 +106,7 @@ def build_app(
     app.include_router(
         build_api_router(
             resolved_service,
-            registry_service=registry_service,
+            registry_service=resolved_registry_service,
             endpoint_service=resolved_endpoint_service,
             endpoint_publication_service=resolved_endpoint_publication_service,
             remote_endpoint_service=resolved_remote_endpoint_service,
@@ -185,13 +199,50 @@ def _build_default_remote_endpoint_service(
     return RemoteEndpointService(RemoteEndpointStore(state_store))
 
 
+def _build_default_registry_service(
+    *,
+    state_store: FileStateStore | None = None,
+) -> RegistryService:
+    if state_store is None:
+        return RegistryService()
+    registry_snapshot_path = state_store.path.parent / "registry-objects.json"
+    return RegistryService(snapshot_path=registry_snapshot_path)
+
+
+def _hydrate_local_registry_from_service(
+    *,
+    registry_service: RegistryService,
+    service: HypervisorService,
+) -> None:
+    advertisement = RegistryNodeAdvertisement(**service.node_advertisement())
+    registry_service.upsert_node(advertisement)
+    local_source = registry_service.get_node(advertisement.node_id)
+    registry_service.ingest_registry_objects(
+        [
+            {
+                **record.model_dump(mode="json"),
+                "_source": {
+                    "node_id": local_source["node_id"],
+                    "operator_id": local_source["operator_id"],
+                    "status": local_source["status"],
+                },
+            }
+            for record in advertisement.canonical_registry_objects
+        ]
+    )
+
+
 def _build_default_session_service(
     *,
     state_store: FileStateStore | None = None,
+    registry_service: RegistryService | None = None,
 ) -> SessionService:
     if state_store is None:
         state_store = _default_state_store()
-    return SessionService(SessionStore(state_store))
+    return SessionService(
+        SessionStore(state_store),
+        registry_service=registry_service,
+    )
 
 
 def _build_default_validation_service(
