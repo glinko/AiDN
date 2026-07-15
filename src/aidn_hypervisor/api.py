@@ -631,10 +631,8 @@ def build_api_router(
     router = APIRouter()
 
     def _effective_registry_service() -> RegistryService:
-        if registry_service is not None:
-            return registry_service
         advertisement = RegistryNodeAdvertisement(**service.node_advertisement())
-        local_registry = RegistryService()
+        local_registry = registry_service or RegistryService()
         local_registry.upsert_node(advertisement)
         local_source = local_registry.get_node(advertisement.node_id)
         ingest_registry_objects = getattr(local_registry, "ingest_registry_objects", None)

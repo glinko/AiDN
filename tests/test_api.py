@@ -1416,6 +1416,60 @@ def test_operator_registry_objects_endpoint_lists_session_contract_objects() -> 
     assert session_contract["payload"]["advertisement_id"] == "adv-ep-1-v1"
 
 
+def test_operator_registry_objects_endpoint_preserves_publication_objects_with_shared_registry() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    validation_service = ValidationService(ValidationStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Shared STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    requested = validation_service.request_validation(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        configuration_hash=created.endpoint.configuration_hash,
+        minimum_session_deposit_q=created.endpoint.session.minimum_deposit,
+    )
+    validation_service.force_mark_validated(
+        request_id=requested.request.request_id,
+        report_id="report-1",
+        validated_at="2026-07-02T00:00:00+00:00",
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+            validation_service=validation_service,
+        )
+    )
+
+    publish_response = client.post(
+        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration"
+    )
+    assert publish_response.status_code == 200
+
+    response = client.get("/operators/registry/objects?include_payload=true")
+
+    assert response.status_code == 200
+    object_types = {item["object_type"] for item in response.json()["objects"]}
+    assert "accounting_contract" in object_types
+    assert "endpoint_feature_profile" in object_types
+    assert "endpoint_limit_profile" in object_types
+    assert "endpoint_implementation_profile" in object_types
+
+
 def test_operator_dashboard_fleet_endpoint_returns_aggregated_payload(tmp_path) -> None:
     service = _service(model_store=FileModelStore(tmp_path))
     client = TestClient(build_app(service=service))
