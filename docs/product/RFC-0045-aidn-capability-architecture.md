@@ -4,7 +4,7 @@ AiDN Capability Architecture
 
 Status: Draft
 
-Version: 0.2
+Version: 0.3
 
 Supersedes:
 
@@ -19,6 +19,8 @@ Depends on:
 * RFC-0051 Usage Reporting and Verification Protocol
 * RFC-0053 Capability Runtime Specification
 * RFC-0054 Capability Runtime Protocol
+* RFC-0055 Provider Plugin System and Directory
+* RFC-0056 Provider Plugin Runtime Interface
 * RFC-0057 Validation Report Specification
 * RFC-0059 Ledger Operation Catalog
 * RFC-0063 Proxy Endpoint Protocol
@@ -368,6 +370,11 @@ HASH(
 ```
 
 Endpoints and Runtimes SHALL bind to the exact hash they implement.
+
+Within a Hypervisor, that binding SHOULD be created from a Model Deployment
+through a Runtime Binding or equivalent runtime-adapter object.
+
+A raw Provider inventory entry is not by itself an AiDN Capability binding.
 
 ---
 

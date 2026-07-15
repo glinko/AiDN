@@ -2,7 +2,7 @@
 
 Status: `Draft`
 
-Version: `0.1`
+Version: `0.2`
 
 Depends on:
 
@@ -12,6 +12,8 @@ Depends on:
 - `RFC-0045 Capability Architecture`
 - `RFC-0051 Usage Reporting and Verification Protocol`
 - `RFC-0053 Capability Runtime Specification`
+- `RFC-0055 Provider Plugin System and Directory`
+- `RFC-0056 Provider Plugin Runtime Interface`
 - `RFC-0059 Ledger Operation Catalog`
 - `RFC-0060 Session Failure, Recovery and Forced Settlement`
 
@@ -81,6 +83,13 @@ The Hypervisor SHALL remain unaware of Runtime-specific Provider implementations
 
 The Runtime SHALL remain unable to modify Ledger state directly.
 
+Within the broader Provider Plugin System, this Runtime Protocol is the
+execution-plane contract.
+
+Plugin installation, Provider Instance lifecycle, Model Deployment lifecycle,
+permission prompts and install plans belong to the Provider Plugin control
+plane, not to this execution protocol.
+
 ## 4. Architectural Boundary
 
 The Hypervisor is responsible for:
@@ -107,6 +116,12 @@ The Capability Runtime is responsible for:
 - Capability-specific validation;
 - Runtime-local resource scheduling;
 - Runtime health reporting.
+
+The Hypervisor MAY separately own a plugin control plane that creates or
+updates the underlying Provider Instance, Model Deployment or Runtime Binding.
+
+That control plane SHALL NOT change the message semantics defined by this
+Runtime Protocol.
 
 ## 5. Runtime Deployment
 

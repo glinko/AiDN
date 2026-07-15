@@ -4,7 +4,7 @@ Hypervisor Service Model
 
 Status: Draft
 
-Version: 0.1 - Reconstructed Edition
+Version: 0.2
 
 Depends on:
 
@@ -18,6 +18,8 @@ Extended by:
 * RFC-0045 Capability Architecture
 * RFC-0046 Registry Architecture
 * RFC-0053 Capability Runtime Specification
+* RFC-0055 Provider Plugin System and Directory
+* RFC-0056 Provider Plugin Runtime Interface
 * RFC-0058 Participant Eligibility and Sybil Resistance
 
 ---
@@ -41,6 +43,7 @@ It specifies:
 * Service discovery;
 * Service eligibility;
 * Service withdrawal and retirement;
+* the relationship between Hypervisor-local Provider Plugins, Provider Instances, Model Deployments and Runtime Bindings;
 * the relationship between Services, Capability Runtimes and Endpoints.
 
 The Hypervisor Service Model provides a common operational foundation for all AiDN network roles.
@@ -235,6 +238,26 @@ The Runtime:
 * maintains execution context.
 
 The detailed Runtime model is defined by RFC-0053.
+
+Within one Hypervisor, Runtime operation MAY be assembled from local entities
+that are not themselves public network Service identities:
+
+* Provider Plugin;
+* Provider Instance;
+* Model Deployment;
+* Runtime Binding.
+
+These entities are Hypervisor-local execution and onboarding objects.
+
+They help the operator install, attach, describe and bind execution backends to
+AiDN Runtime and Endpoint lifecycle.
+
+They SHALL NOT be confused with:
+
+* Service Identity;
+* Runtime Identity;
+* Endpoint Identity;
+* Marketplace Advertisement identity.
 
 ---
 

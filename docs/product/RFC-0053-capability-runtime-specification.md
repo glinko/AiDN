@@ -2,7 +2,7 @@
 
 Status: `Draft`
 
-Version: `0.3`
+Version: `0.4`
 
 Depends on:
 
@@ -10,6 +10,8 @@ Depends on:
 - `RFC-0042 Hypervisor Network Protocol`
 - `RFC-0044 Session Protocol`
 - `RFC-0045 Capability Architecture`
+- `RFC-0055 Provider Plugin System and Directory`
+- `RFC-0056 Provider Plugin Runtime Interface`
 
 ## 1. Purpose
 
@@ -44,6 +46,16 @@ The Hypervisor never communicates directly with Providers.
 The Hypervisor communicates exclusively through the Runtime Protocol.
 
 Every Runtime behaves identically regardless of its internal implementation.
+
+Within a Hypervisor implementation, a Runtime MAY be assembled from:
+
+- one Provider Instance;
+- one Model Deployment;
+- one Provider Plugin adapter;
+- one Runtime Binding exposing exactly one primary Capability contract.
+
+Those assembly details remain internal as long as the resulting Runtime behaves
+like one normalized AiDN Runtime Service.
 
 ## 3. Runtime Model
 
@@ -136,7 +148,8 @@ The Hypervisor SHALL recover Runtime connectivity automatically.
 
 ## 7. Provider Management
 
-Provider discovery and management are entirely the responsibility of the Runtime.
+Provider discovery and management are entirely the responsibility of the
+Runtime-facing plugin or adapter layer behind the Runtime.
 
 Examples:
 
@@ -149,6 +162,16 @@ For Capability `llm.chat`:
 - `MLX`
 
 The Hypervisor SHALL remain unaware of Provider-specific implementation details.
+
+The Hypervisor MAY still manage local Hypervisor-owned objects such as:
+
+- Provider Plugin installation;
+- Provider Instance attachment;
+- Model Deployment lifecycle;
+- Runtime Binding lifecycle.
+
+Those control-plane concerns do not give the Hypervisor direct Provider-native
+execution semantics.
 
 ## 8. Endpoint Management
 

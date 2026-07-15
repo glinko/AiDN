@@ -4,7 +4,7 @@ Distributed Marketplace and Endpoint Advertisement Registry
 
 Status: Draft
 
-Version: 0.2
+Version: 0.3
 
 Supersedes:
 
@@ -25,6 +25,8 @@ Depends on:
 * RFC-0051 Usage Reporting and Verification Protocol
 * RFC-0053 Capability Runtime Specification
 * RFC-0054 Capability Runtime Protocol
+* RFC-0055 Provider Plugin System and Directory
+* RFC-0056 Provider Plugin Runtime Interface
 * RFC-0057 Validation Report Specification
 * RFC-0058 Participant Eligibility and Sybil Resistance
 * RFC-0059 Ledger Operation Catalog
@@ -171,6 +173,13 @@ Every Advertisement SHALL bind to:
 * expiration;
 * operator signature.
 
+An Advertisement SHALL only be publishable after:
+
+* a Runtime Binding or equivalent AiDN Runtime execution surface exists for the
+  advertised Configuration Hash;
+* the operator has created an Endpoint Draft or equivalent pre-publication
+  object from that Runtime Binding.
+
 ⸻
 
 ## 7. Advertisement Object
@@ -292,6 +301,8 @@ An Advertisement is active only when:
 * it has not expired;
 * no later active version supersedes it;
 * no valid withdrawal applies;
+* a compatible Runtime Binding remains present for the advertised Configuration
+  Hash;
 * no suspension blocks new Sessions;
 * its Network Revision matches the client.
 

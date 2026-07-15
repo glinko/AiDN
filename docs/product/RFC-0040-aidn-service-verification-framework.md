@@ -4,7 +4,7 @@ AiDN Service Verification Framework
 
 Status: Draft
 
-Version: 0.2
+Version: 0.3
 
 Supersedes:
 
@@ -21,6 +21,8 @@ Depends on:
 * RFC-0048 Epoch Engine
 * RFC-0053 Capability Runtime Specification
 * RFC-0054 Capability Runtime Protocol
+* RFC-0055 Provider Plugin System and Directory
+* RFC-0056 Provider Plugin Runtime Interface
 * RFC-0058 Participant Eligibility and Sybil Resistance
 * RFC-0059 Ledger Operation Catalog
 * RFC-0061 Registry Replication Protocol
@@ -126,6 +128,20 @@ A specific Endpoint backed by that Runtime may still fail Endpoint Validation be
 * publishes incorrect limits;
 * returns corrupted artifacts;
 * violates its Endpoint Configuration.
+
+Provider installation or attachment is not itself a Verification target.
+
+Provider Plugins, Provider Instances and Model Deployments are preparatory
+Hypervisor-local execution objects.
+
+Service Verification begins only once a Runtime Binding or equivalent Runtime
+Service surface exists and can be checked for:
+
+* identity control;
+* protocol conformance;
+* usage and evidence behavior;
+* recovery behavior;
+* configuration binding.
 
 ---
 

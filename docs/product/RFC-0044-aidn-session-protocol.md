@@ -4,7 +4,7 @@ AiDN Session Protocol
 
 Status: Draft
 
-Version: 0.3
+Version: 0.4
 
 Supersedes:
 
@@ -21,6 +21,8 @@ Depends on:
 * RFC-0051 Usage Reporting and Verification Protocol
 * RFC-0053 Capability Runtime Specification
 * RFC-0054 Capability Runtime Protocol
+* RFC-0055 Provider Plugin System and Directory
+* RFC-0056 Provider Plugin Runtime Interface
 * RFC-0059 Ledger Operation Catalog
 * RFC-0060 Session Failure, Recovery and Forced Settlement
 * RFC-0063 Proxy Endpoint Protocol
@@ -35,6 +37,12 @@ Depends on:
 This document defines the AiDN Session Protocol.
 
 A Session is a bounded execution and economic agreement between a Consumer and an Endpoint.
+
+Execution of an accepted Session SHALL terminate at an authorized Runtime
+Binding or Runtime Adapter surface.
+
+Neither the Consumer nor the Hypervisor Session layer speaks a provider-native
+API directly.
 
 The protocol defines how participants:
 
