@@ -64,6 +64,8 @@ class CreateRuntimeBindingRequest(BaseModel):
 
 
 class BuildProviderInstallationPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     configuration: dict = Field(default_factory=dict)
 
 

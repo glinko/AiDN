@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
 from aidn_hypervisor.providers.models import (
+    InstallationPlan,
     ModelDeployment,
     ProviderInstance,
     RuntimeBinding,
@@ -33,7 +34,8 @@ class ProviderInventoryService:
 
     def build_installation_plan(self, *, plugin_id: str, configuration: dict) -> dict:
         plugin = self._get_plugin(plugin_id)
-        return dict(plugin.build_installation_plan(dict(configuration)))
+        plan = plugin.build_installation_plan(dict(configuration))
+        return InstallationPlan.model_validate(plan).model_dump(mode="json")
 
     def attach_provider_instance(
         self,

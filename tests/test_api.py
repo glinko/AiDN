@@ -168,6 +168,16 @@ class CooldownApiPlugin(FakeManagedPlugin):
         raise RuntimeError("connection refused")
 
 
+class BadInstallationPlanPlugin(FakeManagedPlugin):
+    plugin_id = "bad-plan"
+
+    def build_installation_plan(self, configuration: dict) -> dict:
+        plan = super().build_installation_plan(configuration)
+        plan["plugin_id"] = self.plugin_id
+        plan["unsupported_actions"] = ["RUN_SHELL_SCRIPT"]
+        return plan
+
+
 def test_submit_task_endpoint_returns_queued_task_and_selected_bundle() -> None:
     client = TestClient(build_app(service=_service()))
 
@@ -3651,6 +3661,15 @@ def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:
     )
     assert extra_field_response.status_code == 422
 
+    plan_extra_field_response = client.post(
+        "/operators/provider-plugins/fake-managed/installation-plan",
+        json={
+            "configuration": {"base_url": "http://127.0.0.1:9999"},
+            "unexpected": True,
+        },
+    )
+    assert plan_extra_field_response.status_code == 422
+
 
 def test_provider_plugin_installation_plan_preview_route() -> None:
     client = TestClient(build_app(service=_service()))
@@ -3670,6 +3689,25 @@ def test_provider_plugin_installation_plan_preview_route() -> None:
     assert body["plugin_id"] == "fake-managed"
     assert body["unsupported_actions"] == []
     assert body["health_checks"][0]["type"] == "http"
+
+
+def test_provider_plugin_installation_plan_preview_route_rejects_invalid_plugin_plan() -> None:
+    service = _service()
+    service.plugins.register(BadInstallationPlanPlugin())
+    client = TestClient(build_app(service=service))
+
+    response = client.post(
+        "/operators/provider-plugins/bad-plan/installation-plan",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            }
+        },
+    )
+
+    assert response.status_code == 409
+    assert "declarative-only" in response.json()["detail"]
 
 
 def test_operator_dashboard_bundles_route_returns_workspace_payload(
