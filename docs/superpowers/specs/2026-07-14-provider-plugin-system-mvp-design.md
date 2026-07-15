@@ -251,10 +251,30 @@ readiness is known.
 
 1. Operator selects a plugin and an installation mode.
 2. Hypervisor renders the plugin's declarative install schema.
-3. Plugin returns an Installation Plan or a bounded installer request.
+3. Plugin returns a declarative Installation Plan.
 4. Hypervisor applies the plan through approved control surfaces.
 5. Provider health and conformance checks run.
 6. Hypervisor creates the Provider Instance.
+
+For the MVP, managed install is declarative-only. A provider plugin may describe
+how to install Ollama, vLLM, ComfyUI, llama.cpp, an OpenAI-compatible adapter, or
+another provider family, but the hypervisor remains the executor of the plan. The
+plugin does not receive unrestricted shell execution or host-root authority.
+
+The plan may include:
+
+- container images or process commands from explicit package sources;
+- source repositories or release artifacts with package digests;
+- model downloads and storage targets;
+- environment variables and resource limits;
+- GPU and accelerator requirements;
+- private-network bindings;
+- health checks and conformance probes;
+- secret handles, never raw secret values.
+
+This keeps the operator experience close to "install this provider with this
+model", while making the security boundary inspectable before anything changes
+on the host.
 
 ### Flow D: Add model
 
@@ -399,11 +419,59 @@ lightweight.
 - installation plans reviewed and applied by the hypervisor;
 - no automatic endpoint publication as a plugin side effect.
 
+### Installer execution tiers
+
+The system intentionally separates three things that are easy to collapse:
+
+- `Provider Plugin`: the signed integration package and runtime adapter.
+- `Installation Plan`: a declarative description of host changes the hypervisor
+  may apply.
+- `Installer Component`: optional plugin-supplied code that may be allowed to
+  perform complex installation work in a later risk tier.
+
+The MVP implements the first two and reserves the third.
+
+#### Tier 1: Declarative plan
+
+This is the MVP baseline.
+
+The plugin may generate a plan, but the hypervisor applies it through known
+control surfaces such as container management, model download, volume creation,
+process configuration, and health checks. This is sufficient for common happy
+paths such as:
+
+- install Ollama from a pinned image or release and pull `qwen3:8b`;
+- attach or run vLLM with a declared model reference;
+- configure a generic OpenAI-compatible provider adapter;
+- install a model artifact into a managed model directory.
+
+#### Tier 2: Sandboxed installer component
+
+This is explicitly deferred.
+
+Some provider families may eventually need custom installation logic: building a
+wheel, probing local GPU drivers, compiling llama.cpp variants, preparing a
+provider-specific bridge, or applying migration scripts. Those cases should use
+a sandboxed installer component with:
+
+- separate capability flag such as `CAN_RUN_SANDBOXED_INSTALLER`;
+- elevated trust/risk display in the Plugin Directory;
+- explicit operator approval for new permissions;
+- bounded filesystem and network access;
+- no wallet, consensus, governance, or unrelated provider secrets;
+- captured logs and support bundle output;
+- deterministic install result records where practical.
+
+Tier 2 must not be treated as the default meaning of "install provider".
+Community plugins can be powerful, but they should not become a polite UI around
+arbitrary remote code execution.
+
 ### Deferred but intentionally reserved
 
 - hardened sandboxing;
 - per-plugin filesystem jail;
 - per-plugin egress policy enforcement;
+- sandboxed installer component execution;
 - signature-chain governance;
 - protocol-native plugin blocking.
 
