@@ -326,6 +326,58 @@ def test_service_create_runtime_binding_projects_and_persists_compatibility_bund
     assert len(state_store.snapshots) == 1
 
 
+def test_service_create_runtime_binding_reuses_compatibility_bundle_for_same_logical_binding(
+    tmp_path,
+) -> None:
+    from aidn_hypervisor.bundle_registry import FileBundleRegistry
+
+    bundle_registry = FileBundleRegistry(tmp_path / "bundles.json")
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        bundles=[_bundle("whisper-a", "speech_to_text")],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+        bundle_registry=bundle_registry,
+    )
+
+    attached = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    model = service.discover_provider_models(attached["provider_instance_id"])[0]
+
+    first = service.create_runtime_binding(
+        model_deployment_id=model["model_deployment_id"],
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+    second = service.create_runtime_binding(
+        model_deployment_id=model["model_deployment_id"],
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+
+    matching_bundles = [
+        bundle
+        for bundle in service.bundles
+        if bundle.bundle_id == first["compatibility_bundle_id"]
+    ]
+    persisted_matching_bundles = [
+        bundle
+        for bundle in bundle_registry.load(service.plugins)
+        if bundle.bundle_id == first["compatibility_bundle_id"]
+    ]
+
+    assert first["runtime_binding_id"] == second["runtime_binding_id"]
+    assert first["compatibility_bundle_id"] == second["compatibility_bundle_id"]
+    assert len(matching_bundles) == 1
+    assert len(persisted_matching_bundles) == 1
+
+
 def test_service_submit_routes_and_records_selected_bundle_for_automatic_mode() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),

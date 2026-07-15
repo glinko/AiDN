@@ -1109,16 +1109,31 @@ def test_plugins_endpoint_returns_installed_plugin_descriptions() -> None:
     response = client.get("/plugins")
 
     assert response.status_code == 200
-    assert response.json()[0]["plugin_id"] == "fake-managed"
-    assert response.json()[0]["workload_types"] == ["llm_text", "speech_to_text"]
-    assert response.json()[0]["usage_contract"] == {
-        "supports_exact": False,
-        "supports_estimated": False,
-        "default_measurement_source": None,
-        "fallback_measurement_source": None,
-        "fallback_policy": "none",
-        "missing_usage_behavior": "skip",
-    }
+    assert response.json() == [
+        {
+            "plugin_id": "fake-managed",
+            "plugin_version": "0.1.0",
+            "display_name": "Fake Managed Provider",
+            "publisher": "AiDN Test",
+            "package_digest": "sha256:fake-managed-dev",
+            "provider_type": "fake",
+            "provider_families": ["fake"],
+            "plugin_capability_flags": [
+                "CAN_ATTACH_EXISTING",
+                "CAN_DISCOVER_MODELS",
+            ],
+            "supported_aidn_capabilities": ["llm.chat"],
+            "workload_types": ["llm_text", "speech_to_text"],
+            "usage_contract": {
+                "supports_exact": False,
+                "supports_estimated": False,
+                "default_measurement_source": None,
+                "fallback_measurement_source": None,
+                "fallback_policy": "none",
+                "missing_usage_behavior": "skip",
+            },
+        }
+    ]
 
 
 def test_queue_diagnostics_endpoint_reports_blocked_reason() -> None:
@@ -3573,6 +3588,27 @@ def test_provider_inventory_operator_routes_attach_discover_and_bind() -> None:
     )
     assert compatibility_bundle.workload_type == "llm.chat"
     assert compatibility_bundle.endpoint == "http://127.0.0.1:9999"
+
+
+def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    attach_response = client.post(
+        "/operators/provider-instances/attach",
+        json={
+            "plugin_id": "fake-managed",
+            "display_name": "Local Fake",
+        },
+    )
+    assert attach_response.status_code == 422
+
+    binding_response = client.post(
+        "/operators/model-deployments/md-missing/runtime-bindings",
+        json={
+            "capability_id": "llm.chat",
+        },
+    )
+    assert binding_response.status_code == 422
 
 
 def test_operator_dashboard_bundles_route_returns_workspace_payload(

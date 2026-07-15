@@ -155,3 +155,38 @@ def test_provider_inventory_service_validates_configuration_before_attach() -> N
 
     assert instance.plugin_id == "fake-validation-tracking"
     assert plugin.validated_configurations == [{"base_url": "http://127.0.0.1:9999"}]
+
+
+def test_provider_inventory_service_reuses_runtime_binding_identity_for_same_logical_binding() -> None:
+    registry = PluginRegistry()
+    registry.register(FakeManagedPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    instance = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    model = service.discover_models(instance.provider_instance_id)[0]
+
+    first = service.create_runtime_binding(
+        model_deployment_id=model.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+    second = service.create_runtime_binding(
+        model_deployment_id=model.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+
+    assert first.runtime_binding_id == second.runtime_binding_id
+    assert first.compatibility_bundle_id == second.compatibility_bundle_id
+    assert [binding.runtime_binding_id for binding in service.store.list_runtime_bindings()] == [
+        first.runtime_binding_id
+    ]

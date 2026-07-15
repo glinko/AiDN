@@ -47,6 +47,18 @@ from aidn_hypervisor.wallet_models import (
 _ACTIVE_TASK_STATUSES: set[TaskStatus] = {"queued", "admitted", "starting", "running"}
 
 
+class AttachProviderInstanceRequest(BaseModel):
+    plugin_id: str
+    display_name: str
+    configuration: dict
+
+
+class CreateRuntimeBindingRequest(BaseModel):
+    capability_id: str
+    capability_version: str
+    capability_definition_hash: str
+
+
 def _ok(data: dict, *, status_code: int = 200) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -1035,9 +1047,9 @@ def build_api_router(
         return {"items": service.provider_inventory.list_plugin_manifests()}
 
     @router.post("/operators/provider-instances/attach")
-    async def attach_provider_instance(payload: dict) -> dict:
+    async def attach_provider_instance(payload: AttachProviderInstanceRequest) -> dict:
         try:
-            return service.attach_provider_instance(**payload)
+            return service.attach_provider_instance(**payload.model_dump(mode="json"))
         except KeyError as error:
             raise HTTPException(
                 status_code=404,
@@ -1061,12 +1073,12 @@ def build_api_router(
     @router.post("/operators/model-deployments/{model_deployment_id}/runtime-bindings")
     async def create_runtime_binding(
         model_deployment_id: str,
-        payload: dict,
+        payload: CreateRuntimeBindingRequest,
     ) -> dict:
         try:
             return service.create_runtime_binding(
                 model_deployment_id=model_deployment_id,
-                **payload,
+                **payload.model_dump(mode="json"),
             )
         except KeyError as error:
             raise HTTPException(

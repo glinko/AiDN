@@ -1,3 +1,4 @@
+import hashlib
 from uuid import uuid4
 
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
@@ -83,7 +84,15 @@ class ProviderInventoryService:
             capability_version=capability_version,
             capability_definition_hash=capability_definition_hash,
         )
-        runtime_binding_id = str(projection.get("runtime_binding_id") or f"rtb-{uuid4().hex[:12]}")
+        logical_suffix = self._runtime_binding_logical_suffix(
+            model_deployment_id=model_deployment_id,
+            capability_id=capability_id,
+            capability_version=capability_version,
+            capability_definition_hash=capability_definition_hash,
+        )
+        runtime_binding_id = str(
+            projection.get("runtime_binding_id") or f"rtb-{logical_suffix}"
+        )
         binding = RuntimeBinding(
             runtime_binding_id=runtime_binding_id,
             provider_instance_id=instance.provider_instance_id,
@@ -168,3 +177,23 @@ class ProviderInventoryService:
         if families:
             return str(families[0])
         return plugin_id
+
+    def _runtime_binding_logical_suffix(
+        self,
+        *,
+        model_deployment_id: str,
+        capability_id: str,
+        capability_version: str,
+        capability_definition_hash: str,
+    ) -> str:
+        digest = hashlib.sha256(
+            "|".join(
+                [
+                    model_deployment_id,
+                    capability_id,
+                    capability_version,
+                    capability_definition_hash,
+                ]
+            ).encode("utf-8")
+        ).hexdigest()
+        return digest[:16]
