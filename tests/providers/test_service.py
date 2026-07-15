@@ -339,15 +339,17 @@ def test_provider_inventory_rejects_installation_plan_for_attach_only_plugin() -
         )
 
 
-def test_recorded_provider_installation_executor_records_declarative_plan_without_host_mutation() -> None:
-    executor = RecordedProviderInstallationExecutor()
-    configuration = {
+def _installation_configuration() -> dict:
+    return {
         "display_name": "Local Fake",
         "base_url": "http://127.0.0.1:9999",
     }
-    plan = InstallationPlan(
-        plan_id="plan-fake-managed",
-        plugin_id="fake-managed",
+
+
+def _installation_plan(*, plugin_id: str = "fake-managed", plan_id: str = "plan-fake-managed") -> InstallationPlan:
+    return InstallationPlan(
+        plan_id=plan_id,
+        plugin_id=plugin_id,
         plan_version="1.0.0",
         summary="Install the fake managed provider",
         containers=[
@@ -379,21 +381,38 @@ def test_recorded_provider_installation_executor_records_declarative_plan_withou
             }
         ],
     )
-    approval = ProviderInstallationApproval(
+
+
+def _installation_approval(
+    *,
+    configuration: dict | None = None,
+    plugin_id: str = "fake-managed",
+    plan_id: str = "plan-fake-managed",
+    status: str = "APPROVED",
+) -> ProviderInstallationApproval:
+    return ProviderInstallationApproval(
         approval_id="approval-fake-managed",
-        plugin_id="fake-managed",
-        plan_id="plan-fake-managed",
+        plugin_id=plugin_id,
+        plan_id=plan_id,
         plan_hash="sha256:plan",
         configuration_hash="sha256:configuration",
-        configuration=configuration,
+        configuration=configuration or _installation_configuration(),
         approved_permissions=["container.manage"],
+        status=status,
         created_at="2026-07-15T12:00:00Z",
     )
+
+
+def test_recorded_provider_installation_executor_records_declarative_plan_without_host_mutation() -> None:
+    executor = RecordedProviderInstallationExecutor()
+    configuration = _installation_configuration()
+    plan = _installation_plan()
+    approval = _installation_approval(configuration=configuration)
 
     result = executor.apply(
         approval=approval,
         plan=plan,
-        configuration=configuration,
+        configuration=dict(configuration),
         manifest={
             "plugin_id": "fake-managed",
             "display_name": "Fake Managed Provider",
@@ -419,6 +438,66 @@ def test_recorded_provider_installation_executor_records_declarative_plan_withou
         "display_name": "Local Fake",
         "connection_mode": "managed",
         "configuration": configuration,
-        "operational_state": "ready",
+        "operational_state": "created",
     }
     assert result.provider_instance["configuration"] is not configuration
+
+
+def test_recorded_provider_installation_executor_rejects_revoked_approval() -> None:
+    executor = RecordedProviderInstallationExecutor()
+    configuration = _installation_configuration()
+
+    with pytest.raises(ValueError, match="approved"):
+        executor.apply(
+            approval=_installation_approval(configuration=configuration, status="REVOKED"),
+            plan=_installation_plan(),
+            configuration=configuration,
+            manifest={"plugin_id": "fake-managed"},
+            provider_instance_id="pi-fake-managed",
+        )
+
+
+def test_recorded_provider_installation_executor_rejects_mismatched_configuration() -> None:
+    executor = RecordedProviderInstallationExecutor()
+    configuration = _installation_configuration()
+
+    with pytest.raises(ValueError, match="configuration"):
+        executor.apply(
+            approval=_installation_approval(configuration=configuration),
+            plan=_installation_plan(),
+            configuration={**configuration, "base_url": "http://127.0.0.1:9998"},
+            manifest={"plugin_id": "fake-managed"},
+            provider_instance_id="pi-fake-managed",
+        )
+
+
+def test_recorded_provider_installation_executor_rejects_plugin_and_plan_mismatches() -> None:
+    executor = RecordedProviderInstallationExecutor()
+    configuration = _installation_configuration()
+
+    with pytest.raises(ValueError, match="plugin"):
+        executor.apply(
+            approval=_installation_approval(configuration=configuration, plugin_id="fake-managed"),
+            plan=_installation_plan(plugin_id="other-plugin"),
+            configuration=configuration,
+            manifest={"plugin_id": "fake-managed"},
+            provider_instance_id="pi-fake-managed",
+        )
+
+    with pytest.raises(ValueError, match="plan"):
+        executor.apply(
+            approval=_installation_approval(configuration=configuration, plan_id="plan-fake-managed"),
+            plan=_installation_plan(plan_id="other-plan"),
+            configuration=configuration,
+            manifest={"plugin_id": "fake-managed"},
+            provider_instance_id="pi-fake-managed",
+        )
+
+    with pytest.raises(ValueError, match="manifest"):
+        executor.apply(
+            approval=_installation_approval(configuration=configuration, plugin_id="fake-managed"),
+            plan=_installation_plan(plugin_id="fake-managed"),
+            configuration=configuration,
+            manifest={"plugin_id": "other-plugin"},
+            provider_instance_id="pi-fake-managed",
+        )
