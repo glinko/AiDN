@@ -20,6 +20,9 @@ class InMemoryProviderInventoryStore:
     def list_provider_instances(self) -> list[ProviderInstance]:
         return list(self._provider_instances.values())
 
+    def delete_provider_instance(self, provider_instance_id: str) -> None:
+        del self._provider_instances[provider_instance_id]
+
     def save_model_deployment(self, deployment: ModelDeployment) -> None:
         self._model_deployments[deployment.model_deployment_id] = deployment
 

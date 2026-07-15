@@ -17,7 +17,11 @@ def test_store_round_trips_provider_instances() -> None:
     store.save_provider_instance(instance)
 
     assert store.get_provider_instance("pi-1").display_name == "Local Fake"
-    assert len(store.list_provider_instances()) == 1
+    assert store.list_provider_instances() == [instance]
+
+    store.delete_provider_instance("pi-1")
+
+    assert store.list_provider_instances() == []
 
 
 def test_store_round_trips_model_deployments() -> None:
