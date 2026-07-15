@@ -19,6 +19,17 @@ def test_store_round_trips_provider_instances() -> None:
     assert store.get_provider_instance("pi-1").display_name == "Local Fake"
     assert store.list_provider_instances() == [instance]
 
+    updated_instance = instance.model_copy(
+        update={
+            "display_name": "Updated Fake",
+            "configuration": {"base_url": "http://127.0.0.1:9999"},
+        }
+    )
+    store.save_provider_instance(updated_instance)
+
+    assert store.get_provider_instance("pi-1") == updated_instance
+    assert store.list_provider_instances() == [updated_instance]
+
     store.delete_provider_instance("pi-1")
 
     assert store.list_provider_instances() == []
