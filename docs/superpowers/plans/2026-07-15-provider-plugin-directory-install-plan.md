@@ -852,11 +852,13 @@ Expected: exit 0.
 Run on 2026-07-15:
 
 - `python -m pytest tests/providers/test_models.py tests/plugins/test_registry.py tests/providers/test_service.py tests/test_service.py tests/test_api.py tests/test_operator_views.py -q`
-  Result: `1 failed, 357 passed, 1 warning in 128.37s` after an initial tool timeout and rerun. Failure: `tests/test_api.py::test_plugins_endpoint_returns_installed_plugin_descriptions` expects the legacy `/plugins` payload without `CAN_INSTALL_PROVIDER` and rich directory metadata, while the branch returns the richer manifest.
+  Initial result before the final test-contract and hardening fixes: `1 failed, 357 passed, 1 warning`. The failure was `tests/test_api.py::test_plugins_endpoint_returns_installed_plugin_descriptions`, which still expected the legacy `/plugins` payload without `CAN_INSTALL_PROVIDER` and rich directory metadata.
+  Final result after `fix: expect rich provider plugin manifests` and `fix: harden provider install plan previews`: `360 passed, 1 warning in 124.06s`.
 - `python -m pytest -q`
-  Result: `1 failed, 751 passed, 1 warning in 152.92s`. Same failure: `tests/test_api.py::test_plugins_endpoint_returns_installed_plugin_descriptions`.
+  Initial result before the final test-contract and hardening fixes: `1 failed, 751 passed, 1 warning`. Same legacy `/plugins` payload expectation failure.
+  Final result after fixes: `754 passed, 1 warning in 148.53s`.
 - `git diff --check`
-  Result: exit 0; only CRLF working-copy warnings for the two edited docs.
+  Result: exit 0; only CRLF working-copy warnings for edited working-copy files.
 
 - [x] **Step 3: Commit**
 
