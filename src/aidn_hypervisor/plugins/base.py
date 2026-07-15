@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from aidn_hypervisor.providers.models import ProviderPluginManifest
+from aidn_hypervisor.providers.models import InstallationPlan, ProviderPluginManifest
 
 
 class ProviderPlugin(ABC):
@@ -63,13 +63,28 @@ class ProviderPlugin(ABC):
             plugin_capability_flags=description.get("plugin_capability_flags", []),
             required_permissions=description.get("required_permissions", []),
             supported_aidn_capabilities=supported_aidn_capabilities,
+            trust_status=description.get("trust_status", "UNREVIEWED"),
+            source_repository=description.get("source_repository"),
+            license=description.get("license"),
+            supported_platforms=description.get("supported_platforms", []),
+            supported_architectures=description.get("supported_architectures", []),
+            supported_accelerators=description.get("supported_accelerators", []),
+            attach_ui_schema=description.get("attach_ui_schema")
+            or self.attach_provider_schema(),
+            install_ui_schema=description.get("install_ui_schema")
+            or self.install_provider_schema(),
+            model_ui_schema=description.get("model_ui_schema"),
+            endpoint_defaults_schema=description.get("endpoint_defaults_schema"),
+            diagnostics_schema=description.get("diagnostics_schema"),
+            secret_requirements=description.get("secret_requirements", []),
+            installation_recipes=description.get("installation_recipes", []),
         ).model_dump(mode="json")
 
     def attach_provider_schema(self) -> dict:
-        return {"fields": []}
+        return {"schema_id": f"{self.plugin_id}.attach.v1", "fields": []}
 
     def install_provider_schema(self) -> dict:
-        return {"fields": []}
+        return {"schema_id": f"{self.plugin_id}.install.v1", "fields": []}
 
     def validate_provider_configuration(self, configuration: dict) -> None:
         return None
@@ -84,10 +99,13 @@ class ProviderPlugin(ABC):
 
     def build_installation_plan(self, configuration: dict) -> dict:
         self.validate_provider_configuration(configuration)
-        return {
-            "configuration": dict(configuration),
-            "steps": [],
-        }
+        return InstallationPlan(
+            plan_id=f"plan-{self.plugin_id}",
+            plugin_id=self.plugin_id,
+            plan_version="1.0.0",
+            summary=f"Prepare {self.plugin_id}",
+            required_permissions=self.plugin_manifest().get("required_permissions", []),
+        ).model_dump(mode="json")
 
     def discover_models(self, provider_instance: dict) -> list[dict]:
         return []
