@@ -21,10 +21,29 @@ class InMemoryProviderInventoryStore:
         return list(self._provider_instances.values())
 
     def delete_provider_instance(self, provider_instance_id: str) -> None:
+        removed_deployment_ids = {
+            deployment.model_deployment_id
+            for deployment in self._model_deployments.values()
+            if deployment.provider_instance_id == provider_instance_id
+        }
+        self._model_deployments = {
+            deployment_id: deployment
+            for deployment_id, deployment in self._model_deployments.items()
+            if deployment.provider_instance_id != provider_instance_id
+        }
+        self._runtime_bindings = {
+            binding_id: binding
+            for binding_id, binding in self._runtime_bindings.items()
+            if binding.provider_instance_id != provider_instance_id
+            and binding.model_deployment_id not in removed_deployment_ids
+        }
         del self._provider_instances[provider_instance_id]
 
     def save_model_deployment(self, deployment: ModelDeployment) -> None:
         self._model_deployments[deployment.model_deployment_id] = deployment
+
+    def get_model_deployment(self, model_deployment_id: str) -> ModelDeployment:
+        return self._model_deployments[model_deployment_id]
 
     def list_model_deployments(self, provider_instance_id: str | None = None) -> list[ModelDeployment]:
         items = list(self._model_deployments.values())
