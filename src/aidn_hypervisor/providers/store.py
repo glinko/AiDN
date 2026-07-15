@@ -108,10 +108,8 @@ class InMemoryProviderInventoryStore:
 
     def save_installation_approval(
         self, approval: ProviderInstallationApproval
-    ) -> ProviderInstallationApproval:
-        stored = approval.model_copy(deep=True)
-        self._installation_approvals[approval.approval_id] = stored
-        return stored.model_copy(deep=True)
+    ) -> None:
+        self._installation_approvals[approval.approval_id] = approval.model_copy(deep=True)
 
     def get_installation_approval(self, approval_id: str) -> ProviderInstallationApproval:
         return self._installation_approvals[approval_id].model_copy(deep=True)
@@ -119,10 +117,8 @@ class InMemoryProviderInventoryStore:
     def list_installation_approvals(self) -> list[ProviderInstallationApproval]:
         return [item.model_copy(deep=True) for item in self._installation_approvals.values()]
 
-    def save_installation_job(self, job: ProviderInstallationJob) -> ProviderInstallationJob:
-        stored = job.model_copy(deep=True)
-        self._installation_jobs[job.job_id] = stored
-        return stored.model_copy(deep=True)
+    def save_installation_job(self, job: ProviderInstallationJob) -> None:
+        self._installation_jobs[job.job_id] = job.model_copy(deep=True)
 
     def get_installation_job(self, job_id: str) -> ProviderInstallationJob:
         return self._installation_jobs[job_id].model_copy(deep=True)

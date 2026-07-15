@@ -409,7 +409,12 @@ def _installation_approval(
 
 def test_provider_inventory_store_saves_installation_approvals_and_jobs() -> None:
     store = InMemoryProviderInventoryStore()
-    approval = _installation_approval()
+    approval = _installation_approval(
+        configuration={
+            **_installation_configuration(),
+            "runtime": {"endpoint": "local", "retries": 3},
+        }
+    )
     job = ProviderInstallationJob(
         job_id="job-fake-managed",
         approval_id=approval.approval_id,
@@ -419,18 +424,64 @@ def test_provider_inventory_store_saves_installation_approvals_and_jobs() -> Non
         configuration_hash=approval.configuration_hash,
         status="QUEUED",
         executor_id="recorded-declarative-v1",
+        step_results=[
+            {
+                "step_id": "containers",
+                "step_type": "containers",
+                "status": "RECORDED",
+                "summary": "Recorded container declaration",
+                "details": {
+                    "container": {
+                        "name": "fake-provider",
+                        "image": "example/fake-provider:latest",
+                    }
+                },
+            }
+        ],
         created_at="2026-07-15T12:01:00Z",
     )
+    expected_approval = approval.model_copy(deep=True)
+    expected_job = job.model_copy(deep=True)
 
-    saved_approval = store.save_installation_approval(approval)
-    saved_job = store.save_installation_job(job)
+    assert store.save_installation_approval(approval) is None
+    assert store.save_installation_job(job) is None
 
-    assert saved_approval == approval
-    assert store.get_installation_approval(approval.approval_id) == approval
-    assert store.list_installation_approvals() == [approval]
-    assert saved_job == job
-    assert store.get_installation_job(job.job_id) == job
-    assert store.list_installation_jobs() == [job]
+    approval.configuration["runtime"]["endpoint"] = "mutated"
+    approval.approved_permissions.append("host.write")
+    job.step_results[0].details["container"]["image"] = "mutated:latest"
+    job.step_results[0].status = "FAILED"
+
+    assert store.get_installation_approval(expected_approval.approval_id) == expected_approval
+    assert store.list_installation_approvals() == [expected_approval]
+    assert store.get_installation_job(expected_job.job_id) == expected_job
+    assert store.list_installation_jobs() == [expected_job]
+
+    returned_approval = store.get_installation_approval(expected_approval.approval_id)
+    returned_approval.configuration["runtime"]["retries"] = 99
+    returned_approval.approved_permissions.append("container.delete")
+    listed_approval = store.list_installation_approvals()[0]
+    listed_approval.configuration["runtime"]["endpoint"] = "listed-mutated"
+    listed_approval.approved_permissions.clear()
+
+    returned_job = store.get_installation_job(expected_job.job_id)
+    returned_job.step_results[0].details["container"]["name"] = "mutated-provider"
+    returned_job.step_results[0].status = "FAILED"
+    listed_job = store.list_installation_jobs()[0]
+    listed_job.step_results[0].details["container"]["image"] = "listed-mutated:latest"
+    listed_job.step_results[0].status = "SKIPPED"
+
+    assert store.get_installation_approval(expected_approval.approval_id).configuration["runtime"] == {
+        "endpoint": "local",
+        "retries": 3,
+    }
+    assert store.list_installation_approvals()[0].approved_permissions == ["container.manage"]
+    assert store.get_installation_job(expected_job.job_id).step_results[0].details == {
+        "container": {
+            "name": "fake-provider",
+            "image": "example/fake-provider:latest",
+        }
+    }
+    assert store.list_installation_jobs()[0].step_results[0].status == "RECORDED"
 
 
 def test_recorded_provider_installation_executor_records_declarative_plan_without_host_mutation() -> None:
