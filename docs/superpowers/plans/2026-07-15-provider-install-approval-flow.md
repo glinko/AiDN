@@ -1,10 +1,10 @@
-# Provider Install Approval Flow Implementation Plan
+# Provider Install Approval and Apply Flow Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add durable local approval records for provider installation plan previews without applying host changes.
+**Goal:** Add a complete local provider installation lifecycle: preview, approve, apply through a controlled executor, persist job results, and surface the resulting Provider Instance.
 
-**Architecture:** Keep installation plans preview-only and introduce a local `ProviderInstallationApproval` artifact that binds operator approval to the exact plugin, configuration hash, and plan hash. The approval is stored in provider inventory, included in `HypervisorStateSnapshot`, exposed through operator APIs, and surfaced in the Providers workspace as "approved, not applied." No task in this plan executes installer code, starts containers, downloads models, or mutates host resources.
+**Architecture:** Keep provider installation plan generation declarative, require a durable approval before apply, and bind apply to the exact approved plan/configuration hashes. The MVP executor is `RecordedProviderInstallationExecutor`: it records declarative actions and creates local provider inventory state, but it does not run shell, Docker, downloads, package managers, or plugin installer code. Future real host executors can replace the executor interface without changing approval, job, API, persistence, or UI contracts.
 
 **Tech Stack:** Python 3.13, FastAPI, Pydantic v2, pytest, in-memory provider inventory store, static operator dashboard HTML/JS.
 
@@ -12,42 +12,49 @@
 
 ## File Structure
 
-- `src/aidn_hypervisor/providers/models.py`: adds the approval status literal and `ProviderInstallationApproval` Pydantic model.
-- `src/aidn_hypervisor/providers/store.py`: persists approval records in the in-memory provider inventory store.
-- `src/aidn_hypervisor/providers/service.py`: computes canonical hashes, rebuilds/validates installation plans, creates approvals, and lists approvals.
-- `src/aidn_hypervisor/state.py`: includes approval records in durable hypervisor snapshots.
-- `src/aidn_hypervisor/service.py`: adds Hypervisor facade methods and snapshot/restore wiring.
-- `src/aidn_hypervisor/api.py`: adds approval create/list routes and request validation.
-- `src/aidn_hypervisor/operator_views.py`: includes approval summaries in the Providers workspace payload.
-- `src/aidn_hypervisor/static/operator_dashboard.html`: displays approvals as local operator decisions and keeps install action preview-only.
-- `tests/providers/test_models.py`: verifies approval model validation.
-- `tests/providers/test_service.py`: verifies hashing, approval creation, listing, and rejection paths.
-- `tests/test_service.py`: verifies Hypervisor facade and snapshot/restore.
-- `tests/test_api.py`: verifies HTTP routes and dashboard shell copy.
-- `tests/test_operator_views.py`: verifies Providers workspace payload includes approval status.
+- `src/aidn_hypervisor/providers/models.py`: approval, job, step result, and execution result models.
+- `src/aidn_hypervisor/providers/executor.py`: executor Protocol and recorded MVP executor.
+- `src/aidn_hypervisor/providers/store.py`: approval/job persistence in provider inventory.
+- `src/aidn_hypervisor/providers/service.py`: canonical hashing, approval creation, apply orchestration, job transitions, provider instance creation.
+- `src/aidn_hypervisor/state.py`: snapshot fields for approvals and jobs.
+- `src/aidn_hypervisor/service.py`: Hypervisor facade and snapshot/restore wiring.
+- `src/aidn_hypervisor/api.py`: approval/apply/list HTTP routes.
+- `src/aidn_hypervisor/operator_views.py`: Providers workspace approval/job summaries.
+- `src/aidn_hypervisor/static/operator_dashboard.html`: controlled apply UI copy and endpoint usage.
+- `tests/providers/test_models.py`: model validation tests.
+- `tests/providers/test_service.py`: provider inventory approval/apply tests.
+- `tests/test_service.py`: Hypervisor snapshot/restore tests.
+- `tests/test_api.py`: HTTP route and dashboard shell tests.
+- `tests/test_operator_views.py`: provider workspace payload tests.
 
 ## Safety Boundaries
 
-- Do not add any install/apply/execute route.
-- Do not call Docker, shell installers, package managers, GitHub downloaders, or provider-native APIs.
-- Do not persist secret values; persist only acknowledged secret requirement summaries from the manifest.
-- Do not treat approval as a provider instance, model deployment, runtime binding, endpoint publication, Registry object, Ledger operation, or Verification result.
-- Future apply flow must require the same `approval_id` and matching `plan_hash`, but this plan only creates the record and surfaces the binding.
+- This plan adds an `Apply` route, but the MVP executor is non-host-mutating.
+- Do not add shell execution, `subprocess`, Docker calls, package manager calls, Git checkout, model downloads, or plugin installer code execution.
+- Do not persist or pass plaintext secret values.
+- Apply requires an existing approval and exact hash match.
+- Apply result is local operational state, not Ledger, Registry, Verification, Certification, or Reputation evidence.
 
-### Task 1: Approval Model
+### Task 1: Approval and Job Models
 
 **Files:**
 - Modify: `src/aidn_hypervisor/providers/models.py`
 - Test: `tests/providers/test_models.py`
 
-- [ ] **Step 1: Write the failing approval model test**
+- [ ] **Step 1: Write failing model tests**
 
-Append this test to `tests/providers/test_models.py`:
+Append to `tests/providers/test_models.py`:
 
 ```python
+import pytest
 from pydantic import ValidationError
 
-from aidn_hypervisor.providers.models import ProviderInstallationApproval
+from aidn_hypervisor.providers.models import (
+    ProviderInstallationApproval,
+    ProviderInstallationExecutionResult,
+    ProviderInstallationJob,
+    ProviderInstallationStepResult,
+)
 
 
 def test_provider_installation_approval_captures_plan_binding_without_secrets() -> None:
@@ -57,6 +64,7 @@ def test_provider_installation_approval_captures_plan_binding_without_secrets() 
         plan_id="plan-fake-managed-local-fake",
         plan_hash="sha256:" + "a" * 64,
         configuration_hash="sha256:" + "b" * 64,
+        configuration={"display_name": "Local Fake"},
         approved_permissions=["network.private"],
         acknowledged_secret_requirements=[
             {
@@ -71,10 +79,9 @@ def test_provider_installation_approval_captures_plan_binding_without_secrets() 
         created_at="2026-07-15T12:00:00+00:00",
     )
 
-    assert approval.approval_id == "pia-123"
     assert approval.status == "APPROVED"
+    assert approval.configuration == {"display_name": "Local Fake"}
     assert approval.approved_permissions == ["network.private"]
-    assert approval.acknowledged_secret_requirements[0]["secret_type"] == "API_KEY"
     assert "secret_value" not in approval.model_dump(mode="json")
 
 
@@ -89,15 +96,55 @@ def test_provider_installation_approval_rejects_unknown_status() -> None:
             status="INSTALLED",
             created_at="2026-07-15T12:00:00+00:00",
         )
+
+
+def test_provider_installation_job_records_apply_result() -> None:
+    step = ProviderInstallationStepResult(
+        step_id="containers",
+        step_type="containers",
+        status="RECORDED",
+        summary="Recorded 1 container declaration.",
+        details={"count": 1},
+    )
+    job = ProviderInstallationJob(
+        job_id="pij-123",
+        approval_id="pia-123",
+        plugin_id="fake-managed",
+        plan_id="plan-fake-managed-local-fake",
+        plan_hash="sha256:" + "a" * 64,
+        configuration_hash="sha256:" + "b" * 64,
+        status="SUCCEEDED",
+        executor_id="recorded-declarative-v1",
+        step_results=[step],
+        provider_instance_id="pi-pij-123",
+        created_at="2026-07-15T12:00:00+00:00",
+        started_at="2026-07-15T12:00:01+00:00",
+        completed_at="2026-07-15T12:00:02+00:00",
+    )
+
+    assert job.status == "SUCCEEDED"
+    assert job.step_results[0].status == "RECORDED"
+    assert job.provider_instance_id == "pi-pij-123"
+
+
+def test_provider_installation_execution_result_contains_provider_instance_payload() -> None:
+    result = ProviderInstallationExecutionResult(
+        step_results=[],
+        provider_instance={
+            "provider_instance_id": "pi-pij-123",
+            "plugin_id": "fake-managed",
+            "provider_family": "fake",
+            "display_name": "Local Fake",
+            "connection_mode": "managed",
+            "configuration": {"display_name": "Local Fake"},
+            "operational_state": "ready",
+        },
+    )
+
+    assert result.provider_instance["connection_mode"] == "managed"
 ```
 
-If `pytest` is not already imported in this file, add:
-
-```python
-import pytest
-```
-
-- [ ] **Step 2: Run the model tests and confirm failure**
+- [ ] **Step 2: Run model tests and confirm failure**
 
 Run:
 
@@ -105,23 +152,25 @@ Run:
 python -m pytest tests/providers/test_models.py -q
 ```
 
-Expected: fails with `ImportError` or `cannot import name 'ProviderInstallationApproval'`.
+Expected: import failure for new provider installation models.
 
-- [ ] **Step 3: Add the approval model**
+- [ ] **Step 3: Implement models**
 
-In `src/aidn_hypervisor/providers/models.py`, add `Literal` to the typing imports if it is not already present:
+In `src/aidn_hypervisor/providers/models.py`, add `Literal` import if missing:
 
 ```python
 from typing import Literal
 ```
 
-Add this near the other provider status/type declarations:
+Add near existing status declarations:
 
 ```python
 ProviderInstallationApprovalStatus = Literal["APPROVED", "REVOKED"]
+ProviderInstallationJobStatus = Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"]
+ProviderInstallationStepStatus = Literal["RECORDED", "SKIPPED", "FAILED"]
 ```
 
-Add this model after `InstallationPlan` and before `ProviderPluginManifest`:
+Add after `InstallationPlan`:
 
 ```python
 class ProviderInstallationApproval(BaseModel):
@@ -130,6 +179,7 @@ class ProviderInstallationApproval(BaseModel):
     plan_id: str
     plan_hash: str
     configuration_hash: str
+    configuration: dict = Field(default_factory=dict)
     approved_permissions: list[str] = Field(default_factory=list)
     acknowledged_secret_requirements: list[dict] = Field(default_factory=list)
     operator_note: str | None = None
@@ -140,9 +190,50 @@ class ProviderInstallationApproval(BaseModel):
     @classmethod
     def _required_text(cls, value: str) -> str:
         return _require_non_empty(value)
+
+
+class ProviderInstallationStepResult(BaseModel):
+    step_id: str
+    step_type: str
+    status: ProviderInstallationStepStatus
+    summary: str
+    details: dict = Field(default_factory=dict)
+
+    @field_validator("step_id", "step_type", "summary")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ProviderInstallationJob(BaseModel):
+    job_id: str
+    approval_id: str
+    plugin_id: str
+    plan_id: str
+    plan_hash: str
+    configuration_hash: str
+    status: ProviderInstallationJobStatus
+    executor_id: str
+    step_results: list[ProviderInstallationStepResult] = Field(default_factory=list)
+    provider_instance_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+
+    @field_validator("job_id", "approval_id", "plugin_id", "plan_id", "plan_hash", "configuration_hash", "executor_id", "created_at")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ProviderInstallationExecutionResult(BaseModel):
+    step_results: list[ProviderInstallationStepResult] = Field(default_factory=list)
+    provider_instance: dict
 ```
 
-- [ ] **Step 4: Run the model tests and confirm pass**
+- [ ] **Step 4: Run model tests**
 
 Run:
 
@@ -150,7 +241,7 @@ Run:
 python -m pytest tests/providers/test_models.py -q
 ```
 
-Expected: all tests in `tests/providers/test_models.py` pass.
+Expected: pass.
 
 - [ ] **Step 5: Commit**
 
@@ -158,24 +249,191 @@ Run:
 
 ```powershell
 git add src/aidn_hypervisor/providers/models.py tests/providers/test_models.py
-git commit -m "feat: add provider install approval model"
+git commit -m "feat: add provider install lifecycle models"
 ```
 
-### Task 2: Approval Store
+### Task 2: Recorded Executor Boundary
+
+**Files:**
+- Create: `src/aidn_hypervisor/providers/executor.py`
+- Test: `tests/providers/test_service.py`
+
+- [ ] **Step 1: Write failing executor test**
+
+Append to `tests/providers/test_service.py`:
+
+```python
+from aidn_hypervisor.providers.executor import RecordedProviderInstallationExecutor
+from aidn_hypervisor.providers.models import InstallationPlan, ProviderInstallationApproval
+
+
+def test_recorded_provider_installation_executor_records_declarative_plan_without_host_mutation() -> None:
+    executor = RecordedProviderInstallationExecutor()
+    plan = InstallationPlan(
+        plan_id="plan-fake-managed-local-fake",
+        plugin_id="fake-managed",
+        plan_version="1.0.0",
+        summary="Install fake provider",
+        containers=[{"name": "fake-provider"}],
+        health_checks=[{"url": "http://127.0.0.1:9999"}],
+    )
+    approval = ProviderInstallationApproval(
+        approval_id="pia-123",
+        plugin_id="fake-managed",
+        plan_id=plan.plan_id,
+        plan_hash="sha256:" + "a" * 64,
+        configuration_hash="sha256:" + "b" * 64,
+        configuration={"display_name": "Local Fake", "base_url": "http://127.0.0.1:9999"},
+        status="APPROVED",
+        created_at="2026-07-15T12:00:00+00:00",
+    )
+
+    result = executor.apply(
+        approval=approval,
+        plan=plan,
+        configuration=approval.configuration,
+        manifest={
+            "plugin_id": "fake-managed",
+            "display_name": "Fake Managed Provider",
+            "provider_families": ["fake"],
+        },
+        provider_instance_id="pi-pij-123",
+    )
+
+    assert executor.executor_id == "recorded-declarative-v1"
+    assert [step.step_type for step in result.step_results] == ["containers", "health_checks"]
+    assert result.provider_instance["provider_instance_id"] == "pi-pij-123"
+    assert result.provider_instance["connection_mode"] == "managed"
+    assert result.provider_instance["operational_state"] == "ready"
+```
+
+- [ ] **Step 2: Run executor test and confirm failure**
+
+Run:
+
+```powershell
+python -m pytest tests/providers/test_service.py::test_recorded_provider_installation_executor_records_declarative_plan_without_host_mutation -q
+```
+
+Expected: import failure for `aidn_hypervisor.providers.executor`.
+
+- [ ] **Step 3: Implement recorded executor**
+
+Create `src/aidn_hypervisor/providers/executor.py`:
+
+```python
+from typing import Protocol
+
+from aidn_hypervisor.providers.models import (
+    InstallationPlan,
+    ProviderInstallationApproval,
+    ProviderInstallationExecutionResult,
+    ProviderInstallationStepResult,
+)
+
+
+class ProviderInstallationExecutor(Protocol):
+    executor_id: str
+
+    def apply(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+        provider_instance_id: str,
+    ) -> ProviderInstallationExecutionResult:
+        ...
+
+
+class RecordedProviderInstallationExecutor:
+    executor_id = "recorded-declarative-v1"
+
+    def apply(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+        provider_instance_id: str,
+    ) -> ProviderInstallationExecutionResult:
+        step_results = []
+        for step_type in (
+            "containers",
+            "processes",
+            "model_downloads",
+            "volumes",
+            "networks",
+            "environment",
+            "resource_limits",
+            "health_checks",
+        ):
+            value = getattr(plan, step_type)
+            count = len(value) if isinstance(value, list) else len(value.keys())
+            if count == 0:
+                continue
+            step_results.append(
+                ProviderInstallationStepResult(
+                    step_id=step_type,
+                    step_type=step_type,
+                    status="RECORDED",
+                    summary=f"Recorded {count} {step_type} declaration(s).",
+                    details={"count": count},
+                )
+            )
+
+        provider_families = manifest.get("provider_families", [])
+        display_name = configuration.get("display_name") or manifest.get("display_name") or approval.plugin_id
+        return ProviderInstallationExecutionResult(
+            step_results=step_results,
+            provider_instance={
+                "provider_instance_id": provider_instance_id,
+                "plugin_id": approval.plugin_id,
+                "provider_family": provider_families[0] if provider_families else "unknown",
+                "display_name": display_name,
+                "connection_mode": "managed",
+                "configuration": dict(configuration),
+                "operational_state": "ready",
+            },
+        )
+```
+
+- [ ] **Step 4: Run executor test**
+
+Run:
+
+```powershell
+python -m pytest tests/providers/test_service.py::test_recorded_provider_installation_executor_records_declarative_plan_without_host_mutation -q
+```
+
+Expected: pass.
+
+- [ ] **Step 5: Commit**
+
+Run:
+
+```powershell
+git add src/aidn_hypervisor/providers/executor.py tests/providers/test_service.py
+git commit -m "feat: add recorded provider install executor"
+```
+
+### Task 3: Store Approvals and Jobs
 
 **Files:**
 - Modify: `src/aidn_hypervisor/providers/store.py`
 - Test: `tests/providers/test_service.py`
 
-- [ ] **Step 1: Write the failing store test**
+- [ ] **Step 1: Write failing store test**
 
-Append this test to `tests/providers/test_service.py`:
+Append to `tests/providers/test_service.py`:
 
 ```python
-from aidn_hypervisor.providers.models import ProviderInstallationApproval
+from aidn_hypervisor.providers.models import ProviderInstallationJob
 
 
-def test_provider_inventory_store_saves_and_lists_installation_approvals() -> None:
+def test_provider_inventory_store_saves_installation_approvals_and_jobs() -> None:
     store = InMemoryProviderInventoryStore()
     approval = ProviderInstallationApproval(
         approval_id="pia-123",
@@ -183,36 +441,50 @@ def test_provider_inventory_store_saves_and_lists_installation_approvals() -> No
         plan_id="plan-fake-managed-local-fake",
         plan_hash="sha256:" + "a" * 64,
         configuration_hash="sha256:" + "b" * 64,
-        approved_permissions=["network.private"],
-        acknowledged_secret_requirements=[],
+        configuration={"display_name": "Local Fake"},
         status="APPROVED",
+        created_at="2026-07-15T12:00:00+00:00",
+    )
+    job = ProviderInstallationJob(
+        job_id="pij-123",
+        approval_id="pia-123",
+        plugin_id="fake-managed",
+        plan_id="plan-fake-managed-local-fake",
+        plan_hash=approval.plan_hash,
+        configuration_hash=approval.configuration_hash,
+        status="QUEUED",
+        executor_id="recorded-declarative-v1",
         created_at="2026-07-15T12:00:00+00:00",
     )
 
     store.save_installation_approval(approval)
+    store.save_installation_job(job)
 
-    assert store.get_installation_approval("pia-123").plugin_id == "fake-managed"
+    assert store.get_installation_approval("pia-123") == approval
     assert store.list_installation_approvals() == [approval]
+    assert store.get_installation_job("pij-123") == job
+    assert store.list_installation_jobs() == [job]
 ```
 
-- [ ] **Step 2: Run the provider service tests and confirm failure**
+- [ ] **Step 2: Run store test and confirm failure**
 
 Run:
 
 ```powershell
-python -m pytest tests/providers/test_service.py::test_provider_inventory_store_saves_and_lists_installation_approvals -q
+python -m pytest tests/providers/test_service.py::test_provider_inventory_store_saves_installation_approvals_and_jobs -q
 ```
 
-Expected: fails with `AttributeError: 'InMemoryProviderInventoryStore' object has no attribute 'save_installation_approval'`.
+Expected: store methods are missing.
 
 - [ ] **Step 3: Implement store methods**
 
-In `src/aidn_hypervisor/providers/store.py`, update imports:
+Update `src/aidn_hypervisor/providers/store.py` imports:
 
 ```python
 from aidn_hypervisor.providers.models import (
     ModelDeployment,
     ProviderInstallationApproval,
+    ProviderInstallationJob,
     ProviderInstance,
     RuntimeBinding,
 )
@@ -222,14 +494,13 @@ In `InMemoryProviderInventoryStore.__init__`, add:
 
 ```python
 self._installation_approvals: dict[str, ProviderInstallationApproval] = {}
+self._installation_jobs: dict[str, ProviderInstallationJob] = {}
 ```
 
-Add these methods after the runtime binding methods:
+Add methods:
 
 ```python
-def save_installation_approval(
-    self, approval: ProviderInstallationApproval
-) -> ProviderInstallationApproval:
+def save_installation_approval(self, approval: ProviderInstallationApproval) -> ProviderInstallationApproval:
     self._installation_approvals[approval.approval_id] = approval.model_copy(deep=True)
     return approval
 
@@ -237,18 +508,25 @@ def get_installation_approval(self, approval_id: str) -> ProviderInstallationApp
     return self._installation_approvals[approval_id].model_copy(deep=True)
 
 def list_installation_approvals(self) -> list[ProviderInstallationApproval]:
-    return [
-        approval.model_copy(deep=True)
-        for approval in self._installation_approvals.values()
-    ]
+    return [approval.model_copy(deep=True) for approval in self._installation_approvals.values()]
+
+def save_installation_job(self, job: ProviderInstallationJob) -> ProviderInstallationJob:
+    self._installation_jobs[job.job_id] = job.model_copy(deep=True)
+    return job
+
+def get_installation_job(self, job_id: str) -> ProviderInstallationJob:
+    return self._installation_jobs[job_id].model_copy(deep=True)
+
+def list_installation_jobs(self) -> list[ProviderInstallationJob]:
+    return [job.model_copy(deep=True) for job in self._installation_jobs.values()]
 ```
 
-- [ ] **Step 4: Run the focused store test**
+- [ ] **Step 4: Run store test**
 
 Run:
 
 ```powershell
-python -m pytest tests/providers/test_service.py::test_provider_inventory_store_saves_and_lists_installation_approvals -q
+python -m pytest tests/providers/test_service.py::test_provider_inventory_store_saves_installation_approvals_and_jobs -q
 ```
 
 Expected: pass.
@@ -259,101 +537,104 @@ Run:
 
 ```powershell
 git add src/aidn_hypervisor/providers/store.py tests/providers/test_service.py
-git commit -m "feat: persist provider install approvals"
+git commit -m "feat: persist provider install approvals and jobs"
 ```
 
-### Task 3: Provider Inventory Approval Service
+### Task 4: Provider Inventory Approval and Apply Service
 
 **Files:**
 - Modify: `src/aidn_hypervisor/providers/service.py`
 - Test: `tests/providers/test_service.py`
 
-- [ ] **Step 1: Write failing approval service tests**
+- [ ] **Step 1: Write failing service tests**
 
-Append these tests to `tests/providers/test_service.py`:
+Append to `tests/providers/test_service.py`:
 
 ```python
-def test_provider_inventory_approves_installation_plan_with_hash_binding() -> None:
+def test_provider_inventory_approves_and_applies_installation_plan() -> None:
     service = ProviderInventoryService(
         plugins=_registry(),
         store=InMemoryProviderInventoryStore(),
     )
-
     approval = service.approve_installation_plan(
         plugin_id="fake-managed",
-        configuration={
-            "display_name": "Local Fake",
-            "base_url": "http://127.0.0.1:9999",
-        },
-        operator_note="Operator reviewed plan.",
+        configuration={"display_name": "Local Fake", "base_url": "http://127.0.0.1:9999"},
+        operator_note="Reviewed plan.",
     )
 
-    assert approval.approval_id.startswith("pia-")
-    assert approval.plugin_id == "fake-managed"
-    assert approval.plan_id.startswith("plan-")
-    assert approval.plan_hash.startswith("sha256:")
-    assert approval.configuration_hash.startswith("sha256:")
-    assert approval.status == "APPROVED"
-    assert approval.operator_note == "Operator reviewed plan."
-    assert service.store.get_installation_approval(approval.approval_id) == approval
-    assert service.list_installation_approvals() == [approval]
+    job = service.apply_installation_approval(approval_id=approval.approval_id)
+
+    assert job.status == "SUCCEEDED"
+    assert job.approval_id == approval.approval_id
+    assert job.plan_hash == approval.plan_hash
+    assert job.provider_instance_id is not None
+    provider = service.store.get_provider_instance(job.provider_instance_id)
+    assert provider.plugin_id == "fake-managed"
+    assert provider.connection_mode == "managed"
+    assert provider.operational_state == "ready"
+    assert service.list_installation_jobs() == [job]
 
 
-def test_provider_inventory_approval_hashes_are_deterministic_for_same_plan() -> None:
+def test_provider_inventory_apply_rejects_revoked_approval() -> None:
     service = ProviderInventoryService(
         plugins=_registry(),
         store=InMemoryProviderInventoryStore(),
     )
-
-    first = service.approve_installation_plan(
-        plugin_id="fake-managed",
-        configuration={"base_url": "http://127.0.0.1:9999", "display_name": "Local Fake"},
-    )
-    second = service.approve_installation_plan(
+    approval = service.approve_installation_plan(
         plugin_id="fake-managed",
         configuration={"display_name": "Local Fake", "base_url": "http://127.0.0.1:9999"},
     )
+    service.store.save_installation_approval(approval.model_copy(update={"status": "REVOKED"}))
 
-    assert first.approval_id != second.approval_id
-    assert first.plan_hash == second.plan_hash
-    assert first.configuration_hash == second.configuration_hash
+    with pytest.raises(ValueError, match="approval is not active"):
+        service.apply_installation_approval(approval_id=approval.approval_id)
 
 
-def test_provider_inventory_approval_rejects_attach_only_plugin() -> None:
-    class AttachOnlyPlugin(FakeManagedPlugin):
-        plugin_id = "attach-only-approval"
+def test_provider_inventory_apply_rejects_plan_hash_mismatch() -> None:
+    class ChangingPlanPlugin(FakeManagedPlugin):
+        plugin_id = "changing-plan"
+
+        def __init__(self) -> None:
+            self.counter = 0
 
         def describe(self) -> dict:
             description = super().describe()
             description["plugin_id"] = self.plugin_id
-            description["plugin_capability_flags"] = ["CAN_ATTACH_EXISTING"]
             return description
 
+        def build_installation_plan(self, configuration: dict) -> dict:
+            self.counter += 1
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            plan["summary"] = f"Install attempt {self.counter}"
+            return plan
+
     registry = PluginRegistry()
-    registry.register(AttachOnlyPlugin())
+    registry.register(ChangingPlanPlugin())
     service = ProviderInventoryService(
         plugins=registry,
         store=InMemoryProviderInventoryStore(),
     )
+    approval = service.approve_installation_plan(
+        plugin_id="changing-plan",
+        configuration={"display_name": "Local Fake", "base_url": "http://127.0.0.1:9999"},
+    )
 
-    with pytest.raises(ValueError, match="does not support managed installation"):
-        service.approve_installation_plan(
-            plugin_id="attach-only-approval",
-            configuration={"display_name": "Local Fake", "base_url": "http://127.0.0.1:9999"},
-        )
+    with pytest.raises(ValueError, match="approved plan hash does not match"):
+        service.apply_installation_approval(approval_id=approval.approval_id)
 ```
 
-- [ ] **Step 2: Run the approval service tests and confirm failure**
+- [ ] **Step 2: Run service tests and confirm failure**
 
 Run:
 
 ```powershell
-python -m pytest tests/providers/test_service.py::test_provider_inventory_approves_installation_plan_with_hash_binding tests/providers/test_service.py::test_provider_inventory_approval_hashes_are_deterministic_for_same_plan tests/providers/test_service.py::test_provider_inventory_approval_rejects_attach_only_plugin -q
+python -m pytest tests/providers/test_service.py::test_provider_inventory_approves_and_applies_installation_plan tests/providers/test_service.py::test_provider_inventory_apply_rejects_revoked_approval tests/providers/test_service.py::test_provider_inventory_apply_rejects_plan_hash_mismatch -q
 ```
 
-Expected: fails with `AttributeError: 'ProviderInventoryService' object has no attribute 'approve_installation_plan'`.
+Expected: service methods are missing.
 
-- [ ] **Step 3: Add canonical hash helpers and service methods**
+- [ ] **Step 3: Implement service hashing, approval, apply, and job listing**
 
 In `src/aidn_hypervisor/providers/service.py`, add imports:
 
@@ -362,11 +643,23 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from uuid import uuid4
+
+from aidn_hypervisor.providers.executor import (
+    ProviderInstallationExecutor,
+    RecordedProviderInstallationExecutor,
+)
 ```
 
-Add `ProviderInstallationApproval` to the models import.
+Add model imports:
 
-Add these helpers near the top of the file:
+```python
+ProviderInstallationApproval,
+ProviderInstallationJob,
+ProviderPluginManifest,
+ProviderInstance,
+```
+
+Add helpers:
 
 ```python
 def _canonical_hash(value: dict) -> str:
@@ -378,7 +671,22 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 ```
 
-Add these methods to `ProviderInventoryService` after `build_installation_plan`:
+Update `ProviderInventoryService.__init__` to accept an executor:
+
+```python
+def __init__(
+    self,
+    *,
+    plugins: PluginRegistry,
+    store: InMemoryProviderInventoryStore,
+    installation_executor: ProviderInstallationExecutor | None = None,
+) -> None:
+    self.plugins = plugins
+    self.store = store
+    self.installation_executor = installation_executor or RecordedProviderInstallationExecutor()
+```
+
+Add methods after `build_installation_plan`:
 
 ```python
 def approve_installation_plan(
@@ -399,12 +707,10 @@ def approve_installation_plan(
         plan_id=plan.plan_id,
         plan_hash=_canonical_hash(plan.model_dump(mode="json")),
         configuration_hash=_canonical_hash(dict(configuration)),
-        approved_permissions=[
-            permission.permission_id for permission in manifest.required_permissions
-        ],
+        configuration=dict(configuration),
+        approved_permissions=[permission.permission_id for permission in manifest.required_permissions],
         acknowledged_secret_requirements=[
-            requirement.model_dump(mode="json")
-            for requirement in manifest.secret_requirements
+            requirement.model_dump(mode="json") for requirement in manifest.secret_requirements
         ],
         operator_note=operator_note,
         status="APPROVED",
@@ -415,6 +721,77 @@ def approve_installation_plan(
 
 def list_installation_approvals(self) -> list[ProviderInstallationApproval]:
     return self.store.list_installation_approvals()
+
+def apply_installation_approval(self, *, approval_id: str) -> ProviderInstallationJob:
+    approval = self.store.get_installation_approval(approval_id)
+    if approval.status != "APPROVED":
+        raise ValueError("installation approval is not active")
+    plugin = self._get_plugin(approval.plugin_id)
+    manifest = ProviderPluginManifest.model_validate(plugin.plugin_manifest())
+    plan = InstallationPlan.model_validate(
+        self.build_installation_plan(
+            plugin_id=approval.plugin_id,
+            configuration=approval.configuration,
+        )
+    )
+    plan_hash = _canonical_hash(plan.model_dump(mode="json"))
+    configuration_hash = _canonical_hash(dict(approval.configuration))
+    if plan_hash != approval.plan_hash:
+        raise ValueError("approved plan hash does not match current plan")
+    if configuration_hash != approval.configuration_hash:
+        raise ValueError("approved configuration hash does not match current configuration")
+
+    now = _now_iso()
+    job_id = f"pij-{uuid4().hex[:12]}"
+    provider_instance_id = f"pi-{job_id}"
+    job = ProviderInstallationJob(
+        job_id=job_id,
+        approval_id=approval.approval_id,
+        plugin_id=approval.plugin_id,
+        plan_id=approval.plan_id,
+        plan_hash=approval.plan_hash,
+        configuration_hash=approval.configuration_hash,
+        status="QUEUED",
+        executor_id=self.installation_executor.executor_id,
+        created_at=now,
+    )
+    self.store.save_installation_job(job)
+    running = job.model_copy(update={"status": "RUNNING", "started_at": _now_iso()})
+    self.store.save_installation_job(running)
+    try:
+        result = self.installation_executor.apply(
+            approval=approval,
+            plan=plan,
+            configuration=approval.configuration,
+            manifest=manifest.model_dump(mode="json"),
+            provider_instance_id=provider_instance_id,
+        )
+        provider = ProviderInstance.model_validate(result.provider_instance)
+        self.store.save_provider_instance(provider)
+        succeeded = running.model_copy(
+            update={
+                "status": "SUCCEEDED",
+                "step_results": result.step_results,
+                "provider_instance_id": provider.provider_instance_id,
+                "completed_at": _now_iso(),
+            }
+        )
+        self.store.save_installation_job(succeeded)
+        return succeeded
+    except Exception as error:
+        failed = running.model_copy(
+            update={
+                "status": "FAILED",
+                "error_code": error.__class__.__name__,
+                "error_message": str(error),
+                "completed_at": _now_iso(),
+            }
+        )
+        self.store.save_installation_job(failed)
+        return failed
+
+def list_installation_jobs(self) -> list[ProviderInstallationJob]:
+    return self.store.list_installation_jobs()
 ```
 
 - [ ] **Step 4: Run provider service tests**
@@ -425,7 +802,7 @@ Run:
 python -m pytest tests/providers/test_service.py -q
 ```
 
-Expected: all provider service tests pass.
+Expected: pass.
 
 - [ ] **Step 5: Commit**
 
@@ -433,78 +810,68 @@ Run:
 
 ```powershell
 git add src/aidn_hypervisor/providers/service.py tests/providers/test_service.py
-git commit -m "feat: approve provider install plans locally"
+git commit -m "feat: apply approved provider install plans"
 ```
 
-### Task 4: Hypervisor Facade and Snapshot Persistence
+### Task 5: Hypervisor Facade and Snapshot Persistence
 
 **Files:**
 - Modify: `src/aidn_hypervisor/state.py`
 - Modify: `src/aidn_hypervisor/service.py`
 - Test: `tests/test_service.py`
 
-- [ ] **Step 1: Write failing Hypervisor snapshot test**
+- [ ] **Step 1: Write failing snapshot/restore test**
 
-Append this test to `tests/test_service.py`:
+Append to `tests/test_service.py`:
 
 ```python
-def test_provider_installation_approvals_survive_snapshot_restore() -> None:
+def test_provider_installation_approval_and_job_survive_snapshot_restore() -> None:
     service = _service()
     approval = service.approve_provider_installation_plan(
         plugin_id="fake-managed",
-        configuration={
-            "display_name": "Local Fake",
-            "base_url": "http://127.0.0.1:9999",
-        },
-        operator_note="Reviewed before host changes.",
+        configuration={"display_name": "Local Fake", "base_url": "http://127.0.0.1:9999"},
+        operator_note="Reviewed before controlled apply.",
     )
+    job = service.apply_provider_installation_approval(approval["approval_id"])
 
     snapshot = service.snapshot_state()
     restored = _service()
     restored.restore_state(snapshot)
 
-    restored_approvals = restored.list_provider_installation_approvals()
-    assert [item["approval_id"] for item in restored_approvals] == [
-        approval["approval_id"]
-    ]
-    assert restored_approvals[0]["plan_hash"] == approval["plan_hash"]
-    assert restored_approvals[0]["operator_note"] == "Reviewed before host changes."
+    assert restored.list_provider_installation_approvals()[0]["approval_id"] == approval["approval_id"]
+    assert restored.list_provider_installation_jobs()[0]["job_id"] == job["job_id"]
+    assert restored.provider_inventory.store.get_provider_instance(job["provider_instance_id"]).plugin_id == "fake-managed"
 ```
 
-- [ ] **Step 2: Run the focused Hypervisor test and confirm failure**
+- [ ] **Step 2: Run focused test and confirm failure**
 
 Run:
 
 ```powershell
-python -m pytest tests/test_service.py::test_provider_installation_approvals_survive_snapshot_restore -q
+python -m pytest tests/test_service.py::test_provider_installation_approval_and_job_survive_snapshot_restore -q
 ```
 
-Expected: fails because `approve_provider_installation_plan` is missing.
+Expected: Hypervisor facade methods or snapshot fields are missing.
 
-- [ ] **Step 3: Add snapshot model field**
+- [ ] **Step 3: Add snapshot fields**
 
-In `src/aidn_hypervisor/state.py`, update provider imports:
+In `src/aidn_hypervisor/state.py`, import:
 
 ```python
-from aidn_hypervisor.providers.models import (
-    ModelDeployment,
-    ProviderInstallationApproval,
-    ProviderInstance,
-    RuntimeBinding,
-)
+ProviderInstallationApproval,
+ProviderInstallationJob,
 ```
 
-Add this field to `HypervisorStateSnapshot` immediately after `runtime_bindings`:
+Add to `HypervisorStateSnapshot` after `runtime_bindings`:
 
 ```python
-provider_installation_approvals: list[ProviderInstallationApproval] = Field(
-    default_factory=list
-)
+provider_installation_approvals: list[ProviderInstallationApproval] = Field(default_factory=list)
+provider_installation_jobs: list[ProviderInstallationJob] = Field(default_factory=list)
 ```
 
 - [ ] **Step 4: Add Hypervisor facade methods**
 
-In `src/aidn_hypervisor/service.py`, add these methods next to the existing provider inventory facade methods:
+In `src/aidn_hypervisor/service.py`, add near existing provider facade methods:
 
 ```python
 def approve_provider_installation_plan(
@@ -520,37 +887,54 @@ def approve_provider_installation_plan(
         operator_note=operator_note,
     ).model_dump(mode="json")
 
+def apply_provider_installation_approval(self, approval_id: str) -> dict:
+    return self.provider_inventory.apply_installation_approval(
+        approval_id=approval_id
+    ).model_dump(mode="json")
+
 def list_provider_installation_approvals(self) -> list[dict]:
     return [
         approval.model_dump(mode="json")
         for approval in self.provider_inventory.list_installation_approvals()
     ]
+
+def list_provider_installation_jobs(self) -> list[dict]:
+    return [
+        job.model_dump(mode="json")
+        for job in self.provider_inventory.list_installation_jobs()
+    ]
 ```
 
-- [ ] **Step 5: Wire snapshot and restore**
+- [ ] **Step 5: Wire snapshot/restore**
 
-In `HypervisorService.snapshot_state`, add this argument after `runtime_bindings=[...]`:
+In `snapshot_state`, after `runtime_bindings`, add:
 
 ```python
 provider_installation_approvals=[
     approval.model_copy(deep=True)
     for approval in self.provider_inventory.list_installation_approvals()
 ],
+provider_installation_jobs=[
+    job.model_copy(deep=True)
+    for job in self.provider_inventory.list_installation_jobs()
+],
 ```
 
-In `HypervisorService.restore_state`, after restoring runtime bindings, add:
+In `restore_state`, after runtime bindings restore, add:
 
 ```python
 for approval in snapshot.provider_installation_approvals:
     self.provider_inventory.store.save_installation_approval(approval)
+for job in snapshot.provider_installation_jobs:
+    self.provider_inventory.store.save_installation_job(job)
 ```
 
-- [ ] **Step 6: Run the focused Hypervisor test**
+- [ ] **Step 6: Run focused test**
 
 Run:
 
 ```powershell
-python -m pytest tests/test_service.py::test_provider_installation_approvals_survive_snapshot_restore -q
+python -m pytest tests/test_service.py::test_provider_installation_approval_and_job_survive_snapshot_restore -q
 ```
 
 Expected: pass.
@@ -561,10 +945,10 @@ Run:
 
 ```powershell
 git add src/aidn_hypervisor/state.py src/aidn_hypervisor/service.py tests/test_service.py
-git commit -m "feat: snapshot provider install approvals"
+git commit -m "feat: snapshot provider install apply jobs"
 ```
 
-### Task 5: Operator API Routes
+### Task 6: Operator API Routes
 
 **Files:**
 - Modify: `src/aidn_hypervisor/api.py`
@@ -572,94 +956,72 @@ git commit -m "feat: snapshot provider install approvals"
 
 - [ ] **Step 1: Write failing API tests**
 
-Append these tests near the existing provider installation-plan route tests in `tests/test_api.py`:
+Append near existing provider installation-plan route tests in `tests/test_api.py`:
 
 ```python
-def test_provider_plugin_installation_approval_route_creates_local_record() -> None:
+def test_provider_installation_approval_and_apply_routes() -> None:
     client = TestClient(build_app(service=_service()))
 
-    response = client.post(
+    approval_response = client.post(
         "/operators/provider-plugins/fake-managed/installation-approvals",
         json={
-            "configuration": {
-                "display_name": "Local Fake",
-                "base_url": "http://127.0.0.1:9999",
-            },
+            "configuration": {"display_name": "Local Fake", "base_url": "http://127.0.0.1:9999"},
             "operator_note": "Reviewed plan.",
         },
     )
+    assert approval_response.status_code == 200
+    approval = approval_response.json()
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["plugin_id"] == "fake-managed"
-    assert body["status"] == "APPROVED"
-    assert body["operator_note"] == "Reviewed plan."
-    assert body["plan_hash"].startswith("sha256:")
-
-
-def test_provider_installation_approvals_route_lists_local_records() -> None:
-    service = _service()
-    service.approve_provider_installation_plan(
-        plugin_id="fake-managed",
-        configuration={
-            "display_name": "Local Fake",
-            "base_url": "http://127.0.0.1:9999",
-        },
+    apply_response = client.post(
+        f"/operators/provider-installation-approvals/{approval['approval_id']}/apply",
+        json={"operator_note": "Controlled apply."},
     )
-    client = TestClient(build_app(service=service))
+    assert apply_response.status_code == 200
+    job = apply_response.json()
+    assert job["status"] == "SUCCEEDED"
+    assert job["approval_id"] == approval["approval_id"]
+    assert job["executor_id"] == "recorded-declarative-v1"
+    assert job["provider_instance_id"].startswith("pi-pij-")
 
-    response = client.get("/operators/provider-installation-approvals")
-
-    assert response.status_code == 200
-    assert response.json()["items"][0]["plugin_id"] == "fake-managed"
-    assert response.json()["items"][0]["status"] == "APPROVED"
+    jobs_response = client.get("/operators/provider-installation-jobs")
+    assert jobs_response.status_code == 200
+    assert jobs_response.json()["items"][0]["job_id"] == job["job_id"]
 
 
-def test_provider_plugin_installation_approval_route_rejects_invalid_plan() -> None:
-    service = _service()
-    service.plugins.register(BadInstallationPlanPlugin())
-    client = TestClient(build_app(service=service))
+def test_provider_installation_apply_route_rejects_unknown_approval() -> None:
+    client = TestClient(build_app(service=_service()))
 
     response = client.post(
-        "/operators/provider-plugins/bad-plan/installation-approvals",
-        json={
-            "configuration": {
-                "display_name": "Local Fake",
-                "base_url": "http://127.0.0.1:9999",
-            }
-        },
+        "/operators/provider-installation-approvals/pia-missing/apply",
+        json={},
     )
 
-    assert response.status_code == 409
-    assert "declarative-only" in response.json()["detail"]
+    assert response.status_code == 404
 ```
 
-Update the malformed payload test by adding this request:
+Add malformed payload assertion to existing malformed payload route test:
 
 ```python
 approval_extra_field_response = client.post(
     "/operators/provider-plugins/fake-managed/installation-approvals",
-    json={
-        "configuration": {"base_url": "http://127.0.0.1:9999"},
-        "unexpected": True,
-    },
+    json={"configuration": {}, "unexpected": True},
 )
 assert approval_extra_field_response.status_code == 422
 ```
 
-- [ ] **Step 2: Run the API tests and confirm failure**
+- [ ] **Step 2: Run focused API tests and confirm failure**
 
 Run:
 
 ```powershell
-python -m pytest tests/test_api.py::test_provider_plugin_installation_approval_route_creates_local_record tests/test_api.py::test_provider_installation_approvals_route_lists_local_records tests/test_api.py::test_provider_plugin_installation_approval_route_rejects_invalid_plan -q
+python -m pytest tests/test_api.py::test_provider_installation_approval_and_apply_routes tests/test_api.py::test_provider_installation_apply_route_rejects_unknown_approval -q
 ```
 
-Expected: fails with 404 for missing routes.
+Expected: missing routes.
 
-- [ ] **Step 3: Add request model**
+- [ ] **Step 3: Add request models**
 
-In `src/aidn_hypervisor/api.py`, add this model after `BuildProviderInstallationPlanRequest`:
+In `src/aidn_hypervisor/api.py`, add after `BuildProviderInstallationPlanRequest`:
 
 ```python
 class ApproveProviderInstallationPlanRequest(BaseModel):
@@ -667,11 +1029,17 @@ class ApproveProviderInstallationPlanRequest(BaseModel):
 
     configuration: dict = Field(default_factory=dict)
     operator_note: str | None = None
+
+
+class ApplyProviderInstallationApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operator_note: str | None = None
 ```
 
-- [ ] **Step 4: Add approval API routes**
+- [ ] **Step 4: Add routes**
 
-In `src/aidn_hypervisor/api.py`, after the installation-plan route, add:
+After the installation-plan route, add:
 
 ```python
     @router.post("/operators/provider-plugins/{plugin_id}/installation-approvals")
@@ -686,16 +1054,29 @@ In `src/aidn_hypervisor/api.py`, after the installation-plan route, add:
                 operator_note=payload.operator_note,
             )
         except KeyError as error:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Unknown plugin: {error.args[0]}",
-            ) from error
+            raise HTTPException(status_code=404, detail=f"Unknown plugin: {error.args[0]}") from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/operators/provider-installation-approvals")
     async def list_provider_installation_approvals() -> dict:
         return {"items": service.list_provider_installation_approvals()}
+
+    @router.post("/operators/provider-installation-approvals/{approval_id}/apply")
+    async def apply_provider_installation_approval(
+        approval_id: str,
+        payload: ApplyProviderInstallationApprovalRequest,
+    ) -> dict:
+        try:
+            return service.apply_provider_installation_approval(approval_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=f"Unknown approval: {error.args[0]}") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/operators/provider-installation-jobs")
+    async def list_provider_installation_jobs() -> dict:
+        return {"items": service.list_provider_installation_jobs()}
 ```
 
 - [ ] **Step 5: Run focused API tests**
@@ -703,7 +1084,7 @@ In `src/aidn_hypervisor/api.py`, after the installation-plan route, add:
 Run:
 
 ```powershell
-python -m pytest tests/test_api.py::test_provider_plugin_installation_approval_route_creates_local_record tests/test_api.py::test_provider_installation_approvals_route_lists_local_records tests/test_api.py::test_provider_plugin_installation_approval_route_rejects_invalid_plan tests/test_api.py::test_provider_inventory_operator_routes_reject_malformed_payloads -q
+python -m pytest tests/test_api.py::test_provider_installation_approval_and_apply_routes tests/test_api.py::test_provider_installation_apply_route_rejects_unknown_approval tests/test_api.py::test_provider_inventory_operator_routes_reject_malformed_payloads -q
 ```
 
 Expected: pass.
@@ -714,10 +1095,10 @@ Run:
 
 ```powershell
 git add src/aidn_hypervisor/api.py tests/test_api.py
-git commit -m "feat: expose provider install approval routes"
+git commit -m "feat: expose provider install apply routes"
 ```
 
-### Task 6: Operator Workspace Payload and Dashboard Copy
+### Task 7: Operator Workspace UI and Payload
 
 **Files:**
 - Modify: `src/aidn_hypervisor/operator_views.py`
@@ -727,34 +1108,35 @@ git commit -m "feat: expose provider install approval routes"
 
 - [ ] **Step 1: Write failing operator payload test**
 
-Append this test to `tests/test_operator_views.py`:
+Append to `tests/test_operator_views.py`:
 
 ```python
-def test_provider_workspace_payload_includes_installation_approval_summary() -> None:
+def test_provider_workspace_payload_includes_installation_apply_summary() -> None:
     service = _service()
     approval = service.approve_provider_installation_plan(
         plugin_id="fake-managed",
-        configuration={
-            "display_name": "Local Fake",
-            "base_url": "http://127.0.0.1:9999",
-        },
-        operator_note="Reviewed plan.",
+        configuration={"display_name": "Local Fake", "base_url": "http://127.0.0.1:9999"},
     )
+    job = service.apply_provider_installation_approval(approval["approval_id"])
 
     payload = build_operator_providers_payload(service)
 
     assert payload["summary"]["approved_installation_count"] == 1
-    assert payload["installation_approvals"][0]["approval_id"] == approval["approval_id"]
-    assert payload["installation_approvals"][0]["status_label"] == "Approved, not applied"
+    assert payload["summary"]["installation_job_count"] == 1
+    assert payload["installation_approvals"][0]["status_label"] == "Applied with controlled executor"
+    assert payload["installation_jobs"][0]["job_id"] == job["job_id"]
+    assert payload["installation_jobs"][0]["status"] == "SUCCEEDED"
 ```
 
 - [ ] **Step 2: Add failing dashboard shell assertions**
 
-Append these assertions to `test_operator_dashboard_shell_route_exposes_provider_install_controls` in `tests/test_api.py`:
+Append to `test_operator_dashboard_shell_route_exposes_provider_install_controls` in `tests/test_api.py`:
 
 ```python
 assert "/operators/provider-installation-approvals" in response.text
-assert "Approved, not applied" in response.text
+assert "/operators/provider-installation-jobs" in response.text
+assert "Apply approved plan" in response.text
+assert "controlled executor" in response.text
 ```
 
 - [ ] **Step 3: Run focused operator tests and confirm failure**
@@ -762,69 +1144,68 @@ assert "Approved, not applied" in response.text
 Run:
 
 ```powershell
-python -m pytest tests/test_operator_views.py::test_provider_workspace_payload_includes_installation_approval_summary tests/test_api.py::test_operator_dashboard_shell_route_exposes_provider_install_controls -q
+python -m pytest tests/test_operator_views.py::test_provider_workspace_payload_includes_installation_apply_summary tests/test_api.py::test_operator_dashboard_shell_route_exposes_provider_install_controls -q
 ```
 
-Expected: fails because payload and dashboard do not include approval data/copy.
+Expected: missing payload keys/copy.
 
-- [ ] **Step 4: Add approval data to provider workspace payload**
+- [ ] **Step 4: Add operator payload data**
 
-In `src/aidn_hypervisor/operator_views.py`, inside `build_operator_providers_payload`, collect approvals:
+In `src/aidn_hypervisor/operator_views.py`, inside `build_operator_providers_payload`, collect jobs and approvals:
 
 ```python
-installation_approvals = [
-    {
-        **approval,
-        "status_label": "Approved, not applied"
-        if approval["status"] == "APPROVED"
-        else approval["status"].title(),
-    }
-    for approval in service.list_provider_installation_approvals()
-]
+installation_jobs = service.list_provider_installation_jobs()
+applied_approval_ids = {
+    job["approval_id"] for job in installation_jobs if job["status"] == "SUCCEEDED"
+}
+installation_approvals = []
+for approval in service.list_provider_installation_approvals():
+    status_label = (
+        "Applied with controlled executor"
+        if approval["approval_id"] in applied_approval_ids
+        else "Approved, ready to apply"
+    )
+    installation_approvals.append({**approval, "status_label": status_label})
 ```
 
-Add this to the returned `summary`:
+Add to returned `summary`:
 
 ```python
 "approved_installation_count": sum(
     1 for approval in installation_approvals if approval["status"] == "APPROVED"
 ),
+"installation_job_count": len(installation_jobs),
 ```
 
-Add this top-level return key:
+Add top-level keys:
 
 ```python
 "installation_approvals": installation_approvals,
+"installation_jobs": installation_jobs,
 ```
 
-- [ ] **Step 5: Add dashboard approval copy without adding apply controls**
+- [ ] **Step 5: Add dashboard controlled apply copy**
 
-In `src/aidn_hypervisor/static/operator_dashboard.html`, add the approval list fetch endpoint to the Providers workspace JavaScript where other provider endpoints are referenced:
+In `src/aidn_hypervisor/static/operator_dashboard.html`, add endpoint references/copy in Providers workspace:
+
+```html
+<p class="muted">Apply approved plan uses the controlled executor in this MVP. It records declarative actions and creates local provider inventory state; it does not run shell, Docker, downloads, or plugin installer code.</p>
+<button type="button">Apply approved plan</button>
+```
+
+Ensure the dashboard source includes these route strings:
 
 ```javascript
 const providerInstallationApprovalsUrl = "/operators/provider-installation-approvals";
+const providerInstallationJobsUrl = "/operators/provider-installation-jobs";
 ```
-
-Add visible copy in the provider install section:
-
-```html
-<p class="muted">Approved, not applied: approval records bind an operator decision to an exact plan hash. This MVP still does not execute provider installation plans.</p>
-```
-
-If the dashboard renders provider payload summaries, add:
-
-```html
-<span x-text="providersPayload.summary?.approved_installation_count || 0"></span>
-```
-
-Do not add an `Apply`, `Install now`, `Run installer`, or equivalent button.
 
 - [ ] **Step 6: Run focused operator tests**
 
 Run:
 
 ```powershell
-python -m pytest tests/test_operator_views.py::test_provider_workspace_payload_includes_installation_approval_summary tests/test_api.py::test_operator_dashboard_shell_route_exposes_provider_install_controls -q
+python -m pytest tests/test_operator_views.py::test_provider_workspace_payload_includes_installation_apply_summary tests/test_api.py::test_operator_dashboard_shell_route_exposes_provider_install_controls -q
 ```
 
 Expected: pass.
@@ -835,14 +1216,13 @@ Run:
 
 ```powershell
 git add src/aidn_hypervisor/operator_views.py src/aidn_hypervisor/static/operator_dashboard.html tests/test_operator_views.py tests/test_api.py
-git commit -m "feat: show provider install approvals in operator workspace"
+git commit -m "feat: show provider install apply state"
 ```
 
-### Task 7: Verification, Roadmap Note, and Final Commit
+### Task 8: Verification
 
 **Files:**
-- Modify: `docs/superpowers/plans/2026-07-15-provider-install-approval-flow.md` only if execution notes need checked boxes.
-- Modify: `docs/superpowers/plans/2026-07-15-provider-plugin-directory-install-plan.md` if it has a next-slice/status section.
+- Modify: no source files unless verification exposes an issue.
 
 - [ ] **Step 1: Run focused provider/operator suite**
 
@@ -854,7 +1234,7 @@ python -m pytest tests/providers/test_models.py tests/providers/test_service.py 
 
 Expected: pass.
 
-- [ ] **Step 2: Run full test suite**
+- [ ] **Step 2: Run full suite**
 
 Run:
 
@@ -862,44 +1242,33 @@ Run:
 python -m pytest -q
 ```
 
-Expected: pass. If the full suite has pre-existing unrelated failures, capture the exact failing tests and still keep the focused suite green.
+Expected: pass. If there are pre-existing unrelated failures, capture exact failing tests and keep the focused suite green.
 
-- [ ] **Step 3: Verify no install/apply surface was introduced**
+- [ ] **Step 3: Verify no host mutation execution was added**
 
 Run:
 
 ```powershell
-rg -n "apply|run installer|Install now|docker|subprocess|Start-Process|pip install|git clone" src/aidn_hypervisor tests docs/superpowers/plans/2026-07-15-provider-install-approval-flow.md
+rg -n "subprocess|Start-Process|docker|podman|pip install|git clone|Invoke-WebRequest|curl|Remove-Item|Move-Item" src/aidn_hypervisor/providers src/aidn_hypervisor/api.py src/aidn_hypervisor/service.py tests/providers
 ```
 
-Expected: any matches are either existing unrelated code, documentation saying no apply/install execution exists, or test names. There must be no new route or function that executes an installation plan.
+Expected: no new host-mutation execution paths in provider install code.
 
-- [ ] **Step 4: Inspect git diff**
+- [ ] **Step 4: Inspect diff**
 
 Run:
 
 ```powershell
 git status --short
 git diff --stat
-git diff -- src/aidn_hypervisor/providers src/aidn_hypervisor/state.py src/aidn_hypervisor/service.py src/aidn_hypervisor/api.py src/aidn_hypervisor/operator_views.py src/aidn_hypervisor/static/operator_dashboard.html
+git log --oneline -8
 ```
 
-Expected: changes are limited to approval model/store/service/API/payload/UI/tests/docs.
-
-- [ ] **Step 5: Commit any final documentation/test updates**
-
-If there are uncommitted verification or roadmap note changes, run:
-
-```powershell
-git add docs/superpowers/plans tests src
-git commit -m "docs: record provider install approval verification"
-```
-
-If there are no changes, do not create an empty commit.
+Expected: only provider install lifecycle code, tests, docs, and dashboard copy changed.
 
 ## Self-Review
 
-- Spec coverage: approval model, hash binding, local persistence, snapshot/restore, API, operator visibility, and no-apply safety boundary are each covered by tasks.
+- Spec coverage: preview, approval, apply, job persistence, executor boundary, provider instance creation, API, UI, and snapshot/restore are covered.
 - Placeholder scan: no unresolved placeholder instructions remain.
-- Type consistency: `ProviderInstallationApproval`, `approve_installation_plan`, `list_installation_approvals`, `approve_provider_installation_plan`, and `list_provider_installation_approvals` names are consistent across model/store/service/Hypervisor/API/operator tests.
-- Security check: plan intentionally persists only permission IDs and secret requirement metadata, not secret values; the UI copy explicitly says approved plans are not applied.
+- Type consistency: `ProviderInstallationApproval`, `ProviderInstallationJob`, `ProviderInstallationStepResult`, `ProviderInstallationExecutionResult`, `RecordedProviderInstallationExecutor`, `approve_installation_plan`, and `apply_installation_approval` are used consistently.
+- Security check: the plan introduces an apply route but keeps execution non-host-mutating; real shell/container/download adapters are explicitly excluded.
