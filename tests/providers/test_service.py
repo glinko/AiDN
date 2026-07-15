@@ -22,6 +22,41 @@ def test_fake_plugin_exposes_attach_schema_and_discovers_models() -> None:
     assert models[0]["operational_state"] == "ready"
 
 
+def test_fake_plugin_discovery_uses_provider_specific_model_deployment_ids() -> None:
+    plugin = FakeManagedPlugin()
+
+    first_models = plugin.discover_models(
+        {
+            "provider_instance_id": "pi-fake-a",
+            "display_name": "Local Fake A",
+            "configuration": {"base_url": "http://127.0.0.1:9999"},
+        }
+    )
+    second_models = plugin.discover_models(
+        {
+            "provider_instance_id": "pi-fake-b",
+            "display_name": "Local Fake B",
+            "configuration": {"base_url": "http://127.0.0.1:9998"},
+        }
+    )
+
+    assert first_models[0]["model_deployment_id"] != second_models[0]["model_deployment_id"]
+    assert first_models[0]["provider_instance_id"] == "pi-fake-a"
+    assert second_models[0]["provider_instance_id"] == "pi-fake-b"
+
+
+def test_base_plugin_attach_existing_provider_passes_configuration_through() -> None:
+    plugin = FakeManagedPlugin()
+
+    attached = plugin.attach_existing_provider({"base_url": "http://127.0.0.1:9999"})
+
+    assert attached == {
+        "configuration": {"base_url": "http://127.0.0.1:9999"},
+        "connection_mode": "attached",
+        "operational_state": "ready",
+    }
+
+
 def test_fake_plugin_creates_runtime_binding_projection() -> None:
     plugin = FakeManagedPlugin()
 

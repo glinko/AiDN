@@ -75,10 +75,11 @@ class FakeManagedPlugin(ProviderPlugin):
             raise ValueError("base_url is required")
 
     def discover_models(self, provider_instance: dict) -> list[dict]:
+        provider_instance_id = provider_instance["provider_instance_id"]
         return [
             {
-                "model_deployment_id": "md-fake-model",
-                "provider_instance_id": provider_instance["provider_instance_id"],
+                "model_deployment_id": f"md-{provider_instance_id}-fake-model",
+                "provider_instance_id": provider_instance_id,
                 "provider_model_reference": "fake-model",
                 "operator_display_name": "Fake Model",
                 "declared_model_name": "Fake Model",

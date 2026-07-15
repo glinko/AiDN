@@ -43,9 +43,10 @@ class ProviderPlugin(ABC):
 
     def plugin_manifest(self) -> dict:
         description = self.describe()
-        supported_aidn_capabilities = description.get(
-            "supported_aidn_capabilities"
-        ) or description.get("workload_types", [])
+        if "supported_aidn_capabilities" in description:
+            supported_aidn_capabilities = description["supported_aidn_capabilities"]
+        else:
+            supported_aidn_capabilities = description.get("workload_types", [])
         return ProviderPluginManifest(
             plugin_id=description["plugin_id"],
             plugin_version=description.get("plugin_version", "0.1.0"),

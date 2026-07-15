@@ -32,6 +32,18 @@ class _DescribeOnlyPlugin(ProviderPlugin):
         return None
 
 
+class _ExplicitEmptyCapabilitiesPlugin(_DescribeOnlyPlugin):
+    plugin_id = "explicit-empty"
+
+    def describe(self) -> dict:
+        return {
+            "plugin_id": self.plugin_id,
+            "provider_type": "explicit-empty-provider",
+            "supported_aidn_capabilities": [],
+            "workload_types": ["llm.chat"],
+        }
+
+
 def test_registry_returns_registered_plugin() -> None:
     registry = PluginRegistry()
     plugin = FakeManagedPlugin()
@@ -67,3 +79,13 @@ def test_registry_manifest_falls_back_to_describe_workload_types() -> None:
         "llm.chat",
         "speech.stt",
     ]
+
+
+def test_registry_manifest_preserves_explicit_empty_supported_capabilities() -> None:
+    registry = PluginRegistry()
+    registry.register(_ExplicitEmptyCapabilitiesPlugin())
+
+    manifests = registry.list_manifests()
+
+    assert manifests[0]["plugin_id"] == "explicit-empty"
+    assert manifests[0]["supported_aidn_capabilities"] == []
