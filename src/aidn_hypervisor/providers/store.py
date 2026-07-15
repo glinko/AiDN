@@ -15,13 +15,13 @@ class InMemoryProviderInventoryStore:
         current = self._provider_instances.get(instance.provider_instance_id)
         if current is not None and current.plugin_id != instance.plugin_id:
             raise ValueError("plugin_id is immutable once provider_instance_id exists")
-        self._provider_instances[instance.provider_instance_id] = instance
+        self._provider_instances[instance.provider_instance_id] = instance.model_copy(deep=True)
 
     def get_provider_instance(self, provider_instance_id: str) -> ProviderInstance:
-        return self._provider_instances[provider_instance_id]
+        return self._provider_instances[provider_instance_id].model_copy(deep=True)
 
     def list_provider_instances(self) -> list[ProviderInstance]:
-        return list(self._provider_instances.values())
+        return [item.model_copy(deep=True) for item in self._provider_instances.values()]
 
     def delete_provider_instance(self, provider_instance_id: str) -> None:
         removed_deployment_ids = {
@@ -48,16 +48,20 @@ class InMemoryProviderInventoryStore:
         current = self._model_deployments.get(deployment.model_deployment_id)
         if current is not None and current.provider_instance_id != deployment.provider_instance_id:
             raise ValueError("provider_instance_id is immutable once model_deployment_id exists")
-        self._model_deployments[deployment.model_deployment_id] = deployment
+        self._model_deployments[deployment.model_deployment_id] = deployment.model_copy(deep=True)
 
     def get_model_deployment(self, model_deployment_id: str) -> ModelDeployment:
-        return self._model_deployments[model_deployment_id]
+        return self._model_deployments[model_deployment_id].model_copy(deep=True)
 
     def list_model_deployments(self, provider_instance_id: str | None = None) -> list[ModelDeployment]:
         items = list(self._model_deployments.values())
         if provider_instance_id is None:
-            return items
-        return [item for item in items if item.provider_instance_id == provider_instance_id]
+            return [item.model_copy(deep=True) for item in items]
+        return [
+            item.model_copy(deep=True)
+            for item in items
+            if item.provider_instance_id == provider_instance_id
+        ]
 
     def delete_model_deployment(self, model_deployment_id: str) -> None:
         del self._model_deployments[model_deployment_id]
@@ -87,13 +91,13 @@ class InMemoryProviderInventoryStore:
             )
         if binding.plugin_id != provider_instance.plugin_id:
             raise ValueError("plugin_id must match the owning provider instance plugin_id")
-        self._runtime_bindings[binding.runtime_binding_id] = binding
+        self._runtime_bindings[binding.runtime_binding_id] = binding.model_copy(deep=True)
 
     def get_runtime_binding(self, runtime_binding_id: str) -> RuntimeBinding:
-        return self._runtime_bindings[runtime_binding_id]
+        return self._runtime_bindings[runtime_binding_id].model_copy(deep=True)
 
     def list_runtime_bindings(self) -> list[RuntimeBinding]:
-        return list(self._runtime_bindings.values())
+        return [item.model_copy(deep=True) for item in self._runtime_bindings.values()]
 
     def delete_runtime_binding(self, runtime_binding_id: str) -> None:
         del self._runtime_bindings[runtime_binding_id]

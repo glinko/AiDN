@@ -48,6 +48,29 @@ def test_store_round_trips_provider_instances() -> None:
     assert store.list_provider_instances() == []
 
 
+def test_store_returns_defensive_provider_instance_copies() -> None:
+    store = InMemoryProviderInventoryStore()
+    instance = _provider_instance("pi-1")
+
+    store.save_provider_instance(instance)
+    instance.plugin_id = "aidn.provider.other"
+    instance.configuration["base_url"] = "http://127.0.0.1:9999"
+
+    stored = store.get_provider_instance("pi-1")
+    assert stored.plugin_id == "aidn.provider.fake"
+    assert stored.configuration["base_url"] == "http://127.0.0.1:1234"
+
+    stored.plugin_id = "aidn.provider.third"
+    stored.configuration["base_url"] = "http://127.0.0.1:8888"
+    listed = store.list_provider_instances()
+    listed[0].plugin_id = "aidn.provider.fourth"
+    listed[0].configuration["base_url"] = "http://127.0.0.1:7777"
+
+    reread = store.get_provider_instance("pi-1")
+    assert reread.plugin_id == "aidn.provider.fake"
+    assert reread.configuration["base_url"] == "http://127.0.0.1:1234"
+
+
 def test_store_round_trips_model_deployments() -> None:
     store = InMemoryProviderInventoryStore()
     store.save_provider_instance(_provider_instance("pi-1"))
@@ -87,6 +110,56 @@ def test_store_round_trips_model_deployments() -> None:
         updated_first,
     ]
     assert store.get_model_deployment("md-1") == updated_first
+
+
+def test_store_returns_defensive_model_and_binding_copies() -> None:
+    store = InMemoryProviderInventoryStore()
+    store.save_provider_instance(_provider_instance("pi-1"))
+    deployment = ModelDeployment(
+        model_deployment_id="md-1",
+        provider_instance_id="pi-1",
+        provider_model_reference="qwen3:14b",
+        operator_display_name="Qwen 14B",
+        metadata_sources={"context_limit": "PROVIDER_REPORTED"},
+        operational_state="ready",
+    )
+    binding = RuntimeBinding(
+        runtime_binding_id="rb-1",
+        provider_instance_id="pi-1",
+        model_deployment_id="md-1",
+        capability_id="cap.primary",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+        plugin_id="aidn.provider.fake",
+        compatibility_bundle_id="bundle-rb-1",
+        status="ready",
+    )
+
+    store.save_model_deployment(deployment)
+    store.save_runtime_binding(binding)
+    deployment.provider_instance_id = "pi-2"
+    deployment.metadata_sources["context_limit"] = "TAMPERED"
+    binding.plugin_id = "aidn.provider.other"
+
+    stored_deployment = store.get_model_deployment("md-1")
+    stored_binding = store.get_runtime_binding("rb-1")
+    assert stored_deployment.provider_instance_id == "pi-1"
+    assert stored_deployment.metadata_sources["context_limit"] == "PROVIDER_REPORTED"
+    assert stored_binding.plugin_id == "aidn.provider.fake"
+
+    stored_deployment.provider_instance_id = "pi-3"
+    stored_deployment.metadata_sources["context_limit"] = "MUTATED"
+    stored_binding.plugin_id = "aidn.provider.third"
+    listed_deployment = store.list_model_deployments()[0]
+    listed_binding = store.list_runtime_bindings()[0]
+    listed_deployment.metadata_sources["context_limit"] = "LIST_MUTATED"
+    listed_binding.plugin_id = "aidn.provider.fourth"
+
+    reread_deployment = store.get_model_deployment("md-1")
+    reread_binding = store.get_runtime_binding("rb-1")
+    assert reread_deployment.provider_instance_id == "pi-1"
+    assert reread_deployment.metadata_sources["context_limit"] == "PROVIDER_REPORTED"
+    assert reread_binding.plugin_id == "aidn.provider.fake"
 
 
 def test_store_round_trips_runtime_bindings() -> None:
