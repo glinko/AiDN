@@ -83,6 +83,13 @@ class InMemoryProviderInventoryStore:
         }
 
     def save_runtime_binding(self, binding: RuntimeBinding) -> None:
+        current = self._runtime_bindings.get(binding.runtime_binding_id)
+        if current is not None and (
+            current.provider_instance_id != binding.provider_instance_id
+            or current.model_deployment_id != binding.model_deployment_id
+            or current.plugin_id != binding.plugin_id
+        ):
+            raise ValueError("runtime binding ownership fields are immutable; delete and recreate instead")
         if binding.provider_instance_id not in self._provider_instances:
             raise ValueError("provider_instance_id must reference an existing provider instance")
         provider_instance = self._provider_instances[binding.provider_instance_id]

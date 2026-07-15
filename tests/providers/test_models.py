@@ -47,11 +47,44 @@ def test_provider_plugin_manifest_rejects_blank_package_digest() -> None:
         raise AssertionError("expected ValidationError")
 
 
+def test_provider_plugin_manifest_rejects_blank_required_strings() -> None:
+    for field_name in [
+        "plugin_id",
+        "plugin_version",
+        "display_name",
+        "publisher",
+        "package_digest",
+    ]:
+        payload = {
+            "plugin_id": "aidn.provider.fake",
+            "plugin_version": "0.1.0",
+            "display_name": "Fake Provider",
+            "publisher": "AiDN Test",
+            "package_digest": "sha256:abc123",
+            "provider_families": ["fake"],
+            "plugin_capability_flags": ["CAN_ATTACH_EXISTING"],
+            "required_permissions": [],
+            "supported_aidn_capabilities": ["llm.chat"],
+        }
+        payload[field_name] = "   "
+        try:
+            ProviderPluginManifest(**payload)
+        except ValidationError as exc:
+            assert field_name in str(exc)
+        else:
+            raise AssertionError("expected ValidationError")
+
+
 def test_runtime_binding_requires_primary_capability() -> None:
     for field_name, override in {
+        "runtime_binding_id": "   ",
+        "provider_instance_id": "",
+        "model_deployment_id": "   ",
         "capability_id": "",
         "capability_version": "   ",
         "capability_definition_hash": "",
+        "plugin_id": "",
+        "compatibility_bundle_id": "   ",
     }.items():
         payload = {
             "runtime_binding_id": "rb-1",

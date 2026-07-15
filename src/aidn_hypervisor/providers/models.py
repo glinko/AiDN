@@ -9,6 +9,12 @@ ModelOperationalState = Literal["discovered", "installing", "ready", "error", "r
 RuntimeBindingStatus = Literal["draft", "ready", "degraded", "disabled"]
 
 
+def _require_non_empty(value: str) -> str:
+    if not value or not value.strip():
+        raise ValueError("value must be non-empty")
+    return value
+
+
 class ProviderPluginManifest(BaseModel):
     plugin_id: str
     plugin_version: str
@@ -20,12 +26,10 @@ class ProviderPluginManifest(BaseModel):
     required_permissions: list[str] = Field(default_factory=list)
     supported_aidn_capabilities: list[str] = Field(default_factory=list)
 
-    @field_validator("package_digest")
+    @field_validator("plugin_id", "plugin_version", "display_name", "publisher", "package_digest")
     @classmethod
-    def _package_digest_not_blank(cls, value: str) -> str:
-        if not value or not value.strip():
-            raise ValueError("package_digest must be non-empty")
-        return value
+    def _required_strings_not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
 
 
 class ProviderInstance(BaseModel):
@@ -60,9 +64,16 @@ class RuntimeBinding(BaseModel):
     compatibility_bundle_id: str
     status: RuntimeBindingStatus
 
-    @field_validator("capability_id", "capability_version", "capability_definition_hash")
+    @field_validator(
+        "runtime_binding_id",
+        "provider_instance_id",
+        "model_deployment_id",
+        "capability_id",
+        "capability_version",
+        "capability_definition_hash",
+        "plugin_id",
+        "compatibility_bundle_id",
+    )
     @classmethod
     def _not_blank(cls, value: str) -> str:
-        if not value or not value.strip():
-            raise ValueError("value must be non-empty")
-        return value
+        return _require_non_empty(value)

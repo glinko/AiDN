@@ -123,6 +123,128 @@ def test_store_round_trips_runtime_bindings() -> None:
     assert store.list_runtime_bindings() == [updated_binding]
 
 
+def test_store_rejects_runtime_binding_provider_change_on_replace() -> None:
+    store = InMemoryProviderInventoryStore()
+    store.save_provider_instance(_provider_instance("pi-1"))
+    store.save_provider_instance(_provider_instance("pi-2", display_name="Other Fake"))
+    store.save_model_deployment(
+        ModelDeployment(
+            model_deployment_id="md-1",
+            provider_instance_id="pi-1",
+            provider_model_reference="qwen3:14b",
+            operator_display_name="Qwen 14B",
+            operational_state="ready",
+        )
+    )
+    store.save_model_deployment(
+        ModelDeployment(
+            model_deployment_id="md-2",
+            provider_instance_id="pi-2",
+            provider_model_reference="llama3:8b",
+            operator_display_name="Llama 8B",
+            operational_state="ready",
+        )
+    )
+    binding = RuntimeBinding(
+        runtime_binding_id="rb-1",
+        provider_instance_id="pi-1",
+        model_deployment_id="md-1",
+        capability_id="cap.primary",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+        plugin_id="aidn.provider.fake",
+        compatibility_bundle_id="bundle-rb-1",
+        status="ready",
+    )
+
+    store.save_runtime_binding(binding)
+
+    with pytest.raises(ValueError, match="immutable"):
+        store.save_runtime_binding(
+            binding.model_copy(
+                update={
+                    "provider_instance_id": "pi-2",
+                    "model_deployment_id": "md-2",
+                }
+            )
+        )
+
+    assert store.get_runtime_binding("rb-1") == binding
+
+
+def test_store_rejects_runtime_binding_model_change_on_replace() -> None:
+    store = InMemoryProviderInventoryStore()
+    store.save_provider_instance(_provider_instance("pi-1"))
+    store.save_model_deployment(
+        ModelDeployment(
+            model_deployment_id="md-1",
+            provider_instance_id="pi-1",
+            provider_model_reference="qwen3:14b",
+            operator_display_name="Qwen 14B",
+            operational_state="ready",
+        )
+    )
+    store.save_model_deployment(
+        ModelDeployment(
+            model_deployment_id="md-2",
+            provider_instance_id="pi-1",
+            provider_model_reference="llama3:8b",
+            operator_display_name="Llama 8B",
+            operational_state="ready",
+        )
+    )
+    binding = RuntimeBinding(
+        runtime_binding_id="rb-1",
+        provider_instance_id="pi-1",
+        model_deployment_id="md-1",
+        capability_id="cap.primary",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+        plugin_id="aidn.provider.fake",
+        compatibility_bundle_id="bundle-rb-1",
+        status="ready",
+    )
+
+    store.save_runtime_binding(binding)
+
+    with pytest.raises(ValueError, match="immutable"):
+        store.save_runtime_binding(binding.model_copy(update={"model_deployment_id": "md-2"}))
+
+    assert store.get_runtime_binding("rb-1") == binding
+
+
+def test_store_rejects_runtime_binding_plugin_change_on_replace() -> None:
+    store = InMemoryProviderInventoryStore()
+    store.save_provider_instance(_provider_instance("pi-1"))
+    store.save_model_deployment(
+        ModelDeployment(
+            model_deployment_id="md-1",
+            provider_instance_id="pi-1",
+            provider_model_reference="qwen3:14b",
+            operator_display_name="Qwen 14B",
+            operational_state="ready",
+        )
+    )
+    binding = RuntimeBinding(
+        runtime_binding_id="rb-1",
+        provider_instance_id="pi-1",
+        model_deployment_id="md-1",
+        capability_id="cap.primary",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+        plugin_id="aidn.provider.fake",
+        compatibility_bundle_id="bundle-rb-1",
+        status="ready",
+    )
+
+    store.save_runtime_binding(binding)
+
+    with pytest.raises(ValueError, match="immutable"):
+        store.save_runtime_binding(binding.model_copy(update={"plugin_id": "aidn.provider.other"}))
+
+    assert store.get_runtime_binding("rb-1") == binding
+
+
 def test_store_rejects_provider_plugin_change_when_dependents_exist() -> None:
     store = InMemoryProviderInventoryStore()
     provider_instance = _provider_instance("pi-1")
