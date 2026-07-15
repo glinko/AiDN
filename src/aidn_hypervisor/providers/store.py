@@ -12,6 +12,17 @@ class InMemoryProviderInventoryStore:
         self._runtime_bindings: dict[str, RuntimeBinding] = {}
 
     def save_provider_instance(self, instance: ProviderInstance) -> None:
+        current = self._provider_instances.get(instance.provider_instance_id)
+        if current is not None and current.plugin_id != instance.plugin_id:
+            has_dependents = any(
+                deployment.provider_instance_id == instance.provider_instance_id
+                for deployment in self._model_deployments.values()
+            ) or any(
+                binding.provider_instance_id == instance.provider_instance_id
+                for binding in self._runtime_bindings.values()
+            )
+            if has_dependents:
+                raise ValueError("plugin_id cannot change while dependent records exist")
         self._provider_instances[instance.provider_instance_id] = instance
 
     def get_provider_instance(self, provider_instance_id: str) -> ProviderInstance:
@@ -42,6 +53,16 @@ class InMemoryProviderInventoryStore:
     def save_model_deployment(self, deployment: ModelDeployment) -> None:
         if deployment.provider_instance_id not in self._provider_instances:
             raise ValueError("provider_instance_id must reference an existing provider instance")
+        current = self._model_deployments.get(deployment.model_deployment_id)
+        if (
+            current is not None
+            and current.provider_instance_id != deployment.provider_instance_id
+            and any(
+                binding.model_deployment_id == deployment.model_deployment_id
+                for binding in self._runtime_bindings.values()
+            )
+        ):
+            raise ValueError("provider_instance_id cannot change while dependent runtime bindings exist")
         self._model_deployments[deployment.model_deployment_id] = deployment
 
     def get_model_deployment(self, model_deployment_id: str) -> ModelDeployment:
@@ -52,6 +73,14 @@ class InMemoryProviderInventoryStore:
         if provider_instance_id is None:
             return items
         return [item for item in items if item.provider_instance_id == provider_instance_id]
+
+    def delete_model_deployment(self, model_deployment_id: str) -> None:
+        del self._model_deployments[model_deployment_id]
+        self._runtime_bindings = {
+            binding_id: binding
+            for binding_id, binding in self._runtime_bindings.items()
+            if binding.model_deployment_id != model_deployment_id
+        }
 
     def save_runtime_binding(self, binding: RuntimeBinding) -> None:
         if binding.provider_instance_id not in self._provider_instances:
@@ -73,3 +102,6 @@ class InMemoryProviderInventoryStore:
 
     def list_runtime_bindings(self) -> list[RuntimeBinding]:
         return list(self._runtime_bindings.values())
+
+    def delete_runtime_binding(self, runtime_binding_id: str) -> None:
+        del self._runtime_bindings[runtime_binding_id]
