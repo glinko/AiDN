@@ -2,6 +2,8 @@ import pytest
 
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
+from aidn_hypervisor.providers.executor import RecordedProviderInstallationExecutor
+from aidn_hypervisor.providers.models import InstallationPlan, ProviderInstallationApproval
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
@@ -335,3 +337,88 @@ def test_provider_inventory_rejects_installation_plan_for_attach_only_plugin() -
                 "base_url": "http://127.0.0.1:9999",
             },
         )
+
+
+def test_recorded_provider_installation_executor_records_declarative_plan_without_host_mutation() -> None:
+    executor = RecordedProviderInstallationExecutor()
+    configuration = {
+        "display_name": "Local Fake",
+        "base_url": "http://127.0.0.1:9999",
+    }
+    plan = InstallationPlan(
+        plan_id="plan-fake-managed",
+        plugin_id="fake-managed",
+        plan_version="1.0.0",
+        summary="Install the fake managed provider",
+        containers=[
+            {
+                "name": "fake-provider",
+                "image": "example/fake-provider:latest",
+            }
+        ],
+        processes=[],
+        model_downloads=[
+            {
+                "model": "fake-model",
+                "source": "provider-cache",
+            }
+        ],
+        volumes=[
+            {
+                "name": "fake-model-cache",
+                "mount_path": "/models",
+            }
+        ],
+        networks=[],
+        environment={"FAKE_PROVIDER_MODE": "managed"},
+        resource_limits={"memory": "1Gi"},
+        health_checks=[
+            {
+                "url": "http://127.0.0.1:9999",
+                "interval_seconds": 10,
+            }
+        ],
+    )
+    approval = ProviderInstallationApproval(
+        approval_id="approval-fake-managed",
+        plugin_id="fake-managed",
+        plan_id="plan-fake-managed",
+        plan_hash="sha256:plan",
+        configuration_hash="sha256:configuration",
+        configuration=configuration,
+        approved_permissions=["container.manage"],
+        created_at="2026-07-15T12:00:00Z",
+    )
+
+    result = executor.apply(
+        approval=approval,
+        plan=plan,
+        configuration=configuration,
+        manifest={
+            "plugin_id": "fake-managed",
+            "display_name": "Fake Managed Provider",
+            "provider_families": ["fake"],
+        },
+        provider_instance_id="pi-fake-managed",
+    )
+
+    assert executor.executor_id == "recorded-declarative-v1"
+    assert [step.step_type for step in result.step_results] == [
+        "containers",
+        "model_downloads",
+        "volumes",
+        "environment",
+        "resource_limits",
+        "health_checks",
+    ]
+    assert all(step.status == "RECORDED" for step in result.step_results)
+    assert result.provider_instance == {
+        "provider_instance_id": "pi-fake-managed",
+        "plugin_id": "fake-managed",
+        "provider_family": "fake",
+        "display_name": "Local Fake",
+        "connection_mode": "managed",
+        "configuration": configuration,
+        "operational_state": "ready",
+    }
+    assert result.provider_instance["configuration"] is not configuration
