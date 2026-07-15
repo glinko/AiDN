@@ -13,3 +13,6 @@ class PluginRegistry:
 
     def list(self) -> list[ProviderPlugin]:
         return list(self._plugins.values())
+
+    def list_manifests(self) -> list[dict]:
+        return [plugin.plugin_manifest() for plugin in self.list()]
