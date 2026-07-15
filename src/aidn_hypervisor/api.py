@@ -69,6 +69,19 @@ class BuildProviderInstallationPlanRequest(BaseModel):
     configuration: dict = Field(default_factory=dict)
 
 
+class ApproveProviderInstallationPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    configuration: dict = Field(default_factory=dict)
+    operator_note: str | None = None
+
+
+class ApplyProviderInstallationApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operator_note: str | None = None
+
+
 def _ok(data: dict, *, status_code: int = 200) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -1073,6 +1086,49 @@ def build_api_router(
             ) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-plugins/{plugin_id}/installation-approvals")
+    async def approve_provider_installation_plan(
+        plugin_id: str,
+        payload: ApproveProviderInstallationPlanRequest,
+    ) -> dict:
+        try:
+            return service.approve_provider_installation_plan(
+                plugin_id=plugin_id,
+                configuration=payload.configuration,
+                operator_note=payload.operator_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown plugin: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/operators/provider-installation-approvals")
+    async def list_provider_installation_approvals() -> dict:
+        return {"items": service.list_provider_installation_approvals()}
+
+    @router.post("/operators/provider-installation-approvals/{approval_id}/apply")
+    async def apply_provider_installation_approval(
+        approval_id: str,
+        payload: ApplyProviderInstallationApprovalRequest,
+    ) -> dict:
+        del payload
+        try:
+            return service.apply_provider_installation_approval(approval_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown approval: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/operators/provider-installation-jobs")
+    async def list_provider_installation_jobs() -> dict:
+        return {"items": service.list_provider_installation_jobs()}
 
     @router.post("/operators/provider-instances/attach")
     async def attach_provider_instance(payload: AttachProviderInstanceRequest) -> dict:

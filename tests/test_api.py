@@ -3692,6 +3692,16 @@ def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:
     )
     assert plan_extra_field_response.status_code == 422
 
+    approval_extra_field_response = client.post(
+        "/operators/provider-plugins/fake-managed/installation-approvals",
+        json={
+            "configuration": {"base_url": "http://127.0.0.1:9999"},
+            "operator_note": "approve",
+            "unexpected": True,
+        },
+    )
+    assert approval_extra_field_response.status_code == 422
+
 
 def test_provider_plugin_installation_plan_preview_route() -> None:
     client = TestClient(build_app(service=_service()))
@@ -3711,6 +3721,61 @@ def test_provider_plugin_installation_plan_preview_route() -> None:
     assert body["plugin_id"] == "fake-managed"
     assert body["unsupported_actions"] == []
     assert body["health_checks"][0]["type"] == "http"
+
+
+def test_provider_installation_approval_and_apply_routes() -> None:
+    service = _service()
+    client = TestClient(build_app(service=service))
+
+    approval_response = client.post(
+        "/operators/provider-plugins/fake-managed/installation-approvals",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+            "operator_note": "approved from api",
+        },
+    )
+
+    assert approval_response.status_code == 200
+    approval = approval_response.json()
+    assert approval["plugin_id"] == "fake-managed"
+    assert approval["operator_note"] == "approved from api"
+
+    apply_response = client.post(
+        f"/operators/provider-installation-approvals/{approval['approval_id']}/apply",
+        json={"operator_note": "apply from api"},
+    )
+
+    assert apply_response.status_code == 200
+    job = apply_response.json()
+    assert job["approval_id"] == approval["approval_id"]
+    assert job["status"] == "SUCCEEDED"
+    assert job["executor_id"] == "recorded-declarative-v1"
+    assert job["provider_instance_id"].startswith("pi-")
+
+    jobs_response = client.get("/operators/provider-installation-jobs")
+    assert jobs_response.status_code == 200
+    listed_job = jobs_response.json()["items"][0]
+    assert listed_job["job_id"] == job["job_id"]
+    assert listed_job["provider_instance_id"] == job["provider_instance_id"]
+
+    approvals_response = client.get("/operators/provider-installation-approvals")
+    assert approvals_response.status_code == 200
+    assert approvals_response.json()["items"][0]["approval_id"] == approval["approval_id"]
+
+
+def test_provider_installation_apply_route_rejects_unknown_approval() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.post(
+        "/operators/provider-installation-approvals/approval-missing/apply",
+        json={},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Unknown approval: approval-missing"
 
 
 def test_provider_plugin_installation_plan_preview_route_rejects_invalid_plugin_plan() -> None:
