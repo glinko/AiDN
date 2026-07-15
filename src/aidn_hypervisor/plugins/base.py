@@ -43,6 +43,9 @@ class ProviderPlugin(ABC):
 
     def plugin_manifest(self) -> dict:
         description = self.describe()
+        supported_aidn_capabilities = description.get(
+            "supported_aidn_capabilities"
+        ) or description.get("workload_types", [])
         return ProviderPluginManifest(
             plugin_id=description["plugin_id"],
             plugin_version=description.get("plugin_version", "0.1.0"),
@@ -58,10 +61,7 @@ class ProviderPlugin(ABC):
             ),
             plugin_capability_flags=description.get("plugin_capability_flags", []),
             required_permissions=description.get("required_permissions", []),
-            supported_aidn_capabilities=description.get(
-                "supported_aidn_capabilities",
-                [],
-            ),
+            supported_aidn_capabilities=supported_aidn_capabilities,
         ).model_dump(mode="json")
 
     def attach_provider_schema(self) -> dict:
