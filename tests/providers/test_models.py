@@ -8,7 +8,7 @@ from aidn_hypervisor.providers.models import (
 )
 
 
-def test_provider_plugin_manifest_requires_digest_and_capability_flags() -> None:
+def test_provider_plugin_manifest_stores_digest_and_capability_flags() -> None:
     manifest = ProviderPluginManifest(
         plugin_id="aidn.provider.fake",
         plugin_version="0.1.0",
@@ -26,6 +26,25 @@ def test_provider_plugin_manifest_requires_digest_and_capability_flags() -> None
         "CAN_ATTACH_EXISTING",
         "CAN_DISCOVER_MODELS",
     ]
+
+
+def test_provider_plugin_manifest_rejects_blank_package_digest() -> None:
+    try:
+        ProviderPluginManifest(
+            plugin_id="aidn.provider.fake",
+            plugin_version="0.1.0",
+            display_name="Fake Provider",
+            publisher="AiDN Test",
+            package_digest="   ",
+            provider_families=["fake"],
+            plugin_capability_flags=["CAN_ATTACH_EXISTING"],
+            required_permissions=[],
+            supported_aidn_capabilities=["llm.chat"],
+        )
+    except ValidationError as exc:
+        assert "package_digest" in str(exc)
+    else:
+        raise AssertionError("expected ValidationError")
 
 
 def test_runtime_binding_requires_primary_capability() -> None:

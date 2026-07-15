@@ -20,6 +20,13 @@ class ProviderPluginManifest(BaseModel):
     required_permissions: list[str] = Field(default_factory=list)
     supported_aidn_capabilities: list[str] = Field(default_factory=list)
 
+    @field_validator("package_digest")
+    @classmethod
+    def _package_digest_not_blank(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("package_digest must be non-empty")
+        return value
+
 
 class ProviderInstance(BaseModel):
     provider_instance_id: str

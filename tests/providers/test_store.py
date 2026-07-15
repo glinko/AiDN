@@ -1,3 +1,5 @@
+import pytest
+
 from aidn_hypervisor.providers.models import (
     ModelDeployment,
     ProviderInstance,
@@ -6,17 +8,24 @@ from aidn_hypervisor.providers.models import (
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
-def test_store_round_trips_provider_instances() -> None:
-    store = InMemoryProviderInventoryStore()
-    instance = ProviderInstance(
-        provider_instance_id="pi-1",
+def _provider_instance(
+    provider_instance_id: str,
+    display_name: str = "Local Fake",
+) -> ProviderInstance:
+    return ProviderInstance(
+        provider_instance_id=provider_instance_id,
         plugin_id="aidn.provider.fake",
         provider_family="fake",
-        display_name="Local Fake",
+        display_name=display_name,
         connection_mode="attached",
-        configuration={"base_url": "http://127.0.0.1:1234"},
+        configuration={"base_url": f"http://127.0.0.1:{1234 if provider_instance_id == 'pi-1' else 4321}"},
         operational_state="ready",
     )
+
+
+def test_store_round_trips_provider_instances() -> None:
+    store = InMemoryProviderInventoryStore()
+    instance = _provider_instance("pi-1")
 
     store.save_provider_instance(instance)
 
@@ -41,6 +50,9 @@ def test_store_round_trips_provider_instances() -> None:
 
 def test_store_round_trips_model_deployments() -> None:
     store = InMemoryProviderInventoryStore()
+    store.save_provider_instance(_provider_instance("pi-1"))
+    store.save_provider_instance(_provider_instance("pi-2", display_name="Other Fake"))
+
     first = ModelDeployment(
         model_deployment_id="md-1",
         provider_instance_id="pi-1",
@@ -79,6 +91,17 @@ def test_store_round_trips_model_deployments() -> None:
 
 def test_store_round_trips_runtime_bindings() -> None:
     store = InMemoryProviderInventoryStore()
+    provider_instance = _provider_instance("pi-1")
+    deployment = ModelDeployment(
+        model_deployment_id="md-1",
+        provider_instance_id="pi-1",
+        provider_model_reference="qwen3:14b",
+        operator_display_name="Qwen 14B",
+        operational_state="ready",
+    )
+    store.save_provider_instance(provider_instance)
+    store.save_model_deployment(deployment)
+
     binding = RuntimeBinding(
         runtime_binding_id="rb-1",
         provider_instance_id="pi-1",
@@ -102,24 +125,8 @@ def test_store_round_trips_runtime_bindings() -> None:
 
 def test_delete_provider_instance_cascades_to_deployments_and_bindings() -> None:
     store = InMemoryProviderInventoryStore()
-    provider_instance = ProviderInstance(
-        provider_instance_id="pi-1",
-        plugin_id="aidn.provider.fake",
-        provider_family="fake",
-        display_name="Local Fake",
-        connection_mode="attached",
-        configuration={"base_url": "http://127.0.0.1:1234"},
-        operational_state="ready",
-    )
-    other_provider_instance = ProviderInstance(
-        provider_instance_id="pi-2",
-        plugin_id="aidn.provider.fake",
-        provider_family="fake",
-        display_name="Other Fake",
-        connection_mode="attached",
-        configuration={"base_url": "http://127.0.0.1:4321"},
-        operational_state="ready",
-    )
+    provider_instance = _provider_instance("pi-1")
+    other_provider_instance = _provider_instance("pi-2", display_name="Other Fake")
     removed_deployment = ModelDeployment(
         model_deployment_id="md-1",
         provider_instance_id="pi-1",
@@ -169,3 +176,96 @@ def test_delete_provider_instance_cascades_to_deployments_and_bindings() -> None
     assert store.list_provider_instances() == [other_provider_instance]
     assert store.list_model_deployments() == [kept_deployment]
     assert store.list_runtime_bindings() == [kept_binding]
+
+
+def test_store_rejects_model_deployment_with_unknown_provider_instance() -> None:
+    store = InMemoryProviderInventoryStore()
+    deployment = ModelDeployment(
+        model_deployment_id="md-1",
+        provider_instance_id="pi-missing",
+        provider_model_reference="qwen3:14b",
+        operator_display_name="Qwen 14B",
+        operational_state="ready",
+    )
+
+    with pytest.raises(ValueError, match="provider_instance_id"):
+        store.save_model_deployment(deployment)
+
+
+def test_store_rejects_runtime_binding_with_unknown_provider_instance() -> None:
+    store = InMemoryProviderInventoryStore()
+    store.save_provider_instance(_provider_instance("pi-1"))
+    store.save_model_deployment(
+        ModelDeployment(
+            model_deployment_id="md-1",
+            provider_instance_id="pi-1",
+            provider_model_reference="qwen3:14b",
+            operator_display_name="Qwen 14B",
+            operational_state="ready",
+        )
+    )
+
+    binding = RuntimeBinding(
+        runtime_binding_id="rb-1",
+        provider_instance_id="pi-missing",
+        model_deployment_id="md-1",
+        capability_id="cap.primary",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+        plugin_id="aidn.provider.fake",
+        compatibility_bundle_id="bundle-rb-1",
+        status="ready",
+    )
+
+    with pytest.raises(ValueError, match="provider_instance_id"):
+        store.save_runtime_binding(binding)
+
+
+def test_store_rejects_runtime_binding_with_unknown_model_deployment() -> None:
+    store = InMemoryProviderInventoryStore()
+    store.save_provider_instance(_provider_instance("pi-1"))
+
+    binding = RuntimeBinding(
+        runtime_binding_id="rb-1",
+        provider_instance_id="pi-1",
+        model_deployment_id="md-missing",
+        capability_id="cap.primary",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+        plugin_id="aidn.provider.fake",
+        compatibility_bundle_id="bundle-rb-1",
+        status="ready",
+    )
+
+    with pytest.raises(ValueError, match="model_deployment_id"):
+        store.save_runtime_binding(binding)
+
+
+def test_store_rejects_runtime_binding_when_deployment_belongs_to_different_provider() -> None:
+    store = InMemoryProviderInventoryStore()
+    store.save_provider_instance(_provider_instance("pi-1"))
+    store.save_provider_instance(_provider_instance("pi-2", display_name="Other Fake"))
+    store.save_model_deployment(
+        ModelDeployment(
+            model_deployment_id="md-1",
+            provider_instance_id="pi-1",
+            provider_model_reference="qwen3:14b",
+            operator_display_name="Qwen 14B",
+            operational_state="ready",
+        )
+    )
+
+    binding = RuntimeBinding(
+        runtime_binding_id="rb-1",
+        provider_instance_id="pi-2",
+        model_deployment_id="md-1",
+        capability_id="cap.primary",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+        plugin_id="aidn.provider.fake",
+        compatibility_bundle_id="bundle-rb-1",
+        status="ready",
+    )
+
+    with pytest.raises(ValueError, match="must match"):
+        store.save_runtime_binding(binding)
