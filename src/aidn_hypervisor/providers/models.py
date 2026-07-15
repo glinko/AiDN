@@ -25,6 +25,9 @@ PluginSecretType = Literal[
     "CLIENT_CERTIFICATE",
     "CUSTOM_SECRET_SET",
 ]
+ProviderInstallationApprovalStatus = Literal["APPROVED", "REVOKED"]
+ProviderInstallationJobStatus = Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"]
+ProviderInstallationStepStatus = Literal["RECORDED", "SKIPPED", "FAILED"]
 
 
 def _require_non_empty(value: str) -> str:
@@ -109,6 +112,82 @@ class InstallationPlan(BaseModel):
         if value:
             raise ValueError("installation plan must be declarative-only")
         return value
+
+
+class ProviderInstallationApproval(BaseModel):
+    approval_id: str
+    plugin_id: str
+    plan_id: str
+    plan_hash: str
+    configuration_hash: str
+    configuration: dict = Field(default_factory=dict)
+    approved_permissions: list[str] = Field(default_factory=list)
+    acknowledged_secret_requirements: list[dict] = Field(default_factory=list)
+    operator_note: str | None = None
+    status: ProviderInstallationApprovalStatus = "APPROVED"
+    created_at: str
+
+    @field_validator(
+        "approval_id",
+        "plugin_id",
+        "plan_id",
+        "plan_hash",
+        "configuration_hash",
+        "created_at",
+    )
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ProviderInstallationStepResult(BaseModel):
+    step_id: str
+    step_type: str
+    status: ProviderInstallationStepStatus
+    summary: str
+    details: dict = Field(default_factory=dict)
+
+    @field_validator("step_id", "step_type", "summary")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ProviderInstallationJob(BaseModel):
+    job_id: str
+    approval_id: str
+    plugin_id: str
+    plan_id: str
+    plan_hash: str
+    configuration_hash: str
+    status: ProviderInstallationJobStatus
+    executor_id: str
+    step_results: list[ProviderInstallationStepResult] = Field(default_factory=list)
+    provider_instance_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+
+    @field_validator(
+        "job_id",
+        "approval_id",
+        "plugin_id",
+        "plan_id",
+        "plan_hash",
+        "configuration_hash",
+        "executor_id",
+        "created_at",
+    )
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ProviderInstallationExecutionResult(BaseModel):
+    step_results: list[ProviderInstallationStepResult] = Field(default_factory=list)
+    provider_instance: dict
 
 
 class ProviderPluginManifest(BaseModel):

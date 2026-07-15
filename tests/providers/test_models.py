@@ -8,6 +8,10 @@ from aidn_hypervisor.providers.models import (
     PluginSecretRequirement,
     PluginTrustStatus,
     PluginUISchema,
+    ProviderInstallationApproval,
+    ProviderInstallationExecutionResult,
+    ProviderInstallationJob,
+    ProviderInstallationStepResult,
     ProviderInstance,
     ProviderPluginManifest,
     RuntimeBinding,
@@ -244,3 +248,99 @@ def test_installation_plan_is_declarative_and_rejects_script_execution() -> None
         assert "unsupported_actions" in str(exc)
     else:
         raise AssertionError("expected ValidationError")
+
+
+def test_provider_installation_approval_captures_plan_binding_without_secret_value() -> None:
+    approval = ProviderInstallationApproval(
+        approval_id="approval-ollama",
+        plugin_id="aidn.provider.ollama",
+        plan_id="plan-ollama",
+        plan_hash="sha256:plan",
+        configuration_hash="sha256:configuration",
+        configuration={"model": "qwen3:8b"},
+        approved_permissions=["container.manage"],
+        acknowledged_secret_requirements=[
+            {
+                "secret_type": "API_KEY",
+                "label": "Optional upstream API key",
+            }
+        ],
+        operator_note="Approved for local install",
+        created_at="2026-07-15T12:00:00Z",
+    )
+
+    assert approval.plan_id == "plan-ollama"
+    assert approval.plan_hash == "sha256:plan"
+    assert approval.configuration_hash == "sha256:configuration"
+    assert approval.status == "APPROVED"
+    assert "secret_value" not in str(approval.model_dump())
+
+
+def test_provider_installation_approval_rejects_unknown_status() -> None:
+    try:
+        ProviderInstallationApproval(
+            approval_id="approval-ollama",
+            plugin_id="aidn.provider.ollama",
+            plan_id="plan-ollama",
+            plan_hash="sha256:plan",
+            configuration_hash="sha256:configuration",
+            status="PENDING",
+            created_at="2026-07-15T12:00:00Z",
+        )
+    except ValidationError as exc:
+        assert "status" in str(exc)
+    else:
+        raise AssertionError("expected ValidationError")
+
+
+def test_provider_installation_job_records_apply_result() -> None:
+    step_result = ProviderInstallationStepResult(
+        step_id="create-container",
+        step_type="container",
+        status="RECORDED",
+        summary="Created provider container",
+        details={"container_id": "container-1"},
+    )
+
+    job = ProviderInstallationJob(
+        job_id="job-ollama",
+        approval_id="approval-ollama",
+        plugin_id="aidn.provider.ollama",
+        plan_id="plan-ollama",
+        plan_hash="sha256:plan",
+        configuration_hash="sha256:configuration",
+        status="SUCCEEDED",
+        executor_id="executor-local",
+        step_results=[step_result],
+        provider_instance_id="pi-ollama",
+        created_at="2026-07-15T12:00:00Z",
+        started_at="2026-07-15T12:00:01Z",
+        completed_at="2026-07-15T12:00:05Z",
+    )
+
+    assert job.step_results[0].status == "RECORDED"
+    assert job.step_results[0].details["container_id"] == "container-1"
+    assert job.provider_instance_id == "pi-ollama"
+    assert job.status == "SUCCEEDED"
+
+
+def test_provider_installation_execution_result_contains_provider_instance_payload() -> None:
+    result = ProviderInstallationExecutionResult(
+        step_results=[
+            ProviderInstallationStepResult(
+                step_id="register-provider",
+                step_type="provider_instance",
+                status="RECORDED",
+                summary="Registered provider instance",
+            )
+        ],
+        provider_instance={
+            "provider_instance_id": "pi-ollama",
+            "plugin_id": "aidn.provider.ollama",
+            "provider_family": "ollama",
+            "display_name": "Local Ollama",
+        },
+    )
+
+    assert result.provider_instance["provider_instance_id"] == "pi-ollama"
+    assert result.step_results[0].step_id == "register-provider"
