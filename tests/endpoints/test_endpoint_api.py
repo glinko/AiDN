@@ -62,6 +62,9 @@ def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
     hypervisor.bundle_for_runtime_binding = (  # type: ignore[attr-defined]
         lambda runtime_binding_id: _runtime_binding_bundle(f"bundle-{runtime_binding_id}")
     )
+    hypervisor.bundle_hash_for_runtime_binding = (  # type: ignore[attr-defined]
+        lambda runtime_binding_id: f"bundle-hash-{runtime_binding_id}"
+    )
     client = TestClient(
         build_app(
             service=hypervisor,
@@ -75,8 +78,6 @@ def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
         json={
             "owner_wallet": "wallet-a",
             "runtime_binding_id": "rtb-1",
-            "bundle_id": "bundle-legacy",
-            "bundle_hash": "bundle-hash-a",
             "display_name": "Local Qwen",
             "model_class": "llm.chat",
             "capabilities": ["llm.chat"],
@@ -87,6 +88,7 @@ def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
 
     assert response.status_code == 201
     assert body["data"]["endpoint"]["bundle_id"] == "bundle-rtb-1"
+    assert body["data"]["endpoint"]["bundle_hash"] == "bundle-hash-rtb-1"
 
 
 def test_patch_endpoint_runtime_rotates_configuration_hash() -> None:

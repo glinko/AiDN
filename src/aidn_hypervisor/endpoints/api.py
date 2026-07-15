@@ -58,9 +58,11 @@ def build_endpoint_router(
                 str(runtime_binding_id)
             )
             command_data["bundle_id"] = compatibility_bundle.bundle_id
-            command_data["bundle_hash"] = command_data.get(
-                "bundle_hash"
-            ) or compatibility_bundle.bundle_id
+            command_data["bundle_hash"] = command_data.get("bundle_hash") or (
+                hypervisor_service.bundle_hash_for_runtime_binding(
+                    str(runtime_binding_id)
+                )
+            )
         command = CreateEndpointCommand(**command_data)
         created = service.create_endpoint(command)
         onboarding = None

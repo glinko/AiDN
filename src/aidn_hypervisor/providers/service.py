@@ -1,4 +1,5 @@
 import hashlib
+import json
 from uuid import uuid4
 
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
@@ -141,6 +142,9 @@ class ProviderInventoryService:
             enabled=True,
         )
 
+    def bundle_hash_for_runtime_binding(self, runtime_binding_id: str) -> str:
+        return self._bundle_hash(self.bundle_config_for_runtime_binding(runtime_binding_id))
+
     def _rebuild_runtime_binding_projection(
         self,
         binding: RuntimeBinding,
@@ -189,7 +193,15 @@ class ProviderInventoryService:
                     capability_id,
                     capability_version,
                     capability_definition_hash,
-                ]
-            ).encode("utf-8")
+            ]
+        ).encode("utf-8")
         ).hexdigest()
         return digest[:16]
+
+    def _bundle_hash(self, bundle: BundleConfig) -> str:
+        payload = json.dumps(
+            bundle.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()

@@ -397,6 +397,23 @@ def test_service_bundle_for_runtime_binding_delegates_to_provider_inventory() ->
     assert bundle == expected_bundle
 
 
+def test_service_bundle_hash_for_runtime_binding_delegates_to_provider_inventory() -> None:
+    class FakeProviderInventory:
+        def bundle_hash_for_runtime_binding(self, runtime_binding_id: str) -> str:
+            assert runtime_binding_id == "rtb-1"
+            return "bundle-hash-rtb-1"
+
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        provider_inventory=FakeProviderInventory(),
+    )
+
+    bundle_hash = service.bundle_hash_for_runtime_binding("rtb-1")
+
+    assert bundle_hash == "bundle-hash-rtb-1"
+
+
 def test_service_submit_routes_and_records_selected_bundle_for_automatic_mode() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),

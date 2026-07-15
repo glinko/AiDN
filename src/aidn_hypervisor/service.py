@@ -2334,6 +2334,11 @@ class HypervisorService:
             runtime_binding_id
         )
 
+    def bundle_hash_for_runtime_binding(self, runtime_binding_id: str) -> str:
+        return self.provider_inventory.bundle_hash_for_runtime_binding(
+            runtime_binding_id
+        )
+
     def mark_model_install_completed(self, install_id: str) -> dict:
         job = self._model_installs[install_id]
         job["status"] = "completed"
