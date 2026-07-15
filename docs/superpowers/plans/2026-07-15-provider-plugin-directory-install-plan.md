@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python, Pydantic, FastAPI, pytest, existing `ProviderPlugin`, `ProviderInventoryService`, `PluginRegistry`, and operator dashboard payloads.
 
+**Current status:** Tasks 1-4 are implemented on this branch, including quality fixes for legacy permission manifest compatibility, installation-plan preview validation, and gating install-preview dashboard copy by plugin capability. Task 5 is the roadmap cleanup and verification closeout.
+
 ---
 
 ## File Structure
@@ -54,7 +56,7 @@
 - Modify: `src/aidn_hypervisor/providers/models.py`
 - Test: `tests/providers/test_models.py`
 
-- [ ] **Step 1: Write the failing model tests**
+- [x] **Step 1: Write the failing model tests**
 
 Append these tests to `tests/providers/test_models.py`:
 
@@ -153,7 +155,7 @@ def test_installation_plan_is_declarative_and_rejects_script_execution() -> None
         raise AssertionError("expected ValidationError")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -163,7 +165,7 @@ python -m pytest tests/providers/test_models.py -q -k "directory_install_metadat
 
 Expected: FAIL with import errors for `InstallationPlan`, `InstallationRecipe`, `PluginPermission`, `PluginSecretRequirement`, `PluginTrustStatus`, or `PluginUISchema`.
 
-- [ ] **Step 3: Add minimal model implementation**
+- [x] **Step 3: Add minimal model implementation**
 
 Add these models to `src/aidn_hypervisor/providers/models.py` before `ProviderPluginManifest`, then extend `ProviderPluginManifest` with the new fields:
 
@@ -294,7 +296,7 @@ class ProviderPluginManifest(BaseModel):
     installation_recipes: list[InstallationRecipe] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run:
 
@@ -304,7 +306,7 @@ python -m pytest tests/providers/test_models.py -q -k "directory_install_metadat
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/aidn_hypervisor/providers/models.py tests/providers/test_models.py
@@ -318,7 +320,7 @@ git commit -m "feat: add provider plugin directory models"
 - Modify: `src/aidn_hypervisor/plugins/fake.py`
 - Test: `tests/plugins/test_registry.py`
 
-- [ ] **Step 1: Write the failing plugin manifest tests**
+- [x] **Step 1: Write the failing plugin manifest tests**
 
 Append these tests to `tests/plugins/test_registry.py`:
 
@@ -354,7 +356,7 @@ def test_fake_plugin_builds_declarative_installation_plan() -> None:
     assert plan["health_checks"][0]["type"] == "http"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -364,7 +366,7 @@ python -m pytest tests/plugins/test_registry.py -q -k "install_schema_permission
 
 Expected: FAIL because the manifest lacks richer metadata and fake plugin does not return the expected typed plan fields.
 
-- [ ] **Step 3: Extend base plugin manifest extraction**
+- [x] **Step 3: Extend base plugin manifest extraction**
 
 Update `ProviderPlugin.plugin_manifest()` in `src/aidn_hypervisor/plugins/base.py` so it passes through richer fields from `describe()`:
 
@@ -415,7 +417,7 @@ def build_installation_plan(self, configuration: dict) -> dict:
     ).model_dump(mode="json")
 ```
 
-- [ ] **Step 4: Extend fake plugin fixture**
+- [x] **Step 4: Extend fake plugin fixture**
 
 Update `FakeManagedPlugin.describe()`, `attach_provider_schema()`, `install_provider_schema()`, and `build_installation_plan()` in `src/aidn_hypervisor/plugins/fake.py`:
 
@@ -518,7 +520,7 @@ def build_installation_plan(self, configuration: dict) -> dict:
     }
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run:
 
@@ -528,7 +530,7 @@ python -m pytest tests/plugins/test_registry.py -q -k "install_schema_permission
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/aidn_hypervisor/plugins/base.py src/aidn_hypervisor/plugins/fake.py tests/plugins/test_registry.py
@@ -545,7 +547,7 @@ git commit -m "feat: expose provider plugin directory metadata"
 - Test: `tests/test_service.py`
 - Test: `tests/test_api.py`
 
-- [ ] **Step 1: Write failing service and API tests**
+- [x] **Step 1: Write failing service and API tests**
 
 Append to `tests/providers/test_service.py`:
 
@@ -615,7 +617,7 @@ def test_provider_plugin_installation_plan_preview_route() -> None:
     assert body["health_checks"][0]["type"] == "http"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run:
 
@@ -625,7 +627,7 @@ python -m pytest tests/providers/test_service.py tests/test_service.py tests/tes
 
 Expected: FAIL because `build_installation_plan`, `build_provider_installation_plan`, and the API route are missing.
 
-- [ ] **Step 3: Implement service facades**
+- [x] **Step 3: Implement service facades**
 
 Add to `ProviderInventoryService` in `src/aidn_hypervisor/providers/service.py`:
 
@@ -650,7 +652,7 @@ def build_provider_installation_plan(
     )
 ```
 
-- [ ] **Step 4: Implement API request model and route**
+- [x] **Step 4: Implement API request model and route**
 
 In `src/aidn_hypervisor/api.py`, add a local request model near other operator request models:
 
@@ -681,7 +683,7 @@ async def build_provider_installation_plan(
         raise HTTPException(status_code=409, detail=str(error)) from error
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run:
 
@@ -691,7 +693,7 @@ python -m pytest tests/providers/test_service.py tests/test_service.py tests/tes
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/aidn_hypervisor/providers/service.py src/aidn_hypervisor/service.py src/aidn_hypervisor/api.py tests/providers/test_service.py tests/test_service.py tests/test_api.py
@@ -706,7 +708,7 @@ git commit -m "feat: preview provider installation plans"
 - Test: `tests/test_operator_views.py`
 - Test: `tests/test_api.py`
 
-- [ ] **Step 1: Write failing operator view tests**
+- [x] **Step 1: Write failing operator view tests**
 
 Append to `tests/test_operator_views.py`:
 
@@ -733,7 +735,7 @@ assert "Trust" in response.text
 assert "Install plan preview" in response.text
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run:
 
@@ -743,7 +745,7 @@ python -m pytest tests/test_operator_views.py tests/test_api.py -q -k "install_m
 
 Expected: FAIL because `installable_plugin_count` and dashboard copy are missing.
 
-- [ ] **Step 3: Add summary counts to provider payload**
+- [x] **Step 3: Add summary counts to provider payload**
 
 In `build_operator_providers_payload()` in `src/aidn_hypervisor/operator_views.py`, add:
 
@@ -761,7 +763,7 @@ Add to the returned `summary`:
 "installable_plugin_count": installable_plugin_count,
 ```
 
-- [ ] **Step 4: Update dashboard plugin directory table**
+- [x] **Step 4: Update dashboard plugin directory table**
 
 In `renderProvidersWorkspace()` in `src/aidn_hypervisor/static/operator_dashboard.html`, update the plugin directory table head to include trust and permissions:
 
@@ -784,7 +786,7 @@ Update the plugin row body to include:
 
 Keep the existing inspect/select action button in the final column if the table already has one. The exact row can contain both the preview text and existing action button if preserving the column count is simpler.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run:
 
@@ -794,7 +796,7 @@ python -m pytest tests/test_operator_views.py tests/test_api.py -q -k "install_m
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/aidn_hypervisor/operator_views.py src/aidn_hypervisor/static/operator_dashboard.html tests/test_operator_views.py tests/test_api.py
@@ -807,19 +809,19 @@ git commit -m "feat: surface provider plugin directory metadata"
 - Modify: `docs/superpowers/plans/2026-07-14-provider-plugin-system-mvp.md`
 - Modify: `docs/superpowers/plans/2026-07-15-provider-plugin-directory-install-plan.md`
 
-- [ ] **Step 1: Update provider MVP plan status**
+- [x] **Step 1: Update provider MVP plan status**
 
 In `docs/superpowers/plans/2026-07-14-provider-plugin-system-mvp.md`, update top status:
 
 ```markdown
-**Current status:** Provider inventory, runtime-binding compatibility projection, endpoint draft runtime-binding input, plugin-first Providers workspace, and provider inventory snapshot/restore are implemented and verified. The full test suite passed with `740 passed, 1 warning` before starting the declarative install-plan slice.
+**Current status:** Provider inventory, runtime-binding compatibility projection, endpoint draft runtime-binding input, plugin-first Providers workspace, and provider inventory snapshot/restore are implemented and verified. The full test suite passed with `740 passed, 1 warning` before starting the declarative install-plan slice. The declarative install-plan slice now adds rich Plugin Directory metadata, permission/secret/UI schema/recipe manifest fields, preview-only Installation Plans, operator API preview, and dashboard metadata surfacing.
 
-**Next phase:** deepen the Plugin Directory foundation with richer manifests, declarative UI schemas, permission and secret metadata, installation recipes, and preview-only declarative Installation Plans. Sandboxed installer execution remains deferred.
+**Next phase:** convert previewed declarative plans into a guarded operator approval flow: permission diffing, secret-handle selection, dry-run diagnostics, and eventually sandboxed plan application behind explicit confirmations.
 ```
 
 Mark stale commit checkboxes for Tasks 3, 4, 5, and 6 as checked only when the corresponding commits are already present in `git log`.
 
-- [ ] **Step 2: Run focused and full verification**
+- [x] **Step 2: Run focused and full verification**
 
 Run:
 
@@ -845,7 +847,18 @@ git diff --check
 
 Expected: exit 0.
 
-- [ ] **Step 3: Commit**
+### Verification evidence
+
+Run on 2026-07-15:
+
+- `python -m pytest tests/providers/test_models.py tests/plugins/test_registry.py tests/providers/test_service.py tests/test_service.py tests/test_api.py tests/test_operator_views.py -q`
+  Result: `1 failed, 357 passed, 1 warning in 128.37s` after an initial tool timeout and rerun. Failure: `tests/test_api.py::test_plugins_endpoint_returns_installed_plugin_descriptions` expects the legacy `/plugins` payload without `CAN_INSTALL_PROVIDER` and rich directory metadata, while the branch returns the richer manifest.
+- `python -m pytest -q`
+  Result: `1 failed, 751 passed, 1 warning in 152.92s`. Same failure: `tests/test_api.py::test_plugins_endpoint_returns_installed_plugin_descriptions`.
+- `git diff --check`
+  Result: exit 0; only CRLF working-copy warnings for the two edited docs.
+
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/superpowers/plans/2026-07-14-provider-plugin-system-mvp.md docs/superpowers/plans/2026-07-15-provider-plugin-directory-install-plan.md

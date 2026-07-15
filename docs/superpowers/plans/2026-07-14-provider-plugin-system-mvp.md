@@ -8,9 +8,9 @@
 
 **Tech Stack:** Python, FastAPI, Pydantic, pytest, existing `HypervisorService`, current operator dashboard HTML/JS, existing plugin registry and bundle scheduler.
 
-**Current status:** The provider inventory foundation is in place, runtime bindings are projected into `BundleConfig`, endpoint creation accepts `runtime_binding_id` as the primary input path with deterministic bundle-hash resolution, and the operator Providers workspace now exposes the plugin-first flow (`plugin -> provider instance -> model deployment -> runtime binding -> endpoint`). The currently green validation set covers provider inventory, runtime binding, endpoint service, endpoint API flows, and the operator provider workspace.
+**Current status:** Provider inventory, runtime-binding compatibility projection, endpoint draft runtime-binding input, plugin-first Providers workspace, and provider inventory snapshot/restore are implemented and verified. The full test suite passed with `740 passed, 1 warning` before starting the declarative install-plan slice. The declarative install-plan slice now adds rich Plugin Directory metadata, permission/secret/UI schema/recipe manifest fields, preview-only Installation Plans, operator API preview, and dashboard metadata surfacing.
 
-**Next phase:** persist provider inventory state across Hypervisor export/restore and run full MVP verification, then deepen the plugin directory foundations: declarative install/attach schemas, secret scoping, sandboxed installation plans, and installation recipes.
+**Next phase:** convert previewed declarative plans into a guarded operator approval flow: permission diffing, secret-handle selection, dry-run diagnostics, and eventually sandboxed plan application behind explicit confirmations.
 
 ---
 
@@ -802,7 +802,7 @@ Run: `python -m pytest tests/providers/test_service.py tests/test_service.py tes
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/aidn_hypervisor/providers/service.py src/aidn_hypervisor/service.py src/aidn_hypervisor/api.py tests/providers/test_service.py tests/test_service.py tests/test_api.py
@@ -920,7 +920,7 @@ Run: `python -m pytest tests/endpoints/test_service.py tests/endpoints/test_endp
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/aidn_hypervisor/endpoints/models.py src/aidn_hypervisor/endpoints/api.py src/aidn_hypervisor/endpoints/service.py src/aidn_hypervisor/service.py tests/endpoints/test_service.py tests/endpoints/test_endpoint_api.py
@@ -1067,7 +1067,7 @@ Run: `python -m pytest tests/test_operator_views.py tests/test_api.py -q`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/aidn_hypervisor/operator_views.py src/aidn_hypervisor/operator_onboarding.py src/aidn_hypervisor/static/operator_dashboard.html src/aidn_hypervisor/api.py tests/test_operator_views.py tests/test_api.py
@@ -1162,7 +1162,7 @@ Run: `python -m pytest -q`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/aidn_hypervisor/service.py tests/test_service.py tests/test_api.py
