@@ -79,8 +79,6 @@ class ApproveProviderInstallationPlanRequest(BaseModel):
 class ApplyProviderInstallationApprovalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    operator_note: str | None = None
-
 
 def _ok(data: dict, *, status_code: int = 200) -> JSONResponse:
     return JSONResponse(

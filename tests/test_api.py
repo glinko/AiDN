@@ -3702,6 +3702,22 @@ def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:
     )
     assert approval_extra_field_response.status_code == 422
 
+    approval_response = client.post(
+        "/operators/provider-plugins/fake-managed/installation-approvals",
+        json={
+            "configuration": {"base_url": "http://127.0.0.1:9999"},
+            "operator_note": "approve",
+        },
+    )
+    assert approval_response.status_code == 200
+
+    apply_note_response = client.post(
+        "/operators/provider-installation-approvals/"
+        f"{approval_response.json()['approval_id']}/apply",
+        json={"operator_note": "apply"},
+    )
+    assert apply_note_response.status_code == 422
+
 
 def test_provider_plugin_installation_plan_preview_route() -> None:
     client = TestClient(build_app(service=_service()))
@@ -3745,7 +3761,7 @@ def test_provider_installation_approval_and_apply_routes() -> None:
 
     apply_response = client.post(
         f"/operators/provider-installation-approvals/{approval['approval_id']}/apply",
-        json={"operator_note": "apply from api"},
+        json={},
     )
 
     assert apply_response.status_code == 200
