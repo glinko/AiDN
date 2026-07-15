@@ -12,7 +12,7 @@ Add a complete MVP lifecycle for provider plugin installation plans:
 2. approve the exact plan/configuration/permission set;
 3. apply the approved plan through a controlled execution boundary;
 4. persist the apply job and result;
-5. surface the installed Provider Instance in the operator workspace.
+5. surface the controlled local Provider Instance record in the operator workspace.
 
 The slice implements the product workflow end-to-end, but keeps real host
 mutation behind an executor interface. The MVP executor records declarative
@@ -255,10 +255,11 @@ On successful MVP apply, create a local `ProviderInstance` with:
   name;
 - `connection_mode = "managed"`;
 - original approved configuration;
-- `operational_state = "ready"`.
+- `operational_state = "created"`.
 
 This represents a controlled local lifecycle record, not proof that Ollama,
-vLLM, or any external process is actually running.
+vLLM, or any external process is actually running. A real host executor and
+health check may later transition the provider to `ready`.
 
 ## API
 
@@ -384,7 +385,7 @@ This slice is complete when:
 - the exact plan can be approved;
 - the approval can be applied through the controlled executor;
 - apply creates a durable job record;
-- successful apply creates a local Provider Instance;
+- successful apply creates a local Provider Instance in `created` state;
 - approval and job records survive snapshot/restore;
 - hash mismatches, revoked approvals, attach-only plugins, and
   non-declarative plans are rejected;

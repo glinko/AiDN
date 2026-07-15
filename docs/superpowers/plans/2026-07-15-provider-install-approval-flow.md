@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a complete local provider installation lifecycle: preview, approve, apply through a controlled executor, persist job results, and surface the resulting Provider Instance.
+**Goal:** Add a complete local provider installation lifecycle: preview, approve, apply through a controlled executor, persist job results, and surface the resulting local Provider Instance record.
 
 **Architecture:** Keep provider installation plan generation declarative, require a durable approval before apply, and bind apply to the exact approved plan/configuration hashes. The MVP executor is `RecordedProviderInstallationExecutor`: it records declarative actions and creates local provider inventory state, but it does not run shell, Docker, downloads, package managers, or plugin installer code. Future real host executors can replace the executor interface without changing approval, job, API, persistence, or UI contracts.
 
@@ -137,7 +137,7 @@ def test_provider_installation_execution_result_contains_provider_instance_paylo
             "display_name": "Local Fake",
             "connection_mode": "managed",
             "configuration": {"display_name": "Local Fake"},
-            "operational_state": "ready",
+            "operational_state": "created",
         },
     )
 
@@ -304,7 +304,7 @@ def test_recorded_provider_installation_executor_records_declarative_plan_withou
     assert [step.step_type for step in result.step_results] == ["containers", "health_checks"]
     assert result.provider_instance["provider_instance_id"] == "pi-pij-123"
     assert result.provider_instance["connection_mode"] == "managed"
-    assert result.provider_instance["operational_state"] == "ready"
+    assert result.provider_instance["operational_state"] == "created"
 ```
 
 - [ ] **Step 2: Run executor test and confirm failure**
@@ -395,7 +395,7 @@ class RecordedProviderInstallationExecutor:
                 "display_name": display_name,
                 "connection_mode": "managed",
                 "configuration": dict(configuration),
-                "operational_state": "ready",
+                "operational_state": "created",
             },
         )
 ```
@@ -571,7 +571,7 @@ def test_provider_inventory_approves_and_applies_installation_plan() -> None:
     provider = service.store.get_provider_instance(job.provider_instance_id)
     assert provider.plugin_id == "fake-managed"
     assert provider.connection_mode == "managed"
-    assert provider.operational_state == "ready"
+    assert provider.operational_state == "created"
     assert service.list_installation_jobs() == [job]
 
 
