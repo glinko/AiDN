@@ -189,6 +189,11 @@ class ProviderInstallationExecutionResult(BaseModel):
     step_results: list[ProviderInstallationStepResult] = Field(default_factory=list)
     provider_instance: dict
 
+    @field_validator("provider_instance")
+    @classmethod
+    def _validate_provider_instance(cls, value: dict) -> dict:
+        return ProviderInstance.model_validate(value).model_dump()
+
 
 class ProviderPluginManifest(BaseModel):
     plugin_id: str

@@ -339,8 +339,27 @@ def test_provider_installation_execution_result_contains_provider_instance_paylo
             "plugin_id": "aidn.provider.ollama",
             "provider_family": "ollama",
             "display_name": "Local Ollama",
+            "connection_mode": "managed",
+            "operational_state": "ready",
         },
     )
 
     assert result.provider_instance["provider_instance_id"] == "pi-ollama"
     assert result.step_results[0].step_id == "register-provider"
+
+
+def test_provider_installation_execution_result_rejects_invalid_provider_instance_payload() -> None:
+    try:
+        ProviderInstallationExecutionResult(
+            provider_instance={
+                "provider_instance_id": "pi-ollama",
+                "plugin_id": "aidn.provider.ollama",
+                "provider_family": "ollama",
+                "display_name": "Local Ollama",
+                "connection_mode": "managed",
+            },
+        )
+    except ValidationError as exc:
+        assert "operational_state" in str(exc)
+    else:
+        raise AssertionError("expected ValidationError")
