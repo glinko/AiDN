@@ -378,6 +378,85 @@ def test_service_create_runtime_binding_reuses_compatibility_bundle_for_same_log
     assert len(persisted_matching_bundles) == 1
 
 
+def test_provider_inventory_survives_state_restore() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+    )
+    attached = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    models = service.discover_provider_models(attached["provider_instance_id"])
+    binding = service.create_runtime_binding(
+        model_deployment_id=models[0]["model_deployment_id"],
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+
+    restored = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=service.plugins,
+        runtimes=ProviderProcessManager(),
+    )
+    restored.restore_state(service.snapshot_state())
+
+    assert restored.list_provider_instances()[0]["display_name"] == "Local Fake"
+    assert (
+        restored.list_model_deployments()[0]["provider_instance_id"]
+        == attached["provider_instance_id"]
+    )
+    assert (
+        restored.list_runtime_bindings()[0]["runtime_binding_id"]
+        == binding["runtime_binding_id"]
+    )
+
+
+def test_restored_provider_inventory_resolves_runtime_binding_bundle_hash() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+    )
+    attached = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    model = service.discover_provider_models(attached["provider_instance_id"])[0]
+    binding = service.create_runtime_binding(
+        model_deployment_id=model["model_deployment_id"],
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+    original_hash = service.bundle_hash_for_runtime_binding(
+        binding["runtime_binding_id"]
+    )
+
+    restored = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=service.plugins,
+        runtimes=ProviderProcessManager(),
+    )
+    restored.restore_state(service.snapshot_state())
+
+    assert restored.bundle_hash_for_runtime_binding(
+        binding["runtime_binding_id"]
+    ) == original_hash
+    assert (
+        restored.bundle_for_runtime_binding(binding["runtime_binding_id"]).endpoint
+        == "http://127.0.0.1:9999"
+    )
+
+
 def test_service_bundle_for_runtime_binding_delegates_to_provider_inventory() -> None:
     expected_bundle = _bundle("bundle-rtb-1", "llm.chat")
 

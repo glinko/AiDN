@@ -2698,6 +2698,18 @@ class HypervisorService:
                 ModelInstallSnapshot(**job)
                 for job in self._model_installs.values()
             ],
+            provider_instances=[
+                instance.model_copy(deep=True)
+                for instance in self.provider_inventory.list_provider_instances()
+            ],
+            model_deployments=[
+                deployment.model_copy(deep=True)
+                for deployment in self.provider_inventory.list_model_deployments()
+            ],
+            runtime_bindings=[
+                binding.model_copy(deep=True)
+                for binding in self.provider_inventory.list_runtime_bindings()
+            ],
             operator_requests_policy=dict(self._operator_requests_policy),
             owner_wallet=(
                 OwnerWalletSnapshot(**self._owner_wallet)
@@ -2803,6 +2815,16 @@ class HypervisorService:
             }
         for job in snapshot.model_installs:
             self._model_installs[job.install_id] = job.model_dump(mode="json")
+        self.provider_inventory = ProviderInventoryService(
+            plugins=self.plugins,
+            store=InMemoryProviderInventoryStore(),
+        )
+        for instance in snapshot.provider_instances:
+            self.provider_inventory.store.save_provider_instance(instance)
+        for deployment in snapshot.model_deployments:
+            self.provider_inventory.store.save_model_deployment(deployment)
+        for binding in snapshot.runtime_bindings:
+            self.provider_inventory.store.save_runtime_binding(binding)
         self._wallet_usage_events = [
             event.model_dump(mode="json") for event in snapshot.wallet_usage_events
         ]

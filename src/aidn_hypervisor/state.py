@@ -9,6 +9,11 @@ from aidn_hypervisor.economics.models import (
     RecyclableRemoval,
 )
 from aidn_hypervisor.ledger.models import LedgerOperationRecord
+from aidn_hypervisor.providers.models import (
+    ModelDeployment,
+    ProviderInstance,
+    RuntimeBinding,
+)
 from aidn_hypervisor.endpoints.state import (
     EndpointConfigurationSnapshotRecord,
     EndpointManifestSnapshot,
@@ -268,6 +273,9 @@ class HypervisorStateSnapshot(BaseModel):
     bundle_states: list[BundleStateSnapshot] = Field(default_factory=list)
     allocations: list[AllocationSnapshot] = Field(default_factory=list)
     model_installs: list[ModelInstallSnapshot] = Field(default_factory=list)
+    provider_instances: list[ProviderInstance] = Field(default_factory=list)
+    model_deployments: list[ModelDeployment] = Field(default_factory=list)
+    runtime_bindings: list[RuntimeBinding] = Field(default_factory=list)
     validation_requests: list[ValidationRequest] = Field(default_factory=list)
     validation_bonds: list[ValidationBond] = Field(default_factory=list)
     validation_reports: list[ValidationReport] = Field(default_factory=list)

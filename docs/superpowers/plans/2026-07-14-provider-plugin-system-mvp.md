@@ -513,7 +513,7 @@ Run: `python -m pytest tests/plugins/test_registry.py tests/providers/test_servi
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/aidn_hypervisor/plugins/base.py src/aidn_hypervisor/plugins/fake.py src/aidn_hypervisor/plugins/registry.py tests/plugins/test_registry.py tests/providers/test_service.py
@@ -1081,85 +1081,78 @@ git commit -m "feat: migrate providers workspace to plugin-first workflow"
 - Modify: `tests/test_service.py`
 - Modify: `tests/test_api.py`
 
-- [ ] **Step 1: Write the failing persistence regression tests**
+- [x] **Step 1: Write the failing persistence regression tests**
 
 ```python
 # tests/test_service.py
-def test_provider_inventory_survives_state_persistence(tmp_path) -> None:
-    service = _service_with_model_store(tmp_path)
+def test_provider_inventory_survives_state_restore() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+    )
     attached = service.attach_provider_instance(
         plugin_id="fake-managed",
         display_name="Local Fake",
         configuration={"base_url": "http://127.0.0.1:9999"},
     )
-    service.discover_provider_models(attached["provider_instance_id"])
-
-    reloaded = service.__class__.from_state_snapshot(
-        state=service.export_state(),
-        queue=service.queue,
-        scheduler=service.scheduler,
-        resources=service.resources,
-        plugins=service.plugins,
-        runtimes=service.runtimes,
+    models = service.discover_provider_models(attached["provider_instance_id"])
+    binding = service.create_runtime_binding(
+        model_deployment_id=models[0]["model_deployment_id"],
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
     )
 
-    assert reloaded.list_provider_instances()[0]["display_name"] == "Local Fake"
-    assert reloaded.list_model_deployments()[0]["provider_instance_id"] == attached["provider_instance_id"]
+    restored = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=service.plugins,
+        runtimes=ProviderProcessManager(),
+    )
+    restored.restore_state(service.snapshot_state())
+
+    assert restored.list_provider_instances()[0]["display_name"] == "Local Fake"
+    assert restored.list_model_deployments()[0]["provider_instance_id"] == attached["provider_instance_id"]
+    assert restored.list_runtime_bindings()[0]["runtime_binding_id"] == binding["runtime_binding_id"]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_service.py tests/test_api.py -q`
 
 Expected: FAIL because provider inventory is not serialized or restored by the hypervisor state snapshot
 
-- [ ] **Step 3: Persist the new inventory and expose list helpers**
+- [x] **Step 3: Persist the new inventory and expose list helpers**
 
 ```python
 # src/aidn_hypervisor/service.py
-def export_state(self) -> dict:
-    payload = self._current_state_payload()
-    payload["provider_inventory"] = {
-        "provider_instances": [
-            item.model_dump(mode="json")
-            for item in self.provider_inventory.store.list_provider_instances()
-        ],
-        "model_deployments": [
-            item.model_dump(mode="json")
-            for item in self.provider_inventory.store.list_model_deployments()
-        ],
-        "runtime_bindings": [
-            item.model_dump(mode="json")
-            for item in self.provider_inventory.store.list_runtime_bindings()
-        ],
-    }
-    return payload
+def snapshot_state(self) -> HypervisorStateSnapshot:
+    return HypervisorStateSnapshot(
+        provider_instances=self.provider_inventory.list_provider_instances(),
+        model_deployments=self.provider_inventory.list_model_deployments(),
+        runtime_bindings=self.provider_inventory.list_runtime_bindings(),
+        ...
+    )
 
 
-def list_provider_instances(self) -> list[dict]:
-    return [
-        item.model_dump(mode="json")
-        for item in self.provider_inventory.store.list_provider_instances()
-    ]
-
-
-def list_model_deployments(self) -> list[dict]:
-    return [
-        item.model_dump(mode="json")
-        for item in self.provider_inventory.store.list_model_deployments()
-    ]
-
-
-def list_runtime_bindings(self) -> list[dict]:
-    return [
-        item.model_dump(mode="json")
-        for item in self.provider_inventory.store.list_runtime_bindings()
-    ]
+def restore_state(self, snapshot: HypervisorStateSnapshot) -> dict[str, int]:
+    self.provider_inventory = ProviderInventoryService(
+        plugins=self.plugins,
+        store=InMemoryProviderInventoryStore(),
+    )
+    for instance in snapshot.provider_instances:
+        self.provider_inventory.store.save_provider_instance(instance)
+    for deployment in snapshot.model_deployments:
+        self.provider_inventory.store.save_model_deployment(deployment)
+    for binding in snapshot.runtime_bindings:
+        self.provider_inventory.store.save_runtime_binding(binding)
 ```
 
 Restore the same payload in the constructor or state-rehydration path before rebuilding dashboard views.
 
-- [ ] **Step 4: Run targeted and full verification**
+- [x] **Step 4: Run targeted and full verification**
 
 Run: `python -m pytest tests/providers/test_models.py tests/providers/test_store.py tests/providers/test_service.py tests/plugins/test_registry.py tests/test_service.py tests/test_api.py tests/test_operator_views.py tests/endpoints/test_service.py tests/endpoints/test_endpoint_api.py -q`
 
