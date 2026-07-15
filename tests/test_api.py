@@ -1119,31 +1119,34 @@ def test_plugins_endpoint_returns_installed_plugin_descriptions() -> None:
     response = client.get("/plugins")
 
     assert response.status_code == 200
-    assert response.json() == [
-        {
-            "plugin_id": "fake-managed",
-            "plugin_version": "0.1.0",
-            "display_name": "Fake Managed Provider",
-            "publisher": "AiDN Test",
-            "package_digest": "sha256:fake-managed-dev",
-            "provider_type": "fake",
-            "provider_families": ["fake"],
-            "plugin_capability_flags": [
-                "CAN_ATTACH_EXISTING",
-                "CAN_DISCOVER_MODELS",
-            ],
-            "supported_aidn_capabilities": ["llm.chat"],
-            "workload_types": ["llm_text", "speech_to_text"],
-            "usage_contract": {
-                "supports_exact": False,
-                "supports_estimated": False,
-                "default_measurement_source": None,
-                "fallback_measurement_source": None,
-                "fallback_policy": "none",
-                "missing_usage_behavior": "skip",
-            },
-        }
+    plugins = response.json()
+    assert len(plugins) == 1
+    plugin = plugins[0]
+    assert plugin["plugin_id"] == "fake-managed"
+    assert plugin["plugin_version"] == "0.1.0"
+    assert plugin["display_name"] == "Fake Managed Provider"
+    assert plugin["publisher"] == "AiDN Test"
+    assert plugin["package_digest"] == "sha256:fake-managed-dev"
+    assert plugin["provider_type"] == "fake"
+    assert plugin["provider_families"] == ["fake"]
+    assert plugin["plugin_capability_flags"] == [
+        "CAN_ATTACH_EXISTING",
+        "CAN_INSTALL_PROVIDER",
+        "CAN_DISCOVER_MODELS",
     ]
+    assert plugin["required_permissions"][0]["permission_id"] == "network.private"
+    assert plugin["trust_status"] == "CONFORMANCE_TESTED"
+    assert plugin["installation_recipes"][0]["recipe_id"] == "fake-managed-local"
+    assert plugin["supported_aidn_capabilities"] == ["llm.chat"]
+    assert plugin["workload_types"] == ["llm_text", "speech_to_text"]
+    assert plugin["usage_contract"] == {
+        "supports_exact": False,
+        "supports_estimated": False,
+        "default_measurement_source": None,
+        "fallback_measurement_source": None,
+        "fallback_policy": "none",
+        "missing_usage_behavior": "skip",
+    }
 
 
 def test_queue_diagnostics_endpoint_reports_blocked_reason() -> None:
