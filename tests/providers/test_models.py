@@ -34,6 +34,27 @@ def test_provider_plugin_manifest_stores_digest_and_capability_flags() -> None:
     ]
 
 
+def test_provider_plugin_manifest_normalizes_legacy_permission_strings() -> None:
+    manifest = ProviderPluginManifest(
+        plugin_id="aidn.provider.fake",
+        plugin_version="0.1.0",
+        display_name="Fake Provider",
+        publisher="AiDN Test",
+        package_digest="sha256:abc123",
+        provider_families=["fake"],
+        plugin_capability_flags=["CAN_ATTACH_EXISTING"],
+        required_permissions=["network.private"],
+        supported_aidn_capabilities=["llm.chat"],
+    )
+
+    permission = manifest.required_permissions[0]
+    assert isinstance(permission, PluginPermission)
+    assert permission.permission_id == "network.private"
+    assert permission.label == "network.private"
+    assert permission.risk_level == "low"
+    assert permission.reason == "Legacy permission declaration"
+
+
 def test_provider_plugin_manifest_rejects_blank_package_digest() -> None:
     try:
         ProviderPluginManifest(
@@ -187,6 +208,17 @@ def test_provider_plugin_manifest_exposes_directory_install_metadata() -> None:
     assert manifest.install_ui_schema.fields[0]["id"] == "model_storage_path"
     assert manifest.secret_requirements[0].secret_type == "API_KEY"
     assert manifest.installation_recipes[0].recipe_id == "ollama-qwen3-8b"
+
+
+def test_installation_plan_accepts_default_unsupported_actions() -> None:
+    plan = InstallationPlan(
+        plan_id="plan-ollama",
+        plugin_id="aidn.provider.ollama",
+        plan_version="1.0.0",
+        summary="Install Ollama",
+    )
+
+    assert plan.unsupported_actions == []
 
 
 def test_installation_plan_is_declarative_and_rejects_script_execution() -> None:

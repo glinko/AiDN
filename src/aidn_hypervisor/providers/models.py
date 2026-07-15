@@ -140,6 +140,23 @@ class ProviderPluginManifest(BaseModel):
     def _required_strings_not_blank(cls, value: str) -> str:
         return _require_non_empty(value)
 
+    @field_validator("required_permissions", mode="before")
+    @classmethod
+    def _normalize_legacy_permissions(cls, value: object) -> object:
+        if not isinstance(value, list):
+            return value
+        return [
+            {
+                "permission_id": permission,
+                "label": permission,
+                "risk_level": "low",
+                "reason": "Legacy permission declaration",
+            }
+            if isinstance(permission, str)
+            else permission
+            for permission in value
+        ]
+
 
 class ProviderInstance(BaseModel):
     provider_instance_id: str
