@@ -129,7 +129,7 @@ We already have a working local hypervisor foundation:
 - provider contracts can now opt into `missing_usage_behavior=strict_accounting`, which keeps the task completed but marks the result `unbillable` and settlement-blocked when usage is missing or invalid;
 - settlement export now exposes monotonic `sequence_id` cursors, retention window metadata, and stale-cursor detection.
 - paid endpoint sessions now support explicit create/close lifecycle, deposit lock/release, queue-vs-busy admission, no-request minimum fee, idle timeout auto-close, and usage-linked refund settlement;
-- paid Session contracts now preserve accepted Marketplace identity through `advertisement_id`, optional `offer_id`, pricing/accounting hashes, deterministic `session_contract_hash`, and settlement evidence roots;
+- paid Session contracts now preserve accepted Marketplace identity through `advertisement_id`, optional `offer_id`, pricing/accounting hashes, deterministic `session_contract_hash`, and immutable `session_contract` Registry Object references shared by Session and Settlement evidence;
 - accounting contracts now ship as deterministic registry-style objects with stable object IDs, payload hashes, pricing policy references, and Session-level object-reference preservation alongside local snapshots;
 - canonical capability definitions now ship with stable definition hashes, and published endpoint advertisements now bind to projected feature, limit, and implementation profile hashes inside registry-visible canonical overlays;
 - canonical overlay and node advertisement payloads now also expose immutable local Registry Object envelopes for capability definitions, endpoint profiles, and accounting contracts, giving later persistence and replication work a stable object identity layer to build on;
@@ -159,9 +159,9 @@ What is still missing in the current stage:
 - registry-object alignment is still partial:
   - the repo now has deterministic Registry Object envelopes plus registry-backed list/query/get, opt-in payload retrieval, and standalone local snapshot-backed durable object persistence for capability/profile/accounting artifacts;
   - but it still lacks manifests, retention policy enforcement, and replication of those objects as first-class protocol data.
-- implementation of `RFC-0060` is still pending beyond partial local scaffolding:
-  - manual close, idle timeout, queue/busy admission, remote/proxy-aware session open/close, and basic deposit settlement already exist;
-  - but there is no full forced-settlement state machine yet for `Last Accepted Checkpoint`, acknowledgement timeout, Provider disappearance, Consumer disappearance, deposit exhaustion, or accounting mismatch termination under one canonical evidence model.
+- implementation of `RFC-0044` is still pending beyond partial local scaffolding:
+  - accepted Session contracts now persist as immutable local Registry Objects and settlement/open payloads reference those objects;
+  - but amendment/version chains, remote contract exchange, and full forced-settlement lifecycle semantics remain unimplemented.
 - implementation of `RFC-0058` is still pending beyond partial local scaffolding:
   - Wallet ownership and separate Hypervisor node identity exist;
   - local Faucet claim flow now exists at the app level;
