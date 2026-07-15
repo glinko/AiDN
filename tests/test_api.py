@@ -178,6 +178,16 @@ class BadInstallationPlanPlugin(FakeManagedPlugin):
         return plan
 
 
+class AttachOnlyInstallationPlanPlugin(FakeManagedPlugin):
+    plugin_id = "attach-only"
+
+    def describe(self) -> dict:
+        description = super().describe()
+        description["plugin_id"] = self.plugin_id
+        description["plugin_capability_flags"] = ["CAN_ATTACH_EXISTING"]
+        return description
+
+
 def test_submit_task_endpoint_returns_queued_task_and_selected_bundle() -> None:
     client = TestClient(build_app(service=_service()))
 
@@ -2740,6 +2750,10 @@ def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_contr
     assert "Install plan preview" in response.text
     assert "Preview only: declarative install plan" in response.text
     assert "Declarative preview available" not in response.text
+    assert 'data-provider-row="${escapeHtml(provider.plugin_id)}"' in response.text
+    assert "${escapeHtml(provider.display_name || provider.plugin_id)}" in response.text
+    assert "${escapeHtml(provider.trust_status || \"UNREVIEWED\")}" in response.text
+    assert "escapeHtml(permission.label || permission.permission_id)" in response.text
     assert "No providers installed" in response.text
     assert "Manual Provider Attach" in response.text
     assert "Reload Saved Bundle Config" in response.text
@@ -3716,6 +3730,25 @@ def test_provider_plugin_installation_plan_preview_route_rejects_invalid_plugin_
 
     assert response.status_code == 409
     assert "declarative-only" in response.json()["detail"]
+
+
+def test_provider_plugin_installation_plan_preview_route_rejects_attach_only_plugin() -> None:
+    service = _service()
+    service.plugins.register(AttachOnlyInstallationPlanPlugin())
+    client = TestClient(build_app(service=service))
+
+    response = client.post(
+        "/operators/provider-plugins/attach-only/installation-plan",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            }
+        },
+    )
+
+    assert response.status_code == 409
+    assert "does not support managed installation" in response.json()["detail"]
 
 
 def test_operator_dashboard_bundles_route_returns_workspace_payload(

@@ -34,6 +34,9 @@ class ProviderInventoryService:
 
     def build_installation_plan(self, *, plugin_id: str, configuration: dict) -> dict:
         plugin = self._get_plugin(plugin_id)
+        manifest = plugin.plugin_manifest()
+        if "CAN_INSTALL_PROVIDER" not in manifest.get("plugin_capability_flags", []):
+            raise ValueError(f"Plugin does not support managed installation: {plugin_id}")
         plan = plugin.build_installation_plan(dict(configuration))
         return InstallationPlan.model_validate(plan).model_dump(mode="json")
 

@@ -308,3 +308,30 @@ def test_provider_inventory_rejects_non_declarative_installation_plan() -> None:
                 "base_url": "http://127.0.0.1:9999",
             },
         )
+
+
+def test_provider_inventory_rejects_installation_plan_for_attach_only_plugin() -> None:
+    class AttachOnlyPlugin(FakeManagedPlugin):
+        plugin_id = "attach-only"
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["plugin_capability_flags"] = ["CAN_ATTACH_EXISTING"]
+            return description
+
+    registry = PluginRegistry()
+    registry.register(AttachOnlyPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    with pytest.raises(ValueError, match="does not support managed installation"):
+        service.build_installation_plan(
+            plugin_id="attach-only",
+            configuration={
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+        )
