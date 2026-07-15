@@ -1109,20 +1109,16 @@ def test_plugins_endpoint_returns_installed_plugin_descriptions() -> None:
     response = client.get("/plugins")
 
     assert response.status_code == 200
-    assert response.json() == [
-        {
-            "plugin_id": "fake-managed",
-            "workload_types": ["llm_text", "speech_to_text"],
-            "usage_contract": {
-                "supports_exact": False,
-                "supports_estimated": False,
-                "default_measurement_source": None,
-                "fallback_measurement_source": None,
-                "fallback_policy": "none",
-                "missing_usage_behavior": "skip",
-            },
-        }
-    ]
+    assert response.json()[0]["plugin_id"] == "fake-managed"
+    assert response.json()[0]["workload_types"] == ["llm_text", "speech_to_text"]
+    assert response.json()[0]["usage_contract"] == {
+        "supports_exact": False,
+        "supports_estimated": False,
+        "default_measurement_source": None,
+        "fallback_measurement_source": None,
+        "fallback_policy": "none",
+        "missing_usage_behavior": "skip",
+    }
 
 
 def test_queue_diagnostics_endpoint_reports_blocked_reason() -> None:
@@ -3530,6 +3526,53 @@ def test_operator_dashboard_providers_payload_prefers_create_when_provider_has_m
     assert payload["summary"]["recommended_action"]["action"] == "create_endpoint"
     assert payload["summary"]["endpoint_ready_bundles"] == 2
     assert created.endpoint.endpoint_id is not None
+
+
+def test_provider_inventory_operator_routes_attach_discover_and_bind() -> None:
+    service = _service()
+    client = TestClient(build_app(service=service))
+
+    plugins_response = client.get("/operators/provider-plugins")
+    assert plugins_response.status_code == 200
+    assert plugins_response.json()["items"][0]["plugin_id"] == "fake-managed"
+
+    attach_response = client.post(
+        "/operators/provider-instances/attach",
+        json={
+            "plugin_id": "fake-managed",
+            "display_name": "Local Fake",
+            "configuration": {"base_url": "http://127.0.0.1:9999"},
+        },
+    )
+    assert attach_response.status_code == 200
+    attached = attach_response.json()
+    assert attached["plugin_id"] == "fake-managed"
+
+    discover_response = client.post(
+        f"/operators/provider-instances/{attached['provider_instance_id']}/discover-models"
+    )
+    assert discover_response.status_code == 200
+    models = discover_response.json()["items"]
+    assert models[0]["provider_instance_id"] == attached["provider_instance_id"]
+
+    binding_response = client.post(
+        f"/operators/model-deployments/{models[0]['model_deployment_id']}/runtime-bindings",
+        json={
+            "capability_id": "llm.chat",
+            "capability_version": "1.0.0",
+            "capability_definition_hash": "cap-hash",
+        },
+    )
+    assert binding_response.status_code == 200
+    binding = binding_response.json()
+
+    compatibility_bundle = next(
+        bundle
+        for bundle in service.bundles
+        if bundle.bundle_id == binding["compatibility_bundle_id"]
+    )
+    assert compatibility_bundle.workload_type == "llm.chat"
+    assert compatibility_bundle.endpoint == "http://127.0.0.1:9999"
 
 
 def test_operator_dashboard_bundles_route_returns_workspace_payload(

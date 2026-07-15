@@ -23,6 +23,8 @@ from aidn_hypervisor.economics.models import (
 )
 from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.process_manager import RuntimeHandle
+from aidn_hypervisor.providers.service import ProviderInventoryService
+from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.queue import InMemoryTaskQueue, QueuedTask
 from aidn_hypervisor.reputation import build_reputation_profile
 from aidn_hypervisor.registry_models import (
@@ -152,6 +154,7 @@ class HypervisorService:
         wallet_allocation_grace_period_seconds: int = 300,
         base_emission_q: float = 5000.0,
         epoch_reward_pool_shares: dict | None = None,
+        provider_inventory=None,
     ) -> None:
         self.queue = queue
         self.scheduler = scheduler
@@ -162,6 +165,10 @@ class HypervisorService:
         self.state_store = state_store
         self.bundle_registry = bundle_registry
         self.model_store = model_store
+        self.provider_inventory = provider_inventory or ProviderInventoryService(
+            plugins=self.plugins,
+            store=InMemoryProviderInventoryStore(),
+        )
         self.max_active_allocations_per_owner = max_active_allocations_per_owner
         self.max_pending_allocations_per_owner = max_pending_allocations_per_owner
         self.node_id = node_id
@@ -2278,6 +2285,49 @@ class HypervisorService:
             processed.append(dict(job))
 
         return processed
+
+    def attach_provider_instance(
+        self,
+        *,
+        plugin_id: str,
+        display_name: str,
+        configuration: dict,
+    ) -> dict:
+        instance = self.provider_inventory.attach_provider_instance(
+            plugin_id=plugin_id,
+            display_name=display_name,
+            configuration=configuration,
+        )
+        self._persist_state()
+        return instance.model_dump(mode="json")
+
+    def discover_provider_models(self, provider_instance_id: str) -> list[dict]:
+        deployments = self.provider_inventory.discover_models(provider_instance_id)
+        self._persist_state()
+        return [deployment.model_dump(mode="json") for deployment in deployments]
+
+    def create_runtime_binding(
+        self,
+        *,
+        model_deployment_id: str,
+        capability_id: str,
+        capability_version: str,
+        capability_definition_hash: str,
+    ) -> dict:
+        binding = self.provider_inventory.create_runtime_binding(
+            model_deployment_id=model_deployment_id,
+            capability_id=capability_id,
+            capability_version=capability_version,
+            capability_definition_hash=capability_definition_hash,
+        )
+        self._replace_bundle(
+            self.provider_inventory.bundle_config_for_runtime_binding(
+                binding.runtime_binding_id
+            )
+        )
+        self._persist_bundle_config_if_available()
+        self._persist_state()
+        return binding.model_dump(mode="json")
 
     def mark_model_install_completed(self, install_id: str) -> dict:
         job = self._model_installs[install_id]
@@ -5224,10 +5274,17 @@ class HypervisorService:
         ]
 
     def _replace_bundle(self, updated_bundle: BundleConfig) -> None:
-        self.bundles = [
-            updated_bundle if bundle.bundle_id == updated_bundle.bundle_id else bundle
-            for bundle in self.bundles
-        ]
+        replaced = False
+        bundles: list[BundleConfig] = []
+        for bundle in self.bundles:
+            if bundle.bundle_id == updated_bundle.bundle_id:
+                bundles.append(updated_bundle)
+                replaced = True
+            else:
+                bundles.append(bundle)
+        if not replaced:
+            bundles.append(updated_bundle)
+        self.bundles = bundles
 
     def _persist_bundle_config_if_available(self) -> None:
         if self.bundle_registry is None:

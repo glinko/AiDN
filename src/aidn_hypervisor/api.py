@@ -1030,6 +1030,52 @@ def build_api_router(
             validation_service=validation_service,
         )
 
+    @router.get("/operators/provider-plugins")
+    async def list_provider_plugins() -> dict:
+        return {"items": service.provider_inventory.list_plugin_manifests()}
+
+    @router.post("/operators/provider-instances/attach")
+    async def attach_provider_instance(payload: dict) -> dict:
+        try:
+            return service.attach_provider_instance(**payload)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown plugin: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-instances/{provider_instance_id}/discover-models")
+    async def discover_provider_models(provider_instance_id: str) -> dict:
+        try:
+            return {"items": service.discover_provider_models(provider_instance_id)}
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown provider instance: {provider_instance_id}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/model-deployments/{model_deployment_id}/runtime-bindings")
+    async def create_runtime_binding(
+        model_deployment_id: str,
+        payload: dict,
+    ) -> dict:
+        try:
+            return service.create_runtime_binding(
+                model_deployment_id=model_deployment_id,
+                **payload,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown model deployment: {model_deployment_id}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @router.get("/operators/dashboard/bundles")
     async def operator_dashboard_bundles() -> dict:
         return build_operator_bundles_payload(

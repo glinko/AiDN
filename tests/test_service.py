@@ -23,6 +23,7 @@ from aidn_hypervisor.plugins.ollama import OllamaPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.plugins.whisper import WhisperPlugin
 from aidn_hypervisor.process_manager import ProviderProcessManager, RuntimeHandle
+from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointService
 from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
@@ -244,6 +245,14 @@ class StubRemoteHypervisorTransport:
         raise AssertionError(f"unexpected proxy request: {method} {url}")
 
 
+class RecordingStateStore:
+    def __init__(self) -> None:
+        self.snapshots = []
+
+    def save(self, snapshot) -> None:
+        self.snapshots.append(snapshot)
+
+
 def test_service_submit_routes_and_records_selected_bundle_for_manual_mode() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
@@ -262,6 +271,59 @@ def test_service_submit_routes_and_records_selected_bundle_for_manual_mode() -> 
 
     assert service.selected_bundle_id(task.task_id) == "whisper-a"
     assert task.request.bundle_override == "whisper-a"
+
+
+def test_service_create_runtime_binding_projects_and_persists_compatibility_bundle(
+    tmp_path,
+) -> None:
+    from aidn_hypervisor.bundle_registry import FileBundleRegistry
+
+    bundle_registry = FileBundleRegistry(tmp_path / "bundles.json")
+    state_store = RecordingStateStore()
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        bundles=[_bundle("whisper-a", "speech_to_text")],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+        bundle_registry=bundle_registry,
+        state_store=state_store,
+    )
+
+    attached = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    models = service.discover_provider_models(attached["provider_instance_id"])
+    state_store.snapshots.clear()
+
+    binding = service.create_runtime_binding(
+        model_deployment_id=models[0]["model_deployment_id"],
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+
+    compatibility_bundle = next(
+        bundle
+        for bundle in service.bundles
+        if bundle.bundle_id == binding["compatibility_bundle_id"]
+    )
+    persisted_bundle = next(
+        bundle
+        for bundle in bundle_registry.load(service.plugins)
+        if bundle.bundle_id == binding["compatibility_bundle_id"]
+    )
+
+    assert isinstance(service.provider_inventory, ProviderInventoryService)
+    assert compatibility_bundle.plugin_id == "fake-managed"
+    assert compatibility_bundle.provider_type == "fake"
+    assert compatibility_bundle.workload_type == "llm.chat"
+    assert compatibility_bundle.model_id == "fake-model"
+    assert compatibility_bundle.endpoint == "http://127.0.0.1:9999"
+    assert persisted_bundle.bundle_id == compatibility_bundle.bundle_id
+    assert len(state_store.snapshots) == 1
 
 
 def test_service_submit_routes_and_records_selected_bundle_for_automatic_mode() -> None:
