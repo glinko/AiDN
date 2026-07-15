@@ -50,7 +50,18 @@ def build_endpoint_router(
         return _ok({"items": items})
 
     @router.post("", status_code=201)
-    async def create_endpoint(command: CreateEndpointCommand) -> JSONResponse:
+    async def create_endpoint(payload: dict) -> JSONResponse:
+        command_data = dict(payload)
+        runtime_binding_id = command_data.get("runtime_binding_id")
+        if runtime_binding_id and hypervisor_service is not None:
+            compatibility_bundle = hypervisor_service.bundle_for_runtime_binding(
+                str(runtime_binding_id)
+            )
+            command_data["bundle_id"] = compatibility_bundle.bundle_id
+            command_data["bundle_hash"] = command_data.get(
+                "bundle_hash"
+            ) or compatibility_bundle.bundle_id
+        command = CreateEndpointCommand(**command_data)
         created = service.create_endpoint(command)
         onboarding = None
         if hypervisor_service is not None:

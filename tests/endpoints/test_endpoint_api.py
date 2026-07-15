@@ -1,8 +1,13 @@
 from fastapi.testclient import TestClient
 
+from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.main import build_app
+from aidn_hypervisor.process_manager import ProviderProcessManager
+from aidn_hypervisor.queue import InMemoryTaskQueue
+from aidn_hypervisor.scheduler import Scheduler
+from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 
@@ -12,6 +17,22 @@ def _client() -> TestClient:
     session_service = SessionService(SessionStore())
     return TestClient(
         build_app(endpoint_service=endpoint_service, session_service=session_service)
+    )
+
+
+def _runtime_binding_bundle(bundle_id: str) -> BundleConfig:
+    return BundleConfig(
+        bundle_id=bundle_id,
+        plugin_id="fake-managed",
+        provider_type="fake",
+        workload_type="llm.chat",
+        model_id="qwen3:14b",
+        launch_mode="managed_process",
+        device_affinity="cpu",
+        resource_profile=ResourceProfile(),
+        warm_policy="auto",
+        priority_class=50,
+        enabled=True,
     )
 
 
@@ -34,6 +55,38 @@ def test_create_endpoint_api_returns_enveloped_response() -> None:
     assert body["data"]["endpoint"]["status"] == "created"
     assert body["error"] is None
     assert body["correlation_id"]
+
+
+def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
+    hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    hypervisor.bundle_for_runtime_binding = (  # type: ignore[attr-defined]
+        lambda runtime_binding_id: _runtime_binding_bundle(f"bundle-{runtime_binding_id}")
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=EndpointService(EndpointStore()),
+            session_service=SessionService(SessionStore()),
+        )
+    )
+
+    response = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-a",
+            "runtime_binding_id": "rtb-1",
+            "bundle_id": "bundle-legacy",
+            "bundle_hash": "bundle-hash-a",
+            "display_name": "Local Qwen",
+            "model_class": "llm.chat",
+            "capabilities": ["llm.chat"],
+        },
+    )
+
+    body = response.json()
+
+    assert response.status_code == 201
+    assert body["data"]["endpoint"]["bundle_id"] == "bundle-rtb-1"
 
 
 def test_patch_endpoint_runtime_rotates_configuration_hash() -> None:

@@ -2329,6 +2329,11 @@ class HypervisorService:
         self._persist_state()
         return binding.model_dump(mode="json")
 
+    def bundle_for_runtime_binding(self, runtime_binding_id: str) -> BundleConfig:
+        return self.provider_inventory.bundle_config_for_runtime_binding(
+            runtime_binding_id
+        )
+
     def mark_model_install_completed(self, install_id: str) -> dict:
         job = self._model_installs[install_id]
         job["status"] = "completed"

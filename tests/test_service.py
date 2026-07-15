@@ -378,6 +378,25 @@ def test_service_create_runtime_binding_reuses_compatibility_bundle_for_same_log
     assert len(persisted_matching_bundles) == 1
 
 
+def test_service_bundle_for_runtime_binding_delegates_to_provider_inventory() -> None:
+    expected_bundle = _bundle("bundle-rtb-1", "llm.chat")
+
+    class FakeProviderInventory:
+        def bundle_config_for_runtime_binding(self, runtime_binding_id: str) -> BundleConfig:
+            assert runtime_binding_id == "rtb-1"
+            return expected_bundle
+
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        provider_inventory=FakeProviderInventory(),
+    )
+
+    bundle = service.bundle_for_runtime_binding("rtb-1")
+
+    assert bundle == expected_bundle
+
+
 def test_service_submit_routes_and_records_selected_bundle_for_automatic_mode() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),

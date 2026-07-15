@@ -171,6 +171,7 @@ class EndpointConfigurationSnapshot(BaseModel):
 
 class CreateEndpointCommand(BaseModel):
     owner_wallet: str
+    runtime_binding_id: str | None = None
     bundle_id: str
     bundle_hash: str
     display_name: str
