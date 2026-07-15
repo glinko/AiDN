@@ -513,6 +513,52 @@ def test_service_build_provider_installation_plan_preview() -> None:
     assert plan["plugin_id"] == "fake-managed"
 
 
+def test_provider_installation_approval_and_job_survive_snapshot_restore() -> None:
+    state_store = RecordingStateStore()
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+        state_store=state_store,
+    )
+
+    approval = service.approve_provider_installation_plan(
+        plugin_id="fake-managed",
+        configuration={
+            "display_name": "Local Fake",
+            "base_url": "http://127.0.0.1:9999",
+        },
+        operator_note="approved for local test",
+    )
+    job = service.apply_provider_installation_approval(approval["approval_id"])
+    snapshot = service.snapshot_state()
+
+    restored = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=service.plugins,
+        runtimes=ProviderProcessManager(),
+    )
+    restored.restore_state(snapshot)
+
+    restored_approval = restored.list_provider_installation_approvals()[0]
+    restored_job = restored.list_provider_installation_jobs()[0]
+    restored_instance = restored.list_provider_instances()[0]
+    assert restored_approval["approval_id"] == approval["approval_id"]
+    assert restored_approval["operator_note"] == "approved for local test"
+    assert restored_job["job_id"] == job["job_id"]
+    assert restored_job["status"] == "SUCCEEDED"
+    assert restored_instance["provider_instance_id"] == job["provider_instance_id"]
+    assert restored_instance["plugin_id"] == "fake-managed"
+    assert restored_instance["operational_state"] == "created"
+    assert len(state_store.snapshots) == 2
+    assert state_store.snapshots[0].provider_installation_approvals[0].approval_id == (
+        approval["approval_id"]
+    )
+    assert state_store.snapshots[1].provider_installation_jobs[0].job_id == job["job_id"]
+
+
 def test_service_submit_routes_and_records_selected_bundle_for_automatic_mode() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),

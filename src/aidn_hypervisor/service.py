@@ -2330,6 +2330,37 @@ class HypervisorService:
             configuration=configuration,
         )
 
+    def approve_provider_installation_plan(
+        self,
+        plugin_id: str,
+        configuration: dict,
+        operator_note: str | None = None,
+    ) -> dict:
+        approval = self.provider_inventory.approve_installation_plan(
+            plugin_id=plugin_id,
+            configuration=configuration,
+            operator_note=operator_note,
+        )
+        self._persist_state()
+        return approval.model_dump(mode="json")
+
+    def apply_provider_installation_approval(self, approval_id: str) -> dict:
+        job = self.provider_inventory.apply_installation_approval(approval_id)
+        self._persist_state()
+        return job.model_dump(mode="json")
+
+    def list_provider_installation_approvals(self) -> list[dict]:
+        return [
+            approval.model_dump(mode="json")
+            for approval in self.provider_inventory.list_installation_approvals()
+        ]
+
+    def list_provider_installation_jobs(self) -> list[dict]:
+        return [
+            job.model_dump(mode="json")
+            for job in self.provider_inventory.list_installation_jobs()
+        ]
+
     def discover_provider_models(self, provider_instance_id: str) -> list[dict]:
         deployments = self.provider_inventory.discover_models(provider_instance_id)
         self._persist_state()
@@ -2721,6 +2752,14 @@ class HypervisorService:
                 binding.model_copy(deep=True)
                 for binding in self.provider_inventory.list_runtime_bindings()
             ],
+            provider_installation_approvals=[
+                approval.model_copy(deep=True)
+                for approval in self.provider_inventory.list_installation_approvals()
+            ],
+            provider_installation_jobs=[
+                job.model_copy(deep=True)
+                for job in self.provider_inventory.list_installation_jobs()
+            ],
             operator_requests_policy=dict(self._operator_requests_policy),
             owner_wallet=(
                 OwnerWalletSnapshot(**self._owner_wallet)
@@ -2836,6 +2875,10 @@ class HypervisorService:
             self.provider_inventory.store.save_model_deployment(deployment)
         for binding in snapshot.runtime_bindings:
             self.provider_inventory.store.save_runtime_binding(binding)
+        for approval in snapshot.provider_installation_approvals:
+            self.provider_inventory.store.save_installation_approval(approval)
+        for job in snapshot.provider_installation_jobs:
+            self.provider_inventory.store.save_installation_job(job)
         self._wallet_usage_events = [
             event.model_dump(mode="json") for event in snapshot.wallet_usage_events
         ]
