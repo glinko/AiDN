@@ -29,22 +29,29 @@ def test_provider_plugin_manifest_requires_digest_and_capability_flags() -> None
 
 
 def test_runtime_binding_requires_primary_capability() -> None:
-    try:
-        RuntimeBinding(
-            runtime_binding_id="rb-1",
-            provider_instance_id="pi-1",
-            model_deployment_id="md-1",
-            capability_id="",
-            capability_version="1.0.0",
-            capability_definition_hash="cap-hash",
-            plugin_id="aidn.provider.fake",
-            compatibility_bundle_id="bundle-rb-1",
-            status="ready",
-        )
-    except ValidationError as exc:
-        assert "capability_id" in str(exc)
-    else:
-        raise AssertionError("expected ValidationError")
+    for field_name, override in {
+        "capability_id": "",
+        "capability_version": "   ",
+        "capability_definition_hash": "",
+    }.items():
+        payload = {
+            "runtime_binding_id": "rb-1",
+            "provider_instance_id": "pi-1",
+            "model_deployment_id": "md-1",
+            "capability_id": "cap.primary",
+            "capability_version": "1.0.0",
+            "capability_definition_hash": "cap-hash",
+            "plugin_id": "aidn.provider.fake",
+            "compatibility_bundle_id": "bundle-rb-1",
+            "status": "ready",
+        }
+        payload[field_name] = override
+        try:
+            RuntimeBinding(**payload)
+        except ValidationError as exc:
+            assert field_name in str(exc)
+        else:
+            raise AssertionError("expected ValidationError")
 
 
 def test_model_deployment_tracks_metadata_sources() -> None:
