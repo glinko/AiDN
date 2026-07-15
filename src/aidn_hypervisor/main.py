@@ -100,7 +100,7 @@ def build_app(
     app.include_router(
         build_api_router(
             resolved_service,
-            registry_service=resolved_registry_service,
+            registry_service=registry_service,
             endpoint_service=resolved_endpoint_service,
             endpoint_publication_service=resolved_endpoint_publication_service,
             remote_endpoint_service=resolved_remote_endpoint_service,
