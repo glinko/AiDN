@@ -279,6 +279,20 @@ def test_store_rejects_provider_plugin_change_when_dependents_exist() -> None:
     assert store.get_provider_instance("pi-1") == provider_instance
 
 
+def test_store_rejects_provider_plugin_change_when_no_dependents_exist() -> None:
+    store = InMemoryProviderInventoryStore()
+    provider_instance = _provider_instance("pi-1")
+
+    store.save_provider_instance(provider_instance)
+
+    with pytest.raises(ValueError, match="plugin_id"):
+        store.save_provider_instance(
+            provider_instance.model_copy(update={"plugin_id": "aidn.provider.other"})
+        )
+
+    assert store.get_provider_instance("pi-1") == provider_instance
+
+
 def test_store_rejects_model_deployment_provider_change_when_dependents_exist() -> None:
     store = InMemoryProviderInventoryStore()
     provider_instance = _provider_instance("pi-1")
@@ -306,6 +320,28 @@ def test_store_rejects_model_deployment_provider_change_when_dependents_exist() 
     store.save_provider_instance(other_provider_instance)
     store.save_model_deployment(deployment)
     store.save_runtime_binding(binding)
+
+    with pytest.raises(ValueError, match="provider_instance_id"):
+        store.save_model_deployment(
+            deployment.model_copy(update={"provider_instance_id": "pi-2"})
+        )
+
+    assert store.get_model_deployment("md-1") == deployment
+
+
+def test_store_rejects_model_deployment_provider_change_when_no_bindings_exist() -> None:
+    store = InMemoryProviderInventoryStore()
+    store.save_provider_instance(_provider_instance("pi-1"))
+    store.save_provider_instance(_provider_instance("pi-2", display_name="Other Fake"))
+    deployment = ModelDeployment(
+        model_deployment_id="md-1",
+        provider_instance_id="pi-1",
+        provider_model_reference="qwen3:14b",
+        operator_display_name="Qwen 14B",
+        operational_state="ready",
+    )
+
+    store.save_model_deployment(deployment)
 
     with pytest.raises(ValueError, match="provider_instance_id"):
         store.save_model_deployment(

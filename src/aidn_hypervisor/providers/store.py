@@ -14,15 +14,7 @@ class InMemoryProviderInventoryStore:
     def save_provider_instance(self, instance: ProviderInstance) -> None:
         current = self._provider_instances.get(instance.provider_instance_id)
         if current is not None and current.plugin_id != instance.plugin_id:
-            has_dependents = any(
-                deployment.provider_instance_id == instance.provider_instance_id
-                for deployment in self._model_deployments.values()
-            ) or any(
-                binding.provider_instance_id == instance.provider_instance_id
-                for binding in self._runtime_bindings.values()
-            )
-            if has_dependents:
-                raise ValueError("plugin_id cannot change while dependent records exist")
+            raise ValueError("plugin_id is immutable once provider_instance_id exists")
         self._provider_instances[instance.provider_instance_id] = instance
 
     def get_provider_instance(self, provider_instance_id: str) -> ProviderInstance:
@@ -54,15 +46,8 @@ class InMemoryProviderInventoryStore:
         if deployment.provider_instance_id not in self._provider_instances:
             raise ValueError("provider_instance_id must reference an existing provider instance")
         current = self._model_deployments.get(deployment.model_deployment_id)
-        if (
-            current is not None
-            and current.provider_instance_id != deployment.provider_instance_id
-            and any(
-                binding.model_deployment_id == deployment.model_deployment_id
-                for binding in self._runtime_bindings.values()
-            )
-        ):
-            raise ValueError("provider_instance_id cannot change while dependent runtime bindings exist")
+        if current is not None and current.provider_instance_id != deployment.provider_instance_id:
+            raise ValueError("provider_instance_id is immutable once model_deployment_id exists")
         self._model_deployments[deployment.model_deployment_id] = deployment
 
     def get_model_deployment(self, model_deployment_id: str) -> ModelDeployment:
