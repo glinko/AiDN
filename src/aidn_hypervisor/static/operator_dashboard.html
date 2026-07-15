@@ -3967,6 +3967,7 @@
                   ? pluginDirectory
                       .map((provider) => {
                         const active = provider.plugin_id === state.selectedProviderId;
+                        const canInstallProvider = (provider.plugin_capability_flags || []).includes("CAN_INSTALL_PROVIDER");
                         return `
                           <div class="table-row ${active ? "active" : ""}" data-provider-row="${provider.plugin_id}">
                             <div>
@@ -3976,7 +3977,7 @@
                             <div><span class="chip ${provider.trust_status === "CONFORMANCE_TESTED" ? "good" : ""}">${provider.trust_status || "UNREVIEWED"}</span></div>
                             <div class="row-meta">${(provider.supported_aidn_capabilities || provider.workload_types || []).join(", ") || "-"}</div>
                             <div class="row-meta">${(provider.required_permissions || []).map((permission) => permission.label || permission.permission_id).join(", ") || "No elevated permissions"}</div>
-                            <div class="row-meta">${provider.install_ui_schema ? "Declarative preview available" : "Attach only"}</div>
+                            <div class="row-meta">${canInstallProvider ? "Preview only: declarative install plan" : "Attach only"}</div>
                             <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Inspect"}</button>
                           </div>
                         `;

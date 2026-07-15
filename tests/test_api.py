@@ -2735,6 +2735,8 @@ def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_contr
     assert "Plugin directory" in response.text
     assert "Trust" in response.text
     assert "Install plan preview" in response.text
+    assert "Preview only: declarative install plan" in response.text
+    assert "Declarative preview available" not in response.text
     assert "No providers installed" in response.text
     assert "Manual Provider Attach" in response.text
     assert "Reload Saved Bundle Config" in response.text
