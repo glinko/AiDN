@@ -6,6 +6,7 @@ from aidn_hypervisor.providers.executor import RecordedProviderInstallationExecu
 from aidn_hypervisor.providers.models import (
     InstallationPlan,
     ProviderInstallationApproval,
+    ProviderInstallationExecutionResult,
     ProviderInstallationJob,
 )
 from aidn_hypervisor.providers.service import ProviderInventoryService
@@ -665,6 +666,127 @@ def test_provider_inventory_apply_rejects_plan_hash_mismatch() -> None:
 
     with pytest.raises(ValueError, match="installation plan hash mismatch"):
         service.apply_installation_approval(approval.approval_id)
+
+
+def test_provider_inventory_apply_isolates_nested_approval_configuration_from_plan_rebuild() -> None:
+    class NestedMutatingPlanPlugin(FakeManagedPlugin):
+        plugin_id = "nested-mutating-plan"
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            configuration["runtime"]["endpoint"] = "mutated-by-plan"
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            return plan
+
+    registry = PluginRegistry()
+    registry.register(NestedMutatingPlanPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    configuration = {
+        **_installation_configuration(),
+        "runtime": {"endpoint": "approved", "retries": 3},
+    }
+
+    approval = service.approve_installation_plan(
+        plugin_id="nested-mutating-plan",
+        configuration=configuration,
+    )
+    job = service.apply_installation_approval(approval.approval_id)
+    provider = service.store.get_provider_instance(job.provider_instance_id)
+    stored_approval = service.store.get_installation_approval(approval.approval_id)
+
+    assert job.status == "SUCCEEDED"
+    assert approval.configuration["runtime"] == {"endpoint": "approved", "retries": 3}
+    assert stored_approval.configuration["runtime"] == {"endpoint": "approved", "retries": 3}
+    assert provider.configuration["runtime"] == {"endpoint": "approved", "retries": 3}
+
+
+def test_provider_inventory_apply_fails_when_executor_returns_mismatched_provider_identity() -> None:
+    class MismatchedProviderExecutor:
+        executor_id = "mismatched-provider"
+
+        def apply(
+            self,
+            *,
+            approval: ProviderInstallationApproval,
+            plan: InstallationPlan,
+            configuration: dict,
+            manifest: dict,
+            provider_instance_id: str,
+        ) -> ProviderInstallationExecutionResult:
+            return ProviderInstallationExecutionResult(
+                provider_instance={
+                    "provider_instance_id": f"{provider_instance_id}-other",
+                    "plugin_id": approval.plugin_id,
+                    "provider_family": "fake",
+                    "display_name": "Local Fake",
+                    "connection_mode": "managed",
+                    "configuration": configuration,
+                    "operational_state": "created",
+                },
+            )
+
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=MismatchedProviderExecutor(),
+    )
+    approval = service.approve_installation_plan(
+        plugin_id="fake-managed",
+        configuration=_installation_configuration(),
+    )
+
+    job = service.apply_installation_approval(approval.approval_id)
+
+    assert job.status == "FAILED"
+    assert job.error_code == "ValueError"
+    assert "provider_instance_id" in (job.error_message or "")
+    assert service.list_provider_instances() == []
+
+
+def test_provider_inventory_apply_fails_when_executor_returns_mismatched_plugin() -> None:
+    class MismatchedPluginExecutor:
+        executor_id = "mismatched-plugin"
+
+        def apply(
+            self,
+            *,
+            approval: ProviderInstallationApproval,
+            plan: InstallationPlan,
+            configuration: dict,
+            manifest: dict,
+            provider_instance_id: str,
+        ) -> ProviderInstallationExecutionResult:
+            return ProviderInstallationExecutionResult(
+                provider_instance={
+                    "provider_instance_id": provider_instance_id,
+                    "plugin_id": "other-plugin",
+                    "provider_family": "fake",
+                    "display_name": "Local Fake",
+                    "connection_mode": "managed",
+                    "configuration": configuration,
+                    "operational_state": "created",
+                },
+            )
+
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=MismatchedPluginExecutor(),
+    )
+    approval = service.approve_installation_plan(
+        plugin_id="fake-managed",
+        configuration=_installation_configuration(),
+    )
+
+    job = service.apply_installation_approval(approval.approval_id)
+
+    assert job.status == "FAILED"
+    assert job.error_code == "ValueError"
+    assert "plugin_id" in (job.error_message or "")
+    assert service.list_provider_instances() == []
 
 
 def test_provider_inventory_approval_hashes_are_deterministic_for_key_order() -> None:

@@ -67,7 +67,7 @@ class ProviderInventoryService:
         manifest = plugin.plugin_manifest()
         if "CAN_INSTALL_PROVIDER" not in manifest.get("plugin_capability_flags", []):
             raise ValueError(f"Plugin does not support managed installation: {plugin_id}")
-        plan = plugin.build_installation_plan(dict(configuration))
+        plan = plugin.build_installation_plan(deepcopy(configuration))
         return InstallationPlan.model_validate(plan).model_dump(mode="json")
 
     def approve_installation_plan(
@@ -78,14 +78,18 @@ class ProviderInventoryService:
     ) -> ProviderInstallationApproval:
         plugin = self._get_plugin(plugin_id)
         manifest = ProviderPluginManifest.model_validate(plugin.plugin_manifest())
-        plan = self.build_installation_plan(plugin_id=plugin_id, configuration=configuration)
+        approved_configuration = deepcopy(configuration)
+        plan = self.build_installation_plan(
+            plugin_id=plugin_id,
+            configuration=approved_configuration,
+        )
         approval = ProviderInstallationApproval(
             approval_id=f"pia-{uuid4().hex[:12]}",
             plugin_id=plugin_id,
             plan_id=plan["plan_id"],
-            plan_hash=_canonical_hash(plan),
-            configuration_hash=_canonical_hash(configuration),
-            configuration=deepcopy(configuration),
+            plan_hash=_canonical_hash(deepcopy(plan)),
+            configuration_hash=_canonical_hash(deepcopy(approved_configuration)),
+            configuration=deepcopy(approved_configuration),
             approved_permissions=[
                 permission["permission_id"]
                 for permission in plan.get("required_permissions", [])
@@ -108,17 +112,18 @@ class ProviderInventoryService:
         approval = self.store.get_installation_approval(approval_id)
         if approval.status != "APPROVED":
             raise ValueError("installation approval is not active")
-        if _canonical_hash(approval.configuration) != approval.configuration_hash:
+        approved_configuration = deepcopy(approval.configuration)
+        if _canonical_hash(deepcopy(approved_configuration)) != approval.configuration_hash:
             raise ValueError("installation configuration hash mismatch")
 
         plugin = self._get_plugin(approval.plugin_id)
         manifest = ProviderPluginManifest.model_validate(plugin.plugin_manifest())
         plan_dict = self.build_installation_plan(
             plugin_id=approval.plugin_id,
-            configuration=approval.configuration,
+            configuration=approved_configuration,
         )
         plan = InstallationPlan.model_validate(plan_dict)
-        if _canonical_hash(plan_dict) != approval.plan_hash:
+        if _canonical_hash(deepcopy(plan_dict)) != approval.plan_hash:
             raise ValueError("installation plan hash mismatch")
 
         job = ProviderInstallationJob(
@@ -137,14 +142,22 @@ class ProviderInventoryService:
         self.store.save_installation_job(job)
 
         try:
+            provider_instance_id = f"pi-{uuid4().hex[:12]}"
+            approval_for_executor = approval.model_copy(deep=True)
             result = self.installation_executor.apply(
-                approval=approval,
+                approval=approval_for_executor,
                 plan=plan,
-                configuration=deepcopy(approval.configuration),
+                configuration=deepcopy(approved_configuration),
                 manifest=manifest.model_dump(mode="json"),
-                provider_instance_id=f"pi-{uuid4().hex[:12]}",
+                provider_instance_id=provider_instance_id,
             )
             provider_instance = ProviderInstance.model_validate(result.provider_instance)
+            self._validate_applied_provider_instance(
+                provider_instance=provider_instance,
+                provider_instance_id=provider_instance_id,
+                approval=approval,
+                approved_configuration=approved_configuration,
+            )
             self.store.save_provider_instance(provider_instance)
             job = job.model_copy(
                 update={
@@ -177,9 +190,9 @@ class ProviderInventoryService:
         configuration: dict,
     ) -> ProviderInstance:
         plugin = self._get_plugin(plugin_id)
-        normalized_configuration = dict(configuration)
-        plugin.validate_provider_configuration(normalized_configuration)
-        attached = plugin.attach_existing_provider(normalized_configuration)
+        normalized_configuration = deepcopy(configuration)
+        plugin.validate_provider_configuration(deepcopy(normalized_configuration))
+        attached = plugin.attach_existing_provider(deepcopy(normalized_configuration))
         manifest = plugin.plugin_manifest()
         instance = ProviderInstance(
             provider_instance_id=f"pi-{uuid4().hex[:12]}",
@@ -187,11 +200,40 @@ class ProviderInventoryService:
             provider_family=self._provider_family(manifest, plugin_id),
             display_name=str(attached.get("display_name") or display_name),
             connection_mode=attached.get("connection_mode", "attached"),
-            configuration=dict(attached.get("configuration") or normalized_configuration),
+            configuration=deepcopy(attached.get("configuration") or normalized_configuration),
             operational_state=attached.get("operational_state", "ready"),
         )
         self.store.save_provider_instance(instance)
         return instance
+
+    def _validate_applied_provider_instance(
+        self,
+        *,
+        provider_instance: ProviderInstance,
+        provider_instance_id: str,
+        approval: ProviderInstallationApproval,
+        approved_configuration: dict,
+    ) -> None:
+        expected = {
+            "provider_instance_id": provider_instance_id,
+            "plugin_id": approval.plugin_id,
+            "connection_mode": "managed",
+            "operational_state": "created",
+            "configuration": approved_configuration,
+        }
+        actual = {
+            "provider_instance_id": provider_instance.provider_instance_id,
+            "plugin_id": provider_instance.plugin_id,
+            "connection_mode": provider_instance.connection_mode,
+            "operational_state": provider_instance.operational_state,
+            "configuration": provider_instance.configuration,
+        }
+        for field, expected_value in expected.items():
+            if actual[field] != expected_value:
+                raise ValueError(
+                    "provider installation executor returned mismatched "
+                    f"{field}: expected {expected_value!r}, got {actual[field]!r}"
+                )
 
     def discover_models(self, provider_instance_id: str) -> list[ModelDeployment]:
         instance = self.store.get_provider_instance(provider_instance_id)
