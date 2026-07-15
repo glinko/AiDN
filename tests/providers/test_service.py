@@ -1,7 +1,15 @@
+import pytest
+
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
+
+
+def _registry() -> PluginRegistry:
+    registry = PluginRegistry()
+    registry.register(FakeManagedPlugin())
+    return registry
 
 
 def test_fake_plugin_exposes_attach_schema_and_discovers_models() -> None:
@@ -254,3 +262,76 @@ def test_provider_inventory_service_ignores_plugin_supplied_random_runtime_bindi
         first.runtime_binding_id
     ]
     assert bundle.bundle_id == first.compatibility_bundle_id
+
+
+def test_provider_inventory_builds_declarative_installation_plan() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    plan = service.build_installation_plan(
+        plugin_id="fake-managed",
+        configuration={
+            "display_name": "Local Fake",
+            "base_url": "http://127.0.0.1:9999",
+        },
+    )
+
+    assert plan["plugin_id"] == "fake-managed"
+    assert plan["unsupported_actions"] == []
+    assert plan["health_checks"][0]["url"] == "http://127.0.0.1:9999"
+
+
+def test_provider_inventory_rejects_non_declarative_installation_plan() -> None:
+    class BadPlanPlugin(FakeManagedPlugin):
+        plugin_id = "bad-plan"
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            plan["unsupported_actions"] = ["RUN_SHELL_SCRIPT"]
+            return plan
+
+    registry = PluginRegistry()
+    registry.register(BadPlanPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    with pytest.raises(ValueError, match="declarative-only"):
+        service.build_installation_plan(
+            plugin_id="bad-plan",
+            configuration={
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+        )
+
+
+def test_provider_inventory_rejects_installation_plan_for_attach_only_plugin() -> None:
+    class AttachOnlyPlugin(FakeManagedPlugin):
+        plugin_id = "attach-only"
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["plugin_capability_flags"] = ["CAN_ATTACH_EXISTING"]
+            return description
+
+    registry = PluginRegistry()
+    registry.register(AttachOnlyPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    with pytest.raises(ValueError, match="does not support managed installation"):
+        service.build_installation_plan(
+            plugin_id="attach-only",
+            configuration={
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+        )

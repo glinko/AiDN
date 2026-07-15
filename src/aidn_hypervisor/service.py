@@ -2319,6 +2319,17 @@ class HypervisorService:
             for binding in self.provider_inventory.list_runtime_bindings()
         ]
 
+    def build_provider_installation_plan(
+        self,
+        *,
+        plugin_id: str,
+        configuration: dict,
+    ) -> dict:
+        return self.provider_inventory.build_installation_plan(
+            plugin_id=plugin_id,
+            configuration=configuration,
+        )
+
     def discover_provider_models(self, provider_instance_id: str) -> list[dict]:
         deployments = self.provider_inventory.discover_models(provider_instance_id)
         self._persist_state()

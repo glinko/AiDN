@@ -89,3 +89,34 @@ def test_registry_manifest_preserves_explicit_empty_supported_capabilities() -> 
 
     assert manifests[0]["plugin_id"] == "explicit-empty"
     assert manifests[0]["supported_aidn_capabilities"] == []
+
+
+def test_registry_manifest_includes_install_schema_permissions_and_recipes() -> None:
+    registry = PluginRegistry()
+    registry.register(FakeManagedPlugin())
+
+    manifest = registry.list_manifests()[0]
+
+    assert manifest["trust_status"] == "CONFORMANCE_TESTED"
+    assert manifest["required_permissions"][0]["permission_id"] == "network.private"
+    assert manifest["attach_ui_schema"]["schema_id"] == "fake.attach.v1"
+    assert manifest["install_ui_schema"]["schema_id"] == "fake.install.v1"
+    assert manifest["secret_requirements"] == []
+    assert manifest["installation_recipes"][0]["recipe_id"] == "fake-managed-local"
+    assert "CAN_INSTALL_PROVIDER" in manifest["plugin_capability_flags"]
+
+
+def test_fake_plugin_builds_declarative_installation_plan() -> None:
+    plugin = FakeManagedPlugin()
+
+    plan = plugin.build_installation_plan(
+        {
+            "display_name": "Local Fake",
+            "base_url": "http://127.0.0.1:9999",
+        }
+    )
+
+    assert plan["plugin_id"] == "fake-managed"
+    assert plan["summary"] == "Attach or prepare Fake Managed Provider"
+    assert plan["unsupported_actions"] == []
+    assert plan["health_checks"][0]["type"] == "http"

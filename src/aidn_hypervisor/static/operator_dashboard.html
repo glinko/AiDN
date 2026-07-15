@@ -3956,9 +3956,10 @@
             <div class="table-shell" style="margin-top: 14px;">
               <div class="table-head">
                 <div>Plugin</div>
+                <div>Trust</div>
                 <div>Capabilities</div>
-                <div>Bundles</div>
-                <div>Installs</div>
+                <div>Permissions</div>
+                <div>Install plan preview</div>
                 <div>Action</div>
               </div>
               ${
@@ -3966,15 +3967,23 @@
                   ? pluginDirectory
                       .map((provider) => {
                         const active = provider.plugin_id === state.selectedProviderId;
+                        const canInstallProvider = (provider.plugin_capability_flags || []).includes("CAN_INSTALL_PROVIDER");
+                        const capabilitySummary = (provider.supported_aidn_capabilities || provider.workload_types || [])
+                          .map((capability) => escapeHtml(capability))
+                          .join(", ");
+                        const permissionSummary = (provider.required_permissions || [])
+                          .map((permission) => escapeHtml(permission.label || permission.permission_id))
+                          .join(", ");
                         return `
-                          <div class="table-row ${active ? "active" : ""}" data-provider-row="${provider.plugin_id}">
+                          <div class="table-row ${active ? "active" : ""}" data-provider-row="${escapeHtml(provider.plugin_id)}">
                             <div>
-                              <div class="row-title">${provider.display_name || provider.plugin_id}</div>
+                              <div class="row-title">${escapeHtml(provider.display_name || provider.plugin_id)}</div>
                               <span class="row-copy">${provider.pending_install_count ? `${formatCount(provider.pending_install_count)} pending installs` : "No pending installs"}</span>
                             </div>
-                            <div class="row-meta">${(provider.supported_aidn_capabilities || provider.workload_types || []).join(", ") || "-"}</div>
-                            <div><span class="chip">${formatCount(provider.bundle_count)}</span></div>
-                            <div><span class="chip ${provider.pending_install_count ? "" : "good"}">${formatCount(provider.install_count)}</span></div>
+                            <div><span class="chip ${provider.trust_status === "CONFORMANCE_TESTED" ? "good" : ""}">${escapeHtml(provider.trust_status || "UNREVIEWED")}</span></div>
+                            <div class="row-meta">${capabilitySummary || "-"}</div>
+                            <div class="row-meta">${permissionSummary || "No elevated permissions"}</div>
+                            <div class="row-meta">${canInstallProvider ? "Preview only: declarative install plan" : "Attach only"}</div>
                             <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Inspect"}</button>
                           </div>
                         `;

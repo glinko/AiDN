@@ -1,7 +1,13 @@
 from pydantic import ValidationError
 
 from aidn_hypervisor.providers.models import (
+    InstallationPlan,
+    InstallationRecipe,
     ModelDeployment,
+    PluginPermission,
+    PluginSecretRequirement,
+    PluginTrustStatus,
+    PluginUISchema,
     ProviderInstance,
     ProviderPluginManifest,
     RuntimeBinding,
@@ -26,6 +32,27 @@ def test_provider_plugin_manifest_stores_digest_and_capability_flags() -> None:
         "CAN_ATTACH_EXISTING",
         "CAN_DISCOVER_MODELS",
     ]
+
+
+def test_provider_plugin_manifest_normalizes_legacy_permission_strings() -> None:
+    manifest = ProviderPluginManifest(
+        plugin_id="aidn.provider.fake",
+        plugin_version="0.1.0",
+        display_name="Fake Provider",
+        publisher="AiDN Test",
+        package_digest="sha256:abc123",
+        provider_families=["fake"],
+        plugin_capability_flags=["CAN_ATTACH_EXISTING"],
+        required_permissions=["network.private"],
+        supported_aidn_capabilities=["llm.chat"],
+    )
+
+    permission = manifest.required_permissions[0]
+    assert isinstance(permission, PluginPermission)
+    assert permission.permission_id == "network.private"
+    assert permission.label == "network.private"
+    assert permission.risk_level == "low"
+    assert permission.reason == "Legacy permission declaration"
 
 
 def test_provider_plugin_manifest_rejects_blank_package_digest() -> None:
@@ -122,3 +149,98 @@ def test_model_deployment_tracks_metadata_sources() -> None:
     )
 
     assert deployment.metadata_sources["context_limit"] == "PROVIDER_REPORTED"
+
+
+def test_provider_plugin_manifest_exposes_directory_install_metadata() -> None:
+    manifest = ProviderPluginManifest(
+        plugin_id="aidn.provider.ollama",
+        plugin_version="1.0.0",
+        display_name="Ollama Provider",
+        publisher="AiDN Community",
+        package_digest="sha256:abc123",
+        provider_families=["ollama"],
+        plugin_capability_flags=["CAN_INSTALL_PROVIDER", "CAN_DISCOVER_MODELS"],
+        required_permissions=[
+            PluginPermission(
+                permission_id="container.manage",
+                label="Container management",
+                risk_level="medium",
+                reason="Run the Ollama provider container",
+            )
+        ],
+        supported_aidn_capabilities=["llm.chat"],
+        trust_status="COMMUNITY_REVIEWED",
+        source_repository="https://github.com/aidn/provider-ollama",
+        supported_platforms=["linux"],
+        supported_accelerators=["nvidia"],
+        install_ui_schema=PluginUISchema(
+            schema_id="ollama.install.v1",
+            fields=[
+                {
+                    "id": "model_storage_path",
+                    "type": "directory",
+                    "required": True,
+                }
+            ],
+        ),
+        secret_requirements=[
+            PluginSecretRequirement(
+                secret_type="API_KEY",
+                label="Optional upstream API key",
+                required=False,
+                allowed_usage=["provider_api"],
+            )
+        ],
+        installation_recipes=[
+            InstallationRecipe(
+                recipe_id="ollama-qwen3-8b",
+                display_name="Ollama + Qwen3 8B",
+                description="Install Ollama and pull qwen3:8b",
+                provider_configuration={"deployment_mode": "managed_container"},
+                model_configuration={"provider_model_reference": "qwen3:8b"},
+                endpoint_defaults={"capability_id": "llm.chat"},
+            )
+        ],
+    )
+
+    assert manifest.trust_status == "COMMUNITY_REVIEWED"
+    assert manifest.required_permissions[0].permission_id == "container.manage"
+    assert manifest.install_ui_schema.fields[0]["id"] == "model_storage_path"
+    assert manifest.secret_requirements[0].secret_type == "API_KEY"
+    assert manifest.installation_recipes[0].recipe_id == "ollama-qwen3-8b"
+
+
+def test_installation_plan_accepts_default_unsupported_actions() -> None:
+    plan = InstallationPlan(
+        plan_id="plan-ollama",
+        plugin_id="aidn.provider.ollama",
+        plan_version="1.0.0",
+        summary="Install Ollama",
+    )
+
+    assert plan.unsupported_actions == []
+
+
+def test_installation_plan_is_declarative_and_rejects_script_execution() -> None:
+    try:
+        InstallationPlan(
+            plan_id="plan-ollama",
+            plugin_id="aidn.provider.ollama",
+            plan_version="1.0.0",
+            summary="Install Ollama",
+            containers=[],
+            processes=[],
+            model_downloads=[],
+            volumes=[],
+            networks=[],
+            environment={},
+            resource_limits={},
+            health_checks=[],
+            required_permissions=[],
+            secret_references=[],
+            unsupported_actions=["RUN_SHELL_SCRIPT"],
+        )
+    except ValidationError as exc:
+        assert "unsupported_actions" in str(exc)
+    else:
+        raise AssertionError("expected ValidationError")

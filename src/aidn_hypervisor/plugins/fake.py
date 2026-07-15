@@ -15,7 +15,39 @@ class FakeManagedPlugin(ProviderPlugin):
             "provider_families": ["fake"],
             "plugin_capability_flags": [
                 "CAN_ATTACH_EXISTING",
+                "CAN_INSTALL_PROVIDER",
                 "CAN_DISCOVER_MODELS",
+            ],
+            "required_permissions": [
+                {
+                    "permission_id": "network.private",
+                    "label": "Private network",
+                    "risk_level": "low",
+                    "reason": "Connect to a local fake provider endpoint",
+                }
+            ],
+            "trust_status": "CONFORMANCE_TESTED",
+            "source_repository": "https://github.com/glinko/AiDN",
+            "license": "Apache-2.0",
+            "supported_platforms": ["linux", "darwin", "windows"],
+            "supported_architectures": ["x86_64", "arm64"],
+            "supported_accelerators": ["cpu"],
+            "installation_recipes": [
+                {
+                    "recipe_id": "fake-managed-local",
+                    "display_name": "Local Fake Provider",
+                    "description": "Attach a deterministic fake provider for local testing",
+                    "provider_configuration": {
+                        "display_name": "Local Fake",
+                        "base_url": "http://127.0.0.1:9999",
+                    },
+                    "model_configuration": {
+                        "provider_model_reference": "fake-model",
+                    },
+                    "endpoint_defaults": {
+                        "capability_id": "llm.chat",
+                    },
+                }
             ],
             "supported_aidn_capabilities": ["llm.chat"],
             "workload_types": ["llm_text", "speech_to_text"],
@@ -64,15 +96,51 @@ class FakeManagedPlugin(ProviderPlugin):
 
     def attach_provider_schema(self) -> dict:
         return {
+            "schema_id": "fake.attach.v1",
             "fields": [
                 {"id": "display_name", "type": "text", "required": True},
                 {"id": "base_url", "type": "text", "required": True},
             ]
         }
 
+    def install_provider_schema(self) -> dict:
+        return {
+            "schema_id": "fake.install.v1",
+            "fields": [
+                {"id": "display_name", "type": "text", "required": True},
+                {"id": "base_url", "type": "text", "required": True},
+            ],
+        }
+
     def validate_provider_configuration(self, configuration: dict) -> None:
         if not str(configuration.get("base_url", "")).strip():
             raise ValueError("base_url is required")
+
+    def build_installation_plan(self, configuration: dict) -> dict:
+        self.validate_provider_configuration(configuration)
+        return {
+            "plan_id": "plan-fake-managed",
+            "plugin_id": self.plugin_id,
+            "plan_version": "1.0.0",
+            "summary": "Attach or prepare Fake Managed Provider",
+            "containers": [],
+            "processes": [],
+            "model_downloads": [],
+            "volumes": [],
+            "networks": [{"name": "private-provider", "scope": "local"}],
+            "environment": {},
+            "resource_limits": {"cpu": "shared"},
+            "health_checks": [
+                {
+                    "type": "http",
+                    "url": configuration["base_url"],
+                    "timeout_seconds": 5,
+                }
+            ],
+            "required_permissions": self.plugin_manifest()["required_permissions"],
+            "secret_references": [],
+            "unsupported_actions": [],
+        }
 
     def discover_models(self, provider_instance: dict) -> list[dict]:
         provider_instance_id = provider_instance["provider_instance_id"]

@@ -639,6 +639,20 @@ def test_providers_payload_uses_plugin_first_empty_state() -> None:
     assert payload["empty_state"]["secondary_action"]["action"] == "attach_provider"
 
 
+def test_providers_payload_exposes_plugin_directory_install_metadata() -> None:
+    service = _empty_service()
+    service.plugins.register(FakeManagedPlugin())
+
+    payload = build_operator_providers_payload(service=service)
+    plugin = payload["plugin_directory"][0]
+
+    assert plugin["trust_status"] == "CONFORMANCE_TESTED"
+    assert plugin["required_permissions"][0]["permission_id"] == "network.private"
+    assert plugin["install_ui_schema"]["schema_id"] == "fake.install.v1"
+    assert plugin["installation_recipes"][0]["recipe_id"] == "fake-managed-local"
+    assert payload["summary"]["installable_plugin_count"] == 1
+
+
 def test_providers_payload_exposes_models_and_runtime_binding_readiness() -> None:
     service = _provider_only_service()
     attached = service.attach_provider_instance(

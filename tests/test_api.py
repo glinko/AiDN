@@ -168,6 +168,26 @@ class CooldownApiPlugin(FakeManagedPlugin):
         raise RuntimeError("connection refused")
 
 
+class BadInstallationPlanPlugin(FakeManagedPlugin):
+    plugin_id = "bad-plan"
+
+    def build_installation_plan(self, configuration: dict) -> dict:
+        plan = super().build_installation_plan(configuration)
+        plan["plugin_id"] = self.plugin_id
+        plan["unsupported_actions"] = ["RUN_SHELL_SCRIPT"]
+        return plan
+
+
+class AttachOnlyInstallationPlanPlugin(FakeManagedPlugin):
+    plugin_id = "attach-only"
+
+    def describe(self) -> dict:
+        description = super().describe()
+        description["plugin_id"] = self.plugin_id
+        description["plugin_capability_flags"] = ["CAN_ATTACH_EXISTING"]
+        return description
+
+
 def test_submit_task_endpoint_returns_queued_task_and_selected_bundle() -> None:
     client = TestClient(build_app(service=_service()))
 
@@ -1109,31 +1129,34 @@ def test_plugins_endpoint_returns_installed_plugin_descriptions() -> None:
     response = client.get("/plugins")
 
     assert response.status_code == 200
-    assert response.json() == [
-        {
-            "plugin_id": "fake-managed",
-            "plugin_version": "0.1.0",
-            "display_name": "Fake Managed Provider",
-            "publisher": "AiDN Test",
-            "package_digest": "sha256:fake-managed-dev",
-            "provider_type": "fake",
-            "provider_families": ["fake"],
-            "plugin_capability_flags": [
-                "CAN_ATTACH_EXISTING",
-                "CAN_DISCOVER_MODELS",
-            ],
-            "supported_aidn_capabilities": ["llm.chat"],
-            "workload_types": ["llm_text", "speech_to_text"],
-            "usage_contract": {
-                "supports_exact": False,
-                "supports_estimated": False,
-                "default_measurement_source": None,
-                "fallback_measurement_source": None,
-                "fallback_policy": "none",
-                "missing_usage_behavior": "skip",
-            },
-        }
+    plugins = response.json()
+    assert len(plugins) == 1
+    plugin = plugins[0]
+    assert plugin["plugin_id"] == "fake-managed"
+    assert plugin["plugin_version"] == "0.1.0"
+    assert plugin["display_name"] == "Fake Managed Provider"
+    assert plugin["publisher"] == "AiDN Test"
+    assert plugin["package_digest"] == "sha256:fake-managed-dev"
+    assert plugin["provider_type"] == "fake"
+    assert plugin["provider_families"] == ["fake"]
+    assert plugin["plugin_capability_flags"] == [
+        "CAN_ATTACH_EXISTING",
+        "CAN_INSTALL_PROVIDER",
+        "CAN_DISCOVER_MODELS",
     ]
+    assert plugin["required_permissions"][0]["permission_id"] == "network.private"
+    assert plugin["trust_status"] == "CONFORMANCE_TESTED"
+    assert plugin["installation_recipes"][0]["recipe_id"] == "fake-managed-local"
+    assert plugin["supported_aidn_capabilities"] == ["llm.chat"]
+    assert plugin["workload_types"] == ["llm_text", "speech_to_text"]
+    assert plugin["usage_contract"] == {
+        "supports_exact": False,
+        "supports_estimated": False,
+        "default_measurement_source": None,
+        "fallback_measurement_source": None,
+        "fallback_policy": "none",
+        "missing_usage_behavior": "skip",
+    }
 
 
 def test_queue_diagnostics_endpoint_reports_blocked_reason() -> None:
@@ -2722,6 +2745,15 @@ def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_contr
     assert "Provider instances" in response.text
     assert "Model deployments" in response.text
     assert "Runtime bindings" in response.text
+    assert "Plugin directory" in response.text
+    assert "Trust" in response.text
+    assert "Install plan preview" in response.text
+    assert "Preview only: declarative install plan" in response.text
+    assert "Declarative preview available" not in response.text
+    assert 'data-provider-row="${escapeHtml(provider.plugin_id)}"' in response.text
+    assert "${escapeHtml(provider.display_name || provider.plugin_id)}" in response.text
+    assert "${escapeHtml(provider.trust_status || \"UNREVIEWED\")}" in response.text
+    assert "escapeHtml(permission.label || permission.permission_id)" in response.text
     assert "No providers installed" in response.text
     assert "Manual Provider Attach" in response.text
     assert "Reload Saved Bundle Config" in response.text
@@ -3650,6 +3682,73 @@ def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:
         },
     )
     assert extra_field_response.status_code == 422
+
+    plan_extra_field_response = client.post(
+        "/operators/provider-plugins/fake-managed/installation-plan",
+        json={
+            "configuration": {"base_url": "http://127.0.0.1:9999"},
+            "unexpected": True,
+        },
+    )
+    assert plan_extra_field_response.status_code == 422
+
+
+def test_provider_plugin_installation_plan_preview_route() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.post(
+        "/operators/provider-plugins/fake-managed/installation-plan",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["plugin_id"] == "fake-managed"
+    assert body["unsupported_actions"] == []
+    assert body["health_checks"][0]["type"] == "http"
+
+
+def test_provider_plugin_installation_plan_preview_route_rejects_invalid_plugin_plan() -> None:
+    service = _service()
+    service.plugins.register(BadInstallationPlanPlugin())
+    client = TestClient(build_app(service=service))
+
+    response = client.post(
+        "/operators/provider-plugins/bad-plan/installation-plan",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            }
+        },
+    )
+
+    assert response.status_code == 409
+    assert "declarative-only" in response.json()["detail"]
+
+
+def test_provider_plugin_installation_plan_preview_route_rejects_attach_only_plugin() -> None:
+    service = _service()
+    service.plugins.register(AttachOnlyInstallationPlanPlugin())
+    client = TestClient(build_app(service=service))
+
+    response = client.post(
+        "/operators/provider-plugins/attach-only/installation-plan",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            }
+        },
+    )
+
+    assert response.status_code == 409
+    assert "does not support managed installation" in response.json()["detail"]
 
 
 def test_operator_dashboard_bundles_route_returns_workspace_payload(
