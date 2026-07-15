@@ -48,12 +48,16 @@ _ACTIVE_TASK_STATUSES: set[TaskStatus] = {"queued", "admitted", "starting", "run
 
 
 class AttachProviderInstanceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     plugin_id: str
     display_name: str
     configuration: dict
 
 
 class CreateRuntimeBindingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     capability_id: str
     capability_version: str
     capability_definition_hash: str

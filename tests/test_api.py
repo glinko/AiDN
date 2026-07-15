@@ -3610,6 +3610,17 @@ def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:
     )
     assert binding_response.status_code == 422
 
+    extra_field_response = client.post(
+        "/operators/provider-instances/attach",
+        json={
+            "plugin_id": "fake-managed",
+            "display_name": "Local Fake",
+            "configuration": {"base_url": "http://127.0.0.1:9999"},
+            "unexpected": True,
+        },
+    )
+    assert extra_field_response.status_code == 422
+
 
 def test_operator_dashboard_bundles_route_returns_workspace_payload(
     monkeypatch,

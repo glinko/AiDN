@@ -90,9 +90,8 @@ class ProviderInventoryService:
             capability_version=capability_version,
             capability_definition_hash=capability_definition_hash,
         )
-        runtime_binding_id = str(
-            projection.get("runtime_binding_id") or f"rtb-{logical_suffix}"
-        )
+        runtime_binding_id = f"rtb-{logical_suffix}"
+        compatibility_bundle_id = f"bundle-{runtime_binding_id}"
         binding = RuntimeBinding(
             runtime_binding_id=runtime_binding_id,
             provider_instance_id=instance.provider_instance_id,
@@ -104,10 +103,7 @@ class ProviderInventoryService:
                 capability_definition_hash,
             ),
             plugin_id=instance.plugin_id,
-            compatibility_bundle_id=str(
-                projection.get("compatibility_bundle_id")
-                or f"bundle-{runtime_binding_id}"
-            ),
+            compatibility_bundle_id=compatibility_bundle_id,
             status=projection.get("status", "ready"),
         )
         self.store.save_runtime_binding(binding)

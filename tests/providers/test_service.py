@@ -190,3 +190,67 @@ def test_provider_inventory_service_reuses_runtime_binding_identity_for_same_log
     assert [binding.runtime_binding_id for binding in service.store.list_runtime_bindings()] == [
         first.runtime_binding_id
     ]
+
+
+def test_provider_inventory_service_ignores_plugin_supplied_random_runtime_binding_ids() -> None:
+    class RandomIdentityPlugin(FakeManagedPlugin):
+        plugin_id = "fake-random-identity"
+
+        def create_runtime_binding(
+            self,
+            *,
+            model_deployment: dict,
+            capability_id: str,
+            capability_version: str,
+            capability_definition_hash: str,
+        ) -> dict:
+            binding = super().create_runtime_binding(
+                model_deployment=model_deployment,
+                capability_id=capability_id,
+                capability_version=capability_version,
+                capability_definition_hash=capability_definition_hash,
+            )
+            suffix = uuid4().hex[:12]
+            binding["runtime_binding_id"] = f"plugin-rtb-{suffix}"
+            binding["compatibility_bundle_id"] = f"plugin-bundle-{suffix}"
+            return binding
+
+    from uuid import uuid4
+
+    plugin = RandomIdentityPlugin()
+    registry = PluginRegistry()
+    registry.register(plugin)
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    instance = service.attach_provider_instance(
+        plugin_id="fake-random-identity",
+        display_name="Random Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    model = service.discover_models(instance.provider_instance_id)[0]
+
+    first = service.create_runtime_binding(
+        model_deployment_id=model.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+    second = service.create_runtime_binding(
+        model_deployment_id=model.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+    bundle = service.bundle_config_for_runtime_binding(first.runtime_binding_id)
+
+    assert first.runtime_binding_id == second.runtime_binding_id
+    assert first.compatibility_bundle_id == second.compatibility_bundle_id
+    assert not first.runtime_binding_id.startswith("plugin-rtb-")
+    assert not first.compatibility_bundle_id.startswith("plugin-bundle-")
+    assert [binding.runtime_binding_id for binding in service.store.list_runtime_bindings()] == [
+        first.runtime_binding_id
+    ]
+    assert bundle.bundle_id == first.compatibility_bundle_id
