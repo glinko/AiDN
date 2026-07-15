@@ -118,3 +118,40 @@ def test_provider_inventory_service_attaches_discovers_and_projects_runtime_bind
     assert bundle.workload_type == "llm.chat"
     assert bundle.model_id == "fake-model"
     assert bundle.endpoint == "http://127.0.0.1:9999"
+
+
+def test_provider_inventory_service_validates_configuration_before_attach() -> None:
+    class ValidationTrackingPlugin(FakeManagedPlugin):
+        plugin_id = "fake-validation-tracking"
+
+        def __init__(self) -> None:
+            self.validated_configurations: list[dict] = []
+
+        def validate_provider_configuration(self, configuration: dict) -> None:
+            self.validated_configurations.append(dict(configuration))
+
+        def attach_existing_provider(self, configuration: dict) -> dict:
+            if not self.validated_configurations:
+                raise ValueError("validation not run")
+            return {
+                "configuration": dict(configuration),
+                "connection_mode": "attached",
+                "operational_state": "ready",
+            }
+
+    plugin = ValidationTrackingPlugin()
+    registry = PluginRegistry()
+    registry.register(plugin)
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    instance = service.attach_provider_instance(
+        plugin_id="fake-validation-tracking",
+        display_name="Tracked Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+
+    assert instance.plugin_id == "fake-validation-tracking"
+    assert plugin.validated_configurations == [{"base_url": "http://127.0.0.1:9999"}]

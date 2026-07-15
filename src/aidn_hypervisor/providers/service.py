@@ -28,7 +28,9 @@ class ProviderInventoryService:
         configuration: dict,
     ) -> ProviderInstance:
         plugin = self._get_plugin(plugin_id)
-        attached = plugin.attach_existing_provider(dict(configuration))
+        normalized_configuration = dict(configuration)
+        plugin.validate_provider_configuration(normalized_configuration)
+        attached = plugin.attach_existing_provider(normalized_configuration)
         manifest = plugin.plugin_manifest()
         instance = ProviderInstance(
             provider_instance_id=f"pi-{uuid4().hex[:12]}",
@@ -36,7 +38,7 @@ class ProviderInventoryService:
             provider_family=self._provider_family(manifest, plugin_id),
             display_name=str(attached.get("display_name") or display_name),
             connection_mode=attached.get("connection_mode", "attached"),
-            configuration=dict(attached.get("configuration") or configuration),
+            configuration=dict(attached.get("configuration") or normalized_configuration),
             operational_state=attached.get("operational_state", "ready"),
         )
         self.store.save_provider_instance(instance)
