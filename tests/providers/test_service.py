@@ -3,7 +3,11 @@ import pytest
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.providers.executor import RecordedProviderInstallationExecutor
-from aidn_hypervisor.providers.models import InstallationPlan, ProviderInstallationApproval
+from aidn_hypervisor.providers.models import (
+    InstallationPlan,
+    ProviderInstallationApproval,
+    ProviderInstallationJob,
+)
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
@@ -401,6 +405,32 @@ def _installation_approval(
         status=status,
         created_at="2026-07-15T12:00:00Z",
     )
+
+
+def test_provider_inventory_store_saves_installation_approvals_and_jobs() -> None:
+    store = InMemoryProviderInventoryStore()
+    approval = _installation_approval()
+    job = ProviderInstallationJob(
+        job_id="job-fake-managed",
+        approval_id=approval.approval_id,
+        plugin_id=approval.plugin_id,
+        plan_id=approval.plan_id,
+        plan_hash=approval.plan_hash,
+        configuration_hash=approval.configuration_hash,
+        status="QUEUED",
+        executor_id="recorded-declarative-v1",
+        created_at="2026-07-15T12:01:00Z",
+    )
+
+    saved_approval = store.save_installation_approval(approval)
+    saved_job = store.save_installation_job(job)
+
+    assert saved_approval == approval
+    assert store.get_installation_approval(approval.approval_id) == approval
+    assert store.list_installation_approvals() == [approval]
+    assert saved_job == job
+    assert store.get_installation_job(job.job_id) == job
+    assert store.list_installation_jobs() == [job]
 
 
 def test_recorded_provider_installation_executor_records_declarative_plan_without_host_mutation() -> None:
