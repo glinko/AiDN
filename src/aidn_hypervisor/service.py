@@ -2865,9 +2865,15 @@ class HypervisorService:
             }
         for job in snapshot.model_installs:
             self._model_installs[job.install_id] = job.model_dump(mode="json")
+        installation_executor = getattr(
+            self.provider_inventory,
+            "installation_executor",
+            None,
+        )
         self.provider_inventory = ProviderInventoryService(
             plugins=self.plugins,
             store=InMemoryProviderInventoryStore(),
+            installation_executor=installation_executor,
         )
         for instance in snapshot.provider_instances:
             self.provider_inventory.store.save_provider_instance(instance)

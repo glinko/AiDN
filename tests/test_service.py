@@ -23,7 +23,9 @@ from aidn_hypervisor.plugins.ollama import OllamaPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.plugins.whisper import WhisperPlugin
 from aidn_hypervisor.process_manager import ProviderProcessManager, RuntimeHandle
+from aidn_hypervisor.providers.executor import RecordedProviderInstallationExecutor
 from aidn_hypervisor.providers.service import ProviderInventoryService
+from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointService
 from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
@@ -251,6 +253,10 @@ class RecordingStateStore:
 
     def save(self, snapshot) -> None:
         self.snapshots.append(snapshot)
+
+
+class CustomProviderInstallationExecutor(RecordedProviderInstallationExecutor):
+    executor_id = "custom-test-executor"
 
 
 def test_service_submit_routes_and_records_selected_bundle_for_manual_mode() -> None:
@@ -515,12 +521,18 @@ def test_service_build_provider_installation_plan_preview() -> None:
 
 def test_provider_installation_approval_and_job_survive_snapshot_restore() -> None:
     state_store = RecordingStateStore()
+    installation_executor = CustomProviderInstallationExecutor()
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
         state_store=state_store,
+        provider_inventory=ProviderInventoryService(
+            plugins=_registry(),
+            store=InMemoryProviderInventoryStore(),
+            installation_executor=installation_executor,
+        ),
     )
 
     approval = service.approve_provider_installation_plan(
@@ -531,7 +543,6 @@ def test_provider_installation_approval_and_job_survive_snapshot_restore() -> No
         },
         operator_note="approved for local test",
     )
-    job = service.apply_provider_installation_approval(approval["approval_id"])
     snapshot = service.snapshot_state()
 
     restored = HypervisorService(
@@ -539,8 +550,15 @@ def test_provider_installation_approval_and_job_survive_snapshot_restore() -> No
         scheduler=Scheduler(),
         plugins=service.plugins,
         runtimes=ProviderProcessManager(),
+        state_store=state_store,
+        provider_inventory=ProviderInventoryService(
+            plugins=service.plugins,
+            store=InMemoryProviderInventoryStore(),
+            installation_executor=installation_executor,
+        ),
     )
     restored.restore_state(snapshot)
+    job = restored.apply_provider_installation_approval(approval["approval_id"])
 
     restored_approval = restored.list_provider_installation_approvals()[0]
     restored_job = restored.list_provider_installation_jobs()[0]
@@ -549,14 +567,25 @@ def test_provider_installation_approval_and_job_survive_snapshot_restore() -> No
     assert restored_approval["operator_note"] == "approved for local test"
     assert restored_job["job_id"] == job["job_id"]
     assert restored_job["status"] == "SUCCEEDED"
+    assert restored_job["executor_id"] == "custom-test-executor"
+    assert job["executor_id"] == "custom-test-executor"
     assert restored_instance["provider_instance_id"] == job["provider_instance_id"]
     assert restored_instance["plugin_id"] == "fake-managed"
     assert restored_instance["operational_state"] == "created"
-    assert len(state_store.snapshots) == 2
+    assert len(state_store.snapshots) == 3
     assert state_store.snapshots[0].provider_installation_approvals[0].approval_id == (
         approval["approval_id"]
     )
-    assert state_store.snapshots[1].provider_installation_jobs[0].job_id == job["job_id"]
+    persisted_job = state_store.snapshots[-1].provider_installation_jobs[0]
+    persisted_instance = state_store.snapshots[-1].provider_instances[0]
+    assert persisted_job.job_id == job["job_id"]
+    assert persisted_job.executor_id == "custom-test-executor"
+    assert persisted_instance.provider_instance_id == job["provider_instance_id"]
+    assert persisted_instance.plugin_id == "fake-managed"
+    assert state_store.snapshots[1].provider_installation_approvals[0].approval_id == (
+        approval["approval_id"]
+    )
+    assert state_store.snapshots[1].provider_installation_jobs == []
 
 
 def test_service_submit_routes_and_records_selected_bundle_for_automatic_mode() -> None:
