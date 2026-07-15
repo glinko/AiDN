@@ -582,3 +582,111 @@ def test_recorded_provider_installation_executor_rejects_plugin_and_plan_mismatc
             manifest={"plugin_id": "other-plugin"},
             provider_instance_id="pi-fake-managed",
         )
+
+
+def test_provider_inventory_approves_and_applies_installation_plan() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+    configuration = _installation_configuration()
+
+    approval = service.approve_installation_plan(
+        plugin_id="fake-managed",
+        configuration=configuration,
+        operator_note="Approved for local testing",
+    )
+    configuration["base_url"] = "http://127.0.0.1:9998"
+    job = service.apply_installation_approval(approval.approval_id)
+
+    provider = service.store.get_provider_instance(job.provider_instance_id)
+    stored_approval = service.list_installation_approvals()[0]
+
+    assert approval.plugin_id == "fake-managed"
+    assert approval.plan_id == "plan-fake-managed"
+    assert approval.plan_hash.startswith("sha256:")
+    assert approval.configuration_hash.startswith("sha256:")
+    assert approval.configuration["base_url"] == "http://127.0.0.1:9999"
+    assert approval.approved_permissions == ["network.private"]
+    assert approval.operator_note == "Approved for local testing"
+    assert stored_approval == approval
+    assert job.status == "SUCCEEDED"
+    assert job.approval_id == approval.approval_id
+    assert job.provider_instance_id == provider.provider_instance_id
+    assert job.step_results
+    assert job.completed_at is not None
+    assert provider.plugin_id == "fake-managed"
+    assert provider.connection_mode == "managed"
+    assert provider.operational_state == "created"
+    assert provider.configuration["base_url"] == "http://127.0.0.1:9999"
+    assert service.list_installation_jobs() == [job]
+
+
+def test_provider_inventory_apply_rejects_revoked_approval() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+    approval = service.approve_installation_plan(
+        plugin_id="fake-managed",
+        configuration=_installation_configuration(),
+    )
+    service.store.save_installation_approval(approval.model_copy(update={"status": "REVOKED"}))
+
+    with pytest.raises(ValueError, match="installation approval is not active"):
+        service.apply_installation_approval(approval.approval_id)
+
+
+def test_provider_inventory_apply_rejects_plan_hash_mismatch() -> None:
+    class MutablePlanPlugin(FakeManagedPlugin):
+        plugin_id = "mutable-plan"
+
+        def __init__(self) -> None:
+            self.summary = "Original plan"
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            plan["summary"] = self.summary
+            return plan
+
+    plugin = MutablePlanPlugin()
+    registry = PluginRegistry()
+    registry.register(plugin)
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    approval = service.approve_installation_plan(
+        plugin_id="mutable-plan",
+        configuration=_installation_configuration(),
+    )
+    plugin.summary = "Updated plan"
+
+    with pytest.raises(ValueError, match="installation plan hash mismatch"):
+        service.apply_installation_approval(approval.approval_id)
+
+
+def test_provider_inventory_approval_hashes_are_deterministic_for_key_order() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    first = service.approve_installation_plan(
+        plugin_id="fake-managed",
+        configuration={
+            "display_name": "Local Fake",
+            "base_url": "http://127.0.0.1:9999",
+        },
+    )
+    second = service.approve_installation_plan(
+        plugin_id="fake-managed",
+        configuration={
+            "base_url": "http://127.0.0.1:9999",
+            "display_name": "Local Fake",
+        },
+    )
+
+    assert first.configuration_hash == second.configuration_hash
+    assert first.plan_hash == second.plan_hash

@@ -1,21 +1,51 @@
 import hashlib
 import json
+from copy import deepcopy
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
+from aidn_hypervisor.providers.executor import (
+    ProviderInstallationExecutor,
+    RecordedProviderInstallationExecutor,
+)
 from aidn_hypervisor.providers.models import (
     InstallationPlan,
     ModelDeployment,
+    ProviderInstallationApproval,
+    ProviderInstallationJob,
+    ProviderPluginManifest,
     ProviderInstance,
     RuntimeBinding,
 )
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
+def _canonical_hash(value: dict) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return f"sha256:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 class ProviderInventoryService:
-    def __init__(self, *, plugins, store: InMemoryProviderInventoryStore) -> None:
+    def __init__(
+        self,
+        *,
+        plugins,
+        store: InMemoryProviderInventoryStore,
+        installation_executor: ProviderInstallationExecutor | None = None,
+    ) -> None:
         self.plugins = plugins
         self.store = store
+        self.installation_executor = installation_executor or RecordedProviderInstallationExecutor()
         self._runtime_binding_projections: dict[str, dict] = {}
 
     def list_plugin_manifests(self) -> list[dict]:
@@ -39,6 +69,105 @@ class ProviderInventoryService:
             raise ValueError(f"Plugin does not support managed installation: {plugin_id}")
         plan = plugin.build_installation_plan(dict(configuration))
         return InstallationPlan.model_validate(plan).model_dump(mode="json")
+
+    def approve_installation_plan(
+        self,
+        plugin_id: str,
+        configuration: dict,
+        operator_note: str | None = None,
+    ) -> ProviderInstallationApproval:
+        plugin = self._get_plugin(plugin_id)
+        manifest = ProviderPluginManifest.model_validate(plugin.plugin_manifest())
+        plan = self.build_installation_plan(plugin_id=plugin_id, configuration=configuration)
+        approval = ProviderInstallationApproval(
+            approval_id=f"pia-{uuid4().hex[:12]}",
+            plugin_id=plugin_id,
+            plan_id=plan["plan_id"],
+            plan_hash=_canonical_hash(plan),
+            configuration_hash=_canonical_hash(configuration),
+            configuration=deepcopy(configuration),
+            approved_permissions=[
+                permission["permission_id"]
+                for permission in plan.get("required_permissions", [])
+            ],
+            acknowledged_secret_requirements=[
+                requirement.model_dump(mode="json")
+                for requirement in manifest.secret_requirements
+            ],
+            operator_note=operator_note,
+            status="APPROVED",
+            created_at=_now_iso(),
+        )
+        self.store.save_installation_approval(approval)
+        return approval
+
+    def list_installation_approvals(self) -> list[ProviderInstallationApproval]:
+        return self.store.list_installation_approvals()
+
+    def apply_installation_approval(self, approval_id: str) -> ProviderInstallationJob:
+        approval = self.store.get_installation_approval(approval_id)
+        if approval.status != "APPROVED":
+            raise ValueError("installation approval is not active")
+        if _canonical_hash(approval.configuration) != approval.configuration_hash:
+            raise ValueError("installation configuration hash mismatch")
+
+        plugin = self._get_plugin(approval.plugin_id)
+        manifest = ProviderPluginManifest.model_validate(plugin.plugin_manifest())
+        plan_dict = self.build_installation_plan(
+            plugin_id=approval.plugin_id,
+            configuration=approval.configuration,
+        )
+        plan = InstallationPlan.model_validate(plan_dict)
+        if _canonical_hash(plan_dict) != approval.plan_hash:
+            raise ValueError("installation plan hash mismatch")
+
+        job = ProviderInstallationJob(
+            job_id=f"pij-{uuid4().hex[:12]}",
+            approval_id=approval.approval_id,
+            plugin_id=approval.plugin_id,
+            plan_id=approval.plan_id,
+            plan_hash=approval.plan_hash,
+            configuration_hash=approval.configuration_hash,
+            status="QUEUED",
+            executor_id=self.installation_executor.executor_id,
+            created_at=_now_iso(),
+        )
+        self.store.save_installation_job(job)
+        job = job.model_copy(update={"status": "RUNNING", "started_at": _now_iso()})
+        self.store.save_installation_job(job)
+
+        try:
+            result = self.installation_executor.apply(
+                approval=approval,
+                plan=plan,
+                configuration=deepcopy(approval.configuration),
+                manifest=manifest.model_dump(mode="json"),
+                provider_instance_id=f"pi-{uuid4().hex[:12]}",
+            )
+            provider_instance = ProviderInstance.model_validate(result.provider_instance)
+            self.store.save_provider_instance(provider_instance)
+            job = job.model_copy(
+                update={
+                    "status": "SUCCEEDED",
+                    "step_results": result.step_results,
+                    "provider_instance_id": provider_instance.provider_instance_id,
+                    "completed_at": _now_iso(),
+                }
+            )
+        except Exception as exc:
+            job = job.model_copy(
+                update={
+                    "status": "FAILED",
+                    "error_code": exc.__class__.__name__,
+                    "error_message": str(exc),
+                    "completed_at": _now_iso(),
+                }
+            )
+        self.store.save_installation_job(job)
+        return job
+
+    def list_installation_jobs(self) -> list[ProviderInstallationJob]:
+        return self.store.list_installation_jobs()
 
     def attach_provider_instance(
         self,
