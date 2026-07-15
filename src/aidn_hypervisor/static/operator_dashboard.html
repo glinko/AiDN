@@ -3801,6 +3801,16 @@
       const payload = state.payloads.providers || {};
       const summary = payload.summary || {};
       const items = providerRows();
+      const pluginDirectory = payload.plugin_directory || items;
+      const providerInstances = payload.provider_instances || [];
+      const modelDeployments = payload.model_deployments || [];
+      const runtimeBindings = payload.runtime_bindings || [];
+      const emptyState = payload.empty_state || {
+        title: "No providers installed",
+        description: "Attach an existing provider or browse provider plugins.",
+        primary_action: { label: "Browse provider plugins" },
+        secondary_action: { label: "Add existing provider" },
+      };
       const recommendation = providerRecommendedAction(summary, items, selectedProvider());
 
       return `
@@ -3808,57 +3818,161 @@
           <div>
             <div class="panel-heading">Execution Backends</div>
             <h1 class="workspace-title">Providers</h1>
-            <p class="workspace-copy">This screen prepares execution supply for endpoint creation. Once a provider yields usable local bundles, the dominant handoff is into Endpoints.</p>
+            <p class="workspace-copy">This screen prepares execution supply through provider plugins, provider instances, model deployments, and runtime bindings before endpoint publication.</p>
           </div>
           <div class="toolbar">
-            <button type="button" class="active">Installed Plugins</button>
+            <button type="button" class="active">Provider Workflow</button>
             <button type="button" data-screen-jump="bundles">Open Bundles</button>
           </div>
         </div>
         <div class="workspace-body">
           <div class="summary-grid">
             <section class="summary-card">
-              <div class="panel-heading">Providers</div>
-              <div class="summary-value">${formatCount(summary.total)}</div>
-              <div class="summary-copy">Registered execution plugin adapters on this hypervisor.</div>
+              <div class="panel-heading">Provider instances</div>
+              <div class="summary-value">${formatCount(summary.total_provider_instances)}</div>
+              <div class="summary-copy">Installed or attached provider backends ready for model discovery.</div>
             </section>
             <section class="summary-card">
-              <div class="panel-heading">Bundles</div>
-              <div class="summary-value">${formatCount(summary.bundles)}</div>
-              <div class="summary-copy">Local execution bundles currently attached to provider plugins.</div>
+              <div class="panel-heading">Model deployments</div>
+              <div class="summary-value">${formatCount(summary.total_model_deployments)}</div>
+              <div class="summary-copy">Provider-native model references normalized for AiDN capabilities.</div>
             </section>
             <section class="summary-card">
-              <div class="panel-heading">Install Jobs</div>
-              <div class="summary-value">${formatCount(summary.installs)}</div>
-              <div class="summary-copy">Model installs still converging into bundle-ready artifacts.</div>
+              <div class="panel-heading">Runtime bindings</div>
+              <div class="summary-value">${formatCount(summary.total_runtime_bindings)}</div>
+              <div class="summary-copy">Capability-ready runtime bindings that can become endpoint drafts.</div>
             </section>
           </div>
+          ${
+            providerInstances.length
+              ? ""
+              : `
+                <section class="subpanel">
+                  <div class="panel-heading">${emptyState.title}</div>
+                  <div class="subpanel-copy">${emptyState.description}</div>
+                  <div class="toolbar" style="margin-top: 14px;">
+                    <button class="primary-button" type="button">${emptyState.primary_action?.label || "Browse provider plugins"}</button>
+                    <button class="secondary-button" type="button">${emptyState.secondary_action?.label || "Add existing provider"}</button>
+                  </div>
+                </section>
+              `
+          }
           <section class="subpanel">
             <div class="panel-heading">Recommended Next Action</div>
             <div class="subpanel-copy">${recommendation.detail}</div>
           </section>
           <section class="subpanel">
-            <div class="panel-heading">Provider Inventory</div>
+            <div class="panel-heading">Provider instances</div>
             <div class="table-shell" style="margin-top: 14px;">
               <div class="table-head">
                 <div>Provider</div>
-                <div>Workloads</div>
+                <div>Plugin</div>
+                <div>Models</div>
+                <div>Runtime bindings</div>
+                <div>Status</div>
+              </div>
+              ${
+                providerInstances.length
+                  ? providerInstances
+                      .map((instance) => `
+                        <div class="table-row">
+                          <div>
+                            <div class="row-title">${instance.display_name || instance.provider_instance_id}</div>
+                            <span class="row-copy">${instance.provider_instance_id}</span>
+                          </div>
+                          <div class="row-meta">${instance.plugin_id}</div>
+                          <div><span class="chip">${formatCount(instance.model_count)}</span></div>
+                          <div><span class="chip ${instance.runtime_binding_ready_count ? "good" : ""}">${formatCount(instance.runtime_binding_ready_count)}</span></div>
+                          <div><span class="chip ${instance.operational_state === "ready" ? "good" : ""}">${instance.operational_state || "unknown"}</span></div>
+                        </div>
+                      `)
+                      .join("")
+                  : `<div class="empty-state">No providers installed.</div>`
+              }
+            </div>
+          </section>
+          <section class="subpanel">
+            <div class="panel-heading">Model deployments</div>
+            <div class="table-shell" style="margin-top: 14px;">
+              <div class="table-head">
+                <div>Model</div>
+                <div>Provider instance</div>
+                <div>Capabilities</div>
+                <div>Runtime bindings</div>
+                <div>Status</div>
+              </div>
+              ${
+                modelDeployments.length
+                  ? modelDeployments
+                      .map((model) => `
+                        <div class="table-row">
+                          <div>
+                            <div class="row-title">${model.operator_display_name || model.provider_model_reference}</div>
+                            <span class="row-copy">${model.provider_model_reference}</span>
+                          </div>
+                          <div class="row-meta">${model.provider_instance_id}</div>
+                          <div class="row-meta">${(model.capability_bindings || []).join(", ") || "-"}</div>
+                          <div><span class="chip ${model.runtime_binding_ready_count ? "good" : ""}">${formatCount(model.runtime_binding_ready_count)}</span></div>
+                          <div><span class="chip ${model.operational_state === "ready" ? "good" : ""}">${model.operational_state || "unknown"}</span></div>
+                        </div>
+                      `)
+                      .join("")
+                  : `<div class="empty-state">No model deployments discovered yet.</div>`
+              }
+            </div>
+          </section>
+          <section class="subpanel">
+            <div class="panel-heading">Runtime bindings</div>
+            <div class="table-shell" style="margin-top: 14px;">
+              <div class="table-head">
+                <div>Runtime binding</div>
+                <div>Model deployment</div>
+                <div>Capability</div>
+                <div>Bundle bridge</div>
+                <div>Status</div>
+              </div>
+              ${
+                runtimeBindings.length
+                  ? runtimeBindings
+                      .map((binding) => `
+                        <div class="table-row">
+                          <div>
+                            <div class="row-title">${binding.runtime_binding_id}</div>
+                            <span class="row-copy">${binding.plugin_id}</span>
+                          </div>
+                          <div class="row-meta">${binding.model_deployment_id}</div>
+                          <div class="row-meta">${binding.capability_id} / ${binding.capability_version}</div>
+                          <div class="row-meta">${binding.compatibility_bundle_id}</div>
+                          <div><span class="chip ${binding.status === "ready" ? "good" : ""}">${binding.status || "unknown"}</span></div>
+                        </div>
+                      `)
+                      .join("")
+                  : `<div class="empty-state">No runtime bindings created yet.</div>`
+              }
+            </div>
+          </section>
+          <section class="subpanel">
+            <div class="panel-heading">Plugin directory</div>
+            <div class="table-shell" style="margin-top: 14px;">
+              <div class="table-head">
+                <div>Plugin</div>
+                <div>Capabilities</div>
                 <div>Bundles</div>
                 <div>Installs</div>
                 <div>Action</div>
               </div>
               ${
-                items.length
-                  ? items
+                pluginDirectory.length
+                  ? pluginDirectory
                       .map((provider) => {
                         const active = provider.plugin_id === state.selectedProviderId;
                         return `
                           <div class="table-row ${active ? "active" : ""}" data-provider-row="${provider.plugin_id}">
                             <div>
-                              <div class="row-title">${provider.plugin_id}</div>
+                              <div class="row-title">${provider.display_name || provider.plugin_id}</div>
                               <span class="row-copy">${provider.pending_install_count ? `${formatCount(provider.pending_install_count)} pending installs` : "No pending installs"}</span>
                             </div>
-                            <div class="row-meta">${(provider.workload_types || []).join(", ") || "-"}</div>
+                            <div class="row-meta">${(provider.supported_aidn_capabilities || provider.workload_types || []).join(", ") || "-"}</div>
                             <div><span class="chip">${formatCount(provider.bundle_count)}</span></div>
                             <div><span class="chip ${provider.pending_install_count ? "" : "good"}">${formatCount(provider.install_count)}</span></div>
                             <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Inspect"}</button>

@@ -2301,6 +2301,24 @@ class HypervisorService:
         self._persist_state()
         return instance.model_dump(mode="json")
 
+    def list_provider_instances(self) -> list[dict]:
+        return [
+            instance.model_dump(mode="json")
+            for instance in self.provider_inventory.list_provider_instances()
+        ]
+
+    def list_model_deployments(self) -> list[dict]:
+        return [
+            deployment.model_dump(mode="json")
+            for deployment in self.provider_inventory.list_model_deployments()
+        ]
+
+    def list_runtime_bindings(self) -> list[dict]:
+        return [
+            binding.model_dump(mode="json")
+            for binding in self.provider_inventory.list_runtime_bindings()
+        ]
+
     def discover_provider_models(self, provider_instance_id: str) -> list[dict]:
         deployments = self.provider_inventory.discover_models(provider_instance_id)
         self._persist_state()

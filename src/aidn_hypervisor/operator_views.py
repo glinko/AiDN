@@ -630,6 +630,23 @@ def build_operator_home_payload(
     }
 
 
+def _providers_empty_state() -> dict:
+    return {
+        "title": "No providers installed",
+        "description": "Attach an existing provider or browse provider plugins.",
+        "primary_action": {
+            "action": "browse_provider_plugins",
+            "label": "Browse provider plugins",
+            "workspace": "providers",
+        },
+        "secondary_action": {
+            "action": "attach_provider",
+            "label": "Add existing provider",
+            "workspace": "providers",
+        },
+    }
+
+
 def build_operator_providers_payload(
     *,
     service,
@@ -640,6 +657,56 @@ def build_operator_providers_payload(
     fleet = service.operator_dashboard_fleet()
     bundles = fleet["bundles"]
     installs = fleet["installs"]
+    plugin_directory = service.provider_inventory.list_plugin_manifests()
+    provider_instances = service.list_provider_instances()
+    model_deployments = service.list_model_deployments()
+    runtime_bindings = service.list_runtime_bindings()
+    runtime_bindings_by_model: dict[str, list[dict]] = {}
+    for binding in runtime_bindings:
+        runtime_bindings_by_model.setdefault(binding["model_deployment_id"], []).append(
+            binding
+        )
+    models_by_instance: dict[str, list[dict]] = {}
+    for deployment in model_deployments:
+        models_by_instance.setdefault(deployment["provider_instance_id"], []).append(
+            deployment
+        )
+    enriched_model_deployments = []
+    for deployment in model_deployments:
+        deployment_bindings = runtime_bindings_by_model.get(
+            deployment["model_deployment_id"],
+            [],
+        )
+        enriched_model_deployments.append(
+            {
+                **deployment,
+                "runtime_binding_count": len(deployment_bindings),
+                "runtime_binding_ready_count": sum(
+                    1 for binding in deployment_bindings if binding["status"] == "ready"
+                ),
+            }
+        )
+    enriched_provider_instances = []
+    for instance in provider_instances:
+        instance_models = models_by_instance.get(instance["provider_instance_id"], [])
+        instance_model_ids = {
+            deployment["model_deployment_id"] for deployment in instance_models
+        }
+        instance_bindings = [
+            binding
+            for binding in runtime_bindings
+            if binding["model_deployment_id"] in instance_model_ids
+        ]
+        enriched_provider_instances.append(
+            {
+                **instance,
+                "model_count": len(instance_models),
+                "runtime_binding_count": len(instance_bindings),
+                "runtime_binding_ready_count": sum(
+                    1 for binding in instance_bindings if binding["status"] == "ready"
+                ),
+            }
+        )
     endpoint_items = []
     if endpoint_service is not None:
         endpoint_items = build_operator_endpoints_payload(
@@ -723,6 +790,10 @@ def build_operator_providers_payload(
         ),
         "summary": {
             "total": len(items),
+            "total_plugins": len(plugin_directory),
+            "total_provider_instances": len(provider_instances),
+            "total_model_deployments": len(model_deployments),
+            "total_runtime_bindings": len(runtime_bindings),
             "bundles": len(bundles),
             "installs": len(installs),
             "endpoint_ready_bundles": sum(
@@ -730,6 +801,11 @@ def build_operator_providers_payload(
             ),
             "recommended_action": summary_recommended_action,
         },
+        "empty_state": _providers_empty_state(),
+        "plugin_directory": plugin_directory,
+        "provider_instances": enriched_provider_instances,
+        "model_deployments": enriched_model_deployments,
+        "runtime_bindings": runtime_bindings,
         "items": items,
     }
 

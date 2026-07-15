@@ -8,9 +8,9 @@
 
 **Tech Stack:** Python, FastAPI, Pydantic, pytest, existing `HypervisorService`, current operator dashboard HTML/JS, existing plugin registry and bundle scheduler.
 
-**Current status:** The provider inventory foundation is in place, runtime bindings are projected into `BundleConfig`, and endpoint creation now accepts `runtime_binding_id` as the primary input path with deterministic bundle-hash resolution. The currently green validation set covers provider inventory, runtime binding, endpoint service, and endpoint API flows.
+**Current status:** The provider inventory foundation is in place, runtime bindings are projected into `BundleConfig`, endpoint creation accepts `runtime_binding_id` as the primary input path with deterministic bundle-hash resolution, and the operator Providers workspace now exposes the plugin-first flow (`plugin -> provider instance -> model deployment -> runtime binding -> endpoint`). The currently green validation set covers provider inventory, runtime binding, endpoint service, endpoint API flows, and the operator provider workspace.
 
-**Next phase:** finish the plugin directory and UI-surface work: plugin manifest/directory payloads, declarative install/attach schemas, secret scoping, sandboxed installation plans, installation recipes, and the operator-facing provider workspace.
+**Next phase:** persist provider inventory state across Hypervisor export/restore and run full MVP verification, then deepen the plugin directory foundations: declarative install/attach schemas, secret scoping, sandboxed installation plans, and installation recipes.
 
 ---
 
@@ -315,7 +315,7 @@ Run: `python -m pytest tests/providers/test_models.py tests/providers/test_store
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/aidn_hypervisor/providers/__init__.py src/aidn_hypervisor/providers/models.py src/aidn_hypervisor/providers/store.py tests/providers/test_models.py tests/providers/test_store.py
@@ -937,7 +937,7 @@ git commit -m "feat: accept runtime bindings in endpoint draft flow"
 - Test: `tests/test_operator_views.py`
 - Test: `tests/test_api.py`
 
-- [ ] **Step 1: Write the failing provider-workspace and onboarding tests**
+- [x] **Step 1: Write the failing provider-workspace and onboarding tests**
 
 ```python
 # tests/test_operator_views.py
@@ -979,13 +979,13 @@ def test_operator_dashboard_providers_route_returns_plugin_directory_and_provide
     assert "empty_state" in body
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_operator_views.py tests/test_api.py -q`
 
 Expected: FAIL with missing keys such as `empty_state`, `plugin_directory`, or `provider_instances`
 
-- [ ] **Step 3: Update payload builders, onboarding copy, and dashboard JS**
+- [x] **Step 3: Update payload builders, onboarding copy, and dashboard JS**
 
 ```python
 # src/aidn_hypervisor/operator_views.py
@@ -1061,7 +1061,7 @@ function renderProvidersWorkspace(payload) {
 
 Do not remove the bundles workspace in this slice; leave it visible as a compatibility execution view.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_operator_views.py tests/test_api.py -q`
 

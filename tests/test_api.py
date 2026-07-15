@@ -2719,6 +2719,10 @@ def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_contr
     assert "/operators/models/install" in response.text
     assert "/operators/bundles/config" in response.text
     assert "/operators/bundles/reload" in response.text
+    assert "Provider instances" in response.text
+    assert "Model deployments" in response.text
+    assert "Runtime bindings" in response.text
+    assert "No providers installed" in response.text
     assert "Manual Provider Attach" in response.text
     assert "Reload Saved Bundle Config" in response.text
     assert 'data-provider-bundle-field="bundleId"' in response.text
@@ -2739,7 +2743,7 @@ def test_operator_dashboard_shell_route_uses_payload_driven_provider_and_bundle_
     assert response.status_code == 200
     assert "selectedProvider()?.endpoint_readiness" in response.text
     assert "selectedFleetBundle()?.endpoint_relationship" in response.text
-    assert "This screen prepares execution supply for endpoint creation." in response.text
+    assert "This screen prepares execution supply through provider plugins" in response.text
     assert "This screen tracks bundle-to-endpoint relationship state." in response.text
 
 
@@ -3413,6 +3417,32 @@ def test_operator_dashboard_providers_route_returns_workspace_payload(
     assert captured["view_args"]["endpoint_service"] is endpoint_service
     assert "endpoint_publication_service" in captured["view_args"]
     assert "validation_service" in captured["view_args"]
+
+
+def test_operator_dashboard_providers_route_returns_plugin_first_inventory_payload() -> None:
+    service = _service()
+    attached = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    models = service.discover_provider_models(attached["provider_instance_id"])
+    binding = service.create_runtime_binding(
+        model_deployment_id=models[0]["model_deployment_id"],
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+    client = TestClient(build_app(service=service))
+
+    payload = client.get("/operators/dashboard/providers").json()
+
+    assert payload["plugin_directory"][0]["plugin_id"] == "fake-managed"
+    assert payload["provider_instances"][0]["provider_instance_id"] == attached["provider_instance_id"]
+    assert payload["provider_instances"][0]["model_count"] == 1
+    assert payload["provider_instances"][0]["runtime_binding_ready_count"] == 1
+    assert payload["model_deployments"][0]["model_deployment_id"] == models[0]["model_deployment_id"]
+    assert payload["runtime_bindings"][0]["runtime_binding_id"] == binding["runtime_binding_id"]
 
 
 def test_operator_dashboard_providers_payload_prefers_endpoint_handoff_when_supply_is_ready() -> None:

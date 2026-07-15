@@ -22,6 +22,15 @@ class ProviderInventoryService:
             return list(self.plugins.list_manifests())
         return [plugin.plugin_manifest() for plugin in self._list_plugins()]
 
+    def list_provider_instances(self) -> list[ProviderInstance]:
+        return self.store.list_provider_instances()
+
+    def list_model_deployments(self) -> list[ModelDeployment]:
+        return self.store.list_model_deployments()
+
+    def list_runtime_bindings(self) -> list[RuntimeBinding]:
+        return self.store.list_runtime_bindings()
+
     def attach_provider_instance(
         self,
         *,

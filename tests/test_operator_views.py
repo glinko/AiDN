@@ -622,6 +622,52 @@ def test_providers_payload_summarizes_plugins_and_bundle_state(
     assert payload["items"][0]["install_count"] == 0
 
 
+def test_providers_payload_uses_plugin_first_empty_state() -> None:
+    service = _empty_service()
+    service.plugins.register(FakeManagedPlugin())
+
+    payload = build_operator_providers_payload(service=service)
+
+    assert payload["summary"]["total_plugins"] == 1
+    assert payload["summary"]["total_provider_instances"] == 0
+    assert payload["plugin_directory"][0]["plugin_id"] == "fake-managed"
+    assert payload["provider_instances"] == []
+    assert payload["model_deployments"] == []
+    assert payload["runtime_bindings"] == []
+    assert payload["empty_state"]["title"] == "No providers installed"
+    assert payload["empty_state"]["primary_action"]["action"] == "browse_provider_plugins"
+    assert payload["empty_state"]["secondary_action"]["action"] == "attach_provider"
+
+
+def test_providers_payload_exposes_models_and_runtime_binding_readiness() -> None:
+    service = _provider_only_service()
+    attached = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    models = service.discover_provider_models(attached["provider_instance_id"])
+    binding = service.create_runtime_binding(
+        model_deployment_id=models[0]["model_deployment_id"],
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+
+    payload = build_operator_providers_payload(service=service)
+
+    instance = payload["provider_instances"][0]
+    assert instance["provider_instance_id"] == attached["provider_instance_id"]
+    assert instance["model_count"] == 1
+    assert instance["runtime_binding_ready_count"] == 1
+    assert payload["model_deployments"][0]["provider_instance_id"] == attached["provider_instance_id"]
+    assert payload["runtime_bindings"][0]["runtime_binding_id"] == binding["runtime_binding_id"]
+    assert payload["summary"]["total_provider_instances"] == 1
+    assert payload["summary"]["total_model_deployments"] == 1
+    assert payload["summary"]["total_runtime_bindings"] == 1
+    assert payload["recommended_action"]["action"] == "create_endpoint"
+
+
 def test_providers_payload_matches_install_aliases_from_bundle_provider_type(
     tmp_path: Path,
 ) -> None:
