@@ -3956,9 +3956,10 @@
             <div class="table-shell" style="margin-top: 14px;">
               <div class="table-head">
                 <div>Plugin</div>
+                <div>Trust</div>
                 <div>Capabilities</div>
-                <div>Bundles</div>
-                <div>Installs</div>
+                <div>Permissions</div>
+                <div>Install plan preview</div>
                 <div>Action</div>
               </div>
               ${
@@ -3972,9 +3973,10 @@
                               <div class="row-title">${provider.display_name || provider.plugin_id}</div>
                               <span class="row-copy">${provider.pending_install_count ? `${formatCount(provider.pending_install_count)} pending installs` : "No pending installs"}</span>
                             </div>
+                            <div><span class="chip ${provider.trust_status === "CONFORMANCE_TESTED" ? "good" : ""}">${provider.trust_status || "UNREVIEWED"}</span></div>
                             <div class="row-meta">${(provider.supported_aidn_capabilities || provider.workload_types || []).join(", ") || "-"}</div>
-                            <div><span class="chip">${formatCount(provider.bundle_count)}</span></div>
-                            <div><span class="chip ${provider.pending_install_count ? "" : "good"}">${formatCount(provider.install_count)}</span></div>
+                            <div class="row-meta">${(provider.required_permissions || []).map((permission) => permission.label || permission.permission_id).join(", ") || "No elevated permissions"}</div>
+                            <div class="row-meta">${provider.install_ui_schema ? "Declarative preview available" : "Attach only"}</div>
                             <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Inspect"}</button>
                           </div>
                         `;

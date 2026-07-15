@@ -2732,6 +2732,9 @@ def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_contr
     assert "Provider instances" in response.text
     assert "Model deployments" in response.text
     assert "Runtime bindings" in response.text
+    assert "Plugin directory" in response.text
+    assert "Trust" in response.text
+    assert "Install plan preview" in response.text
     assert "No providers installed" in response.text
     assert "Manual Provider Attach" in response.text
     assert "Reload Saved Bundle Config" in response.text

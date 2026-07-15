@@ -658,6 +658,11 @@ def build_operator_providers_payload(
     bundles = fleet["bundles"]
     installs = fleet["installs"]
     plugin_directory = service.provider_inventory.list_plugin_manifests()
+    installable_plugin_count = sum(
+        1
+        for manifest in plugin_directory
+        if "CAN_INSTALL_PROVIDER" in manifest.get("plugin_capability_flags", [])
+    )
     provider_instances = service.list_provider_instances()
     model_deployments = service.list_model_deployments()
     runtime_bindings = service.list_runtime_bindings()
@@ -791,6 +796,7 @@ def build_operator_providers_payload(
         "summary": {
             "total": len(items),
             "total_plugins": len(plugin_directory),
+            "installable_plugin_count": installable_plugin_count,
             "total_provider_instances": len(provider_instances),
             "total_model_deployments": len(model_deployments),
             "total_runtime_bindings": len(runtime_bindings),
