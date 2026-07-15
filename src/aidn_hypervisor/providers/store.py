@@ -56,6 +56,7 @@ class InMemoryProviderInventoryStore:
     def save_runtime_binding(self, binding: RuntimeBinding) -> None:
         if binding.provider_instance_id not in self._provider_instances:
             raise ValueError("provider_instance_id must reference an existing provider instance")
+        provider_instance = self._provider_instances[binding.provider_instance_id]
         if binding.model_deployment_id not in self._model_deployments:
             raise ValueError("model_deployment_id must reference an existing model deployment")
         deployment = self._model_deployments[binding.model_deployment_id]
@@ -63,6 +64,8 @@ class InMemoryProviderInventoryStore:
             raise ValueError(
                 "runtime binding provider_instance_id must match the model deployment provider_instance_id"
             )
+        if binding.plugin_id != provider_instance.plugin_id:
+            raise ValueError("plugin_id must match the owning provider instance plugin_id")
         self._runtime_bindings[binding.runtime_binding_id] = binding
 
     def get_runtime_binding(self, runtime_binding_id: str) -> RuntimeBinding:

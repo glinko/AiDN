@@ -269,3 +269,32 @@ def test_store_rejects_runtime_binding_when_deployment_belongs_to_different_prov
 
     with pytest.raises(ValueError, match="must match"):
         store.save_runtime_binding(binding)
+
+
+def test_store_rejects_runtime_binding_with_mismatched_provider_plugin() -> None:
+    store = InMemoryProviderInventoryStore()
+    store.save_provider_instance(_provider_instance("pi-1"))
+    store.save_model_deployment(
+        ModelDeployment(
+            model_deployment_id="md-1",
+            provider_instance_id="pi-1",
+            provider_model_reference="qwen3:14b",
+            operator_display_name="Qwen 14B",
+            operational_state="ready",
+        )
+    )
+
+    binding = RuntimeBinding(
+        runtime_binding_id="rb-1",
+        provider_instance_id="pi-1",
+        model_deployment_id="md-1",
+        capability_id="cap.primary",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+        plugin_id="aidn.provider.other",
+        compatibility_bundle_id="bundle-rb-1",
+        status="ready",
+    )
+
+    with pytest.raises(ValueError, match="plugin_id"):
+        store.save_runtime_binding(binding)
