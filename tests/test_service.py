@@ -493,6 +493,26 @@ def test_service_bundle_hash_for_runtime_binding_delegates_to_provider_inventory
     assert bundle_hash == "bundle-hash-rtb-1"
 
 
+def test_service_build_provider_installation_plan_preview() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+    )
+
+    plan = service.build_provider_installation_plan(
+        plugin_id="fake-managed",
+        configuration={
+            "display_name": "Local Fake",
+            "base_url": "http://127.0.0.1:9999",
+        },
+    )
+
+    assert plan["plan_id"] == "plan-fake-managed"
+    assert plan["plugin_id"] == "fake-managed"
+
+
 def test_service_submit_routes_and_records_selected_bundle_for_automatic_mode() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),

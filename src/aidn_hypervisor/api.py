@@ -63,6 +63,10 @@ class CreateRuntimeBindingRequest(BaseModel):
     capability_definition_hash: str
 
 
+class BuildProviderInstallationPlanRequest(BaseModel):
+    configuration: dict = Field(default_factory=dict)
+
+
 def _ok(data: dict, *, status_code: int = 200) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -1049,6 +1053,24 @@ def build_api_router(
     @router.get("/operators/provider-plugins")
     async def list_provider_plugins() -> dict:
         return {"items": service.provider_inventory.list_plugin_manifests()}
+
+    @router.post("/operators/provider-plugins/{plugin_id}/installation-plan")
+    async def build_provider_installation_plan(
+        plugin_id: str,
+        payload: BuildProviderInstallationPlanRequest,
+    ) -> dict:
+        try:
+            return service.build_provider_installation_plan(
+                plugin_id=plugin_id,
+                configuration=payload.configuration,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown plugin: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.post("/operators/provider-instances/attach")
     async def attach_provider_instance(payload: AttachProviderInstanceRequest) -> dict:

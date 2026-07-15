@@ -4,6 +4,12 @@ from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
+def _registry() -> PluginRegistry:
+    registry = PluginRegistry()
+    registry.register(FakeManagedPlugin())
+    return registry
+
+
 def test_fake_plugin_exposes_attach_schema_and_discovers_models() -> None:
     plugin = FakeManagedPlugin()
 
@@ -254,3 +260,22 @@ def test_provider_inventory_service_ignores_plugin_supplied_random_runtime_bindi
         first.runtime_binding_id
     ]
     assert bundle.bundle_id == first.compatibility_bundle_id
+
+
+def test_provider_inventory_builds_declarative_installation_plan() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    plan = service.build_installation_plan(
+        plugin_id="fake-managed",
+        configuration={
+            "display_name": "Local Fake",
+            "base_url": "http://127.0.0.1:9999",
+        },
+    )
+
+    assert plan["plugin_id"] == "fake-managed"
+    assert plan["unsupported_actions"] == []
+    assert plan["health_checks"][0]["url"] == "http://127.0.0.1:9999"

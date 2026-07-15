@@ -3652,6 +3652,26 @@ def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:
     assert extra_field_response.status_code == 422
 
 
+def test_provider_plugin_installation_plan_preview_route() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.post(
+        "/operators/provider-plugins/fake-managed/installation-plan",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["plugin_id"] == "fake-managed"
+    assert body["unsupported_actions"] == []
+    assert body["health_checks"][0]["type"] == "http"
+
+
 def test_operator_dashboard_bundles_route_returns_workspace_payload(
     monkeypatch,
 ) -> None:
