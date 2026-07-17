@@ -863,7 +863,9 @@
     .wallet-toolbar input,
     .wallet-form input,
     .wallet-form select,
-    .wallet-form textarea {
+    .wallet-form textarea,
+    .wallet-form-grid input,
+    .wallet-form-grid select {
       min-height: 38px;
       padding: 8px 12px;
       border-radius: 12px;
@@ -1039,6 +1041,33 @@
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
+    }
+
+    .wallet-form-grid label,
+    .checkbox-line {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .checkbox-line {
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      min-height: 38px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(7, 18, 28, 0.88);
+      color: var(--ink);
+    }
+
+    .field-label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
     }
 
     .wallet-inline-actions {
@@ -1599,8 +1628,7 @@
       },
       providerApplyDraft: {
         pluginId: null,
-        displayName: "",
-        baseUrl: "",
+        values: {},
         operatorNote: "",
       },
       bundleEndpointDraft: {
@@ -2991,17 +3019,126 @@
       return state.providerInstallDraft;
     }
 
+    function providerInstallSchema(provider) {
+      return provider?.install_ui_schema || {
+        schema_id: `${provider?.plugin_id || "provider"}.install.local.v1`,
+        fields: [
+          { id: "display_name", type: "text", required: true },
+          { id: "base_url", type: "text", required: true },
+        ],
+      };
+    }
+
+    function schemaFieldOptions(field) {
+      return field.options || field.choices || [];
+    }
+
+    function schemaFieldDefault(field, provider) {
+      if (field.default !== undefined) {
+        return field.default;
+      }
+      if (field.id === "display_name") {
+        return provider?.display_name || provider?.plugin_id || "";
+      }
+      if (field.id === "base_url") {
+        return providerSuggestedEndpoint(provider);
+      }
+      if (field.type === "boolean") {
+        return false;
+      }
+      const options = schemaFieldOptions(field);
+      if (field.type === "select" && options.length) {
+        const first = options[0];
+        return typeof first === "object" ? first.value : first;
+      }
+      return "";
+    }
+
     function syncProviderApplyDraft(provider) {
       const pluginId = provider?.plugin_id || null;
       if (state.providerApplyDraft.pluginId !== pluginId) {
+        const values = {};
+        for (const field of providerInstallSchema(provider).fields || []) {
+          values[field.id] = schemaFieldDefault(field, provider);
+        }
         state.providerApplyDraft = {
           pluginId,
-          displayName: provider?.display_name || provider?.plugin_id || "",
-          baseUrl: providerSuggestedEndpoint(provider),
+          values,
           operatorNote: "approved from operator dashboard",
         };
       }
       return state.providerApplyDraft;
+    }
+
+    function providerApplyConfiguration(provider) {
+      const draft = syncProviderApplyDraft(provider);
+      const fields = providerInstallSchema(provider).fields || [];
+      return fields.reduce((configuration, field) => {
+        configuration[field.id] = draft.values[field.id] ?? schemaFieldDefault(field, provider);
+        return configuration;
+      }, {});
+    }
+
+    function providerApplyRequiredFieldsSatisfied(provider) {
+      const configuration = providerApplyConfiguration(provider);
+      return (providerInstallSchema(provider).fields || []).every((field) => {
+        if (!field.required) {
+          return true;
+        }
+        const value = configuration[field.id];
+        if (field.type === "boolean") {
+          return typeof value === "boolean";
+        }
+        return String(value ?? "").trim().length > 0;
+      });
+    }
+
+    function schemaFieldLabel(field) {
+      if (field.label) {
+        return field.label;
+      }
+      return String(field.id || "field")
+        .replace(/[_-]+/g, " ")
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+    }
+
+    function renderProviderApplySchemaField(field, draft) {
+      const fieldId = String(field.id || "");
+      const fieldType = field.type || "text";
+      const value = draft.values[fieldId] ?? "";
+      const requiredMarker = field.required ? " *" : "";
+      const placeholder = field.placeholder || schemaFieldLabel(field);
+      if (fieldType === "boolean") {
+        return `
+          <label class="checkbox-line">
+            <input type="checkbox" data-provider-apply-field="${escapeHtml(fieldId)}" ${value ? "checked" : ""}>
+            ${escapeHtml(schemaFieldLabel(field))}${requiredMarker}
+          </label>
+        `;
+      }
+      if (fieldType === "select") {
+        return `
+          <label>
+            <span class="field-label">${escapeHtml(schemaFieldLabel(field))}${requiredMarker}</span>
+            <select data-provider-apply-field="${escapeHtml(fieldId)}">
+              ${schemaFieldOptions(field)
+                .map((option) => {
+                  const optionValue = typeof option === "object" ? option.value : option;
+                  const optionLabel = typeof option === "object" ? option.label || option.value : option;
+                  return `<option value="${escapeHtml(optionValue)}" ${String(value) === String(optionValue) ? "selected" : ""}>${escapeHtml(optionLabel)}</option>`;
+                })
+                .join("")}
+            </select>
+          </label>
+        `;
+      }
+      const inputType = fieldType === "number" ? "number" : "text";
+      return `
+        <label>
+          <span class="field-label">${escapeHtml(schemaFieldLabel(field))}${requiredMarker}</span>
+          <input type="${inputType}" data-provider-apply-field="${escapeHtml(fieldId)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}">
+        </label>
+      `;
     }
 
     function providerInstallationApprovals() {
@@ -6160,8 +6297,7 @@
         Boolean(installDraft.requestedBy) &&
         state.providerActionPending !== "queue-install";
       const canApproveInstallation =
-        Boolean(applyDraft.displayName) &&
-        Boolean(applyDraft.baseUrl) &&
+        providerApplyRequiredFieldsSatisfied(provider) &&
         state.providerActionPending !== "approve-installation";
       const canApplyInstallation =
         Boolean(latestApproval?.approval_id) &&
@@ -6202,12 +6338,14 @@
           <section class="subpanel" style="padding: 16px; margin-top: 10px;">
             <div class="panel-heading">Managed Provider Apply</div>
             <div class="inspector-copy">Approve and apply a declarative provider plan through the controlled executor. This creates local Provider Instance inventory state only; it does not run shell, Docker, downloads, or plugin installer code.</div>
+            <div class="notice" style="margin-top: 10px;">Install UI schema: ${escapeHtml(providerInstallSchema(provider).schema_id || "none")}</div>
             <div class="wallet-form-grid" style="margin-top: 12px;">
-              <input type="text" data-provider-apply-field="displayName" value="${escapeHtml(applyDraft.displayName)}" placeholder="Provider display name">
-              <input type="text" data-provider-apply-field="baseUrl" value="${escapeHtml(applyDraft.baseUrl)}" placeholder="Provider API base URL">
+              ${(providerInstallSchema(provider).fields || [])
+                .map((field) => renderProviderApplySchemaField(field, applyDraft))
+                .join("")}
             </div>
             <div class="wallet-form-grid" style="margin-top: 10px;">
-              <input type="text" data-provider-apply-field="operatorNote" value="${escapeHtml(applyDraft.operatorNote)}" placeholder="Operator approval note">
+              <input type="text" data-provider-apply-note value="${escapeHtml(applyDraft.operatorNote)}" placeholder="Operator approval note">
               <button class="primary-button" type="button" data-provider-action="approve-installation" ${canApproveInstallation ? "" : "disabled"}>${state.providerActionPending === "approve-installation" ? "Approving..." : "Approve Install Plan"}</button>
             </div>
             <div class="wallet-inline-actions" style="margin-top: 10px;">
@@ -8021,10 +8159,7 @@
       bindInteractiveElements();
       try {
         const approval = await postJson(providerInstallationApprovalPath(provider.plugin_id), {
-          configuration: {
-            display_name: draft.displayName,
-            base_url: draft.baseUrl,
-          },
+          configuration: providerApplyConfiguration(provider),
           operator_note: draft.operatorNote || null,
         });
         state.providerMessage = {
@@ -8484,7 +8619,21 @@
         const key = control.dataset.providerApplyField;
         const eventName = control.tagName === "SELECT" ? "change" : "input";
         control.addEventListener(eventName, () => {
-          state.providerApplyDraft[key] = control.value;
+          if (control.type === "checkbox") {
+            state.providerApplyDraft.values[key] = control.checked;
+          } else if (control.type === "number") {
+            state.providerApplyDraft.values[key] = control.value === "" ? "" : Number(control.value);
+          } else {
+            state.providerApplyDraft.values[key] = control.value;
+          }
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-apply-note]").forEach((control) => {
+        control.addEventListener("input", () => {
+          state.providerApplyDraft.operatorNote = control.value;
           renderInspector();
           bindInteractiveElements();
         });

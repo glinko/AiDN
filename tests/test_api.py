@@ -2798,8 +2798,9 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert "controlled executor" in response.text
     assert "Approve Install Plan" in response.text
     assert "Apply Latest Approval" in response.text
-    assert 'data-provider-apply-field="displayName"' in response.text
-    assert 'data-provider-apply-field="baseUrl"' in response.text
+    assert "Install UI schema:" in response.text
+    assert 'data-provider-apply-field="${escapeHtml(fieldId)}"' in response.text
+    assert 'data-provider-apply-note' in response.text
     assert 'data-provider-action="approve-installation"' in response.text
     assert 'data-provider-action="apply-installation"' in response.text
     assert "Provider Installation Apply Jobs" in response.text
