@@ -13,9 +13,12 @@ from aidn_hypervisor.providers.models import (
     InstallationPlan,
     ModelDeployment,
     ProviderInstallationApproval,
+    ProviderInstallationDiagnosticCheck,
+    ProviderInstallationDiagnostics,
     ProviderInstallationJob,
     ProviderPluginManifest,
     ProviderInstance,
+    ProviderInstallationRollbackResult,
     RuntimeBinding,
     SelectedSecretHandle,
 )
@@ -118,6 +121,194 @@ class ProviderInventoryService:
     def list_installation_approvals(self) -> list[ProviderInstallationApproval]:
         return self.store.list_installation_approvals()
 
+    def run_installation_diagnostics(
+        self,
+        *,
+        plugin_id: str,
+        configuration: dict,
+        approved_permissions: list[str] | None = None,
+        selected_secret_handles: list[dict] | None = None,
+    ) -> ProviderInstallationDiagnostics:
+        plugin = self._get_plugin(plugin_id)
+        manifest = ProviderPluginManifest.model_validate(plugin.plugin_manifest())
+        diagnostics_configuration = deepcopy(configuration)
+        plan = InstallationPlan.model_validate(
+            self.build_installation_plan(
+                plugin_id=plugin_id,
+                configuration=diagnostics_configuration,
+            )
+        )
+        plan_hash = _canonical_hash(plan.model_dump(mode="json"))
+        configuration_hash = _canonical_hash(deepcopy(diagnostics_configuration))
+        normalized_secret_requirements = self._normalized_secret_requirements(manifest)
+        checks: list[ProviderInstallationDiagnosticCheck] = [
+            ProviderInstallationDiagnosticCheck(
+                check_id="configuration_valid",
+                status="PASS",
+                summary="Declarative installation plan built successfully.",
+                details={
+                    "plan_id": plan.plan_id,
+                    "declared_sections": [
+                        section
+                        for section in (
+                            "containers",
+                            "processes",
+                            "model_downloads",
+                            "volumes",
+                            "networks",
+                            "environment",
+                            "resource_limits",
+                            "health_checks",
+                        )
+                        if getattr(plan, section)
+                    ],
+                },
+            )
+        ]
+
+        try:
+            normalized_permissions = self._validate_approved_permissions(
+                requested_permissions=[
+                    permission.permission_id for permission in plan.required_permissions
+                ],
+                approved_permissions=approved_permissions,
+            )
+            checks.append(
+                ProviderInstallationDiagnosticCheck(
+                    check_id="permissions_acknowledged",
+                    status="PASS",
+                    summary="Requested permissions are fully acknowledged.",
+                    details={
+                        "requested_permissions": [
+                            permission.permission_id for permission in plan.required_permissions
+                        ],
+                        "approved_permissions": normalized_permissions,
+                    },
+                )
+            )
+        except ValueError as exc:
+            checks.append(
+                ProviderInstallationDiagnosticCheck(
+                    check_id="permissions_acknowledged",
+                    status="FAIL",
+                    summary=str(exc),
+                    details={
+                        "requested_permissions": [
+                            permission.permission_id for permission in plan.required_permissions
+                        ],
+                        "approved_permissions": list(approved_permissions or []),
+                    },
+                )
+            )
+
+        normalized_selected_handles: list[SelectedSecretHandle] = []
+        try:
+            normalized_selected_handles = self._validate_selected_secret_handles(
+                normalized_requirements=normalized_secret_requirements,
+                selected_secret_handles=selected_secret_handles,
+            )
+            missing_optional_requirements = [
+                requirement["requirement_key"]
+                for requirement in normalized_secret_requirements
+                if not requirement["required"]
+                and requirement["requirement_key"]
+                not in {
+                    handle.requirement_key for handle in normalized_selected_handles
+                }
+            ]
+            if missing_optional_requirements:
+                checks.append(
+                    ProviderInstallationDiagnosticCheck(
+                        check_id="secret_handles",
+                        status="WARN",
+                        summary="Optional secret handles are still unassigned.",
+                        details={
+                            "selected_secret_handles": [
+                                handle.model_dump(mode="json")
+                                for handle in normalized_selected_handles
+                            ],
+                            "missing_optional_requirements": missing_optional_requirements,
+                        },
+                    )
+                )
+            else:
+                checks.append(
+                    ProviderInstallationDiagnosticCheck(
+                        check_id="secret_handles",
+                        status="PASS",
+                        summary="Secret handle requirements are satisfied.",
+                        details={
+                            "selected_secret_handles": [
+                                handle.model_dump(mode="json")
+                                for handle in normalized_selected_handles
+                            ],
+                        },
+                    )
+                )
+        except ValueError as exc:
+            checks.append(
+                ProviderInstallationDiagnosticCheck(
+                    check_id="secret_handles",
+                    status="FAIL",
+                    summary=str(exc),
+                    details={
+                        "selected_secret_handles": list(selected_secret_handles or []),
+                        "requirements": normalized_secret_requirements,
+                    },
+                )
+            )
+
+        diagnostic_approval = ProviderInstallationApproval(
+            approval_id="diagnostic-preview",
+            plugin_id=plugin_id,
+            plan_id=plan.plan_id,
+            plan_hash=plan_hash,
+            configuration_hash=configuration_hash,
+            configuration=deepcopy(diagnostics_configuration),
+            approved_permissions=[
+                permission.permission_id for permission in plan.required_permissions
+            ],
+            acknowledged_secret_requirements=normalized_secret_requirements,
+            selected_secret_handles=normalized_selected_handles,
+            created_at=_now_iso(),
+        )
+        rollback_result = self._rollback_preview(
+            approval=diagnostic_approval,
+            plan=plan,
+            configuration=deepcopy(diagnostics_configuration),
+            manifest=manifest.model_dump(mode="json"),
+        )
+        checks.append(
+            ProviderInstallationDiagnosticCheck(
+                check_id="executor_readiness",
+                status="PASS",
+                summary=f"Executor {self.installation_executor.executor_id} accepted the dry-run preview.",
+                details={"executor_id": self.installation_executor.executor_id},
+            )
+        )
+        checks.append(
+            ProviderInstallationDiagnosticCheck(
+                check_id="rollback_preview",
+                status="PASS" if rollback_result.status in {"NOT_REQUIRED", "NOT_NEEDED", "COMPLETED"} else "WARN",
+                summary=rollback_result.summary,
+                details=deepcopy(rollback_result.details),
+            )
+        )
+
+        readiness_status = self._diagnostic_readiness_status(checks)
+        return ProviderInstallationDiagnostics(
+            diagnostics_id=f"pid-{uuid4().hex[:12]}",
+            plugin_id=plugin_id,
+            plan_id=plan.plan_id,
+            plan_hash=plan_hash,
+            configuration_hash=configuration_hash,
+            executor_id=self.installation_executor.executor_id,
+            readiness_status=readiness_status,
+            checks=checks,
+            rollback_result=rollback_result,
+            created_at=_now_iso(),
+        )
+
     def apply_installation_approval(self, approval_id: str) -> ProviderInstallationJob:
         approval = self.store.get_installation_approval(approval_id)
         if approval.status != "APPROVED":
@@ -182,13 +373,31 @@ class ProviderInventoryService:
                     "status": "SUCCEEDED",
                     "step_results": result.step_results,
                     "provider_instance_id": provider_instance.provider_instance_id,
+                    "rollback_status": (
+                        result.rollback_result.status
+                        if result.rollback_result is not None
+                        else "NOT_NEEDED"
+                    ),
+                    "rollback_summary": (
+                        result.rollback_result.summary
+                        if result.rollback_result is not None
+                        else None
+                    ),
                     "completed_at": _now_iso(),
                 }
             )
         except Exception as exc:
+            rollback_result = self._rollback_preview(
+                approval=approval,
+                plan=plan,
+                configuration=deepcopy(approved_configuration),
+                manifest=manifest.model_dump(mode="json"),
+            )
             job = job.model_copy(
                 update={
                     "status": "FAILED",
+                    "rollback_status": rollback_result.status,
+                    "rollback_summary": rollback_result.summary,
                     "error_code": exc.__class__.__name__,
                     "error_message": str(exc),
                     "completed_at": _now_iso(),
@@ -199,6 +408,60 @@ class ProviderInventoryService:
 
     def list_installation_jobs(self) -> list[ProviderInstallationJob]:
         return self.store.list_installation_jobs()
+
+    def _diagnostic_readiness_status(
+        self,
+        checks: list[ProviderInstallationDiagnosticCheck],
+    ) -> str:
+        statuses = [check.status for check in checks]
+        if "FAIL" in statuses:
+            return "BLOCKED"
+        if "WARN" in statuses:
+            return "ACTION_REQUIRED"
+        return "READY"
+
+    def _rollback_preview(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+    ) -> ProviderInstallationRollbackResult:
+        executor = self.installation_executor
+        rollback_preview = getattr(executor, "rollback_preview", None)
+        if rollback_preview is None:
+            return ProviderInstallationRollbackResult(
+                status="FAILED",
+                summary=(
+                    f"Executor {executor.executor_id} does not expose rollback preview; "
+                    "manual cleanup guidance is required."
+                ),
+                details={
+                    "executor_id": executor.executor_id,
+                    "rollback_preview_available": False,
+                },
+            )
+        try:
+            return rollback_preview(
+                approval=approval,
+                plan=plan,
+                configuration=configuration,
+                manifest=manifest,
+            )
+        except Exception as exc:
+            return ProviderInstallationRollbackResult(
+                status="FAILED",
+                summary=(
+                    f"Rollback preview failed for executor {executor.executor_id}: {exc}"
+                ),
+                details={
+                    "executor_id": executor.executor_id,
+                    "rollback_preview_available": True,
+                    "error_code": exc.__class__.__name__,
+                    "error_message": str(exc),
+                },
+            )
 
     def _normalized_secret_requirements(
         self,

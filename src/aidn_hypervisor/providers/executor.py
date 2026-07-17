@@ -4,6 +4,7 @@ from typing import Protocol
 from aidn_hypervisor.providers.models import (
     InstallationPlan,
     ProviderInstallationApproval,
+    ProviderInstallationRollbackResult,
     ProviderInstallationExecutionResult,
     ProviderInstallationStepResult,
 )
@@ -11,6 +12,16 @@ from aidn_hypervisor.providers.models import (
 
 class ProviderInstallationExecutor(Protocol):
     executor_id: str
+
+    def rollback_preview(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+    ) -> ProviderInstallationRollbackResult:
+        ...
 
     def apply(
         self,
@@ -37,6 +48,32 @@ class RecordedProviderInstallationExecutor:
         "resource_limits",
         "health_checks",
     )
+
+    def rollback_preview(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+    ) -> ProviderInstallationRollbackResult:
+        self._validate_inputs(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+        )
+        return ProviderInstallationRollbackResult(
+            status="NOT_REQUIRED",
+            summary="Recorded executor does not mutate host state; rollback is not required.",
+            details={
+                "executor_id": self.executor_id,
+                "host_mutation": False,
+                "recorded_plan_sections": [
+                    section for section in self._PLAN_SECTIONS if getattr(plan, section)
+                ],
+            },
+        )
 
     def apply(
         self,
@@ -77,6 +114,12 @@ class RecordedProviderInstallationExecutor:
                 "configuration": deepcopy(approved_configuration),
                 "operational_state": "created",
             },
+            rollback_result=self.rollback_preview(
+                approval=approval,
+                plan=plan,
+                configuration=configuration,
+                manifest=manifest,
+            ),
         )
 
     def _validate_inputs(

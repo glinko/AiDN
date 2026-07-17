@@ -10,7 +10,7 @@
 
 **Current status:** Provider inventory, runtime-binding compatibility projection, endpoint draft runtime-binding input, plugin-first Providers workspace, provider inventory snapshot/restore, rich Plugin Directory metadata, permission/secret/UI schema/recipe manifest fields, preview Installation Plans, approval/apply job records, explicit permission acknowledgement, secret-handle selection, schema-driven dashboard forms, Installation Recipe prefill, model discovery from an applied Provider Instance, Runtime Binding creation from a Model Deployment, and Endpoint draft creation from a Runtime Binding are implemented and verified. The latest targeted provider/dashboard verification suite for this branch passed with `386 passed, 1 warning`.
 
-**Next phase:** harden the guarded operator approval/apply boundary before real host mutation with dry-run diagnostics, rollback semantics, plugin sandbox policy, permission-upgrade prompts, signed package verification, and eventually sandboxed plan application behind explicit confirmations.
+**Next phase:** harden the guarded operator approval/apply boundary before real host mutation with plugin sandbox policy, permission-upgrade prompts, signed package verification, host-mutating rollback execution, and eventually sandboxed plan application behind explicit confirmations.
 
 ---
 
@@ -1180,7 +1180,7 @@ git commit -m "feat: persist provider inventory and verify provider plugin MVP"
 - Operator dashboard migration to provider-first workflow is covered by Task 5.
 - Persistence and compatibility validation are covered by Task 6.
 - Managed-install foundation now includes plan preview, approval/apply records, a controlled non-host-mutating executor, schema-rendered install forms, recipe prefill, and guided handoff through model discovery, Runtime Binding, and Endpoint draft creation.
-- Full host-mutating execution remains deferred by design until sandbox, permission-diff, secret-handle, diagnostics, rollback, and signed-package controls are implemented.
+- Full host-mutating execution remains deferred by design until sandbox, permission-diff, secret-handle, signed-package, and host-mutating rollback controls are implemented.
 
 ### Placeholder scan
 

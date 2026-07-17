@@ -78,6 +78,14 @@ class ApproveProviderInstallationPlanRequest(BaseModel):
     operator_note: str | None = None
 
 
+class ProviderInstallationDiagnosticsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    configuration: dict = Field(default_factory=dict)
+    approved_permissions: list[str] = Field(default_factory=list)
+    selected_secret_handles: list[dict] = Field(default_factory=list)
+
+
 class ApplyProviderInstallationApprovalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1099,6 +1107,26 @@ def build_api_router(
                 approved_permissions=payload.approved_permissions,
                 selected_secret_handles=payload.selected_secret_handles,
                 operator_note=payload.operator_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown plugin: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-plugins/{plugin_id}/installation-diagnostics")
+    async def run_provider_installation_diagnostics(
+        plugin_id: str,
+        payload: ProviderInstallationDiagnosticsRequest,
+    ) -> dict:
+        try:
+            return service.run_provider_installation_diagnostics(
+                plugin_id=plugin_id,
+                configuration=payload.configuration,
+                approved_permissions=payload.approved_permissions,
+                selected_secret_handles=payload.selected_secret_handles,
             )
         except KeyError as error:
             raise HTTPException(

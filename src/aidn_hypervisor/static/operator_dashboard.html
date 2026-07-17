@@ -1501,6 +1501,8 @@
     const providerInstallationJobsPath = "/operators/provider-installation-jobs";
     const providerInstallationApprovalPath = (pluginId) =>
       `/operators/provider-plugins/${encodeURIComponent(pluginId)}/installation-approvals`;
+    const providerInstallationDiagnosticsPath = (pluginId) =>
+      `/operators/provider-plugins/${encodeURIComponent(pluginId)}/installation-diagnostics`;
     const providerInstallationApplyPath = (approvalId) =>
       `/operators/provider-installation-approvals/${encodeURIComponent(approvalId)}/apply`;
     const providerModelDiscoveryPath = (providerInstanceId) =>
@@ -1547,6 +1549,8 @@
       installMessage: null,
       providerActionPending: null,
       providerDiscoveryPendingId: null,
+      providerDiagnosticsPendingId: null,
+      providerDiagnosticsByPluginId: {},
       providerMessage: null,
       marketOriginFilter: "all",
       requireReadyEndpoint: false,
@@ -3354,6 +3358,24 @@
 
     function providerInstallationJobs() {
       return state.payloads.providers?.installation_jobs || [];
+    }
+
+    function providerInstallationDiagnostics(provider) {
+      const pluginId = provider?.plugin_id || null;
+      if (!pluginId) {
+        return null;
+      }
+      return state.providerDiagnosticsByPluginId[pluginId] || null;
+    }
+
+    function clearProviderInstallationDiagnostics(pluginId) {
+      if (!pluginId) {
+        return;
+      }
+      state.providerDiagnosticsByPluginId = {
+        ...state.providerDiagnosticsByPluginId,
+        [pluginId]: null,
+      };
     }
 
     function latestProviderInstallationApproval(provider) {
@@ -6586,6 +6608,9 @@
       const canApproveInstallation =
         providerApplyRequiredFieldsSatisfied(provider) &&
         state.providerActionPending !== "approve-installation";
+      const diagnostics = providerInstallationDiagnostics(provider);
+      const canRunInstallationDiagnostics =
+        state.providerDiagnosticsPendingId !== provider.plugin_id;
       const canApplyInstallation =
         Boolean(latestApproval?.approval_id) &&
         latestApproval.status === "APPROVED" &&
@@ -6709,7 +6734,34 @@
               <button class="primary-button" type="button" data-provider-action="approve-installation" ${canApproveInstallation ? "" : "disabled"}>${state.providerActionPending === "approve-installation" ? "Approving..." : "Approve Install Plan"}</button>
             </div>
             <div class="wallet-inline-actions" style="margin-top: 10px;">
+              <button class="secondary-button" type="button" data-provider-action="run-installation-diagnostics" ${canRunInstallationDiagnostics ? "" : "disabled"}>${state.providerDiagnosticsPendingId === provider.plugin_id ? "Running Diagnostics..." : "Run Dry-Run Diagnostics"}</button>
               <button class="secondary-button" type="button" data-provider-action="apply-installation" ${canApplyInstallation ? "" : "disabled"}>${state.providerActionPending === "apply-installation" ? "Applying..." : "Apply Latest Approval"}</button>
+            </div>
+            <div class="request-history" style="margin-top: 10px;">
+              <div class="request-history-item">
+                <strong>Dry-Run Diagnostics</strong>
+                <div class="notice">${diagnostics ? `${diagnostics.diagnostics_id} / ${diagnostics.readiness_status} / ${diagnostics.executor_id}` : "Run a dry-run before approval to validate config, permission coverage, secret handles, and rollback posture."}</div>
+                ${
+                  diagnostics
+                    ? `
+                      <div class="row-copy" style="margin-top: 8px;">Plan hash: ${escapeHtml(diagnostics.plan_hash)}</div>
+                      <div class="row-copy">Configuration hash: ${escapeHtml(diagnostics.configuration_hash)}</div>
+                      <div class="row-copy">Rollback: ${escapeHtml(diagnostics.rollback_result?.status || "NOT_NEEDED")} / ${escapeHtml(diagnostics.rollback_result?.summary || "No rollback summary")}</div>
+                      <div class="stack" style="margin-top: 10px;">
+                        ${(diagnostics.checks || [])
+                          .map(
+                            (check) => `
+                              <div class="notice">
+                                <strong>${escapeHtml(check.check_id)}</strong>: ${escapeHtml(check.status)} / ${escapeHtml(check.summary)}
+                              </div>
+                            `
+                          )
+                          .join("")}
+                      </div>
+                    `
+                    : ""
+                }
+              </div>
             </div>
             <div class="request-history" style="margin-top: 10px;">
               <div class="request-history-item">
@@ -8548,6 +8600,39 @@
       }
     }
 
+    async function runProviderInstallationDiagnostics() {
+      const provider = selectedProvider();
+      if (!provider?.plugin_id) {
+        return;
+      }
+      const pluginId = provider.plugin_id;
+      state.providerDiagnosticsPendingId = pluginId;
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const diagnostics = await postJson(providerInstallationDiagnosticsPath(pluginId), {
+          configuration: providerApplyConfiguration(provider),
+          approved_permissions: providerApplyApprovedPermissions(provider),
+          selected_secret_handles: providerApplySelectedSecretHandles(provider),
+        });
+        state.providerDiagnosticsByPluginId = {
+          ...state.providerDiagnosticsByPluginId,
+          [pluginId]: diagnostics,
+        };
+        state.providerMessage = {
+          kind: diagnostics.readiness_status === "BLOCKED" ? "bad" : "good",
+          text: `Dry-run diagnostics ${diagnostics.diagnostics_id} finished with ${diagnostics.readiness_status}.`,
+        };
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerDiagnosticsPendingId = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function applyLatestProviderInstallationApproval() {
       const provider = selectedProvider();
       const approval = latestProviderInstallationApproval(provider);
@@ -9099,6 +9184,7 @@
         const key = control.dataset.providerApplyField;
         const eventName = control.tagName === "SELECT" ? "change" : "input";
         control.addEventListener(eventName, () => {
+          clearProviderInstallationDiagnostics(selectedProvider()?.plugin_id);
           if (control.type === "checkbox") {
             state.providerApplyDraft.values[key] = control.checked;
           } else if (control.type === "number") {
@@ -9114,6 +9200,7 @@
       document.querySelectorAll("[data-provider-apply-permission]").forEach((control) => {
         const permissionId = control.dataset.providerApplyPermission;
         control.addEventListener("change", () => {
+          clearProviderInstallationDiagnostics(selectedProvider()?.plugin_id);
           const approved = new Set(state.providerApplyDraft.approvedPermissionIds || []);
           if (control.checked) {
             approved.add(permissionId);
@@ -9129,6 +9216,7 @@
       document.querySelectorAll("[data-provider-apply-secret-handle]").forEach((control) => {
         const requirementKey = control.dataset.providerApplySecretHandle;
         control.addEventListener("input", () => {
+          clearProviderInstallationDiagnostics(selectedProvider()?.plugin_id);
           state.providerApplyDraft.selectedSecretHandles = {
             ...(state.providerApplyDraft.selectedSecretHandles || {}),
             [requirementKey]: control.value,
@@ -9140,6 +9228,7 @@
 
       document.querySelectorAll("[data-provider-apply-recipe]").forEach((control) => {
         control.addEventListener("change", () => {
+          clearProviderInstallationDiagnostics(selectedProvider()?.plugin_id);
           applyProviderInstallationRecipe(selectedProvider(), control.value);
           renderInspector();
           bindInteractiveElements();
@@ -9162,6 +9251,8 @@
             void queueInstallForSelectedProvider();
           } else if (button.dataset.providerAction === "approve-installation") {
             void approveProviderInstallationPlan();
+          } else if (button.dataset.providerAction === "run-installation-diagnostics") {
+            void runProviderInstallationDiagnostics();
           } else if (button.dataset.providerAction === "apply-installation") {
             void applyLatestProviderInstallationApproval();
           } else if (button.dataset.providerAction === "process-installs") {

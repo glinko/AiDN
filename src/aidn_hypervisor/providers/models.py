@@ -28,6 +28,15 @@ PluginSecretType = Literal[
 ProviderInstallationApprovalStatus = Literal["APPROVED", "REVOKED"]
 ProviderInstallationJobStatus = Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"]
 ProviderInstallationStepStatus = Literal["RECORDED", "SKIPPED", "FAILED"]
+ProviderInstallationDiagnosticStatus = Literal["PASS", "WARN", "FAIL"]
+ProviderInstallationReadinessStatus = Literal["READY", "ACTION_REQUIRED", "BLOCKED"]
+ProviderInstallationRollbackStatus = Literal[
+    "NOT_REQUIRED",
+    "NOT_NEEDED",
+    "PENDING",
+    "COMPLETED",
+    "FAILED",
+]
 
 
 def _require_non_empty(value: str) -> str:
@@ -167,6 +176,55 @@ class ProviderInstallationStepResult(BaseModel):
         return _require_non_empty(value)
 
 
+class ProviderInstallationDiagnosticCheck(BaseModel):
+    check_id: str
+    status: ProviderInstallationDiagnosticStatus
+    summary: str
+    details: dict = Field(default_factory=dict)
+
+    @field_validator("check_id", "summary")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ProviderInstallationRollbackResult(BaseModel):
+    status: ProviderInstallationRollbackStatus
+    summary: str
+    details: dict = Field(default_factory=dict)
+
+    @field_validator("summary")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ProviderInstallationDiagnostics(BaseModel):
+    diagnostics_id: str
+    plugin_id: str
+    plan_id: str
+    plan_hash: str
+    configuration_hash: str
+    executor_id: str
+    readiness_status: ProviderInstallationReadinessStatus
+    checks: list[ProviderInstallationDiagnosticCheck] = Field(default_factory=list)
+    rollback_result: ProviderInstallationRollbackResult
+    created_at: str
+
+    @field_validator(
+        "diagnostics_id",
+        "plugin_id",
+        "plan_id",
+        "plan_hash",
+        "configuration_hash",
+        "executor_id",
+        "created_at",
+    )
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
 class ProviderInstallationJob(BaseModel):
     job_id: str
     approval_id: str
@@ -178,6 +236,8 @@ class ProviderInstallationJob(BaseModel):
     executor_id: str
     step_results: list[ProviderInstallationStepResult] = Field(default_factory=list)
     provider_instance_id: str | None = None
+    rollback_status: ProviderInstallationRollbackStatus = "NOT_NEEDED"
+    rollback_summary: str | None = None
     error_code: str | None = None
     error_message: str | None = None
     created_at: str
@@ -202,6 +262,7 @@ class ProviderInstallationJob(BaseModel):
 class ProviderInstallationExecutionResult(BaseModel):
     step_results: list[ProviderInstallationStepResult] = Field(default_factory=list)
     provider_instance: dict
+    rollback_result: ProviderInstallationRollbackResult | None = None
 
     @field_validator("provider_instance")
     @classmethod

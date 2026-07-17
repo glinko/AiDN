@@ -8,9 +8,9 @@
 
 **Tech Stack:** Python 3.13, FastAPI, Pydantic v2, pytest, in-memory provider inventory store, static operator dashboard HTML/JS.
 
-**Implementation status:** Implemented on `feat/provider-install-approval-flow` through commit `eed1286`, then extended with explicit permission acknowledgement and secret-handle selection. The safe MVP operator path now covers `Approve/Apply Provider -> Discover Models -> Create Runtime Binding -> Create Endpoint Draft`. Apply remains non-host-mutating through `RecordedProviderInstallationExecutor`; real shell/container/download/package-manager/plugin-installer execution is deferred behind the existing executor, approval, job, persistence, and UI contracts.
+**Implementation status:** Implemented on `feat/provider-install-approval-flow` through commit `eed1286`, then extended with explicit permission acknowledgement, secret-handle selection, dry-run diagnostics, and rollback preview/status reporting. The safe MVP operator path now covers `Dry-Run -> Approve/Apply Provider -> Discover Models -> Create Runtime Binding -> Create Endpoint Draft`. Apply remains non-host-mutating through `RecordedProviderInstallationExecutor`; real shell/container/download/package-manager/plugin-installer execution is deferred behind the existing executor, approval, job, persistence, and UI contracts.
 
-**Next phase:** dry-run diagnostics, rollback semantics, plugin sandbox policy, signed package verification, permission-upgrade prompts, and real executor enablement behind explicit operator confirmations.
+**Next phase:** plugin sandbox policy, signed package verification, permission-upgrade prompts, host-mutating rollback execution, and real executor enablement behind explicit operator confirmations.
 
 ---
 

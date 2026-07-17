@@ -9,8 +9,10 @@ from aidn_hypervisor.providers.models import (
     PluginTrustStatus,
     PluginUISchema,
     ProviderInstallationApproval,
+    ProviderInstallationDiagnostics,
     ProviderInstallationExecutionResult,
     ProviderInstallationJob,
+    ProviderInstallationRollbackResult,
     ProviderInstallationStepResult,
     ProviderInstance,
     ProviderPluginManifest,
@@ -337,6 +339,34 @@ def test_provider_installation_job_records_apply_result() -> None:
     assert job.status == "SUCCEEDED"
 
 
+def test_provider_installation_diagnostics_capture_readiness_and_rollback_preview() -> None:
+    diagnostics = ProviderInstallationDiagnostics(
+        diagnostics_id="diag-ollama",
+        plugin_id="aidn.provider.ollama",
+        plan_id="plan-ollama",
+        plan_hash="sha256:plan",
+        configuration_hash="sha256:configuration",
+        executor_id="recorded-declarative-v1",
+        readiness_status="ACTION_REQUIRED",
+        checks=[
+            {
+                "check_id": "secret_handles",
+                "status": "WARN",
+                "summary": "Optional secret handles are still unassigned.",
+            }
+        ],
+        rollback_result=ProviderInstallationRollbackResult(
+            status="NOT_REQUIRED",
+            summary="Recorded executor does not mutate host state; rollback is not required.",
+        ),
+        created_at="2026-07-17T12:00:00Z",
+    )
+
+    assert diagnostics.readiness_status == "ACTION_REQUIRED"
+    assert diagnostics.checks[0].status == "WARN"
+    assert diagnostics.rollback_result.status == "NOT_REQUIRED"
+
+
 def test_provider_installation_execution_result_contains_provider_instance_payload() -> None:
     result = ProviderInstallationExecutionResult(
         step_results=[
@@ -355,10 +385,15 @@ def test_provider_installation_execution_result_contains_provider_instance_paylo
             "connection_mode": "managed",
             "operational_state": "ready",
         },
+        rollback_result=ProviderInstallationRollbackResult(
+            status="NOT_REQUIRED",
+            summary="Recorded executor does not mutate host state; rollback is not required.",
+        ),
     )
 
     assert result.provider_instance["provider_instance_id"] == "pi-ollama"
     assert result.step_results[0].step_id == "register-provider"
+    assert result.rollback_result.status == "NOT_REQUIRED"
 
 
 def test_provider_installation_execution_result_rejects_invalid_provider_instance_payload() -> None:

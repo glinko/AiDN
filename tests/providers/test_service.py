@@ -618,6 +618,8 @@ def test_provider_inventory_approves_and_applies_installation_plan() -> None:
     assert job.status == "SUCCEEDED"
     assert job.approval_id == approval.approval_id
     assert job.provider_instance_id == provider.provider_instance_id
+    assert job.rollback_status == "NOT_REQUIRED"
+    assert "rollback is not required" in (job.rollback_summary or "")
     assert job.step_results
     assert job.completed_at is not None
     assert provider.plugin_id == "fake-managed"
@@ -640,6 +642,69 @@ def test_provider_inventory_apply_rejects_revoked_approval() -> None:
 
     with pytest.raises(ValueError, match="installation approval is not active"):
         service.apply_installation_approval(approval.approval_id)
+
+
+def test_provider_inventory_run_installation_diagnostics_reports_ready_when_inputs_match() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    diagnostics = service.run_installation_diagnostics(
+        plugin_id="fake-managed",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private"],
+        selected_secret_handles=[
+            {
+                "requirement_key": "API_KEY:Optional provider API key handle",
+                "secret_handle": "secret://providers/fake-managed/api-key",
+            }
+        ],
+    )
+
+    assert diagnostics.plugin_id == "fake-managed"
+    assert diagnostics.readiness_status == "READY"
+    assert diagnostics.rollback_result.status == "NOT_REQUIRED"
+    assert diagnostics.rollback_result.details["executor_id"] == "recorded-declarative-v1"
+    assert [check.status for check in diagnostics.checks] == ["PASS", "PASS", "PASS", "PASS", "PASS"]
+
+
+def test_provider_inventory_run_installation_diagnostics_reports_action_required_for_optional_secret_gap() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    diagnostics = service.run_installation_diagnostics(
+        plugin_id="fake-managed",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private"],
+    )
+
+    assert diagnostics.readiness_status == "ACTION_REQUIRED"
+    secret_check = next(check for check in diagnostics.checks if check.check_id == "secret_handles")
+    assert secret_check.status == "WARN"
+    assert "missing_optional_requirements" in secret_check.details
+
+
+def test_provider_inventory_run_installation_diagnostics_blocks_missing_permission_ack() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    diagnostics = service.run_installation_diagnostics(
+        plugin_id="fake-managed",
+        configuration=_installation_configuration(),
+        approved_permissions=[],
+    )
+
+    assert diagnostics.readiness_status == "BLOCKED"
+    permission_check = next(
+        check for check in diagnostics.checks if check.check_id == "permissions_acknowledged"
+    )
+    assert permission_check.status == "FAIL"
+    assert "approved permissions must match requested permissions exactly" in permission_check.summary
 
 
 def test_provider_inventory_approval_rejects_incomplete_explicit_permission_acknowledgement() -> None:

@@ -100,7 +100,7 @@ We already have a working local hypervisor foundation:
 - local resource accounting for `CPU`, `RAM`, and `VRAM`;
 - provider-plugin adapter infrastructure plus bundle-compatibility execution abstraction;
 - first-class Provider Plugin, Provider Instance, Model Deployment, and Runtime Binding inventory with snapshot/restore persistence;
-- schema-driven Provider install forms, Installation Recipe prefill, approval records, permission acknowledgement, secret-handle selection, apply jobs, and a non-host-mutating `RecordedProviderInstallationExecutor`;
+- schema-driven Provider install forms, Installation Recipe prefill, approval records, permission acknowledgement, secret-handle selection, dry-run diagnostics, rollback preview, apply jobs, and a non-host-mutating `RecordedProviderInstallationExecutor`;
 - guided provider setup handoff from approved/apply Provider plan to model discovery, Runtime Binding creation, and Endpoint draft creation;
 - subprocess-backed runtime lifecycle and operator controls;
 - agent allocation leases;
@@ -158,7 +158,7 @@ What is still missing in the current stage:
 - formal `RFC-0051` accounting contracts, signed usage-report and acknowledgement chains, Marketplace accounting-transparency publication, and mismatch-safe settlement checkpoints beyond today’s `measurement_kind` / `measurement_source` metadata;
 - rating publication, reputation policy, and validation economics implementation;
 - network-visible custom model onboarding workflow.
-- real host-mutating Provider install executors remain deferred: the current apply path records declarative actions and creates local inventory only; shell, container, download, package-manager, and plugin-installer execution still need dry-run diagnostics, sandbox, permission-upgrade policy, rollback, and signed-package controls before enablement;
+- real host-mutating Provider install executors remain deferred: the current apply path records declarative actions and creates local inventory only; shell, container, download, package-manager, and plugin-installer execution still need sandbox policy, permission-upgrade policy, signed-package controls, and host-mutating rollback execution before enablement;
 - final onboarding polish across the remaining operator workspaces, so the new guided layer feels native outside `Home` and handoffs stay consistent across `Providers / Models / Endpoints` even while `Bundles` remains as a compatibility execution surface;
 - full endpoint-first persistence and API beyond the current bootstrap/dashboard slice, so privacy, sharing, publication, and validation remain distinct all the way through the service contract;
 - complete dashboard migration of older bundle-centric affordances onto the endpoint-first trust layer, so bootstrap fallback logic can eventually be removed cleanly;
@@ -200,10 +200,10 @@ What is still missing in the current stage:
   - but there is still no finalized standalone Runtime Protocol with authenticated registration, negotiated features, canonical message envelopes, reconnect/recovery handshakes, or full Hypervisor-to-Runtime streaming and usage-report contracts matching one shared RFC.
 - implementation of `RFC-0055` and `RFC-0056` is now partially implemented:
   - the repo now has first-class Provider Plugin metadata, Provider Instance and Model Deployment inventory, Runtime Binding objects, declarative install/attach schemas, Installation Recipes, approval/apply job records, runtime-binding-to-bundle compatibility projection, model discovery, Runtime Binding creation, and Endpoint draft handoff from the Provider workspace;
-  - but real host-mutating executors, plugin sandbox enforcement, permission-upgrade prompts, dry-run diagnostics, rollback, signed community package installation, and full RFC-0054/RFC-0056 execution-plane conformance remain unimplemented.
+  - but real host-mutating executors, plugin sandbox enforcement, permission-upgrade prompts, signed community package installation, host-mutating rollback execution, and full RFC-0054/RFC-0056 execution-plane conformance remain unimplemented.
 
 Immediate priorities:
-1. Harden the Provider Plugin MVP boundary further with dry-run diagnostics, rollback semantics, permission-upgrade policy, and sandbox policy before any real host-mutating executor is enabled.
+1. Harden the Provider Plugin MVP boundary further with sandbox policy, permission-upgrade policy, signed package verification, and host-mutating rollback execution before any real host-mutating executor is enabled.
 2. Continue migrating older bundle-centric affordances onto `plugin -> provider instance -> model deployment -> runtime binding -> endpoint`, using bundle projection only as compatibility execution plumbing.
 3. Continue deepening `M5` trust and remote/proxy lifecycle on top of the new runtime-binding surface instead of adding more bundle-centric contracts.
 

@@ -2348,6 +2348,21 @@ class HypervisorService:
         self._persist_state()
         return approval.model_dump(mode="json")
 
+    def run_provider_installation_diagnostics(
+        self,
+        plugin_id: str,
+        configuration: dict,
+        approved_permissions: list[str] | None = None,
+        selected_secret_handles: list[dict] | None = None,
+    ) -> dict:
+        diagnostics = self.provider_inventory.run_installation_diagnostics(
+            plugin_id=plugin_id,
+            configuration=configuration,
+            approved_permissions=approved_permissions,
+            selected_secret_handles=selected_secret_handles,
+        )
+        return diagnostics.model_dump(mode="json")
+
     def apply_provider_installation_approval(self, approval_id: str) -> dict:
         job = self.provider_inventory.apply_installation_approval(approval_id)
         self._persist_state()

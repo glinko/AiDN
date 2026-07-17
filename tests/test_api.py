@@ -2798,6 +2798,7 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert "Apply approved plan" in response.text
     assert "controlled executor" in response.text
     assert "Approve Install Plan" in response.text
+    assert "Run Dry-Run Diagnostics" in response.text
     assert "Apply Latest Approval" in response.text
     assert "Install UI schema:" in response.text
     assert "Installation Recipe" in response.text
@@ -2806,7 +2807,10 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert 'data-provider-apply-field="${escapeHtml(fieldId)}"' in response.text
     assert 'data-provider-apply-note' in response.text
     assert 'data-provider-action="approve-installation"' in response.text
+    assert 'data-provider-action="run-installation-diagnostics"' in response.text
     assert 'data-provider-action="apply-installation"' in response.text
+    assert "/operators/provider-plugins/" in response.text
+    assert "/installation-diagnostics" in response.text
     assert "Provider Installation Apply Jobs" in response.text
     assert "/operators/provider-instances/" in response.text
     assert "/discover-models" in response.text
@@ -3809,6 +3813,8 @@ def test_provider_installation_approval_and_apply_routes() -> None:
     assert job["status"] == "SUCCEEDED"
     assert job["executor_id"] == "recorded-declarative-v1"
     assert job["provider_instance_id"].startswith("pi-")
+    assert job["rollback_status"] == "NOT_REQUIRED"
+    assert "rollback is not required" in (job["rollback_summary"] or "")
 
     jobs_response = client.get("/operators/provider-installation-jobs")
     assert jobs_response.status_code == 200
@@ -3850,6 +3856,58 @@ def test_provider_installation_approval_route_rejects_incomplete_permission_ackn
 
     assert response.status_code == 409
     assert response.json()["detail"] == "approved permissions must match requested permissions exactly"
+
+
+def test_provider_installation_diagnostics_route_returns_readiness_and_rollback_preview() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.post(
+        "/operators/provider-plugins/fake-managed/installation-diagnostics",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+            "approved_permissions": ["network.private"],
+            "selected_secret_handles": [
+                {
+                    "requirement_key": "API_KEY:Optional provider API key handle",
+                    "secret_handle": "secret://providers/fake-managed/api-key",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    diagnostics = response.json()
+    assert diagnostics["plugin_id"] == "fake-managed"
+    assert diagnostics["readiness_status"] == "READY"
+    assert diagnostics["executor_id"] == "recorded-declarative-v1"
+    assert diagnostics["rollback_result"]["status"] == "NOT_REQUIRED"
+    assert any(check["check_id"] == "rollback_preview" for check in diagnostics["checks"])
+
+
+def test_provider_installation_diagnostics_route_surfaces_blocked_state_without_failing_request() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.post(
+        "/operators/provider-plugins/fake-managed/installation-diagnostics",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+            "approved_permissions": [],
+        },
+    )
+
+    assert response.status_code == 200
+    diagnostics = response.json()
+    assert diagnostics["readiness_status"] == "BLOCKED"
+    permission_check = next(
+        check for check in diagnostics["checks"] if check["check_id"] == "permissions_acknowledged"
+    )
+    assert permission_check["status"] == "FAIL"
 
 
 def test_provider_plugin_installation_plan_preview_route_rejects_invalid_plugin_plan() -> None:
