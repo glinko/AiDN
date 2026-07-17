@@ -2811,6 +2811,10 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert "/discover-models" in response.text
     assert "Discover Models" in response.text
     assert "data-provider-discover-models" in response.text
+    assert "/operators/model-deployments/" in response.text
+    assert "/runtime-bindings" in response.text
+    assert "Create Runtime Binding" in response.text
+    assert "data-model-runtime-binding" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_provider_install_processing_controls() -> None:

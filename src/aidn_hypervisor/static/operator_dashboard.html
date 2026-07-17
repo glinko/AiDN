@@ -1505,6 +1505,8 @@
       `/operators/provider-installation-approvals/${encodeURIComponent(approvalId)}/apply`;
     const providerModelDiscoveryPath = (providerInstanceId) =>
       `/operators/provider-instances/${encodeURIComponent(providerInstanceId)}/discover-models`;
+    const modelRuntimeBindingPath = (modelDeploymentId) =>
+      `/operators/model-deployments/${encodeURIComponent(modelDeploymentId)}/runtime-bindings`;
     const bundleConfigPath = "/operators/bundles/config";
     const bundleReloadPath = "/operators/bundles/reload";
     const endpointApiBase = "/api/v1/endpoints";
@@ -1634,6 +1636,12 @@
         selectedRecipeId: "",
         values: {},
         operatorNote: "",
+      },
+      runtimeBindingDraft: {
+        modelDeploymentId: null,
+        capabilityId: "",
+        capabilityVersion: "1.0.0",
+        capabilityDefinitionHash: "",
       },
       bundleEndpointDraft: {
         bundleId: null,
@@ -3210,6 +3218,30 @@
       );
     }
 
+    function syncRuntimeBindingDraft(model) {
+      const modelDeploymentId = model?.model_deployment_id || null;
+      if (state.runtimeBindingDraft.modelDeploymentId !== modelDeploymentId) {
+        const capabilityId = (model?.capability_bindings || [])[0] || "llm.chat";
+        const capabilityVersion = "1.0.0";
+        state.runtimeBindingDraft = {
+          modelDeploymentId,
+          capabilityId,
+          capabilityVersion,
+          capabilityDefinitionHash: `capability:${capabilityId}:${capabilityVersion}`,
+        };
+      }
+      return state.runtimeBindingDraft;
+    }
+
+    function modelHasRuntimeBinding(model) {
+      if (!model?.model_deployment_id) {
+        return false;
+      }
+      return (state.payloads.providers?.runtime_bindings || []).some(
+        (binding) => binding.model_deployment_id === model.model_deployment_id
+      );
+    }
+
     function providerTypeForDraft(provider) {
       if (!provider) {
         return null;
@@ -4140,22 +4172,29 @@
                 <div>Capabilities</div>
                 <div>Runtime bindings</div>
                 <div>Status</div>
+                <div>Action</div>
               </div>
               ${
                 modelDeployments.length
                   ? modelDeployments
-                      .map((model) => `
-                        <div class="table-row">
-                          <div>
-                            <div class="row-title">${model.operator_display_name || model.provider_model_reference}</div>
-                            <span class="row-copy">${model.provider_model_reference}</span>
+                      .map((model) => {
+                        const draft = syncRuntimeBindingDraft(model);
+                        const hasBinding = modelHasRuntimeBinding(model);
+                        const pending = state.providerActionPending === `runtime-binding:${model.model_deployment_id}`;
+                        return `
+                          <div class="table-row">
+                            <div>
+                              <div class="row-title">${model.operator_display_name || model.provider_model_reference}</div>
+                              <span class="row-copy">${model.provider_model_reference}</span>
+                            </div>
+                            <div class="row-meta">${model.provider_instance_id}</div>
+                            <div class="row-meta">${(model.capability_bindings || []).join(", ") || "-"}</div>
+                            <div><span class="chip ${model.runtime_binding_ready_count ? "good" : ""}">${formatCount(model.runtime_binding_ready_count)}</span></div>
+                            <div><span class="chip ${model.operational_state === "ready" ? "good" : ""}">${model.operational_state || "unknown"}</span></div>
+                            <button class="row-action" type="button" data-model-runtime-binding="${escapeHtml(model.model_deployment_id)}" ${hasBinding ? "disabled" : ""}>${pending ? "Creating..." : hasBinding ? "Binding Ready" : `Create Runtime Binding (${escapeHtml(draft.capabilityId)})`}</button>
                           </div>
-                          <div class="row-meta">${model.provider_instance_id}</div>
-                          <div class="row-meta">${(model.capability_bindings || []).join(", ") || "-"}</div>
-                          <div><span class="chip ${model.runtime_binding_ready_count ? "good" : ""}">${formatCount(model.runtime_binding_ready_count)}</span></div>
-                          <div><span class="chip ${model.operational_state === "ready" ? "good" : ""}">${model.operational_state || "unknown"}</span></div>
-                        </div>
-                      `)
+                        `;
+                      })
                       .join("")
                   : `<div class="empty-state">No model deployments discovered yet.</div>`
               }
@@ -8298,6 +8337,38 @@
       }
     }
 
+    async function createRuntimeBindingForModel(modelDeploymentId) {
+      const model = (state.payloads.providers?.model_deployments || []).find(
+        (deployment) => deployment.model_deployment_id === modelDeploymentId
+      );
+      const draft = syncRuntimeBindingDraft(model);
+      if (!model?.model_deployment_id) {
+        return;
+      }
+      state.providerActionPending = `runtime-binding:${model.model_deployment_id}`;
+      state.providerMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        const binding = await postJson(modelRuntimeBindingPath(model.model_deployment_id), {
+          capability_id: draft.capabilityId,
+          capability_version: draft.capabilityVersion,
+          capability_definition_hash: draft.capabilityDefinitionHash,
+        });
+        state.providerMessage = {
+          kind: "good",
+          text: `Runtime binding ${binding.runtime_binding_id} created for ${model.model_deployment_id}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function processQueuedInstallsForSelectedProvider() {
       const provider = selectedProvider();
       if (!provider?.plugin_id) {
@@ -8759,6 +8830,13 @@
         button.addEventListener("click", (event) => {
           event.stopPropagation();
           void discoverModelsForProviderInstance(button.dataset.providerDiscoverModels);
+        });
+      });
+
+      document.querySelectorAll("[data-model-runtime-binding]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void createRuntimeBindingForModel(button.dataset.modelRuntimeBinding);
         });
       });
 
