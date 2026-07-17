@@ -1503,6 +1503,8 @@
       `/operators/provider-plugins/${encodeURIComponent(pluginId)}/installation-approvals`;
     const providerInstallationApplyPath = (approvalId) =>
       `/operators/provider-installation-approvals/${encodeURIComponent(approvalId)}/apply`;
+    const providerModelDiscoveryPath = (providerInstanceId) =>
+      `/operators/provider-instances/${encodeURIComponent(providerInstanceId)}/discover-models`;
     const bundleConfigPath = "/operators/bundles/config";
     const bundleReloadPath = "/operators/bundles/reload";
     const endpointApiBase = "/api/v1/endpoints";
@@ -1542,6 +1544,7 @@
       installActionPending: null,
       installMessage: null,
       providerActionPending: null,
+      providerDiscoveryPendingId: null,
       providerMessage: null,
       marketOriginFilter: "all",
       requireReadyEndpoint: false,
@@ -4105,6 +4108,7 @@
                 <div>Models</div>
                 <div>Runtime bindings</div>
                 <div>Status</div>
+                <div>Action</div>
               </div>
               ${
                 providerInstances.length
@@ -4119,6 +4123,7 @@
                           <div><span class="chip">${formatCount(instance.model_count)}</span></div>
                           <div><span class="chip ${instance.runtime_binding_ready_count ? "good" : ""}">${formatCount(instance.runtime_binding_ready_count)}</span></div>
                           <div><span class="chip ${instance.operational_state === "ready" ? "good" : ""}">${instance.operational_state || "unknown"}</span></div>
+                          <button class="row-action" type="button" data-provider-discover-models="${escapeHtml(instance.provider_instance_id)}">${state.providerDiscoveryPendingId === instance.provider_instance_id ? "Discovering..." : "Discover Models"}</button>
                         </div>
                       `)
                       .join("")
@@ -4243,6 +4248,7 @@
                 <div>Status</div>
                 <div>Provider Instance</div>
                 <div>Executor</div>
+                <div>Action</div>
               </div>
               ${
                 installationJobs.length
@@ -4257,6 +4263,7 @@
                           <div><span class="chip ${job.status === "SUCCEEDED" ? "good" : job.status === "FAILED" ? "bad" : ""}">${escapeHtml(job.status)}</span></div>
                           <div class="row-meta">${escapeHtml(job.provider_instance_id || "-")}</div>
                           <div class="row-meta">${escapeHtml(job.executor_id || "-")}</div>
+                          <button class="row-action" type="button" data-provider-discover-models="${escapeHtml(job.provider_instance_id || "")}" ${job.provider_instance_id ? "" : "disabled"}>${state.providerDiscoveryPendingId === job.provider_instance_id ? "Discovering..." : "Discover Models"}</button>
                         </div>
                       `)
                       .join("")
@@ -6413,6 +6420,11 @@
               <div class="request-history-item">
                 <strong>Latest Apply Job</strong>
                 <div class="notice">${latestJob ? `${latestJob.job_id} / ${latestJob.status} / ${latestJob.provider_instance_id || "no provider instance"}` : "No apply job yet"}</div>
+                ${
+                  latestJob?.provider_instance_id
+                    ? `<button class="secondary-button" style="margin-top: 10px;" type="button" data-provider-discover-models="${escapeHtml(latestJob.provider_instance_id)}">${state.providerDiscoveryPendingId === latestJob.provider_instance_id ? "Discovering..." : "Discover Models"}</button>`
+                    : ""
+                }
               </div>
             </div>
           </section>
@@ -8262,6 +8274,30 @@
       }
     }
 
+    async function discoverModelsForProviderInstance(providerInstanceId) {
+      if (!providerInstanceId) {
+        return;
+      }
+      state.providerDiscoveryPendingId = providerInstanceId;
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(providerModelDiscoveryPath(providerInstanceId), {});
+        state.providerMessage = {
+          kind: "good",
+          text: `Discovered ${formatCount((result.items || []).length)} model deployment${(result.items || []).length === 1 ? "" : "s"} for ${providerInstanceId}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerDiscoveryPendingId = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function processQueuedInstallsForSelectedProvider() {
       const provider = selectedProvider();
       if (!provider?.plugin_id) {
@@ -8716,6 +8752,13 @@
           } else if (button.dataset.providerAction === "reload-bundles") {
             void reloadSelectedProviderBundles();
           }
+        });
+      });
+
+      document.querySelectorAll("[data-provider-discover-models]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void discoverModelsForProviderInstance(button.dataset.providerDiscoverModels);
         });
       });
 

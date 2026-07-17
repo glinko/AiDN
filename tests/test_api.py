@@ -2807,6 +2807,10 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert 'data-provider-action="approve-installation"' in response.text
     assert 'data-provider-action="apply-installation"' in response.text
     assert "Provider Installation Apply Jobs" in response.text
+    assert "/operators/provider-instances/" in response.text
+    assert "/discover-models" in response.text
+    assert "Discover Models" in response.text
+    assert "data-provider-discover-models" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_provider_install_processing_controls() -> None:
