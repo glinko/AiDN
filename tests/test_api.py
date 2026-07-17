@@ -2792,6 +2792,10 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert 'data-provider-install-field="sourceUrl"' in response.text
     assert 'data-provider-install-field="requestedBy"' in response.text
     assert 'data-provider-action="queue-install"' in response.text
+    assert "/operators/provider-installation-approvals" in response.text
+    assert "/operators/provider-installation-jobs" in response.text
+    assert "Apply approved plan" in response.text
+    assert "controlled executor" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_provider_install_processing_controls() -> None:

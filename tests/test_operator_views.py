@@ -653,6 +653,29 @@ def test_providers_payload_exposes_plugin_directory_install_metadata() -> None:
     assert payload["summary"]["installable_plugin_count"] == 1
 
 
+def test_provider_workspace_payload_includes_installation_apply_summary() -> None:
+    service = _provider_only_service()
+    approval = service.approve_provider_installation_plan(
+        plugin_id="fake-managed",
+        configuration={
+            "display_name": "Local Fake",
+            "base_url": "http://127.0.0.1:9999",
+        },
+    )
+    job = service.apply_provider_installation_approval(approval["approval_id"])
+
+    payload = build_operator_providers_payload(service=service)
+
+    assert payload["summary"]["approved_installation_count"] == 1
+    assert payload["summary"]["installation_job_count"] == 1
+    assert (
+        payload["installation_approvals"][0]["status_label"]
+        == "Applied with controlled executor"
+    )
+    assert payload["installation_jobs"][0]["job_id"] == job["job_id"]
+    assert payload["installation_jobs"][0]["status"] == "SUCCEEDED"
+
+
 def test_providers_payload_exposes_models_and_runtime_binding_readiness() -> None:
     service = _provider_only_service()
     attached = service.attach_provider_instance(

@@ -663,6 +663,18 @@ def build_operator_providers_payload(
         for manifest in plugin_directory
         if "CAN_INSTALL_PROVIDER" in manifest.get("plugin_capability_flags", [])
     )
+    installation_jobs = service.list_provider_installation_jobs()
+    applied_approval_ids = {
+        job["approval_id"] for job in installation_jobs if job["status"] == "SUCCEEDED"
+    }
+    installation_approvals = []
+    for approval in service.list_provider_installation_approvals():
+        status_label = (
+            "Applied with controlled executor"
+            if approval["approval_id"] in applied_approval_ids
+            else "Approved, ready to apply"
+        )
+        installation_approvals.append({**approval, "status_label": status_label})
     provider_instances = service.list_provider_instances()
     model_deployments = service.list_model_deployments()
     runtime_bindings = service.list_runtime_bindings()
@@ -797,6 +809,10 @@ def build_operator_providers_payload(
             "total": len(items),
             "total_plugins": len(plugin_directory),
             "installable_plugin_count": installable_plugin_count,
+            "approved_installation_count": sum(
+                1 for approval in installation_approvals if approval["status"] == "APPROVED"
+            ),
+            "installation_job_count": len(installation_jobs),
             "total_provider_instances": len(provider_instances),
             "total_model_deployments": len(model_deployments),
             "total_runtime_bindings": len(runtime_bindings),
@@ -809,6 +825,8 @@ def build_operator_providers_payload(
         },
         "empty_state": _providers_empty_state(),
         "plugin_directory": plugin_directory,
+        "installation_approvals": installation_approvals,
+        "installation_jobs": installation_jobs,
         "provider_instances": enriched_provider_instances,
         "model_deployments": enriched_model_deployments,
         "runtime_bindings": runtime_bindings,

@@ -3953,6 +3953,12 @@
           </section>
           <section class="subpanel">
             <div class="panel-heading">Plugin directory</div>
+            <div class="subpanel-copy">
+              Apply approved plan uses the controlled executor in this MVP. It records declarative actions through
+              <code>/operators/provider-installation-approvals</code> and
+              <code>/operators/provider-installation-jobs</code>, then creates local provider inventory state. It does
+              not run shell, Docker, downloads, or plugin installer code.
+            </div>
             <div class="table-shell" style="margin-top: 14px;">
               <div class="table-head">
                 <div>Plugin</div>
@@ -3984,7 +3990,7 @@
                             <div class="row-meta">${capabilitySummary || "-"}</div>
                             <div class="row-meta">${permissionSummary || "No elevated permissions"}</div>
                             <div class="row-meta">${canInstallProvider ? "Preview only: declarative install plan" : "Attach only"}</div>
-                            <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Inspect"}</button>
+                            <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Apply approved plan"}</button>
                           </div>
                         `;
                       })
