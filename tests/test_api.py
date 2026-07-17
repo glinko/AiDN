@@ -2817,6 +2817,9 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert "data-model-runtime-binding" in response.text
     assert "runtime_binding_id" in response.text
     assert "data-runtime-binding-endpoint" in response.text
+    assert "Guided Provider Setup" in response.text
+    assert "data-provider-setup-step" in response.text
+    assert "Suggested Provider Step" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_provider_install_processing_controls() -> None:

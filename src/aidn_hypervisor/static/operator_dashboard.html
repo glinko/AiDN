@@ -2335,6 +2335,74 @@
       `;
     }
 
+    function providerSetupSteps(payload) {
+      const approvals = payload.installation_approvals || [];
+      const jobs = payload.installation_jobs || [];
+      const models = payload.model_deployments || [];
+      const bindings = payload.runtime_bindings || [];
+      const endpoints = endpointDrafts();
+      const hasAppliedProvider = jobs.some((job) => job.status === "SUCCEEDED");
+      const hasModels = models.length > 0;
+      const hasRuntimeBinding = bindings.length > 0;
+      const hasEndpoint = bindings.some((binding) =>
+        endpoints.some((endpoint) => endpoint.bundle_id === binding.compatibility_bundle_id)
+      );
+      const rawSteps = [
+        {
+          key: "apply_provider",
+          title: "Apply Provider",
+          detail: approvals.length
+            ? "A provider install plan has been approved; apply creates local provider inventory state."
+            : "Approve and apply a declarative provider plan through the controlled executor.",
+          done: hasAppliedProvider,
+        },
+        {
+          key: "discover_models",
+          title: "Discover Models",
+          detail: "Query the provider adapter and persist Model Deployment records.",
+          done: hasModels,
+        },
+        {
+          key: "runtime_binding",
+          title: "Create Runtime Binding",
+          detail: "Bind a discovered model to an AiDN Capability before endpoint creation.",
+          done: hasRuntimeBinding,
+        },
+        {
+          key: "endpoint_draft",
+          title: "Create Endpoint",
+          detail: "Create a private Endpoint draft from the runtime binding, then continue in Endpoints.",
+          done: hasEndpoint,
+        },
+      ];
+      const currentIndex = rawSteps.findIndex((step) => !step.done);
+      return rawSteps.map((step, index) => ({
+        ...step,
+        state:
+          step.done
+            ? "Done"
+            : index === currentIndex
+              ? "Current"
+              : "Next",
+      }));
+    }
+
+    function providerSetupRecommendedAction(steps) {
+      const current = steps.find((step) => step.state === "Current");
+      switch (current?.key) {
+        case "apply_provider":
+          return "Select a plugin, optionally choose a recipe, then approve and apply its provider plan.";
+        case "discover_models":
+          return "Use Discover Models on the created Provider Instance or apply job.";
+        case "runtime_binding":
+          return "Create a Runtime Binding from a discovered Model Deployment.";
+        case "endpoint_draft":
+          return "Create an Endpoint from the ready Runtime Binding.";
+        default:
+          return "Provider setup is ready for endpoint lifecycle work.";
+      }
+    }
+
     function endpointNextSteps(item) {
       if (!item) {
         return [
@@ -4090,6 +4158,7 @@
       const runtimeBindings = payload.runtime_bindings || [];
       const installationApprovals = payload.installation_approvals || [];
       const installationJobs = payload.installation_jobs || [];
+      const setupSteps = providerSetupSteps(payload);
       const emptyState = payload.empty_state || {
         title: "No providers installed",
         description: "Attach an existing provider or browse provider plugins.",
@@ -4145,6 +4214,27 @@
           <section class="subpanel">
             <div class="panel-heading">Recommended Next Action</div>
             <div class="subpanel-copy">${recommendation.detail}</div>
+          </section>
+          <section class="subpanel">
+            <div class="panel-heading">Guided Provider Setup</div>
+            <div class="subpanel-copy">Follow the local chain from plugin apply to endpoint draft. Each step remains explicit so provider installation never silently publishes an Endpoint.</div>
+            <div class="list" style="margin-top: 12px;">
+              ${setupSteps
+                .map((step) => `
+                  <div class="list-row" data-provider-setup-step="${step.key}">
+                    <div>
+                      <strong>${step.title}</strong>
+                      <span>${step.detail}</span>
+                    </div>
+                    <span class="chip ${step.state === "Done" ? "good" : step.state === "Current" ? "warn" : ""}">${step.state}</span>
+                  </div>
+                `)
+                .join("")}
+            </div>
+            <div class="notice" style="margin-top: 12px;">
+              <strong>Suggested Provider Step</strong>
+              <span style="display: block; margin-top: 4px;">${providerSetupRecommendedAction(setupSteps)}</span>
+            </div>
           </section>
           <section class="subpanel">
             <div class="panel-heading">Provider instances</div>
