@@ -3242,6 +3242,21 @@
       );
     }
 
+    function runtimeBindingById(runtimeBindingId) {
+      return (state.payloads.providers?.runtime_bindings || []).find(
+        (binding) => binding.runtime_binding_id === runtimeBindingId
+      ) || null;
+    }
+
+    function modelForRuntimeBinding(binding) {
+      if (!binding?.model_deployment_id) {
+        return null;
+      }
+      return (state.payloads.providers?.model_deployments || []).find(
+        (model) => model.model_deployment_id === binding.model_deployment_id
+      ) || null;
+    }
+
     function providerTypeForDraft(provider) {
       if (!provider) {
         return null;
@@ -4209,22 +4224,27 @@
                 <div>Capability</div>
                 <div>Bundle bridge</div>
                 <div>Status</div>
+                <div>Action</div>
               </div>
               ${
                 runtimeBindings.length
                   ? runtimeBindings
-                      .map((binding) => `
-                        <div class="table-row">
-                          <div>
-                            <div class="row-title">${binding.runtime_binding_id}</div>
-                            <span class="row-copy">${binding.plugin_id}</span>
+                      .map((binding) => {
+                        const pending = state.providerActionPending === `endpoint:${binding.runtime_binding_id}`;
+                        return `
+                          <div class="table-row">
+                            <div>
+                              <div class="row-title">${binding.runtime_binding_id}</div>
+                              <span class="row-copy">${binding.plugin_id}</span>
+                            </div>
+                            <div class="row-meta">${binding.model_deployment_id}</div>
+                            <div class="row-meta">${binding.capability_id} / ${binding.capability_version}</div>
+                            <div class="row-meta">${binding.compatibility_bundle_id}</div>
+                            <div><span class="chip ${binding.status === "ready" ? "good" : ""}">${binding.status || "unknown"}</span></div>
+                            <button class="row-action" type="button" data-runtime-binding-endpoint="${escapeHtml(binding.runtime_binding_id)}">${pending ? "Creating..." : "Create Endpoint"}</button>
                           </div>
-                          <div class="row-meta">${binding.model_deployment_id}</div>
-                          <div class="row-meta">${binding.capability_id} / ${binding.capability_version}</div>
-                          <div class="row-meta">${binding.compatibility_bundle_id}</div>
-                          <div><span class="chip ${binding.status === "ready" ? "good" : ""}">${binding.status || "unknown"}</span></div>
-                        </div>
-                      `)
+                        `;
+                      })
                       .join("")
                   : `<div class="empty-state">No runtime bindings created yet.</div>`
               }
@@ -8369,6 +8389,58 @@
       }
     }
 
+    async function createEndpointFromRuntimeBinding(runtimeBindingId) {
+      const binding = runtimeBindingById(runtimeBindingId);
+      const model = modelForRuntimeBinding(binding);
+      const ownerWalletId = state.payloads.home?.bootstrap?.owner_wallet?.wallet_id;
+      if (!binding?.runtime_binding_id || !ownerWalletId) {
+        state.providerMessage = {
+          kind: "bad",
+          text: "Configure a wallet and create a runtime binding before creating an endpoint.",
+        };
+        render();
+        bindInteractiveElements();
+        return;
+      }
+      state.providerActionPending = `endpoint:${binding.runtime_binding_id}`;
+      state.providerMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        const created = await postJson(endpointApiBase, {
+          owner_wallet: ownerWalletId,
+          runtime_binding_id: binding.runtime_binding_id,
+          display_name:
+            model?.operator_display_name ||
+            model?.provider_model_reference ||
+            `${binding.capability_id} Endpoint`,
+          model_class: binding.capability_id,
+          capabilities: [binding.capability_id],
+          publication: {
+            visibility: "private",
+            shared_with_wallet_ids: [],
+            discoverable: false,
+            accepts_external_requests: false,
+            validation: "disabled",
+          },
+        });
+        const endpoint = created.endpoint || created.data?.endpoint;
+        state.selectedEndpointDraftId = endpoint?.endpoint_id || null;
+        state.screen = "endpoints";
+        state.providerMessage = {
+          kind: "good",
+          text: `Endpoint ${endpoint?.endpoint_id || "draft"} created from runtime binding ${binding.runtime_binding_id}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function processQueuedInstallsForSelectedProvider() {
       const provider = selectedProvider();
       if (!provider?.plugin_id) {
@@ -8837,6 +8909,13 @@
         button.addEventListener("click", (event) => {
           event.stopPropagation();
           void createRuntimeBindingForModel(button.dataset.modelRuntimeBinding);
+        });
+      });
+
+      document.querySelectorAll("[data-runtime-binding-endpoint]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void createEndpointFromRuntimeBinding(button.dataset.runtimeBindingEndpoint);
         });
       });
 
