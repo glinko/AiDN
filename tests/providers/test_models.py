@@ -261,8 +261,20 @@ def test_provider_installation_approval_captures_plan_binding_without_secret_val
         approved_permissions=["container.manage"],
         acknowledged_secret_requirements=[
             {
+                "requirement_key": "API_KEY:Optional upstream API key",
                 "secret_type": "API_KEY",
                 "label": "Optional upstream API key",
+                "required": False,
+                "allowed_usage": ["provider.connect"],
+            }
+        ],
+        selected_secret_handles=[
+            {
+                "requirement_key": "API_KEY:Optional upstream API key",
+                "secret_type": "API_KEY",
+                "label": "Optional upstream API key",
+                "secret_handle": "secret://provider/upstream-api-key",
+                "allowed_usage": ["provider.connect"],
             }
         ],
         operator_note="Approved for local install",
@@ -273,6 +285,7 @@ def test_provider_installation_approval_captures_plan_binding_without_secret_val
     assert approval.plan_hash == "sha256:plan"
     assert approval.configuration_hash == "sha256:configuration"
     assert approval.status == "APPROVED"
+    assert approval.selected_secret_handles[0].secret_handle == "secret://provider/upstream-api-key"
     assert "secret_value" not in str(approval.model_dump())
 
 

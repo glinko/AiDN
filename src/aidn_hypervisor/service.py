@@ -2334,11 +2334,15 @@ class HypervisorService:
         self,
         plugin_id: str,
         configuration: dict,
+        approved_permissions: list[str] | None = None,
+        selected_secret_handles: list[dict] | None = None,
         operator_note: str | None = None,
     ) -> dict:
         approval = self.provider_inventory.approve_installation_plan(
             plugin_id=plugin_id,
             configuration=configuration,
+            approved_permissions=approved_permissions,
+            selected_secret_handles=selected_secret_handles,
             operator_note=operator_note,
         )
         self._persist_state()

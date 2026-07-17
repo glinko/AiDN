@@ -1145,6 +1145,7 @@ def test_plugins_endpoint_returns_installed_plugin_descriptions() -> None:
         "CAN_DISCOVER_MODELS",
     ]
     assert plugin["required_permissions"][0]["permission_id"] == "network.private"
+    assert plugin["secret_requirements"][0]["secret_type"] == "API_KEY"
     assert plugin["trust_status"] == "CONFORMANCE_TESTED"
     assert plugin["installation_recipes"][0]["recipe_id"] == "fake-managed-local"
     assert plugin["supported_aidn_capabilities"] == ["llm.chat"]
@@ -3724,6 +3725,7 @@ def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:
         "/operators/provider-plugins/fake-managed/installation-approvals",
         json={
             "configuration": {"base_url": "http://127.0.0.1:9999"},
+            "approved_permissions": ["network.private"],
             "operator_note": "approve",
             "unexpected": True,
         },
@@ -3734,6 +3736,7 @@ def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:
         "/operators/provider-plugins/fake-managed/installation-approvals",
         json={
             "configuration": {"base_url": "http://127.0.0.1:9999"},
+            "approved_permissions": ["network.private"],
             "operator_note": "approve",
         },
     )
@@ -3778,6 +3781,13 @@ def test_provider_installation_approval_and_apply_routes() -> None:
                 "display_name": "Local Fake",
                 "base_url": "http://127.0.0.1:9999",
             },
+            "approved_permissions": ["network.private"],
+            "selected_secret_handles": [
+                {
+                    "requirement_key": "API_KEY:Optional provider API key handle",
+                    "secret_handle": "secret://providers/fake-managed/api-key",
+                }
+            ],
             "operator_note": "approved from api",
         },
     )
@@ -3786,6 +3796,7 @@ def test_provider_installation_approval_and_apply_routes() -> None:
     approval = approval_response.json()
     assert approval["plugin_id"] == "fake-managed"
     assert approval["operator_note"] == "approved from api"
+    assert approval["selected_secret_handles"][0]["secret_handle"] == "secret://providers/fake-managed/api-key"
 
     apply_response = client.post(
         f"/operators/provider-installation-approvals/{approval['approval_id']}/apply",
@@ -3820,6 +3831,25 @@ def test_provider_installation_apply_route_rejects_unknown_approval() -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Unknown approval: approval-missing"
+
+
+def test_provider_installation_approval_route_rejects_incomplete_permission_acknowledgement() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.post(
+        "/operators/provider-plugins/fake-managed/installation-approvals",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+            "approved_permissions": [],
+            "operator_note": "approve",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "approved permissions must match requested permissions exactly"
 
 
 def test_provider_plugin_installation_plan_preview_route_rejects_invalid_plugin_plan() -> None:

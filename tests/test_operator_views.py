@@ -649,6 +649,7 @@ def test_providers_payload_exposes_plugin_directory_install_metadata() -> None:
     assert plugin["trust_status"] == "CONFORMANCE_TESTED"
     assert plugin["required_permissions"][0]["permission_id"] == "network.private"
     assert plugin["install_ui_schema"]["schema_id"] == "fake.install.v1"
+    assert plugin["secret_requirements"][0]["secret_type"] == "API_KEY"
     assert plugin["installation_recipes"][0]["recipe_id"] == "fake-managed-local"
     assert payload["summary"]["installable_plugin_count"] == 1
 

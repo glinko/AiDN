@@ -17,6 +17,7 @@ from aidn_hypervisor.providers.models import (
     ProviderPluginManifest,
     ProviderInstance,
     RuntimeBinding,
+    SelectedSecretHandle,
 )
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
@@ -74,6 +75,8 @@ class ProviderInventoryService:
         self,
         plugin_id: str,
         configuration: dict,
+        approved_permissions: list[str] | None = None,
+        selected_secret_handles: list[dict] | None = None,
         operator_note: str | None = None,
     ) -> ProviderInstallationApproval:
         plugin = self._get_plugin(plugin_id)
@@ -83,6 +86,18 @@ class ProviderInventoryService:
             plugin_id=plugin_id,
             configuration=approved_configuration,
         )
+        normalized_secret_requirements = self._normalized_secret_requirements(manifest)
+        normalized_approved_permissions = self._validate_approved_permissions(
+            requested_permissions=[
+                permission["permission_id"]
+                for permission in plan.get("required_permissions", [])
+            ],
+            approved_permissions=approved_permissions,
+        )
+        normalized_selected_secret_handles = self._validate_selected_secret_handles(
+            normalized_requirements=normalized_secret_requirements,
+            selected_secret_handles=selected_secret_handles,
+        )
         approval = ProviderInstallationApproval(
             approval_id=f"pia-{uuid4().hex[:12]}",
             plugin_id=plugin_id,
@@ -90,14 +105,9 @@ class ProviderInventoryService:
             plan_hash=_canonical_hash(deepcopy(plan)),
             configuration_hash=_canonical_hash(deepcopy(approved_configuration)),
             configuration=deepcopy(approved_configuration),
-            approved_permissions=[
-                permission["permission_id"]
-                for permission in plan.get("required_permissions", [])
-            ],
-            acknowledged_secret_requirements=[
-                requirement.model_dump(mode="json")
-                for requirement in manifest.secret_requirements
-            ],
+            approved_permissions=normalized_approved_permissions,
+            acknowledged_secret_requirements=normalized_secret_requirements,
+            selected_secret_handles=normalized_selected_secret_handles,
             operator_note=operator_note,
             status="APPROVED",
             created_at=_now_iso(),
@@ -125,6 +135,14 @@ class ProviderInventoryService:
         plan = InstallationPlan.model_validate(plan_dict)
         if _canonical_hash(deepcopy(plan_dict)) != approval.plan_hash:
             raise ValueError("installation plan hash mismatch")
+        normalized_secret_requirements = self._normalized_secret_requirements(manifest)
+        if normalized_secret_requirements != approval.acknowledged_secret_requirements:
+            raise ValueError("installation secret requirements changed since approval")
+        rebuilt_permission_ids = [
+            permission.permission_id for permission in plan.required_permissions
+        ]
+        if approval.approved_permissions != rebuilt_permission_ids:
+            raise ValueError("installation approved permissions do not match current plan")
 
         job = ProviderInstallationJob(
             job_id=f"pij-{uuid4().hex[:12]}",
@@ -181,6 +199,98 @@ class ProviderInventoryService:
 
     def list_installation_jobs(self) -> list[ProviderInstallationJob]:
         return self.store.list_installation_jobs()
+
+    def _normalized_secret_requirements(
+        self,
+        manifest: ProviderPluginManifest,
+    ) -> list[dict]:
+        normalized: list[dict] = []
+        for requirement in manifest.secret_requirements:
+            normalized.append(
+                {
+                    "requirement_key": self._secret_requirement_key(
+                        secret_type=requirement.secret_type,
+                        label=requirement.label,
+                    ),
+                    "secret_type": requirement.secret_type,
+                    "label": requirement.label,
+                    "required": requirement.required,
+                    "allowed_usage": list(requirement.allowed_usage),
+                }
+            )
+        return normalized
+
+    def _validate_approved_permissions(
+        self,
+        *,
+        requested_permissions: list[str],
+        approved_permissions: list[str] | None,
+    ) -> list[str]:
+        requested_permission_ids = list(requested_permissions)
+        if approved_permissions is None:
+            return requested_permission_ids
+        normalized_approved_permissions = list(approved_permissions)
+        missing_permissions = [
+            permission_id
+            for permission_id in requested_permission_ids
+            if permission_id not in normalized_approved_permissions
+        ]
+        unexpected_permissions = [
+            permission_id
+            for permission_id in normalized_approved_permissions
+            if permission_id not in requested_permission_ids
+        ]
+        if missing_permissions or unexpected_permissions:
+            raise ValueError(
+                "approved permissions must match requested permissions exactly"
+            )
+        return requested_permission_ids
+
+    def _validate_selected_secret_handles(
+        self,
+        *,
+        normalized_requirements: list[dict],
+        selected_secret_handles: list[dict] | None,
+    ) -> list[SelectedSecretHandle]:
+        selected_handles = list(selected_secret_handles or [])
+        requirement_by_key = {
+            requirement["requirement_key"]: requirement
+            for requirement in normalized_requirements
+        }
+        matched_keys: set[str] = set()
+        normalized_selected_handles: list[SelectedSecretHandle] = []
+        for item in selected_handles:
+            requirement_key = str(item.get("requirement_key") or "").strip()
+            if not requirement_key or requirement_key not in requirement_by_key:
+                raise ValueError("selected secret handle does not match a known requirement")
+            if requirement_key in matched_keys:
+                raise ValueError("selected secret handle requirement keys must be unique")
+            secret_handle = str(item.get("secret_handle") or "").strip()
+            if not secret_handle:
+                raise ValueError("selected secret handle must be non-empty")
+            requirement = requirement_by_key[requirement_key]
+            normalized_selected_handles.append(
+                SelectedSecretHandle(
+                    requirement_key=requirement_key,
+                    secret_type=requirement["secret_type"],
+                    label=requirement["label"],
+                    secret_handle=secret_handle,
+                    allowed_usage=list(requirement["allowed_usage"]),
+                )
+            )
+            matched_keys.add(requirement_key)
+
+        missing_required_keys = [
+            requirement["requirement_key"]
+            for requirement in normalized_requirements
+            if requirement["required"] and requirement["requirement_key"] not in matched_keys
+        ]
+        if missing_required_keys:
+            raise ValueError("required secret handles are missing")
+        return normalized_selected_handles
+
+    def _secret_requirement_key(self, *, secret_type: str, label: str) -> str:
+        return f"{secret_type}:{label}"
 
     def attach_provider_instance(
         self,

@@ -609,6 +609,10 @@ def test_provider_inventory_approves_and_applies_installation_plan() -> None:
     assert approval.configuration_hash.startswith("sha256:")
     assert approval.configuration["base_url"] == "http://127.0.0.1:9999"
     assert approval.approved_permissions == ["network.private"]
+    assert approval.acknowledged_secret_requirements[0]["requirement_key"] == (
+        "API_KEY:Optional provider API key handle"
+    )
+    assert approval.selected_secret_handles == []
     assert approval.operator_note == "Approved for local testing"
     assert stored_approval == approval
     assert job.status == "SUCCEEDED"
@@ -635,6 +639,130 @@ def test_provider_inventory_apply_rejects_revoked_approval() -> None:
     service.store.save_installation_approval(approval.model_copy(update={"status": "REVOKED"}))
 
     with pytest.raises(ValueError, match="installation approval is not active"):
+        service.apply_installation_approval(approval.approval_id)
+
+
+def test_provider_inventory_approval_rejects_incomplete_explicit_permission_acknowledgement() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="approved permissions must match requested permissions exactly",
+    ):
+        service.approve_installation_plan(
+            plugin_id="fake-managed",
+            configuration=_installation_configuration(),
+            approved_permissions=[],
+        )
+
+
+def test_provider_inventory_approval_records_selected_secret_handles() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    approval = service.approve_installation_plan(
+        plugin_id="fake-managed",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private"],
+        selected_secret_handles=[
+            {
+                "requirement_key": "API_KEY:Optional provider API key handle",
+                "secret_handle": "secret://providers/fake-managed/api-key",
+            }
+        ],
+    )
+
+    assert approval.selected_secret_handles[0].secret_handle == (
+        "secret://providers/fake-managed/api-key"
+    )
+    assert approval.selected_secret_handles[0].label == "Optional provider API key handle"
+
+
+def test_provider_inventory_approval_requires_handles_for_required_secret_requirements() -> None:
+    class RequiredSecretPlugin(FakeManagedPlugin):
+        plugin_id = "required-secret"
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["secret_requirements"] = [
+                {
+                    "secret_type": "API_KEY",
+                    "label": "Required provider API key handle",
+                    "required": True,
+                    "allowed_usage": ["provider.connect"],
+                }
+            ]
+            return description
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            return plan
+
+    registry = PluginRegistry()
+    registry.register(RequiredSecretPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    with pytest.raises(ValueError, match="required secret handles are missing"):
+        service.approve_installation_plan(
+            plugin_id="required-secret",
+            configuration=_installation_configuration(),
+            approved_permissions=["network.private"],
+        )
+
+
+def test_provider_inventory_apply_rejects_secret_requirement_drift() -> None:
+    class MutableSecretPlugin(FakeManagedPlugin):
+        plugin_id = "mutable-secret"
+
+        def __init__(self) -> None:
+            self.secret_label = "Optional provider API key handle"
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["secret_requirements"] = [
+                {
+                    "secret_type": "API_KEY",
+                    "label": self.secret_label,
+                    "required": False,
+                    "allowed_usage": ["provider.connect"],
+                }
+            ]
+            return description
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            return plan
+
+    plugin = MutableSecretPlugin()
+    registry = PluginRegistry()
+    registry.register(plugin)
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    approval = service.approve_installation_plan(
+        plugin_id="mutable-secret",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private"],
+    )
+    plugin.secret_label = "Changed provider API key handle"
+
+    with pytest.raises(
+        ValueError,
+        match="installation secret requirements changed since approval",
+    ):
         service.apply_installation_approval(approval.approval_id)
 
 

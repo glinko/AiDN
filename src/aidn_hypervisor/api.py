@@ -73,6 +73,8 @@ class ApproveProviderInstallationPlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     configuration: dict = Field(default_factory=dict)
+    approved_permissions: list[str] = Field(default_factory=list)
+    selected_secret_handles: list[dict] = Field(default_factory=list)
     operator_note: str | None = None
 
 
@@ -1094,6 +1096,8 @@ def build_api_router(
             return service.approve_provider_installation_plan(
                 plugin_id=plugin_id,
                 configuration=payload.configuration,
+                approved_permissions=payload.approved_permissions,
+                selected_secret_handles=payload.selected_secret_handles,
                 operator_note=payload.operator_note,
             )
         except KeyError as error:

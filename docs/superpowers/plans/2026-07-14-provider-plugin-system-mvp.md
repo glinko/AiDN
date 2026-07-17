@@ -8,9 +8,9 @@
 
 **Tech Stack:** Python, FastAPI, Pydantic, pytest, existing `HypervisorService`, current operator dashboard HTML/JS, existing plugin registry and bundle scheduler.
 
-**Current status:** Provider inventory, runtime-binding compatibility projection, endpoint draft runtime-binding input, plugin-first Providers workspace, provider inventory snapshot/restore, rich Plugin Directory metadata, permission/secret/UI schema/recipe manifest fields, preview Installation Plans, approval/apply job records, schema-driven dashboard forms, Installation Recipe prefill, model discovery from an applied Provider Instance, Runtime Binding creation from a Model Deployment, and Endpoint draft creation from a Runtime Binding are implemented and verified. The latest full test suite for this branch passed with `775 passed, 1 warning`.
+**Current status:** Provider inventory, runtime-binding compatibility projection, endpoint draft runtime-binding input, plugin-first Providers workspace, provider inventory snapshot/restore, rich Plugin Directory metadata, permission/secret/UI schema/recipe manifest fields, preview Installation Plans, approval/apply job records, explicit permission acknowledgement, secret-handle selection, schema-driven dashboard forms, Installation Recipe prefill, model discovery from an applied Provider Instance, Runtime Binding creation from a Model Deployment, and Endpoint draft creation from a Runtime Binding are implemented and verified. The latest targeted provider/dashboard verification suite for this branch passed with `386 passed, 1 warning`.
 
-**Next phase:** harden the guarded operator approval/apply boundary before real host mutation: permission diffing, secret-handle selection, dry-run diagnostics, rollback semantics, plugin sandbox policy, signed package verification, and eventually sandboxed plan application behind explicit confirmations.
+**Next phase:** harden the guarded operator approval/apply boundary before real host mutation with dry-run diagnostics, rollback semantics, plugin sandbox policy, permission-upgrade prompts, signed package verification, and eventually sandboxed plan application behind explicit confirmations.
 
 ---
 

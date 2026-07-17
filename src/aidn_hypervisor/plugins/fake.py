@@ -32,6 +32,14 @@ class FakeManagedPlugin(ProviderPlugin):
             "supported_platforms": ["linux", "darwin", "windows"],
             "supported_architectures": ["x86_64", "arm64"],
             "supported_accelerators": ["cpu"],
+            "secret_requirements": [
+                {
+                    "secret_type": "API_KEY",
+                    "label": "Optional provider API key handle",
+                    "required": False,
+                    "allowed_usage": ["provider.connect", "provider.health_check"],
+                }
+            ],
             "installation_recipes": [
                 {
                     "recipe_id": "fake-managed-local",

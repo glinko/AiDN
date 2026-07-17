@@ -3134,6 +3134,18 @@
       return "";
     }
 
+    function providerPermissionRequirements(provider) {
+      return provider?.required_permissions || [];
+    }
+
+    function providerSecretRequirements(provider) {
+      return provider?.secret_requirements || [];
+    }
+
+    function providerSecretRequirementKey(requirement) {
+      return `${requirement?.secret_type || "NONE"}:${requirement?.label || ""}`;
+    }
+
     function syncProviderApplyDraft(provider) {
       const pluginId = provider?.plugin_id || null;
       if (state.providerApplyDraft.pluginId !== pluginId) {
@@ -3141,10 +3153,23 @@
         for (const field of providerInstallSchema(provider).fields || []) {
           values[field.id] = schemaFieldDefault(field, provider);
         }
+        const latestApproval = latestProviderInstallationApproval(provider);
+        const selectedSecretHandles = {};
+        for (const requirement of providerSecretRequirements(provider)) {
+          const requirementKey = providerSecretRequirementKey(requirement);
+          const previousSelection = (latestApproval?.selected_secret_handles || []).find(
+            (item) => item.requirement_key === requirementKey
+          );
+          selectedSecretHandles[requirementKey] = previousSelection?.secret_handle || "";
+        }
         state.providerApplyDraft = {
           pluginId,
           selectedRecipeId: "",
           values,
+          approvedPermissionIds: providerPermissionRequirements(provider).map(
+            (permission) => permission.permission_id
+          ),
+          selectedSecretHandles,
           operatorNote: "approved from operator dashboard",
         };
       }
@@ -3194,9 +3219,58 @@
       }, {});
     }
 
+    function providerApplyApprovedPermissions(provider) {
+      const draft = syncProviderApplyDraft(provider);
+      const approved = new Set(draft.approvedPermissionIds || []);
+      return providerPermissionRequirements(provider)
+        .map((permission) => permission.permission_id)
+        .filter((permissionId) => approved.has(permissionId));
+    }
+
+    function providerApplySelectedSecretHandles(provider) {
+      const draft = syncProviderApplyDraft(provider);
+      return providerSecretRequirements(provider)
+        .map((requirement) => {
+          const requirementKey = providerSecretRequirementKey(requirement);
+          const secretHandle = String(
+            draft.selectedSecretHandles?.[requirementKey] || ""
+          ).trim();
+          if (!secretHandle) {
+            return null;
+          }
+          return {
+            requirement_key: requirementKey,
+            secret_handle: secretHandle,
+          };
+        })
+        .filter(Boolean);
+    }
+
+    function providerApplyPermissionCoverageSatisfied(provider) {
+      const approved = new Set(providerApplyApprovedPermissions(provider));
+      return providerPermissionRequirements(provider).every((permission) =>
+        approved.has(permission.permission_id)
+      );
+    }
+
+    function providerApplyRequiredSecretHandlesSatisfied(provider) {
+      const selectedHandles = new Map(
+        providerApplySelectedSecretHandles(provider).map((item) => [
+          item.requirement_key,
+          item.secret_handle,
+        ])
+      );
+      return providerSecretRequirements(provider).every((requirement) => {
+        if (!requirement.required) {
+          return true;
+        }
+        return Boolean(selectedHandles.get(providerSecretRequirementKey(requirement)));
+      });
+    }
+
     function providerApplyRequiredFieldsSatisfied(provider) {
       const configuration = providerApplyConfiguration(provider);
-      return (providerInstallSchema(provider).fields || []).every((field) => {
+      const schemaSatisfied = (providerInstallSchema(provider).fields || []).every((field) => {
         if (!field.required) {
           return true;
         }
@@ -3206,6 +3280,24 @@
         }
         return String(value ?? "").trim().length > 0;
       });
+      return (
+        schemaSatisfied &&
+        providerApplyPermissionCoverageSatisfied(provider) &&
+        providerApplyRequiredSecretHandlesSatisfied(provider)
+      );
+    }
+
+    function providerPermissionDiff(provider) {
+      const latestApproval = latestProviderInstallationApproval(provider);
+      const previous = new Set(latestApproval?.approved_permissions || []);
+      const current = providerPermissionRequirements(provider).map(
+        (permission) => permission.permission_id
+      );
+      return {
+        added: current.filter((permissionId) => !previous.has(permissionId)),
+        removed: [...previous].filter((permissionId) => !current.includes(permissionId)),
+        unchanged: current.filter((permissionId) => previous.has(permissionId)),
+      };
     }
 
     function schemaFieldLabel(field) {
@@ -6475,6 +6567,7 @@
       const selectedRecipe = selectedProviderInstallationRecipe(provider);
       const latestApproval = latestProviderInstallationApproval(provider);
       const latestJob = latestProviderInstallationJob(provider);
+      const permissionDiff = providerPermissionDiff(provider);
       const recommendation = providerRecommendedAction(
         state.payloads.providers?.summary || {},
         providerRows(),
@@ -6554,6 +6647,63 @@
                 .map((field) => renderProviderApplySchemaField(field, applyDraft))
                 .join("")}
             </div>
+            <div class="request-history" style="margin-top: 10px;">
+              <div class="request-history-item">
+                <strong>Permission Approval</strong>
+                <div class="notice">Every requested permission must be explicitly acknowledged before approval is accepted.</div>
+                <div class="stack" style="margin-top: 10px;">
+                  ${providerPermissionRequirements(provider).length
+                    ? providerPermissionRequirements(provider)
+                        .map((permission) => `
+                          <label class="checkbox-line">
+                            <input
+                              type="checkbox"
+                              data-provider-apply-permission="${escapeHtml(permission.permission_id)}"
+                              ${providerApplyApprovedPermissions(provider).includes(permission.permission_id) ? "checked" : ""}
+                            >
+                            <span>
+                              ${escapeHtml(permission.label || permission.permission_id)}
+                              <span class="row-copy">${escapeHtml(permission.reason || permission.permission_id)} • risk ${escapeHtml(permission.risk_level || "low")}</span>
+                            </span>
+                          </label>
+                        `)
+                        .join("")
+                    : `<div class="notice">No elevated permissions requested by this install plan.</div>`}
+                </div>
+                <div class="notice">
+                  Permission diff vs latest approval:
+                  +${permissionDiff.added.length}
+                  / -${permissionDiff.removed.length}
+                  / =${permissionDiff.unchanged.length}
+                </div>
+              </div>
+              <div class="request-history-item">
+                <strong>Secret Handle Selection</strong>
+                <div class="notice">Secret values are not stored here. Enter only scoped secret handles for this provider instance.</div>
+                <div class="wallet-form-grid" style="margin-top: 10px;">
+                  ${providerSecretRequirements(provider).length
+                    ? providerSecretRequirements(provider)
+                        .map((requirement) => {
+                          const requirementKey = providerSecretRequirementKey(requirement);
+                          const selectedHandle = applyDraft.selectedSecretHandles?.[requirementKey] || "";
+                          return `
+                            <label>
+                              <span class="field-label">${escapeHtml(requirement.label)}${requirement.required ? " *" : ""}</span>
+                              <input
+                                type="text"
+                                data-provider-apply-secret-handle="${escapeHtml(requirementKey)}"
+                                value="${escapeHtml(selectedHandle)}"
+                                placeholder="${escapeHtml(requirement.required ? "Required secret handle" : "Optional secret handle")}"
+                              >
+                              <span class="row-copy">${escapeHtml(requirement.secret_type || "NONE")} / ${(requirement.allowed_usage || []).map((item) => escapeHtml(item)).join(", ") || "no declared usage"}</span>
+                            </label>
+                          `;
+                        })
+                        .join("")
+                    : `<div class="notice">This plugin does not require secret handles for managed install.</div>`}
+                </div>
+              </div>
+            </div>
             <div class="wallet-form-grid" style="margin-top: 10px;">
               <input type="text" data-provider-apply-note value="${escapeHtml(applyDraft.operatorNote)}" placeholder="Operator approval note">
               <button class="primary-button" type="button" data-provider-action="approve-installation" ${canApproveInstallation ? "" : "disabled"}>${state.providerActionPending === "approve-installation" ? "Approving..." : "Approve Install Plan"}</button>
@@ -6565,6 +6715,11 @@
               <div class="request-history-item">
                 <strong>Latest Approval</strong>
                 <div class="notice">${latestApproval ? `${latestApproval.approval_id} / ${latestApproval.status_label || latestApproval.status}` : "No approved plan yet"}</div>
+                ${
+                  latestApproval
+                    ? `<div class="row-copy" style="margin-top: 8px;">Permissions: ${(latestApproval.approved_permissions || []).length} / Secret handles: ${(latestApproval.selected_secret_handles || []).length}</div>`
+                    : ""
+                }
               </div>
               <div class="request-history-item">
                 <strong>Latest Apply Job</strong>
@@ -8375,6 +8530,8 @@
       try {
         const approval = await postJson(providerInstallationApprovalPath(provider.plugin_id), {
           configuration: providerApplyConfiguration(provider),
+          approved_permissions: providerApplyApprovedPermissions(provider),
+          selected_secret_handles: providerApplySelectedSecretHandles(provider),
           operator_note: draft.operatorNote || null,
         });
         state.providerMessage = {
@@ -8949,6 +9106,33 @@
           } else {
             state.providerApplyDraft.values[key] = control.value;
           }
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-apply-permission]").forEach((control) => {
+        const permissionId = control.dataset.providerApplyPermission;
+        control.addEventListener("change", () => {
+          const approved = new Set(state.providerApplyDraft.approvedPermissionIds || []);
+          if (control.checked) {
+            approved.add(permissionId);
+          } else {
+            approved.delete(permissionId);
+          }
+          state.providerApplyDraft.approvedPermissionIds = [...approved];
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-apply-secret-handle]").forEach((control) => {
+        const requirementKey = control.dataset.providerApplySecretHandle;
+        control.addEventListener("input", () => {
+          state.providerApplyDraft.selectedSecretHandles = {
+            ...(state.providerApplyDraft.selectedSecretHandles || {}),
+            [requirementKey]: control.value,
+          };
           renderInspector();
           bindInteractiveElements();
         });

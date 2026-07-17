@@ -60,6 +60,19 @@ class PluginSecretRequirement(BaseModel):
         return _require_non_empty(value)
 
 
+class SelectedSecretHandle(BaseModel):
+    requirement_key: str
+    secret_type: PluginSecretType
+    label: str
+    secret_handle: str
+    allowed_usage: list[str] = Field(default_factory=list)
+
+    @field_validator("requirement_key", "label", "secret_handle")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
 class PluginUISchema(BaseModel):
     schema_id: str
     fields: list[dict] = Field(default_factory=list)
@@ -123,6 +136,7 @@ class ProviderInstallationApproval(BaseModel):
     configuration: dict = Field(default_factory=dict)
     approved_permissions: list[str] = Field(default_factory=list)
     acknowledged_secret_requirements: list[dict] = Field(default_factory=list)
+    selected_secret_handles: list[SelectedSecretHandle] = Field(default_factory=list)
     operator_note: str | None = None
     status: ProviderInstallationApprovalStatus = "APPROVED"
     created_at: str
