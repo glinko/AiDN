@@ -8,9 +8,9 @@
 
 **Tech Stack:** Python, FastAPI, Pydantic, pytest, existing `HypervisorService`, current operator dashboard HTML/JS, existing plugin registry and bundle scheduler.
 
-**Current status:** Provider inventory, runtime-binding compatibility projection, endpoint draft runtime-binding input, plugin-first Providers workspace, and provider inventory snapshot/restore are implemented and verified. The full test suite passed with `740 passed, 1 warning` before starting the declarative install-plan slice. The declarative install-plan slice now adds rich Plugin Directory metadata, permission/secret/UI schema/recipe manifest fields, preview-only Installation Plans, operator API preview, and dashboard metadata surfacing.
+**Current status:** Provider inventory, runtime-binding compatibility projection, endpoint draft runtime-binding input, plugin-first Providers workspace, provider inventory snapshot/restore, rich Plugin Directory metadata, permission/secret/UI schema/recipe manifest fields, preview Installation Plans, approval/apply job records, schema-driven dashboard forms, Installation Recipe prefill, model discovery from an applied Provider Instance, Runtime Binding creation from a Model Deployment, and Endpoint draft creation from a Runtime Binding are implemented and verified. The latest full test suite for this branch passed with `775 passed, 1 warning`.
 
-**Next phase:** convert previewed declarative plans into a guarded operator approval flow: permission diffing, secret-handle selection, dry-run diagnostics, and eventually sandboxed plan application behind explicit confirmations.
+**Next phase:** harden the guarded operator approval/apply boundary before real host mutation: permission diffing, secret-handle selection, dry-run diagnostics, rollback semantics, plugin sandbox policy, signed package verification, and eventually sandboxed plan application behind explicit confirmations.
 
 ---
 
@@ -1179,7 +1179,8 @@ git commit -m "feat: persist provider inventory and verify provider plugin MVP"
 - Runtime Binding as the endpoint-draft prerequisite is covered by Task 4.
 - Operator dashboard migration to provider-first workflow is covered by Task 5.
 - Persistence and compatibility validation are covered by Task 6.
-- Managed-install foundation is intentionally limited to manifest/schema/plan scaffolding in Task 2 and Task 3; full plan execution is deferred by design.
+- Managed-install foundation now includes plan preview, approval/apply records, a controlled non-host-mutating executor, schema-rendered install forms, recipe prefill, and guided handoff through model discovery, Runtime Binding, and Endpoint draft creation.
+- Full host-mutating execution remains deferred by design until sandbox, permission-diff, secret-handle, diagnostics, rollback, and signed-package controls are implemented.
 
 ### Placeholder scan
 

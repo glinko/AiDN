@@ -8,6 +8,10 @@
 
 **Tech Stack:** Python 3.13, FastAPI, Pydantic v2, pytest, in-memory provider inventory store, static operator dashboard HTML/JS.
 
+**Implementation status:** Implemented on `feat/provider-install-approval-flow` through commit `eed1286`. The safe MVP operator path now covers `Approve/Apply Provider -> Discover Models -> Create Runtime Binding -> Create Endpoint Draft`. Apply remains non-host-mutating through `RecordedProviderInstallationExecutor`; real shell/container/download/package-manager/plugin-installer execution is deferred behind the existing executor, approval, job, persistence, and UI contracts.
+
+**Next phase:** permission diffing, secret-handle selection, dry-run diagnostics, rollback semantics, plugin sandbox policy, signed package verification, and real executor enablement behind explicit operator confirmations.
+
 ---
 
 ## File Structure
@@ -20,7 +24,7 @@
 - `src/aidn_hypervisor/service.py`: Hypervisor facade and snapshot/restore wiring.
 - `src/aidn_hypervisor/api.py`: approval/apply/list HTTP routes.
 - `src/aidn_hypervisor/operator_views.py`: Providers workspace approval/job summaries.
-- `src/aidn_hypervisor/static/operator_dashboard.html`: controlled apply UI copy and endpoint usage.
+- `src/aidn_hypervisor/static/operator_dashboard.html`: controlled apply UI, schema-rendered install forms, recipe prefill, model discovery, Runtime Binding, Endpoint draft creation, and guided setup copy.
 - `tests/providers/test_models.py`: model validation tests.
 - `tests/providers/test_service.py`: provider inventory approval/apply tests.
 - `tests/test_service.py`: Hypervisor snapshot/restore tests.
@@ -1268,7 +1272,7 @@ Expected: only provider install lifecycle code, tests, docs, and dashboard copy 
 
 ## Self-Review
 
-- Spec coverage: preview, approval, apply, job persistence, executor boundary, provider instance creation, API, UI, and snapshot/restore are covered.
+- Spec coverage: preview, approval, apply, job persistence, executor boundary, Provider Instance creation, schema-rendered UI, Installation Recipe prefill, model discovery, Runtime Binding creation, Endpoint draft creation, guided setup copy, API, and snapshot/restore are covered.
 - Placeholder scan: no unresolved placeholder instructions remain.
-- Type consistency: `ProviderInstallationApproval`, `ProviderInstallationJob`, `ProviderInstallationStepResult`, `ProviderInstallationExecutionResult`, `RecordedProviderInstallationExecutor`, `approve_installation_plan`, and `apply_installation_approval` are used consistently.
+- Type consistency: `ProviderInstallationApproval`, `ProviderInstallationJob`, `ProviderInstallationStepResult`, `ProviderInstallationExecutionResult`, `RecordedProviderInstallationExecutor`, `approve_installation_plan`, `apply_installation_approval`, `discover_models_for_provider_instance`, `create_runtime_binding`, and endpoint-draft `runtime_binding_id` handoff are used consistently.
 - Security check: the plan introduces an apply route but keeps execution non-host-mutating; real shell/container/download adapters are explicitly excluded.

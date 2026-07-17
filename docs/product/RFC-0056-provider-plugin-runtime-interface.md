@@ -4,7 +4,11 @@ Provider Plugin Runtime Interface
 
 Status: Draft
 
-Version: 0.1
+Version: 0.2
+
+Supersedes:
+
+* RFC-0056 Version 0.1
 
 Depends on:
 
@@ -26,6 +30,7 @@ It specifies how a Provider Plugin:
 
 * validates Provider Instance configuration;
 * attaches or installs a Provider Instance;
+* separates installation-plan generation from approved plan application;
 * discovers or installs Model Deployments;
 * creates Runtime Bindings;
 * reports health and usage capability;
@@ -117,6 +122,7 @@ The control plane SHOULD support methods equivalent to:
 * `ValidateProviderConfiguration`
 * `BuildInstallationPlan`
 * `InstallProvider`
+* `ApplyInstallationPlan`
 * `AttachExistingProvider`
 * `UpdateProvider`
 * `StartProvider`
@@ -127,6 +133,23 @@ The control plane SHOULD support methods equivalent to:
 * `GetProviderHealth`
 
 Not every plugin is required to implement every method.
+
+`BuildInstallationPlan` SHALL be side-effect bounded. It may validate inputs
+and construct an auditable plan, but it SHALL NOT perform host-mutating
+installation work.
+
+`ApplyInstallationPlan` SHALL be called only by the Hypervisor after an
+operator approval has been recorded and bound to the exact plan and
+configuration hashes.
+
+An MVP implementation MAY expose only a recorded apply executor. In that mode,
+the apply result records intended declarative actions and creates local Provider
+Instance inventory state without running shell commands, container engines,
+downloads, package managers or plugin installer code.
+
+Host-mutating apply implementations SHALL report executor identity, requested
+permissions, consumed secret references, step results, failure class and
+rollback status through stable result objects.
 
 ---
 
@@ -245,6 +268,9 @@ The interface SHOULD expose stable error classes for:
 * invalid configuration;
 * unsupported install mode;
 * provider connection failure;
+* installation approval mismatch;
+* installation executor unavailable;
+* installation rollback failure;
 * model discovery failure;
 * model install failure;
 * runtime-binding failure;
@@ -281,6 +307,9 @@ Certification.
 * Unsupported behavior is declared explicitly.
 * Provider-native semantics are normalized before endpoint publication.
 * Execution adaptation and plugin installation are separate concerns.
+* Installation-plan generation is separate from approved plan application.
+* A recorded apply executor is valid MVP behavior only when it is clearly
+  reported as non-host-mutating.
 
 ---
 

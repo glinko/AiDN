@@ -4,7 +4,11 @@ Provider Plugin System and Directory
 
 Status: Draft
 
-Version: 0.1
+Version: 0.2
+
+Supersedes:
+
+* RFC-0055 Version 0.1
 
 Depends on:
 
@@ -29,6 +33,7 @@ It specifies:
 * Runtime Binding prerequisites;
 * attach-existing flow;
 * managed-install flow;
+* installation approval and apply boundaries;
 * Installation Recipes;
 * plugin permissions and trust status;
 * declarative plugin UI schemas;
@@ -286,6 +291,24 @@ Example plan contents include:
 
 The Hypervisor remains the authority that applies the plan.
 
+Applying an Installation Plan SHALL require an explicit operator approval bound
+to the exact:
+
+* Plugin ID;
+* Installation Plan hash;
+* Provider configuration hash;
+* permission set;
+* secret-reference set where applicable.
+
+The Hypervisor MAY implement a non-host-mutating recorded executor for MVP
+operation. Such an executor creates local inventory and audit state but does not
+run shell commands, container engines, package managers, downloads or plugin
+installer code.
+
+Host-mutating executors SHALL be treated as a higher-risk implementation layer
+and require sandboxing, permission checks, secret scoping, diagnostics and
+rollback policy.
+
 ---
 
 ## 15. Installation Recipes
@@ -354,6 +377,10 @@ this RFC.
 * Plugin permissions are explicit.
 * Provider credentials are not public protocol data.
 * Plugin installation does not create Endpoint publication.
+* Installation approval does not grant Wallet, Consensus or Governance
+  authority.
+* Host-mutating plugin execution is not implied by the existence of an
+  Installation Plan.
 * Plugin trust status is not Endpoint Certification.
 * A plugin package digest identifies one exact installable artifact.
 
@@ -368,3 +395,5 @@ this RFC.
 * One Provider Instance may expose many Model Deployments.
 * Runtime Binding is the prerequisite execution surface for endpoint lifecycle.
 * Installation Recipes are presets, not protocol authorities.
+* Approval, apply-job history and executor identity remain auditable even when
+  the executor is a safe recorded MVP executor.
