@@ -2799,6 +2799,9 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert "Approve Install Plan" in response.text
     assert "Apply Latest Approval" in response.text
     assert "Install UI schema:" in response.text
+    assert "Installation Recipe" in response.text
+    assert "Custom configuration" in response.text
+    assert "data-provider-apply-recipe" in response.text
     assert 'data-provider-apply-field="${escapeHtml(fieldId)}"' in response.text
     assert 'data-provider-apply-note' in response.text
     assert 'data-provider-action="approve-installation"' in response.text

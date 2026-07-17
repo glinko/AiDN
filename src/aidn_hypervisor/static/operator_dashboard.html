@@ -1628,6 +1628,7 @@
       },
       providerApplyDraft: {
         pluginId: null,
+        selectedRecipeId: "",
         values: {},
         operatorNote: "",
       },
@@ -3063,11 +3064,46 @@
         }
         state.providerApplyDraft = {
           pluginId,
+          selectedRecipeId: "",
           values,
           operatorNote: "approved from operator dashboard",
         };
       }
       return state.providerApplyDraft;
+    }
+
+    function providerInstallationRecipes(provider) {
+      return provider?.installation_recipes || [];
+    }
+
+    function selectedProviderInstallationRecipe(provider) {
+      const draft = syncProviderApplyDraft(provider);
+      return (
+        providerInstallationRecipes(provider).find(
+          (recipe) => recipe.recipe_id === draft.selectedRecipeId
+        ) || null
+      );
+    }
+
+    function applyProviderInstallationRecipe(provider, recipeId) {
+      const draft = syncProviderApplyDraft(provider);
+      const recipe = providerInstallationRecipes(provider).find(
+        (candidate) => candidate.recipe_id === recipeId
+      );
+      draft.selectedRecipeId = recipeId || "";
+      if (!recipe) {
+        return draft;
+      }
+      const nextValues = { ...draft.values };
+      const providerConfiguration = recipe.provider_configuration || {};
+      for (const field of providerInstallSchema(provider).fields || []) {
+        if (Object.prototype.hasOwnProperty.call(providerConfiguration, field.id)) {
+          nextValues[field.id] = providerConfiguration[field.id];
+        }
+      }
+      draft.values = nextValues;
+      draft.operatorNote = `approved from recipe ${recipe.recipe_id}`;
+      return draft;
     }
 
     function providerApplyConfiguration(provider) {
@@ -6279,6 +6315,8 @@
       const draft = syncProviderBundleDraft(provider);
       const installDraft = syncProviderInstallDraft(provider);
       const applyDraft = syncProviderApplyDraft(provider);
+      const installationRecipes = providerInstallationRecipes(provider);
+      const selectedRecipe = selectedProviderInstallationRecipe(provider);
       const latestApproval = latestProviderInstallationApproval(provider);
       const latestJob = latestProviderInstallationJob(provider);
       const recommendation = providerRecommendedAction(
@@ -6339,6 +6377,22 @@
             <div class="panel-heading">Managed Provider Apply</div>
             <div class="inspector-copy">Approve and apply a declarative provider plan through the controlled executor. This creates local Provider Instance inventory state only; it does not run shell, Docker, downloads, or plugin installer code.</div>
             <div class="notice" style="margin-top: 10px;">Install UI schema: ${escapeHtml(providerInstallSchema(provider).schema_id || "none")}</div>
+            <div class="wallet-form-grid" style="margin-top: 12px;">
+              <label>
+                <span class="field-label">Installation Recipe</span>
+                <select data-provider-apply-recipe>
+                  <option value="">Custom configuration</option>
+                  ${installationRecipes
+                    .map((recipe) => `
+                      <option value="${escapeHtml(recipe.recipe_id)}" ${applyDraft.selectedRecipeId === recipe.recipe_id ? "selected" : ""}>${escapeHtml(recipe.display_name || recipe.recipe_id)}</option>
+                    `)
+                    .join("")}
+                </select>
+              </label>
+              <div class="notice">
+                ${selectedRecipe ? escapeHtml(selectedRecipe.description || selectedRecipe.recipe_id) : "Choose a recipe to prefill provider configuration, then review before approval."}
+              </div>
+            </div>
             <div class="wallet-form-grid" style="margin-top: 12px;">
               ${(providerInstallSchema(provider).fields || [])
                 .map((field) => renderProviderApplySchemaField(field, applyDraft))
@@ -8626,6 +8680,14 @@
           } else {
             state.providerApplyDraft.values[key] = control.value;
           }
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-apply-recipe]").forEach((control) => {
+        control.addEventListener("change", () => {
+          applyProviderInstallationRecipe(selectedProvider(), control.value);
           renderInspector();
           bindInteractiveElements();
         });
