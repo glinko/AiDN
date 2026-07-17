@@ -1468,6 +1468,12 @@
     const modelInstallApiBase = "/operators/models/";
     const modelInstallRequestPath = "/operators/models/install";
     const modelInstallProcessPath = "/operators/models/install/process";
+    const providerInstallationApprovalsPath = "/operators/provider-installation-approvals";
+    const providerInstallationJobsPath = "/operators/provider-installation-jobs";
+    const providerInstallationApprovalPath = (pluginId) =>
+      `/operators/provider-plugins/${encodeURIComponent(pluginId)}/installation-approvals`;
+    const providerInstallationApplyPath = (approvalId) =>
+      `/operators/provider-installation-approvals/${encodeURIComponent(approvalId)}/apply`;
     const bundleConfigPath = "/operators/bundles/config";
     const bundleReloadPath = "/operators/bundles/reload";
     const endpointApiBase = "/api/v1/endpoints";
@@ -1590,6 +1596,12 @@
         modelId: "",
         sourceUrl: "",
         requestedBy: "",
+      },
+      providerApplyDraft: {
+        pluginId: null,
+        displayName: "",
+        baseUrl: "",
+        operatorNote: "",
       },
       bundleEndpointDraft: {
         bundleId: null,
@@ -1822,8 +1834,13 @@
       return (state.payloads.providers || { items: [] }).items || [];
     }
 
+    function providerDirectoryRows() {
+      const payload = state.payloads.providers || {};
+      return payload.plugin_directory || providerRows();
+    }
+
     function selectedProvider() {
-      const items = providerRows();
+      const items = providerDirectoryRows();
       if (!items.length) {
         state.selectedProviderId = null;
         return null;
@@ -2974,6 +2991,49 @@
       return state.providerInstallDraft;
     }
 
+    function syncProviderApplyDraft(provider) {
+      const pluginId = provider?.plugin_id || null;
+      if (state.providerApplyDraft.pluginId !== pluginId) {
+        state.providerApplyDraft = {
+          pluginId,
+          displayName: provider?.display_name || provider?.plugin_id || "",
+          baseUrl: providerSuggestedEndpoint(provider),
+          operatorNote: "approved from operator dashboard",
+        };
+      }
+      return state.providerApplyDraft;
+    }
+
+    function providerInstallationApprovals() {
+      return state.payloads.providers?.installation_approvals || [];
+    }
+
+    function providerInstallationJobs() {
+      return state.payloads.providers?.installation_jobs || [];
+    }
+
+    function latestProviderInstallationApproval(provider) {
+      if (!provider?.plugin_id) {
+        return null;
+      }
+      return (
+        providerInstallationApprovals()
+          .filter((approval) => approval.plugin_id === provider.plugin_id)
+          .slice(-1)[0] || null
+      );
+    }
+
+    function latestProviderInstallationJob(provider) {
+      if (!provider?.plugin_id) {
+        return null;
+      }
+      return (
+        providerInstallationJobs()
+          .filter((job) => job.plugin_id === provider.plugin_id)
+          .slice(-1)[0] || null
+      );
+    }
+
     function providerTypeForDraft(provider) {
       if (!provider) {
         return null;
@@ -3805,6 +3865,8 @@
       const providerInstances = payload.provider_instances || [];
       const modelDeployments = payload.model_deployments || [];
       const runtimeBindings = payload.runtime_bindings || [];
+      const installationApprovals = payload.installation_approvals || [];
+      const installationJobs = payload.installation_jobs || [];
       const emptyState = payload.empty_state || {
         title: "No providers installed",
         description: "Attach an existing provider or browse provider plugins.",
@@ -3955,8 +4017,8 @@
             <div class="panel-heading">Plugin directory</div>
             <div class="subpanel-copy">
               Apply approved plan uses the controlled executor in this MVP. It records declarative actions through
-              <code>/operators/provider-installation-approvals</code> and
-              <code>/operators/provider-installation-jobs</code>, then creates local provider inventory state. It does
+              <code>${providerInstallationApprovalsPath}</code> and
+              <code>${providerInstallationJobsPath}</code>, then creates local provider inventory state. It does
               not run shell, Docker, downloads, or plugin installer code.
             </div>
             <div class="table-shell" style="margin-top: 14px;">
@@ -3997,6 +4059,39 @@
                       .join("")
                   : `<div class="empty-state">No provider plugins are registered on this node yet.</div>`
               }
+            </div>
+          </section>
+          <section class="subpanel">
+            <div class="panel-heading">Provider Installation Apply Jobs</div>
+            <div class="table-shell" style="margin-top: 14px;">
+              <div class="table-head">
+                <div>Approval</div>
+                <div>Plugin</div>
+                <div>Status</div>
+                <div>Provider Instance</div>
+                <div>Executor</div>
+              </div>
+              ${
+                installationJobs.length
+                  ? installationJobs
+                      .map((job) => `
+                        <div class="table-row">
+                          <div>
+                            <div class="row-title">${escapeHtml(job.approval_id)}</div>
+                            <span class="row-copy">${escapeHtml(job.job_id)}</span>
+                          </div>
+                          <div class="row-meta">${escapeHtml(job.plugin_id)}</div>
+                          <div><span class="chip ${job.status === "SUCCEEDED" ? "good" : job.status === "FAILED" ? "bad" : ""}">${escapeHtml(job.status)}</span></div>
+                          <div class="row-meta">${escapeHtml(job.provider_instance_id || "-")}</div>
+                          <div class="row-meta">${escapeHtml(job.executor_id || "-")}</div>
+                        </div>
+                      `)
+                      .join("")
+                  : `<div class="empty-state">No provider installation apply jobs recorded yet. Approve and apply a plan from the selected provider inspector.</div>`
+              }
+            </div>
+            <div class="notice" style="margin-top: 10px;">
+              Approved plans: ${formatCount(installationApprovals.length)} / Apply jobs: ${formatCount(installationJobs.length)}
             </div>
           </section>
         </div>
@@ -6046,6 +6141,9 @@
 
       const draft = syncProviderBundleDraft(provider);
       const installDraft = syncProviderInstallDraft(provider);
+      const applyDraft = syncProviderApplyDraft(provider);
+      const latestApproval = latestProviderInstallationApproval(provider);
+      const latestJob = latestProviderInstallationJob(provider);
       const recommendation = providerRecommendedAction(
         state.payloads.providers?.summary || {},
         providerRows(),
@@ -6061,6 +6159,14 @@
         Boolean(installDraft.sourceUrl) &&
         Boolean(installDraft.requestedBy) &&
         state.providerActionPending !== "queue-install";
+      const canApproveInstallation =
+        Boolean(applyDraft.displayName) &&
+        Boolean(applyDraft.baseUrl) &&
+        state.providerActionPending !== "approve-installation";
+      const canApplyInstallation =
+        Boolean(latestApproval?.approval_id) &&
+        latestApproval.status === "APPROVED" &&
+        state.providerActionPending !== "apply-installation";
 
       return `
         <div class="panel-heading">Selected Provider</div>
@@ -6093,6 +6199,31 @@
             <strong>Recommended Next Action</strong>
             <span style="display: block; margin-top: 4px;">${recommendation.detail}</span>
           </div>
+          <section class="subpanel" style="padding: 16px; margin-top: 10px;">
+            <div class="panel-heading">Managed Provider Apply</div>
+            <div class="inspector-copy">Approve and apply a declarative provider plan through the controlled executor. This creates local Provider Instance inventory state only; it does not run shell, Docker, downloads, or plugin installer code.</div>
+            <div class="wallet-form-grid" style="margin-top: 12px;">
+              <input type="text" data-provider-apply-field="displayName" value="${escapeHtml(applyDraft.displayName)}" placeholder="Provider display name">
+              <input type="text" data-provider-apply-field="baseUrl" value="${escapeHtml(applyDraft.baseUrl)}" placeholder="Provider API base URL">
+            </div>
+            <div class="wallet-form-grid" style="margin-top: 10px;">
+              <input type="text" data-provider-apply-field="operatorNote" value="${escapeHtml(applyDraft.operatorNote)}" placeholder="Operator approval note">
+              <button class="primary-button" type="button" data-provider-action="approve-installation" ${canApproveInstallation ? "" : "disabled"}>${state.providerActionPending === "approve-installation" ? "Approving..." : "Approve Install Plan"}</button>
+            </div>
+            <div class="wallet-inline-actions" style="margin-top: 10px;">
+              <button class="secondary-button" type="button" data-provider-action="apply-installation" ${canApplyInstallation ? "" : "disabled"}>${state.providerActionPending === "apply-installation" ? "Applying..." : "Apply Latest Approval"}</button>
+            </div>
+            <div class="request-history" style="margin-top: 10px;">
+              <div class="request-history-item">
+                <strong>Latest Approval</strong>
+                <div class="notice">${latestApproval ? `${latestApproval.approval_id} / ${latestApproval.status_label || latestApproval.status}` : "No approved plan yet"}</div>
+              </div>
+              <div class="request-history-item">
+                <strong>Latest Apply Job</strong>
+                <div class="notice">${latestJob ? `${latestJob.job_id} / ${latestJob.status} / ${latestJob.provider_instance_id || "no provider instance"}` : "No apply job yet"}</div>
+              </div>
+            </div>
+          </section>
           <section class="subpanel" style="padding: 16px; margin-top: 10px;">
             <div class="panel-heading">Install Model Artifact</div>
             <div class="inspector-copy">Queue a provider-scoped model install before bundle registration. This feeds the install pipeline through ${modelInstallRequestPath} and hands off the artifact to the Installs workspace for processing and registration.</div>
@@ -7878,6 +8009,70 @@
       }
     }
 
+    async function approveProviderInstallationPlan() {
+      const provider = selectedProvider();
+      const draft = syncProviderApplyDraft(provider);
+      if (!provider?.plugin_id) {
+        return;
+      }
+      state.providerActionPending = "approve-installation";
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const approval = await postJson(providerInstallationApprovalPath(provider.plugin_id), {
+          configuration: {
+            display_name: draft.displayName,
+            base_url: draft.baseUrl,
+          },
+          operator_note: draft.operatorNote || null,
+        });
+        state.providerMessage = {
+          kind: "good",
+          text: `Approved declarative install plan ${approval.approval_id}. Apply it to create controlled local provider inventory state.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function applyLatestProviderInstallationApproval() {
+      const provider = selectedProvider();
+      const approval = latestProviderInstallationApproval(provider);
+      if (!approval?.approval_id) {
+        state.providerMessage = {
+          kind: "bad",
+          text: "Approve a provider installation plan before applying it.",
+        };
+        renderInspector();
+        bindInteractiveElements();
+        return;
+      }
+      state.providerActionPending = "apply-installation";
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const job = await postJson(providerInstallationApplyPath(approval.approval_id), {});
+        state.providerMessage = {
+          kind: job.status === "SUCCEEDED" ? "good" : "bad",
+          text: `Apply job ${job.job_id} finished with ${job.status}. Provider inventory id: ${job.provider_instance_id || "none"}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function processQueuedInstallsForSelectedProvider() {
       const provider = selectedProvider();
       if (!provider?.plugin_id) {
@@ -8285,12 +8480,26 @@
         });
       });
 
+      document.querySelectorAll("[data-provider-apply-field]").forEach((control) => {
+        const key = control.dataset.providerApplyField;
+        const eventName = control.tagName === "SELECT" ? "change" : "input";
+        control.addEventListener(eventName, () => {
+          state.providerApplyDraft[key] = control.value;
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
       document.querySelectorAll("[data-provider-action]").forEach((button) => {
         button.addEventListener("click", () => {
           if (button.dataset.providerAction === "attach-bundle") {
             void attachBundleToSelectedProvider();
           } else if (button.dataset.providerAction === "queue-install") {
             void queueInstallForSelectedProvider();
+          } else if (button.dataset.providerAction === "approve-installation") {
+            void approveProviderInstallationPlan();
+          } else if (button.dataset.providerAction === "apply-installation") {
+            void applyLatestProviderInstallationApproval();
           } else if (button.dataset.providerAction === "process-installs") {
             void processQueuedInstallsForSelectedProvider();
           } else if (button.dataset.providerAction === "reload-bundles") {
