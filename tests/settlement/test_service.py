@@ -12,6 +12,7 @@ from aidn_hypervisor.settlement import (
     SettlementDispute,
     SettlementEngine,
     SettlementError,
+    SessionSettlementAcceptance,
     TerminalChargePolicy,
 )
 
@@ -188,6 +189,97 @@ def test_canonical_ledger_settlement_state_survives_restore() -> None:
     assert restored.wallet_q_atom_balance("wallet-consumer") == 0
     assert restored.wallet_q_atom_balance("wallet-endpoint") == 100
     assert restored.get_session_funding_account("session-1").funding_state == "RELEASED"
+
+
+def test_canonical_ledger_requires_exact_acceptance_before_cooperative_finalization() -> None:
+    ledger = LedgerOperationService()
+    funding = _funding(payment_reserve=100, fee_reserve=0)
+    ledger.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=100)
+    locked = ledger.lock_session_funding(funding)
+    terms = SettlementAccountingTerms(
+        accounting_contract_hash="sha256:contract-1",
+        accounting_mode="fixed_price",
+        components=[SettlementChargeComponent(component_id="fixed", fixed_amount_q_atoms=100)],
+    )
+    evaluation = SettlementEngine().evaluate_session(
+        funding=locked,
+        session_contract_hash="sha256:session-contract",
+        effective_terms_hash="sha256:effective-terms",
+        request_inputs=[_request(ceiling=100, dimensions=[])],
+        terms_by_hash={"sha256:contract-1": terms},
+        maximum_session_charge_q_atoms=100,
+        actual_network_fees_q_atoms=0,
+        session_close_reference="sha256:close",
+    )
+
+    ledger.propose_settlement(evaluation)
+    with pytest.raises(ValueError, match="acceptance"):
+        ledger.finalize_accepted_settlement(evaluation)
+    acceptance = SessionSettlementAcceptance(
+        settlement_id=evaluation.proposal.settlement_id,
+        session_id="session-1",
+        settlement_input_root=evaluation.proposal.settlement_input_root,
+        accepted_endpoint_payment_q_atoms=100,
+        accepted_consumer_refund_q_atoms=0,
+        accepted_network_fees_q_atoms=0,
+        consumer_signature="consumer-signature",
+        accepted_at="2026-07-18T00:01:00+00:00",
+    )
+
+    ledger.accept_settlement(acceptance)
+    finalized = ledger.finalize_accepted_settlement(evaluation)
+
+    assert finalized.funding_state == "RELEASED"
+    assert ledger.wallet_q_atom_balance("wallet-endpoint") == 100
+    assert [item["operation_type"] for item in ledger.list_operations()] == [
+        "SESSION_ESCROW_LOCK",
+        "SESSION_SETTLEMENT_PROPOSE",
+        "SESSION_SETTLEMENT_ACCEPT",
+        "SESSION_SETTLEMENT_FINALIZE",
+    ]
+
+
+def test_forced_fixed_price_settlement_requires_timeout_and_completed_evidence() -> None:
+    ledger = LedgerOperationService()
+    funding = _funding(payment_reserve=100, fee_reserve=0)
+    ledger.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=100)
+    locked = ledger.lock_session_funding(funding)
+    terms = SettlementAccountingTerms(
+        accounting_contract_hash="sha256:contract-1",
+        accounting_mode="fixed_price",
+        components=[SettlementChargeComponent(component_id="fixed", fixed_amount_q_atoms=100)],
+    )
+    evaluation = SettlementEngine().evaluate_session(
+        funding=locked,
+        session_contract_hash="sha256:session-contract",
+        effective_terms_hash="sha256:effective-terms",
+        request_inputs=[_request(ceiling=100, dimensions=[])],
+        terms_by_hash={"sha256:contract-1": terms},
+        maximum_session_charge_q_atoms=100,
+        actual_network_fees_q_atoms=0,
+        session_close_reference="sha256:close",
+    )
+
+    with pytest.raises(ValueError, match="timeout"):
+        ledger.force_finalize_fixed_price_settlement(
+            evaluation,
+            reason="CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE",
+            force_after="2026-07-18T00:01:00+00:00",
+            now="2026-07-18T00:00:59+00:00",
+        )
+    finalized = ledger.force_finalize_fixed_price_settlement(
+        evaluation,
+        reason="CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE",
+        force_after="2026-07-18T00:01:00+00:00",
+        now="2026-07-18T00:01:00+00:00",
+    )
+
+    assert finalized.funding_state == "RELEASED"
+    assert ledger.wallet_q_atom_balance("wallet-endpoint") == 100
+    assert [item["operation_type"] for item in ledger.list_operations()][-2:] == [
+        "SESSION_FORCED_SETTLEMENT",
+        "SESSION_SETTLEMENT_FINALIZE",
+    ]
 
 
 def test_request_charge_is_capped_and_excess_is_endpoint_absorbed() -> None:

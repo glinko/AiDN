@@ -153,6 +153,7 @@ We already have a working local hypervisor foundation:
 - accounting contracts now ship as deterministic registry-style objects with stable object IDs, payload hashes, pricing policy references, and Session-level object-reference preservation alongside local snapshots;
 - RFC-0051 now has a first canonical evidence core: four-state Usage Availability, dimension-specific Authority, Runtime Usage Profiles, pre-admission Contract/Profile compatibility, fixed and variable charge evaluation, signed RFC-0054 acknowledgments, durable conflict evidence and mandatory Final Usage before terminal Runtime transition;
 - RFC-0037 now has a canonical integer-`q_atoms` Settlement core with separate Endpoint Payment and Network Fee reserves, request-first charge records, terminal/fallback policy enforcement, Request/Session ceilings, Endpoint-absorbed excess, bounded dispute reserves, atomic conservation and Validation-zero evaluation; canonical escrow locks and settlement transitions now mutate persisted `q_atoms` wallet balances through idempotent Ledger operations, while Session Contract v2 explicitly binds Endpoint Payment and Consumer refund beneficiaries;
+- MVP-0001 now narrows the paid launch profile to one fixed-price Request per prepaid Session, Final Usage, canonical escrow, cooperative proposal/accept/finalize, and conservative timeout settlement; unsupported metered, multi-request and legacy float-Q bridge paths are explicit rather than implied;
 - canonical capability definitions now ship with stable definition hashes, and published endpoint advertisements now bind to projected feature, limit, and implementation profile hashes inside registry-visible canonical overlays;
 - canonical overlay and node advertisement payloads now also expose immutable local Registry Object envelopes for capability definitions, endpoint profiles, and accounting contracts, giving later persistence and replication work a stable object identity layer to build on;
 - registry-backed object views now support deduplicated `object_id` lookup, filtered listing, durable local snapshot persistence, and a versioned local completeness summary over the standalone store, while manifest identity, retention policy enforcement, and replication remain the next gaps;
@@ -424,7 +425,7 @@ Order of work right now:
 1. Close the operator bootstrap loop from `install -> wallet ownership -> provider attach -> model/bundle setup -> first endpoint publish`
 2. Make endpoint management the primary operator object, including privacy mode, publication mode, and validation as separate actions
 3. Finish migrating the operator shell onto the endpoint-first trust layer, so publish/proof/sync state are first-class controls across `Home`, `Endpoints`, and later marketplace flows
-4. Stitch `M4` session settlement events into the wallet/export layer, so paid endpoint economics and future on-chain settlement share one replay-safe ledger
+4. Bridge the public Session API to `MVP-0001` canonical funding and settlement inputs, then add the end-to-end paid-session smoke flow
 5. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
 6. Finish the remaining `M3/M4` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
 7. Define `M5` rating, validation economics, and `M6` custom model onboarding contracts around the endpoint-centric operator experience
@@ -445,6 +446,7 @@ Order of work right now:
 - Validation escrow system: [docs/product/RFC-0035-validation-escrow-system.md](./docs/product/RFC-0035-validation-escrow-system.md)
 - Ledger state machine: [docs/product/RFC-0036-aidn-ledger-state-machine.md](./docs/product/RFC-0036-aidn-ledger-state-machine.md)
 - Settlement engine: [docs/product/RFC-0037-settlement-engine.md](./docs/product/RFC-0037-settlement-engine.md)
+- Economic MVP profile: [docs/product/MVP-0001-economic-execution-profile.md](./docs/product/MVP-0001-economic-execution-profile.md)
 - Ledger operation catalog: [docs/product/RFC-0059-ledger-operation-catalog.md](./docs/product/RFC-0059-ledger-operation-catalog.md)
 - Usage reporting and verification: [docs/product/RFC-0051-usage-reporting-and-verification-protocol.md](./docs/product/RFC-0051-usage-reporting-and-verification-protocol.md)
 - Capability runtime specification: [docs/product/RFC-0053-capability-runtime-specification.md](./docs/product/RFC-0053-capability-runtime-specification.md)

@@ -395,6 +395,38 @@ class HypervisorService:
         self._persist_state()
         return funding
 
+    def propose_settlement(self, evaluation, *, created_at: str | None = None):
+        proposal = self._ledger_operation_service.propose_settlement(
+            evaluation,
+            created_at=created_at,
+        )
+        self._persist_state()
+        return proposal
+
+    def accept_settlement(self, acceptance, *, created_at: str | None = None):
+        accepted = self._ledger_operation_service.accept_settlement(
+            acceptance,
+            created_at=created_at,
+        )
+        self._persist_state()
+        return accepted
+
+    def finalize_accepted_settlement(self, evaluation, *, created_at: str | None = None):
+        funding = self._ledger_operation_service.finalize_accepted_settlement(
+            evaluation,
+            created_at=created_at,
+        )
+        self._persist_state()
+        return funding
+
+    def force_finalize_fixed_price_settlement(self, evaluation, **kwargs):
+        funding = self._ledger_operation_service.force_finalize_fixed_price_settlement(
+            evaluation,
+            **kwargs,
+        )
+        self._persist_state()
+        return funding
+
     def record_ledger_operation(
         self,
         *,
@@ -3081,6 +3113,12 @@ class HypervisorService:
             wallet_q_atom_balances=dict(snapshot.wallet_q_atom_balances),
             session_funding_accounts=[
                 item.model_dump(mode="json") for item in snapshot.session_funding_accounts
+            ],
+            settlement_proposals=[
+                item.model_dump(mode="json") for item in snapshot.settlement_proposals
+            ],
+            settlement_acceptances=[
+                item.model_dump(mode="json") for item in snapshot.settlement_acceptances
             ],
             settlement_transition_hashes=dict(snapshot.settlement_transition_hashes),
         )

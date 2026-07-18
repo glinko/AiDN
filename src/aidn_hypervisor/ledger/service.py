@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from aidn_hypervisor.ledger.models import LedgerOperationRecord, LedgerOperationResult
 from aidn_hypervisor.settlement.models import (
     SessionFundingAccount,
+    SessionSettlementAcceptance,
+    SessionSettlementProposal,
     SettlementEvaluation,
 )
 
@@ -42,6 +44,8 @@ class LedgerOperationService:
         self._wallet_next_sequences: dict[str, int] = {}
         self._wallet_q_atom_balances: dict[str, int] = {}
         self._session_funding_accounts: dict[str, SessionFundingAccount] = {}
+        self._settlement_proposals: dict[str, SessionSettlementProposal] = {}
+        self._settlement_acceptances: dict[str, SessionSettlementAcceptance] = {}
         self._settlement_transition_hashes: dict[str, str] = {}
         self._next_sequence_id = 1
 
@@ -57,6 +61,151 @@ class LedgerOperationService:
 
     def get_session_funding_account(self, session_id: str) -> SessionFundingAccount:
         return self._session_funding_accounts[session_id]
+
+    def get_settlement_proposal(self, settlement_id: str) -> SessionSettlementProposal:
+        return self._settlement_proposals[settlement_id]
+
+    def propose_settlement(
+        self,
+        evaluation: SettlementEvaluation,
+        *,
+        created_at: str | None = None,
+    ) -> SessionSettlementProposal:
+        proposal = evaluation.proposal
+        funding = self.get_session_funding_account(proposal.session_id)
+        if evaluation.input_set.funding_state_reference != funding.funding_state_hash:
+            raise ValueError("Settlement input does not match current funding state")
+        existing = self._settlement_proposals.get(proposal.settlement_id)
+        if existing is not None:
+            if existing.model_dump(mode="json") != proposal.model_dump(mode="json"):
+                raise ValueError("conflicting Settlement proposal")
+            return existing
+        self.record_operation(
+            operation_type="SESSION_SETTLEMENT_PROPOSE",
+            origin_type="multi_party",
+            fee_class="session",
+            initiator_id=proposal.session_id,
+            fee_payer=funding.consumer_funding_account,
+            payload={
+                "settlement_id": proposal.settlement_id,
+                "session_id": proposal.session_id,
+                "settlement_input_root": proposal.settlement_input_root,
+                "endpoint_payment_q_atoms": proposal.final_endpoint_payment_q_atoms,
+                "consumer_refund_q_atoms": (
+                    proposal.consumer_payment_refund_q_atoms
+                    + proposal.consumer_fee_refund_q_atoms
+                ),
+                "network_fees_q_atoms": proposal.actual_network_fees_q_atoms,
+                "dispute_reserve_q_atoms": proposal.dispute_reserve_q_atoms,
+            },
+            created_at=created_at,
+            emitted_events=["SessionSettlementProposed"],
+        )
+        self._settlement_proposals[proposal.settlement_id] = proposal
+        return proposal
+
+    def accept_settlement(
+        self,
+        acceptance: SessionSettlementAcceptance,
+        *,
+        created_at: str | None = None,
+    ) -> SessionSettlementAcceptance:
+        proposal = self.get_settlement_proposal(acceptance.settlement_id)
+        if (
+            acceptance.session_id != proposal.session_id
+            or acceptance.settlement_input_root != proposal.settlement_input_root
+            or acceptance.accepted_endpoint_payment_q_atoms
+            != proposal.final_endpoint_payment_q_atoms
+            or acceptance.accepted_consumer_refund_q_atoms
+            != proposal.consumer_payment_refund_q_atoms + proposal.consumer_fee_refund_q_atoms
+            or acceptance.accepted_network_fees_q_atoms
+            != proposal.actual_network_fees_q_atoms
+        ):
+            raise ValueError("Settlement acceptance does not match proposal")
+        existing = self._settlement_acceptances.get(acceptance.settlement_id)
+        if existing is not None:
+            if existing.acceptance_hash != acceptance.acceptance_hash:
+                raise ValueError("conflicting Settlement acceptance")
+            return existing
+        funding = self.get_session_funding_account(proposal.session_id)
+        self.record_operation(
+            operation_type="SESSION_SETTLEMENT_ACCEPT",
+            origin_type="multi_party",
+            fee_class="session",
+            initiator_id=proposal.session_id,
+            fee_payer=funding.consumer_funding_account,
+            payload={
+                "settlement_id": proposal.settlement_id,
+                "session_id": proposal.session_id,
+                "settlement_input_root": proposal.settlement_input_root,
+                "acceptance_hash": acceptance.acceptance_hash,
+            },
+            created_at=created_at,
+            emitted_events=["SessionSettlementAccepted"],
+        )
+        self._settlement_acceptances[acceptance.settlement_id] = acceptance
+        return acceptance
+
+    def finalize_accepted_settlement(
+        self,
+        evaluation: SettlementEvaluation,
+        *,
+        created_at: str | None = None,
+    ) -> SessionFundingAccount:
+        proposal = self.get_settlement_proposal(evaluation.proposal.settlement_id)
+        if proposal.model_dump(mode="json") != evaluation.proposal.model_dump(mode="json"):
+            raise ValueError("Settlement evaluation does not match proposal")
+        if proposal.settlement_id not in self._settlement_acceptances:
+            raise ValueError("Settlement acceptance is required")
+        return self.apply_settlement_evaluation(evaluation, created_at=created_at)
+
+    def force_finalize_fixed_price_settlement(
+        self,
+        evaluation: SettlementEvaluation,
+        *,
+        reason: str,
+        force_after: str,
+        now: str | None = None,
+        created_at: str | None = None,
+    ) -> SessionFundingAccount:
+        current_time = datetime.fromisoformat(now) if now else datetime.now(timezone.utc)
+        deadline = datetime.fromisoformat(force_after)
+        if current_time < deadline:
+            raise ValueError("forced Settlement timeout has not elapsed")
+        proposal = evaluation.proposal
+        records = evaluation.input_set.request_settlement_records
+        if reason == "ENDPOINT_UNAVAILABLE":
+            if proposal.final_endpoint_payment_q_atoms != 0:
+                raise ValueError("unavailable Endpoint requires a zero-payment Settlement")
+        elif reason == "CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE":
+            if not records or any(
+                record.terminal_state != "COMPLETED"
+                or record.dispute_state != "NONE"
+                or record.final_usage_report_hash is None
+                or any(component.dimension_id is not None for component in record.billable_components)
+                for record in records
+            ):
+                raise ValueError("forced payment requires completed fixed-price evidence")
+        else:
+            raise ValueError("unsupported forced Settlement reason")
+        funding = self.get_session_funding_account(proposal.session_id)
+        self.record_operation(
+            operation_type="SESSION_FORCED_SETTLEMENT",
+            origin_type="evidence_triggered",
+            fee_class="session",
+            initiator_id=proposal.session_id,
+            fee_payer=funding.consumer_funding_account,
+            payload={
+                "settlement_id": proposal.settlement_id,
+                "session_id": proposal.session_id,
+                "settlement_input_root": proposal.settlement_input_root,
+                "reason": reason,
+                "force_after": force_after,
+            },
+            created_at=created_at or current_time.isoformat(),
+            emitted_events=["SessionForcedSettlementAuthorized"],
+        )
+        return self.apply_settlement_evaluation(evaluation, created_at=created_at)
 
     def lock_session_funding(
         self,
@@ -343,6 +492,14 @@ class LedgerOperationService:
                 account.model_dump(mode="json")
                 for account in self._session_funding_accounts.values()
             ],
+            "settlement_proposals": [
+                proposal.model_dump(mode="json")
+                for proposal in self._settlement_proposals.values()
+            ],
+            "settlement_acceptances": [
+                acceptance.model_dump(mode="json")
+                for acceptance in self._settlement_acceptances.values()
+            ],
             "settlement_transition_hashes": dict(self._settlement_transition_hashes),
         }
 
@@ -353,6 +510,8 @@ class LedgerOperationService:
         wallet_sequences: dict[str, int],
         wallet_q_atom_balances: dict[str, int] | None = None,
         session_funding_accounts: list[dict] | None = None,
+        settlement_proposals: list[dict] | None = None,
+        settlement_acceptances: list[dict] | None = None,
         settlement_transition_hashes: dict[str, str] | None = None,
     ) -> None:
         self._operations = [LedgerOperationRecord(**item).model_dump(mode="json") for item in operations]
@@ -371,6 +530,20 @@ class LedgerOperationService:
         self._settlement_transition_hashes = {
             str(key): str(value)
             for key, value in (settlement_transition_hashes or {}).items()
+        }
+        self._settlement_proposals = {
+            proposal.settlement_id: proposal
+            for proposal in (
+                SessionSettlementProposal.model_validate(item)
+                for item in (settlement_proposals or [])
+            )
+        }
+        self._settlement_acceptances = {
+            acceptance.settlement_id: acceptance
+            for acceptance in (
+                SessionSettlementAcceptance.model_validate(item)
+                for item in (settlement_acceptances or [])
+            )
         }
         self._next_sequence_id = (
             max((int(item["sequence_id"]) for item in self._operations), default=0) + 1
