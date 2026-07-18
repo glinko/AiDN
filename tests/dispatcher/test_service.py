@@ -492,3 +492,46 @@ def test_session_lifecycle_rotates_on_activation_and_revokes_on_close() -> None:
     assert "SESSION_DATA" in active.allowed_channel_classes
     assert closed is not None and closed.route_generation == 3
     assert closed.route_state == "REVOKED"
+
+
+def test_dispatcher_derives_priority_from_message_policy() -> None:
+    delivered: list[str] = []
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="rev-1",
+    )
+    route = DispatcherRoute(
+        destination_type="SESSION",
+        destination_id="sess-1",
+        route_type="LOCAL_PROTOCOL_HANDLER",
+        route_generation=1,
+        allowed_source_types={"CONSUMER_SESSION"},
+        allowed_channel_classes={"SESSION_CONTROL", "SESSION_DATA"},
+        allowed_message_types={"SESSION_CLOSE", "SESSION_REQUEST"},
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    dispatcher.register_local_route(route, lambda payload: delivered.append(payload["kind"]))
+    request = _message(
+        message_id="interactive-request",
+        channel_class="SESSION_DATA",
+        message_type="SESSION_REQUEST",
+        payload={"kind": "request"},
+        source_subject={"subject_type": "CONSUMER_SESSION", "subject_id": "sess-1"},
+        destination_subject={"subject_type": "SESSION", "subject_id": "sess-1"},
+    )
+    close = _message(
+        message_id="close-priority",
+        channel_class="SESSION_CONTROL",
+        message_type="SESSION_CLOSE",
+        payload={"kind": "close"},
+        source_subject={"subject_type": "CONSUMER_SESSION", "subject_id": "sess-1"},
+        destination_subject={"subject_type": "SESSION", "subject_id": "sess-1"},
+    )
+    dispatcher.submit(request)
+    dispatcher.submit(close)
+
+    dispatcher.drain_once()
+    dispatcher.drain_once()
+
+    assert delivered == ["close", "request"]

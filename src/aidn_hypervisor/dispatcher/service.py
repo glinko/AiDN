@@ -134,7 +134,8 @@ class NetworkDispatcher:
     def drain_once(self) -> tuple[DeliveryRecord, object] | None:
         if not self._queue:
             return None
-        message = self._queue.popleft()
+        message = min(self._queue, key=self._queue_priority)
+        self._queue.remove(message)
         self.store.queued_messages.pop(message.message_id, None)
         record = self._delivery_records[message.message_id]
         try:
@@ -292,3 +293,31 @@ class NetworkDispatcher:
     @staticmethod
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _queue_priority(message: NetworkMessage) -> tuple[int, str, int]:
+        """Apply protocol-derived priority, preserving FIFO within each class."""
+        ranks = {
+            "CRITICAL_CONTROL": 0,
+            "HIGH": 1,
+            "INTERACTIVE": 2,
+            "NORMAL": 3,
+            "BULK": 4,
+            "BACKGROUND": 5,
+        }
+        policy_priority = {
+            "SESSION_CLOSE": "HIGH",
+            "SESSION_CANCELLATION": "HIGH",
+            "SESSION_DEPOSIT_EXTENSION": "HIGH",
+            "SESSION_REQUEST": "INTERACTIVE",
+            "SESSION_RESPONSE_STREAM": "INTERACTIVE",
+            "SESSION_CAPABILITY_EVENT": "INTERACTIVE",
+            "REGISTRY_REPLICATION": "BULK",
+            "REGISTRY_SNAPSHOT_TRANSFER": "BACKGROUND",
+        }.get(message.message_type, "NORMAL")
+        # The envelope cannot elevate its own priority above protocol policy.
+        return (
+            ranks[policy_priority],
+            message.created_at,
+            message.source_sequence,
+        )

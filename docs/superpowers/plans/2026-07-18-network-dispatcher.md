@@ -56,6 +56,11 @@ Session is active; Session lifecycle rotation and closure advance or revoke the
 route generation. Runtime execution and transport adapters remain separate
 integration work.
 
+Progress 2026-07-18: Dispatcher scheduling now derives effective priority from
+message profile rather than trusting a sender-supplied label. Session close and
+cancellation control preempt interactive Session data, while Registry transfer
+profiles remain bulk or background traffic.
+
 ## Current Boundary
 
 The repository currently has application services and an in-process Validation
