@@ -2,15 +2,15 @@
 
 Status: `Draft`
 
-Version: `0.4`
+Version: `0.5`
 
-Revision note: Runtime Protocol remains independent of Plugin management. A
-Plugin-provided Runtime Adapter is one valid Runtime implementation and receives
-its own Runtime Identity and `RUNTIME` route after Hypervisor approval.
+Revision note: Runtime handshake, registration and recovery now bind Runtime
+Generation, Runtime Configuration Hash, Runtime Binding Hash, Route Generation
+and the dimension-specific Runtime Usage Profile.
 
 Supersedes:
 
-- `RFC-0054 Version 0.3`
+- `RFC-0054 Version 0.4`
 
 Depends on:
 
@@ -35,7 +35,7 @@ The Runtime Protocol enables an independent Runtime Service to:
 
 - register with a Hypervisor;
 - advertise its Capability;
-- publish Endpoint definitions;
+- provide execution metadata for Hypervisor-controlled Endpoint drafts;
 - accept and execute Sessions;
 - stream results;
 - report usage;
@@ -168,7 +168,10 @@ Every Runtime SHALL have a unique Runtime Identity.
 runtime_identity:
   runtime_id:
   runtime_public_key:
+  runtime_generation:
+  runtime_configuration_hash:
   capability_id:
+  capability_definition_hash:
   runtime_version:
   runtime_protocol_version:
 ```
@@ -492,14 +495,20 @@ Required payload:
 register_runtime:
   runtime_id:
   runtime_public_key:
+  runtime_generation:
+  runtime_configuration_hash:
+  runtime_binding_hash:
   capability_id:
   capability_version:
+  capability_definition_hash:
   runtime_version:
   runtime_protocol_version:
   supported_features:
+  runtime_usage_profile_hash:
+  requested_route_scope:
+  recovery_state_hash:
   deployment_metadata:
   health_status:
-  endpoint_generation_mode:
 ```
 
 Registration SHALL be signed by the Runtime Identity.
@@ -520,8 +529,14 @@ A successful response includes:
 runtime_registered:
   connection_id:
   hypervisor_id:
+  runtime_id:
+  runtime_generation:
+  runtime_binding_hash:
+  route_generation:
   accepted_capability_version:
   accepted_features:
+  accepted_runtime_usage_profile_hash:
+  granted_route_scope:
   heartbeat_policy:
   session_limits:
   endpoint_policy:
@@ -1318,6 +1333,9 @@ A disconnected Runtime MAY reconnect using the same Runtime Identity.
 The Runtime SHALL present:
 
 - previous Runtime ID;
+- Runtime Generation;
+- Runtime Configuration Hash;
+- previous Route Generation;
 - new connection ID request;
 - last synchronized state hash;
 - active Session summary;
@@ -1345,6 +1363,10 @@ For each Session:
 ```yaml
 runtime_session_recovery:
   session_id:
+  runtime_id:
+  runtime_generation:
+  route_generation:
+  state_generation:
   runtime_session_state:
   active_request_id:
   active_request_state:
@@ -1368,6 +1390,10 @@ The Hypervisor responds per Session:
 The Hypervisor remains authoritative for protocol-level Session state.
 
 The Runtime remains authoritative only for its recoverable execution context.
+
+Connection or route recovery SHALL NOT infer a compatible Runtime Generation.
+Any generation or Configuration Hash conflict requires explicit migration,
+rejection or Session failure handling.
 
 ## 72. Runtime Replacement
 

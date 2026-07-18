@@ -2,15 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.3`
+Version: `0.4`
 
-Revision note: Session recovery may consume Dispatcher delivery records and an
-RFC-0054 Runtime recovery snapshot. Plugin Manager reconciliation remains local
-management evidence and cannot independently resume or settle a Session.
+Revision note: Session recovery compares Runtime Generation, State Generation
+and Route Generation independently before resuming execution.
 
 Supersedes:
 
-- `RFC-0060 Version 0.2`
+- `RFC-0060 Version 0.3`
 
 Depends on:
 
@@ -562,9 +561,16 @@ also reconcile Plugin management state under RFC-0056. That reconciliation does
 not replace the Runtime recovery state required by RFC-0054.
 
 The Runtime recovery snapshot SHOULD identify Runtime ID, current Dispatcher
-Route Generation, active and recoverable Request IDs, last event sequence, Usage
-chain head and provider-connection state. It is evidence for the Session
-recovery decision, not authority to alter accepted Session terms.
+Route Generation, Runtime Generation, Runtime Configuration Hash, State
+Generation, active Request mappings, stream position and Usage chain head.
+
+A Route Generation change alone MAY resume the same compatible Runtime lineage.
+A Runtime Generation, Configuration Hash or State Generation mismatch SHALL
+require explicit migration evidence or fail recovery. Plugin Manager
+reconciliation is management evidence and cannot independently resume or settle
+a Session.
+The snapshot is evidence for the Session recovery decision, not authority to
+alter accepted Session terms.
 
 ## 29. Runtime Replacement
 

@@ -1475,9 +1475,24 @@ class ProviderInventoryService:
             capability_definition_hash=capability_definition_hash,
         )
         runtime_binding_id = f"rtb-{logical_suffix}"
+        runtime_id = f"runtime-{logical_suffix}"
         compatibility_bundle_id = f"bundle-{runtime_binding_id}"
+        manifest = ProviderPluginManifest.model_validate(plugin.plugin_manifest())
+        installed_plugin = next(
+            (
+                item
+                for item in self.store.list_installed_plugins()
+                if item.plugin_id == instance.plugin_id
+                and item.plugin_version == manifest.plugin_version
+                and item.state in {"INSTALLED", "ACTIVE"}
+            ),
+            None,
+        )
         binding = RuntimeBinding(
             runtime_binding_id=runtime_binding_id,
+            runtime_id=runtime_id,
+            runtime_generation=1,
+            implementation_class="PLUGIN_MANAGED",
             provider_instance_id=instance.provider_instance_id,
             model_deployment_id=deployment.model_deployment_id,
             capability_id=projection.get("capability_id", capability_id),
@@ -1487,6 +1502,26 @@ class ProviderInventoryService:
                 capability_definition_hash,
             ),
             plugin_id=instance.plugin_id,
+            installed_plugin_id=(
+                installed_plugin.installed_plugin_id
+                if installed_plugin is not None
+                else None
+            ),
+            plugin_version=manifest.plugin_version,
+            adapter_id=projection.get("adapter_id"),
+            adapter_version=projection.get("adapter_version"),
+            supported_features=list(projection.get("supported_features") or []),
+            supported_modalities=list(projection.get("supported_modalities") or []),
+            supported_accounting_modes=list(
+                projection.get("supported_accounting_modes") or []
+            ),
+            usage_reporting_profile_hash=projection.get(
+                "usage_reporting_profile_hash"
+            ),
+            dispatcher_route_scope={
+                "channel_class": "RUNTIME",
+                "runtime_id": runtime_id,
+            },
             compatibility_bundle_id=compatibility_bundle_id,
             status=projection.get("status", "ready"),
         )

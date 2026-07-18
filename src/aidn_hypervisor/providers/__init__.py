@@ -7,6 +7,8 @@ from aidn_hypervisor.providers.models import (
     ProviderInstance,
     ProviderPluginManifest,
     RuntimeBinding,
+    RuntimeIdentity,
+    RuntimeInstance,
     plugin_permission_hash,
 )
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
@@ -20,6 +22,8 @@ __all__ = [
     "ModelArtifact",
     "ModelArtifactSet",
     "RuntimeBinding",
+    "RuntimeIdentity",
+    "RuntimeInstance",
     "plugin_permission_hash",
     "InMemoryProviderInventoryStore",
 ]

@@ -23,6 +23,8 @@ from aidn_hypervisor.providers.models import (
     ProviderInstance,
     ProviderPluginManifest,
     RuntimeBinding,
+    RuntimeIdentity,
+    RuntimeInstance,
     plugin_permission_hash,
 )
 
@@ -188,6 +190,61 @@ def test_runtime_binding_requires_primary_capability() -> None:
             assert field_name in str(exc)
         else:
             raise AssertionError("expected ValidationError")
+
+
+def test_runtime_binding_separates_configuration_identity_from_lifecycle() -> None:
+    binding = RuntimeBinding(
+        runtime_binding_id="rb-1",
+        runtime_id="runtime-1",
+        runtime_generation=3,
+        provider_instance_id="pi-1",
+        model_deployment_id="md-1",
+        capability_id="llm.chat",
+        capability_version="2.1",
+        capability_definition_hash="cap-hash",
+        plugin_id="aidn.provider.fake",
+        plugin_version="1.2.0",
+        adapter_id="adapter.chat",
+        adapter_version="4",
+        compatibility_bundle_id="bundle-rb-1",
+        status="ready",
+    )
+
+    assert binding.runtime_configuration_hash.startswith("sha256:")
+    degraded = RuntimeBinding.model_validate(
+        {
+            **binding.model_dump(mode="json"),
+            "status": "degraded",
+            "operational_state": "DEGRADED",
+        }
+    )
+    assert degraded.binding_hash() == binding.binding_hash()
+    assert binding.runtime_id != binding.runtime_binding_id
+
+
+def test_runtime_identity_and_instance_are_distinct() -> None:
+    identity = RuntimeIdentity(
+        runtime_id="runtime-1",
+        runtime_owner="operator-1",
+        operator_hypervisor_id="hypervisor-1",
+        implementation_class="PLUGIN_MANAGED",
+        runtime_generation=2,
+        capability_id="llm.chat",
+        capability_major_version=2,
+        runtime_configuration_hash="sha256:configuration",
+    )
+    instance = RuntimeInstance(
+        runtime_id=identity.runtime_id,
+        runtime_generation=identity.runtime_generation,
+        instance_id="instance-9",
+        runtime_binding_hash="sha256:binding",
+        execution_host_id="host-1",
+        started_at="2026-07-18T00:00:00Z",
+        operational_state="STARTING",
+    )
+
+    assert instance.instance_id != identity.runtime_id
+    assert instance.runtime_generation == identity.runtime_generation
 
 
 def test_model_deployment_tracks_metadata_sources() -> None:

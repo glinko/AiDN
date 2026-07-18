@@ -4,15 +4,14 @@ Provider Plugin System and Directory
 
 Status: Draft
 
-Version: 0.20
+Version: 0.21
 
-Revision note: binds Installed Plugin activation to Installation Generation and
-an installation-specific local identity. Detailed control-plane RPC, operations
-and Runtime Adapter registration are delegated to RFC-0056.
+Revision note: Runtime Binding identity and hashing are delegated to RFC-0053;
+Plugins only propose Provider/model/Adapter configuration and required scope.
 
 Supersedes:
 
-* RFC-0055 Version 0.19
+* RFC-0055 Version 0.20
 
 Depends on:
 
@@ -142,8 +141,15 @@ A Model Deployment is not yet a published AiDN Endpoint.
 
 ## 6. Runtime Binding
 
-A Runtime Binding is the AiDN-facing execution binding created from one Model
-Deployment and one primary Capability contract.
+A Runtime Binding is the RFC-0053 AiDN-facing configuration connecting one
+execution backend to one Runtime ID and primary Capability contract. The Plugin
+may propose Provider Instance, Model Deployment, Adapter, features, Usage and
+resource profiles. The Hypervisor approves Runtime ID, Runtime Generation,
+canonical Configuration Hash and Dispatcher scope.
+
+Current `route_generation` is not part of the Runtime Binding. It belongs to
+the active RFC-0042 route and may change after reconnect without changing the
+Binding Hash.
 
 Endpoint drafting and publication SHALL begin only after a Runtime Binding or
 equivalent normalized execution surface exists.

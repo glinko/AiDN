@@ -204,23 +204,24 @@ What is still missing in the current stage:
   - a canonical local ledger-operation stream now exists for Faucet, session, validation, endpoint lifecycle, endpoint Advertisement and Offer publication, epoch transition, and faucet reward mint flows;
   - but there is still no finalized evidence replay-protection registry, full operation-by-operation consensus execution engine, or complete `SESSION_FORCE_SETTLE` and enforcement implementation.
 - implementation of `RFC-0053` is still pending beyond current runtime abstractions:
-  - the repo already has provider adapters, subprocess-backed runtime lifecycle, endpoint/session orchestration, and local runtime health surfaces;
-  - but Runtime identity, formal one-capability-per-Runtime boundaries, explicit Runtime authorization, Runtime ownership separation, and conformance-targeted Runtime service contracts are not yet implemented as one canonical layer.
+  - the repo now has canonical Runtime IDs separate from Runtime Binding IDs and Instance IDs, explicit Runtime Generation, deterministic Runtime Configuration and Binding hashes, implementation classes, Plugin/Provider/Model/Adapter provenance, and Dispatcher checks that reject stale Runtime and Route Generations;
+  - existing snapshots remain compatibility-loaded as Runtime Generation 1, and current bundle execution remains a transitional projection;
+  - Runtime Instance persistence, full readiness/Health profiles, one-capability conformance, state generation, Runtime verification and authenticated execution-plane registration remain to be implemented.
 - implementation of `RFC-0054` is still pending beyond current runtime adapters and local lifecycle hooks:
   - the repo already has subprocess-backed runtime lifecycle, provider execution adapters, local health/status surfaces, and endpoint/session orchestration;
   - but there is still no finalized standalone Runtime Protocol with authenticated registration, negotiated features, canonical message envelopes, reconnect/recovery handshakes, or full Hypervisor-to-Runtime streaming and usage-report contracts matching one shared RFC.
 - implementation of `RFC-0055` and `RFC-0056` is now partially implemented:
   - the repo now has first-class Provider Plugin metadata, immutable Plugin Release records, package-bound local Installed Plugin approval records with deterministic permission hashes and Installation Generation, Provider Instance and Model Deployment inventory, Runtime Binding objects, declarative install/attach schemas, Installation Recipes, approval/apply job records, permission/sandbox upgrade acknowledgement, sandbox-policy binding, executor-declared sandbox boundary compatibility, runtime-binding-to-bundle compatibility projection, model discovery, Runtime Binding creation, Endpoint draft handoff from the Provider workspace, controlled local artifact staging, bounded staged-archive extraction, shared immutable Model Artifact Store promotion/deduplication, multi-file Model Artifact Sets, deployment binding, reference-aware removal, explicit fail-closed grace-period garbage collection, `model-artifact://` provider-volume materialization, and persisted per-Provider-Instance Artifact Set materialization records;
-  - RFC-0056 v0.3 now defines staged Plugin Host conformance, install-specific local authentication, one RFC-0042 envelope, persistent Plugin Operations and a separate RFC-0054 Runtime Adapter identity;
+  - RFC-0056 v0.4 now defines staged Plugin Host conformance, install-specific local authentication, one RFC-0042 envelope, persistent Plugin Operations and an RFC-0053-bound, separately authenticated RFC-0054 Runtime Adapter identity;
   - Release registration records signed metadata only. It does not download, unpack, load or execute a package. Existing in-process adapters remain explicitly transitional and must not be represented as sandboxed community packages;
   - but a content-addressed Package Store that verifies downloaded bytes, Registry `plugin` Directory replication, external Plugin Host/Local IPC, OCI/container lifecycle, full plugin update/removal/security response and RFC-0056 execution-plane conformance remain unimplemented.
 
 Immediate priorities:
-1. Add Model Deployment artifact-materialization readiness and enforce it at Runtime Binding or Endpoint Draft admission without breaking deployments that do not require artifact sets.
-2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
-3. Add a content-addressed Plugin Package Store and verify downloaded bytes before any package activation; then project signed Release metadata into the Registry `plugin` namespace.
-4. Replace in-process community plugin loading with a scoped Plugin Host and Local IPC contract before enabling shell, container, download or package-manager executors.
-5. Continue migrating older bundle-centric affordances onto `plugin -> provider instance -> model deployment -> runtime binding -> endpoint`, using bundle projection only as compatibility execution plumbing.
+1. Implement RFC-0054 authenticated Runtime registration/reconnect using Runtime ID, Runtime Generation, Configuration Hash, Binding Hash, Usage Profile and granted Route Generation.
+2. Add Model Deployment artifact-materialization readiness and enforce it at Runtime Binding or Endpoint Draft admission without breaking deployments that do not require artifact sets.
+3. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
+4. Add a content-addressed Plugin Package Store and verify downloaded bytes before any package activation; then project signed Release metadata into the Registry `plugin` namespace.
+5. Replace in-process community plugin loading with a scoped Plugin Host and Local IPC contract before enabling shell, container, download or package-manager executors.
 
 ## Milestones
 

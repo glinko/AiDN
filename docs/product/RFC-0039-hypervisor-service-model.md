@@ -4,12 +4,11 @@ Hypervisor Service Model
 
 Status: Draft
 
-Version: 0.3
+Version: 0.4
 
-Revision note: every Hypervisor includes the RFC-0042 Network Dispatcher as a
-mandatory trusted control-plane component. Services, Runtimes and Provider
-Plugins attach through scoped local routes; route, delivery, replay and Dead
-Letter state participate in Hypervisor recovery.
+Revision note: the Hypervisor local inventory separates Runtime Binding,
+Runtime Instance and active Dispatcher route state while retaining the Network
+Dispatcher as the mandatory trusted control-plane boundary.
 
 Depends on:
 
@@ -251,6 +250,12 @@ that are not themselves public network Service identities:
 * Provider Instance;
 * Model Deployment;
 * Runtime Binding.
+
+Runtime identity and Runtime Binding are durable local control-plane state.
+Runtime Instances and transport connections are separate operational state. A
+restart may replace an Instance without changing Runtime identity; incompatible
+recreation advances Runtime Generation. Dispatcher Route Generation advances
+independently and SHALL NOT be embedded in the Runtime Binding Hash.
 
 These entities are Hypervisor-local execution and onboarding objects.
 

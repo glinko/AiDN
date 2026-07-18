@@ -4,39 +4,25 @@ AiDN Hypervisor Network Protocol and Dispatcher Architecture
 
 Status: Draft
 
-Version: 0.4
+Version: 0.5
 
-Revision note: `PLUGIN_CONTROL` uses the common RFC-0042 envelope for Plugin
-Host handshake and management payloads. Installed Plugin identity and object
-scope are authorized without creating a second message or replay layer.
+Revision note: application protocols extend the Dispatcher through authorized
+profiles rather than becoming dependencies of the transport foundation. Runtime
+routes bind both Runtime Generation and independently mutable Route Generation.
 
 Supersedes:
 
-* RFC-0042 Version 0.3 - AiDN Hypervisor Network Protocol and Dispatcher Architecture
+* RFC-0042 Version 0.4 - AiDN Hypervisor Network Protocol and Dispatcher Architecture
 
 Depends on:
 
 * RFC-0036 AiDN Ledger State Machine
 * RFC-0039 Hypervisor Service Model
-* RFC-0040 AiDN Service Verification Framework
-* RFC-0044 AiDN Session Protocol
-* RFC-0045 AiDN Capability Architecture
-* RFC-0046 Registry Architecture
-* RFC-0047 CometBFT Consensus Integration
-* RFC-0048 Epoch Engine
-* RFC-0049 Distributed Marketplace and Advertisement Registry
-* RFC-0053 Capability Runtime Specification
-* RFC-0054 Capability Runtime Protocol
-* RFC-0055 Provider Plugin System and Directory
-* RFC-0058 Participant Eligibility and Sybil Resistance
-* RFC-0059 Ledger Operation Catalog
-* RFC-0060 Session Failure, Recovery and Forced Settlement
-* RFC-0061 Registry Replication Protocol
-* RFC-0062 Snapshot and State Sync Protocol
-* RFC-0063 Proxy Endpoint Protocol
-* RFC-0064 Validation Assignment, Concealed Session and Escrow Protocol
-* RFC-0066 Protocol Upgrade and Emergency Recovery
-* RFC-0067 Protocol Governance and Authorization Policy
+
+Extended by:
+
+* RFC-0040 through RFC-0067 application, consensus, Registry, Runtime,
+  Session, Validation, Plugin, recovery and upgrade profiles as applicable.
 
 ---
 
@@ -2762,6 +2748,19 @@ separate implementation slices, but SHALL invoke the same ingress pipeline.
 * Provider Plugins cannot impersonate Services, Wallets or Validators.
 * Dead Letter messages are not automatically replayed.
 * Connection recovery does not invent Session or economic state.
+
+## 184. Runtime Route Binding
+
+An RFC-0053 Runtime route SHALL include `runtime_id`, `runtime_generation`,
+`runtime_binding_hash` and `route_generation`. Runtime Generation authenticates
+the execution lineage; Route Generation authenticates the current delivery
+target. A message failing either comparison SHALL be rejected before Runtime
+delivery.
+
+`route_generation` is Dispatcher state and SHALL NOT be included in the
+immutable Runtime Binding or Runtime Configuration Hash. Reconnect may rotate a
+route without changing Runtime identity; incompatible Runtime replacement
+requires an explicit Runtime Generation transition.
 
 Комментарии к решениям
 

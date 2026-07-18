@@ -281,6 +281,15 @@ def test_provider_inventory_service_attaches_discovers_and_projects_runtime_bind
     assert models[0].provider_instance_id == instance.provider_instance_id
     assert service.store.get_model_deployment(models[0].model_deployment_id).provider_model_reference == "fake-model"
     assert binding.provider_instance_id == instance.provider_instance_id
+    assert binding.runtime_id.startswith("runtime-")
+    assert binding.runtime_id != binding.runtime_binding_id
+    assert binding.runtime_generation == 1
+    assert binding.implementation_class == "PLUGIN_MANAGED"
+    assert binding.runtime_configuration_hash.startswith("sha256:")
+    assert binding.dispatcher_route_scope == {
+        "channel_class": "RUNTIME",
+        "runtime_id": binding.runtime_id,
+    }
     assert service.store.get_runtime_binding(binding.runtime_binding_id).compatibility_bundle_id == binding.compatibility_bundle_id
     assert bundle.bundle_id == binding.compatibility_bundle_id
     assert bundle.plugin_id == "fake-managed"

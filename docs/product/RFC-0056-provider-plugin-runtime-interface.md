@@ -4,16 +4,15 @@ AiDN Provider Plugin Runtime Interface
 
 Status: Draft
 
-Version: 0.3
+Version: 0.4
 
-Revision note: defines the authenticated Plugin Host interface as application
-profiles over RFC-0042 `PLUGIN_CONTROL`, introduces installation generation and
-persistent management operations, and keeps Runtime Adapter execution under
-RFC-0054.
+Revision note: Runtime Binding proposals use the normative RFC-0053 schema and
+exclude mutable Route Generation; Adapter registration binds the approved
+Runtime Generation and Configuration Hash.
 
 Supersedes:
 
-* RFC-0056 Version 0.2
+* RFC-0056 Version 0.3
 
 Depends on:
 
@@ -453,6 +452,13 @@ resources, secret scope and Dispatcher authorization.
 The Hypervisor Runtime Manager creates or approves Runtime ID. Plugin code SHALL
 NOT assign arbitrary Runtime IDs.
 
+The proposal SHALL identify the requested RFC-0053 implementation class,
+Provider Instance, Model Deployment, Adapter, exact Capability Definition,
+features, dimension-specific Usage Profile, resource/security/recovery profiles
+and requested route scope. It SHALL NOT assign `runtime_generation`,
+`runtime_configuration_hash` or Dispatcher `route_generation` as authoritative
+values.
+
 ---
 
 ## 21. Runtime Adapter Registration
@@ -465,10 +471,14 @@ The registration is linked to:
 * Model Deployment ID;
 * Adapter ID and version;
 * one Capability Definition;
-* Runtime configuration hash.
+* Runtime configuration hash;
+* Runtime Generation;
+* Runtime Binding Hash.
 
 The Adapter receives an RFC-0054 `RUNTIME` route scoped to its Runtime ID and
 assigned Sessions. It does not reuse Plugin Session Identity for execution.
+The registration result returns Route Generation separately from the immutable
+Runtime Binding.
 
 Runtime execution, streaming, cancellation, Usage Reports and Request recovery
 then use RFC-0054 only.

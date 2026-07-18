@@ -218,6 +218,15 @@ class NetworkDispatcher:
                 "routing",
                 "Message Route Generation is stale",
             )
+        if (
+            route.runtime_generation is not None
+            and message.runtime_generation != route.runtime_generation
+        ):
+            raise DispatcherError(
+                "RUNTIME_GENERATION_MISMATCH",
+                "routing",
+                "Message Runtime Generation does not match the active Runtime lineage",
+            )
         if message.source_subject.subject_type not in route.allowed_source_types:
             raise DispatcherError(
                 "SOURCE_NOT_AUTHORIZED",

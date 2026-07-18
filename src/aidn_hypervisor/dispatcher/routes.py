@@ -42,17 +42,19 @@ def runtime_route(
     *,
     route_generation: int,
 ) -> DispatcherRoute:
-    if binding.status != "ready":
+    binding = RuntimeBinding.model_validate(binding.model_dump(mode="json"))
+    if binding.operational_state != "READY":
         raise ValueError("only ready Runtime Bindings may receive RUNTIME routes")
     return DispatcherRoute(
         destination_type="RUNTIME",
-        destination_id=binding.runtime_binding_id,
+        destination_id=binding.runtime_id,
         route_type="LOCAL_RUNTIME",
         route_generation=route_generation,
+        runtime_generation=binding.runtime_generation,
         allowed_source_types={"HYPERVISOR", "ENDPOINT"},
         allowed_channel_classes={"RUNTIME"},
         allowed_message_types=set(RUNTIME_MESSAGE_TYPES),
-        runtime_binding_hash=binding.compatibility_bundle_id,
+        runtime_binding_hash=binding.binding_hash(),
         created_at=datetime.now(timezone.utc).isoformat(),
     )
 

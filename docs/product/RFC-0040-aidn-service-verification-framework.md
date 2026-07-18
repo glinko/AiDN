@@ -4,7 +4,7 @@ AiDN Service Verification Framework
 
 Status: Draft
 
-Version: 0.3
+Version: 0.4
 
 Supersedes:
 
@@ -1431,6 +1431,13 @@ Capability Runtime Verification MAY include:
 ---
 
 ## 97. Runtime Verification and Endpoint Certification
+
+Runtime Verification evidence SHALL bind `runtime_id`, `runtime_generation`,
+`runtime_configuration_hash`, exact Capability Definition Hash and applicable
+Adapter, Provider and Model references. A Route Generation change alone does
+not invalidate Runtime Verification. A material Runtime configuration or
+Runtime Generation change requires compatibility evaluation and, where
+applicable, reverification.
 
 A Runtime passing verification means it can implement the Capability contract.
 

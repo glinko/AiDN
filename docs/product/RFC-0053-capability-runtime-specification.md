@@ -1,922 +1,573 @@
-# RFC-0053 Capability Runtime Specification
+# RFC-0053 AiDN Capability Runtime Specification
 
 Status: `Draft`
 
-Version: `0.5`
+Version: `0.6`
 
-Revision note: every Runtime Binding exposes Dispatcher destination scope,
-authorized message profiles, Endpoint Configuration binding and current Route
-Generation. Runtime replacement invalidates stale routes unless Session-safe
-migration is explicitly proven.
+Revision note: separates Runtime identity, immutable Runtime Binding,
+process-local Runtime Instance and Dispatcher route state. Provider Plugins
+manage integrations but do not become the execution protocol or own Runtime
+identity.
+
+Supersedes:
+
+- `RFC-0053 Version 0.5`
 
 Depends on:
 
 - `RFC-0039 Hypervisor Service Model`
-- `RFC-0042 Hypervisor Network Protocol`
-- `RFC-0044 Session Protocol`
-- `RFC-0045 Capability Architecture`
+- `RFC-0042 AiDN Hypervisor Network Protocol and Dispatcher Architecture`
+- `RFC-0045 AiDN Capability Architecture`
+
+Extended by:
+
+- `RFC-0040 AiDN Service Verification Framework`
+- `RFC-0044 AiDN Session Protocol`
+- `RFC-0049 Distributed Marketplace and Endpoint Advertisement Registry`
+- `RFC-0051 Usage Reporting and Verification Protocol`
+- `RFC-0054 Capability Runtime Protocol`
 - `RFC-0055 Provider Plugin System and Directory`
 - `RFC-0056 Provider Plugin Runtime Interface`
+- `RFC-0060 Session Failure, Recovery and Forced Settlement`
+- `RFC-0063 Proxy Endpoint Protocol`
+- `RFC-0066 Protocol Upgrade and Emergency Recovery`
 
 ## 1. Purpose
 
-This document defines the Runtime Protocol between the Hypervisor and a Capability Runtime.
+This document defines the AiDN Capability Runtime architecture: Runtime
+identity, binding, instances, execution backends, Capability conformance,
+lifecycle, readiness, resources, isolation, Usage Reporting, recovery,
+verification, Endpoint integration and Dispatcher authorization.
 
-A Capability Runtime is an independent service implementing exactly one computational Capability.
+Wire-level Runtime messages are defined by RFC-0054. Provider Plugin management
+is defined by RFC-0055 and RFC-0056.
 
-The Hypervisor never executes Capability-specific logic.
+## 2. Core Boundary
 
-The Hypervisor orchestrates Runtime Services through the Runtime Protocol.
-
-A Runtime MAY execute as:
-
-- a local operating system process;
-- a container;
-- a virtual machine;
-- a remote service;
-- or another supported execution environment.
-
-Runtime deployment is an implementation detail and SHALL NOT affect protocol behavior.
-
-## 2. Design Philosophy
-
-The Hypervisor is a runtime host.
-
-Capability Runtimes implement computational behavior.
-
-Providers are private implementation details of a Runtime.
-
-The Hypervisor never communicates directly with Providers.
-
-The Hypervisor communicates exclusively through the Runtime Protocol.
-
-Every Runtime behaves identically regardless of its internal implementation.
-
-Within a Hypervisor implementation, a Runtime MAY be assembled from:
-
-- one Provider Instance;
-- one Model Deployment;
-- one Provider Plugin adapter;
-- one Runtime Binding exposing exactly one primary Capability contract.
-
-Those assembly details remain internal as long as the resulting Runtime behaves
-like one normalized AiDN Runtime Service.
-
-## 3. Runtime Model
-
-Capability Runtimes are independent services.
-
-The Hypervisor does not own Runtime execution.
-
-Instead, Runtime Services register themselves with the Hypervisor.
-
-A Runtime MAY execute:
-
-- locally;
-- inside a container;
-- inside a virtual machine;
-- on another physical host;
-- in future supported execution environments.
-
-Runtime location SHALL NOT affect protocol behavior.
-
-From the Hypervisor perspective, every Runtime behaves identically.
-
-## 4. Runtime Registration
-
-Every Runtime registers itself with the Hypervisor.
-
-Registration includes:
-
-- Runtime Identifier;
-- Capability Identifier;
-- Runtime Version;
-- Protocol Version;
-- Supported Features;
-- Health Status.
-
-Registration SHALL complete before the Runtime accepts Sessions.
-
-Runtime discovery MAY occur through:
-
-- automatic local discovery;
-- operator configuration;
-- service registration;
-- future discovery mechanisms.
-
-Registration semantics SHALL remain identical regardless of Runtime location.
-
-## 5. Capability Identity
-
-Every Runtime implements exactly one Capability.
-
-Examples:
-
-- `llm.chat`
-- `llm.embedding`
-- `speech.stt`
-- `speech.tts`
-- `image.generate`
-- `image.upscale`
-- `video.generate`
-- `protein.fold`
-
-Capability identifiers are immutable.
-
-## 6. Runtime Lifecycle
-
-Every Runtime follows the same lifecycle.
+A Capability Runtime is an AiDN execution boundary implementing one versioned
+Capability contract.
 
 ```text
-Start
-    ↓
-Initialize
-    ↓
-Register
-    ↓
-Discover Providers
-    ↓
-Publish Endpoints
-    ↓
-Accept Sessions
-    ↓
-Execute Requests
-    ↓
-Report Health
-    ↓
-Shutdown
+Session Request
+  -> Hypervisor
+  -> Network Dispatcher
+  -> Capability Runtime
+  -> Execution Backend
+  -> Result and Usage
 ```
 
-The Runtime MAY restart independently of the Hypervisor.
-
-The Hypervisor SHALL recover Runtime connectivity automatically.
-
-## 7. Provider Management
-
-Provider discovery and management are entirely the responsibility of the
-Runtime-facing plugin or adapter layer behind the Runtime.
-
-Examples:
-
-For Capability `llm.chat`:
-
-- `llama.cpp`
-- `Ollama`
-- `vLLM`
-- `TensorRT-LLM`
-- `MLX`
-
-The Hypervisor SHALL remain unaware of Provider-specific implementation details.
-
-The Hypervisor MAY still manage local Hypervisor-owned objects such as:
-
-- Provider Plugin installation;
-- Provider Instance attachment;
-- Model Deployment lifecycle;
-- Runtime Binding lifecycle.
-
-Those control-plane concerns do not give the Hypervisor direct Provider-native
-execution semantics.
-
-## 8. Endpoint Management
-
-The Runtime is responsible for:
-
-- discovering available Providers;
-- creating Endpoint definitions;
-- updating Runtime execution metadata;
-- updating local Endpoint execution readiness and availability state.
-
-The Hypervisor publishes Endpoint advertisements to the Marketplace, including the commercial terms selected by the Endpoint operator.
-
-The Runtime remains the authoritative owner of execution metadata exposed through those advertisements, but SHALL NOT directly publish Marketplace price identity.
-
-Public Endpoint publication and withdrawal remain Hypervisor-controlled lifecycle actions.
-
-## 9. Session Handling
-
-The Hypervisor routes Sessions using the Capability Identifier.
-
-The Runtime is responsible for:
-
-- opening execution contexts;
-- queue management;
-- execution scheduling;
-- resource allocation;
-- request execution;
-- Session completion.
-
-The Hypervisor SHALL NOT interpret Capability-specific requests.
-
-## 10. Usage Accounting
-
-Every Runtime performs deterministic Usage Accounting where the Capability and underlying Provider permit deterministic measurement.
-
-Examples include:
-
-- input tokens;
-- output tokens;
-- generated images;
-- processed audio duration;
-- processed video duration;
-- execution statistics.
-
-Where exact deterministic accounting is not possible, the Runtime SHALL declare the applicable Accounting Mode according to `RFC-0051`.
-
-The Runtime SHALL NOT represent estimated or unavailable usage as deterministic measured usage.
-
-## 11. Usage Verification
-
-Every Runtime SHALL expose sufficient accounting metadata for independent verification where such verification is supported.
-
-Verification procedures are Capability-specific.
-
-Independent verification is desirable but is not mandatory for every Capability, Provider or Proxy Endpoint.
-
-Where exact verification is unavailable, the Runtime SHALL disclose:
-
-- the Accounting Mode;
-- the measurement source;
-- unavailable usage fields;
-- observable billable units;
-- non-authoritative estimates.
-
-Confirmed Verification failures SHALL terminate the Session according to the Session Protocol.
-
-## 12. Validation Support
-
-Every Runtime SHALL expose benchmark and Validation execution support appropriate to its Capability.
-
-Validation MAY include:
-
-- representative execution requests;
-- protocol compliance checks;
-- output observations;
-- usage reporting checks;
-- Capability-specific measurements.
-
-Validation SHALL NOT require Runtime modification.
-
-Validation does not prove the hidden identity of a model or Provider.
-
-It records observable Runtime and Endpoint behavior.
-
-## 13. Health Reporting
-
-Every Runtime periodically publishes operational metrics.
-
-Examples include:
-
-- availability;
-- latency;
-- throughput;
-- queue depth;
-- execution failures;
-- resource utilization;
-- Provider availability;
-- accounting availability;
-- recovery state.
-
-Health Reports contribute to the Reputation Profile only through protocol-defined and verifiable processing.
-
-Local diagnostic metrics SHALL NOT directly alter Ledger Reputation.
-
-## 14. Configuration
-
-Every Runtime owns its complete Capability-specific configuration.
-
-Configuration MAY include:
-
-- execution limits;
-- pricing defaults;
-- Provider configuration;
-- Runtime parameters;
-- scheduling policies;
-- accounting capabilities;
-- Proxy configuration;
-- model or backend discovery.
-
-The Hypervisor SHALL treat Runtime-specific configuration as opaque.
-
-The Hypervisor MAY manage references to configuration without interpreting Capability-specific fields.
-
-## 15. Versioning
-
-Every Runtime advertises:
-
-- Runtime Version;
-- Capability Version;
-- Runtime Protocol Version;
-- supported Accounting Contract versions;
-- supported optional features.
-
-The Hypervisor SHALL reject incompatible Runtime Protocol versions.
-
-Active Sessions SHALL remain bound to the versions negotiated at Session creation.
-
-A Runtime upgrade SHALL NOT silently reinterpret existing Session accounting or behavior.
-
-## 16. Runtime Isolation
-
-Capability Runtime failures SHALL remain isolated.
-
-The Hypervisor SHALL tolerate:
-
-- Runtime restart;
-- Runtime upgrade;
-- Runtime relocation;
-- Runtime replacement;
-- temporary Runtime unavailability;
-- Provider failure inside the Runtime.
-
-Isolation is a protocol requirement rather than a specific deployment requirement.
-
-The Hypervisor SHALL communicate exclusively through the Runtime Protocol.
-
-A Runtime failure SHALL NOT directly terminate the Hypervisor.
-
-## 17. Runtime Protocol
-
-The Runtime Protocol SHALL remain transport-independent.
-
-Possible transports include:
-
-- Unix Domain Socket;
-- TCP;
-- QUIC;
-- HTTP/2;
-- gRPC;
-- WebSocket;
-- stdio;
-- Named Pipes;
-- shared memory with a control channel.
-
-Future transport mechanisms MAY be introduced.
-
-Transport SHALL NOT alter protocol semantics.
-
-The detailed Runtime message protocol is defined by `RFC-0054`.
-
-## 18. Runtime Discovery
-
-The Hypervisor discovers Runtime Services through Runtime Registration.
-
-Every Runtime advertises:
-
-- Runtime Identifier;
-- Capability Identifier;
-- Runtime Version;
-- Protocol Version;
-- Health Status;
-- Supported Features;
-- supported Accounting Modes;
-- available Runtime Endpoints.
-
-The Hypervisor SHALL NOT assume Runtime locality.
-
-Discovery SHALL behave identically regardless of deployment topology.
-
-Discovery does not imply authorization.
-
-## 19. Runtime Authorization
-
-A discovered Runtime SHALL be explicitly authorized before use.
-
-Authorization MAY occur through:
-
-- operator approval;
-- configured Runtime public key;
-- local trust policy;
-- registration token;
-- certificate enrollment;
-- future service authorization mechanisms.
-
-An unauthorized Runtime SHALL NOT:
-
-- publish Endpoints;
-- receive Session data;
-- report billable usage;
-- execute Validation tasks;
-- influence Hypervisor state.
-
-## 20. Runtime Identity
-
-Every Runtime SHALL have a unique cryptographic identity.
-
-Runtime Identity is separate from:
-
-- Wallet Identity;
-- Hypervisor Node Identity;
-- Service Identity;
-- Endpoint Identity;
-- Provider credentials.
-
-Runtime messages affecting:
-
-- registration;
-- Endpoint metadata;
-- Usage Reports;
-- recovery state;
-- benchmark results;
-
-SHALL be authenticated according to `RFC-0054`.
-
-## 21. Runtime Locality
-
-A Runtime MAY be:
-
-- on the same host as the Hypervisor;
-- on another host in the same private network;
-- inside a container or VM;
-- remotely operated;
-- shared by multiple authorized Hypervisors.
-
-Runtime locality SHALL not change protocol behavior.
-
-The Hypervisor MAY apply stricter security policy to remote Runtimes.
-
-## 22. Runtime Ownership
-
-Runtime ownership and Endpoint ownership are separate concepts.
-
-A Runtime may be operated by one party while an Endpoint using that Runtime is published by another authorized Hypervisor operator.
-
-The Endpoint operator remains responsible for:
-
-- published pricing;
-- Session Policy;
-- Accounting Contract;
-- result delivery;
-- Usage Reporting;
-- Consumer-facing protocol behavior.
-
-The Runtime operator does not automatically become the economic counterparty of the Consumer.
-
-## 23. Session Contract Binding
-
-Before accepting a Session, the Runtime SHALL confirm support for:
-
-- Capability Version;
-- Endpoint Configuration Hash;
-- referenced Accounting Contract;
-- Session Policy;
-- execution limits;
-- required features;
-- recovery requirements.
-
-A Runtime SHALL reject Session preparation when it cannot satisfy the negotiated contract.
-
-Commercial terms, including Marketplace price identity, belong to the accepted Advertisement or Offer selected by the Endpoint operator.
-
-The Runtime executes under the accepted Session Contract and its referenced Accounting Contract.
-
-The Hypervisor SHALL NOT accept an external Session before Runtime preparation succeeds.
-
-## 24. Usage Reporting Responsibility
-
-The Runtime SHALL generate Provider-side Usage Reports according to `RFC-0051` and the Accounting Contract bound to the accepted Session Contract.
-
-The Runtime SHALL:
-
-- declare Accounting Modes;
-- identify measurement sources;
-- preserve report sequencing;
-- report unknown values as unknown;
-- avoid billing non-authoritative estimates;
-- support observable accounting where possible;
-- preserve request-level accounting evidence.
-
-Usage Reporting by the Runtime describes measured execution state and SHALL NOT be treated as publication of Marketplace pricing or commercial offer identity.
-
-The Hypervisor SHALL:
-
-- bind reports to Sessions;
-- verify Runtime authorization;
-- enforce Deposits and maximum charges;
-- forward applicable reports;
-- initiate Settlement.
-
-## 25. Proxy Runtime Support
-
-A Runtime MAY proxy an external or remote service.
-
-Proxy Runtime behavior MAY include:
-
-- `DIRECT_EXTERNAL_PROXY`;
-- `AIDN_ENDPOINT_PROXY`;
-- `AGGREGATING_PROXY`;
-- `FAILOVER_PROXY`;
-- `TRANSFORMING_PROXY`;
-- `AGENT_PROXY`;
-- `CHAINED_PROXY`.
-
-When upstream usage is unavailable, the Runtime SHALL declare:
-
-`PROXY_OPAQUE`
-
-The Runtime SHALL NOT invent upstream token counts.
-
-Proxy-Opaque billing SHALL use:
-
-- fixed units;
-- observable units;
-- predefined request classes;
-- active execution time where reliably measurable;
-- other units accepted under `RFC-0051`.
-
-Estimated tokens MAY be reported only as non-authoritative metadata.
-
-The Endpoint operator remains the Consumer-facing protocol counterparty and remains responsible for:
-
-- published pricing;
-- result delivery;
-- Usage Reporting;
-- upstream failure handling;
-- retry and failover behavior;
-- data-handling disclosure;
-- maximum-charge compliance.
-
-## 26. Runtime Health Ownership
-
-The Runtime is authoritative for its local operational condition.
-
-The Hypervisor is authoritative for public Endpoint state.
-
-A Runtime MAY report:
-
-- available;
-- degraded;
-- unavailable;
-- draining;
-- recovering.
-
-The Hypervisor decides whether to:
-
-- continue routing Sessions;
-- pause new Sessions;
-- update Marketplace metadata;
-- withdraw an Endpoint;
-- begin Session recovery.
-
-## 27. Failure Recovery
-
-The Runtime SHALL support recovery reporting.
-
-After reconnect or restart, the Runtime SHALL identify:
-
-- recoverable Sessions;
-- active request state;
-- last Usage Report sequence;
-- result hashes;
-- Runtime restart identity;
-- Session-context availability.
-
-The Hypervisor remains authoritative for canonical Session state.
-
-A Runtime SHALL NOT independently reopen or settle a Session.
-
-## 28. Runtime Replacement
-
-A Hypervisor MAY replace one Runtime with another compatible Runtime.
-
-Replacement requires:
-
-- matching Capability Version;
-- support for the accepted Accounting Contract;
-- compatible Session state;
-- valid context transfer or reconstruction;
-- no conflicting Usage history;
-- policy permission.
-
-Runtime replacement SHALL NOT:
-
-- reset usage;
-- change pricing;
-- erase accepted checkpoints;
-- alter Endpoint identity;
-- silently change observable Session semantics.
-
-## 29. Session Context
-
-A Runtime MAY maintain Capability-specific Session context.
-
-Examples include:
-
-- conversation state;
-- cached model context;
-- Provider session reference;
-- workspace state;
-- generated artifacts;
-- request history;
-- tool state.
-
-Context MAY be:
-
-- Runtime-local;
-- exportable;
-- encrypted;
-- non-portable.
-
-The Runtime SHALL declare whether Session recovery and migration are supported.
-
-## 30. Runtime Pools
-
-Multiple compatible Runtimes MAY implement the same Capability.
-
-The Hypervisor MAY use Runtime Pools for:
-
-- load distribution;
-- failover;
-- maintenance;
-- Provider diversity;
-- geographic placement.
-
-Runtime Pools SHALL preserve:
-
-- Endpoint semantics;
-- Accounting Contract;
-- Capability Version;
-- Session affinity where required.
-
-A remote Consumer need not know which internal Runtime handled a request unless the published contract requires disclosure.
-
-## 31. Provider Abstraction
-
-Providers remain private implementation details of the Runtime.
-
-Examples include:
-
-- `llama.cpp`;
-- `Ollama`;
-- `vLLM`;
-- `TensorRT-LLM`;
-- `MLX`;
-- remote proprietary APIs;
-- OAuth-connected agents;
-- local media processors.
-
-The Hypervisor SHALL NOT contain Provider-specific execution logic.
-
-The Runtime MAY change Provider only when the resulting Endpoint Configuration remains compatible or is explicitly updated.
-
-## 32. Provider Changes
-
-Execution-relevant Provider changes SHALL cause the Runtime to notify the Hypervisor.
-
-Examples include:
-
-- model change;
-- tokenizer change;
-- upstream service change;
-- accounting change;
-- Capability behavior change;
-- Provider version change affecting output;
-- proxy mode change.
-
-The Hypervisor SHALL determine whether the Endpoint requires:
-
-- configuration update;
-- Certification invalidation;
-- Marketplace update;
-- Session pause;
-- new Validation.
-
-## 33. Endpoint Authority
-
-The Runtime proposes and maintains Runtime Endpoint metadata.
-
-The Hypervisor controls the public AiDN Endpoint object.
-
-The Runtime SHALL NOT directly:
-
-- publish to the Ledger;
-- publish to the Marketplace;
-- change Endpoint ownership;
-- change pricing visible to Consumers;
-- change access policy;
-- withdraw a public Endpoint.
-
-Such actions require Hypervisor processing and applicable Ledger Operations.
-
-## 34. Validation Behavior
-
-The Runtime SHALL support Capability-appropriate Validation execution.
-
-A Runtime MAY provide:
-
-- benchmark execution;
-- request execution;
-- artifact measurement;
-- usage reporting;
-- protocol observations;
-- health information.
-
-The Runtime SHALL NOT determine final Certification.
-
-Certification is derived from finalized Validation Reports and protocol rules.
-
-## 35. Security Boundary
-
-A compromised Runtime SHALL NOT be able to:
-
-- access Wallet private keys;
-- authorize Wallet transfers;
-- mint Q;
-- unlock Deposits;
-- alter Ledger state;
-- finalize Settlement;
-- create Protocol Rewards;
-- impersonate a Hypervisor;
-- change unrelated Endpoints;
-- access unauthorized Sessions.
-
-The Hypervisor SHALL validate all economically significant Runtime claims.
-
-## 36. Secret Isolation
-
-Provider secrets belong to the Runtime environment.
-
-Examples include:
-
-- API keys;
-- OAuth tokens;
-- refresh tokens;
-- model repository credentials;
-- upstream service credentials.
-
-Secrets SHOULD remain inaccessible to:
-
-- remote Consumers;
-- unrelated Runtimes;
-- Marketplace;
-- Registry;
-- Ledger;
-- Hypervisor components that do not require them.
-
-Runtime logs SHALL not expose secrets.
-
-## 37. Multi-Tenancy
-
-A Runtime MAY serve multiple:
-
-- Sessions;
-- Endpoints;
-- Hypervisors;
-- operators.
-
-Multi-tenant Runtimes SHALL isolate:
-
-- Session content;
-- Endpoint configuration;
-- Provider credentials;
-- Usage Reports;
-- artifacts;
-- resource limits;
-- recovery data.
-
-One tenant SHALL not access another tenant's data.
-
-## 38. Extensibility
-
-Future computational domains require only a new Runtime implementation conforming to this specification and `RFC-0054`.
-
-Examples may include:
-
-- `robotics.control`;
-- `cad.simulation`;
-- `weather.forecast`;
-- `molecular.simulation`;
-- `quantum.compute`;
-- `distributed agent execution`.
-
-The Hypervisor SHALL require no architectural modification.
-
-This requirement is fundamental to AiDN.
-
-## 39. Conformance
-
-Every Runtime implementation SHALL pass conformance tests covering:
-
-- identity;
-- authorization;
-- registration;
-- Capability metadata;
-- Endpoint lifecycle;
-- Session preparation;
-- request execution;
-- Usage Reporting;
-- streaming where supported;
-- cancellation;
-- recovery;
-- health;
-- shutdown;
-- malformed input;
-- incompatible versions;
-- security boundaries.
-
-Capability-specific tests MAY extend the core suite.
-
-## 40. Reference Runtime
-
-The AiDN project SHOULD provide a minimal Reference Runtime.
-
-The Reference Runtime SHOULD implement:
-
-- one deterministic sample Capability;
-- fixed-price accounting;
-- observable usage;
-- request streaming;
-- failure simulation;
-- Session recovery;
-- Runtime replacement testing;
-- benchmark execution.
-
-The Reference Runtime provides a stable integration target for Hypervisor development.
-
-## 41. Runtime Packaging
-
-Runtime distribution format is outside the core scope of this document.
-
-A future specification MAY define:
-
-- Runtime manifest;
-- executable or container reference;
-- signatures;
-- Capability schema;
-- configuration schema;
-- icons and descriptive metadata;
-- benchmark definitions;
-- compatibility information;
-- update channel.
-
-The Hypervisor SHALL not require one packaging technology.
-
-## 42. Lifecycle Summary
-
-The complete Runtime lifecycle is:
+The complete plugin-managed path is:
 
 ```text
-Discover
-    ↓
-Authorize
-    ↓
-Connect
-    ↓
-Authenticate
-    ↓
-Negotiate Version
-    ↓
-Register
-    ↓
-Synchronize
-    ↓
-Ready
-    ↓
-Publish Runtime Endpoints
-    ↓
-Prepare Sessions
-    ↓
-Execute Requests
-    ↓
-Report Usage and Health
-    ↓
-Recover or Replace When Required
-    ↓
-Drain
-    ↓
-Shutdown
+Provider Plugin
+  -> manages Provider Instance
+  -> discovers Model Deployment
+  -> configures Runtime Adapter
+  -> proposes Runtime Binding
+  -> Hypervisor approves Runtime identity and route
+  -> Endpoint sells access to the Runtime
 ```
 
-## 43. Open Questions
+Provider Plugin, Provider Instance, Model Deployment, Runtime Adapter,
+Capability Runtime, Endpoint and Session are distinct entities.
 
-The following MAY require later dedicated specifications:
+## 3. Runtime Independence
 
-- Runtime package format;
-- remote Runtime discovery;
-- confidential-computing attestation;
-- shared Runtime economics;
-- Runtime marketplace;
-- multi-Runtime collaborative execution;
-- secure Session-context migration;
-- Runtime ownership transfer;
-- cross-operator Runtime authorization;
-- distributed Runtime scheduling.
+A Runtime MAY be implemented as:
 
-## 44. Design Invariants
+- `PLUGIN_MANAGED`;
+- `NATIVE`;
+- `EXTERNAL_DIRECT`;
+- `PROXY`;
+- `COMPOSITE`;
+- `REMOTE_RUNTIME`.
 
-- Every Capability is implemented by an independent Runtime Service.
-- Every Runtime implements exactly one Capability.
-- Runtime deployment is transparent to the Hypervisor.
-- Discovery does not imply authorization.
-- Runtime Identity is separate from Wallet and Hypervisor Identity.
-- Providers remain Runtime implementation details.
-- The Hypervisor never contains Capability-specific execution logic.
-- The Runtime never directly modifies Ledger state.
-- Runtime failures remain isolated.
-- Runtime replacement never resets Session accounting.
-- Runtime upgrades never silently change active Session contracts.
-- Unknown upstream usage remains unknown.
-- Proxy-Opaque estimates are not authoritative billing data.
-- Public Endpoint state remains controlled by the Hypervisor.
-- New Capabilities require no Hypervisor architectural changes.
-- Detailed message semantics are defined by `RFC-0054`.
+A Plugin-managed Runtime references one Installed Plugin, Provider Instance,
+Model Deployment and Adapter. A native Runtime implements RFC-0054 directly. A
+Proxy Runtime also follows RFC-0063. A composite Runtime coordinates internal
+components while exposing one primary Capability.
+
+User workload execution SHALL use RFC-0054. RFC-0056 management RPC SHALL NOT
+become a second execution protocol.
+
+## 4. Runtime Identity
+
+Every Runtime SHALL have a Hypervisor-approved stable Runtime ID.
+
+```yaml
+runtime_identity:
+  runtime_id:
+  runtime_owner:
+  operator_hypervisor_id:
+  implementation_class:
+  runtime_generation:
+  capability_id:
+  capability_major_version:
+  runtime_configuration_hash:
+  identity_version:
+```
+
+Recommended derivation:
+
+```text
+RuntimeID = HASH(OperatorHypervisorID + RuntimeNonce)
+```
+
+Runtime ID SHALL NOT be derived only from a Provider address, port, model name
+or Plugin ID. Provider Plugins may propose but SHALL NOT assign arbitrary
+Runtime IDs.
+
+## 5. Runtime Generation
+
+`runtime_generation` identifies an execution lineage under one Runtime ID. It
+SHALL increase after an incompatible recreation, including incompatible Adapter
+replacement, model or Provider migration, state-format reset or loss of
+recoverable Runtime state.
+
+`runtime_generation` and Dispatcher `route_generation` are independent:
+
+- Runtime Generation identifies the executor lineage.
+- Route Generation identifies the currently authorized delivery route.
+
+A reconnect may change Route Generation without changing Runtime Generation. A
+Runtime replacement commonly changes both.
+
+## 6. Runtime Binding
+
+A Runtime Binding is the immutable configuration that connects an execution
+backend to one Runtime identity and one primary Capability.
+
+```yaml
+runtime_binding:
+  runtime_binding_id:
+  runtime_id:
+  runtime_generation:
+  implementation_class:
+  installed_plugin_id:
+  plugin_id:
+  plugin_version:
+  provider_instance_id:
+  model_deployment_id:
+  adapter_id:
+  adapter_version:
+  capability_id:
+  capability_version:
+  capability_definition_hash:
+  supported_features:
+  supported_modalities:
+  supported_accounting_modes:
+  usage_reporting_profile_hash:
+  resource_profile_hash:
+  security_profile_hash:
+  recovery_profile_hash:
+  dispatcher_route_scope:
+  runtime_configuration_hash:
+  operational_state:
+```
+
+Fields not applicable to an implementation class SHALL be omitted. A
+Plugin-managed Runtime SHALL include the Installed Plugin, Provider Instance,
+Model Deployment and Adapter identity.
+
+`route_generation` SHALL NOT be part of Runtime Binding or
+`RuntimeConfigurationHash`; it is mutable Dispatcher state. An active Runtime
+route separately binds Runtime ID, Runtime Generation, Runtime Binding Hash and
+Route Generation.
+
+## 7. Runtime Configuration Hash
+
+```text
+RuntimeConfigurationHash = HASH(CanonicalRuntimeConfiguration)
+```
+
+The canonical configuration includes Capability binding, execution backend,
+Adapter, Provider and model references, execution parameters, supported
+features, Usage profile, resource policy, state model, cancellation, recovery,
+security and side-effect policy.
+
+It excludes lifecycle state, Runtime Instance ID, current Route Generation,
+Health samples and plaintext secrets. Material behavior changes require a new
+hash and a higher Runtime Generation. Process restart, equivalent hardware
+replacement, logging changes and non-semantic patches MAY preserve the hash.
+
+## 8. Runtime Instance
+
+A Runtime Instance is one active process, container, VM or remote execution
+unit realizing a Runtime Binding.
+
+```yaml
+runtime_instance:
+  runtime_id:
+  runtime_generation:
+  instance_id:
+  runtime_binding_hash:
+  execution_host_id:
+  process_reference:
+  started_at:
+  operational_state:
+  health_reference:
+```
+
+A restart MAY change Instance ID without changing Runtime ID, Runtime
+Generation or Runtime Configuration Hash.
+
+## 9. Capability Binding
+
+Every Runtime SHALL implement one primary Capability ID and one Major Version.
+It MAY support a compatible Minor Version range. Every accepted Request SHALL
+bind to an exact Capability Definition Hash.
+
+A Runtime SHALL reject unknown Definition Hashes, unsupported modalities and
+required features in state `UNSUPPORTED`, `TEMPORARILY_UNAVAILABLE` or
+`DEGRADED` when the Request cannot tolerate the limitation.
+
+Hidden payload flags SHALL NOT switch one Runtime identity among unrelated
+primary Capabilities.
+
+## 10. Lifecycle
+
+The normative lifecycle is:
+
+```text
+DRAFT -> STAGING -> REGISTERING -> VERIFYING -> READY
+```
+
+Additional states are `STARTING`, `DEGRADED`, `OVERLOADED`, `DRAINING`,
+`STOPPED`, `RECOVERING`, `FAILED`, `QUARANTINED`, `REVOKED`, `REMOVING` and
+`REMOVED`.
+
+- Draft and Staging Runtimes SHALL NOT receive ordinary public work.
+- Ready requires all mandatory readiness dimensions.
+- Overloaded is healthy but lacks current capacity.
+- Draining accepts completion, cancellation, recovery and close traffic only.
+- Revoked routes SHALL NOT reactivate after process restart.
+
+## 11. Registration and Dispatcher Scope
+
+Registration occurs through RFC-0054 and, for Plugin-managed Runtimes, Adapter
+approval through RFC-0056. The Hypervisor verifies Runtime ID, Runtime
+Generation, Configuration Hash, Capability Definition, Adapter ownership,
+Provider/model ownership and requested Dispatcher scope.
+
+Every active route SHALL bind:
+
+```yaml
+runtime_route_binding:
+  runtime_id:
+  runtime_generation:
+  runtime_binding_hash:
+  route_generation:
+  route_state:
+  allowed_message_types:
+```
+
+The route permits only assigned Requests, authorized Session events, Runtime
+Health, Usage Reports, cancellation, recovery, artifact events and Runtime
+control. A stale Runtime Instance SHALL not regain traffic by reconnecting with
+only the same Runtime ID.
+
+## 12. Readiness and Health
+
+Readiness is multidimensional:
+
+```yaml
+runtime_readiness:
+  process_ready:
+  adapter_ready:
+  provider_ready:
+  model_ready:
+  capability_ready:
+  usage_reporting_ready:
+  dispatcher_route_ready:
+  recovery_ready:
+```
+
+Health SHALL separately describe Runtime process, Adapter, Provider, model,
+Capability, resources, Usage Reporting, recovery and route. Expired Health is
+`UNKNOWN`, not Healthy. Provider process Health alone does not prove Runtime
+readiness.
+
+## 13. Capacity and Admission
+
+A Runtime SHALL expose bounded capacity for requests, sessions, queue depth,
+input, output and artifacts. Runtime capacity is current execution ability;
+Endpoint Advertisement limits are contractual maxima.
+
+Admission evaluates Health, Runtime and Route Generation, capacity, Session
+authorization, feature and modality requirements, deadline, resources,
+side-effect policy and Request limits. Results are `ACCEPTED`, `REJECTED`,
+`QUEUED`, `BACKPRESSURED`, `TEMPORARILY_UNAVAILABLE` or `REQUIRES_RECOVERY`.
+
+Queue ownership SHALL be disclosed and every queue SHALL be bounded by count,
+bytes, exposure, wait time and subject quota. Queue time SHALL not be counted
+twice across Dispatcher, Runtime Manager, Runtime and Provider queues.
+
+## 14. Endpoint Binding
+
+An Endpoint Configuration references one or more authorized Runtime Bindings:
+
+```yaml
+endpoint_runtime_binding:
+  endpoint_id:
+  endpoint_configuration_hash:
+  runtime_binding_hash:
+  routing_policy:
+  failover_policy:
+  binding_hash:
+```
+
+Several Endpoints MAY share one compatible Runtime while retaining independent
+prices, access policies, Session limits, Advertisements and Certification.
+One Endpoint MAY use several compatible Runtimes for capacity, redundancy,
+regions or rollout.
+
+Stateful Sessions SHOULD be pinned to one compatible Runtime lineage. Failover
+and migration SHALL be explicit and SHALL NOT silently substitute an
+incompatible model, Provider, Data Handling behavior or accounting contract.
+
+## 15. Request Identity and Idempotency
+
+Every Runtime Request preserves Session ID, Request ID, Endpoint ID, accepted
+Endpoint Configuration Hash, Runtime ID, Runtime Generation, Capability
+Definition Hash, charge ceiling, deadline and idempotency information.
+
+A duplicate Request ID returns existing state/result, resumes delivery or is
+rejected if content conflicts. It SHALL NOT silently execute twice. Provider
+Adapters maintain durable AiDN-to-provider Request mappings where cancellation,
+Usage, recovery or side-effect attribution requires them.
+
+## 16. Streaming and Cancellation
+
+Streams preserve Stream ID, Request ID, Runtime ID, modality, ordering and
+result-root policy. Every stream terminates explicitly as completed, partial,
+cancelled, failed or expired; transport close is not successful completion.
+
+Cancellation support is `IMMEDIATE`, `CHECKPOINT_BOUNDED`, `BEST_EFFORT` or
+`UNSUPPORTED`. A Runtime SHALL NOT claim confirmed cancellation while upstream
+billable or side-effecting work continues. Provider uncertainty is reported and
+handled by Session Failure and Accounting policy.
+
+## 17. Retries and Side Effects
+
+Internal retries obey Request idempotency, Capability side-effect model,
+Failure Policy, deadline, charge ceiling, Pending Exposure and retry limit.
+Retries and material Provider changes are visible in diagnostics and Usage.
+Undeclared retries SHALL NOT create Consumer charges.
+
+Side-effect classes include `NONE`, `READ_ONLY_EXTERNAL`, `REVERSIBLE_WRITE`,
+`EXTERNAL_WRITE`, `IRREVERSIBLE`, `FINANCIAL` and `SECURITY_SENSITIVE`.
+Approval binds Session, Request, action, scope, expiration and exposure. Plugins
+and Adapters SHALL NOT fabricate Consumer approval.
+
+## 18. State Models
+
+A Runtime declares `STATELESS`, `SESSION_STATEFUL`, `EXTERNAL_STATEFUL` or
+`WORKSPACE_STATEFUL`. Session state, Provider threads, workspaces, artifacts,
+credentials and tool results SHALL be isolated.
+
+State references include Runtime ID, Session ID, state model, state reference,
+State Generation, recoverability and checkpoint. Reset or replacement increments
+State Generation; stale Requests SHALL not attach to unrelated new state.
+
+## 19. Artifacts
+
+Runtime artifacts are content-addressed descriptors containing Request ID,
+content hash, media type, size, storage reference, retention and access class.
+Storage location does not change artifact identity. Consumers and Hypervisors
+SHALL be able to verify artifact bytes against the content hash.
+
+Retention follows Session, Data Handling, Validation evidence, Registry and
+Endpoint obligations. The validated Hypervisor, not the Runtime process, owns
+long-term Validation Report custody.
+
+## 20. Usage Reporting
+
+Every Runtime defines a dimension-specific Usage profile. Authority classes are:
+
+- `AUTHORITATIVE_PROVIDER`;
+- `DETERMINISTIC_LOCAL`;
+- `OBSERVABLE_LOCAL`;
+- `ESTIMATED`;
+- `UNAVAILABLE`.
+
+Each dimension declares unit, availability, authority, cumulative behavior,
+scope, billing eligibility and limitations. Unknown values remain unknown and
+SHALL NOT be replaced by zero. Estimates remain estimates unless the Accounting
+Contract explicitly accepts a deterministic measurement method.
+
+Usage chains remain ordered through recovery where possible. Retry work is
+reported according to the Accounting Contract even when non-billable.
+
+## 21. Resources and Security
+
+Resource profiles describe CPU, memory, GPU, storage, network, allocation mode
+and enforcement. Remote opaque resources use `EXTERNAL` or `UNOBSERVABLE`; the
+Runtime SHALL NOT fabricate hardware claims.
+
+Security profiles describe isolation, egress, filesystem scope, secret scope,
+code execution, side effects and external Provider use. Runtime and Adapter
+secrets are scoped to the Runtime, Provider Instance and permitted upstream
+usage. Public Endpoint Data Handling SHALL NOT claim guarantees stronger than
+the Runtime can enforce.
+
+## 22. Recovery
+
+Recovery classes are `FULLY_RECOVERABLE`, `CHECKPOINT_RECOVERABLE`,
+`RECONSTRUCTIBLE`, `BEST_EFFORT` and `NON_RECOVERABLE`.
+
+```yaml
+runtime_recovery_state:
+  runtime_id:
+  runtime_generation:
+  route_generation:
+  active_requests:
+  recoverable_requests:
+  unrecoverable_requests:
+  active_sessions:
+  state_references:
+  last_event_sequence:
+  usage_chain_heads:
+  artifact_references:
+  state_hash:
+```
+
+After restart the Runtime reconciles provider-native operations, Requests,
+Sessions, streams, Usage and artifacts. It SHALL NOT blindly restart work unless
+prior execution state, idempotency, side effects, deadline and Session recovery
+all permit it. Unrecoverable work enters RFC-0060 handling and SHALL NOT be
+reported completed.
+
+## 23. Update, Migration and Rollback
+
+The preferred update sequence is:
+
+```text
+Prepare new Runtime
+  -> Stage
+  -> Conformance and readiness
+  -> Authorize new Runtime and Route Generation
+  -> Drain old Runtime
+  -> Explicitly migrate compatible Sessions
+  -> Activate
+  -> Retain rollback
+```
+
+Model, Adapter, Provider, state, security or accounting changes are material
+when Consumer-visible behavior changes. Stateful migration requires compatible
+state format, checkpoint, Session pinning update and State Generation
+continuity. Rollback SHALL NOT move active Sessions to an incompatible Runtime
+Generation.
+
+## 24. Verification and Certification
+
+Runtime Verification asks whether the Runtime correctly implements the
+Capability contract. It binds Runtime ID, Runtime Generation, Runtime
+Configuration Hash, Capability Definition Hash, Adapter version and applicable
+Provider/model references.
+
+Endpoint Certification asks whether one Endpoint Configuration produced
+meaningful behavior through its public Session path. Validation SHALL traverse
+Hypervisor, Dispatcher, Session routing and accounting rather than call the
+Provider directly.
+
+Plugin conformance, Runtime Verification and Endpoint Certification are
+independent evidence classes.
+
+## 25. Public and Private State
+
+Endpoints MAY commit publicly to a Runtime Binding Hash without revealing local
+Provider addresses, credentials, model paths, resource topology or process IDs.
+Registry Services MAY hold public Runtime commitments, verification records,
+Adapter manifests and conformance evidence. Most Runtime lifecycle actions and
+execution topology remain local.
+
+## 26. Observability
+
+The Hypervisor SHOULD expose Runtime state, Runtime and Route Generations,
+Capability, Provider/model references, Health, capacity, queue depth, active
+Requests and Sessions, resource use, Usage state, recovery and conformance.
+Metrics SHOULD cover requests, latency, failures, queueing, streams,
+cancellation, retries, Usage, recovery, Provider/model failures and generation
+changes.
+
+## 27. Required Errors
+
+The MVP SHALL define stable errors for identity, generation, configuration,
+Capability, route scope, admission, execution, streaming, cancellation, Usage,
+artifacts, state, recovery, resources, Provider/model availability and security.
+At minimum it includes:
+
+```text
+RUNTIME_NOT_FOUND
+RUNTIME_GENERATION_MISMATCH
+RUNTIME_CONFIGURATION_MISMATCH
+RUNTIME_CAPABILITY_DEFINITION_MISMATCH
+RUNTIME_NOT_READY
+RUNTIME_OVERLOADED
+RUNTIME_ROUTE_GENERATION_MISMATCH
+RUNTIME_ROUTE_SCOPE_DENIED
+RUNTIME_REQUEST_DUPLICATE
+RUNTIME_REQUEST_CONFLICT
+RUNTIME_QUEUE_FULL
+RUNTIME_CANCELLATION_UNSUPPORTED
+RUNTIME_USAGE_UNAVAILABLE
+RUNTIME_STATE_GENERATION_MISMATCH
+RUNTIME_RECOVERY_REQUIRED
+RUNTIME_REQUEST_UNRECOVERABLE
+RUNTIME_SIDE_EFFECT_NOT_AUTHORIZED
+RUNTIME_SECURITY_POLICY_VIOLATION
+```
+
+Provider-native errors are sanitized and mapped to stable Runtime errors.
+
+## 28. Conformance
+
+Runtime conformance SHALL test identity, Runtime Generation, exact Capability
+binding, Configuration Hash, Dispatcher authorization, schema validation,
+features, replay, bounded queues, streaming, cancellation, Usage authority,
+artifacts, side effects, state isolation, recovery, restart, Route Generation,
+Provider/model failure, Plugin failure, update, migration and rollback.
+
+The project SHOULD provide a Reference Runtime Harness with deterministic sample
+execution and fault injection.
+
+## 29. MVP Requirements
+
+The MVP SHALL implement:
+
+- Runtime ID, Runtime Generation, Runtime Binding and Runtime Instance;
+- Plugin-managed and native implementation classes;
+- one primary Capability and exact Definition Hash binding;
+- deterministic Runtime Configuration Hash;
+- lifecycle, readiness, multidimensional Health and capacity;
+- bounded admission and queues;
+- Endpoint-to-Runtime binding and Session pinning;
+- Dispatcher Runtime and Route Generation checks;
+- Request idempotency, streaming and honest cancellation;
+- dimension-specific Usage authority;
+- artifacts, state models and side-effect authorization;
+- recovery, verification, update and rollback;
+- stable errors and operational metrics.
+
+Live stateful migration, cross-Hypervisor federation, distributed GPU
+scheduling, automatic sharding, confidential execution and hardware-attested
+model identity MAY be deferred.
+
+## 30. Invariants
+
+- Runtime ID, Runtime Binding ID and Runtime Instance ID are distinct.
+- Runtime Generation and Route Generation are distinct.
+- Every Runtime binds to one primary Capability and exact Definition Hash.
+- Runtime Configuration is hash-bound and excludes mutable route state.
+- Provider Plugins manage integration but do not own Runtime identity.
+- Plugin Manager failure does not necessarily stop an independent Adapter.
+- Runtime execution uses RFC-0054, not generic Plugin RPC.
+- Draft and Staging Runtimes do not receive public work.
+- Duplicate Requests do not create duplicate effects.
+- Runtime Adapters do not change deadlines or charge ceilings.
+- Session state, secrets and artifacts remain isolated.
+- Unknown Usage remains unknown and estimates remain estimates.
+- Internal retries do not create hidden charges.
+- Active Sessions do not silently move across incompatible Runtime Generations.
+- Endpoint Certification and Runtime Verification remain separate.
+- Provider-specific implementation details do not enter Hypervisor core.

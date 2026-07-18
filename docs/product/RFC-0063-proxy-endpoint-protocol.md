@@ -2,15 +2,15 @@
 
 Status: `Draft`
 
-Version: `0.3`
+Version: `0.4`
 
-Revision note: Proxy Runtime Adapter profiles disclose upstream egress, Usage
-authority and recovery behavior through RFC-0056 while execution remains on
-RFC-0054.
+Revision note: Proxy Runtime is the RFC-0053 `PROXY` implementation class and
+commits upstream selection, egress, Usage authority and recovery limitations to
+Runtime and Endpoint configuration.
 
 Supersedes:
 
-- `RFC-0063 Version 0.2`
+- `RFC-0063 Version 0.3`
 
 Depends on:
 

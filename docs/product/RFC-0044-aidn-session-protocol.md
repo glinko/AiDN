@@ -4,12 +4,10 @@ AiDN Session Protocol
 
 Status: Draft
 
-Version: 0.5
+Version: 0.6
 
-Revision note: every Session route binds Session ID, Session Contract Hash,
-accepted Endpoint Configuration Hash, Consumer Session identity and
-`route_generation`. Connection resume does not change Session state, and stale
-queued messages require explicit recovery or rejection.
+Revision note: Session routing additionally binds the accepted Runtime Binding
+or compatible Runtime set, Runtime Generation and state pinning policy.
 
 Supersedes:
 
@@ -2311,6 +2309,15 @@ SETTLEMENT_RESOLVER_NOT_REVEALED
 ORDINARY_SETTLEMENT_PROHIBITED
 RECOVERY_STATE_MISMATCH
 SESSION_PROTOCOL_VERSION_UNSUPPORTED
+
+## Runtime Acceptance Binding
+
+A Session route SHALL retain the accepted Endpoint Configuration Hash and its
+authorized Runtime Binding Hash or compatible Runtime set. Stateful Sessions
+SHOULD remain pinned to one Runtime lineage and State Generation. Route
+reconnect SHALL NOT silently migrate Session state. Runtime failover requires
+contract-compatible behavior, preserved Request IDs and Usage continuity, or
+the Session enters explicit RFC-0060 recovery.
 
 ---
 

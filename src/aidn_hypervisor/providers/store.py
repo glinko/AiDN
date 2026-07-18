@@ -167,12 +167,30 @@ class InMemoryProviderInventoryStore:
 
     def save_runtime_binding(self, binding: RuntimeBinding) -> None:
         current = self._runtime_bindings.get(binding.runtime_binding_id)
-        if current is not None and (
-            current.provider_instance_id != binding.provider_instance_id
-            or current.model_deployment_id != binding.model_deployment_id
-            or current.plugin_id != binding.plugin_id
-        ):
-            raise ValueError("runtime binding ownership fields are immutable; delete and recreate instead")
+        if current is not None:
+            if current.runtime_id != binding.runtime_id:
+                raise ValueError("runtime binding Runtime ID is immutable")
+            if binding.runtime_generation < current.runtime_generation:
+                raise ValueError("runtime generation cannot decrease")
+            ownership_changed = (
+                current.provider_instance_id != binding.provider_instance_id
+                or current.model_deployment_id != binding.model_deployment_id
+                or current.plugin_id != binding.plugin_id
+            )
+            if ownership_changed and binding.runtime_generation == current.runtime_generation:
+                raise ValueError(
+                    "runtime binding ownership fields are immutable within one Runtime Generation"
+                )
+        binding = RuntimeBinding.model_validate(binding.model_dump(mode="json"))
+        if current is not None:
+            if (
+                binding.runtime_generation == current.runtime_generation
+                and current.runtime_configuration_hash
+                != binding.runtime_configuration_hash
+            ):
+                raise ValueError(
+                    "Runtime configuration change requires a higher Runtime Generation"
+                )
         if binding.provider_instance_id not in self._provider_instances:
             raise ValueError("provider_instance_id must reference an existing provider instance")
         provider_instance = self._provider_instances[binding.provider_instance_id]
@@ -185,6 +203,17 @@ class InMemoryProviderInventoryStore:
             )
         if binding.plugin_id != provider_instance.plugin_id:
             raise ValueError("plugin_id must match the owning provider instance plugin_id")
+        if binding.installed_plugin_id is not None:
+            installed_plugin = self._installed_plugins.get(binding.installed_plugin_id)
+            if installed_plugin is None:
+                raise ValueError("installed_plugin_id must reference an installed plugin")
+            if installed_plugin.plugin_id != binding.plugin_id:
+                raise ValueError("installed_plugin_id must own the Runtime Binding plugin")
+            if (
+                binding.plugin_version is not None
+                and installed_plugin.plugin_version != binding.plugin_version
+            ):
+                raise ValueError("plugin_version must match the installed plugin release")
         self._runtime_bindings[binding.runtime_binding_id] = binding.model_copy(deep=True)
 
     def get_runtime_binding(self, runtime_binding_id: str) -> RuntimeBinding:

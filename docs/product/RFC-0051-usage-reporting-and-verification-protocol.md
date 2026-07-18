@@ -2,10 +2,10 @@
 
 Status: `Draft`
 
-Version: `0.4`
+Version: `0.5`
 
-Revision note: usage dimensions now carry explicit measurement authority classes
-shared by Runtime and Provider Plugin Adapter capability discovery.
+Revision note: each Runtime publishes a Configuration-bound Usage Profile with
+authority, scope and billing eligibility defined independently per dimension.
 
 Supersedes:
 
@@ -33,6 +33,12 @@ The Usage Reporting and Verification Protocol defines how billable usage is:
 - applied during Settlement.
 
 Every Endpoint SHALL report usage.
+
+An RFC-0053 Runtime Usage Profile SHALL bind to Runtime ID and Runtime
+Configuration Hash. Each dimension independently declares unit, availability,
+authority, cumulative behavior, Request/Session scope, billing eligibility and
+limitations. Unknown values remain unknown; a missing Provider metric SHALL NOT
+be converted to zero.
 
 Independent verification of reported usage is desirable but is not universally possible.
 
