@@ -4,12 +4,14 @@ import pytest
 
 from aidn_hypervisor.dispatcher import (
     DispatcherError,
+    DispatcherStore,
     DispatcherRoute,
     NetworkDispatcher,
     NetworkMessage,
     canonical_payload_hash,
 )
 from aidn_hypervisor.dispatcher.models import canonical_payload_bytes
+from aidn_hypervisor.persistence import FileStateStore
 
 
 def _message(
@@ -135,3 +137,44 @@ def test_dispatcher_rejects_conflicting_processed_replay() -> None:
         dispatcher.submit(_message(payload={"value": "changed"}))
 
     assert error.value.code == "MESSAGE_REPLAYED"
+
+
+def test_dispatcher_restores_queue_and_persistent_replay_state(tmp_path) -> None:
+    state_store = FileStateStore(tmp_path / "state.json")
+    received: list[dict] = []
+    first = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="rev-1",
+        store=DispatcherStore(state_store),
+    )
+    route = DispatcherRoute(
+        destination_type="ENDPOINT",
+        destination_id="ep-1",
+        route_type="LOCAL_PROTOCOL_HANDLER",
+        route_generation=1,
+        allowed_source_types={"SERVICE"},
+        allowed_channel_classes={"VALIDATION"},
+        allowed_message_types={"VALIDATION_REPORT_TRANSFER"},
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    first.register_local_route(route, lambda payload: received.append(payload))
+    message = _message(message_id="durable-msg")
+    first.submit(message)
+
+    restored = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="rev-1",
+        store=DispatcherStore(state_store),
+    )
+    restored.register_local_route(
+        restored.store.routes[("ENDPOINT", "ep-1")],
+        lambda payload: received.append(payload),
+    )
+    delivered, _ = restored.drain_once()
+    duplicate = restored.submit(message)
+
+    assert delivered.delivery_state == "APPLICATION_ACCEPTED"
+    assert received == [{"value": "ok"}]
+    assert duplicate.delivery_state == "DUPLICATE"

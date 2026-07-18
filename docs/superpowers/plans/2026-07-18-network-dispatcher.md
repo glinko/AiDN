@@ -31,6 +31,11 @@ domain, authorization, Route Generation, admission, replay and delivery state.
 7. Recovery and operations: restart revalidation, Dead Letter operator surface,
    metrics, overload and Safe Mode.
 
+Progress 2026-07-18: Slice 1 is implemented. Slice 2 now persists routes,
+durable queued messages, delivery records, processed Message IDs and Dead Letter
+metadata using `HypervisorStateSnapshot`. Local handlers are intentionally
+rebound after restart and queued messages are revalidated before delivery.
+
 ## Current Boundary
 
 The repository currently has application services and an in-process Validation

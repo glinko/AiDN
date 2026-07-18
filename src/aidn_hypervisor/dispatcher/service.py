@@ -5,9 +5,11 @@ from typing import Callable
 from aidn_hypervisor.dispatcher.models import (
     DeadLetterRecord,
     DeliveryRecord,
+    DispatcherReplayRecord,
     DispatcherRoute,
     NetworkMessage,
 )
+from aidn_hypervisor.dispatcher.store import DispatcherStore
 
 
 class DispatcherError(ValueError):
@@ -27,6 +29,7 @@ class NetworkDispatcher:
         chain_id: str,
         network_revision: str,
         maximum_queue_messages: int = 256,
+        store: DispatcherStore | None = None,
     ) -> None:
         if maximum_queue_messages <= 0:
             raise ValueError("maximum_queue_messages must be positive")
@@ -34,12 +37,13 @@ class NetworkDispatcher:
         self.chain_id = chain_id
         self.network_revision = network_revision
         self.maximum_queue_messages = maximum_queue_messages
-        self._routes: dict[tuple[str, str], DispatcherRoute] = {}
+        self.store = store or DispatcherStore()
+        self._routes = self.store.routes
         self._handlers: dict[tuple[str, str], Callable[[dict], object]] = {}
-        self._queue: deque[NetworkMessage] = deque()
-        self._delivery_records: dict[str, DeliveryRecord] = {}
-        self._processed_messages: dict[str, str] = {}
-        self._dead_letters: list[DeadLetterRecord] = []
+        self._queue: deque[NetworkMessage] = deque(self.store.queued_messages.values())
+        self._delivery_records = self.store.delivery_records
+        self._processed_messages = self.store.replays
+        self._dead_letters = self.store.dead_letters
 
     def register_local_route(
         self,
@@ -49,6 +53,9 @@ class NetworkDispatcher:
         key = (route.destination_type, route.destination_id)
         previous = self._routes.get(key)
         if previous is not None and route.route_generation <= previous.route_generation:
+            if previous == route:
+                self._handlers[key] = handler
+                return
             raise DispatcherError(
                 "ROUTE_GENERATION_MISMATCH",
                 "route_update",
@@ -58,6 +65,7 @@ class NetworkDispatcher:
             raise ValueError("register_local_route requires a local route type")
         self._routes[key] = route
         self._handlers[key] = handler
+        self.store.flush()
 
     def submit(self, message: NetworkMessage) -> DeliveryRecord:
         now = self._now()
@@ -70,9 +78,9 @@ class NetworkDispatcher:
             received_at=now,
             payload_hash=message.payload_hash,
         )
-        existing_hash = self._processed_messages.get(message.message_id)
-        if existing_hash is not None:
-            if existing_hash != message.payload_hash:
+        existing_replay = self._processed_messages.get(message.message_id)
+        if existing_replay is not None:
+            if existing_replay.payload_hash != message.payload_hash:
                 raise DispatcherError(
                     "MESSAGE_REPLAYED",
                     "replay_guard",
@@ -80,6 +88,7 @@ class NetworkDispatcher:
                 )
             duplicate = record.model_copy(update={"delivery_state": "DUPLICATE"})
             self._delivery_records[message.message_id] = duplicate
+            self.store.flush()
             return duplicate
         try:
             self._validate_domain(message)
@@ -91,7 +100,9 @@ class NetworkDispatcher:
                 update={"delivery_state": "QUEUED", "queued_at": now}
             )
             self._queue.append(message)
+            self.store.queued_messages[message.message_id] = message
             self._delivery_records[message.message_id] = queued
+            self.store.flush()
             return queued
         except DispatcherError as exc:
             self._reject(record, message, exc)
@@ -101,8 +112,10 @@ class NetworkDispatcher:
         if not self._queue:
             return None
         message = self._queue.popleft()
+        self.store.queued_messages.pop(message.message_id, None)
         record = self._delivery_records[message.message_id]
         try:
+            self._validate_domain(message)
             self._validate_expiration(message)
             route = self._resolve_and_authorize(message)
             key = (route.destination_type, route.destination_id)
@@ -116,8 +129,13 @@ class NetworkDispatcher:
                     "attempt_count": record.attempt_count + 1,
                 }
             )
-            self._processed_messages[message.message_id] = message.payload_hash
+            self._processed_messages[message.message_id] = DispatcherReplayRecord(
+                message_id=message.message_id,
+                payload_hash=message.payload_hash,
+                processed_at=self._now(),
+            )
             self._delivery_records[message.message_id] = completed
+            self.store.flush()
             return completed, result
         except (DispatcherError, Exception) as exc:
             if not isinstance(exc, DispatcherError):
@@ -228,6 +246,7 @@ class NetworkDispatcher:
                 payload_hash=message.payload_hash,
             )
         )
+        self.store.flush()
 
     @staticmethod
     def _now() -> str:

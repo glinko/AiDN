@@ -162,3 +162,9 @@ class DeadLetterRecord(BaseModel):
     payload_retention_class: str = "HASH_ONLY"
     retryable: bool = False
     operator_action_required: bool = True
+
+
+class DispatcherReplayRecord(BaseModel):
+    message_id: str
+    payload_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    processed_at: str

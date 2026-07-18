@@ -9,6 +9,13 @@ from aidn_hypervisor.economics.models import (
     RecyclableRemoval,
 )
 from aidn_hypervisor.ledger.models import LedgerOperationRecord
+from aidn_hypervisor.dispatcher.models import (
+    DeadLetterRecord,
+    DeliveryRecord,
+    DispatcherReplayRecord,
+    DispatcherRoute,
+    NetworkMessage,
+)
 from aidn_hypervisor.providers.models import (
     ModelDeployment,
     ProviderArtifactMaterialization,
@@ -294,6 +301,13 @@ class HypervisorStateSnapshot(BaseModel):
     provider_installation_jobs: list[ProviderInstallationJob] = Field(
         default_factory=list
     )
+    dispatcher_routes: list[DispatcherRoute] = Field(default_factory=list)
+    dispatcher_queued_messages: list[NetworkMessage] = Field(default_factory=list)
+    dispatcher_delivery_records: list[DeliveryRecord] = Field(default_factory=list)
+    dispatcher_replay_records: list[DispatcherReplayRecord] = Field(
+        default_factory=list
+    )
+    dispatcher_dead_letters: list[DeadLetterRecord] = Field(default_factory=list)
     validation_requests: list[ValidationRequest] = Field(default_factory=list)
     validation_bonds: list[ValidationBond] = Field(default_factory=list)
     validation_reports: list[ValidationReport] = Field(default_factory=list)
