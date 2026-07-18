@@ -6558,7 +6558,9 @@ def test_session_detail_exposes_session_contract_object_references() -> None:
         session_payload["session_contract_object_id"]
         == opened.session.session_contract_object_id
     )
-    assert session_payload["session_contract_object_version"] == "session-contract.v1"
+    assert session_payload["session_contract_object_version"] == "session-contract.v2"
+    assert session_payload["endpoint_payment_beneficiary"] == "wallet-provider"
+    assert session_payload["consumer_refund_beneficiary"] == "wallet-client"
     assert session_payload["session_contract_namespace"] == "session"
 
 

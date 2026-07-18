@@ -2,14 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.6`
+Version: `0.7`
 
-Revision note: Forced Settlement evaluates the last accepted RFC-0051 Usage
-chain and explicit incomplete/conflicting Usage policy without inventing values.
+Revision note: Forced Settlement uses the RFC-0037 Settlement Input Root,
+request records, bounded dispute reserve and partial undisputed finalization.
 
 Supersedes:
 
-- `RFC-0060 Version 0.5`
+- `RFC-0060 Version 0.6`
 
 Depends on:
 
@@ -308,7 +308,7 @@ An acknowledgement MAY have status:
 The Last Accepted Checkpoint defines:
 
 - uncontested cumulative usage;
-- minimum Provider payment;
+- minimum Endpoint Payment;
 - maximum ordinary refund before additional policy charges.
 
 It SHALL be the default forced-settlement baseline.
@@ -789,7 +789,7 @@ Both parties SHALL preserve:
 
 The default Mismatch Settlement is:
 
-`Provider payment = value of Last Accepted Checkpoint`
+`Endpoint Payment = value of Last Accepted Checkpoint`
 
 plus any independently proven and explicitly authorized fixed or observable charge.
 
@@ -1073,7 +1073,7 @@ forced_settlement_result:
   terminal_state:
   failure_class:
   attribution:
-  provider_payment:
+  endpoint_payment:
   consumer_refund:
   network_fees:
   penalties:
@@ -1232,7 +1232,7 @@ The Ledger SHALL record at minimum:
 - failure class;
 - attribution state;
 - Last Accepted Checkpoint;
-- Provider payment;
+- Endpoint Payment;
 - Consumer refund;
 - fees;
 - penalties;
@@ -1527,9 +1527,18 @@ The following remain versioned protocol parameters:
 
 For every terminal Session:
 
-`Provider Payment + Consumer Refund + Network Fees + Finalized Penalties = Locked Session Deposit`
+`Endpoint Payment + Consumer Refund + Network Fees + Finalized Penalties = Locked Session Deposit`
 
-`Provider Payment <= Accepted and Authorized Usage`
+`Endpoint Payment <= Accepted and Authorized Usage`
+
+## RFC-0037 Forced Settlement Input and Partial Finalization
+
+Every Forced Settlement claim SHALL bind the effective Session terms,
+Settlement Input Root, Request Settlement Root, accepted Checkpoint references,
+prior releases and a bounded disputed amount. Deterministically supported and
+undisputed Endpoint Payment and Consumer refund MAY finalize atomically while
+only the dispute reserve remains locked. Unsupported liability is refunded;
+valid accepted exposure is not erased solely because one participant is absent.
 
 `Total Distribution <= Locked Deposit`
 

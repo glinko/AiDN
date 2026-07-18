@@ -146,6 +146,7 @@ def test_close_session_applies_minimum_session_fee_when_no_requests_were_sent() 
     assert closed.settlement is not None
     assert closed.settlement.no_request is True
     assert closed.settlement.network_fee_q == 0.01
+    assert closed.settlement.endpoint_payment_q == 2.0
     assert closed.settlement.charged_q == 2.01
     assert closed.settlement.refunded_q == 7.99
 
@@ -171,6 +172,7 @@ def test_close_session_refunds_remaining_balance_after_usage_charge() -> None:
     assert closed.settlement is not None
     assert closed.settlement.no_request is False
     assert closed.settlement.usage_charged_q == 6.5
+    assert closed.settlement.endpoint_payment_q == 6.5
     assert closed.settlement.network_fee_q == 0.01
     assert closed.settlement.charged_q == 6.51
     assert closed.settlement.refunded_q == 13.49
@@ -372,7 +374,9 @@ def test_open_session_persists_session_contract_registry_object(tmp_path: Path) 
     )
 
     assert opened.session.session_contract_object_id.startswith("sha256:")
-    assert opened.session.session_contract_object_version == "session-contract.v1"
+    assert opened.session.session_contract_object_version == "session-contract.v2"
+    assert opened.session.endpoint_payment_beneficiary == "wallet-provider"
+    assert opened.session.consumer_refund_beneficiary == "wallet-a"
     assert opened.session.session_contract_namespace == "session"
     assert opened.session.session_contract_hash.startswith("sha256:")
 
@@ -382,7 +386,7 @@ def test_open_session_persists_session_contract_registry_object(tmp_path: Path) 
     )
 
     assert stored["object_type"] == "session_contract"
-    assert stored["object_version"] == "session-contract.v1"
+    assert stored["object_version"] == "session-contract.v2"
     assert stored["namespace"] == "session"
     expected_payload_hash = _canonical_hash(stored["payload"])
     expected_object_id = _canonical_registry_object_id(
@@ -398,11 +402,33 @@ def test_open_session_persists_session_contract_registry_object(tmp_path: Path) 
     assert stored["payload"]["advertisement_id"] == "adv-ep-1-v1"
     assert stored["payload"]["offer_id"] == "offer-public"
     assert stored["payload"]["endpoint_configuration_hash"] == "cfg-accepted"
+    assert stored["payload"]["endpoint_payment_beneficiary"] == "wallet-provider"
+    assert stored["payload"]["consumer_refund_beneficiary"] == "wallet-a"
+    assert stored["payload"]["session_contract_version"] == "session-contract.v2"
     assert opened.session.endpoint_configuration_hash == "cfg-accepted"
     assert (
         stored["payload"]["accounting_contract_object_id"]
         == opened.session.accounting_contract_object_id
     )
+
+
+def test_open_session_binds_explicit_payment_and_refund_beneficiaries() -> None:
+    service = _session_service()
+
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-consumer",
+        provider_wallet="legacy-provider-wallet",
+        endpoint_payment_beneficiary="wallet-treasury",
+        consumer_refund_beneficiary="wallet-refunds",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(),
+    )
+
+    assert opened.session.provider_wallet == "legacy-provider-wallet"
+    assert opened.session.endpoint_payment_beneficiary == "wallet-treasury"
+    assert opened.session.consumer_refund_beneficiary == "wallet-refunds"
 
 
 def test_open_session_reuses_persisted_session_contract_object_after_registry_restart(

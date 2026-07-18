@@ -20,6 +20,8 @@ class EndpointSession(BaseModel):
     endpoint_id: str
     client_wallet: str
     provider_wallet: str
+    endpoint_payment_beneficiary: str = Field(min_length=1)
+    consumer_refund_beneficiary: str = Field(min_length=1)
     node_id: str
     status: SessionStatus
     created_at: str
@@ -55,6 +57,22 @@ class EndpointSession(BaseModel):
     last_accepted_usage_charged_q: float = Field(default=0.0, ge=0.0)
     close_reason: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _populate_legacy_beneficiaries(cls, value):
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        if not normalized.get("endpoint_payment_beneficiary"):
+            normalized["endpoint_payment_beneficiary"] = normalized.get(
+                "provider_wallet"
+            )
+        if not normalized.get("consumer_refund_beneficiary"):
+            normalized["consumer_refund_beneficiary"] = normalized.get(
+                "client_wallet"
+            )
+        return normalized
+
 
 class LockedDeposit(BaseModel):
     deposit_id: str
@@ -78,12 +96,15 @@ class LockedDeposit(BaseModel):
 
 class SessionSettlementSummary(BaseModel):
     settlement_evidence_root: str | None = None
+    endpoint_payment_beneficiary: str | None = None
+    consumer_refund_beneficiary: str | None = None
     usage_charged_q: float = Field(default=0.0, ge=0.0)
     idle_fee_charged_q: float = Field(default=0.0, ge=0.0)
     minimum_session_fee_q: float = Field(default=0.0, ge=0.0)
     network_fee_q: float = Field(default=0.0, ge=0.0)
     charged_q: float = Field(default=0.0, ge=0.0)
     refunded_q: float = Field(default=0.0, ge=0.0)
+    endpoint_payment_q: float = Field(default=0.0, ge=0.0)
     payout_q: float = Field(default=0.0, ge=0.0)
     no_request: bool = False
 

@@ -2,11 +2,11 @@
 
 Status: `Draft`
 
-Version: `0.2`
+Version: `0.3`
 
 Supersedes:
 
-- `ECO-0005 Version 0.1`
+- `ECO-0005 Version 0.2`
 
 Depends on:
 
@@ -815,3 +815,12 @@ The following invariants SHALL always hold:
 - Unclaimed Faucet allocation carries forward.
 - The Faucet algorithm may be changed by future protocol upgrades.
 - All Mint, removal, recycling, and carryover values are auditable through the Ledger.
+
+## 53. Session Network Fee Disposition
+
+Actual Network Fees consumed from an RFC-0037 Session Funding Account are
+removed into the canonical recycle accumulator. They are not paid directly to
+the Endpoint, Runtime, internal Provider, Validator or Registry node that
+participated in that Session. A later Epoch may authorize recycled emission
+under this document's pool and eligibility rules. `Q` permanently classified as
+burned is never added to the recycle accumulator.

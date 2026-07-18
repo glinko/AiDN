@@ -2,15 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.7`
+Version: `0.8`
 
-Revision note: every accepted Request produces a Usage Report envelope and every
-terminal Request produces a Final Report. Tokens remain optional; Availability,
-Authority, fallback policy and economic exposure are explicit per dimension.
+Revision note: accepted Usage chain heads feed RFC-0037 Request Settlement
+Records; Usage remains evidence and never redirects Endpoint Payment.
 
 Supersedes:
 
-- `RFC-0051 Version 0.6`
+- `RFC-0051 Version 0.7`
 
 Depends on:
 
@@ -1668,3 +1667,11 @@ The following remain Capability-specific or configurable:
 - Reputation distinguishes opacity, transparency, and correctness.
 - Budget limits protect Consumers even when exact usage cannot be reproduced.
 - The Proxy Endpoint remains responsible for its published Accounting Contract.
+
+## RFC-0037 Settlement Evidence Binding
+
+Settlement consumes only the accepted Final Usage chain head and the exact
+Accounting Contract Hash for each Request. It applies Availability, Authority,
+fallback, retry and terminal-state rules before Request and Session ceilings.
+Usage Reports SHALL NOT name or redirect the Endpoint Payment Beneficiary;
+Provider cost remains separate from Consumer-facing Endpoint Payment.

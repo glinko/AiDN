@@ -239,6 +239,8 @@ class SessionService:
         endpoint_id: str,
         client_wallet: str,
         provider_wallet: str,
+        endpoint_payment_beneficiary: str,
+        consumer_refund_beneficiary: str,
         node_id: str,
         deposit_q: float,
         advertisement_id: str | None,
@@ -255,6 +257,8 @@ class SessionService:
             "endpoint_id": endpoint_id,
             "client_wallet": client_wallet,
             "provider_wallet": provider_wallet,
+            "endpoint_payment_beneficiary": endpoint_payment_beneficiary,
+            "consumer_refund_beneficiary": consumer_refund_beneficiary,
             "node_id": node_id,
             "deposit_locked_q": deposit_q,
             "advertisement_id": advertisement_id,
@@ -273,7 +277,7 @@ class SessionService:
             ),
             "session_policy_snapshot": session_policy_snapshot,
             "accepted_at": accepted_at,
-            "session_contract_version": "session-contract.v1",
+            "session_contract_version": "session-contract.v2",
         }
 
     def _session_contract_record(
@@ -286,11 +290,11 @@ class SessionService:
         return {
             "object_id": _registry_object_id(
                 object_type="session_contract",
-                object_version="session-contract.v1",
+                object_version="session-contract.v2",
                 payload_hash=payload_hash,
             ),
             "object_type": "session_contract",
-            "object_version": "session-contract.v1",
+            "object_version": "session-contract.v2",
             "namespace": "session",
             "payload_hash": payload_hash,
             "payload_encoding": "canonical_json",
@@ -336,6 +340,12 @@ class SessionService:
                     "accounting_contract_hash": session.accounting_contract_hash,
                     "session_contract_hash": session.session_contract_hash,
                     "session_contract_object_id": session.session_contract_object_id,
+                    "endpoint_payment_beneficiary": (
+                        session.endpoint_payment_beneficiary
+                    ),
+                    "consumer_refund_beneficiary": (
+                        session.consumer_refund_beneficiary
+                    ),
                     "deposit_amount": deposit_q,
                     "open_expiration": session.expires_at,
                 },
@@ -386,6 +396,8 @@ class SessionService:
         pricing_policy_hash: str | None = None,
         accounting_contract_hash: str | None = None,
         endpoint_configuration_hash: str | None = None,
+        endpoint_payment_beneficiary: str | None = None,
+        consumer_refund_beneficiary: str | None = None,
     ) -> SessionResult:
         session_policy_snapshot = dict(session_policy)
         session_policy_snapshot.setdefault("network_fee_q", self.network_fee_q)
@@ -402,6 +414,12 @@ class SessionService:
         )
         accounting_contract_namespace = accounting_contract_snapshot.get(
             "registry_namespace"
+        )
+        accepted_endpoint_payment_beneficiary = (
+            endpoint_payment_beneficiary or provider_wallet
+        )
+        accepted_consumer_refund_beneficiary = (
+            consumer_refund_beneficiary or client_wallet
         )
         minimum_deposit = float(session_policy.get("minimum_deposit", 0.0) or 0.0)
         if deposit_q < minimum_deposit:
@@ -437,6 +455,8 @@ class SessionService:
             endpoint_id=endpoint_id,
             client_wallet=client_wallet,
             provider_wallet=provider_wallet,
+            endpoint_payment_beneficiary=accepted_endpoint_payment_beneficiary,
+            consumer_refund_beneficiary=accepted_consumer_refund_beneficiary,
             node_id=node_id,
             deposit_q=deposit_q,
             advertisement_id=advertisement_id,
@@ -458,6 +478,8 @@ class SessionService:
             endpoint_id=endpoint_id,
             client_wallet=client_wallet,
             provider_wallet=provider_wallet,
+            endpoint_payment_beneficiary=accepted_endpoint_payment_beneficiary,
+            consumer_refund_beneficiary=accepted_consumer_refund_beneficiary,
             node_id=node_id,
             status=status,
             created_at=now.isoformat(),
@@ -1055,6 +1077,8 @@ class SessionService:
             "session_contract_hash": session.session_contract_hash,
             "accounting_contract_hash": session.accounting_contract_hash,
             "pricing_policy_hash": session.pricing_policy_hash,
+            "endpoint_payment_beneficiary": session.endpoint_payment_beneficiary,
+            "consumer_refund_beneficiary": session.consumer_refund_beneficiary,
             "last_accepted_report_sequence": session.last_accepted_report_sequence,
             "last_accepted_usage_charged_q": session.last_accepted_usage_charged_q,
             "accounting_checkpoint": dict(session.accounting_checkpoint or {}),
@@ -1077,12 +1101,15 @@ class SessionService:
         settlement_evidence_root = _hash_payload(settlement_payload)
         settlement = SessionSettlementSummary(
             settlement_evidence_root=settlement_evidence_root,
+            endpoint_payment_beneficiary=session.endpoint_payment_beneficiary,
+            consumer_refund_beneficiary=session.consumer_refund_beneficiary,
             usage_charged_q=accepted_usage_charged_q,
             idle_fee_charged_q=idle_fee_charged_q,
             minimum_session_fee_q=minimum_session_fee_q,
             network_fee_q=network_fee_charged_q,
             charged_q=charged_q,
             refunded_q=refunded_q,
+            endpoint_payment_q=payout_q,
             payout_q=payout_q,
             no_request=no_request,
         )
@@ -1114,6 +1141,12 @@ class SessionService:
                     "endpoint_id": session.endpoint_id,
                     "client_wallet": session.client_wallet,
                     "provider_wallet": session.provider_wallet,
+                    "endpoint_payment_beneficiary": (
+                        session.endpoint_payment_beneficiary
+                    ),
+                    "consumer_refund_beneficiary": (
+                        session.consumer_refund_beneficiary
+                    ),
                     "advertisement_id": session.advertisement_id,
                     "offer_id": session.offer_id,
                     "session_contract_hash": session.session_contract_hash,
@@ -1121,6 +1154,7 @@ class SessionService:
                     "settlement_evidence_root": settlement.settlement_evidence_root,
                     "charged_q": settlement.charged_q,
                     "refunded_q": settlement.refunded_q,
+                    "endpoint_payment_q": settlement.endpoint_payment_q,
                     "payout_q": settlement.payout_q,
                     "last_accepted_report_sequence": session.last_accepted_report_sequence,
                 },
@@ -1135,6 +1169,7 @@ class SessionService:
                 "endpoint_id": session.endpoint_id,
                 "charged_q": settlement.charged_q,
                 "refunded_q": settlement.refunded_q,
+                "endpoint_payment_q": settlement.endpoint_payment_q,
                 "payout_q": settlement.payout_q,
                 "usage_charged_q": settlement.usage_charged_q,
                 "idle_fee_charged_q": settlement.idle_fee_charged_q,

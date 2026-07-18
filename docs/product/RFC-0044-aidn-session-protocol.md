@@ -4,14 +4,14 @@ AiDN Session Protocol
 
 Status: Draft
 
-Version: 0.8
+Version: 0.9
 
-Revision note: Session accounting binds Checkpoints to an accepted RFC-0051
-Usage chain head, Accounting Contract and bounded economic exposure.
+Revision note: Session Contract v2 explicitly binds Endpoint Payment and
+Consumer refund beneficiaries and supplies request-level evidence to RFC-0037.
 
 Supersedes:
 
-* RFC-0044 Version 0.7
+* RFC-0044 Version 0.8
 
 Depends on:
 
@@ -301,6 +301,8 @@ session_contract:
   consumer_session_key:
   endpoint_id:
   endpoint_operator:
+  endpoint_payment_beneficiary:
+  consumer_refund_beneficiary:
   endpoint_session_key:
   endpoint_configuration_hash:
   advertisement_reference:
@@ -341,6 +343,8 @@ After Session acceptance, the following SHALL remain immutable:
 
 * Endpoint ID;
 * Endpoint Configuration Hash;
+* Endpoint Payment Beneficiary;
+* Consumer Refund Beneficiary;
 * accepted Advertisement identity (`advertisement_id`);
 * accepted Offer identity (`offer_id`), where present;
 * Capability and version;
@@ -387,7 +391,7 @@ SPONSORED_DEPOSIT
 PROTOCOL_ESCROW_DEPOSIT
 CONCEALED_SPONSORED_DEPOSIT
 
-Funding class does not by itself determine Provider payment.
+Funding class does not by itself determine Endpoint Payment.
 
 Settlement is determined by the accepted Settlement Resolver.
 
@@ -453,7 +457,7 @@ COMMITTED_CONCEALED_SETTLEMENT
 
 The resolver determines:
 
-* Provider payment rules;
+* Endpoint Payment rules;
 * refund destination;
 * fee handling;
 * reveal requirements;
@@ -485,7 +489,7 @@ The exact resolver details remain hidden until valid reveal or protocol timeout 
 
 ## 21. No Unilateral Pre-Reveal Settlement
 
-A Session using COMMITTED_CONCEALED_SETTLEMENT SHALL NOT permit unilateral ordinary Provider Settlement before:
+A Session using COMMITTED_CONCEALED_SETTLEMENT SHALL NOT permit unilateral ordinary Endpoint Settlement before:
 
 * valid resolver reveal;
 * or deterministic protocol timeout resolution.
@@ -720,7 +724,7 @@ MaximumSessionCharge
 LockedDeposit
 ```
 
-Provider payment SHALL never exceed the accepted maximum.
+Endpoint Payment SHALL never exceed the accepted maximum.
 
 ---
 
@@ -1882,7 +1886,7 @@ They serve as:
 * maximum-limit evidence;
 * Validation Report inputs.
 
-They do not create Provider payment.
+They do not create Endpoint Payment.
 
 ---
 
@@ -1921,7 +1925,7 @@ When cooperative close fails, RFC-0060 defines:
 * recovery window;
 * Last Accepted Checkpoint use;
 * later objective evidence;
-* Provider payment;
+* Endpoint Payment;
 * refund;
 * failure attribution.
 
@@ -2145,7 +2149,7 @@ They differ in:
 
 * Funding Authorization;
 * concealed resolver;
-* Provider payment;
+* Endpoint Payment;
 * Assignment reveal;
 * Validation Report linkage.
 
@@ -2736,7 +2740,7 @@ is_validation: true
 После выполнения раскрывается Resolver:
 
 VALIDATION_SESSION_SETTLE
-Provider Payment = 0Q
+Endpoint Payment = 0Q
 
 Если Validator исчезнет и не опубликует отчёт, Deposit всё равно не зависает навсегда: действует Resolver reveal timeout.
 
