@@ -238,3 +238,52 @@ def test_storage_receipt_rejects_tampered_custody_payload(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="content hash mismatch"):
         service.create_report_storage_receipt(report_id=outcome.report.report_id)
+
+
+def test_validation_read_models_expose_custody_metadata_without_report_body(tmp_path) -> None:
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    signer = Ed25519ValidationReportCustodySigner("33" * 32)
+    service = ValidationService(
+        ValidationStore(),
+        custody_store=custody,
+        custody_signer=signer,
+    )
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+    receipt = service.create_report_storage_receipt(report_id=outcome.report.report_id)
+
+    summary = service.validation_summary("ep-1", configuration_hash="cfg-1")
+    history = service.validation_history("ep-1")
+
+    assert summary["latest_report_commitment"]["report_hash"] == outcome.commitment.report_hash
+    assert summary["latest_report_custody"]["report_hash"] == outcome.commitment.report_hash
+    assert summary["latest_report_storage_receipt"]["receipt_id"] == receipt.receipt_id
+    assert summary["custody_object_present"] is True
+    assert summary["storage_receipt_present"] is True
+    assert history["report_commitments"] == [outcome.commitment.model_dump(mode="json")]
+    assert history["report_custody_objects"] == [outcome.custody_object.model_dump(mode="json")]
+    assert history["report_storage_receipts"] == [receipt.model_dump(mode="json")]
+    assert "report_body" not in history

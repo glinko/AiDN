@@ -454,6 +454,36 @@ class ValidationService:
             scoped_requests[-1] if scoped_requests else None
         )
         latest_report_for_configuration = scoped_reports[-1] if scoped_reports else None
+        scoped_report_ids = {report.report_id for report in scoped_reports}
+        scoped_commitments = sorted(
+            [
+                item
+                for item in self.store.list_report_commitments()
+                if item.report_id in scoped_report_ids
+            ],
+            key=lambda item: item.created_at,
+        )
+        latest_commitment = scoped_commitments[-1] if scoped_commitments else None
+        custody_objects_by_hash = {
+            item.report_hash: item
+            for item in self.store.list_report_custody_objects()
+        }
+        latest_custody_object = (
+            custody_objects_by_hash.get(latest_commitment.report_hash)
+            if latest_commitment is not None
+            else None
+        )
+        latest_storage_receipt = next(
+            (
+                item
+                for item in self.store.list_report_storage_receipts()
+                if latest_commitment is not None
+                and item.report_hash == latest_commitment.report_hash
+                and item.endpoint_id == endpoint_id
+                and item.endpoint_configuration_hash == resolved_configuration_hash
+            ),
+            None,
+        )
         scoped_request_ids = {request.request_id for request in scoped_requests}
         latest_bond = (
             self.store.get_bond(latest_request_for_configuration.bond_id)
@@ -490,6 +520,23 @@ class ValidationService:
                 if current_snapshot is not None
                 else None
             ),
+            "latest_report_commitment": (
+                latest_commitment.model_dump(mode="json")
+                if latest_commitment is not None
+                else None
+            ),
+            "latest_report_custody": (
+                latest_custody_object.model_dump(mode="json")
+                if latest_custody_object is not None
+                else None
+            ),
+            "latest_report_storage_receipt": (
+                latest_storage_receipt.model_dump(mode="json")
+                if latest_storage_receipt is not None
+                else None
+            ),
+            "custody_object_present": latest_custody_object is not None,
+            "storage_receipt_present": latest_storage_receipt is not None,
             "latest_recommendation": (
                 latest_report_for_configuration.recommendation
                 if latest_report_for_configuration is not None
@@ -632,6 +679,31 @@ class ValidationService:
             self.store.list_reports_for_endpoint(endpoint_id),
             key=lambda item: item.created_at,
         )
+        report_ids = {item.report_id for item in reports}
+        commitments = sorted(
+            [
+                item
+                for item in self.store.list_report_commitments()
+                if item.report_id in report_ids
+            ],
+            key=lambda item: item.created_at,
+        )
+        report_hashes = {item.report_hash for item in commitments}
+        custody_objects = [
+            item
+            for item in self.store.list_report_custody_objects()
+            if item.report_hash in report_hashes
+        ]
+        storage_receipts = [
+            item
+            for item in self.store.list_report_storage_receipts()
+            if item.report_hash in report_hashes and item.endpoint_id == endpoint_id
+        ]
+        custody_states = [
+            item
+            for item in self.store.list_report_custody_states()
+            if item.report_hash in report_hashes and item.endpoint_id == endpoint_id
+        ]
         snapshots = [
             item
             for item in self.store.list_snapshots()
@@ -650,6 +722,18 @@ class ValidationService:
                 item.model_dump(mode="json") for item in authorizations
             ],
             "reports": [item.model_dump(mode="json") for item in reports],
+            "report_commitments": [
+                item.model_dump(mode="json") for item in commitments
+            ],
+            "report_custody_objects": [
+                item.model_dump(mode="json") for item in custody_objects
+            ],
+            "report_storage_receipts": [
+                item.model_dump(mode="json") for item in storage_receipts
+            ],
+            "report_custody_states": [
+                item.model_dump(mode="json") for item in custody_states
+            ],
             "snapshots": [item.model_dump(mode="json") for item in snapshots],
             "epochs": [item.model_dump(mode="json") for item in epochs],
             "request_count": len(request_ids),

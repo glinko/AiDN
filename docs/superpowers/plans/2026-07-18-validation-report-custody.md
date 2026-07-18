@@ -113,6 +113,8 @@ Exit criteria: valid transfer returns a verifiable receipt; invalid bindings ret
 
 Progress 2026-07-18: the local Endpoint-side receipt primitive is implemented with an injectable Ed25519 signer, content re-verification before signing, deterministic receipt identity, idempotent persistence and a local ledger projection. It remains opt-in through `AIDN_HYPERVISOR_CUSTODY_SIGNING_KEY`. Assignment-key transfer, canonical Hypervisor-key registration and Certification enforcement remain pending.
 
+Progress 2026-07-18: operator-facing validation summaries and histories now expose only the compact commitment, custody-object metadata, receipt metadata and future custody-state records. They do not expose the stored report body; authenticated locator retrieval remains a later transport slice.
+
 ### Slice 4: Compact Ledger Operations and Dual Write
 
 - Extend `VALIDATION_REPORT_COMMIT` with compact Certification inputs and receipt/failure references.
