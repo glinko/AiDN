@@ -8,10 +8,17 @@ from aidn_hypervisor.dispatcher import (
     DispatcherRoute,
     NetworkDispatcher,
     NetworkMessage,
+    bind_plugin_control_route,
+    bind_runtime_route,
     canonical_payload_hash,
 )
 from aidn_hypervisor.dispatcher.models import canonical_payload_bytes
 from aidn_hypervisor.persistence import FileStateStore
+from aidn_hypervisor.providers.models import (
+    PluginPermission,
+    ProviderPluginManifest,
+    RuntimeBinding,
+)
 
 
 def _message(
@@ -20,19 +27,23 @@ def _message(
     route_generation: int = 1,
     network_revision: str = "rev-1",
     payload: dict | None = None,
+    channel_class: str = "VALIDATION",
+    message_type: str = "VALIDATION_REPORT_TRANSFER",
+    source_subject: dict | None = None,
+    destination_subject: dict | None = None,
 ) -> NetworkMessage:
     body = payload or {"value": "ok"}
     now = datetime.now(timezone.utc)
     return NetworkMessage(
         message_id=message_id,
-        message_type="VALIDATION_REPORT_TRANSFER",
+        message_type=message_type,
         network_id="aidn-test",
         chain_id="chain-test",
         network_revision=network_revision,
         channel_id="validation-1",
-        channel_class="VALIDATION",
-        source_subject={"subject_type": "SERVICE", "subject_id": "validator-1"},
-        destination_subject={"subject_type": "ENDPOINT", "subject_id": "ep-1"},
+        channel_class=channel_class,
+        source_subject=source_subject or {"subject_type": "SERVICE", "subject_id": "validator-1"},
+        destination_subject=destination_subject or {"subject_type": "ENDPOINT", "subject_id": "ep-1"},
         source_sequence=1,
         route_generation=route_generation,
         created_at=now.isoformat(),
@@ -178,3 +189,73 @@ def test_dispatcher_restores_queue_and_persistent_replay_state(tmp_path) -> None
     assert delivered.delivery_state == "APPLICATION_ACCEPTED"
     assert received == [{"value": "ok"}]
     assert duplicate.delivery_state == "DUPLICATE"
+
+
+def test_runtime_and_plugin_control_routes_are_scoped_by_binding_and_permissions() -> None:
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="rev-1",
+    )
+    binding = RuntimeBinding(
+        runtime_binding_id="rtb-1",
+        provider_instance_id="pi-1",
+        model_deployment_id="md-1",
+        capability_id="llm.chat",
+        capability_version="1",
+        capability_definition_hash="cap-1",
+        plugin_id="plugin-1",
+        compatibility_bundle_id="bundle-1",
+        status="ready",
+    )
+    bind_runtime_route(dispatcher, binding, lambda payload: payload, route_generation=1)
+    runtime_message = _message(
+        message_id="runtime-1",
+        channel_class="RUNTIME",
+        message_type="RUNTIME_EXECUTION_REQUEST",
+        source_subject={"subject_type": "ENDPOINT", "subject_id": "ep-1"},
+        destination_subject={"subject_type": "RUNTIME", "subject_id": "rtb-1"},
+    )
+    assert dispatcher.submit(runtime_message).delivery_state == "QUEUED"
+
+    manifest = ProviderPluginManifest(
+        plugin_id="plugin-1",
+        plugin_version="1",
+        display_name="Plugin",
+        publisher="test",
+        package_digest="digest",
+        required_permissions=[
+            PluginPermission(
+                permission_id="private_network",
+                label="Private network",
+                reason="Provider health",
+            )
+        ],
+    )
+    bind_plugin_control_route(
+        dispatcher,
+        manifest,
+        lambda payload: payload,
+        provider_instance_id="pi-1",
+        approved_permissions={"private_network"},
+        route_generation=1,
+    )
+    allowed = _message(
+        message_id="plugin-1",
+        channel_class="PLUGIN_CONTROL",
+        message_type="PLUGIN_PROVIDER_HEALTH",
+        source_subject={"subject_type": "HYPERVISOR", "subject_id": "local"},
+        destination_subject={"subject_type": "PROVIDER_PLUGIN", "subject_id": "pi-1"},
+    )
+    assert dispatcher.submit(allowed).delivery_state == "QUEUED"
+
+    denied = _message(
+        message_id="plugin-2",
+        channel_class="PLUGIN_CONTROL",
+        message_type="PLUGIN_DIAGNOSTICS",
+        source_subject={"subject_type": "HYPERVISOR", "subject_id": "local"},
+        destination_subject={"subject_type": "PROVIDER_PLUGIN", "subject_id": "pi-1"},
+    )
+    with pytest.raises(DispatcherError) as error:
+        dispatcher.submit(denied)
+    assert error.value.code == "MESSAGE_PROFILE_UNSUPPORTED"

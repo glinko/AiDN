@@ -200,6 +200,15 @@ class NetworkDispatcher:
                 "authorization",
                 "Source subject type is not authorized",
             )
+        if (
+            route.allowed_source_ids
+            and message.source_subject.subject_id not in route.allowed_source_ids
+        ):
+            raise DispatcherError(
+                "SOURCE_NOT_AUTHORIZED",
+                "authorization",
+                "Source subject identity is not authorized",
+            )
         if message.channel_class not in route.allowed_channel_classes:
             raise DispatcherError(
                 "CHANNEL_NOT_AUTHORIZED",

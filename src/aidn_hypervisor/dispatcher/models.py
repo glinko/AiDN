@@ -124,6 +124,7 @@ class DispatcherRoute(BaseModel):
     route_generation: int = Field(ge=1)
     route_state: RouteState = "ACTIVE"
     allowed_source_types: set[str] = Field(default_factory=set)
+    allowed_source_ids: set[str] = Field(default_factory=set)
     allowed_channel_classes: set[ChannelClass] = Field(default_factory=set)
     allowed_message_types: set[str] = Field(default_factory=set)
     configuration_hash: str | None = None

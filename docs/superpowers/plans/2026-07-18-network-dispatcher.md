@@ -36,6 +36,12 @@ durable queued messages, delivery records, processed Message IDs and Dead Letter
 metadata using `HypervisorStateSnapshot`. Local handlers are intentionally
 rebound after restart and queued messages are revalidated before delivery.
 
+Progress 2026-07-18: Slice 4 has a first route-factory layer. Ready Runtime
+Bindings receive scoped `RUNTIME` routes, and `PLUGIN_CONTROL` message types are
+derived from the intersection of declared and approved Plugin permissions. Full
+lifecycle wiring will register, drain and revoke these routes as Provider
+Inventory state changes.
+
 ## Current Boundary
 
 The repository currently has application services and an in-process Validation
