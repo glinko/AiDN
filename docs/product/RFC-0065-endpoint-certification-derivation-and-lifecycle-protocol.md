@@ -2,7 +2,11 @@
 
 Status: `Draft`
 
-Version: `0.1`
+Version: `0.2`
+
+Supersedes:
+
+- `RFC-0065 Version 0.1`
 
 Depends on:
 
@@ -241,6 +245,8 @@ The Endpoint remains visible as previously Certified but under active concern.
 
 `DEGRADED` SHALL trigger additional Validation.
 
+Temporary report unavailability beyond the first failed custody check MAY produce `DEGRADED` with an explicit report-availability warning.
+
 ## 14. REVALIDATION_REQUIRED
 
 The Endpoint must complete a new Validation before its Certification can continue.
@@ -253,7 +259,9 @@ This state MAY result from:
 - policy-version change;
 - prolonged lack of Maintenance Validation;
 - repeated Session failures;
-- material accounting anomaly.
+- material accounting anomaly;
+- report custody remaining unavailable beyond its grace period;
+- `WITHHELD`, `LOST`, `CORRUPTED` or unauthorized `ACCESS_RESTRICTED` report state.
 
 ## 15. CERTIFICATION_REVOKED
 
@@ -297,12 +305,17 @@ A report affects Certification only when:
 - its assignment was valid;
 - the Validator was eligible;
 - the report was committed;
+- the compact commitment contains every field required for deterministic derivation;
 - assignment reveal was valid;
 - the report matches the current Endpoint Configuration Hash;
 - required evidence exists;
 - the report is within the applicable time window;
 - no fabrication evidence exists;
 - the Validator is not in the same Known Control Group as the Endpoint.
+
+Positive Certification additionally requires a valid Endpoint Storage Receipt and a retrievable Public Report at initial derivation. A missing receipt SHALL NOT make adverse or inconclusive evidence ineligible.
+
+Certification derivation SHALL not depend on fetching narrative or large Evidence Bundle content during State Machine execution.
 
 ## 19. Ineligible Reports
 
@@ -321,6 +334,8 @@ Reasons include:
 - report fabrication;
 - report duplication;
 - unsupported report version.
+
+Temporary report unavailability does not rewrite historical eligibility. It creates a separate custody state transition applied to the current Certification lifecycle.
 
 ## 20. Single-Report Default
 
@@ -1448,6 +1463,9 @@ This protocol uses:
 
 - `VALIDATION_REQUEST`;
 - `VALIDATION_REPORT_COMMIT`;
+- `VALIDATION_REPORT_STORAGE_RECEIPT`;
+- `VALIDATION_REPORT_STORAGE_FAILURE`;
+- `VALIDATION_REPORT_AVAILABILITY_COMMIT`;
 - `CERTIFICATION_STATE_UPDATE`;
 - `VALIDATION_BOND_REFUND`;
 - `VALIDATION_BOND_FORFEIT`;
@@ -1470,6 +1488,12 @@ The MVP SHALL define at least:
 - `CERTIFICATION_MAINTENANCE_OVERDUE`
 - `CERTIFICATION_BOND_RULE_NOT_SATISFIED`
 - `CERTIFICATION_RECOVERY_REQUIREMENT_NOT_MET`
+- `CERTIFICATION_REPORT_CUSTODY_REQUIRED`
+- `CERTIFICATION_REPORT_CUSTODY_GRACE_ACTIVE`
+- `CERTIFICATION_REPORT_WITHHELD`
+- `CERTIFICATION_REPORT_LOST`
+- `CERTIFICATION_REPORT_CORRUPTED`
+- `CERTIFICATION_REPORT_ACCESS_RESTRICTED`
 
 ## 94. Idempotency
 
@@ -1504,6 +1528,9 @@ The MVP SHALL implement:
 - Recovery Validation;
 - Bond refund and forfeiture triggers;
 - Certification history;
+- positive-Certification Storage Receipt requirement;
+- report-custody warning, grace and revalidation transitions;
+- legacy-report compatibility through the next Maintenance Validation;
 - Marketplace-visible Certification updates for the matching canonical Certification Record scope;
 - immutable historical Advertisement preservation;
 - Marketplace status exposure;

@@ -2,7 +2,11 @@
 
 Status: `Draft`
 
-Version: `0.2`
+Version: `0.3`
+
+Supersedes:
+
+- `RFC-0041 Version 0.2`
 
 Depends on:
 
@@ -912,6 +916,10 @@ The Endpoint Profile MAY contain:
 - `SETTLEMENT_CONSISTENCY`
 - `CERTIFICATION_HISTORY`
 - `RECOVERY_RELIABILITY`
+- `VALIDATION_REPORT_AVAILABILITY`
+- `VALIDATION_REPORT_RETENTION`
+- `VALIDATION_REPORT_INTEGRITY`
+- `VALIDATION_DISCLOSURE_RELIABILITY`
 
 ## 65. Endpoint Availability
 
@@ -974,6 +982,19 @@ The Profile SHALL preserve:
 - recovery.
 
 A new Certification SHALL not delete previous failures.
+
+## 69A. Validation Report Custody Reputation
+
+Endpoint custody Reputation SHALL distinguish:
+
+- one temporary retrieval outage, which normally affects current Health only;
+- repeated unavailability, which reduces report availability confidence;
+- report loss after migration or storage failure, which reduces retention reliability;
+- deliberate withholding or unauthorized access restriction, which creates a strong negative disclosure event;
+- content that fails the committed hash, which creates a critical integrity event;
+- successful restoration, which repairs current availability without erasing historical events.
+
+An optional Registry mirror may preserve report access, but it does not erase an Endpoint origin-custody failure. A Hypervisor-wide storage incident MAY also create a Hypervisor Reputation Event when objective evidence binds the failure to shared infrastructure.
 
 ## 70. Protocol Evidence First
 

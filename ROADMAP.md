@@ -157,6 +157,7 @@ What is still missing in the current stage:
 - decision on whether adapter-declared `usage_contract` becomes an enforced runtime gate, plus a first non-token pricing unit for `whisper`-class workloads;
 - formal `RFC-0051` accounting contracts, signed usage-report and acknowledgement chains, Marketplace accounting-transparency publication, and mismatch-safe settlement checkpoints beyond today’s `measurement_kind` / `measurement_source` metadata;
 - rating publication, reputation policy, and validation economics implementation;
+- Validation Report custody migration: deterministic compact commitments, report hashes, stable logical locators and snapshot persistence now exist alongside legacy local reports; full report custody still shares the general Hypervisor state snapshot, submission still derives Certification in one call, and transfer receipts/challenges remain to be implemented under `docs/superpowers/plans/2026-07-18-validation-report-custody.md`;
 - network-visible custom model onboarding workflow.
 - broad host-mutating Provider install executors remain deferred: the repo now has an opt-in controlled-filesystem executor that writes installation state, prepares controlled volume directories, stages model-download manifests, promotes local files into a shared immutable Model Artifact Store, and materializes them into provider volumes only inside one configured root path; shell, container, download, package-manager, and plugin-installer execution still need a broader sandboxed apply backend before enablement;
 - final onboarding polish across the remaining operator workspaces, so the new guided layer feels native outside `Home` and handoffs stay consistent across `Providers / Models / Endpoints` even while `Bundles` remains as a compatibility execution surface;
@@ -203,9 +204,10 @@ What is still missing in the current stage:
   - but very large resumable uploads, provider-specific cache/link optimization, scheduled/background GC policy, broader host-mutating executors, broader plugin sandbox enforcement, deep host-mutating rollback for shell/container/download actions, and full RFC-0054/RFC-0056 execution-plane conformance remain unimplemented.
 
 Immediate priorities:
-1. Harden the Provider Plugin MVP boundary further by extending beyond controlled filesystem mutation into broader sandboxed apply/rollback surfaces before any shell/container/download executor is enabled.
-2. Continue migrating older bundle-centric affordances onto `plugin -> provider instance -> model deployment -> runtime binding -> endpoint`, using bundle projection only as compatibility execution plumbing.
-3. Continue deepening `M5` trust and remote/proxy lifecycle on top of the new runtime-binding surface instead of adding more bundle-centric contracts.
+1. Add Model Deployment artifact-materialization readiness and enforce it at Runtime Binding or Endpoint Draft admission without breaking deployments that do not require artifact sets.
+2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
+3. Harden the Provider Plugin MVP boundary beyond controlled filesystem mutation before enabling shell, container, download or package-manager executors.
+4. Continue migrating older bundle-centric affordances onto `plugin -> provider instance -> model deployment -> runtime binding -> endpoint`, using bundle projection only as compatibility execution plumbing.
 
 ## Milestones
 
@@ -333,6 +335,10 @@ Checkpoints:
 - [ ] Selection policy that can combine price and rating
 - [ ] Validation Bond, Validator Reward, and Maintenance Validation contract
 - [ ] Validator qualification and deterministic selection policy
+- [ ] Endpoint-origin Validation Report custody with signed Storage Receipts
+- [x] Compact canonical Validation Commitments with deterministic Certification inputs in local persistence and ledger projections
+- [ ] Report availability challenges, custody grace periods, and retention Reputation
+- [ ] Marketplace report-custody freshness and warning surfaces
 
 Exit criteria:
 - nodes and validated Endpoints are ranked by structured signals instead of static preference only;

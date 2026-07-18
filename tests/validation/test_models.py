@@ -5,7 +5,9 @@ from aidn_hypervisor.endpoints.models import EndpointValidationState
 from aidn_hypervisor.validation.models import (
     ValidationBond,
     ValidationReport,
+    ValidationReportCommitment,
     ValidationStatusSnapshot,
+    validation_report_integrity,
 )
 
 
@@ -151,6 +153,51 @@ def test_validation_report_rejects_unstructured_issue_rows() -> None:
             detected_issues=[{"issue_id": "issue-1", "details": {"nested": {"bad": "nope"}}}],
             evidence_summary="operational with warnings",
             created_at="2026-07-09T00:00:00+00:00",
+        )
+
+
+def test_validation_report_integrity_ignores_local_id_and_signature_wrapper() -> None:
+    base = {
+        "request_id": "req-1",
+        "endpoint_id": "ep-1",
+        "configuration_hash": "cfg-1",
+        "report_kind": "initial",
+        "validator_label": "validator-a",
+        "recommendation": "certify",
+        "evidence_summary": "all checks passed",
+        "created_at": "2026-07-18T00:00:00+00:00",
+        "measured_metrics": {"latency_ms": 20, "success": True},
+    }
+    first = ValidationReport(
+        report_id="report-1",
+        signed_payload={"signature": "one"},
+        **base,
+    )
+    second = ValidationReport(
+        report_id="report-2",
+        signed_payload={"signature": "two"},
+        **base,
+    )
+
+    assert validation_report_integrity(first) == validation_report_integrity(second)
+
+
+def test_validation_report_commitment_rejects_receipt_and_failure_together() -> None:
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        ValidationReportCommitment(
+            commitment_id="vcommit-1",
+            report_id="report-1",
+            report_hash="sha256:" + "a" * 64,
+            report_size=10,
+            request_id="req-1",
+            endpoint_id="ep-1",
+            configuration_hash="cfg-1",
+            conclusion="certify",
+            evidence_root="sha256:" + "b" * 64,
+            report_locator="aidn://endpoint/ep-1/validation/test",
+            storage_receipt_hash="sha256:" + "c" * 64,
+            storage_failure_reference="failure-1",
+            created_at="2026-07-18T00:00:00+00:00",
         )
 
 

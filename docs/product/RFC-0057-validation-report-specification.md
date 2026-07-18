@@ -2,7 +2,11 @@
 
 Status: `Draft`
 
-Version: `0.1`
+Version: `0.2`
+
+Supersedes:
+
+- `RFC-0057 Version 0.1`
 
 Depends on:
 
@@ -64,12 +68,15 @@ Every Validation Report SHALL contain:
 ```yaml
 validation_report:
   report_id:
+  report_hash:
+  report_size:
   report_version:
   validation_assignment_id:
   endpoint_id:
   endpoint_configuration_hash:
   advertisement_id:
   capability_id:
+  capability_version:
   model_class:
   validator_service_id:
   validator_signature:
@@ -85,6 +92,11 @@ validation_report:
   accounting_verification:
   issues:
   conclusion:
+  limitation_codes:
+  failure_codes:
+  observation_codes:
+  evidence_bundle_root:
+  evidence_access_class:
   evidence_references:
 ```
 
@@ -92,7 +104,9 @@ All fields affecting interpretation SHALL be covered by the Validator signature.
 
 ## 5. Report Identity
 
-`report_id` SHALL be derived from the canonical serialized report.
+`report_hash` SHALL be derived from the canonical serialized report body excluding `report_id`, `report_hash`, `report_size`, transport locators, Storage Receipts and signatures. The Validator signature SHALL cover `report_hash` together with the assignment and network domain.
+
+For the MVP, `report_id` SHOULD equal the content-addressed `report_hash` or use a versioned domain-separated derivation from it.
 
 A modified report produces a different identifier.
 
@@ -700,36 +714,73 @@ They SHALL NOT replace the reports.
 
 ## 37. Registry Storage
 
-Validation Reports are first-class immutable Registry objects.
+Validation Reports are immutable content-addressed protocol objects, but Full Registry replication of every complete report is not required.
 
-Registry Services SHALL store:
+The validated Endpoint Hypervisor SHALL be the mandatory origin custodian for every committed report concerning that Endpoint. Registry Services SHALL store or index the compact Validation Commitment and MAY mirror the complete report or its Evidence Bundle.
+
+The origin locator SHALL be a stable logical AiDN locator rather than a transport URL:
+
+```text
+aidn://endpoint/<endpoint_id>/validation/<report_hash>
+```
+
+Registry indexes and optional mirrors SHALL preserve:
 
 - canonical report metadata;
 - report hash;
 - Validator signature;
 - evidence references;
-- Certification result;
+- canonical conclusion and limitation codes;
 - related Configuration Hash.
 
 Large artifacts MAY be stored separately and referenced by content hash.
 
+An optional mirror does not release the Endpoint from its origin-custody obligation.
+
 ## 38. Ledger Integration
 
-The full Validation Report MAY remain off-chain.
+The full Validation Report and Evidence Bundle SHALL remain off-chain.
 
 The Ledger SHALL store at minimum:
 
-- Report ID;
-- Report hash;
-- Endpoint ID;
-- Configuration Hash;
+- Validation ID and Assignment ID;
+- Endpoint ID and Configuration Hash;
+- Capability ID and version;
 - Validator Service ID;
-- conclusion summary;
-- Certification State transition;
-- publication timestamp;
-- evidence-root reference.
+- validation Epoch;
+- canonical conclusion;
+- objective failure, limitation and observation codes required for deterministic Certification derivation;
+- Report ID, hash, size, schema version and logical locator;
+- Evidence Bundle root and access class;
+- Retention Policy ID;
+- Endpoint Storage Receipt hash when custody was accepted;
+- Validator signature;
+- Endpoint signature when a Storage Receipt exists.
 
-This allows the network to verify that Registry content matches the finalized report commitment.
+The compact commitment SHALL contain enough structured information to derive Certification even when the complete report is temporarily unavailable. The report supplies explanation and auditable evidence; it SHALL NOT be the only location of a state-machine input.
+
+### Validation Report Storage Receipt
+
+After validating and durably storing a report, the Endpoint Hypervisor SHALL issue:
+
+```yaml
+validation_report_storage_receipt:
+  validation_id:
+  endpoint_id:
+  endpoint_configuration_hash:
+  report_hash:
+  report_size:
+  stored_at:
+  report_locator:
+  retention_policy_id:
+  endpoint_signature:
+```
+
+The receipt proves acceptance of custody, not agreement with the report conclusion.
+
+Where Validator identity remains concealed until commitment, the transfer envelope SHALL use an assignment-scoped signature or proof bound to the concealed Assignment Commitment. The permanent Validator Service signature may remain sealed until identity reveal; the finalized Public Report SHALL expose it afterwards.
+
+An Endpoint refusal SHALL NOT suppress the Validator's canonical conclusion. The Validator MAY commit the report result together with `REPORT_STORAGE_REFUSED`; positive Certification requires accepted custody, while adverse or inconclusive evidence remains eligible according to Certification policy.
 
 ## 39. Epoch Integration
 
@@ -740,6 +791,9 @@ Relevant Epoch Tasks include:
 - Generate Validation Assignments
 - Accept Validation Assignments
 - Collect Validation Reports
+- Verify Storage Receipts
+- Schedule Report Availability Challenges
+- Apply Custody Grace Periods
 - Verify Report Eligibility
 - Derive Certification States
 - Calculate Validator Rewards
@@ -757,15 +811,41 @@ The complete report SHALL be published only after:
 - evidence is finalized;
 - the Validator signs the report.
 
+The Validator SHALL transfer the immutable report through an assignment-authorized envelope to the Endpoint Hypervisor before ordinary completion. It SHALL retain a temporary immutable copy until the Storage Receipt and commitment finalize or the applicable dispute window ends.
+
 This reduces the Endpoint’s ability to detect and adapt to active validation.
 
 ## 41. Retention
 
-Validation Reports SHALL remain permanently addressable.
+Every committed report SHALL remain logically addressable by Report Hash.
 
-Registry pruning MAY move old reports to archival storage.
+The Endpoint Hypervisor SHALL retain the complete Public Validation Report while the Endpoint exists and for the configured Retirement Grace Period afterwards. Evidence Bundles SHALL follow their committed access and retention policy, which SHALL not be shortened retroactively.
 
 Report hashes and Certification State transitions SHALL remain verifiable through Ledger history.
+
+Custody availability states are:
+
+- `AVAILABLE`;
+- `TEMPORARILY_UNAVAILABLE`;
+- `WITHHELD`;
+- `LOST`;
+- `CORRUPTED`;
+- `ACCESS_RESTRICTED`.
+
+One failed retrieval SHALL normally produce only `TEMPORARILY_UNAVAILABLE`. `WITHHELD`, `LOST`, `CORRUPTED` and unauthorized access restriction require objective evidence or repeated checks after a bounded grace period.
+
+### Public Report and Evidence Bundle
+
+The Public Validation Report SHALL contain the signed structured conclusion, safe observations, usage summary, limitation and failure codes, and evidence hashes needed to explain Certification. It SHALL avoid unnecessary raw private Session content.
+
+Large or sensitive material SHALL be placed in a separate Evidence Bundle with one of:
+
+- `PUBLIC`;
+- `ENCRYPTED`;
+- `RESTRICTED`;
+- `HASH_COMMITTED`.
+
+Availability checks SHALL respect the committed access class. Restricted evidence is challenged by authorized actors and is not made public merely to prove custody.
 
 ## 42. Capability Extensions
 
@@ -809,6 +889,9 @@ Machine-readable fields remain authoritative for protocol processing.
 - Accepted assignments are expected to be completed.
 - Certification is derived from reports.
 - Report history is immutable.
+- The Endpoint is the mandatory origin custodian, not the editor, of its reports.
+- Storage refusal cannot erase an adverse Validation result.
+- Canonical Certification inputs remain available in the compact commitment.
 - Subjective quality differences alone do not cause protocol failure.
 - Critical operational or protocol failures prevent certification.
 - Rewards compensate valid report production, not positive outcomes.

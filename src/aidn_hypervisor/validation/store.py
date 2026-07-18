@@ -3,8 +3,11 @@ from aidn_hypervisor.validation.models import (
     ValidationAssignment,
     ValidationAuthorization,
     ValidationBond,
+    ValidationReportCommitment,
+    ValidationReportCustodyState,
     ValidationEpoch,
     ValidationReport,
+    ValidationReportStorageReceipt,
     ValidationRequest,
     ValidationStatusSnapshot,
     ValidationValidatorEntry,
@@ -17,6 +20,9 @@ class ValidationStore:
         self._requests: dict[str, ValidationRequest] = {}
         self._bonds: dict[str, ValidationBond] = {}
         self._reports: dict[str, ValidationReport] = {}
+        self._report_commitments: dict[str, ValidationReportCommitment] = {}
+        self._report_storage_receipts: dict[str, ValidationReportStorageReceipt] = {}
+        self._report_custody_states: dict[str, ValidationReportCustodyState] = {}
         self._snapshots: dict[tuple[str, str], ValidationStatusSnapshot] = {}
         self._epochs: dict[str, ValidationEpoch] = {}
         self._validator_entries: dict[str, ValidationValidatorEntry] = {}
@@ -40,6 +46,24 @@ class ValidationStore:
         self._reports = {
             item.report_id: ValidationReport.model_validate(item.model_dump(mode="json"))
             for item in snapshot.validation_reports
+        }
+        self._report_commitments = {
+            item.report_id: ValidationReportCommitment.model_validate(
+                item.model_dump(mode="json")
+            )
+            for item in snapshot.validation_report_commitments
+        }
+        self._report_storage_receipts = {
+            item.receipt_id: ValidationReportStorageReceipt.model_validate(
+                item.model_dump(mode="json")
+            )
+            for item in snapshot.validation_report_storage_receipts
+        }
+        self._report_custody_states = {
+            item.report_hash: ValidationReportCustodyState.model_validate(
+                item.model_dump(mode="json")
+            )
+            for item in snapshot.validation_report_custody_states
         }
         self._snapshots = {
             (item.endpoint_id, item.configuration_hash): ValidationStatusSnapshot.model_validate(
@@ -111,6 +135,39 @@ class ValidationStore:
 
     def list_reports_for_endpoint(self, endpoint_id: str) -> list[ValidationReport]:
         return [item for item in self._reports.values() if item.endpoint_id == endpoint_id]
+
+    def save_report_commitment(self, commitment: ValidationReportCommitment) -> None:
+        existing = self._report_commitments.get(commitment.report_id)
+        if existing is not None and existing != commitment:
+            raise ValueError(f"Validation report commitment conflict: {commitment.report_id}")
+        self._report_commitments[commitment.report_id] = commitment
+        self._flush()
+
+    def get_report_commitment(self, report_id: str) -> ValidationReportCommitment:
+        return self._report_commitments[report_id]
+
+    def list_report_commitments(self) -> list[ValidationReportCommitment]:
+        return list(self._report_commitments.values())
+
+    def save_report_storage_receipt(
+        self,
+        receipt: ValidationReportStorageReceipt,
+    ) -> None:
+        existing = self._report_storage_receipts.get(receipt.receipt_id)
+        if existing is not None and existing != receipt:
+            raise ValueError(f"Validation report storage receipt conflict: {receipt.receipt_id}")
+        self._report_storage_receipts[receipt.receipt_id] = receipt
+        self._flush()
+
+    def list_report_storage_receipts(self) -> list[ValidationReportStorageReceipt]:
+        return list(self._report_storage_receipts.values())
+
+    def save_report_custody_state(self, state: ValidationReportCustodyState) -> None:
+        self._report_custody_states[state.report_hash] = state
+        self._flush()
+
+    def list_report_custody_states(self) -> list[ValidationReportCustodyState]:
+        return list(self._report_custody_states.values())
 
     def save_snapshot(self, snapshot: ValidationStatusSnapshot) -> None:
         self._snapshots[(snapshot.endpoint_id, snapshot.configuration_hash)] = snapshot
@@ -198,6 +255,15 @@ class ValidationStore:
                 "validation_requests": list(self._requests.values()),
                 "validation_bonds": list(self._bonds.values()),
                 "validation_reports": list(self._reports.values()),
+                "validation_report_commitments": list(
+                    self._report_commitments.values()
+                ),
+                "validation_report_storage_receipts": list(
+                    self._report_storage_receipts.values()
+                ),
+                "validation_report_custody_states": list(
+                    self._report_custody_states.values()
+                ),
                 "validation_status_snapshots": list(self._snapshots.values()),
                 "validation_epochs": list(self._epochs.values()),
                 "validation_validator_entries": list(self._validator_entries.values()),

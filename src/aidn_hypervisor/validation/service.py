@@ -13,9 +13,12 @@ from aidn_hypervisor.validation.models import (
     ValidationDetectedIssue,
     ValidationEpoch,
     ValidationReport,
+    ValidationReportCommitment,
     ValidationRequest,
     ValidationStatusSnapshot,
     ValidationValidatorEntry,
+    canonical_validation_hash,
+    validation_report_integrity,
 )
 
 
@@ -73,6 +76,7 @@ class ValidationReportOutcome:
     bond: ValidationBond
     snapshot: ValidationStatusSnapshot
     report: ValidationReport
+    commitment: ValidationReportCommitment
 
 
 @dataclass(frozen=True)
@@ -312,6 +316,7 @@ class ValidationService:
             evidence_summary=evidence_summary,
             created_at=self._now(),
         )
+        commitment = self._create_report_commitment(request=request, report=report)
         certification_status = _derive_certification_status(
             request_kind="initial",
             recommendation=report.recommendation,
@@ -339,27 +344,11 @@ class ValidationService:
             }
         )
         self.store.save_report(report)
+        self.store.save_report_commitment(commitment)
         self.store.save_request(updated_request)
         self.store.save_snapshot(updated_snapshot)
         if self.operation_recorder is not None:
-            self.operation_recorder(
-                operation_type="VALIDATION_REPORT_COMMIT",
-                origin_type="protocol",
-                fee_class="protocol_sponsored",
-                initiator_id=report.report_id,
-                payload={
-                    "report_id": report.report_id,
-                    "validation_request_id": request.request_id,
-                    "assignment_id": request.assignment_id,
-                    "endpoint_id": request.endpoint_id,
-                    "endpoint_configuration_hash": request.configuration_hash,
-                    "validator_service_id": request.assignment_id,
-                    "conclusion_summary": report.recommendation,
-                    "evidence_summary": report.evidence_summary,
-                },
-                created_at=report.created_at,
-                emitted_events=["ValidationReportCommitted"],
-            )
+            self._record_validation_report_commitment(commitment, report)
             self._record_certification_state_update(
                 endpoint_id=request.endpoint_id,
                 configuration_hash=request.configuration_hash,
@@ -388,6 +377,7 @@ class ValidationService:
             bond=bond,
             snapshot=updated_snapshot,
             report=report,
+            commitment=commitment,
         )
 
     def validation_summary(
@@ -746,7 +736,11 @@ class ValidationService:
             evidence_summary=evidence_summary,
             created_at=self._now(),
         )
+        commitment = self._create_report_commitment(request=request, report=report)
         self.store.save_report(report)
+        self.store.save_report_commitment(commitment)
+        if self.operation_recorder is not None:
+            self._record_validation_report_commitment(commitment, report)
         certification_status = _derive_certification_status(
             request_kind="maintenance",
             recommendation=report.recommendation,
@@ -901,6 +895,98 @@ class ValidationService:
             bond=updated_bond,
             snapshot=updated_snapshot,
             report=report,
+            commitment=commitment,
+        )
+
+    def _create_report_commitment(
+        self,
+        *,
+        request: ValidationRequest,
+        report: ValidationReport,
+    ) -> ValidationReportCommitment:
+        report_hash, report_size = validation_report_integrity(report)
+        assignment = next(
+            (
+                item
+                for item in self.store.list_assignments()
+                if item.assignment_id == request.assignment_id
+            ),
+            None,
+        )
+
+        def issue_codes(severity: str) -> list[str]:
+            return sorted(
+                {
+                    item.summary or item.issue_id
+                    for item in report.detected_issues
+                    if item.severity == severity
+                }
+            )
+
+        return ValidationReportCommitment(
+            commitment_id=f"vcommit-{report_hash.removeprefix('sha256:')}",
+            report_id=report.report_id,
+            report_hash=report_hash,
+            report_size=report_size,
+            request_id=request.request_id,
+            assignment_id=request.assignment_id,
+            endpoint_id=report.endpoint_id,
+            configuration_hash=report.configuration_hash,
+            capability_id=report.capability_id,
+            validator_service_id=(
+                assignment.validator_id if assignment is not None else report.validator_id
+            ),
+            validation_epoch_id=request.epoch_id,
+            conclusion=report.recommendation,
+            limitation_codes=issue_codes("warning"),
+            failure_codes=issue_codes("critical"),
+            evidence_root=canonical_validation_hash(
+                {
+                    "evidence_summary": report.evidence_summary,
+                    "signed_payload": report.signed_payload,
+                }
+            ),
+            report_locator=(
+                f"aidn://endpoint/{report.endpoint_id}/validation/{report_hash}"
+            ),
+            created_at=report.created_at,
+        )
+
+    def _record_validation_report_commitment(
+        self,
+        commitment: ValidationReportCommitment,
+        report: ValidationReport,
+    ) -> None:
+        if self.operation_recorder is None:
+            return
+        self.operation_recorder(
+            operation_type="VALIDATION_REPORT_COMMIT",
+            origin_type="protocol",
+            fee_class="protocol_sponsored",
+            initiator_id=report.report_id,
+            payload={
+                "report_id": commitment.report_id,
+                "report_hash": commitment.report_hash,
+                "report_size": commitment.report_size,
+                "validation_request_id": commitment.request_id,
+                "assignment_id": commitment.assignment_id,
+                "endpoint_id": commitment.endpoint_id,
+                "endpoint_configuration_hash": commitment.configuration_hash,
+                "validator_service_id": commitment.validator_service_id,
+                "conclusion_summary": commitment.conclusion,
+                "limitation_codes": commitment.limitation_codes,
+                "failure_codes": commitment.failure_codes,
+                "observation_codes": commitment.observation_codes,
+                "evidence_root": commitment.evidence_root,
+                "evidence_access_class": commitment.evidence_access_class,
+                "report_locator": commitment.report_locator,
+                "retention_policy_id": commitment.retention_policy_id,
+                "storage_receipt_hash": commitment.storage_receipt_hash,
+                "storage_failure_reference": commitment.storage_failure_reference,
+                "evidence_summary": report.evidence_summary,
+            },
+            created_at=report.created_at,
+            emitted_events=["ValidationReportCommitted"],
         )
 
     def _normalize_recommendation(

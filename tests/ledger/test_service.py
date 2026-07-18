@@ -721,6 +721,11 @@ def test_validation_report_commit_records_canonical_ledger_operation() -> None:
         operations[0]["payload"]["validation_request_id"]
         == requested.request.request_id
     )
+    assert operations[0]["payload"]["report_hash"].startswith("sha256:")
+    assert operations[0]["payload"]["report_locator"] == (
+        "aidn://endpoint/ep-1/validation/" + operations[0]["payload"]["report_hash"]
+    )
+    assert operations[0]["payload"]["storage_receipt_hash"] is None
     assert operations[1]["operation_type"] == "CERTIFICATION_STATE_UPDATE"
     assert operations[1]["origin_type"] == "protocol"
     assert operations[1]["payload"]["certification_status"] == "certified"

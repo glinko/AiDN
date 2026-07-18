@@ -1,3 +1,5 @@
+import hashlib
+import json
 from decimal import Decimal
 from typing import Literal
 
@@ -47,6 +49,20 @@ ValidationEpochStatus = Literal["open", "assigned", "closed"]
 ValidationAuthorizationStatus = Literal["issued", "consumed", "expired"]
 EvidenceScalar = str | int | float | bool | None
 EvidenceMap = dict[str, EvidenceScalar]
+ValidationEvidenceAccessClass = Literal[
+    "public",
+    "encrypted",
+    "restricted",
+    "hash_committed",
+]
+ValidationCustodyStatus = Literal[
+    "available",
+    "temporarily_unavailable",
+    "withheld",
+    "lost",
+    "corrupted",
+    "access_restricted",
+]
 
 
 def expected_validation_status_for(
@@ -134,6 +150,96 @@ class ValidationReport(BaseModel):
     evidence_summary: str
     signed_payload: EvidenceMap = Field(default_factory=dict)
     created_at: str
+
+
+def canonical_validation_report_body(report: ValidationReport) -> dict:
+    """Returns the immutable report body without local identity or signature wrappers."""
+    body = report.model_dump(mode="json")
+    for field_name in ("report_id", "signed_payload"):
+        body.pop(field_name, None)
+    return body
+
+
+def canonical_validation_hash(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def validation_report_integrity(report: ValidationReport) -> tuple[str, int]:
+    encoded = json.dumps(
+        canonical_validation_report_body(report),
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}", len(encoded)
+
+
+class ValidationReportCommitment(BaseModel):
+    commitment_id: str
+    report_id: str
+    report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    report_size: int = Field(ge=0)
+    request_id: str
+    assignment_id: str | None = None
+    endpoint_id: str
+    configuration_hash: str
+    capability_id: str | None = None
+    capability_version: str | None = None
+    validator_service_id: str | None = None
+    validation_epoch_id: str | None = None
+    conclusion: ValidationReportRecommendation
+    limitation_codes: list[str] = Field(default_factory=list)
+    failure_codes: list[str] = Field(default_factory=list)
+    observation_codes: list[str] = Field(default_factory=list)
+    evidence_root: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    evidence_access_class: ValidationEvidenceAccessClass = "public"
+    retention_policy_id: str = "legacy-local-state-v1"
+    report_locator: str
+    storage_receipt_hash: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+    storage_failure_reference: str | None = None
+    created_at: str
+
+    @model_validator(mode="after")
+    def _validate_storage_outcome(self):
+        if self.storage_receipt_hash and self.storage_failure_reference:
+            raise ValueError(
+                "storage_receipt_hash and storage_failure_reference are mutually exclusive"
+            )
+        return self
+
+
+class ValidationReportStorageReceipt(BaseModel):
+    receipt_id: str
+    validation_id: str
+    endpoint_id: str
+    endpoint_configuration_hash: str
+    report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    report_size: int = Field(ge=0)
+    stored_at: str
+    report_locator: str
+    retention_policy_id: str
+    endpoint_signature: str
+
+
+class ValidationReportCustodyState(BaseModel):
+    report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    endpoint_id: str
+    configuration_hash: str
+    status: ValidationCustodyStatus
+    last_checked_at: str | None = None
+    last_available_at: str | None = None
+    grace_expires_at: str | None = None
+    failure_streak: int = Field(default=0, ge=0)
+    latest_challenge_id: str | None = None
+    mirror_available: bool | None = None
 
 
 class ValidationStatusSnapshot(BaseModel):
