@@ -612,6 +612,8 @@ class HypervisorService:
             },
         )
         funding = self.get_session_funding_account(session_id)
+        if funding.funding_state in {"RELEASED", "REFUNDED"}:
+            raise ValueError("MVP Session funding is already finalized")
         if funding.funding_state_hash != session.canonical_funding_state_hash:
             raise ValueError("Session funding hash no longer matches Session")
         close_reference = _canonical_hash(
@@ -637,6 +639,64 @@ class HypervisorService:
             proposal_expiration=proposal_expiration,
         )
 
+    def build_mvp_endpoint_unavailable_refund_evaluation(
+        self,
+        *,
+        session_service,
+        session_id: str,
+        actual_network_fees_q_atoms: int = 0,
+        settlement_sequence: int = 1,
+        proposal_expiration: str | None = None,
+    ):
+        session = session_service.store.get_session(session_id)
+        if session.economic_profile != "MVP-0001":
+            raise ValueError("Session is not an MVP-0001 economic Session")
+        if session.request_charge_ceiling_q_atoms is None:
+            raise ValueError("MVP Session is missing request_charge_ceiling_q_atoms")
+        if session.session_contract_hash is None:
+            raise ValueError("MVP Session is missing session_contract_hash")
+        if session.canonical_funding_state_hash is None:
+            raise ValueError("MVP Session is not bound to canonical funding")
+        matching_requests = [
+            item
+            for item in self.runtime_protocol_store.requests.values()
+            if item.request.session_id == session_id
+        ]
+        if matching_requests:
+            raise ValueError("Endpoint-unavailable refund requires no accepted Runtime work")
+        funding = self.get_session_funding_account(session_id)
+        if funding.funding_state in {"RELEASED", "REFUNDED"}:
+            raise ValueError("MVP Session funding is already finalized")
+        if funding.funding_state_hash != session.canonical_funding_state_hash:
+            raise ValueError("Session funding hash no longer matches Session")
+        close_reference = _canonical_hash(
+            {
+                "economic_profile": "MVP-0001",
+                "session_id": session_id,
+                "reason": "ENDPOINT_UNAVAILABLE",
+                "settlement_sequence": settlement_sequence,
+            }
+        )
+        return SettlementEngine().evaluate_session(
+            funding=funding,
+            session_contract_hash=session.session_contract_hash,
+            effective_terms_hash=_canonical_hash(
+                {
+                    "economic_profile": "MVP-0001",
+                    "reason": "ENDPOINT_UNAVAILABLE",
+                    "terms": "zero_endpoint_payment",
+                }
+            ),
+            request_inputs=[],
+            terms_by_hash={},
+            maximum_session_charge_q_atoms=session.request_charge_ceiling_q_atoms,
+            actual_network_fees_q_atoms=actual_network_fees_q_atoms,
+            session_close_reference=close_reference,
+            settlement_sequence=settlement_sequence,
+            settlement_mode="FORCED",
+            proposal_expiration=proposal_expiration,
+        )
+
     def finalize_mvp_fixed_price_session(
         self,
         *,
@@ -657,6 +717,13 @@ class HypervisorService:
             settlement_sequence=settlement_sequence,
             proposal_expiration=proposal_expiration,
         )
+        if evaluation.proposal.dispute_reserve_q_atoms or any(
+            record.dispute_state != "NONE"
+            for record in evaluation.input_set.request_settlement_records
+        ):
+            raise ValueError(
+                "MVP cooperative Settlement requires undisputed Runtime evidence"
+            )
         proposal = self.propose_settlement(evaluation)
         acceptance = SessionSettlementAcceptance(
             settlement_id=proposal.settlement_id,
@@ -688,6 +755,66 @@ class HypervisorService:
             "evaluation": evaluation,
             "proposal": proposal,
             "acceptance": acceptance,
+            "funding": funding,
+            "session_result": session_result,
+        }
+
+    def force_finalize_mvp_fixed_price_session(
+        self,
+        *,
+        session_service,
+        session_id: str,
+        reason: str,
+        force_after: str,
+        request_id: str | None = None,
+        now: str | None = None,
+        actual_network_fees_q_atoms: int = 0,
+        settlement_sequence: int = 1,
+    ):
+        if reason == "ENDPOINT_UNAVAILABLE":
+            evaluation = self.build_mvp_endpoint_unavailable_refund_evaluation(
+                session_service=session_service,
+                session_id=session_id,
+                actual_network_fees_q_atoms=actual_network_fees_q_atoms,
+                settlement_sequence=settlement_sequence,
+            )
+            no_request = True
+        elif reason == "CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE":
+            if request_id is None:
+                raise ValueError("forced completed fixed-price payment requires request_id")
+            evaluation = self.build_mvp_fixed_price_settlement_evaluation(
+                session_service=session_service,
+                session_id=session_id,
+                request_id=request_id,
+                actual_network_fees_q_atoms=actual_network_fees_q_atoms,
+                settlement_sequence=settlement_sequence,
+            )
+            no_request = False
+        else:
+            raise ValueError("unsupported forced Settlement reason")
+        funding = self.force_finalize_fixed_price_settlement(
+            evaluation,
+            reason=reason,
+            force_after=force_after,
+            now=now,
+        )
+        proposal = evaluation.proposal
+        session_result = session_service.mark_canonical_settlement_finalized(
+            session_id,
+            settlement_evidence_root=evaluation.input_set.settlement_input_root,
+            endpoint_payment_q_atoms=proposal.final_endpoint_payment_q_atoms,
+            consumer_refund_q_atoms=(
+                proposal.consumer_payment_refund_q_atoms
+                + proposal.consumer_fee_refund_q_atoms
+            ),
+            network_fee_q_atoms=proposal.actual_network_fees_q_atoms,
+            close_reason=f"forced_{reason.lower()}",
+            no_request=no_request,
+        )
+        self._persist_state()
+        return {
+            "evaluation": evaluation,
+            "proposal": proposal,
             "funding": funding,
             "session_result": session_result,
         }

@@ -28,6 +28,14 @@ class FinalizeMvpFixedPriceSessionRequest(BaseModel):
     actual_network_fees_q_atoms: int = Field(default=0, ge=0)
 
 
+class ForceFinalizeMvpFixedPriceSessionRequest(BaseModel):
+    reason: str = Field(min_length=1)
+    force_after: str = Field(min_length=1)
+    request_id: str | None = Field(default=None, min_length=1)
+    now: str | None = Field(default=None, min_length=1)
+    actual_network_fees_q_atoms: int = Field(default=0, ge=0)
+
+
 def build_endpoint_router(
     service,
     hypervisor_service=None,
@@ -340,6 +348,54 @@ def build_endpoint_router(
             {
                 "proposal": finalized["proposal"].model_dump(mode="json"),
                 "acceptance": finalized["acceptance"].model_dump(mode="json"),
+                "funding": finalized["funding"].model_dump(mode="json"),
+                "session": finalized["session_result"].session.model_dump(mode="json"),
+                "deposit": finalized["session_result"].deposit.model_dump(mode="json"),
+                "settlement": (
+                    finalized["session_result"].settlement.model_dump(mode="json")
+                    if finalized["session_result"].settlement is not None
+                    else None
+                ),
+            }
+        )
+
+    @router.post("/{endpoint_id}/mvp-sessions/{session_id}/force-finalize")
+    async def force_finalize_mvp_fixed_price_session(
+        endpoint_id: str,
+        session_id: str,
+        request: ForceFinalizeMvpFixedPriceSessionRequest,
+    ) -> JSONResponse:
+        if session_service is None or hypervisor_service is None:
+            return _error(
+                503,
+                "mvp_session_unavailable",
+                "MVP economic Session service is not configured",
+            )
+        try:
+            session = session_service.store.get_session(session_id)
+        except KeyError:
+            return _error(404, "session_not_found", f"Unknown session: {session_id}")
+        if session.endpoint_id != endpoint_id:
+            return _error(
+                409,
+                "mvp_session_endpoint_mismatch",
+                "MVP Session does not belong to this Endpoint",
+            )
+        try:
+            finalized = hypervisor_service.force_finalize_mvp_fixed_price_session(
+                session_service=session_service,
+                session_id=session_id,
+                reason=request.reason,
+                force_after=request.force_after,
+                request_id=request.request_id,
+                now=request.now,
+                actual_network_fees_q_atoms=request.actual_network_fees_q_atoms,
+            )
+        except ValueError as error:
+            return _error(409, "mvp_session_force_finalize_rejected", str(error))
+        return _ok(
+            {
+                "proposal": finalized["proposal"].model_dump(mode="json"),
                 "funding": finalized["funding"].model_dump(mode="json"),
                 "session": finalized["session_result"].session.model_dump(mode="json"),
                 "deposit": finalized["session_result"].deposit.model_dump(mode="json"),

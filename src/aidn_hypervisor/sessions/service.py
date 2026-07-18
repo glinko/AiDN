@@ -613,6 +613,7 @@ class SessionService:
         consumer_refund_q_atoms: int,
         network_fee_q_atoms: int = 0,
         close_reason: str = "canonical_settlement_finalized",
+        no_request: bool = False,
     ) -> SessionResult:
         current = self.store.get_session(session_id)
         deposit = self.store.get_deposit_for_session(session_id)
@@ -632,7 +633,7 @@ class SessionService:
             refunded_q=consumer_refund_q,
             endpoint_payment_q=endpoint_payment_q,
             payout_q=endpoint_payment_q,
-            no_request=False,
+            no_request=no_request,
         )
         closed = current.model_copy(
             update={
