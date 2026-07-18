@@ -248,6 +248,20 @@ class ValidationReportStorageFailure(BaseModel):
     attempted_at: str
 
 
+class ValidationReportTransferEnvelope(BaseModel):
+    transfer_id: str
+    report_id: str
+    request_id: str
+    assignment_id: str
+    authorization_id: str
+    endpoint_id: str
+    endpoint_configuration_hash: str
+    report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    report_size: int = Field(ge=0)
+    report_locator: str
+    created_at: str
+
+
 class ValidationReportCustodyState(BaseModel):
     report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     endpoint_id: str

@@ -121,6 +121,8 @@ Progress 2026-07-18: local custody verification now records compact availability
 
 Progress 2026-07-18: a compatibility-preserving service policy can now require a valid local Storage Receipt before a positive report changes Certification to `CERTIFIED` or `CERTIFIED_WITH_ISSUES`. In that mode an initial report remains `pending_initial` until custody succeeds; negative results remain independent of receipt. The policy is opt-in until canonical Endpoint and assignment identity binding are implemented.
 
+Progress 2026-07-18: the validation service can build a compact transfer envelope that binds a completed report to its persisted Assignment, Authorization, Endpoint, Configuration Hash and report integrity commitment. It is the future `VALIDATION` channel payload; assignment-key signatures, expiry enforcement and concealed identity handling are still pending.
+
 ### Slice 4: Compact Ledger Operations and Dual Write
 
 - Extend `VALIDATION_REPORT_COMMIT` with compact Certification inputs and receipt/failure references.

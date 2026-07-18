@@ -18,6 +18,7 @@ from aidn_hypervisor.validation.models import (
     ValidationReportCustodyState,
     ValidationReportStorageFailure,
     ValidationReportStorageReceipt,
+    ValidationReportTransferEnvelope,
     ValidationRequest,
     ValidationStatusSnapshot,
     ValidationValidatorEntry,
@@ -1018,6 +1019,64 @@ class ValidationService:
         if self.custody_store is None:
             raise ValueError("Validation report custody store is not configured")
         return self.custody_store.read_report_body(report_hash)
+
+    def build_report_transfer_envelope(
+        self,
+        *,
+        report_id: str,
+    ) -> ValidationReportTransferEnvelope:
+        """Build the RFC-0064 payload binding a report to its assignment scope."""
+        report = self.store.get_report(report_id)
+        request = self.store.get_request(report.request_id)
+        if request.assignment_id is None or request.authorization_id is None:
+            raise ValueError("validation report has no assignment-scoped authorization")
+        assignment = next(
+            (
+                item
+                for item in self.store.list_assignments()
+                if item.assignment_id == request.assignment_id
+            ),
+            None,
+        )
+        authorization = next(
+            (
+                item
+                for item in self.store.list_authorizations()
+                if item.authorization_id == request.authorization_id
+            ),
+            None,
+        )
+        if assignment is None or assignment.request_id != request.request_id:
+            raise ValueError("validation assignment does not bind to report request")
+        if authorization is None or authorization.request_id != request.request_id:
+            raise ValueError("validation authorization does not bind to report request")
+        if authorization.status != "issued":
+            raise ValueError("validation authorization is not active")
+        commitment = self.store.get_report_commitment(report_id)
+        transfer_seed = canonical_validation_hash(
+            {
+                "report_id": report.report_id,
+                "request_id": request.request_id,
+                "assignment_id": assignment.assignment_id,
+                "authorization_id": authorization.authorization_id,
+                "endpoint_id": report.endpoint_id,
+                "endpoint_configuration_hash": report.configuration_hash,
+                "report_hash": commitment.report_hash,
+            }
+        )
+        return ValidationReportTransferEnvelope(
+            transfer_id=f"report-transfer-{transfer_seed.removeprefix('sha256:')}",
+            report_id=report.report_id,
+            request_id=request.request_id,
+            assignment_id=assignment.assignment_id,
+            authorization_id=authorization.authorization_id,
+            endpoint_id=report.endpoint_id,
+            endpoint_configuration_hash=report.configuration_hash,
+            report_hash=commitment.report_hash,
+            report_size=commitment.report_size,
+            report_locator=commitment.report_locator,
+            created_at=self._now(),
+        )
 
     def create_report_storage_receipt(
         self,
