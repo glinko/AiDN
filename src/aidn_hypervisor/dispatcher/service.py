@@ -67,6 +67,29 @@ class NetworkDispatcher:
         self._handlers[key] = handler
         self.store.flush()
 
+    def revoke_route(self, *, destination_type: str, destination_id: str) -> DispatcherRoute | None:
+        """Revoke a destination without deleting its generation history."""
+        key = (destination_type, destination_id)
+        previous = self._routes.get(key)
+        if previous is None:
+            return None
+        if previous.route_state == "REVOKED":
+            return previous
+        revoked = previous.model_copy(
+            update={
+                "route_generation": previous.route_generation + 1,
+                "route_state": "REVOKED",
+                "created_at": self._now(),
+            }
+        )
+        self._routes[key] = revoked
+        self._handlers.pop(key, None)
+        self.store.flush()
+        return revoked
+
+    def route(self, *, destination_type: str, destination_id: str) -> DispatcherRoute | None:
+        return self._routes.get((destination_type, destination_id))
+
     def submit(self, message: NetworkMessage) -> DeliveryRecord:
         now = self._now()
         record = DeliveryRecord(

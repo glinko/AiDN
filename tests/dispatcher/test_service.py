@@ -4,6 +4,7 @@ import pytest
 
 from aidn_hypervisor.dispatcher import (
     DispatcherError,
+    DispatcherRouteLifecycle,
     DispatcherStore,
     DispatcherRoute,
     NetworkDispatcher,
@@ -259,3 +260,105 @@ def test_runtime_and_plugin_control_routes_are_scoped_by_binding_and_permissions
     with pytest.raises(DispatcherError) as error:
         dispatcher.submit(denied)
     assert error.value.code == "MESSAGE_PROFILE_UNSUPPORTED"
+
+
+def test_provider_inventory_lifecycle_rotates_and_revokes_scoped_routes() -> None:
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="rev-1",
+    )
+    lifecycle = DispatcherRouteLifecycle(dispatcher)
+    binding = RuntimeBinding(
+        runtime_binding_id="rtb-1",
+        provider_instance_id="pi-1",
+        model_deployment_id="md-1",
+        capability_id="llm.chat",
+        capability_version="1",
+        capability_definition_hash="cap-1",
+        plugin_id="plugin-1",
+        compatibility_bundle_id="bundle-1",
+        status="ready",
+    )
+
+    initial = lifecycle.sync_runtime_binding(binding, lambda payload: payload)
+    changed = lifecycle.sync_runtime_binding(
+        binding.model_copy(update={"compatibility_bundle_id": "bundle-2"}),
+        lambda payload: payload,
+    )
+    revoked = lifecycle.sync_runtime_binding(
+        binding.model_copy(update={"status": "disabled"}),
+        None,
+    )
+
+    assert initial is not None and initial.route_generation == 1
+    assert changed is not None and changed.route_generation == 2
+    assert revoked is not None
+    assert revoked.route_generation == 3
+    assert revoked.route_state == "REVOKED"
+
+    stale_runtime_message = _message(
+        message_id="runtime-revoked",
+        route_generation=2,
+        channel_class="RUNTIME",
+        message_type="RUNTIME_EXECUTION_REQUEST",
+        source_subject={"subject_type": "ENDPOINT", "subject_id": "ep-1"},
+        destination_subject={"subject_type": "RUNTIME", "subject_id": "rtb-1"},
+    )
+    with pytest.raises(DispatcherError) as error:
+        dispatcher.submit(stale_runtime_message)
+    assert error.value.code == "ROUTE_REVOKED"
+
+
+def test_provider_inventory_lifecycle_rotates_plugin_route_on_permission_change() -> None:
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="rev-1",
+    )
+    lifecycle = DispatcherRouteLifecycle(dispatcher)
+    manifest = ProviderPluginManifest(
+        plugin_id="plugin-1",
+        plugin_version="1",
+        display_name="Plugin",
+        publisher="test",
+        package_digest="digest",
+        required_permissions=[
+            PluginPermission(
+                permission_id="private_network",
+                label="Private network",
+                reason="Provider health",
+            ),
+            PluginPermission(
+                permission_id="diagnostics",
+                label="Diagnostics",
+                reason="Support bundle",
+            ),
+        ],
+    )
+
+    first = lifecycle.sync_plugin_control(
+        manifest,
+        provider_instance_id="pi-1",
+        approved_permissions={"private_network"},
+        handler=lambda payload: payload,
+    )
+    expanded = lifecycle.sync_plugin_control(
+        manifest,
+        provider_instance_id="pi-1",
+        approved_permissions={"private_network", "diagnostics"},
+        handler=lambda payload: payload,
+    )
+    revoked = lifecycle.sync_plugin_control(
+        manifest,
+        provider_instance_id="pi-1",
+        approved_permissions=set(),
+        handler=None,
+    )
+
+    assert first is not None and first.route_generation == 1
+    assert expanded is not None and expanded.route_generation == 2
+    assert "PLUGIN_DIAGNOSTICS" in expanded.allowed_message_types
+    assert revoked is not None
+    assert revoked.route_generation == 3
+    assert revoked.route_state == "REVOKED"

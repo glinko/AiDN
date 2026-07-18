@@ -8,6 +8,7 @@ from aidn_hypervisor.dispatcher.models import (
 )
 from aidn_hypervisor.dispatcher.service import DispatcherError, NetworkDispatcher
 from aidn_hypervisor.dispatcher.store import DispatcherStore
+from aidn_hypervisor.dispatcher.lifecycle import DispatcherRouteLifecycle
 from aidn_hypervisor.dispatcher.routes import (
     bind_plugin_control_route,
     bind_runtime_route,
@@ -24,6 +25,7 @@ __all__ = [
     "NetworkDispatcher",
     "NetworkMessage",
     "DispatcherStore",
+    "DispatcherRouteLifecycle",
     "bind_plugin_control_route",
     "bind_runtime_route",
     "plugin_control_route",

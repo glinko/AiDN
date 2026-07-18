@@ -42,6 +42,12 @@ derived from the intersection of declared and approved Plugin permissions. Full
 lifecycle wiring will register, drain and revoke these routes as Provider
 Inventory state changes.
 
+Progress 2026-07-18: Slice 4 now includes a Provider Inventory lifecycle bridge.
+It rebinds process-local handlers after restart, increments `route_generation`
+for material Runtime Binding, Plugin Manifest or approved-permission changes,
+and records revoked generations when a Runtime disappears, becomes non-ready or
+a Plugin loses every approved control permission.
+
 ## Current Boundary
 
 The repository currently has application services and an in-process Validation
