@@ -287,3 +287,58 @@ def test_validation_read_models_expose_custody_metadata_without_report_body(tmp_
     assert history["report_custody_objects"] == [outcome.custody_object.model_dump(mode="json")]
     assert history["report_storage_receipts"] == [receipt.model_dump(mode="json")]
     assert "report_body" not in history
+
+
+def test_storage_failure_is_idempotent_and_preserves_negative_report(tmp_path) -> None:
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    operations: list[dict] = []
+    service = ValidationService(
+        ValidationStore(),
+        custody_store=custody,
+        operation_recorder=lambda **item: operations.append(item),
+    )
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="fail",
+        validator_label="validator-a",
+        evidence_summary="schema mismatch",
+    )
+
+    first = service.record_report_storage_failure(
+        report_id=outcome.report.report_id,
+        failure_code="REPORT_STORAGE_REFUSED",
+        failure_details={"reason": "endpoint refused custody"},
+        reported_by="val-1",
+    )
+    second = service.record_report_storage_failure(
+        report_id=outcome.report.report_id,
+        failure_code="REPORT_STORAGE_REFUSED",
+        failure_details={"reason": "retry details do not duplicate event"},
+        reported_by="val-1",
+    )
+
+    assert first == second
+    assert outcome.snapshot.certification_status == "uncertified"
+    assert operations[-1]["operation_type"] == "VALIDATION_REPORT_STORAGE_FAILURE"
+    assert service.validation_history("ep-1")["report_storage_failures"] == [
+        first.model_dump(mode="json")
+    ]

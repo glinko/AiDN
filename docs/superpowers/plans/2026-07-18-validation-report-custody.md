@@ -115,6 +115,8 @@ Progress 2026-07-18: the local Endpoint-side receipt primitive is implemented wi
 
 Progress 2026-07-18: operator-facing validation summaries and histories now expose only the compact commitment, custody-object metadata, receipt metadata and future custody-state records. They do not expose the stored report body; authenticated locator retrieval remains a later transport slice.
 
+Progress 2026-07-18: the local protocol projection records an immutable, idempotent `VALIDATION_REPORT_STORAGE_FAILURE` for endpoint refusal or custody failure. It does not modify the report conclusion or Certification by itself and is not yet assignment-key signed; those enforcement and network-authentication rules remain Slice 4 and Slice 5 work.
+
 ### Slice 4: Compact Ledger Operations and Dual Write
 
 - Extend `VALIDATION_REPORT_COMMIT` with compact Certification inputs and receipt/failure references.

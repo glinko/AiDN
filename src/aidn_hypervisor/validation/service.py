@@ -15,6 +15,7 @@ from aidn_hypervisor.validation.models import (
     ValidationReport,
     ValidationReportCommitment,
     ValidationReportCustodyObject,
+    ValidationReportStorageFailure,
     ValidationReportStorageReceipt,
     ValidationRequest,
     ValidationStatusSnapshot,
@@ -699,6 +700,11 @@ class ValidationService:
             for item in self.store.list_report_storage_receipts()
             if item.report_hash in report_hashes and item.endpoint_id == endpoint_id
         ]
+        storage_failures = [
+            item
+            for item in self.store.list_report_storage_failures()
+            if item.report_hash in report_hashes and item.endpoint_id == endpoint_id
+        ]
         custody_states = [
             item
             for item in self.store.list_report_custody_states()
@@ -730,6 +736,9 @@ class ValidationService:
             ],
             "report_storage_receipts": [
                 item.model_dump(mode="json") for item in storage_receipts
+            ],
+            "report_storage_failures": [
+                item.model_dump(mode="json") for item in storage_failures
             ],
             "report_custody_states": [
                 item.model_dump(mode="json") for item in custody_states
@@ -1099,6 +1108,91 @@ class ValidationService:
             },
         )
         return receipt
+
+    def record_report_storage_failure(
+        self,
+        *,
+        report_id: str,
+        failure_code: str,
+        failure_details: dict | None = None,
+        reported_by: str | None = None,
+        attempted_at: str | None = None,
+    ) -> ValidationReportStorageFailure:
+        """Record an endpoint custody refusal without changing report conclusion."""
+        report = self.store.get_report(report_id)
+        commitment = self.store.get_report_commitment(report_id)
+        if any(
+            item.endpoint_id == report.endpoint_id
+            and item.endpoint_configuration_hash == report.configuration_hash
+            and item.report_hash == commitment.report_hash
+            for item in self.store.list_report_storage_receipts()
+        ):
+            raise ValueError("cannot record storage failure after a storage receipt")
+        failure_seed = canonical_validation_hash(
+            {
+                "validation_id": report.request_id,
+                "endpoint_id": report.endpoint_id,
+                "endpoint_configuration_hash": report.configuration_hash,
+                "report_hash": commitment.report_hash,
+                "failure_code": failure_code,
+            }
+        )
+        failure = ValidationReportStorageFailure(
+            failure_id=f"storage-failure-{failure_seed.removeprefix('sha256:')}",
+            validation_id=report.request_id,
+            endpoint_id=report.endpoint_id,
+            endpoint_configuration_hash=report.configuration_hash,
+            report_hash=commitment.report_hash,
+            report_size=commitment.report_size,
+            report_locator=commitment.report_locator,
+            failure_code=failure_code,
+            failure_evidence_root=canonical_validation_hash(failure_details or {}),
+            reported_by=reported_by,
+            attempted_at=attempted_at or self._now(),
+        )
+        existing = next(
+            (
+                item
+                for item in self.store.list_report_storage_failures()
+                if item.failure_id == failure.failure_id
+            ),
+            None,
+        )
+        if existing is not None:
+            return existing
+        self.store.save_report_storage_failure(failure)
+        if self.operation_recorder is not None:
+            self.operation_recorder(
+                operation_type="VALIDATION_REPORT_STORAGE_FAILURE",
+                origin_type="evidence_triggered",
+                fee_class="protocol_sponsored",
+                initiator_id=reported_by or report.report_id,
+                payload={
+                    "failure_id": failure.failure_id,
+                    "validation_id": failure.validation_id,
+                    "endpoint_id": failure.endpoint_id,
+                    "endpoint_configuration_hash": failure.endpoint_configuration_hash,
+                    "report_hash": failure.report_hash,
+                    "report_size": failure.report_size,
+                    "report_locator": failure.report_locator,
+                    "failure_code": failure.failure_code,
+                    "failure_evidence_root": failure.failure_evidence_root,
+                    "reported_by": failure.reported_by,
+                },
+                created_at=failure.attempted_at,
+                emitted_events=["ValidationReportStorageFailureCommitted"],
+            )
+        self._emit(
+            event_type="validation_report_custody_failed",
+            message="validation report storage was refused or failed",
+            details={
+                "report_id": report.report_id,
+                "report_hash": commitment.report_hash,
+                "failure_id": failure.failure_id,
+                "failure_code": failure.failure_code,
+            },
+        )
+        return failure
 
     def _store_report_custody(
         self,

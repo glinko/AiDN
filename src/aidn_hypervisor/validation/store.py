@@ -8,6 +8,7 @@ from aidn_hypervisor.validation.models import (
     ValidationReportCustodyState,
     ValidationEpoch,
     ValidationReport,
+    ValidationReportStorageFailure,
     ValidationReportStorageReceipt,
     ValidationRequest,
     ValidationStatusSnapshot,
@@ -23,6 +24,7 @@ class ValidationStore:
         self._reports: dict[str, ValidationReport] = {}
         self._report_commitments: dict[str, ValidationReportCommitment] = {}
         self._report_storage_receipts: dict[str, ValidationReportStorageReceipt] = {}
+        self._report_storage_failures: dict[str, ValidationReportStorageFailure] = {}
         self._report_custody_states: dict[str, ValidationReportCustodyState] = {}
         self._report_custody_objects: dict[str, ValidationReportCustodyObject] = {}
         self._snapshots: dict[tuple[str, str], ValidationStatusSnapshot] = {}
@@ -60,6 +62,12 @@ class ValidationStore:
                 item.model_dump(mode="json")
             )
             for item in snapshot.validation_report_storage_receipts
+        }
+        self._report_storage_failures = {
+            item.failure_id: ValidationReportStorageFailure.model_validate(
+                item.model_dump(mode="json")
+            )
+            for item in snapshot.validation_report_storage_failures
         }
         self._report_custody_states = {
             item.report_hash: ValidationReportCustodyState.model_validate(
@@ -169,6 +177,19 @@ class ValidationStore:
 
     def list_report_storage_receipts(self) -> list[ValidationReportStorageReceipt]:
         return list(self._report_storage_receipts.values())
+
+    def save_report_storage_failure(
+        self,
+        failure: ValidationReportStorageFailure,
+    ) -> None:
+        existing = self._report_storage_failures.get(failure.failure_id)
+        if existing is not None and existing != failure:
+            raise ValueError(f"Validation report storage failure conflict: {failure.failure_id}")
+        self._report_storage_failures[failure.failure_id] = failure
+        self._flush()
+
+    def list_report_storage_failures(self) -> list[ValidationReportStorageFailure]:
+        return list(self._report_storage_failures.values())
 
     def save_report_custody_state(self, state: ValidationReportCustodyState) -> None:
         self._report_custody_states[state.report_hash] = state
@@ -292,6 +313,9 @@ class ValidationStore:
                 ),
                 "validation_report_storage_receipts": list(
                     self._report_storage_receipts.values()
+                ),
+                "validation_report_storage_failures": list(
+                    self._report_storage_failures.values()
                 ),
                 "validation_report_custody_states": list(
                     self._report_custody_states.values()

@@ -234,6 +234,20 @@ class ValidationReportStorageReceipt(BaseModel):
     endpoint_signature: str
 
 
+class ValidationReportStorageFailure(BaseModel):
+    failure_id: str
+    validation_id: str
+    endpoint_id: str
+    endpoint_configuration_hash: str
+    report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    report_size: int = Field(ge=0)
+    report_locator: str
+    failure_code: str = Field(min_length=1, max_length=128)
+    failure_evidence_root: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    reported_by: str | None = None
+    attempted_at: str
+
+
 class ValidationReportCustodyState(BaseModel):
     report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     endpoint_id: str
