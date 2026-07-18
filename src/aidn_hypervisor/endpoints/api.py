@@ -22,6 +22,12 @@ class OpenMvpFixedPriceSessionRequest(BaseModel):
     network_fee_reserve_q_atoms: int = Field(default=0, ge=0)
 
 
+class FinalizeMvpFixedPriceSessionRequest(BaseModel):
+    request_id: str = Field(min_length=1)
+    consumer_signature: str = Field(min_length=1)
+    actual_network_fees_q_atoms: int = Field(default=0, ge=0)
+
+
 def build_endpoint_router(
     service,
     hypervisor_service=None,
@@ -296,6 +302,53 @@ def build_endpoint_router(
                 "funding": funding.model_dump(mode="json"),
             },
             status_code=201,
+        )
+
+    @router.post("/{endpoint_id}/mvp-sessions/{session_id}/finalize")
+    async def finalize_mvp_fixed_price_session(
+        endpoint_id: str,
+        session_id: str,
+        request: FinalizeMvpFixedPriceSessionRequest,
+    ) -> JSONResponse:
+        if session_service is None or hypervisor_service is None:
+            return _error(
+                503,
+                "mvp_session_unavailable",
+                "MVP economic Session service is not configured",
+            )
+        try:
+            session = session_service.store.get_session(session_id)
+        except KeyError:
+            return _error(404, "session_not_found", f"Unknown session: {session_id}")
+        if session.endpoint_id != endpoint_id:
+            return _error(
+                409,
+                "mvp_session_endpoint_mismatch",
+                "MVP Session does not belong to this Endpoint",
+            )
+        try:
+            finalized = hypervisor_service.finalize_mvp_fixed_price_session(
+                session_service=session_service,
+                session_id=session_id,
+                request_id=request.request_id,
+                consumer_signature=request.consumer_signature,
+                actual_network_fees_q_atoms=request.actual_network_fees_q_atoms,
+            )
+        except ValueError as error:
+            return _error(409, "mvp_session_finalize_rejected", str(error))
+        return _ok(
+            {
+                "proposal": finalized["proposal"].model_dump(mode="json"),
+                "acceptance": finalized["acceptance"].model_dump(mode="json"),
+                "funding": finalized["funding"].model_dump(mode="json"),
+                "session": finalized["session_result"].session.model_dump(mode="json"),
+                "deposit": finalized["session_result"].deposit.model_dump(mode="json"),
+                "settlement": (
+                    finalized["session_result"].settlement.model_dump(mode="json")
+                    if finalized["session_result"].settlement is not None
+                    else None
+                ),
+            }
         )
 
     return router
