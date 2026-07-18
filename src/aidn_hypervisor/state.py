@@ -28,6 +28,7 @@ from aidn_hypervisor.validation.models import (
     ValidationAuthorization,
     ValidationBond,
     ValidationReportCommitment,
+    ValidationReportCustodyObject,
     ValidationReportCustodyState,
     ValidationEpoch,
     ValidationReport,
@@ -301,6 +302,9 @@ class HypervisorStateSnapshot(BaseModel):
         default_factory=list
     )
     validation_report_custody_states: list[ValidationReportCustodyState] = Field(
+        default_factory=list
+    )
+    validation_report_custody_objects: list[ValidationReportCustodyObject] = Field(
         default_factory=list
     )
     validation_status_snapshots: list[ValidationStatusSnapshot] = Field(

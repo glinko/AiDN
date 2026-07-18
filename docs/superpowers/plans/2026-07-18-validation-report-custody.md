@@ -99,6 +99,8 @@ Completed: old snapshots load unchanged; new reports produce deterministic hashe
 
 Exit criteria: report bytes survive restart; corrupted bytes are detected before serving; path traversal and arbitrary-file reads are rejected; identical content deduplicates safely.
 
+Progress 2026-07-18: a controlled content-addressed store now writes canonical report bodies through a staging directory and atomic promotion, verifies hashes on every read, stores only relative-path metadata in snapshots, and is enabled by default when file-state persistence is configured. Legacy `ValidationReport` entries remain in the general state snapshot for compatibility, so removal of duplicate legacy data is deferred to Slice 8.
+
 ### Slice 3: Transfer and Storage Receipt
 
 - Add Validation-channel report transfer messages.

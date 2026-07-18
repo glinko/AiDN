@@ -4,6 +4,7 @@ from aidn_hypervisor.validation.models import (
     ValidationAuthorization,
     ValidationBond,
     ValidationReportCommitment,
+    ValidationReportCustodyObject,
     ValidationReportCustodyState,
     ValidationEpoch,
     ValidationReport,
@@ -23,6 +24,7 @@ class ValidationStore:
         self._report_commitments: dict[str, ValidationReportCommitment] = {}
         self._report_storage_receipts: dict[str, ValidationReportStorageReceipt] = {}
         self._report_custody_states: dict[str, ValidationReportCustodyState] = {}
+        self._report_custody_objects: dict[str, ValidationReportCustodyObject] = {}
         self._snapshots: dict[tuple[str, str], ValidationStatusSnapshot] = {}
         self._epochs: dict[str, ValidationEpoch] = {}
         self._validator_entries: dict[str, ValidationValidatorEntry] = {}
@@ -64,6 +66,12 @@ class ValidationStore:
                 item.model_dump(mode="json")
             )
             for item in snapshot.validation_report_custody_states
+        }
+        self._report_custody_objects = {
+            item.report_hash: ValidationReportCustodyObject.model_validate(
+                item.model_dump(mode="json")
+            )
+            for item in snapshot.validation_report_custody_objects
         }
         self._snapshots = {
             (item.endpoint_id, item.configuration_hash): ValidationStatusSnapshot.model_validate(
@@ -169,6 +177,30 @@ class ValidationStore:
     def list_report_custody_states(self) -> list[ValidationReportCustodyState]:
         return list(self._report_custody_states.values())
 
+    def save_report_custody_object(
+        self,
+        custody_object: ValidationReportCustodyObject,
+    ) -> None:
+        existing = self._report_custody_objects.get(custody_object.report_hash)
+        if existing is not None and (
+            existing.report_size != custody_object.report_size
+            or existing.storage_relative_path != custody_object.storage_relative_path
+        ):
+            raise ValueError(
+                "Validation report custody object conflicts with existing report hash"
+            )
+        self._report_custody_objects[custody_object.report_hash] = custody_object
+        self._flush()
+
+    def get_report_custody_object(
+        self,
+        report_hash: str,
+    ) -> ValidationReportCustodyObject:
+        return self._report_custody_objects[report_hash]
+
+    def list_report_custody_objects(self) -> list[ValidationReportCustodyObject]:
+        return list(self._report_custody_objects.values())
+
     def save_snapshot(self, snapshot: ValidationStatusSnapshot) -> None:
         self._snapshots[(snapshot.endpoint_id, snapshot.configuration_hash)] = snapshot
         self._flush()
@@ -263,6 +295,9 @@ class ValidationStore:
                 ),
                 "validation_report_custody_states": list(
                     self._report_custody_states.values()
+                ),
+                "validation_report_custody_objects": list(
+                    self._report_custody_objects.values()
                 ),
                 "validation_status_snapshots": list(self._snapshots.values()),
                 "validation_epochs": list(self._epochs.values()),

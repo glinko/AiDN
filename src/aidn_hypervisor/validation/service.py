@@ -14,6 +14,7 @@ from aidn_hypervisor.validation.models import (
     ValidationEpoch,
     ValidationReport,
     ValidationReportCommitment,
+    ValidationReportCustodyObject,
     ValidationRequest,
     ValidationStatusSnapshot,
     ValidationValidatorEntry,
@@ -77,6 +78,7 @@ class ValidationReportOutcome:
     snapshot: ValidationStatusSnapshot
     report: ValidationReport
     commitment: ValidationReportCommitment
+    custody_object: ValidationReportCustodyObject | None = None
 
 
 @dataclass(frozen=True)
@@ -95,12 +97,14 @@ class ValidationService:
         validator_escrow=None,
         event_recorder=None,
         operation_recorder=None,
+        custody_store=None,
     ) -> None:
         self.store = store
         self.bond_escrow = bond_escrow or LocalOperatorBondEscrowAdapter()
         self.validator_escrow = validator_escrow or LocalValidatorEscrowPoolAdapter()
         self.event_recorder = event_recorder
         self.operation_recorder = operation_recorder
+        self.custody_store = custody_store
 
     def request_validation(
         self,
@@ -316,6 +320,7 @@ class ValidationService:
             evidence_summary=evidence_summary,
             created_at=self._now(),
         )
+        custody_object = self._store_report_custody(report)
         commitment = self._create_report_commitment(request=request, report=report)
         certification_status = _derive_certification_status(
             request_kind="initial",
@@ -344,6 +349,8 @@ class ValidationService:
             }
         )
         self.store.save_report(report)
+        if custody_object is not None:
+            self.store.save_report_custody_object(custody_object)
         self.store.save_report_commitment(commitment)
         self.store.save_request(updated_request)
         self.store.save_snapshot(updated_snapshot)
@@ -378,6 +385,7 @@ class ValidationService:
             snapshot=updated_snapshot,
             report=report,
             commitment=commitment,
+            custody_object=custody_object,
         )
 
     def validation_summary(
@@ -736,8 +744,11 @@ class ValidationService:
             evidence_summary=evidence_summary,
             created_at=self._now(),
         )
+        custody_object = self._store_report_custody(report)
         commitment = self._create_report_commitment(request=request, report=report)
         self.store.save_report(report)
+        if custody_object is not None:
+            self.store.save_report_custody_object(custody_object)
         self.store.save_report_commitment(commitment)
         if self.operation_recorder is not None:
             self._record_validation_report_commitment(commitment, report)
@@ -896,7 +907,28 @@ class ValidationService:
             snapshot=updated_snapshot,
             report=report,
             commitment=commitment,
+            custody_object=custody_object,
         )
+
+    def get_custody_report_body(self, report_hash: str) -> dict:
+        if self.custody_store is None:
+            raise ValueError("Validation report custody store is not configured")
+        return self.custody_store.read_report_body(report_hash)
+
+    def _store_report_custody(
+        self,
+        report: ValidationReport,
+    ) -> ValidationReportCustodyObject | None:
+        if self.custody_store is None:
+            return None
+        custody_object = self.custody_store.store_report(report)
+        report_hash, report_size = validation_report_integrity(report)
+        if (
+            custody_object.report_hash != report_hash
+            or custody_object.report_size != report_size
+        ):
+            raise ValueError("Validation report custody store returned invalid metadata")
+        return custody_object
 
     def _create_report_commitment(
         self,

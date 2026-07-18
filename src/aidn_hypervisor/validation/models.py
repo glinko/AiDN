@@ -160,6 +160,16 @@ def canonical_validation_report_body(report: ValidationReport) -> dict:
     return body
 
 
+def canonical_validation_report_bytes(report: ValidationReport) -> bytes:
+    return json.dumps(
+        canonical_validation_report_body(report),
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
 def canonical_validation_hash(value: object) -> str:
     encoded = json.dumps(
         value,
@@ -172,13 +182,7 @@ def canonical_validation_hash(value: object) -> str:
 
 
 def validation_report_integrity(report: ValidationReport) -> tuple[str, int]:
-    encoded = json.dumps(
-        canonical_validation_report_body(report),
-        allow_nan=False,
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    encoded = canonical_validation_report_bytes(report)
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}", len(encoded)
 
 
@@ -240,6 +244,20 @@ class ValidationReportCustodyState(BaseModel):
     failure_streak: int = Field(default=0, ge=0)
     latest_challenge_id: str | None = None
     mirror_available: bool | None = None
+
+
+class ValidationReportCustodyObject(BaseModel):
+    report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    report_size: int = Field(ge=0)
+    storage_relative_path: str
+    stored_at: str
+
+    @model_validator(mode="after")
+    def _validate_relative_path(self):
+        parts = self.storage_relative_path.replace("\\", "/").split("/")
+        if not self.storage_relative_path or any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("storage_relative_path must be a safe relative path")
+        return self
 
 
 class ValidationStatusSnapshot(BaseModel):
