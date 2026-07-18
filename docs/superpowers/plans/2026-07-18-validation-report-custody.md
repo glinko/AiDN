@@ -117,6 +117,8 @@ Progress 2026-07-18: operator-facing validation summaries and histories now expo
 
 Progress 2026-07-18: the local protocol projection records an immutable, idempotent `VALIDATION_REPORT_STORAGE_FAILURE` for endpoint refusal or custody failure. It does not modify the report conclusion or Certification by itself and is not yet assignment-key signed; those enforcement and network-authentication rules remain Slice 4 and Slice 5 work.
 
+Progress 2026-07-18: local custody verification now records compact availability observations. A verified object is `available`, a missing object is initially `temporarily_unavailable`, and a hash or size mismatch is `corrupted`. The observations are projected as `VALIDATION_REPORT_AVAILABILITY_COMMIT`; epoch scheduling, independent actors, grace windows, Reputation and Certification transitions remain later work.
+
 ### Slice 4: Compact Ledger Operations and Dual Write
 
 - Extend `VALIDATION_REPORT_COMMIT` with compact Certification inputs and receipt/failure references.

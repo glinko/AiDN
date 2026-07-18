@@ -342,3 +342,52 @@ def test_storage_failure_is_idempotent_and_preserves_negative_report(tmp_path) -
     assert service.validation_history("ep-1")["report_storage_failures"] == [
         first.model_dump(mode="json")
     ]
+
+
+def test_custody_check_distinguishes_available_missing_and_corrupted(tmp_path) -> None:
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    service = ValidationService(ValidationStore(), custody_store=custody)
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+    assert outcome.custody_object is not None
+
+    available = service.check_report_custody(
+        report_id=outcome.report.report_id,
+        challenge_id="challenge-1",
+    )
+    payload_path = tmp_path / "custody" / outcome.custody_object.storage_relative_path
+    payload_path.chmod(stat.S_IREAD | stat.S_IWRITE)
+    payload_path.unlink()
+    missing = service.check_report_custody(report_id=outcome.report.report_id)
+    payload_path.parent.mkdir(parents=True, exist_ok=True)
+    payload_path.write_text("{}", encoding="utf-8")
+    corrupted = service.check_report_custody(report_id=outcome.report.report_id)
+
+    assert available.status == "available"
+    assert missing.status == "temporarily_unavailable"
+    assert missing.failure_streak == 1
+    assert corrupted.status == "corrupted"
+    assert corrupted.failure_streak == 2

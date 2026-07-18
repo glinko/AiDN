@@ -15,6 +15,7 @@ from aidn_hypervisor.validation.models import (
     ValidationReport,
     ValidationReportCommitment,
     ValidationReportCustodyObject,
+    ValidationReportCustodyState,
     ValidationReportStorageFailure,
     ValidationReportStorageReceipt,
     ValidationRequest,
@@ -1193,6 +1194,90 @@ class ValidationService:
             },
         )
         return failure
+
+    def check_report_custody(
+        self,
+        *,
+        report_id: str,
+        challenge_id: str | None = None,
+        checked_at: str | None = None,
+    ) -> ValidationReportCustodyState:
+        """Verify local report availability without changing Certification state."""
+        if self.custody_store is None:
+            raise ValueError("Validation report custody store is not configured")
+        report = self.store.get_report(report_id)
+        commitment = self.store.get_report_commitment(report_id)
+        checked_at = checked_at or self._now()
+        previous = next(
+            (
+                item
+                for item in self.store.list_report_custody_states()
+                if item.report_hash == commitment.report_hash
+            ),
+            None,
+        )
+        try:
+            custody_object = self.custody_store.verify_report(commitment.report_hash)
+            if custody_object.report_size != commitment.report_size:
+                raise ValueError("Validation report custody size does not match commitment")
+            state = ValidationReportCustodyState(
+                report_hash=commitment.report_hash,
+                endpoint_id=report.endpoint_id,
+                configuration_hash=report.configuration_hash,
+                status="available",
+                last_checked_at=checked_at,
+                last_available_at=checked_at,
+                failure_streak=0,
+                latest_challenge_id=challenge_id,
+            )
+        except KeyError:
+            state = ValidationReportCustodyState(
+                report_hash=commitment.report_hash,
+                endpoint_id=report.endpoint_id,
+                configuration_hash=report.configuration_hash,
+                status="temporarily_unavailable",
+                last_checked_at=checked_at,
+                last_available_at=(
+                    previous.last_available_at if previous is not None else None
+                ),
+                failure_streak=(previous.failure_streak if previous is not None else 0)
+                + 1,
+                latest_challenge_id=challenge_id,
+            )
+        except ValueError:
+            state = ValidationReportCustodyState(
+                report_hash=commitment.report_hash,
+                endpoint_id=report.endpoint_id,
+                configuration_hash=report.configuration_hash,
+                status="corrupted",
+                last_checked_at=checked_at,
+                last_available_at=(
+                    previous.last_available_at if previous is not None else None
+                ),
+                failure_streak=(previous.failure_streak if previous is not None else 0)
+                + 1,
+                latest_challenge_id=challenge_id,
+            )
+        self.store.save_report_custody_state(state)
+        if self.operation_recorder is not None:
+            self.operation_recorder(
+                operation_type="VALIDATION_REPORT_AVAILABILITY_COMMIT",
+                origin_type="protocol",
+                fee_class="protocol_sponsored",
+                initiator_id=report.endpoint_id,
+                payload={
+                    "report_id": report.report_id,
+                    "report_hash": state.report_hash,
+                    "endpoint_id": state.endpoint_id,
+                    "endpoint_configuration_hash": state.configuration_hash,
+                    "custody_status": state.status,
+                    "failure_streak": state.failure_streak,
+                    "challenge_id": state.latest_challenge_id,
+                },
+                created_at=checked_at,
+                emitted_events=["ValidationReportAvailabilityCommitted"],
+            )
+        return state
 
     def _store_report_custody(
         self,
