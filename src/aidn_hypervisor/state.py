@@ -9,6 +9,7 @@ from aidn_hypervisor.economics.models import (
     RecyclableRemoval,
 )
 from aidn_hypervisor.ledger.models import LedgerOperationRecord
+from aidn_hypervisor.settlement.models import SessionFundingAccount
 from aidn_hypervisor.dispatcher.models import (
     DeadLetterRecord,
     DeliveryRecord,
@@ -405,4 +406,7 @@ class HypervisorStateSnapshot(BaseModel):
     proxy_session_bindings: list[ProxySessionBindingSnapshot] = Field(default_factory=list)
     ledger_operations: list[LedgerOperationRecord] = Field(default_factory=list)
     wallet_operation_sequences: dict[str, int] = Field(default_factory=dict)
+    wallet_q_atom_balances: dict[str, int] = Field(default_factory=dict)
+    session_funding_accounts: list[SessionFundingAccount] = Field(default_factory=list)
+    settlement_transition_hashes: dict[str, str] = Field(default_factory=dict)
     events: list[JournalEvent] = Field(default_factory=list)

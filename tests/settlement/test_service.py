@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from aidn_hypervisor.accounting.models import UsageDimensionEvidence
+from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.settlement import (
     RequestSettlementInput,
     SessionFundingAccount,
@@ -114,6 +115,79 @@ def test_funding_account_enforces_separate_reserve_conservation() -> None:
             unsettled_payment_reserve_q_atoms=1_000,
             unsettled_fee_reserve_q_atoms=100,
         )
+
+
+def test_canonical_ledger_locks_and_finalizes_q_atom_settlement_idempotently() -> None:
+    ledger = LedgerOperationService()
+    funding = _funding()
+    ledger.credit_wallet_q_atoms(
+        wallet_id=funding.consumer_funding_account,
+        amount_q_atoms=funding.total_locked_amount_q_atoms,
+    )
+
+    locked = ledger.lock_session_funding(
+        funding,
+        created_at="2026-07-18T00:00:00+00:00",
+    )
+    assert ledger.lock_session_funding(funding) == locked
+    evaluation = SettlementEngine().evaluate_session(
+        funding=locked,
+        session_contract_hash="sha256:session-contract",
+        effective_terms_hash="sha256:effective-terms",
+        request_inputs=[_request()],
+        terms_by_hash={"sha256:contract-1": _metered_terms()},
+        maximum_session_charge_q_atoms=1_000,
+        actual_network_fees_q_atoms=20,
+        session_close_reference="sha256:close",
+    )
+
+    finalized = ledger.apply_settlement_evaluation(
+        evaluation,
+        created_at="2026-07-18T00:01:00+00:00",
+    )
+    repeated = ledger.apply_settlement_evaluation(evaluation)
+
+    assert ledger.wallet_q_atom_balance("wallet-consumer") == 840
+    assert ledger.wallet_q_atom_balance("wallet-endpoint") == 240
+    assert finalized == repeated
+    assert finalized.released_to_endpoint_q_atoms == 240
+    assert finalized.consumer_payment_refund_q_atoms == 760
+    assert finalized.consumer_fee_refund_q_atoms == 80
+    assert finalized.consumed_network_fees_q_atoms == 20
+    assert [item["operation_type"] for item in ledger.list_operations()] == [
+        "SESSION_ESCROW_LOCK",
+        "SESSION_SETTLEMENT_FINALIZE",
+    ]
+
+
+def test_canonical_ledger_settlement_state_survives_restore() -> None:
+    ledger = LedgerOperationService()
+    funding = _funding(payment_reserve=100, fee_reserve=0)
+    ledger.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=100)
+    locked = ledger.lock_session_funding(funding)
+    evaluation = SettlementEngine().evaluate_session(
+        funding=locked,
+        session_contract_hash="sha256:session-contract",
+        effective_terms_hash="sha256:effective-terms",
+        request_inputs=[_request(ceiling=100, dimensions=[_dimension(value=50)])],
+        terms_by_hash={"sha256:contract-1": _metered_terms()},
+        maximum_session_charge_q_atoms=100,
+        actual_network_fees_q_atoms=0,
+        session_close_reference="sha256:close",
+    )
+    ledger.apply_settlement_evaluation(evaluation)
+
+    restored = LedgerOperationService()
+    settlement_state = ledger.snapshot_settlement_state()
+    restored.restore(
+        operations=ledger.snapshot_operations(),
+        wallet_sequences=ledger.snapshot_wallet_sequences(),
+        **settlement_state,
+    )
+
+    assert restored.wallet_q_atom_balance("wallet-consumer") == 0
+    assert restored.wallet_q_atom_balance("wallet-endpoint") == 100
+    assert restored.get_session_funding_account("session-1").funding_state == "RELEASED"
 
 
 def test_request_charge_is_capped_and_excess_is_endpoint_absorbed() -> None:

@@ -368,6 +368,33 @@ class HypervisorService:
     def wallet_next_operation_sequence(self, wallet_id: str) -> int:
         return self._ledger_operation_service.wallet_next_sequence(wallet_id)
 
+    def wallet_q_atom_balance(self, wallet_id: str) -> int:
+        return self._ledger_operation_service.wallet_q_atom_balance(wallet_id)
+
+    def credit_wallet_q_atoms(self, *, wallet_id: str, amount_q_atoms: int) -> int:
+        balance = self._ledger_operation_service.credit_wallet_q_atoms(
+            wallet_id=wallet_id,
+            amount_q_atoms=amount_q_atoms,
+        )
+        self._persist_state()
+        return balance
+
+    def lock_session_funding(self, funding, *, created_at: str | None = None):
+        locked = self._ledger_operation_service.lock_session_funding(
+            funding,
+            created_at=created_at,
+        )
+        self._persist_state()
+        return locked
+
+    def apply_settlement_evaluation(self, evaluation, *, created_at: str | None = None):
+        funding = self._ledger_operation_service.apply_settlement_evaluation(
+            evaluation,
+            created_at=created_at,
+        )
+        self._persist_state()
+        return funding
+
     def record_ledger_operation(
         self,
         *,
@@ -3015,6 +3042,7 @@ class HypervisorService:
             ],
             ledger_operations=self.list_ledger_operations(),
             wallet_operation_sequences=self._ledger_operation_service.snapshot_wallet_sequences(),
+            **self._ledger_operation_service.snapshot_settlement_state(),
             events=[event.model_copy(deep=True) for event in self._events],
         )
 
@@ -3050,6 +3078,11 @@ class HypervisorService:
                 event.model_dump(mode="json") for event in snapshot.ledger_operations
             ],
             wallet_sequences=dict(snapshot.wallet_operation_sequences),
+            wallet_q_atom_balances=dict(snapshot.wallet_q_atom_balances),
+            session_funding_accounts=[
+                item.model_dump(mode="json") for item in snapshot.session_funding_accounts
+            ],
+            settlement_transition_hashes=dict(snapshot.settlement_transition_hashes),
         )
         self._bundle_states = {
             state.bundle_id: state.model_dump(mode="json")
