@@ -211,6 +211,7 @@ class RuntimeRequestRecord(BaseModel):
     runtime_request_handle: str | None = None
     accepted_at: str | None = None
     terminal_result_hash: str | None = None
+    terminal_final_usage_report_id: str | None = None
     updated_at: str = Field(min_length=1)
 
 

@@ -591,6 +591,7 @@ class RuntimeProtocolService:
             update={
                 "request_state": terminal_state,
                 "terminal_result_hash": terminal_result_hash,
+                "terminal_final_usage_report_id": final_usage_report_id,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         )

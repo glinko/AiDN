@@ -39,7 +39,15 @@ from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.sessions.models import ProxySessionBinding
-from aidn_hypervisor.settlement.models import SessionFundingAccount
+from aidn_hypervisor.settlement.models import (
+    RequestSettlementInput,
+    SessionFundingAccount,
+    SessionSettlementAcceptance,
+    SettlementAccountingTerms,
+    SettlementChargeComponent,
+    TerminalChargePolicy,
+)
+from aidn_hypervisor.settlement.service import SettlementEngine
 from aidn_hypervisor.state import (
     AllocationSnapshot,
     BundleStateSnapshot,
@@ -89,6 +97,16 @@ _DEFAULT_EPOCH_REWARD_POOL_SHARES = {
     "validation": 0.3,
     "faucet": 0.1,
 }
+
+
+def _canonical_hash(payload: dict) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def _empty_resource_summary() -> dict[str, dict[str, float | int]]:
@@ -374,6 +392,9 @@ class HypervisorService:
     def wallet_q_atom_balance(self, wallet_id: str) -> int:
         return self._ledger_operation_service.wallet_q_atom_balance(wallet_id)
 
+    def get_session_funding_account(self, session_id: str) -> SessionFundingAccount:
+        return self._ledger_operation_service.get_session_funding_account(session_id)
+
     def credit_wallet_q_atoms(self, *, wallet_id: str, amount_q_atoms: int) -> int:
         balance = self._ledger_operation_service.credit_wallet_q_atoms(
             wallet_id=wallet_id,
@@ -460,6 +481,8 @@ class HypervisorService:
             node_id=self.node_id,
             deposit_q=deposit_q_atoms / Q_ATOMS_PER_Q,
             deposit_q_atoms=deposit_q_atoms,
+            fixed_price_q_atoms=fixed_price_q_atoms,
+            request_charge_ceiling_q_atoms=fixed_price_q_atoms,
             economic_profile="MVP-0001",
             session_policy=endpoint.session.model_dump(mode="json"),
             accounting_contract=accounting_contract,
@@ -488,6 +511,186 @@ class HypervisorService:
             funding_state_hash=str(locked.funding_state_hash),
         )
         return session, result.deposit, locked
+
+    def build_mvp_fixed_price_settlement_evaluation(
+        self,
+        *,
+        session_service,
+        session_id: str,
+        request_id: str,
+        actual_network_fees_q_atoms: int = 0,
+        settlement_sequence: int = 1,
+        proposal_expiration: str | None = None,
+    ):
+        session = session_service.store.get_session(session_id)
+        if session.economic_profile != "MVP-0001":
+            raise ValueError("Session is not an MVP-0001 economic Session")
+        if session.fixed_price_q_atoms is None:
+            raise ValueError("MVP Session is missing fixed_price_q_atoms")
+        if session.request_charge_ceiling_q_atoms is None:
+            raise ValueError("MVP Session is missing request_charge_ceiling_q_atoms")
+        if session.accounting_contract_hash is None:
+            raise ValueError("MVP Session is missing accounting_contract_hash")
+        if session.session_contract_hash is None:
+            raise ValueError("MVP Session is missing session_contract_hash")
+        if session.canonical_funding_state_hash is None:
+            raise ValueError("MVP Session is not bound to canonical funding")
+
+        matching_requests = [
+            item
+            for item in self.runtime_protocol_store.requests.values()
+            if item.request.session_id == session_id
+        ]
+        if len(matching_requests) != 1 or matching_requests[0].request_id != request_id:
+            raise ValueError("MVP-0001 supports exactly one Runtime Request per Session")
+        record = matching_requests[0]
+        if record.request.endpoint_id != session.endpoint_id:
+            raise ValueError("Runtime Request Endpoint does not match Session")
+        if record.request.endpoint_configuration_hash != session.endpoint_configuration_hash:
+            raise ValueError("Runtime Request Endpoint Configuration does not match Session")
+        if record.request.session_contract_hash != session.session_contract_hash:
+            raise ValueError("Runtime Request Session Contract does not match Session")
+        if record.request.accounting_contract_hash != session.accounting_contract_hash:
+            raise ValueError("Runtime Request Accounting Contract does not match Session")
+        if record.terminal_result_hash is None or record.terminal_final_usage_report_id is None:
+            raise ValueError("Runtime Request is not terminal with Final Usage")
+
+        final_usage = self.runtime_protocol_store.usage_reports.get(
+            record.terminal_final_usage_report_id
+        )
+        if final_usage is None:
+            raise ValueError("Final Usage Report is missing from Runtime store")
+        request_reports = sorted(
+            (
+                item
+                for item in self.runtime_protocol_store.usage_reports.values()
+                if item.request_id == request_id
+            ),
+            key=lambda item: item.usage_sequence,
+        )
+        if not request_reports or request_reports[-1].usage_report_id != final_usage.usage_report_id:
+            raise ValueError("Final Usage Report is not the current Usage chain head")
+
+        usage_conflicted = any(
+            item.request_id == request_id
+            for item in self.runtime_protocol_store.usage_conflicts.values()
+        )
+        request_input = RequestSettlementInput(
+            session_id=session_id,
+            request_id=request_id,
+            request_charge_ceiling_q_atoms=session.request_charge_ceiling_q_atoms,
+            accounting_contract_hash=session.accounting_contract_hash,
+            terminal_state=record.request_state,
+            result_reference=record.terminal_result_hash,
+            final_usage_report_id=final_usage.usage_report_id,
+            final_usage_report_hash=final_usage.report_hash,
+            usage_sequence=final_usage.usage_sequence,
+            usage_chain_valid=not usage_conflicted,
+            usage_chain_conflicted=usage_conflicted,
+            dimensions=[
+                dimension.model_copy(deep=True)
+                for dimension in final_usage.dimensions
+            ],
+        )
+        terms = SettlementAccountingTerms(
+            accounting_contract_hash=session.accounting_contract_hash,
+            accounting_mode="fixed_price",
+            components=[
+                SettlementChargeComponent(
+                    component_id="mvp_fixed_request_price",
+                    fixed_amount_q_atoms=session.fixed_price_q_atoms,
+                )
+            ],
+            terminal_policies={
+                "COMPLETED": TerminalChargePolicy(mode="FULL_CHARGE"),
+                "PARTIAL": TerminalChargePolicy(mode="NO_CHARGE"),
+                "CANCELLED": TerminalChargePolicy(mode="NO_CHARGE"),
+                "FAILED": TerminalChargePolicy(mode="NO_CHARGE"),
+                "EXPIRED": TerminalChargePolicy(mode="NO_CHARGE"),
+                "UNRECOVERABLE": TerminalChargePolicy(mode="NO_CHARGE"),
+                "REJECTED": TerminalChargePolicy(mode="NO_CHARGE"),
+            },
+        )
+        funding = self.get_session_funding_account(session_id)
+        if funding.funding_state_hash != session.canonical_funding_state_hash:
+            raise ValueError("Session funding hash no longer matches Session")
+        close_reference = _canonical_hash(
+            {
+                "economic_profile": "MVP-0001",
+                "session_id": session_id,
+                "request_id": request_id,
+                "terminal_result_hash": record.terminal_result_hash,
+                "final_usage_report_hash": final_usage.report_hash,
+                "settlement_sequence": settlement_sequence,
+            }
+        )
+        return SettlementEngine().evaluate_session(
+            funding=funding,
+            session_contract_hash=session.session_contract_hash,
+            effective_terms_hash=terms.terms_hash,
+            request_inputs=[request_input],
+            terms_by_hash={session.accounting_contract_hash: terms},
+            maximum_session_charge_q_atoms=session.request_charge_ceiling_q_atoms,
+            actual_network_fees_q_atoms=actual_network_fees_q_atoms,
+            session_close_reference=close_reference,
+            settlement_sequence=settlement_sequence,
+            proposal_expiration=proposal_expiration,
+        )
+
+    def finalize_mvp_fixed_price_session(
+        self,
+        *,
+        session_service,
+        session_id: str,
+        request_id: str,
+        consumer_signature: str,
+        actual_network_fees_q_atoms: int = 0,
+        settlement_sequence: int = 1,
+        proposal_expiration: str | None = None,
+        accepted_at: str | None = None,
+    ):
+        evaluation = self.build_mvp_fixed_price_settlement_evaluation(
+            session_service=session_service,
+            session_id=session_id,
+            request_id=request_id,
+            actual_network_fees_q_atoms=actual_network_fees_q_atoms,
+            settlement_sequence=settlement_sequence,
+            proposal_expiration=proposal_expiration,
+        )
+        proposal = self.propose_settlement(evaluation)
+        acceptance = SessionSettlementAcceptance(
+            settlement_id=proposal.settlement_id,
+            session_id=session_id,
+            settlement_input_root=proposal.settlement_input_root,
+            accepted_endpoint_payment_q_atoms=proposal.final_endpoint_payment_q_atoms,
+            accepted_consumer_refund_q_atoms=(
+                proposal.consumer_payment_refund_q_atoms
+                + proposal.consumer_fee_refund_q_atoms
+            ),
+            accepted_network_fees_q_atoms=proposal.actual_network_fees_q_atoms,
+            consumer_signature=consumer_signature,
+            accepted_at=accepted_at or datetime.now(timezone.utc).isoformat(),
+        )
+        self.accept_settlement(acceptance)
+        funding = self.finalize_accepted_settlement(evaluation)
+        session_result = session_service.mark_canonical_settlement_finalized(
+            session_id,
+            settlement_evidence_root=evaluation.input_set.settlement_input_root,
+            endpoint_payment_q_atoms=proposal.final_endpoint_payment_q_atoms,
+            consumer_refund_q_atoms=(
+                proposal.consumer_payment_refund_q_atoms
+                + proposal.consumer_fee_refund_q_atoms
+            ),
+            network_fee_q_atoms=proposal.actual_network_fees_q_atoms,
+        )
+        self._persist_state()
+        return {
+            "evaluation": evaluation,
+            "proposal": proposal,
+            "acceptance": acceptance,
+            "funding": funding,
+            "session_result": session_result,
+        }
 
     def record_ledger_operation(
         self,

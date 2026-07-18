@@ -253,6 +253,8 @@ class SessionService:
         accepted_at: str,
         economic_profile: str | None = None,
         deposit_q_atoms: int | None = None,
+        fixed_price_q_atoms: int | None = None,
+        request_charge_ceiling_q_atoms: int | None = None,
     ) -> dict:
         return {
             "session_id": session_id,
@@ -265,6 +267,8 @@ class SessionService:
             "deposit_locked_q": deposit_q,
             "economic_profile": economic_profile,
             "deposit_locked_q_atoms": deposit_q_atoms,
+            "fixed_price_q_atoms": fixed_price_q_atoms,
+            "request_charge_ceiling_q_atoms": request_charge_ceiling_q_atoms,
             "advertisement_id": advertisement_id,
             "offer_id": offer_id,
             "pricing_policy_hash": pricing_policy_hash,
@@ -405,6 +409,8 @@ class SessionService:
         session_id: str | None = None,
         economic_profile: str | None = None,
         deposit_q_atoms: int | None = None,
+        fixed_price_q_atoms: int | None = None,
+        request_charge_ceiling_q_atoms: int | None = None,
     ) -> SessionResult:
         session_policy_snapshot = dict(session_policy)
         session_policy_snapshot.setdefault("network_fee_q", self.network_fee_q)
@@ -476,6 +482,8 @@ class SessionService:
             accepted_at=now.isoformat(),
             economic_profile=economic_profile,
             deposit_q_atoms=deposit_q_atoms,
+            fixed_price_q_atoms=fixed_price_q_atoms,
+            request_charge_ceiling_q_atoms=request_charge_ceiling_q_atoms,
         )
         session_contract_record = self._session_contract_record(
             payload=session_contract_payload,
@@ -499,6 +507,8 @@ class SessionService:
             deposit_locked_q=deposit_q,
             economic_profile=economic_profile,
             deposit_locked_q_atoms=deposit_q_atoms,
+            fixed_price_q_atoms=fixed_price_q_atoms,
+            request_charge_ceiling_q_atoms=request_charge_ceiling_q_atoms,
             reserved_slot_index=reserved_slot_index,
             queue_policy_snapshot=queue_policy,
             session_policy_snapshot=session_policy_snapshot,
@@ -593,6 +603,67 @@ class SessionService:
         )
         self._promote_next_waiting_session(endpoint_id=current.endpoint_id)
         return result
+
+    def mark_canonical_settlement_finalized(
+        self,
+        session_id: str,
+        *,
+        settlement_evidence_root: str,
+        endpoint_payment_q_atoms: int,
+        consumer_refund_q_atoms: int,
+        network_fee_q_atoms: int = 0,
+        close_reason: str = "canonical_settlement_finalized",
+    ) -> SessionResult:
+        current = self.store.get_session(session_id)
+        deposit = self.store.get_deposit_for_session(session_id)
+        if current.economic_profile != "MVP-0001":
+            raise ValueError("Session is not an MVP-0001 economic Session")
+        atoms_per_q = 1_000_000
+        endpoint_payment_q = round(endpoint_payment_q_atoms / atoms_per_q, 6)
+        consumer_refund_q = round(consumer_refund_q_atoms / atoms_per_q, 6)
+        network_fee_q = round(network_fee_q_atoms / atoms_per_q, 6)
+        charged_q = round(endpoint_payment_q + network_fee_q, 6)
+        settlement = SessionSettlementSummary(
+            settlement_evidence_root=settlement_evidence_root,
+            endpoint_payment_beneficiary=current.endpoint_payment_beneficiary,
+            consumer_refund_beneficiary=current.consumer_refund_beneficiary,
+            network_fee_q=network_fee_q,
+            charged_q=charged_q,
+            refunded_q=consumer_refund_q,
+            endpoint_payment_q=endpoint_payment_q,
+            payout_q=endpoint_payment_q,
+            no_request=False,
+        )
+        closed = current.model_copy(
+            update={
+                "status": "closed",
+                "reserved_slot_index": None,
+                "close_reason": close_reason,
+            }
+        )
+        released = deposit.model_copy(
+            update={
+                "status": "released",
+                "consumed_q": charged_q,
+                "refunded_q": consumer_refund_q,
+            }
+        )
+        self.store.save_session(closed)
+        self.store.save_deposit(released)
+        self._emit(
+            event_type="session.canonical_settled",
+            message="canonical MVP Session settlement finalized",
+            details={
+                "session_id": session_id,
+                "endpoint_id": current.endpoint_id,
+                "settlement_evidence_root": settlement_evidence_root,
+                "endpoint_payment_q_atoms": endpoint_payment_q_atoms,
+                "consumer_refund_q_atoms": consumer_refund_q_atoms,
+                "network_fee_q_atoms": network_fee_q_atoms,
+            },
+        )
+        self._promote_next_waiting_session(endpoint_id=current.endpoint_id)
+        return SessionResult(session=closed, deposit=released, settlement=settlement)
 
     def touch_session(self, session_id: str) -> EndpointSession:
         current = self.store.get_session(session_id)
