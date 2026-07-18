@@ -647,10 +647,18 @@ def test_providers_payload_exposes_plugin_directory_install_metadata() -> None:
     plugin = payload["plugin_directory"][0]
 
     assert plugin["trust_status"] == "CONFORMANCE_TESTED"
+    assert plugin["package_verification"]["status"] == "VERIFIED"
+    assert plugin["package_verification"]["verification_mode"] == "ED25519"
+    assert plugin["sandbox_policy"]["execution_mode"] == "RECORDED_ONLY"
     assert plugin["required_permissions"][0]["permission_id"] == "network.private"
     assert plugin["install_ui_schema"]["schema_id"] == "fake.install.v1"
     assert plugin["secret_requirements"][0]["secret_type"] == "API_KEY"
     assert plugin["installation_recipes"][0]["recipe_id"] == "fake-managed-local"
+    assert payload["installation_executor"]["executor_id"] == "sandbox-enforced-declarative-v1"
+    assert (
+        payload["installation_executor"]["sandbox_capabilities"]["supported_execution_modes"]
+        == ["RECORDED_ONLY", "SANDBOX_REQUIRED"]
+    )
     assert payload["summary"]["installable_plugin_count"] == 1
 
 
@@ -673,8 +681,39 @@ def test_provider_workspace_payload_includes_installation_apply_summary() -> Non
         payload["installation_approvals"][0]["status_label"]
         == "Applied with controlled executor"
     )
+    assert (
+        payload["installation_approvals"][0]["acknowledged_sandbox_policy"]["execution_mode"]
+        == "RECORDED_ONLY"
+    )
+    assert (
+        payload["installation_approvals"][0]["acknowledged_package_verification"]["status"]
+        == "VERIFIED"
+    )
+    assert payload["installation_approvals"][0]["upgrade_review"]["status"] == "INITIAL_APPROVAL"
+    assert payload["installation_approvals"][0]["upgrade_acknowledged"] is False
     assert payload["installation_jobs"][0]["job_id"] == job["job_id"]
     assert payload["installation_jobs"][0]["status"] == "SUCCEEDED"
+
+
+def test_provider_workspace_payload_exposes_installation_rollback_state() -> None:
+    service = _provider_only_service()
+    approval = service.approve_provider_installation_plan(
+        plugin_id="fake-managed",
+        configuration={
+            "display_name": "Local Fake",
+            "base_url": "http://127.0.0.1:9999",
+        },
+    )
+    job = service.apply_provider_installation_approval(approval["approval_id"])
+    service.rollback_provider_installation_job(job["job_id"])
+
+    payload = build_operator_providers_payload(service=service)
+
+    assert payload["installation_jobs"][0]["job_id"] == job["job_id"]
+    assert payload["installation_jobs"][0]["rollback_status"] == "COMPLETED"
+    assert payload["installation_jobs"][0]["rollback_step_results"][-1]["step_id"] == (
+        "rollback-delete-local-provider-instance"
+    )
 
 
 def test_providers_payload_exposes_models_and_runtime_binding_readiness() -> None:

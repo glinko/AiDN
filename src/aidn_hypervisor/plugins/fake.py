@@ -3,6 +3,9 @@ from aidn_hypervisor.plugins.base import ProviderPlugin
 
 class FakeManagedPlugin(ProviderPlugin):
     plugin_id = "fake-managed"
+    developer_signing_private_key = (
+        "4a664e60d04e8b403f3b5d9d45115eb521019518fe67ca396a32cc73b76c8d2e"
+    )
 
     def describe(self) -> dict:
         return {
@@ -10,7 +13,7 @@ class FakeManagedPlugin(ProviderPlugin):
             "plugin_version": "0.1.0",
             "display_name": "Fake Managed Provider",
             "publisher": "AiDN Test",
-            "package_digest": "sha256:fake-managed-dev",
+            "package_digest": "sha256:2e348ef1dca5559c3e648df90ce6774de4fdf400887945645f6f32d4ecc1fa8b",
             "provider_type": "fake",
             "provider_families": ["fake"],
             "plugin_capability_flags": [
@@ -27,6 +30,13 @@ class FakeManagedPlugin(ProviderPlugin):
                 }
             ],
             "trust_status": "CONFORMANCE_TESTED",
+            "sandbox_policy": {
+                "execution_mode": "RECORDED_ONLY",
+                "filesystem_scope": "NONE",
+                "network_scope": "NONE",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+                "notes": "Current MVP plugin install path is recorded only and does not mutate host state.",
+            },
             "source_repository": "https://github.com/glinko/AiDN",
             "license": "Apache-2.0",
             "supported_platforms": ["linux", "darwin", "windows"],

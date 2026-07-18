@@ -4,11 +4,11 @@ Provider Plugin System and Directory
 
 Status: Draft
 
-Version: 0.2
+Version: 0.17
 
 Supersedes:
 
-* RFC-0055 Version 0.1
+* RFC-0055 Version 0.16
 
 Depends on:
 
@@ -34,8 +34,13 @@ It specifies:
 * attach-existing flow;
 * managed-install flow;
 * installation approval and apply boundaries;
+* installation diagnostics and local artifact readiness reporting;
+* controlled local artifact staging for managed install;
+* controlled staged-archive extraction for managed install;
+* shared Model Artifact Store promotion and provider materialization;
+* rollback execution and rollback-result lifecycle for managed install jobs;
 * Installation Recipes;
-* plugin permissions and trust status;
+* plugin permissions, sandbox policy and trust status;
 * declarative plugin UI schemas;
 * plugin security and secret boundaries.
 
@@ -190,11 +195,14 @@ provider_plugin_manifest:
   supported_accelerators:
   plugin_capability_flags:
   required_permissions:
+  sandbox_policy:
   secret_requirements:
   attach_ui_schema_hash:
   install_ui_schema_hash:
   model_ui_schema_hash:
   package_digest:
+  publisher_public_key:
+  publisher_signature:
   manifest_hash:
 ```
 
@@ -254,6 +262,33 @@ Examples include:
 * remote deployment agent access.
 
 Permission changes on plugin update SHALL require explicit operator approval.
+When a plugin's requested permission set or sandbox policy differs from the
+latest managed-install approval for that plugin, the Hypervisor SHALL require a
+fresh explicit upgrade acknowledgement before diagnostics or approval can
+proceed.
+
+Provider Plugins SHALL also declare a sandbox policy for managed install.
+
+The sandbox policy SHOULD identify at least:
+
+* execution mode;
+* filesystem scope;
+* network scope;
+* secret scope.
+
+The Hypervisor SHALL treat sandbox policy as part of the managed-install trust
+boundary rather than optional display metadata.
+
+Managed-install compatibility SHALL also be evaluated against the sandbox
+boundary declared by the active installation executor.
+
+That executor boundary SHOULD identify at least:
+
+* supported execution modes;
+* supported filesystem scopes;
+* supported network scopes;
+* supported secret scopes;
+* whether host mutation is enabled.
 
 ---
 
@@ -291,6 +326,15 @@ Example plan contents include:
 
 The Hypervisor remains the authority that applies the plan.
 
+An MVP sandbox-enforced executor MAY accept only a bounded declarative subset
+within otherwise allowed plan sections.
+
+Examples include:
+
+* private-only network declarations with limited keys;
+* read-only HTTP health checks without embedded credentials or query parameters;
+* flat scalar resource-limit metadata.
+
 Applying an Installation Plan SHALL require an explicit operator approval bound
 to the exact:
 
@@ -298,20 +342,179 @@ to the exact:
 * Installation Plan hash;
 * Provider configuration hash;
 * permission set;
+* verified package identity;
+* sandbox policy;
 * secret-reference set where applicable.
 
-The Hypervisor MAY implement a non-host-mutating recorded executor for MVP
-operation. Such an executor creates local inventory and audit state but does not
-run shell commands, container engines, package managers, downloads or plugin
+The Hypervisor SHOULD expose upgrade-review details to the operator, including:
+
+* added permissions;
+* removed permissions;
+* package-identity change relative to the latest approval;
+* sandbox-policy change relative to the latest approval;
+* whether a fresh upgrade acknowledgement is required.
+
+The Hypervisor MAY implement one or more non-host-mutating executors for MVP
+operation. Such executors create local inventory and audit state but do not run
+shell commands, container engines, package managers, downloads or plugin
 installer code.
 
 Host-mutating executors SHALL be treated as a higher-risk implementation layer
-and require sandboxing, permission checks, secret scoping, diagnostics and
-rollback policy.
+and require enforced sandbox policy, permission checks, secret scoping,
+diagnostics and rollback policy.
+
+An MVP Hypervisor MAY expose a sandbox-enforced non-host-mutating executor as
+its default managed-install path while still persisting and validating sandbox
+policy against executor capabilities as part of approval, diagnostics and
+apply-state binding.
+
+Managed-install jobs SHOULD expose rollback state separately from apply state.
+
+Managed-install diagnostics SHOULD expose any required `local-import://`
+artifacts before apply proceeds.
+
+That readiness surface SHOULD identify at least:
+
+* the controlled imports root;
+* each required relative import path;
+* the declared destination volume path;
+* whether the artifact is already staged locally.
+
+An implementation MAY also expose a bounded operator-facing staging surface
+for those artifacts.
+
+That staging surface SHOULD:
+
+* accept only relative paths inside the controlled imports root;
+* enforce explicit maximum artifact size;
+* expose staged artifact metadata;
+* avoid arbitrary host-path access;
+* remain separate from shell, container, or package-manager execution.
+
+An implementation MAY also expose bounded archive extraction inside the same
+controlled imports root when operators need to prepare model files or
+manifests before apply.
+
+That archive-extraction surface SHOULD:
+
+* accept only previously staged local archives;
+* extract only into relative directories inside the controlled imports root;
+* reject path traversal and absolute archive members;
+* enforce explicit extracted file-count and total-size limits;
+* expose which archive formats are accepted;
+* remain separate from shell, container, or package-manager execution.
+
+### 14.1 Shared Model Artifact Store
+
+An implementation MAY promote a staged local file into a separate shared Model
+Artifact Store. The staging area and Model Artifact Store SHALL remain distinct:
+staging is temporary operator preparation state, while the store contains
+immutable content-addressed bytes suitable for reuse by several Provider
+Instances.
+
+Each stored artifact SHALL bind at least:
+
+* a content hash and stable artifact identifier;
+* byte size;
+* original filename and source reference;
+* storage location relative to the controlled store root;
+* verified integrity status.
+
+Promotion SHALL recompute and verify the content hash before making bytes
+available. Identical byte content MAY deduplicate to one artifact. Matching
+model names alone SHALL NOT imply identity or deduplication.
+
+A managed-install plan MAY reference immutable bytes with
+`model-artifact://sha256:<digest>`. The executor SHALL materialize that source
+only into the declared Provider volume path. Removing a staged source SHALL NOT
+remove an already promoted artifact. Artifact lifecycle, reference accounting,
+garbage collection, large resumable ingestion, and provider-specific caching
+MAY be added by later versions.
+
+An implementation MAY define an immutable Model Artifact Set to represent a
+multi-file model package. A set SHALL contain an ordered, path-bound list of
+artifact identifiers and file roles such as `WEIGHTS`, `TOKENIZER`, `CONFIG`,
+`ADAPTER`, or `AUXILIARY`. Every member SHALL be verified before set creation.
+An Artifact Set MAY be bound to one Model Deployment before Runtime Binding is
+created. An implementation SHALL prevent removal of an artifact referenced by
+a set, and prevent removal of a set referenced by a Model Deployment.
+
+The Hypervisor SHOULD render Artifact Set composition through declarative local
+controls that expose selected artifacts, relative target paths, and file roles.
+It MAY materialize immutable artifact bytes by copy. A hardlink optimization
+MAY be offered only as an explicit local policy and only for read-only store
+payloads; the resulting execution evidence SHALL identify the actual method.
+
+When an Artifact Set is materialized for a Provider Instance, the Hypervisor
+SHALL retain a local Provider Artifact Materialization record binding the exact
+Provider Instance, Artifact Set, controlled destination, member files, and
+actual materialization method. This record is local operational evidence; it
+does not replace Runtime Binding, Service Verification, or Endpoint
+Certification. State restoration SHALL preserve the record, while the
+underlying immutable Artifact Set remains the authoritative byte identity.
+
+Implementations MAY perform explicit local garbage collection for unreferenced
+artifacts. Collection SHALL use a configured grace period, SHALL re-evaluate
+current set references before deletion, and SHALL be fail-closed when Artifact
+Set metadata is unreadable. A collection pass SHOULD first record an
+unreferenced timestamp; it SHALL NOT remove newly unreferenced bytes in that
+same pass merely because a grace period is configured as zero for testing.
+
+Rollback lifecycle SHOULD support at least:
+
+* rollback preview during diagnostics;
+* rollback execution after apply failure where the executor can provide it;
+* explicit operator-triggered rollback for terminal install jobs;
+* rollback step results and timestamps distinct from apply execution;
+* local Provider Instance inventory cleanup where rollback succeeds or is not
+  otherwise required.
+
+An implementation MAY also provide a narrowly scoped host-mutating executor
+that writes only controlled local installation state inside an explicitly
+approved filesystem root. Such an executor does not by itself imply support
+for shell execution, container lifecycle, package-manager actions, downloads,
+or arbitrary plugin installer code.
+
+Examples of allowed narrow host mutation MAY include:
+
+* creating controlled provider-local volume directories;
+* writing staged model-artifact manifests for later operator-reviewed fetch;
+* importing local artifacts from a dedicated Hypervisor-controlled import area
+  into declared provider volume paths;
+* extracting staged local archives into that same controlled import area
+  before apply;
+* writing managed installation state needed for deterministic rollback.
 
 ---
 
-## 15. Installation Recipes
+## 15. Package Verification
+
+Provider Plugin package identity SHALL be bound to at least:
+
+* package digest;
+* manifest hash;
+* publisher identity claim;
+* publisher signature where available.
+
+The Hypervisor SHOULD verify package identity before accepting or applying a
+managed-install approval.
+
+Signed package verification MAY use a local trusted-publisher key set in MVP
+implementations.
+
+The Hypervisor SHALL:
+
+* reject objectively invalid package identity evidence;
+* surface unverified-but-not-invalid package state distinctly from verified
+  package state;
+* bind approval and apply to the exact acknowledged package identity;
+* expose package-verification results in diagnostics and operator views.
+
+Package verification remains distinct from plugin trust status.
+
+---
+
+## 16. Installation Recipes
 
 An Installation Recipe is a preset composed from:
 
@@ -325,7 +528,7 @@ Recipes are convenience presets rather than new protocol identities.
 
 ---
 
-## 16. Plugin Trust Status
+## 17. Plugin Trust Status
 
 The Directory or Hypervisor MAY display a plugin trust status such as:
 
@@ -344,7 +547,7 @@ Plugin trust status is distinct from:
 
 ---
 
-## 17. Endpoint Publication Boundary
+## 18. Endpoint Publication Boundary
 
 A Provider Plugin SHALL NOT automatically publish an Endpoint offer merely
 because:

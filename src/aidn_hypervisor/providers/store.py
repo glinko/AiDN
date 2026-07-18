@@ -2,6 +2,7 @@ from aidn_hypervisor.providers.models import (
     ModelDeployment,
     ProviderInstallationApproval,
     ProviderInstallationJob,
+    ProviderArtifactMaterialization,
     ProviderInstance,
     RuntimeBinding,
 )
@@ -14,6 +15,15 @@ class InMemoryProviderInventoryStore:
         self._runtime_bindings: dict[str, RuntimeBinding] = {}
         self._installation_approvals: dict[str, ProviderInstallationApproval] = {}
         self._installation_jobs: dict[str, ProviderInstallationJob] = {}
+        self._artifact_materializations: dict[str, ProviderArtifactMaterialization] = {}
+
+    def save_artifact_materialization(self, materialization: ProviderArtifactMaterialization) -> None:
+        if materialization.provider_instance_id not in self._provider_instances:
+            raise ValueError("provider_instance_id must reference an existing provider instance")
+        self._artifact_materializations[materialization.materialization_id] = materialization.model_copy(deep=True)
+
+    def list_artifact_materializations(self, provider_instance_id: str | None = None) -> list[ProviderArtifactMaterialization]:
+        return [item.model_copy(deep=True) for item in self._artifact_materializations.values() if provider_instance_id is None or item.provider_instance_id == provider_instance_id]
 
     def save_provider_instance(self, instance: ProviderInstance) -> None:
         current = self._provider_instances.get(instance.provider_instance_id)
@@ -44,6 +54,11 @@ class InMemoryProviderInventoryStore:
             if binding.provider_instance_id != provider_instance_id
             and binding.model_deployment_id not in removed_deployment_ids
         }
+        self._artifact_materializations = {
+            materialization_id: materialization
+            for materialization_id, materialization in self._artifact_materializations.items()
+            if materialization.provider_instance_id != provider_instance_id
+        }
         del self._provider_instances[provider_instance_id]
 
     def save_model_deployment(self, deployment: ModelDeployment) -> None:
@@ -52,6 +67,12 @@ class InMemoryProviderInventoryStore:
         current = self._model_deployments.get(deployment.model_deployment_id)
         if current is not None and current.provider_instance_id != deployment.provider_instance_id:
             raise ValueError("provider_instance_id is immutable once model_deployment_id exists")
+        if (
+            current is not None
+            and current.artifact_set_id is not None
+            and current.artifact_set_id != deployment.artifact_set_id
+        ):
+            raise ValueError("artifact_set_id is immutable once assigned to a model deployment")
         self._model_deployments[deployment.model_deployment_id] = deployment.model_copy(deep=True)
 
     def get_model_deployment(self, model_deployment_id: str) -> ModelDeployment:
@@ -74,6 +95,19 @@ class InMemoryProviderInventoryStore:
             for binding_id, binding in self._runtime_bindings.items()
             if binding.model_deployment_id != model_deployment_id
         }
+
+    def model_deployment_has_runtime_bindings(self, model_deployment_id: str) -> bool:
+        return any(
+            binding.model_deployment_id == model_deployment_id
+            for binding in self._runtime_bindings.values()
+        )
+
+    def model_deployments_for_artifact_set(self, artifact_set_id: str) -> list[ModelDeployment]:
+        return [
+            deployment.model_copy(deep=True)
+            for deployment in self._model_deployments.values()
+            if deployment.artifact_set_id == artifact_set_id
+        ]
 
     def save_runtime_binding(self, binding: RuntimeBinding) -> None:
         current = self._runtime_bindings.get(binding.runtime_binding_id)

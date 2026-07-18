@@ -23,7 +23,10 @@ from aidn_hypervisor.plugins.ollama import OllamaPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.plugins.whisper import WhisperPlugin
 from aidn_hypervisor.process_manager import ProviderProcessManager, RuntimeHandle
-from aidn_hypervisor.providers.executor import RecordedProviderInstallationExecutor
+from aidn_hypervisor.providers.executor import (
+    ControlledFilesystemProviderInstallationExecutor,
+    RecordedProviderInstallationExecutor,
+)
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.queue import InMemoryTaskQueue
@@ -421,6 +424,64 @@ def test_provider_inventory_survives_state_restore() -> None:
         restored.list_runtime_bindings()[0]["runtime_binding_id"]
         == binding["runtime_binding_id"]
     )
+
+
+def test_provider_artifact_materialization_survives_state_restore(tmp_path) -> None:
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+    inventory = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=executor,
+    )
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+        provider_inventory=inventory,
+    )
+    attached = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    executor.stage_local_artifact(
+        relative_path="models/model.gguf",
+        content_bytes=b"model",
+    )
+    artifact = executor.promote_local_artifact_to_model_store(
+        relative_path="models/model.gguf"
+    )
+    artifact_set = executor.create_model_artifact_set(
+        display_name="Model",
+        files=[
+            {
+                "relative_path": "weights/model.gguf",
+                "artifact_id": artifact.artifact_id,
+                "role": "WEIGHTS",
+            }
+        ],
+    )
+    materialization = service.materialize_model_artifact_set(
+        provider_instance_id=attached["provider_instance_id"],
+        artifact_set_id=artifact_set.artifact_set_id,
+        destination="models",
+    )
+
+    restored = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=service.plugins,
+        runtimes=ProviderProcessManager(),
+        provider_inventory=ProviderInventoryService(
+            plugins=service.plugins,
+            store=InMemoryProviderInventoryStore(),
+            installation_executor=executor,
+        ),
+    )
+    restored.restore_state(service.snapshot_state())
+
+    assert restored.list_model_artifact_materializations() == [materialization]
 
 
 def test_restored_provider_inventory_resolves_runtime_binding_bundle_hash() -> None:

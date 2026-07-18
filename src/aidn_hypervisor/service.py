@@ -2335,6 +2335,7 @@ class HypervisorService:
         plugin_id: str,
         configuration: dict,
         approved_permissions: list[str] | None = None,
+        upgrade_acknowledged: bool = False,
         selected_secret_handles: list[dict] | None = None,
         operator_note: str | None = None,
     ) -> dict:
@@ -2342,6 +2343,7 @@ class HypervisorService:
             plugin_id=plugin_id,
             configuration=configuration,
             approved_permissions=approved_permissions,
+            upgrade_acknowledged=upgrade_acknowledged,
             selected_secret_handles=selected_secret_handles,
             operator_note=operator_note,
         )
@@ -2353,18 +2355,25 @@ class HypervisorService:
         plugin_id: str,
         configuration: dict,
         approved_permissions: list[str] | None = None,
+        upgrade_acknowledged: bool = False,
         selected_secret_handles: list[dict] | None = None,
     ) -> dict:
         diagnostics = self.provider_inventory.run_installation_diagnostics(
             plugin_id=plugin_id,
             configuration=configuration,
             approved_permissions=approved_permissions,
+            upgrade_acknowledged=upgrade_acknowledged,
             selected_secret_handles=selected_secret_handles,
         )
         return diagnostics.model_dump(mode="json")
 
     def apply_provider_installation_approval(self, approval_id: str) -> dict:
         job = self.provider_inventory.apply_installation_approval(approval_id)
+        self._persist_state()
+        return job.model_dump(mode="json")
+
+    def rollback_provider_installation_job(self, job_id: str) -> dict:
+        job = self.provider_inventory.rollback_installation_job(job_id)
         self._persist_state()
         return job.model_dump(mode="json")
 
@@ -2379,6 +2388,105 @@ class HypervisorService:
             job.model_dump(mode="json")
             for job in self.provider_inventory.list_installation_jobs()
         ]
+
+    def list_provider_installation_artifacts(self) -> dict:
+        return self.provider_inventory.installation_artifact_inventory().model_dump(
+            mode="json"
+        )
+
+    def stage_provider_installation_artifact(
+        self,
+        *,
+        relative_path: str,
+        content_bytes: bytes,
+    ) -> dict:
+        artifact = self.provider_inventory.stage_local_artifact(
+            relative_path=relative_path,
+            content_bytes=content_bytes,
+        )
+        return artifact.model_dump(mode="json")
+
+    def delete_provider_installation_artifact(self, *, relative_path: str) -> dict:
+        self.provider_inventory.delete_local_artifact(relative_path=relative_path)
+        return {"relative_path": relative_path, "deleted": True}
+
+    def extract_provider_installation_artifact_archive(
+        self,
+        *,
+        archive_relative_path: str,
+        destination_directory: str,
+    ) -> dict:
+        result = self.provider_inventory.extract_local_artifact_archive(
+            archive_relative_path=archive_relative_path,
+            destination_directory=destination_directory,
+        )
+        return result.model_dump(mode="json")
+
+    def list_model_artifacts(self) -> dict:
+        return self.provider_inventory.model_artifact_inventory().model_dump(mode="json")
+
+    def promote_provider_installation_artifact_to_model_store(
+        self,
+        *,
+        relative_path: str,
+    ) -> dict:
+        artifact = self.provider_inventory.promote_local_artifact_to_model_store(
+            relative_path=relative_path,
+        )
+        return artifact.model_dump(mode="json")
+
+    def delete_model_artifact(self, *, artifact_id: str) -> dict:
+        self.provider_inventory.delete_model_artifact(artifact_id=artifact_id)
+        return {"artifact_id": artifact_id, "deleted": True}
+
+    def list_model_artifact_sets(self) -> list[dict]:
+        return [
+            item.model_dump(mode="json")
+            for item in self.provider_inventory.list_model_artifact_sets()
+        ]
+
+    def create_model_artifact_set(self, *, display_name: str, files: list[dict]) -> dict:
+        artifact_set = self.provider_inventory.create_model_artifact_set(
+            display_name=display_name,
+            files=files,
+        )
+        return artifact_set.model_dump(mode="json")
+
+    def delete_model_artifact_set(self, *, artifact_set_id: str) -> dict:
+        self.provider_inventory.delete_model_artifact_set(artifact_set_id=artifact_set_id)
+        return {"artifact_set_id": artifact_set_id, "deleted": True}
+
+    def bind_model_artifact_set(
+        self,
+        *,
+        model_deployment_id: str,
+        artifact_set_id: str,
+    ) -> dict:
+        deployment = self.provider_inventory.bind_model_artifact_set(
+            model_deployment_id=model_deployment_id,
+            artifact_set_id=artifact_set_id,
+        )
+        self._persist_state()
+        return deployment.model_dump(mode="json")
+
+    def collect_model_artifact_garbage(self) -> dict:
+        return self.provider_inventory.collect_model_artifact_garbage().model_dump(
+            mode="json"
+        )
+
+    def materialize_model_artifact_set(
+        self, *, provider_instance_id: str, artifact_set_id: str, destination: str
+    ) -> dict:
+        result = self.provider_inventory.materialize_model_artifact_set(
+            provider_instance_id=provider_instance_id,
+            artifact_set_id=artifact_set_id,
+            destination=destination,
+        )
+        self._persist_state()
+        return result.model_dump(mode="json")
+
+    def list_model_artifact_materializations(self) -> list[dict]:
+        return [item.model_dump(mode="json") for item in self.provider_inventory.list_artifact_materializations()]
 
     def discover_provider_models(self, provider_instance_id: str) -> list[dict]:
         deployments = self.provider_inventory.discover_models(provider_instance_id)
@@ -2771,6 +2879,10 @@ class HypervisorService:
                 binding.model_copy(deep=True)
                 for binding in self.provider_inventory.list_runtime_bindings()
             ],
+            provider_artifact_materializations=[
+                materialization.model_copy(deep=True)
+                for materialization in self.provider_inventory.list_artifact_materializations()
+            ],
             provider_installation_approvals=[
                 approval.model_copy(deep=True)
                 for approval in self.provider_inventory.list_installation_approvals()
@@ -2900,6 +3012,8 @@ class HypervisorService:
             self.provider_inventory.store.save_model_deployment(deployment)
         for binding in snapshot.runtime_bindings:
             self.provider_inventory.store.save_runtime_binding(binding)
+        for materialization in snapshot.provider_artifact_materializations:
+            self.provider_inventory.store.save_artifact_materialization(materialization)
         for approval in snapshot.provider_installation_approvals:
             self.provider_inventory.store.save_installation_approval(approval)
         for job in snapshot.provider_installation_jobs:

@@ -1,8 +1,18 @@
+import io
+import json
+import json
+from pathlib import Path
+import zipfile
+
 import pytest
 
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
-from aidn_hypervisor.providers.executor import RecordedProviderInstallationExecutor
+from aidn_hypervisor.providers.executor import (
+    ControlledFilesystemProviderInstallationExecutor,
+    RecordedProviderInstallationExecutor,
+    SandboxEnforcedProviderInstallationExecutor,
+)
 from aidn_hypervisor.providers.models import (
     InstallationPlan,
     ProviderInstallationApproval,
@@ -13,10 +23,83 @@ from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
+def _zip_bytes(entries: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w") as archive:
+        for relative_path, content in entries.items():
+            archive.writestr(relative_path, content)
+    return buffer.getvalue()
+
+
 def _registry() -> PluginRegistry:
     registry = PluginRegistry()
     registry.register(FakeManagedPlugin())
     return registry
+
+
+class ControlledFilesystemPlugin(FakeManagedPlugin):
+    plugin_id = "controlled-fs"
+
+    def describe(self) -> dict:
+        description = super().describe()
+        description["plugin_id"] = self.plugin_id
+        description["required_permissions"] = [
+            {
+                "permission_id": "network.private",
+                "label": "Private network",
+                "risk_level": "low",
+                "reason": "Connect to a local fake provider endpoint",
+            },
+            {
+                "permission_id": "filesystem.controlled_path",
+                "label": "Controlled filesystem path",
+                "risk_level": "medium",
+                "reason": "Persist managed installation state inside a controlled path",
+            },
+        ]
+        description["sandbox_policy"] = {
+            "execution_mode": "SANDBOX_REQUIRED",
+            "filesystem_scope": "CONTROLLED_PATHS",
+            "network_scope": "DECLARED_EGRESS",
+            "secret_scope": "DECLARED_HANDLES_ONLY",
+            "notes": "Managed install may write state inside one controlled host path.",
+        }
+        return description
+
+    def build_installation_plan(self, configuration: dict) -> dict:
+        plan = super().build_installation_plan(configuration)
+        plan["plugin_id"] = self.plugin_id
+        plan["required_permissions"] = self.plugin_manifest()["required_permissions"]
+        plan["volumes"] = [
+            {
+                "name": "provider-cache",
+                "mount_path": "/var/lib/provider-cache",
+            }
+        ]
+        plan["model_downloads"] = [
+            {
+                "model": "fake-model",
+                "source": "registry://fake-model",
+                "destination": "provider-cache",
+            }
+        ]
+        return plan
+
+
+class LocalImportControlledFilesystemPlugin(ControlledFilesystemPlugin):
+    plugin_id = "controlled-fs-import"
+
+    def build_installation_plan(self, configuration: dict) -> dict:
+        plan = super().build_installation_plan(configuration)
+        plan["plugin_id"] = self.plugin_id
+        plan["model_downloads"] = [
+            {
+                "model": "fake-model-imported",
+                "source": "local-import://models/fake-model.gguf",
+                "destination": "provider-cache/fake-model.gguf",
+            }
+        ]
+        return plan
 
 
 def test_fake_plugin_exposes_attach_schema_and_discovers_models() -> None:
@@ -525,6 +608,720 @@ def test_recorded_provider_installation_executor_records_declarative_plan_withou
     assert result.provider_instance["configuration"] is not configuration
 
 
+def test_recorded_provider_installation_executor_exposes_sandbox_capabilities() -> None:
+    executor = RecordedProviderInstallationExecutor()
+
+    capabilities = executor.sandbox_capabilities()
+
+    assert capabilities.supported_execution_modes == ["RECORDED_ONLY"]
+    assert capabilities.supported_filesystem_scopes == ["NONE"]
+    assert capabilities.supported_network_scopes == ["NONE"]
+    assert capabilities.supported_secret_scopes == ["DECLARED_HANDLES_ONLY"]
+    assert capabilities.host_mutation is False
+
+
+def test_sandbox_enforced_provider_installation_executor_accepts_supported_fake_plan() -> None:
+    executor = SandboxEnforcedProviderInstallationExecutor()
+    configuration = _installation_configuration()
+    approval = _installation_approval(configuration=configuration).model_copy(
+        update={
+            "approved_permissions": ["network.private"],
+            "acknowledged_sandbox_policy": {
+                "execution_mode": "RECORDED_ONLY",
+                "filesystem_scope": "NONE",
+                "network_scope": "NONE",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+            },
+        }
+    )
+    plan = InstallationPlan.model_validate(
+        FakeManagedPlugin().build_installation_plan(dict(configuration))
+    )
+
+    result = executor.apply(
+        approval=approval,
+        plan=plan,
+        configuration=dict(configuration),
+        manifest=FakeManagedPlugin().plugin_manifest(),
+        provider_instance_id="pi-fake-sandboxed",
+    )
+
+    assert executor.executor_id == "sandbox-enforced-declarative-v1"
+    assert result.step_results[0].step_type == "sandbox_boundary"
+    assert result.step_results[0].details["validated_network_names"] == [
+        "private-provider"
+    ]
+    assert result.step_results[0].details["validated_health_hosts"] == ["127.0.0.1"]
+    assert result.provider_instance["provider_instance_id"] == "pi-fake-sandboxed"
+
+
+def test_sandbox_enforced_provider_installation_executor_rejects_disallowed_plan_sections() -> None:
+    executor = SandboxEnforcedProviderInstallationExecutor()
+    configuration = _installation_configuration()
+
+    with pytest.raises(
+        ValueError,
+        match="sandbox executor does not permit non-empty declarative section: containers",
+    ):
+        executor.apply(
+            approval=_installation_approval(configuration=configuration),
+            plan=_installation_plan(),
+            configuration=dict(configuration),
+            manifest={"plugin_id": "fake-managed"},
+            provider_instance_id="pi-fake-managed",
+        )
+
+
+def test_sandbox_enforced_provider_installation_executor_rejects_health_check_outside_boundary(
+) -> None:
+    executor = SandboxEnforcedProviderInstallationExecutor()
+    configuration = _installation_configuration()
+    plan = InstallationPlan.model_validate(
+        {
+            "plan_id": "plan-fake-managed",
+            "plugin_id": "fake-managed",
+            "plan_version": "1.0.0",
+            "summary": "Boundary test plan",
+            "containers": [],
+            "processes": [],
+            "model_downloads": [],
+            "volumes": [],
+            "networks": [{"name": "private-provider", "scope": "local"}],
+            "environment": {},
+            "resource_limits": {"cpu": "shared"},
+            "health_checks": [
+                {
+                    "type": "http",
+                    "url": "http://example.com:9999",
+                    "timeout_seconds": 5,
+                }
+            ],
+            "required_permissions": [],
+            "secret_references": [],
+            "unsupported_actions": [],
+        }
+    )
+    approval = _installation_approval(configuration=configuration).model_copy(
+        update={
+            "approved_permissions": [],
+            "acknowledged_sandbox_policy": {
+                "execution_mode": "RECORDED_ONLY",
+                "filesystem_scope": "NONE",
+                "network_scope": "NONE",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+            },
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="sandbox executor does not permit health check host outside the approved boundary",
+    ):
+        executor.apply(
+            approval=approval,
+            plan=plan,
+            configuration=dict(configuration),
+            manifest={"plugin_id": "fake-managed"},
+            provider_instance_id="pi-fake-managed",
+        )
+
+
+def test_sandbox_enforced_provider_installation_executor_rejects_network_keys_outside_bounded_subset(
+) -> None:
+    executor = SandboxEnforcedProviderInstallationExecutor()
+    configuration = _installation_configuration()
+    plan = InstallationPlan.model_validate(
+        {
+            "plan_id": "plan-fake-managed",
+            "plugin_id": "fake-managed",
+            "plan_version": "1.0.0",
+            "summary": "Network key boundary test plan",
+            "containers": [],
+            "processes": [],
+            "model_downloads": [],
+            "volumes": [],
+            "networks": [
+                {
+                    "name": "private-provider",
+                    "scope": "local",
+                    "driver": "bridge",
+                }
+            ],
+            "environment": {},
+            "resource_limits": {"cpu": "shared"},
+            "health_checks": [
+                {
+                    "type": "http",
+                    "url": "http://127.0.0.1:9999",
+                    "timeout_seconds": 5,
+                }
+            ],
+            "required_permissions": [],
+            "secret_references": [],
+            "unsupported_actions": [],
+        }
+    )
+    approval = _installation_approval(configuration=configuration)
+
+    with pytest.raises(
+        ValueError,
+        match="sandbox executor does not permit network declaration keys outside the bounded subset: driver",
+    ):
+        executor.apply(
+            approval=approval,
+            plan=plan,
+            configuration=dict(configuration),
+            manifest={"plugin_id": "fake-managed"},
+            provider_instance_id="pi-fake-managed",
+        )
+
+
+def test_sandbox_enforced_provider_installation_executor_rejects_health_check_query_parameters(
+) -> None:
+    executor = SandboxEnforcedProviderInstallationExecutor()
+    configuration = _installation_configuration()
+    plan = InstallationPlan.model_validate(
+        {
+            "plan_id": "plan-fake-managed",
+            "plugin_id": "fake-managed",
+            "plan_version": "1.0.0",
+            "summary": "Health query boundary test plan",
+            "containers": [],
+            "processes": [],
+            "model_downloads": [],
+            "volumes": [],
+            "networks": [{"name": "private-provider", "scope": "local"}],
+            "environment": {},
+            "resource_limits": {"cpu": "shared"},
+            "health_checks": [
+                {
+                    "type": "http",
+                    "url": "http://127.0.0.1:9999/health?probe=full",
+                    "timeout_seconds": 5,
+                }
+            ],
+            "required_permissions": [],
+            "secret_references": [],
+            "unsupported_actions": [],
+        }
+    )
+    approval = _installation_approval(configuration=configuration)
+
+    with pytest.raises(
+        ValueError,
+        match="sandbox executor does not permit health check query or fragment parameters",
+    ):
+        executor.apply(
+            approval=approval,
+            plan=plan,
+            configuration=dict(configuration),
+            manifest={"plugin_id": "fake-managed"},
+            provider_instance_id="pi-fake-managed",
+        )
+
+
+def test_sandbox_enforced_provider_installation_executor_rejects_health_check_methods_outside_bounded_subset(
+) -> None:
+    executor = SandboxEnforcedProviderInstallationExecutor()
+    configuration = _installation_configuration()
+    plan = InstallationPlan.model_validate(
+        {
+            "plan_id": "plan-fake-managed",
+            "plugin_id": "fake-managed",
+            "plan_version": "1.0.0",
+            "summary": "Health method boundary test plan",
+            "containers": [],
+            "processes": [],
+            "model_downloads": [],
+            "volumes": [],
+            "networks": [{"name": "private-provider", "scope": "local"}],
+            "environment": {},
+            "resource_limits": {"cpu": "shared"},
+            "health_checks": [
+                {
+                    "type": "http",
+                    "url": "http://127.0.0.1:9999/health",
+                    "timeout_seconds": 5,
+                    "method": "POST",
+                }
+            ],
+            "required_permissions": [],
+            "secret_references": [],
+            "unsupported_actions": [],
+        }
+    )
+    approval = _installation_approval(configuration=configuration)
+
+    with pytest.raises(
+        ValueError,
+        match="sandbox executor does not permit health check method outside the bounded subset: POST",
+    ):
+        executor.apply(
+            approval=approval,
+            plan=plan,
+            configuration=dict(configuration),
+            manifest={"plugin_id": "fake-managed"},
+            provider_instance_id="pi-fake-managed",
+        )
+
+
+def test_sandbox_enforced_provider_installation_executor_rejects_negative_resource_limits(
+) -> None:
+    executor = SandboxEnforcedProviderInstallationExecutor()
+    configuration = _installation_configuration()
+    plan = InstallationPlan.model_validate(
+        {
+            "plan_id": "plan-fake-managed",
+            "plugin_id": "fake-managed",
+            "plan_version": "1.0.0",
+            "summary": "Resource limit boundary test plan",
+            "containers": [],
+            "processes": [],
+            "model_downloads": [],
+            "volumes": [],
+            "networks": [{"name": "private-provider", "scope": "local"}],
+            "environment": {},
+            "resource_limits": {"memory_mb": -1},
+            "health_checks": [
+                {
+                    "type": "http",
+                    "url": "http://127.0.0.1:9999",
+                    "timeout_seconds": 5,
+                }
+            ],
+            "required_permissions": [],
+            "secret_references": [],
+            "unsupported_actions": [],
+        }
+    )
+    approval = _installation_approval(configuration=configuration)
+
+    with pytest.raises(
+        ValueError,
+        match="sandbox executor does not permit negative resource limits: memory_mb",
+    ):
+        executor.apply(
+            approval=approval,
+            plan=plan,
+            configuration=dict(configuration),
+            manifest={"plugin_id": "fake-managed"},
+            provider_instance_id="pi-fake-managed",
+        )
+
+
+def test_controlled_filesystem_executor_writes_and_removes_state(tmp_path) -> None:
+    plugin = ControlledFilesystemPlugin()
+    configuration = _installation_configuration()
+    plan = InstallationPlan.model_validate(plugin.build_installation_plan(configuration))
+    approval = _installation_approval(
+        configuration=configuration,
+        plugin_id=plugin.plugin_id,
+    ).model_copy(
+        update={
+            "approved_permissions": [
+                "network.private",
+                "filesystem.controlled_path",
+            ],
+            "acknowledged_sandbox_policy": {
+                "execution_mode": "SANDBOX_REQUIRED",
+                "filesystem_scope": "CONTROLLED_PATHS",
+                "network_scope": "DECLARED_EGRESS",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+            },
+        }
+    )
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+
+    result = executor.apply(
+        approval=approval,
+        plan=plan,
+        configuration=dict(configuration),
+        manifest=plugin.plugin_manifest(),
+        provider_instance_id="pi-controlled-fs",
+    )
+
+    state_path = (
+        tmp_path
+        / "executor-root"
+        / "providers"
+        / "pi-controlled-fs"
+        / "provider-installation-state.json"
+    )
+    volume_path = (
+        tmp_path
+        / "executor-root"
+        / "providers"
+        / "pi-controlled-fs"
+        / "volumes"
+        / "provider-cache"
+    )
+    download_manifest_path = (
+        tmp_path
+        / "executor-root"
+        / "providers"
+        / "pi-controlled-fs"
+        / "downloads"
+        / "01-fake-model.json"
+    )
+    assert state_path.exists()
+    assert volume_path.exists()
+    assert download_manifest_path.exists()
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    download_manifest = json.loads(download_manifest_path.read_text(encoding="utf-8"))
+    assert state_payload["provider_instance_id"] == "pi-controlled-fs"
+    assert state_payload["prepared_volumes"] == ["provider-cache"]
+    assert state_payload["staged_model_downloads"] == ["fake-model"]
+    assert download_manifest["destination"] == "provider-cache"
+    assert result.rollback_result.status == "PENDING"
+    assert any(
+        step.step_type == "filesystem_prepare_volume"
+        for step in result.step_results
+    )
+    assert any(
+        step.step_type == "filesystem_stage_model_download"
+        for step in result.step_results
+    )
+    assert result.step_results[-1].step_type == "filesystem_state_write"
+
+    rollback = executor.rollback(
+        approval=approval,
+        plan=plan,
+        configuration=dict(configuration),
+        manifest=plugin.plugin_manifest(),
+        provider_instance_id="pi-controlled-fs",
+    )
+
+    assert rollback.status == "COMPLETED"
+    assert rollback.step_results[0].step_type == "filesystem_state_remove"
+    assert not state_path.exists()
+    assert not volume_path.exists()
+    assert not download_manifest_path.exists()
+
+
+def test_controlled_filesystem_executor_imports_local_artifact_into_volume(tmp_path) -> None:
+    plugin = LocalImportControlledFilesystemPlugin()
+    configuration = _installation_configuration()
+    plan = InstallationPlan.model_validate(plugin.build_installation_plan(configuration))
+    approval = _installation_approval(
+        configuration=configuration,
+        plugin_id=plugin.plugin_id,
+    ).model_copy(
+        update={
+            "approved_permissions": [
+                "network.private",
+                "filesystem.controlled_path",
+            ],
+            "acknowledged_sandbox_policy": {
+                "execution_mode": "SANDBOX_REQUIRED",
+                "filesystem_scope": "CONTROLLED_PATHS",
+                "network_scope": "DECLARED_EGRESS",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+            },
+        }
+    )
+    imports_root = tmp_path / "executor-root" / "imports" / "models"
+    imports_root.mkdir(parents=True, exist_ok=True)
+    source_path = imports_root / "fake-model.gguf"
+    source_path.write_text("fake-model-bytes", encoding="utf-8")
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+
+    result = executor.apply(
+        approval=approval,
+        plan=plan,
+        configuration=dict(configuration),
+        manifest=plugin.plugin_manifest(),
+        provider_instance_id="pi-controlled-fs-import",
+    )
+
+    imported_path = (
+        tmp_path
+        / "executor-root"
+        / "providers"
+        / "pi-controlled-fs-import"
+        / "volumes"
+        / "provider-cache"
+        / "fake-model.gguf"
+    )
+    state_path = (
+        tmp_path
+        / "executor-root"
+        / "providers"
+        / "pi-controlled-fs-import"
+        / "provider-installation-state.json"
+    )
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert imported_path.exists()
+    assert imported_path.read_text(encoding="utf-8") == "fake-model-bytes"
+    assert state_payload["imported_local_artifacts"] == ["fake-model-imported"]
+    assert any(
+        step.step_type == "filesystem_import_local_artifact"
+        for step in result.step_results
+    )
+
+    rollback = executor.rollback(
+        approval=approval,
+        plan=plan,
+        configuration=dict(configuration),
+        manifest=plugin.plugin_manifest(),
+        provider_instance_id="pi-controlled-fs-import",
+    )
+
+    assert rollback.status == "COMPLETED"
+    assert not imported_path.exists()
+
+
+def test_controlled_filesystem_executor_promotes_and_reuses_model_artifact(
+    tmp_path,
+) -> None:
+    plugin = LocalImportControlledFilesystemPlugin()
+    configuration = _installation_configuration()
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+    executor.stage_local_artifact(
+        relative_path="models/fake-model.gguf",
+        content_bytes=b"shared-model-bytes",
+    )
+    artifact = executor.promote_local_artifact_to_model_store(
+        relative_path="models/fake-model.gguf"
+    )
+    executor.stage_local_artifact(
+        relative_path="copies/fake-model.gguf",
+        content_bytes=b"shared-model-bytes",
+    )
+    duplicate = executor.promote_local_artifact_to_model_store(
+        relative_path="copies/fake-model.gguf"
+    )
+
+    assert artifact.artifact_id == duplicate.artifact_id
+    assert len(executor.model_artifact_inventory().items) == 1
+
+    plan = InstallationPlan.model_validate(plugin.build_installation_plan(configuration))
+    plan = plan.model_copy(
+        update={
+            "model_downloads": [
+                {
+                    "model": "fake-model-imported",
+                    "source": f"model-artifact://{artifact.artifact_id}",
+                    "destination": "provider-cache/fake-model.gguf",
+                }
+            ]
+        }
+    )
+    approval = _installation_approval(
+        configuration=configuration,
+        plugin_id=plugin.plugin_id,
+        plan_id=plan.plan_id,
+    ).model_copy(
+        update={
+            "approved_permissions": ["network.private", "filesystem.controlled_path"],
+            "acknowledged_sandbox_policy": {
+                "execution_mode": "SANDBOX_REQUIRED",
+                "filesystem_scope": "CONTROLLED_PATHS",
+                "network_scope": "DECLARED_EGRESS",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+            },
+        }
+    )
+
+    diagnostics = executor.diagnostic_checks(
+        approval=approval,
+        plan=plan,
+        configuration=configuration,
+        manifest=plugin.plugin_manifest(),
+    )
+    assert next(check for check in diagnostics if check.check_id == "model_artifact_store").status == "PASS"
+
+    result = executor.apply(
+        approval=approval,
+        plan=plan,
+        configuration=configuration,
+        manifest=plugin.plugin_manifest(),
+        provider_instance_id="pi-controlled-fs-shared-model",
+    )
+
+    materialized_path = (
+        tmp_path
+        / "executor-root"
+        / "providers"
+        / "pi-controlled-fs-shared-model"
+        / "volumes"
+        / "provider-cache"
+        / "fake-model.gguf"
+    )
+    assert materialized_path.read_bytes() == b"shared-model-bytes"
+    assert any(
+        step.step_type == "filesystem_materialize_model_artifact"
+        for step in result.step_results
+    )
+
+
+def test_model_artifact_inventory_excludes_corrupt_payloads(tmp_path) -> None:
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+    executor.stage_local_artifact(
+        relative_path="models/fake-model.gguf",
+        content_bytes=b"verified-model-bytes",
+    )
+    artifact = executor.promote_local_artifact_to_model_store(
+        relative_path="models/fake-model.gguf"
+    )
+    payload_path = executor._model_artifact_payload_path(artifact.artifact_id)
+    payload_path.chmod(0o644)
+    payload_path.write_bytes(b"corrupt")
+
+    assert executor.model_artifact_inventory().items == []
+
+
+def test_model_artifact_materialization_can_use_readonly_hardlinks(tmp_path) -> None:
+    executor = ControlledFilesystemProviderInstallationExecutor(
+        tmp_path / "executor-root",
+        model_artifact_materialization_mode="HARDLINK_IF_READONLY",
+    )
+    source = tmp_path / "source.gguf"
+    source.write_bytes(b"shared-model")
+    source.chmod(0o444)
+    destination = tmp_path / "destination.gguf"
+
+    method = executor._materialize_shared_model_artifact(
+        source_path=source,
+        destination_path=destination,
+    )
+
+    assert destination.read_bytes() == b"shared-model"
+    assert method in {"HARDLINK", "COPY"}
+
+
+def test_executor_materializes_artifact_set_into_provider_scoped_root(tmp_path) -> None:
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+    executor.stage_local_artifact(relative_path="models/model.gguf", content_bytes=b"model")
+    artifact = executor.promote_local_artifact_to_model_store(relative_path="models/model.gguf")
+    artifact_set = executor.create_model_artifact_set(
+        display_name="Model",
+        files=[{"relative_path": "weights/model.gguf", "artifact_id": artifact.artifact_id, "role": "WEIGHTS"}],
+    )
+
+    result = executor.materialize_model_artifact_set(
+        provider_instance_id="pi-local",
+        artifact_set_id=artifact_set.artifact_set_id,
+        destination="models",
+    )
+
+    assert result.status == "READY"
+    assert Path(result.files[0]["destination_path"]).read_bytes() == b"model"
+
+
+def test_model_artifact_sets_protect_referenced_bytes_and_bind_deployments(tmp_path) -> None:
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+    executor.stage_local_artifact(
+        relative_path="models/weights.gguf",
+        content_bytes=b"weights",
+    )
+    executor.stage_local_artifact(
+        relative_path="models/tokenizer.json",
+        content_bytes=b"tokenizer",
+    )
+    weights = executor.promote_local_artifact_to_model_store(
+        relative_path="models/weights.gguf"
+    )
+    tokenizer = executor.promote_local_artifact_to_model_store(
+        relative_path="models/tokenizer.json"
+    )
+    artifact_set = executor.create_model_artifact_set(
+        display_name="Fake model package",
+        files=[
+            {"relative_path": "weights/model.gguf", "artifact_id": weights.artifact_id, "role": "WEIGHTS"},
+            {"relative_path": "tokenizer.json", "artifact_id": tokenizer.artifact_id, "role": "TOKENIZER"},
+        ],
+    )
+
+    with pytest.raises(ValueError, match="referenced"):
+        executor.delete_model_artifact(artifact_id=weights.artifact_id)
+
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=executor,
+    )
+    instance = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    deployment = service.discover_models(instance.provider_instance_id)[0]
+    bound = service.bind_model_artifact_set(
+        model_deployment_id=deployment.model_deployment_id,
+        artifact_set_id=artifact_set.artifact_set_id,
+    )
+    assert bound.artifact_set_id == artifact_set.artifact_set_id
+    rediscovered = service.discover_models(instance.provider_instance_id)[0]
+    assert rediscovered.artifact_set_id == artifact_set.artifact_set_id
+
+    with pytest.raises(ValueError, match="referenced by model deployment"):
+        service.delete_model_artifact_set(artifact_set_id=artifact_set.artifact_set_id)
+
+
+def test_model_artifact_garbage_collection_respects_references_and_grace_period(
+    tmp_path,
+) -> None:
+    executor = ControlledFilesystemProviderInstallationExecutor(
+        tmp_path / "executor-root",
+        model_artifact_gc_grace_seconds=0,
+    )
+    executor.stage_local_artifact(
+        relative_path="models/fake-model.gguf",
+        content_bytes=b"model-bytes",
+    )
+    artifact = executor.promote_local_artifact_to_model_store(
+        relative_path="models/fake-model.gguf"
+    )
+
+    first_collection = executor.collect_model_artifact_garbage()
+    assert first_collection.pending_artifact_ids == [artifact.artifact_id]
+    assert executor.model_artifact_inventory().items[0].unreferenced_since is not None
+
+    artifact_set = executor.create_model_artifact_set(
+        display_name="Protected model",
+        files=[
+            {
+                "relative_path": "model.gguf",
+                "artifact_id": artifact.artifact_id,
+                "role": "WEIGHTS",
+            }
+        ],
+    )
+    retained_collection = executor.collect_model_artifact_garbage()
+    assert retained_collection.retained_artifact_ids == [artifact.artifact_id]
+
+    executor.delete_model_artifact_set(artifact_set_id=artifact_set.artifact_set_id)
+    second_collection = executor.collect_model_artifact_garbage()
+    assert second_collection.pending_artifact_ids == [artifact.artifact_id]
+    final_collection = executor.collect_model_artifact_garbage()
+    assert final_collection.collected_artifact_ids == [artifact.artifact_id]
+    assert executor.model_artifact_inventory().items == []
+
+
+def test_model_artifact_garbage_collection_fails_closed_for_bad_set_manifest(tmp_path) -> None:
+    executor = ControlledFilesystemProviderInstallationExecutor(
+        tmp_path / "executor-root",
+        model_artifact_gc_grace_seconds=0,
+    )
+    executor.stage_local_artifact(
+        relative_path="models/fake-model.gguf",
+        content_bytes=b"model-bytes",
+    )
+    artifact = executor.promote_local_artifact_to_model_store(
+        relative_path="models/fake-model.gguf"
+    )
+    sets_root = executor._model_artifact_sets_root()
+    sets_root.mkdir(parents=True, exist_ok=True)
+    (sets_root / "broken.json").write_text("not-json", encoding="utf-8")
+
+    result = executor.collect_model_artifact_garbage()
+
+    assert result.retained_artifact_ids == [artifact.artifact_id]
+    with pytest.raises(ValueError, match="unreadable"):
+        executor.delete_model_artifact(artifact_id=artifact.artifact_id)
+
+
 def test_recorded_provider_installation_executor_rejects_revoked_approval() -> None:
     executor = RecordedProviderInstallationExecutor()
     configuration = _installation_configuration()
@@ -609,6 +1406,8 @@ def test_provider_inventory_approves_and_applies_installation_plan() -> None:
     assert approval.configuration_hash.startswith("sha256:")
     assert approval.configuration["base_url"] == "http://127.0.0.1:9999"
     assert approval.approved_permissions == ["network.private"]
+    assert approval.acknowledged_package_verification["status"] == "VERIFIED"
+    assert approval.acknowledged_sandbox_policy["execution_mode"] == "RECORDED_ONLY"
     assert approval.acknowledged_secret_requirements[0]["requirement_key"] == (
         "API_KEY:Optional provider API key handle"
     )
@@ -621,12 +1420,202 @@ def test_provider_inventory_approves_and_applies_installation_plan() -> None:
     assert job.rollback_status == "NOT_REQUIRED"
     assert "rollback is not required" in (job.rollback_summary or "")
     assert job.step_results
+    assert job.executor_id == "sandbox-enforced-declarative-v1"
+    assert job.step_results[0].step_type == "sandbox_boundary"
     assert job.completed_at is not None
     assert provider.plugin_id == "fake-managed"
     assert provider.connection_mode == "managed"
     assert provider.operational_state == "created"
     assert provider.configuration["base_url"] == "http://127.0.0.1:9999"
     assert service.list_installation_jobs() == [job]
+
+
+def test_provider_inventory_rolls_back_succeeded_installation_job_and_cleans_local_inventory() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+    approval = service.approve_installation_plan(
+        plugin_id="fake-managed",
+        configuration=_installation_configuration(),
+    )
+    job = service.apply_installation_approval(approval.approval_id)
+
+    rolled_back = service.rollback_installation_job(job.job_id)
+
+    assert rolled_back.job_id == job.job_id
+    assert rolled_back.rollback_status == "COMPLETED"
+    assert rolled_back.rollback_started_at is not None
+    assert rolled_back.rollback_completed_at is not None
+    assert rolled_back.rollback_step_results
+    assert rolled_back.rollback_step_results[-1].step_id == (
+        "rollback-delete-local-provider-instance"
+    )
+    assert service.list_provider_instances() == []
+
+
+def test_provider_inventory_rollback_marks_not_needed_when_job_never_created_provider_instance(
+) -> None:
+    class ExplodingExecutor(RecordedProviderInstallationExecutor):
+        executor_id = "exploding-recorded"
+
+        def apply(
+            self,
+            *,
+            approval: ProviderInstallationApproval,
+            plan: InstallationPlan,
+            configuration: dict,
+            manifest: dict,
+            provider_instance_id: str,
+        ) -> ProviderInstallationExecutionResult:
+            raise RuntimeError("executor exploded before provider instance creation")
+
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ExplodingExecutor(),
+    )
+    approval = service.approve_installation_plan(
+        plugin_id="fake-managed",
+        configuration=_installation_configuration(),
+    )
+
+    job = service.apply_installation_approval(approval.approval_id)
+
+    assert job.status == "FAILED"
+    assert job.rollback_status == "COMPLETED"
+    assert "local provider inventory cleanup" in (job.rollback_summary or "").lower()
+    assert job.rollback_started_at is not None
+    assert job.rollback_completed_at is not None
+    assert job.rollback_step_results[0].step_id == "rollback-recorded-local-inventory"
+    assert service.list_provider_instances() == []
+
+
+def test_provider_inventory_rejects_duplicate_installation_job_rollback() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+    approval = service.approve_installation_plan(
+        plugin_id="fake-managed",
+        configuration=_installation_configuration(),
+    )
+    job = service.apply_installation_approval(approval.approval_id)
+
+    service.rollback_installation_job(job.job_id)
+
+    with pytest.raises(ValueError, match="rollback already completed"):
+        service.rollback_installation_job(job.job_id)
+
+
+def test_provider_inventory_uses_controlled_filesystem_executor_for_real_host_state(
+    tmp_path,
+) -> None:
+    registry = PluginRegistry()
+    registry.register(ControlledFilesystemPlugin())
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=executor,
+    )
+    approval = service.approve_installation_plan(
+        plugin_id="controlled-fs",
+        configuration=_installation_configuration(),
+        approved_permissions=[
+            "network.private",
+            "filesystem.controlled_path",
+        ],
+    )
+
+    job = service.apply_installation_approval(approval.approval_id)
+    state_path = (
+        tmp_path
+        / "executor-root"
+        / "providers"
+        / job.provider_instance_id
+        / "provider-installation-state.json"
+    )
+    volume_path = (
+        tmp_path
+        / "executor-root"
+        / "providers"
+        / job.provider_instance_id
+        / "volumes"
+        / "provider-cache"
+    )
+    download_manifest_path = (
+        tmp_path
+        / "executor-root"
+        / "providers"
+        / job.provider_instance_id
+        / "downloads"
+        / "01-fake-model.json"
+    )
+
+    assert job.status == "SUCCEEDED"
+    assert job.executor_id == "controlled-filesystem-v1"
+    assert job.rollback_status == "PENDING"
+    assert state_path.exists()
+    assert volume_path.exists()
+    assert download_manifest_path.exists()
+
+    rolled_back = service.rollback_installation_job(job.job_id)
+
+    assert rolled_back.rollback_status == "COMPLETED"
+    assert not state_path.exists()
+    assert not volume_path.exists()
+    assert not download_manifest_path.exists()
+    assert service.list_provider_instances() == []
+
+
+def test_provider_inventory_uses_controlled_filesystem_executor_for_local_imports(
+    tmp_path,
+) -> None:
+    registry = PluginRegistry()
+    registry.register(LocalImportControlledFilesystemPlugin())
+    imports_root = tmp_path / "executor-root" / "imports" / "models"
+    imports_root.mkdir(parents=True, exist_ok=True)
+    source_path = imports_root / "fake-model.gguf"
+    source_path.write_text("fake-model-bytes", encoding="utf-8")
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=executor,
+    )
+    approval = service.approve_installation_plan(
+        plugin_id="controlled-fs-import",
+        configuration=_installation_configuration(),
+        approved_permissions=[
+            "network.private",
+            "filesystem.controlled_path",
+        ],
+    )
+
+    job = service.apply_installation_approval(approval.approval_id)
+    imported_path = (
+        tmp_path
+        / "executor-root"
+        / "providers"
+        / job.provider_instance_id
+        / "volumes"
+        / "provider-cache"
+        / "fake-model.gguf"
+    )
+
+    assert job.status == "SUCCEEDED"
+    assert imported_path.exists()
+    assert imported_path.read_text(encoding="utf-8") == "fake-model-bytes"
+    assert any(
+        step.step_type == "filesystem_import_local_artifact"
+        for step in job.step_results
+    )
+
+    rolled_back = service.rollback_installation_job(job.job_id)
+
+    assert rolled_back.rollback_status == "COMPLETED"
+    assert not imported_path.exists()
 
 
 def test_provider_inventory_apply_rejects_revoked_approval() -> None:
@@ -665,8 +1654,22 @@ def test_provider_inventory_run_installation_diagnostics_reports_ready_when_inpu
     assert diagnostics.plugin_id == "fake-managed"
     assert diagnostics.readiness_status == "READY"
     assert diagnostics.rollback_result.status == "NOT_REQUIRED"
-    assert diagnostics.rollback_result.details["executor_id"] == "recorded-declarative-v1"
-    assert [check.status for check in diagnostics.checks] == ["PASS", "PASS", "PASS", "PASS", "PASS"]
+    assert diagnostics.rollback_result.details["executor_id"] == "sandbox-enforced-declarative-v1"
+    assert [check.status for check in diagnostics.checks] == [
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+    ]
+    package_check = next(
+        check for check in diagnostics.checks if check.check_id == "package_verification"
+    )
+    assert package_check.status == "PASS"
+    assert package_check.details["status"] == "VERIFIED"
 
 
 def test_provider_inventory_run_installation_diagnostics_reports_action_required_for_optional_secret_gap() -> None:
@@ -685,6 +1688,212 @@ def test_provider_inventory_run_installation_diagnostics_reports_action_required
     secret_check = next(check for check in diagnostics.checks if check.check_id == "secret_handles")
     assert secret_check.status == "WARN"
     assert "missing_optional_requirements" in secret_check.details
+
+
+def test_controlled_filesystem_executor_diagnostics_block_missing_local_import_artifacts(
+    tmp_path,
+) -> None:
+    registry = PluginRegistry()
+    registry.register(LocalImportControlledFilesystemPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+
+    diagnostics = service.run_installation_diagnostics(
+        plugin_id="controlled-fs-import",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private", "filesystem.controlled_path"],
+        selected_secret_handles=[
+            {
+                "requirement_key": "API_KEY:Optional provider API key handle",
+                "secret_handle": "secret://providers/controlled-fs-import/api-key",
+            }
+        ],
+    )
+
+    assert diagnostics.readiness_status == "BLOCKED"
+    import_check = next(
+        check
+        for check in diagnostics.checks
+        if check.check_id == "local_import_artifacts"
+    )
+    assert import_check.status == "FAIL"
+    assert import_check.details["required_local_import_count"] == 1
+    assert import_check.details["missing_local_import_count"] == 1
+    assert import_check.details["local_imports"][0]["exists"] is False
+
+
+def test_controlled_filesystem_executor_diagnostics_confirm_ready_local_import_artifacts(
+    tmp_path,
+) -> None:
+    registry = PluginRegistry()
+    registry.register(LocalImportControlledFilesystemPlugin())
+    imports_root = tmp_path / "executor-root" / "imports" / "models"
+    imports_root.mkdir(parents=True, exist_ok=True)
+    source_path = imports_root / "fake-model.gguf"
+    source_path.write_text("fake-model-bytes", encoding="utf-8")
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+
+    diagnostics = service.run_installation_diagnostics(
+        plugin_id="controlled-fs-import",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private", "filesystem.controlled_path"],
+        selected_secret_handles=[
+            {
+                "requirement_key": "API_KEY:Optional provider API key handle",
+                "secret_handle": "secret://providers/controlled-fs-import/api-key",
+            }
+        ],
+    )
+
+    assert diagnostics.readiness_status == "READY"
+    import_check = next(
+        check
+        for check in diagnostics.checks
+        if check.check_id == "local_import_artifacts"
+    )
+    assert import_check.status == "PASS"
+    assert import_check.details["ready_local_import_count"] == 1
+    assert import_check.details["missing_local_import_count"] == 0
+    assert import_check.details["local_imports"][0]["exists"] is True
+    assert import_check.details["local_imports"][0]["size_bytes"] == len(
+        "fake-model-bytes"
+    )
+
+
+def test_provider_inventory_stages_lists_and_deletes_controlled_installation_artifacts(
+    tmp_path,
+) -> None:
+    registry = PluginRegistry()
+    registry.register(LocalImportControlledFilesystemPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+
+    created = service.stage_local_artifact(
+        relative_path="models/fake-model.gguf",
+        content_bytes=b"fake-model-bytes",
+    )
+    inventory = service.installation_artifact_inventory()
+
+    assert created.relative_path == "models/fake-model.gguf"
+    assert created.size_bytes == len(b"fake-model-bytes")
+    assert created.sha256.startswith("sha256:")
+    assert inventory.supported is True
+    assert inventory.imports_root.endswith("executor-root\\imports") or inventory.imports_root.endswith("executor-root/imports")
+    assert inventory.items[0].relative_path == "models/fake-model.gguf"
+
+    service.delete_local_artifact(relative_path="models/fake-model.gguf")
+    inventory_after_delete = service.installation_artifact_inventory()
+
+    assert inventory_after_delete.items == []
+
+
+def test_provider_inventory_extracts_staged_archive_into_controlled_imports_root(
+    tmp_path,
+) -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+
+    service.stage_local_artifact(
+        relative_path="archives/fake-model.zip",
+        content_bytes=_zip_bytes(
+            {
+                "weights/model.gguf": b"fake-model-bytes",
+                "metadata/config.json": b'{"name":"fake"}',
+            }
+        ),
+    )
+
+    result = service.extract_local_artifact_archive(
+        archive_relative_path="archives/fake-model.zip",
+        destination_directory="models/fake-model",
+    )
+    inventory = service.installation_artifact_inventory()
+
+    assert result.archive_relative_path == "archives/fake-model.zip"
+    assert result.destination_directory == "models/fake-model"
+    assert result.extracted_file_count == 2
+    assert "models/fake-model/weights/model.gguf" in result.extracted_relative_paths
+    assert "models/fake-model/metadata/config.json" in result.extracted_relative_paths
+    assert any(
+        item.relative_path == "models/fake-model/weights/model.gguf"
+        for item in inventory.items
+    )
+    assert any(
+        item.relative_path == "models/fake-model/metadata/config.json"
+        for item in inventory.items
+    )
+
+
+def test_provider_inventory_rejects_archive_members_outside_controlled_imports_root(
+    tmp_path,
+) -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+
+    service.stage_local_artifact(
+        relative_path="archives/escape.zip",
+        content_bytes=_zip_bytes({"../escape.txt": b"nope"}),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="does not permit archive members outside the extraction target",
+    ):
+        service.extract_local_artifact_archive(
+            archive_relative_path="archives/escape.zip",
+            destination_directory="models/fake-model",
+        )
+
+
+def test_provider_inventory_rejects_local_artifact_staging_for_non_staging_executor() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="does not support local artifact staging",
+    ):
+        service.stage_local_artifact(
+            relative_path="models/fake-model.gguf",
+            content_bytes=b"fake-model-bytes",
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="does not support local artifact archive extraction",
+    ):
+        service.extract_local_artifact_archive(
+            archive_relative_path="archives/fake-model.zip",
+            destination_directory="models/fake-model",
+        )
 
 
 def test_provider_inventory_run_installation_diagnostics_blocks_missing_permission_ack() -> None:
@@ -707,6 +1916,171 @@ def test_provider_inventory_run_installation_diagnostics_blocks_missing_permissi
     assert "approved permissions must match requested permissions exactly" in permission_check.summary
 
 
+def test_provider_inventory_run_installation_diagnostics_blocks_unsupported_sandbox_policy() -> None:
+    class SandboxedPlugin(FakeManagedPlugin):
+        plugin_id = "sandbox-required"
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["sandbox_policy"] = {
+                "execution_mode": "UNSANDBOXED_HOST",
+                "filesystem_scope": "CONTROLLED_PATHS",
+                "network_scope": "DECLARED_EGRESS",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+            }
+            return description
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            return plan
+
+    registry = PluginRegistry()
+    registry.register(SandboxedPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    diagnostics = service.run_installation_diagnostics(
+        plugin_id="sandbox-required",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private"],
+        selected_secret_handles=[
+            {
+                "requirement_key": "API_KEY:Optional provider API key handle",
+                "secret_handle": "secret://providers/sandbox-required/api-key",
+            }
+        ],
+    )
+
+    assert diagnostics.readiness_status == "BLOCKED"
+    sandbox_check = next(check for check in diagnostics.checks if check.check_id == "sandbox_policy")
+    assert sandbox_check.status == "FAIL"
+    assert "unsupported execution mode" in sandbox_check.summary
+
+
+def test_provider_inventory_executor_capabilities_allow_stricter_sandbox_policy_when_supported(
+) -> None:
+    class SandboxedPlugin(FakeManagedPlugin):
+        plugin_id = "sandbox-supported"
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["sandbox_policy"] = {
+                "execution_mode": "SANDBOX_REQUIRED",
+                "filesystem_scope": "CONTROLLED_PATHS",
+                "network_scope": "DECLARED_EGRESS",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+            }
+            return description
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            return plan
+
+    class SandboxedExecutor(RecordedProviderInstallationExecutor):
+        executor_id = "sandboxed-declarative-v1"
+
+        def sandbox_capabilities(self):
+            capabilities = super().sandbox_capabilities()
+            return capabilities.model_copy(
+                update={
+                    "supported_execution_modes": ["RECORDED_ONLY", "SANDBOX_REQUIRED"],
+                    "supported_filesystem_scopes": ["NONE", "CONTROLLED_PATHS"],
+                    "supported_network_scopes": ["NONE", "DECLARED_EGRESS"],
+                    "host_mutation": True,
+                    "notes": "Sandboxed executor contract for future host-mutating apply.",
+                }
+            )
+
+    registry = PluginRegistry()
+    registry.register(SandboxedPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=SandboxedExecutor(),
+    )
+
+    diagnostics = service.run_installation_diagnostics(
+        plugin_id="sandbox-supported",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private"],
+        selected_secret_handles=[
+            {
+                "requirement_key": "API_KEY:Optional provider API key handle",
+                "secret_handle": "secret://providers/sandbox-supported/api-key",
+            }
+        ],
+    )
+    approval = service.approve_installation_plan(
+        plugin_id="sandbox-supported",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private"],
+        selected_secret_handles=[
+            {
+                "requirement_key": "API_KEY:Optional provider API key handle",
+                "secret_handle": "secret://providers/sandbox-supported/api-key",
+            }
+        ],
+    )
+
+    assert diagnostics.readiness_status == "READY"
+    sandbox_check = next(check for check in diagnostics.checks if check.check_id == "sandbox_policy")
+    assert sandbox_check.status == "PASS"
+    assert sandbox_check.details["executor_sandbox_capabilities"]["host_mutation"] is True
+    assert approval.acknowledged_sandbox_policy["execution_mode"] == "SANDBOX_REQUIRED"
+
+
+def test_provider_inventory_run_installation_diagnostics_blocks_unsupported_sandbox_scope(
+) -> None:
+    class FilesystemHeavyPlugin(FakeManagedPlugin):
+        plugin_id = "sandbox-fs-heavy"
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["sandbox_policy"] = {
+                "execution_mode": "RECORDED_ONLY",
+                "filesystem_scope": "MODEL_STORAGE_ONLY",
+                "network_scope": "NONE",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+            }
+            return description
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            return plan
+
+    registry = PluginRegistry()
+    registry.register(FilesystemHeavyPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    diagnostics = service.run_installation_diagnostics(
+        plugin_id="sandbox-fs-heavy",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private"],
+        selected_secret_handles=[
+            {
+                "requirement_key": "API_KEY:Optional provider API key handle",
+                "secret_handle": "secret://providers/sandbox-fs-heavy/api-key",
+            }
+        ],
+    )
+
+    assert diagnostics.readiness_status == "BLOCKED"
+    sandbox_check = next(check for check in diagnostics.checks if check.check_id == "sandbox_policy")
+    assert sandbox_check.status == "FAIL"
+    assert "unsupported filesystem scope" in sandbox_check.summary
+
+
 def test_provider_inventory_approval_rejects_incomplete_explicit_permission_acknowledgement() -> None:
     service = ProviderInventoryService(
         plugins=_registry(),
@@ -722,6 +2096,69 @@ def test_provider_inventory_approval_rejects_incomplete_explicit_permission_ackn
             configuration=_installation_configuration(),
             approved_permissions=[],
         )
+
+
+def test_provider_inventory_run_installation_diagnostics_blocks_changed_permission_contract_without_upgrade_ack(
+) -> None:
+    class MutablePermissionPlugin(FakeManagedPlugin):
+        plugin_id = "mutable-permissions"
+
+        def __init__(self) -> None:
+            self.required_permissions = [
+                {
+                    "permission_id": "network.private",
+                    "label": "Private network",
+                    "risk_level": "low",
+                    "reason": "Connect to a local fake provider endpoint",
+                }
+            ]
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["required_permissions"] = list(self.required_permissions)
+            return description
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            plan["required_permissions"] = list(self.required_permissions)
+            return plan
+
+    plugin = MutablePermissionPlugin()
+    registry = PluginRegistry()
+    registry.register(plugin)
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    service.approve_installation_plan(
+        plugin_id="mutable-permissions",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private"],
+    )
+    plugin.required_permissions = [
+        *plugin.required_permissions,
+        {
+            "permission_id": "filesystem.write",
+            "label": "Filesystem write",
+            "risk_level": "medium",
+            "reason": "Write provider files into a controlled location",
+        },
+    ]
+
+    diagnostics = service.run_installation_diagnostics(
+        plugin_id="mutable-permissions",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private", "filesystem.write"],
+    )
+
+    assert diagnostics.readiness_status == "BLOCKED"
+    upgrade_check = next(check for check in diagnostics.checks if check.check_id == "upgrade_review")
+    assert upgrade_check.status == "FAIL"
+    assert "requires explicit upgrade acknowledgement" in upgrade_check.summary
+    assert upgrade_check.details["status"] == "CHANGED"
+    assert upgrade_check.details["added_permissions"] == ["filesystem.write"]
 
 
 def test_provider_inventory_approval_records_selected_secret_handles() -> None:
@@ -746,6 +2183,166 @@ def test_provider_inventory_approval_records_selected_secret_handles() -> None:
         "secret://providers/fake-managed/api-key"
     )
     assert approval.selected_secret_handles[0].label == "Optional provider API key handle"
+
+
+def test_provider_inventory_approval_requires_upgrade_acknowledgement_for_changed_contract(
+) -> None:
+    class MutablePermissionPlugin(FakeManagedPlugin):
+        plugin_id = "mutable-permissions"
+
+        def __init__(self) -> None:
+            self.required_permissions = [
+                {
+                    "permission_id": "network.private",
+                    "label": "Private network",
+                    "risk_level": "low",
+                    "reason": "Connect to a local fake provider endpoint",
+                }
+            ]
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["required_permissions"] = list(self.required_permissions)
+            return description
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            plan["required_permissions"] = list(self.required_permissions)
+            return plan
+
+    plugin = MutablePermissionPlugin()
+    registry = PluginRegistry()
+    registry.register(plugin)
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    service.approve_installation_plan(
+        plugin_id="mutable-permissions",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private"],
+    )
+    plugin.required_permissions = [
+        *plugin.required_permissions,
+        {
+            "permission_id": "filesystem.write",
+            "label": "Filesystem write",
+            "risk_level": "medium",
+            "reason": "Write provider files into a controlled location",
+        },
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="installation permission or sandbox change requires explicit upgrade acknowledgement",
+    ):
+        service.approve_installation_plan(
+            plugin_id="mutable-permissions",
+            configuration=_installation_configuration(),
+            approved_permissions=["network.private", "filesystem.write"],
+        )
+
+
+def test_provider_inventory_approval_records_upgrade_review_when_contract_change_is_acknowledged(
+) -> None:
+    class MutablePermissionPlugin(FakeManagedPlugin):
+        plugin_id = "mutable-permissions"
+
+        def __init__(self) -> None:
+            self.required_permissions = [
+                {
+                    "permission_id": "network.private",
+                    "label": "Private network",
+                    "risk_level": "low",
+                    "reason": "Connect to a local fake provider endpoint",
+                }
+            ]
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["required_permissions"] = list(self.required_permissions)
+            return description
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            plan["required_permissions"] = list(self.required_permissions)
+            return plan
+
+    plugin = MutablePermissionPlugin()
+    registry = PluginRegistry()
+    registry.register(plugin)
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    service.approve_installation_plan(
+        plugin_id="mutable-permissions",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private"],
+    )
+    plugin.required_permissions = [
+        *plugin.required_permissions,
+        {
+            "permission_id": "filesystem.write",
+            "label": "Filesystem write",
+            "risk_level": "medium",
+            "reason": "Write provider files into a controlled location",
+        },
+    ]
+
+    approval = service.approve_installation_plan(
+        plugin_id="mutable-permissions",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private", "filesystem.write"],
+        upgrade_acknowledged=True,
+    )
+
+    assert approval.upgrade_acknowledged is True
+    assert approval.upgrade_review["status"] == "CHANGED"
+    assert approval.upgrade_review["requires_acknowledgement"] is True
+    assert approval.upgrade_review["added_permissions"] == ["filesystem.write"]
+
+
+def test_provider_inventory_approval_rejects_unsupported_sandbox_policy() -> None:
+    class SandboxedPlugin(FakeManagedPlugin):
+        plugin_id = "sandbox-required"
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["sandbox_policy"] = {
+                "execution_mode": "UNSANDBOXED_HOST",
+                "filesystem_scope": "CONTROLLED_PATHS",
+                "network_scope": "DECLARED_EGRESS",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+            }
+            return description
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            return plan
+
+    registry = PluginRegistry()
+    registry.register(SandboxedPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="plugin sandbox policy requires an unsupported execution mode",
+    ):
+        service.approve_installation_plan(
+            plugin_id="sandbox-required",
+            configuration=_installation_configuration(),
+            approved_permissions=["network.private"],
+        )
 
 
 def test_provider_inventory_approval_requires_handles_for_required_secret_requirements() -> None:
@@ -827,6 +2424,50 @@ def test_provider_inventory_apply_rejects_secret_requirement_drift() -> None:
     with pytest.raises(
         ValueError,
         match="installation secret requirements changed since approval",
+    ):
+        service.apply_installation_approval(approval.approval_id)
+
+
+def test_provider_inventory_apply_rejects_sandbox_policy_drift() -> None:
+    class MutableSandboxPlugin(FakeManagedPlugin):
+        plugin_id = "mutable-sandbox"
+
+        def __init__(self) -> None:
+            self.execution_mode = "RECORDED_ONLY"
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["sandbox_policy"] = {
+                "execution_mode": self.execution_mode,
+                "filesystem_scope": "NONE",
+                "network_scope": "NONE",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+            }
+            return description
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            return plan
+
+    plugin = MutableSandboxPlugin()
+    registry = PluginRegistry()
+    registry.register(plugin)
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    approval = service.approve_installation_plan(
+        plugin_id="mutable-sandbox",
+        configuration=_installation_configuration(),
+        approved_permissions=["network.private"],
+    )
+    plugin.execution_mode = "SANDBOX_REQUIRED"
+
+    with pytest.raises(
+        ValueError,
+        match="installation sandbox policy changed since approval",
     ):
         service.apply_installation_approval(approval.approval_id)
 

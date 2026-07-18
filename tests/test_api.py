@@ -1,5 +1,8 @@
+import base64
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+import io
+import zipfile
 
 from fastapi.testclient import TestClient
 
@@ -30,6 +33,11 @@ from aidn_hypervisor.model_store import FileModelStore
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager, RuntimeHandle
+from aidn_hypervisor.providers.executor import (
+    ControlledFilesystemProviderInstallationExecutor,
+)
+from aidn_hypervisor.providers.service import ProviderInventoryService
+from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
@@ -43,6 +51,14 @@ from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.validation.service import ValidationService
 from aidn_hypervisor.validation.store import ValidationStore
+
+
+def _zip_bytes(entries: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w") as archive:
+        for relative_path, content in entries.items():
+            archive.writestr(relative_path, content)
+    return buffer.getvalue()
 
 
 def _bundle(
@@ -186,6 +202,55 @@ class AttachOnlyInstallationPlanPlugin(FakeManagedPlugin):
         description["plugin_id"] = self.plugin_id
         description["plugin_capability_flags"] = ["CAN_ATTACH_EXISTING"]
         return description
+
+
+class LocalImportApiPlugin(FakeManagedPlugin):
+    plugin_id = "controlled-fs-import-api"
+
+    def describe(self) -> dict:
+        description = super().describe()
+        description["plugin_id"] = self.plugin_id
+        description["required_permissions"] = [
+            {
+                "permission_id": "network.private",
+                "label": "Private network",
+                "risk_level": "low",
+                "reason": "Connect to a local fake provider endpoint",
+            },
+            {
+                "permission_id": "filesystem.controlled_path",
+                "label": "Controlled filesystem path",
+                "risk_level": "medium",
+                "reason": "Persist managed installation state inside a controlled path",
+            },
+        ]
+        description["sandbox_policy"] = {
+            "execution_mode": "SANDBOX_REQUIRED",
+            "filesystem_scope": "CONTROLLED_PATHS",
+            "network_scope": "DECLARED_EGRESS",
+            "secret_scope": "DECLARED_HANDLES_ONLY",
+            "notes": "Managed install may write state inside one controlled host path.",
+        }
+        return description
+
+    def build_installation_plan(self, configuration: dict) -> dict:
+        plan = super().build_installation_plan(configuration)
+        plan["plugin_id"] = self.plugin_id
+        plan["required_permissions"] = self.plugin_manifest()["required_permissions"]
+        plan["volumes"] = [
+            {
+                "name": "provider-cache",
+                "mount_path": "/var/lib/provider-cache",
+            }
+        ]
+        plan["model_downloads"] = [
+            {
+                "model": "fake-model-imported",
+                "source": "local-import://models/fake-model.gguf",
+                "destination": "provider-cache/fake-model.gguf",
+            }
+        ]
+        return plan
 
 
 def test_submit_task_endpoint_returns_queued_task_and_selected_bundle() -> None:
@@ -1136,7 +1201,7 @@ def test_plugins_endpoint_returns_installed_plugin_descriptions() -> None:
     assert plugin["plugin_version"] == "0.1.0"
     assert plugin["display_name"] == "Fake Managed Provider"
     assert plugin["publisher"] == "AiDN Test"
-    assert plugin["package_digest"] == "sha256:fake-managed-dev"
+    assert plugin["package_digest"] == "sha256:2e348ef1dca5559c3e648df90ce6774de4fdf400887945645f6f32d4ecc1fa8b"
     assert plugin["provider_type"] == "fake"
     assert plugin["provider_families"] == ["fake"]
     assert plugin["plugin_capability_flags"] == [
@@ -1147,6 +1212,7 @@ def test_plugins_endpoint_returns_installed_plugin_descriptions() -> None:
     assert plugin["required_permissions"][0]["permission_id"] == "network.private"
     assert plugin["secret_requirements"][0]["secret_type"] == "API_KEY"
     assert plugin["trust_status"] == "CONFORMANCE_TESTED"
+    assert plugin["sandbox_policy"]["execution_mode"] == "RECORDED_ONLY"
     assert plugin["installation_recipes"][0]["recipe_id"] == "fake-managed-local"
     assert plugin["supported_aidn_capabilities"] == ["llm.chat"]
     assert plugin["workload_types"] == ["llm_text", "speech_to_text"]
@@ -2749,7 +2815,7 @@ def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_contr
     assert "Plugin directory" in response.text
     assert "Trust" in response.text
     assert "Install plan preview" in response.text
-    assert "Preview only: declarative install plan" in response.text
+    assert "Preview only /" in response.text
     assert "Declarative preview available" not in response.text
     assert 'data-provider-row="${escapeHtml(provider.plugin_id)}"' in response.text
     assert "${escapeHtml(provider.display_name || provider.plugin_id)}" in response.text
@@ -2795,12 +2861,14 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert 'data-provider-action="queue-install"' in response.text
     assert "/operators/provider-installation-approvals" in response.text
     assert "/operators/provider-installation-jobs" in response.text
+    assert "/operators/provider-installation-artifacts" in response.text
     assert "Apply approved plan" in response.text
     assert "controlled executor" in response.text
     assert "Approve Install Plan" in response.text
     assert "Run Dry-Run Diagnostics" in response.text
     assert "Apply Latest Approval" in response.text
     assert "Install UI schema:" in response.text
+    assert "Sandbox Policy" in response.text
     assert "Installation Recipe" in response.text
     assert "Custom configuration" in response.text
     assert "data-provider-apply-recipe" in response.text
@@ -2822,6 +2890,13 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert "data-model-runtime-binding" in response.text
     assert "runtime_binding_id" in response.text
     assert "data-runtime-binding-endpoint" in response.text
+    assert "Stage Local Artifact" in response.text
+    assert "Extract Staged Archive" in response.text
+    assert "Controlled Imports Root" in response.text
+    assert "data-provider-artifact-relative-path" in response.text
+    assert "data-provider-artifact-file" in response.text
+    assert "data-provider-artifact-archive-path" in response.text
+    assert "data-provider-artifact-destination-directory" in response.text
     assert "Guided Provider Setup" in response.text
     assert "data-provider-setup-step" in response.text
     assert "Suggested Provider Step" in response.text
@@ -3503,6 +3578,12 @@ def test_operator_dashboard_providers_route_returns_plugin_first_inventory_paylo
     payload = client.get("/operators/dashboard/providers").json()
 
     assert payload["plugin_directory"][0]["plugin_id"] == "fake-managed"
+    assert payload["plugin_directory"][0]["package_verification"]["status"] == "VERIFIED"
+    assert payload["installation_executor"]["executor_id"] == "sandbox-enforced-declarative-v1"
+    assert (
+        payload["installation_executor"]["sandbox_capabilities"]["supported_execution_modes"]
+        == ["RECORDED_ONLY", "SANDBOX_REQUIRED"]
+    )
     assert payload["provider_instances"][0]["provider_instance_id"] == attached["provider_instance_id"]
     assert payload["provider_instances"][0]["model_count"] == 1
     assert payload["provider_instances"][0]["runtime_binding_ready_count"] == 1
@@ -3645,6 +3726,7 @@ def test_provider_inventory_operator_routes_attach_discover_and_bind() -> None:
     plugins_response = client.get("/operators/provider-plugins")
     assert plugins_response.status_code == 200
     assert plugins_response.json()["items"][0]["plugin_id"] == "fake-managed"
+    assert plugins_response.json()["items"][0]["package_verification"]["status"] == "VERIFIED"
 
     attach_response = client.post(
         "/operators/provider-instances/attach",
@@ -3800,6 +3882,9 @@ def test_provider_installation_approval_and_apply_routes() -> None:
     approval = approval_response.json()
     assert approval["plugin_id"] == "fake-managed"
     assert approval["operator_note"] == "approved from api"
+    assert approval["upgrade_review"]["status"] == "INITIAL_APPROVAL"
+    assert approval["upgrade_acknowledged"] is False
+    assert approval["acknowledged_sandbox_policy"]["execution_mode"] == "RECORDED_ONLY"
     assert approval["selected_secret_handles"][0]["secret_handle"] == "secret://providers/fake-managed/api-key"
 
     apply_response = client.post(
@@ -3811,7 +3896,7 @@ def test_provider_installation_approval_and_apply_routes() -> None:
     job = apply_response.json()
     assert job["approval_id"] == approval["approval_id"]
     assert job["status"] == "SUCCEEDED"
-    assert job["executor_id"] == "recorded-declarative-v1"
+    assert job["executor_id"] == "sandbox-enforced-declarative-v1"
     assert job["provider_instance_id"].startswith("pi-")
     assert job["rollback_status"] == "NOT_REQUIRED"
     assert "rollback is not required" in (job["rollback_summary"] or "")
@@ -3825,6 +3910,53 @@ def test_provider_installation_approval_and_apply_routes() -> None:
     approvals_response = client.get("/operators/provider-installation-approvals")
     assert approvals_response.status_code == 200
     assert approvals_response.json()["items"][0]["approval_id"] == approval["approval_id"]
+
+
+def test_provider_installation_job_rollback_route() -> None:
+    service = _service()
+    client = TestClient(build_app(service=service))
+
+    approval_response = client.post(
+        "/operators/provider-plugins/fake-managed/installation-approvals",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+            "approved_permissions": ["network.private"],
+        },
+    )
+    approval = approval_response.json()
+    apply_response = client.post(
+        f"/operators/provider-installation-approvals/{approval['approval_id']}/apply",
+        json={},
+    )
+    job = apply_response.json()
+
+    rollback_response = client.post(
+        f"/operators/provider-installation-jobs/{job['job_id']}/rollback",
+        json={},
+    )
+
+    assert rollback_response.status_code == 200
+    rolled_back = rollback_response.json()
+    assert rolled_back["job_id"] == job["job_id"]
+    assert rolled_back["rollback_status"] == "COMPLETED"
+    assert rolled_back["rollback_step_results"][-1]["step_id"] == (
+        "rollback-delete-local-provider-instance"
+    )
+
+
+def test_provider_installation_job_rollback_route_rejects_unknown_job() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.post(
+        "/operators/provider-installation-jobs/job-missing/rollback",
+        json={},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Unknown installation job: job-missing"
 
 
 def test_provider_installation_apply_route_rejects_unknown_approval() -> None:
@@ -3858,6 +3990,108 @@ def test_provider_installation_approval_route_rejects_incomplete_permission_ackn
     assert response.json()["detail"] == "approved permissions must match requested permissions exactly"
 
 
+def test_provider_installation_routes_require_upgrade_acknowledgement_for_changed_contract() -> None:
+    class MutablePermissionPlugin(FakeManagedPlugin):
+        plugin_id = "mutable-permissions"
+
+        def __init__(self) -> None:
+            self.required_permissions = [
+                {
+                    "permission_id": "network.private",
+                    "label": "Private network",
+                    "risk_level": "low",
+                    "reason": "Connect to a local fake provider endpoint",
+                }
+            ]
+
+        def describe(self) -> dict:
+            description = super().describe()
+            description["plugin_id"] = self.plugin_id
+            description["required_permissions"] = list(self.required_permissions)
+            return description
+
+        def build_installation_plan(self, configuration: dict) -> dict:
+            plan = super().build_installation_plan(configuration)
+            plan["plugin_id"] = self.plugin_id
+            plan["required_permissions"] = list(self.required_permissions)
+            return plan
+
+    service = _service()
+    plugin = MutablePermissionPlugin()
+    service.plugins.register(plugin)
+    client = TestClient(build_app(service=service))
+
+    first_approval = client.post(
+        "/operators/provider-plugins/mutable-permissions/installation-approvals",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+            "approved_permissions": ["network.private"],
+        },
+    )
+    assert first_approval.status_code == 200
+
+    plugin.required_permissions = [
+        *plugin.required_permissions,
+        {
+            "permission_id": "filesystem.write",
+            "label": "Filesystem write",
+            "risk_level": "medium",
+            "reason": "Write provider files into a controlled location",
+        },
+    ]
+
+    diagnostics_response = client.post(
+        "/operators/provider-plugins/mutable-permissions/installation-diagnostics",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+            "approved_permissions": ["network.private", "filesystem.write"],
+        },
+    )
+    assert diagnostics_response.status_code == 200
+    diagnostics = diagnostics_response.json()
+    assert diagnostics["readiness_status"] == "BLOCKED"
+    upgrade_check = next(
+        check for check in diagnostics["checks"] if check["check_id"] == "upgrade_review"
+    )
+    assert upgrade_check["status"] == "FAIL"
+    assert upgrade_check["details"]["status"] == "CHANGED"
+    assert upgrade_check["details"]["added_permissions"] == ["filesystem.write"]
+
+    approval_response = client.post(
+        "/operators/provider-plugins/mutable-permissions/installation-approvals",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+            "approved_permissions": ["network.private", "filesystem.write"],
+        },
+    )
+    assert approval_response.status_code == 409
+    assert "requires explicit upgrade acknowledgement" in approval_response.json()["detail"]
+
+    acknowledged_response = client.post(
+        "/operators/provider-plugins/mutable-permissions/installation-approvals",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+            "approved_permissions": ["network.private", "filesystem.write"],
+            "upgrade_acknowledged": True,
+        },
+    )
+    assert acknowledged_response.status_code == 200
+    assert acknowledged_response.json()["upgrade_review"]["status"] == "CHANGED"
+    assert acknowledged_response.json()["upgrade_acknowledged"] is True
+
+
 def test_provider_installation_diagnostics_route_returns_readiness_and_rollback_preview() -> None:
     client = TestClient(build_app(service=_service()))
 
@@ -3882,8 +4116,12 @@ def test_provider_installation_diagnostics_route_returns_readiness_and_rollback_
     diagnostics = response.json()
     assert diagnostics["plugin_id"] == "fake-managed"
     assert diagnostics["readiness_status"] == "READY"
-    assert diagnostics["executor_id"] == "recorded-declarative-v1"
+    assert diagnostics["executor_id"] == "sandbox-enforced-declarative-v1"
     assert diagnostics["rollback_result"]["status"] == "NOT_REQUIRED"
+    package_check = next(
+        check for check in diagnostics["checks"] if check["check_id"] == "package_verification"
+    )
+    assert package_check["status"] == "PASS"
     assert any(check["check_id"] == "rollback_preview" for check in diagnostics["checks"])
 
 
@@ -3908,6 +4146,331 @@ def test_provider_installation_diagnostics_route_surfaces_blocked_state_without_
         check for check in diagnostics["checks"] if check["check_id"] == "permissions_acknowledged"
     )
     assert permission_check["status"] == "FAIL"
+
+
+def test_provider_installation_diagnostics_route_surfaces_missing_local_import_artifacts(
+    tmp_path,
+) -> None:
+    service = _service()
+    service.plugins.register(LocalImportApiPlugin())
+    service.provider_inventory = ProviderInventoryService(
+        plugins=service.plugins,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+    client = TestClient(build_app(service=service))
+
+    response = client.post(
+        "/operators/provider-plugins/controlled-fs-import-api/installation-diagnostics",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+            "approved_permissions": ["network.private", "filesystem.controlled_path"],
+            "selected_secret_handles": [
+                {
+                    "requirement_key": "API_KEY:Optional provider API key handle",
+                    "secret_handle": "secret://providers/controlled-fs-import-api/api-key",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    diagnostics = response.json()
+    assert diagnostics["readiness_status"] == "BLOCKED"
+    import_check = next(
+        check
+        for check in diagnostics["checks"]
+        if check["check_id"] == "local_import_artifacts"
+    )
+    assert import_check["status"] == "FAIL"
+    assert import_check["details"]["missing_local_import_count"] == 1
+
+
+def test_provider_installation_diagnostics_route_surfaces_ready_local_import_artifacts(
+    tmp_path,
+) -> None:
+    service = _service()
+    service.plugins.register(LocalImportApiPlugin())
+    imports_root = tmp_path / "executor-root" / "imports" / "models"
+    imports_root.mkdir(parents=True, exist_ok=True)
+    (imports_root / "fake-model.gguf").write_text("fake-model-bytes", encoding="utf-8")
+    service.provider_inventory = ProviderInventoryService(
+        plugins=service.plugins,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+    client = TestClient(build_app(service=service))
+
+    response = client.post(
+        "/operators/provider-plugins/controlled-fs-import-api/installation-diagnostics",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+            "approved_permissions": ["network.private", "filesystem.controlled_path"],
+            "selected_secret_handles": [
+                {
+                    "requirement_key": "API_KEY:Optional provider API key handle",
+                    "secret_handle": "secret://providers/controlled-fs-import-api/api-key",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    diagnostics = response.json()
+    assert diagnostics["readiness_status"] == "READY"
+    import_check = next(
+        check
+        for check in diagnostics["checks"]
+        if check["check_id"] == "local_import_artifacts"
+    )
+    assert import_check["status"] == "PASS"
+    assert import_check["details"]["ready_local_import_count"] == 1
+
+
+def test_provider_installation_artifact_routes_stage_list_and_remove_artifacts(
+    tmp_path,
+) -> None:
+    service = _service()
+    service.provider_inventory = ProviderInventoryService(
+        plugins=service.plugins,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+    client = TestClient(build_app(service=service))
+
+    create_response = client.post(
+        "/operators/provider-installation-artifacts",
+        json={
+            "relative_path": "models/fake-model.gguf",
+            "content_base64": base64.b64encode(b"fake-model-bytes").decode("ascii"),
+        },
+    )
+
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["relative_path"] == "models/fake-model.gguf"
+    assert created["size_bytes"] == len(b"fake-model-bytes")
+
+    list_response = client.get("/operators/provider-installation-artifacts")
+    assert list_response.status_code == 200
+    inventory = list_response.json()
+    assert inventory["supported"] is True
+    assert inventory["items"][0]["relative_path"] == "models/fake-model.gguf"
+
+    delete_response = client.post(
+        "/operators/provider-installation-artifacts/remove",
+        json={"relative_path": "models/fake-model.gguf"},
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {
+        "relative_path": "models/fake-model.gguf",
+        "deleted": True,
+    }
+
+    final_inventory = client.get("/operators/provider-installation-artifacts").json()
+    assert final_inventory["items"] == []
+
+
+def test_provider_installation_artifact_extract_route_unpacks_staged_archive(
+    tmp_path,
+) -> None:
+    service = _service()
+    service.provider_inventory = ProviderInventoryService(
+        plugins=service.plugins,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+    client = TestClient(build_app(service=service))
+
+    create_response = client.post(
+        "/operators/provider-installation-artifacts",
+        json={
+            "relative_path": "archives/fake-model.zip",
+            "content_base64": base64.b64encode(
+                _zip_bytes(
+                    {
+                        "weights/model.gguf": b"fake-model-bytes",
+                        "metadata/config.json": b'{"name":"fake"}',
+                    }
+                )
+            ).decode("ascii"),
+        },
+    )
+
+    assert create_response.status_code == 200
+
+    extract_response = client.post(
+        "/operators/provider-installation-artifacts/extract",
+        json={
+            "archive_relative_path": "archives/fake-model.zip",
+            "destination_directory": "models/fake-model",
+        },
+    )
+
+    assert extract_response.status_code == 200
+    extracted = extract_response.json()
+    assert extracted["archive_relative_path"] == "archives/fake-model.zip"
+    assert extracted["destination_directory"] == "models/fake-model"
+    assert extracted["extracted_file_count"] == 2
+    assert "models/fake-model/weights/model.gguf" in extracted["extracted_relative_paths"]
+
+    inventory = client.get("/operators/provider-installation-artifacts").json()
+    paths = {item["relative_path"] for item in inventory["items"]}
+    assert "archives/fake-model.zip" in paths
+    assert "models/fake-model/weights/model.gguf" in paths
+    assert "models/fake-model/metadata/config.json" in paths
+
+
+def test_model_artifact_routes_promote_deduplicate_and_remove_staged_artifacts(
+    tmp_path,
+) -> None:
+    service = _service()
+    service.provider_inventory = ProviderInventoryService(
+        plugins=service.plugins,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+    client = TestClient(build_app(service=service))
+    content_base64 = base64.b64encode(b"shared-model-bytes").decode("ascii")
+
+    for relative_path in ["models/first.gguf", "models/second.gguf"]:
+        response = client.post(
+            "/operators/provider-installation-artifacts",
+            json={"relative_path": relative_path, "content_base64": content_base64},
+        )
+        assert response.status_code == 200
+
+    first = client.post(
+        "/operators/model-artifacts/promote",
+        json={"relative_path": "models/first.gguf"},
+    )
+    second = client.post(
+        "/operators/model-artifacts/promote",
+        json={"relative_path": "models/second.gguf"},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["artifact_id"] == second.json()["artifact_id"]
+
+    inventory = client.get("/operators/model-artifacts")
+    assert inventory.status_code == 200
+    assert inventory.json()["supported"] is True
+    assert len(inventory.json()["items"]) == 1
+
+    artifact_id = first.json()["artifact_id"]
+    remove = client.post(
+        "/operators/model-artifacts/remove",
+        json={"artifact_id": artifact_id},
+    )
+    assert remove.status_code == 200
+    assert remove.json() == {"artifact_id": artifact_id, "deleted": True}
+    assert client.get("/operators/model-artifacts").json()["items"] == []
+
+
+def test_model_artifact_set_routes_create_and_list_sets(tmp_path) -> None:
+    service = _service()
+    service.provider_inventory = ProviderInventoryService(
+        plugins=service.plugins,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+    client = TestClient(build_app(service=service))
+    client.post(
+        "/operators/provider-installation-artifacts",
+        json={
+            "relative_path": "models/fake-model.gguf",
+            "content_base64": base64.b64encode(b"model-bytes").decode("ascii"),
+        },
+    )
+    artifact = client.post(
+        "/operators/model-artifacts/promote",
+        json={"relative_path": "models/fake-model.gguf"},
+    ).json()
+
+    created = client.post(
+        "/operators/model-artifact-sets",
+        json={
+            "display_name": "Fake model package",
+            "files": [
+                {
+                    "relative_path": "weights/fake-model.gguf",
+                    "artifact_id": artifact["artifact_id"],
+                    "role": "WEIGHTS",
+                }
+            ],
+        },
+    )
+
+    assert created.status_code == 200
+    listed = client.get("/operators/model-artifact-sets")
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["artifact_set_id"] == created.json()["artifact_set_id"]
+
+
+def test_model_artifact_collect_route_starts_grace_tracking(tmp_path) -> None:
+    service = _service()
+    service.provider_inventory = ProviderInventoryService(
+        plugins=service.plugins,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root",
+            model_artifact_gc_grace_seconds=0,
+        ),
+    )
+    client = TestClient(build_app(service=service))
+    client.post(
+        "/operators/provider-installation-artifacts",
+        json={
+            "relative_path": "models/fake-model.gguf",
+            "content_base64": base64.b64encode(b"model-bytes").decode("ascii"),
+        },
+    )
+    client.post(
+        "/operators/model-artifacts/promote",
+        json={"relative_path": "models/fake-model.gguf"},
+    )
+
+    first = client.post("/operators/model-artifacts/collect")
+    second = client.post("/operators/model-artifacts/collect")
+
+    assert first.status_code == 200
+    assert len(first.json()["pending_artifact_ids"]) == 1
+    assert second.status_code == 200
+    assert len(second.json()["collected_artifact_ids"]) == 1
+
+
+def test_provider_installation_artifact_route_rejects_invalid_base64() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.post(
+        "/operators/provider-installation-artifacts",
+        json={
+            "relative_path": "models/fake-model.gguf",
+            "content_base64": "%%%not-base64%%%",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Invalid base64 artifact content" in response.json()["detail"]
 
 
 def test_provider_plugin_installation_plan_preview_route_rejects_invalid_plugin_plan() -> None:

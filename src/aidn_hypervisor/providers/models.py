@@ -25,6 +25,41 @@ PluginSecretType = Literal[
     "CLIENT_CERTIFICATE",
     "CUSTOM_SECRET_SET",
 ]
+PluginPackageVerificationStatus = Literal[
+    "VERIFIED",
+    "UNVERIFIED",
+    "INVALID",
+]
+PluginPackageVerificationMode = Literal[
+    "NONE",
+    "HASH_ONLY",
+    "ED25519",
+]
+PluginSandboxExecutionMode = Literal[
+    "RECORDED_ONLY",
+    "SANDBOX_REQUIRED",
+    "UNSANDBOXED_HOST",
+]
+PluginSandboxFilesystemScope = Literal[
+    "NONE",
+    "PLUGIN_DATA_ONLY",
+    "MODEL_STORAGE_ONLY",
+    "CONTROLLED_PATHS",
+]
+PluginSandboxNetworkScope = Literal[
+    "NONE",
+    "PRIVATE_ONLY",
+    "DECLARED_EGRESS",
+]
+PluginSandboxSecretScope = Literal[
+    "NONE",
+    "DECLARED_HANDLES_ONLY",
+]
+ProviderInstallationUpgradeReviewStatus = Literal[
+    "INITIAL_APPROVAL",
+    "UNCHANGED",
+    "CHANGED",
+]
 ProviderInstallationApprovalStatus = Literal["APPROVED", "REVOKED"]
 ProviderInstallationJobStatus = Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"]
 ProviderInstallationStepStatus = Literal["RECORDED", "SKIPPED", "FAILED"]
@@ -92,6 +127,64 @@ class PluginUISchema(BaseModel):
         return _require_non_empty(value)
 
 
+class PluginPackageVerification(BaseModel):
+    status: PluginPackageVerificationStatus
+    verification_mode: PluginPackageVerificationMode = "NONE"
+    summary: str
+    package_digest: str
+    declared_manifest_hash: str | None = None
+    computed_manifest_hash: str | None = None
+    publisher_key_id: str | None = None
+    signature_present: bool = False
+    trusted_publisher: bool = False
+    details: dict = Field(default_factory=dict)
+
+    @field_validator("summary", "package_digest")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+    @field_validator("declared_manifest_hash", "computed_manifest_hash", "publisher_key_id")
+    @classmethod
+    def _optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
+
+class PluginSandboxPolicy(BaseModel):
+    execution_mode: PluginSandboxExecutionMode = "RECORDED_ONLY"
+    filesystem_scope: PluginSandboxFilesystemScope = "NONE"
+    network_scope: PluginSandboxNetworkScope = "NONE"
+    secret_scope: PluginSandboxSecretScope = "DECLARED_HANDLES_ONLY"
+    notes: str | None = None
+
+    @field_validator("notes")
+    @classmethod
+    def _notes_not_blank_when_present(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
+
+class ExecutorSandboxCapabilities(BaseModel):
+    supported_execution_modes: list[PluginSandboxExecutionMode] = Field(default_factory=list)
+    supported_filesystem_scopes: list[PluginSandboxFilesystemScope] = Field(
+        default_factory=list
+    )
+    supported_network_scopes: list[PluginSandboxNetworkScope] = Field(default_factory=list)
+    supported_secret_scopes: list[PluginSandboxSecretScope] = Field(default_factory=list)
+    host_mutation: bool = False
+    notes: str | None = None
+
+    @field_validator("notes")
+    @classmethod
+    def _notes_not_blank_when_present(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
+
 class InstallationRecipe(BaseModel):
     recipe_id: str
     display_name: str
@@ -144,6 +237,10 @@ class ProviderInstallationApproval(BaseModel):
     configuration_hash: str
     configuration: dict = Field(default_factory=dict)
     approved_permissions: list[str] = Field(default_factory=list)
+    upgrade_review: dict = Field(default_factory=dict)
+    upgrade_acknowledged: bool = False
+    acknowledged_package_verification: dict = Field(default_factory=dict)
+    acknowledged_sandbox_policy: dict = Field(default_factory=dict)
     acknowledged_secret_requirements: list[dict] = Field(default_factory=list)
     selected_secret_handles: list[SelectedSecretHandle] = Field(default_factory=list)
     operator_note: str | None = None
@@ -192,6 +289,7 @@ class ProviderInstallationRollbackResult(BaseModel):
     status: ProviderInstallationRollbackStatus
     summary: str
     details: dict = Field(default_factory=dict)
+    step_results: list["ProviderInstallationStepResult"] = Field(default_factory=list)
 
     @field_validator("summary")
     @classmethod
@@ -225,6 +323,178 @@ class ProviderInstallationDiagnostics(BaseModel):
         return _require_non_empty(value)
 
 
+class ProviderInstallationArtifact(BaseModel):
+    relative_path: str
+    size_bytes: int
+    sha256: str
+    updated_at: str
+
+    @field_validator("relative_path", "sha256", "updated_at")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ProviderInstallationArtifactInventory(BaseModel):
+    supported: bool
+    imports_root: str | None = None
+    max_artifact_bytes: int | None = None
+    archive_extract_supported: bool = False
+    supported_archive_formats: list[str] = Field(default_factory=list)
+    max_extracted_bytes: int | None = None
+    max_extracted_files: int | None = None
+    items: list[ProviderInstallationArtifact] = Field(default_factory=list)
+
+    @field_validator("imports_root")
+    @classmethod
+    def _optional_imports_root(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
+
+class ProviderInstallationArchiveExtractionResult(BaseModel):
+    archive_relative_path: str
+    destination_directory: str
+    extracted_file_count: int
+    extracted_total_bytes: int
+    extracted_relative_paths: list[str] = Field(default_factory=list)
+
+    @field_validator("archive_relative_path", "destination_directory")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ModelArtifact(BaseModel):
+    """Immutable locally stored model bytes, addressed by their SHA-256 digest."""
+
+    artifact_id: str
+    content_sha256: str
+    size_bytes: int
+    original_filename: str
+    storage_relative_path: str
+    source_type: str
+    source_reference: str
+    created_at: str
+    integrity_status: Literal["VERIFIED"] = "VERIFIED"
+    reference_count: int = Field(default=0, ge=0)
+    unreferenced_since: str | None = None
+    garbage_collection_eligible_at: str | None = None
+
+    @field_validator(
+        "artifact_id",
+        "content_sha256",
+        "original_filename",
+        "storage_relative_path",
+        "source_type",
+        "source_reference",
+        "created_at",
+    )
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+    @field_validator("unreferenced_since", "garbage_collection_eligible_at")
+    @classmethod
+    def _optional_not_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
+
+class ModelArtifactInventory(BaseModel):
+    supported: bool
+    store_root: str | None = None
+    max_artifact_bytes: int | None = None
+    garbage_collection_grace_seconds: int | None = None
+    items: list[ModelArtifact] = Field(default_factory=list)
+
+    @field_validator("store_root")
+    @classmethod
+    def _optional_store_root(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
+
+class ModelArtifactGarbageCollectionResult(BaseModel):
+    evaluated_at: str
+    grace_seconds: int = Field(ge=0)
+    retained_artifact_ids: list[str] = Field(default_factory=list)
+    pending_artifact_ids: list[str] = Field(default_factory=list)
+    collected_artifact_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("evaluated_at")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ModelArtifactSetFile(BaseModel):
+    relative_path: str
+    artifact_id: str
+    role: Literal["WEIGHTS", "TOKENIZER", "CONFIG", "ADAPTER", "AUXILIARY"] = "AUXILIARY"
+
+    @field_validator("relative_path", "artifact_id")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ModelArtifactSet(BaseModel):
+    artifact_set_id: str
+    display_name: str
+    files: list[ModelArtifactSetFile] = Field(min_length=1)
+    manifest_hash: str
+    created_at: str
+
+    @field_validator("artifact_set_id", "display_name", "manifest_hash", "created_at")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ProviderArtifactMaterialization(BaseModel):
+    materialization_id: str
+    provider_instance_id: str
+    artifact_set_id: str
+    destination: str
+    status: Literal["READY", "FAILED"]
+    files: list[dict] = Field(default_factory=list)
+    created_at: str
+
+    @field_validator(
+        "materialization_id",
+        "provider_instance_id",
+        "artifact_set_id",
+        "destination",
+        "created_at",
+    )
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ProviderInstallationUpgradeReview(BaseModel):
+    status: ProviderInstallationUpgradeReviewStatus
+    requires_acknowledgement: bool = False
+    added_permissions: list[str] = Field(default_factory=list)
+    removed_permissions: list[str] = Field(default_factory=list)
+    package_verification_changed: bool = False
+    previous_package_verification: dict = Field(default_factory=dict)
+    current_package_verification: dict = Field(default_factory=dict)
+    sandbox_policy_changed: bool = False
+    previous_sandbox_policy: dict = Field(default_factory=dict)
+    current_sandbox_policy: dict = Field(default_factory=dict)
+    summary: str
+
+    @field_validator("summary")
+    @classmethod
+    def _summary_not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
 class ProviderInstallationJob(BaseModel):
     job_id: str
     approval_id: str
@@ -238,11 +508,14 @@ class ProviderInstallationJob(BaseModel):
     provider_instance_id: str | None = None
     rollback_status: ProviderInstallationRollbackStatus = "NOT_NEEDED"
     rollback_summary: str | None = None
+    rollback_step_results: list[ProviderInstallationStepResult] = Field(default_factory=list)
     error_code: str | None = None
     error_message: str | None = None
     created_at: str
     started_at: str | None = None
     completed_at: str | None = None
+    rollback_started_at: str | None = None
+    rollback_completed_at: str | None = None
 
     @field_validator(
         "job_id",
@@ -276,11 +549,15 @@ class ProviderPluginManifest(BaseModel):
     display_name: str
     publisher: str
     package_digest: str
+    publisher_public_key: str | None = None
+    publisher_signature: str | None = None
+    manifest_hash: str | None = None
     provider_families: list[str] = Field(default_factory=list)
     plugin_capability_flags: list[str] = Field(default_factory=list)
     required_permissions: list[PluginPermission] = Field(default_factory=list)
     supported_aidn_capabilities: list[str] = Field(default_factory=list)
     trust_status: PluginTrustStatus = "UNREVIEWED"
+    sandbox_policy: PluginSandboxPolicy = Field(default_factory=PluginSandboxPolicy)
     source_repository: str | None = None
     license: str | None = None
     supported_platforms: list[str] = Field(default_factory=list)
@@ -297,6 +574,13 @@ class ProviderPluginManifest(BaseModel):
     @field_validator("plugin_id", "plugin_version", "display_name", "publisher", "package_digest")
     @classmethod
     def _required_strings_not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+    @field_validator("publisher_public_key", "publisher_signature", "manifest_hash")
+    @classmethod
+    def _optional_strings_not_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return _require_non_empty(value)
 
     @field_validator("required_permissions", mode="before")
@@ -333,9 +617,17 @@ class ModelDeployment(BaseModel):
     provider_model_reference: str
     operator_display_name: str
     declared_model_name: str | None = None
+    artifact_set_id: str | None = None
     metadata_sources: dict[str, str] = Field(default_factory=dict)
     capability_bindings: list[str] = Field(default_factory=list)
     operational_state: ModelOperationalState
+
+    @field_validator("artifact_set_id")
+    @classmethod
+    def _optional_artifact_set_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
 
 
 class RuntimeBinding(BaseModel):

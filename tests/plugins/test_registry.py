@@ -103,7 +103,10 @@ def test_registry_manifest_includes_install_schema_permissions_and_recipes() -> 
     assert manifest["install_ui_schema"]["schema_id"] == "fake.install.v1"
     assert manifest["secret_requirements"][0]["secret_type"] == "API_KEY"
     assert manifest["secret_requirements"][0]["label"] == "Optional provider API key handle"
+    assert manifest["sandbox_policy"]["execution_mode"] == "RECORDED_ONLY"
     assert manifest["installation_recipes"][0]["recipe_id"] == "fake-managed-local"
+    assert manifest["manifest_hash"].startswith("sha256:")
+    assert manifest["publisher_signature"].startswith("ed25519:")
     assert "CAN_INSTALL_PROVIDER" in manifest["plugin_capability_flags"]
 
 

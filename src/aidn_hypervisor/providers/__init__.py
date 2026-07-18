@@ -1,4 +1,6 @@
 from aidn_hypervisor.providers.models import (
+    ModelArtifact,
+    ModelArtifactSet,
     ModelDeployment,
     ProviderInstance,
     ProviderPluginManifest,
@@ -10,6 +12,8 @@ __all__ = [
     "ProviderPluginManifest",
     "ProviderInstance",
     "ModelDeployment",
+    "ModelArtifact",
+    "ModelArtifactSet",
     "RuntimeBinding",
     "InMemoryProviderInventoryStore",
 ]

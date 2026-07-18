@@ -1,6 +1,18 @@
 from abc import ABC, abstractmethod
 
 from aidn_hypervisor.providers.models import InstallationPlan, ProviderPluginManifest
+from aidn_hypervisor.providers.package_verification import (
+    compute_manifest_hash,
+    package_signature_payload,
+)
+
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    _ED25519_AVAILABLE = True
+except Exception:  # pragma: no cover - optional crypto support
+    Ed25519PrivateKey = None
+    _ED25519_AVAILABLE = False
 
 
 class ProviderPlugin(ABC):
@@ -47,7 +59,24 @@ class ProviderPlugin(ABC):
             supported_aidn_capabilities = description["supported_aidn_capabilities"]
         else:
             supported_aidn_capabilities = description.get("workload_types", [])
-        return ProviderPluginManifest(
+        signing_private_key = description.get("developer_signing_private_key") or getattr(
+            self,
+            "developer_signing_private_key",
+            None,
+        )
+        publisher_public_key = description.get("publisher_public_key")
+        if signing_private_key and not publisher_public_key:
+            if not _ED25519_AVAILABLE:
+                raise RuntimeError(
+                    "developer_signing_private_key requires Ed25519 support"
+                )
+            private_key = Ed25519PrivateKey.from_private_bytes(
+                bytes.fromhex(signing_private_key)
+            )
+            publisher_public_key = (
+                f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+            )
+        manifest = ProviderPluginManifest(
             plugin_id=description["plugin_id"],
             plugin_version=description.get("plugin_version", "0.1.0"),
             display_name=description.get("display_name", description["plugin_id"]),
@@ -56,6 +85,9 @@ class ProviderPlugin(ABC):
                 "package_digest",
                 f"dev:{description['plugin_id']}",
             ),
+            publisher_public_key=publisher_public_key,
+            publisher_signature=description.get("publisher_signature"),
+            manifest_hash=description.get("manifest_hash"),
             provider_families=description.get(
                 "provider_families",
                 [description.get("provider_type", description["plugin_id"])],
@@ -64,6 +96,7 @@ class ProviderPlugin(ABC):
             required_permissions=description.get("required_permissions", []),
             supported_aidn_capabilities=supported_aidn_capabilities,
             trust_status=description.get("trust_status", "UNREVIEWED"),
+            sandbox_policy=description.get("sandbox_policy", {}),
             source_repository=description.get("source_repository"),
             license=description.get("license"),
             supported_platforms=description.get("supported_platforms", []),
@@ -78,7 +111,25 @@ class ProviderPlugin(ABC):
             diagnostics_schema=description.get("diagnostics_schema"),
             secret_requirements=description.get("secret_requirements", []),
             installation_recipes=description.get("installation_recipes", []),
-        ).model_dump(mode="json")
+        )
+        if signing_private_key:
+            private_key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(signing_private_key))
+            manifest_hash = compute_manifest_hash(manifest)
+            manifest = manifest.model_copy(
+                update={
+                    "manifest_hash": manifest_hash,
+                    "publisher_signature": (
+                        "ed25519:"
+                        + private_key.sign(
+                            package_signature_payload(
+                                manifest,
+                                manifest_hash=manifest_hash,
+                            )
+                        ).hex()
+                    ),
+                }
+            )
+        return manifest.model_dump(mode="json")
 
     def attach_provider_schema(self) -> dict:
         return {"schema_id": f"{self.plugin_id}.attach.v1", "fields": []}

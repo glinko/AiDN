@@ -11,6 +11,7 @@ from aidn_hypervisor.economics.models import (
 from aidn_hypervisor.ledger.models import LedgerOperationRecord
 from aidn_hypervisor.providers.models import (
     ModelDeployment,
+    ProviderArtifactMaterialization,
     ProviderInstallationApproval,
     ProviderInstallationJob,
     ProviderInstance,
@@ -278,6 +279,9 @@ class HypervisorStateSnapshot(BaseModel):
     provider_instances: list[ProviderInstance] = Field(default_factory=list)
     model_deployments: list[ModelDeployment] = Field(default_factory=list)
     runtime_bindings: list[RuntimeBinding] = Field(default_factory=list)
+    provider_artifact_materializations: list[ProviderArtifactMaterialization] = Field(
+        default_factory=list
+    )
     provider_installation_approvals: list[ProviderInstallationApproval] = Field(
         default_factory=list
     )
