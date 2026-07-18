@@ -773,6 +773,7 @@ validation_report_storage_receipt:
   stored_at:
   report_locator:
   retention_policy_id:
+  endpoint_public_key:
   endpoint_signature:
 ```
 

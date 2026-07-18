@@ -230,6 +230,7 @@ class ValidationReportStorageReceipt(BaseModel):
     stored_at: str
     report_locator: str
     retention_policy_id: str
+    endpoint_public_key: str
     endpoint_signature: str
 
 

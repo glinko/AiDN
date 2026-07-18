@@ -15,11 +15,16 @@ from aidn_hypervisor.validation.models import (
     ValidationReport,
     ValidationReportCommitment,
     ValidationReportCustodyObject,
+    ValidationReportStorageReceipt,
     ValidationRequest,
     ValidationStatusSnapshot,
     ValidationValidatorEntry,
     canonical_validation_hash,
     validation_report_integrity,
+)
+from aidn_hypervisor.validation.custody_signing import (
+    storage_receipt_signing_payload,
+    verify_storage_receipt,
 )
 
 
@@ -98,6 +103,7 @@ class ValidationService:
         event_recorder=None,
         operation_recorder=None,
         custody_store=None,
+        custody_signer=None,
     ) -> None:
         self.store = store
         self.bond_escrow = bond_escrow or LocalOperatorBondEscrowAdapter()
@@ -105,6 +111,7 @@ class ValidationService:
         self.event_recorder = event_recorder
         self.operation_recorder = operation_recorder
         self.custody_store = custody_store
+        self.custody_signer = custody_signer
 
     def request_validation(
         self,
@@ -914,6 +921,100 @@ class ValidationService:
         if self.custody_store is None:
             raise ValueError("Validation report custody store is not configured")
         return self.custody_store.read_report_body(report_hash)
+
+    def create_report_storage_receipt(
+        self,
+        *,
+        report_id: str,
+    ) -> ValidationReportStorageReceipt:
+        if self.custody_store is None or self.custody_signer is None:
+            raise ValueError("Validation report custody signing is not configured")
+        report = self.store.get_report(report_id)
+        commitment = self.store.get_report_commitment(report_id)
+        custody_object = self.store.get_report_custody_object(commitment.report_hash)
+        verified_object = self.custody_store.verify_report(commitment.report_hash)
+        if verified_object.report_size != commitment.report_size:
+            raise ValueError("Validation report custody metadata does not match commitment")
+        existing = next(
+            (
+                item
+                for item in self.store.list_report_storage_receipts()
+                if item.endpoint_id == report.endpoint_id
+                and item.endpoint_configuration_hash == report.configuration_hash
+                and item.report_hash == commitment.report_hash
+            ),
+            None,
+        )
+        if existing is not None:
+            verify_storage_receipt(existing)
+            return existing
+
+        receipt_seed = canonical_validation_hash(
+            {
+                "validation_id": report.request_id,
+                "endpoint_id": report.endpoint_id,
+                "endpoint_configuration_hash": report.configuration_hash,
+                "report_hash": commitment.report_hash,
+                "report_locator": commitment.report_locator,
+                "retention_policy_id": commitment.retention_policy_id,
+            }
+        )
+        unsigned_receipt = ValidationReportStorageReceipt(
+            receipt_id=f"receipt-{receipt_seed.removeprefix('sha256:')}",
+            validation_id=report.request_id,
+            endpoint_id=report.endpoint_id,
+            endpoint_configuration_hash=report.configuration_hash,
+            report_hash=commitment.report_hash,
+            report_size=custody_object.report_size,
+            stored_at=self._now(),
+            report_locator=commitment.report_locator,
+            retention_policy_id=commitment.retention_policy_id,
+            endpoint_public_key=self.custody_signer.public_key,
+            endpoint_signature="",
+        )
+        receipt = unsigned_receipt.model_copy(
+            update={
+                "endpoint_signature": self.custody_signer.sign(
+                    storage_receipt_signing_payload(unsigned_receipt)
+                )
+            }
+        )
+        verify_storage_receipt(receipt)
+        self.store.save_report_storage_receipt(receipt)
+        if self.operation_recorder is not None:
+            self.operation_recorder(
+                operation_type="VALIDATION_REPORT_STORAGE_RECEIPT",
+                origin_type="protocol",
+                fee_class="protocol_sponsored",
+                initiator_id=report.endpoint_id,
+                payload={
+                    "receipt_id": receipt.receipt_id,
+                    "validation_id": receipt.validation_id,
+                    "endpoint_id": receipt.endpoint_id,
+                    "endpoint_configuration_hash": receipt.endpoint_configuration_hash,
+                    "report_hash": receipt.report_hash,
+                    "report_size": receipt.report_size,
+                    "report_locator": receipt.report_locator,
+                    "retention_policy_id": receipt.retention_policy_id,
+                    "endpoint_public_key": receipt.endpoint_public_key,
+                    "receipt_hash": canonical_validation_hash(
+                        receipt.model_dump(mode="json")
+                    ),
+                },
+                created_at=receipt.stored_at,
+                emitted_events=["ValidationReportStorageReceiptCommitted"],
+            )
+        self._emit(
+            event_type="validation_report_custody_accepted",
+            message="validation report stored with a signed custody receipt",
+            details={
+                "report_id": report.report_id,
+                "report_hash": receipt.report_hash,
+                "receipt_id": receipt.receipt_id,
+                "endpoint_id": receipt.endpoint_id,
+            },
+        )
+        return receipt
 
     def _store_report_custody(
         self,

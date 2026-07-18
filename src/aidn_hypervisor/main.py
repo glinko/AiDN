@@ -28,6 +28,9 @@ from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.validation.service import ValidationService
 from aidn_hypervisor.validation.custody_store import ValidationReportCustodyStore
+from aidn_hypervisor.validation.custody_signing import (
+    Ed25519ValidationReportCustodySigner,
+)
 from aidn_hypervisor.validation.store import ValidationStore
 
 
@@ -230,9 +233,16 @@ def _build_default_validation_service(
         if state_store is not None
         else None
     )
+    custody_signing_key = os.getenv("AIDN_HYPERVISOR_CUSTODY_SIGNING_KEY")
+    custody_signer = (
+        Ed25519ValidationReportCustodySigner(custody_signing_key)
+        if custody_signing_key
+        else None
+    )
     return ValidationService(
         ValidationStore(state_store),
         custody_store=custody_store,
+        custody_signer=custody_signer,
     )
 
 

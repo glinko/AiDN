@@ -111,6 +111,8 @@ Progress 2026-07-18: a controlled content-addressed store now writes canonical r
 
 Exit criteria: valid transfer returns a verifiable receipt; invalid bindings return stable errors; receipt retry is idempotent; restart does not lose accepted custody.
 
+Progress 2026-07-18: the local Endpoint-side receipt primitive is implemented with an injectable Ed25519 signer, content re-verification before signing, deterministic receipt identity, idempotent persistence and a local ledger projection. It remains opt-in through `AIDN_HYPERVISOR_CUSTODY_SIGNING_KEY`. Assignment-key transfer, canonical Hypervisor-key registration and Certification enforcement remain pending.
+
 ### Slice 4: Compact Ledger Operations and Dual Write
 
 - Extend `VALIDATION_REPORT_COMMIT` with compact Certification inputs and receipt/failure references.
