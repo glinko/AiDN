@@ -3,6 +3,10 @@ import stat
 import pytest
 
 from aidn_hypervisor.validation.custody_store import ValidationReportCustodyStore
+from aidn_hypervisor.validation.channel import (
+    ValidationReportTransferChannel,
+    ValidationReportTransferMessage,
+)
 from aidn_hypervisor.validation.custody_signing import (
     Ed25519ValidationReportCustodySigner,
     verify_storage_receipt,
@@ -338,6 +342,29 @@ def test_receiver_accepts_signed_report_transfer_into_custody(tmp_path) -> None:
     assert accepted.report_hash == outcome.commitment.report_hash
     assert receiver.get_custody_report_body(accepted.report_hash)["endpoint_id"] == "ep-1"
     assert receiver.store.get_report_commitment(outcome.report.report_id).report_hash == accepted.report_hash
+
+
+def test_validation_channel_transfer_is_idempotent_and_rejects_conflict(tmp_path) -> None:
+    signer = Ed25519ValidationReportTransferSigner("77" * 32)
+    sender = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "sender"), transfer_signer=signer)
+    requested = sender.request_validation(endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0)
+    sender.assign_epoch_requests(epoch_id="epoch-1", validator_entries=[{"validator_id": "val-1", "validator_label": "validator-a", "shares": 1, "capability_profiles": ["llm_text"], "contribution_q": 500.0}], seed="seed-1")
+    outcome = sender.submit_validation_report(request_id=requested.request.request_id, outcome="pass", validator_label="validator-a", evidence_summary="all checks passed")
+    receiver = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True)
+    receiver.store.save_request(sender.store.get_request(requested.request.request_id))
+    receiver.store.save_assignment(sender.store.list_assignments()[0])
+    receiver.store.save_authorization(sender.store.list_authorizations()[0])
+    channel = ValidationReportTransferChannel(receiver)
+    message = ValidationReportTransferMessage(message_id="msg-1", envelope=sender.build_report_transfer_envelope(report_id=outcome.report.report_id), report=outcome.report)
+
+    first = channel.handle(message)
+    replayed = channel.handle(message)
+    conflicting = message.model_copy(update={"report": outcome.report.model_copy(update={"evidence_summary": "tampered"})})
+
+    assert first["replayed"] is False
+    assert replayed["replayed"] is True
+    with pytest.raises(ValueError, match="replay conflicts"):
+        channel.handle(conflicting)
 
 
 def test_storage_receipt_rejects_tampered_custody_payload(tmp_path) -> None:
