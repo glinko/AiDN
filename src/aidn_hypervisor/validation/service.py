@@ -112,6 +112,7 @@ class ValidationService:
         custody_store=None,
         custody_signer=None,
         transfer_signer=None,
+        require_signed_transfer_envelope: bool = False,
         require_storage_receipt_for_positive_certification: bool = False,
     ) -> None:
         self.store = store
@@ -122,6 +123,7 @@ class ValidationService:
         self.custody_store = custody_store
         self.custody_signer = custody_signer
         self.transfer_signer = transfer_signer
+        self.require_signed_transfer_envelope = require_signed_transfer_envelope
         self.require_storage_receipt_for_positive_certification = (
             require_storage_receipt_for_positive_certification
         )
@@ -1099,6 +1101,58 @@ class ValidationService:
         )
         verify_report_transfer_envelope(envelope)
         return envelope
+
+    def accept_report_transfer(
+        self,
+        *,
+        envelope: ValidationReportTransferEnvelope,
+        report: ValidationReport,
+    ) -> ValidationReportCustodyObject:
+        """Validate and durably accept a report transferred over the Validation channel."""
+        if self.require_signed_transfer_envelope and not envelope.validator_signature:
+            raise ValueError("signed validation report transfer envelope is required")
+        verify_report_transfer_envelope(envelope)
+        request = self.store.get_request(envelope.request_id)
+        if request.assignment_id != envelope.assignment_id:
+            raise ValueError("validation transfer assignment does not match request")
+        if request.authorization_id != envelope.authorization_id:
+            raise ValueError("validation transfer authorization does not match request")
+        if request.endpoint_id != envelope.endpoint_id:
+            raise ValueError("validation transfer endpoint does not match request")
+        if request.configuration_hash != envelope.endpoint_configuration_hash:
+            raise ValueError("validation transfer configuration does not match request")
+        if report.report_id != envelope.report_id or report.request_id != request.request_id:
+            raise ValueError("validation transfer report does not match envelope")
+        if report.endpoint_id != request.endpoint_id:
+            raise ValueError("validation transfer report endpoint does not match request")
+        if report.configuration_hash != request.configuration_hash:
+            raise ValueError("validation transfer report configuration does not match request")
+        report_hash, report_size = validation_report_integrity(report)
+        if report_hash != envelope.report_hash or report_size != envelope.report_size:
+            raise ValueError("validation transfer report integrity does not match envelope")
+        if self.custody_store is None:
+            raise ValueError("Validation report custody store is not configured")
+        custody_object = self.custody_store.store_report(report)
+        self.store.save_report(report)
+        self.store.save_report_custody_object(custody_object)
+        commitment = self._create_report_commitment(request=request, report=report)
+        if (
+            commitment.report_hash != envelope.report_hash
+            or commitment.report_locator != envelope.report_locator
+        ):
+            raise ValueError("validation transfer commitment does not match envelope")
+        self.store.save_report_commitment(commitment)
+        self._emit(
+            event_type="validation_report_transfer_accepted",
+            message="validation report transfer accepted into endpoint custody",
+            details={
+                "transfer_id": envelope.transfer_id,
+                "report_id": report.report_id,
+                "report_hash": report_hash,
+                "endpoint_id": report.endpoint_id,
+            },
+        )
+        return custody_object
 
     def create_report_storage_receipt(
         self,

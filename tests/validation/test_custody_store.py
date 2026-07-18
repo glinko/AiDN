@@ -312,6 +312,34 @@ def test_report_transfer_envelope_can_be_signed_by_validator(tmp_path) -> None:
     assert envelope.validator_signature is not None
 
 
+def test_receiver_accepts_signed_report_transfer_into_custody(tmp_path) -> None:
+    signer = Ed25519ValidationReportTransferSigner("66" * 32)
+    sender = ValidationService(
+        ValidationStore(),
+        custody_store=ValidationReportCustodyStore(tmp_path / "sender-custody"),
+        transfer_signer=signer,
+    )
+    requested = sender.request_validation(endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0)
+    sender.assign_epoch_requests(epoch_id="epoch-1", validator_entries=[{"validator_id": "val-1", "validator_label": "validator-a", "shares": 1, "capability_profiles": ["llm_text"], "contribution_q": 500.0}], seed="seed-1")
+    outcome = sender.submit_validation_report(request_id=requested.request.request_id, outcome="pass", validator_label="validator-a", evidence_summary="all checks passed")
+    envelope = sender.build_report_transfer_envelope(report_id=outcome.report.report_id)
+
+    receiver = ValidationService(
+        ValidationStore(),
+        custody_store=ValidationReportCustodyStore(tmp_path / "receiver-custody"),
+        require_signed_transfer_envelope=True,
+    )
+    receiver.store.save_request(sender.store.get_request(requested.request.request_id))
+    receiver.store.save_assignment(sender.store.list_assignments()[0])
+    receiver.store.save_authorization(sender.store.list_authorizations()[0])
+
+    accepted = receiver.accept_report_transfer(envelope=envelope, report=outcome.report)
+
+    assert accepted.report_hash == outcome.commitment.report_hash
+    assert receiver.get_custody_report_body(accepted.report_hash)["endpoint_id"] == "ep-1"
+    assert receiver.store.get_report_commitment(outcome.report.report_id).report_hash == accepted.report_hash
+
+
 def test_storage_receipt_rejects_tampered_custody_payload(tmp_path) -> None:
     custody = ValidationReportCustodyStore(tmp_path / "custody")
     signer = Ed25519ValidationReportCustodySigner("22" * 32)
