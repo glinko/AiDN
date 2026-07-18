@@ -234,6 +234,7 @@ class LedgerOperationService:
             fee_payer=funding.consumer_funding_account,
             payload={
                 "session_id": funding.session_id,
+                "session_contract_hash": funding.session_contract_hash,
                 "funding_class": funding.funding_class,
                 "funding_state_hash": locked.funding_state_hash,
                 "total_locked_amount_q_atoms": funding.total_locked_amount_q_atoms,

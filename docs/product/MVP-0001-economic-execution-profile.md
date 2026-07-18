@@ -59,17 +59,17 @@ Implemented now:
 - Final Usage enforcement at Runtime terminal transition.
 - Canonical `q_atoms` funding accounts, escrow lock, proposal, acceptance,
   cooperative finalization and the two conservative forced-settlement rules.
+- Public `POST /api/v1/endpoints/{endpoint_id}/mvp-sessions` creates an
+  `MVP-0001` Session Contract, locks canonical escrow and records the Funding
+  Account hash; the legacy float-Q deposit is display-only on that path.
 - Snapshot persistence and replay-safe Ledger operation records for that
   canonical economic path.
 
 Still required before public paid-MVP launch:
 
-1. Make the Session API create only this profile's canonical Funding Account
-   and Settlement Input Set, rather than the legacy float-Q deposit projection.
-2. Bind a Runtime Result and Final Usage Report into that one-Request Session
+1. Bind a Runtime Result and Final Usage Report into that one-Request Session
    record.
-3. Expose consumer proposal acceptance and timeout actions through the public
+2. Expose consumer proposal acceptance and timeout actions through the public
    API/dashboard with authenticated signatures.
-4. Add an end-to-end smoke test: endpoint publish, session, escrow, request,
+3. Add an end-to-end smoke test: endpoint publish, session, escrow, request,
    result, final Usage, proposal, acceptance and Ledger finalization.
-

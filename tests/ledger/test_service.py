@@ -188,6 +188,38 @@ def test_session_open_and_settle_record_canonical_ledger_operations() -> None:
     assert closed.settlement.settlement_evidence_root == operations[1]["payload"]["settlement_evidence_root"]
 
 
+def test_mvp_fixed_price_session_binds_canonical_escrow_to_session_contract() -> None:
+    service = _hypervisor()
+    endpoint_service = EndpointService(EndpointStore())
+    endpoint = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-endpoint",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Fixed price endpoint",
+            model_class="llm.chat",
+        )
+    ).endpoint
+    service.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+
+    session, deposit, funding = service.open_mvp_fixed_price_session(
+        session_service=service.session_service,
+        endpoint=endpoint,
+        client_wallet="wallet-consumer",
+        deposit_q_atoms=1_000,
+        fixed_price_q_atoms=900,
+        network_fee_reserve_q_atoms=100,
+    )
+
+    assert session.economic_profile == "MVP-0001"
+    assert session.deposit_locked_q_atoms == 1_000
+    assert session.canonical_funding_state_hash == funding.funding_state_hash
+    assert funding.session_contract_hash == session.session_contract_hash
+    assert deposit.locked_q == 0.001
+    assert service.wallet_q_atom_balance("wallet-consumer") == 0
+    assert service.list_ledger_operations()[-1]["operation_type"] == "SESSION_ESCROW_LOCK"
+
+
 def test_session_accounting_report_and_acknowledgement_record_canonical_ledger_operations() -> None:
     service = _hypervisor()
     session_service = service.session_service

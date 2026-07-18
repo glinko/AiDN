@@ -3,7 +3,7 @@ from uuid import uuid4
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand, UpdateEndpointCommand
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AttachProxyTargetRequest(BaseModel):
@@ -13,6 +13,13 @@ class AttachProxyTargetRequest(BaseModel):
 class OpenSessionRequest(BaseModel):
     client_wallet: str
     deposit_q: float
+
+
+class OpenMvpFixedPriceSessionRequest(BaseModel):
+    client_wallet: str
+    deposit_q_atoms: int = Field(gt=0)
+    fixed_price_q_atoms: int = Field(ge=0)
+    network_fee_reserve_q_atoms: int = Field(default=0, ge=0)
 
 
 def build_endpoint_router(
@@ -245,6 +252,48 @@ def build_endpoint_router(
             {
                 "session": result.session.model_dump(mode="json"),
                 "deposit": result.deposit.model_dump(mode="json"),
+            },
+            status_code=201,
+        )
+
+    @router.post("/{endpoint_id}/mvp-sessions", status_code=201)
+    async def open_mvp_fixed_price_session(
+        endpoint_id: str,
+        request: OpenMvpFixedPriceSessionRequest,
+    ) -> JSONResponse:
+        if session_service is None or hypervisor_service is None:
+            return _error(
+                503,
+                "mvp_session_unavailable",
+                "MVP economic Session service is not configured",
+            )
+        try:
+            endpoint = service.get_endpoint(endpoint_id).endpoint
+        except KeyError:
+            return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        try:
+            accounting_contract = hypervisor_service.accounting_contract_for_endpoint(
+                endpoint
+            )
+        except KeyError:
+            accounting_contract = None
+        try:
+            session, deposit, funding = hypervisor_service.open_mvp_fixed_price_session(
+                session_service=session_service,
+                endpoint=endpoint,
+                client_wallet=request.client_wallet,
+                deposit_q_atoms=request.deposit_q_atoms,
+                fixed_price_q_atoms=request.fixed_price_q_atoms,
+                network_fee_reserve_q_atoms=request.network_fee_reserve_q_atoms,
+                accounting_contract=accounting_contract,
+            )
+        except ValueError as error:
+            return _error(409, "mvp_session_open_rejected", str(error))
+        return _ok(
+            {
+                "session": session.model_dump(mode="json"),
+                "deposit": deposit.model_dump(mode="json"),
+                "funding": funding.model_dump(mode="json"),
             },
             status_code=201,
         )

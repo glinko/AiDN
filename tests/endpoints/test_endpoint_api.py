@@ -57,6 +57,46 @@ def test_create_endpoint_api_returns_enveloped_response() -> None:
     assert body["correlation_id"]
 
 
+def test_open_mvp_fixed_price_session_locks_canonical_escrow() -> None:
+    hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    endpoint_service = EndpointService(EndpointStore())
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            session_service=SessionService(SessionStore()),
+        )
+    )
+    endpoint = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-endpoint",
+            "bundle_id": "bundle-a",
+            "bundle_hash": "bundle-hash-a",
+            "display_name": "Fixed price endpoint",
+            "model_class": "llm.chat",
+        },
+    ).json()["data"]["endpoint"]
+    hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+        },
+    )
+    body = response.json()
+
+    assert response.status_code == 201
+    assert body["data"]["session"]["economic_profile"] == "MVP-0001"
+    assert body["data"]["session"]["canonical_funding_state_hash"]
+    assert body["data"]["funding"]["total_locked_amount_q_atoms"] == 1_000
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
+
+
 def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
     hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
     hypervisor.bundle_for_runtime_binding = (  # type: ignore[attr-defined]

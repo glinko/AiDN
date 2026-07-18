@@ -30,6 +30,9 @@ class EndpointSession(BaseModel):
     expires_at: str
     idle_deadline_at: str
     deposit_locked_q: float = Field(gt=0.0)
+    economic_profile: str | None = None
+    deposit_locked_q_atoms: int | None = Field(default=None, gt=0)
+    canonical_funding_state_hash: str | None = None
     request_count: int = Field(default=0, ge=0)
     reserved_slot_index: int | None = Field(default=None, ge=0)
     queue_policy_snapshot: str

@@ -71,6 +71,7 @@ def canonical_hash(payload: dict) -> str:
 
 class SessionFundingAccount(BaseModel):
     session_id: str = Field(min_length=1)
+    session_contract_hash: str | None = None
     funding_class: FundingClass
     consumer_funding_account: str = Field(min_length=1)
     endpoint_payment_beneficiary: str = Field(min_length=1)

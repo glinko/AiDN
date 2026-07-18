@@ -251,6 +251,8 @@ class SessionService:
         accounting_contract_snapshot: dict,
         session_policy_snapshot: dict,
         accepted_at: str,
+        economic_profile: str | None = None,
+        deposit_q_atoms: int | None = None,
     ) -> dict:
         return {
             "session_id": session_id,
@@ -261,6 +263,8 @@ class SessionService:
             "consumer_refund_beneficiary": consumer_refund_beneficiary,
             "node_id": node_id,
             "deposit_locked_q": deposit_q,
+            "economic_profile": economic_profile,
+            "deposit_locked_q_atoms": deposit_q_atoms,
             "advertisement_id": advertisement_id,
             "offer_id": offer_id,
             "pricing_policy_hash": pricing_policy_hash,
@@ -398,6 +402,9 @@ class SessionService:
         endpoint_configuration_hash: str | None = None,
         endpoint_payment_beneficiary: str | None = None,
         consumer_refund_beneficiary: str | None = None,
+        session_id: str | None = None,
+        economic_profile: str | None = None,
+        deposit_q_atoms: int | None = None,
     ) -> SessionResult:
         session_policy_snapshot = dict(session_policy)
         session_policy_snapshot.setdefault("network_fee_q", self.network_fee_q)
@@ -449,7 +456,7 @@ class SessionService:
         maximum_session_duration_seconds = int(
             session_policy.get("maximum_session_duration_seconds", 3600) or 3600
         )
-        session_id = f"sess-{uuid4().hex[:12]}"
+        session_id = session_id or f"sess-{uuid4().hex[:12]}"
         session_contract_payload = self._session_contract_payload(
             session_id=session_id,
             endpoint_id=endpoint_id,
@@ -467,6 +474,8 @@ class SessionService:
             accounting_contract_snapshot=accounting_contract_snapshot,
             session_policy_snapshot=session_policy_snapshot,
             accepted_at=now.isoformat(),
+            economic_profile=economic_profile,
+            deposit_q_atoms=deposit_q_atoms,
         )
         session_contract_record = self._session_contract_record(
             payload=session_contract_payload,
@@ -488,6 +497,8 @@ class SessionService:
             expires_at=(now + timedelta(seconds=maximum_session_duration_seconds)).isoformat(),
             idle_deadline_at=(now + timedelta(seconds=idle_timeout_seconds)).isoformat(),
             deposit_locked_q=deposit_q,
+            economic_profile=economic_profile,
+            deposit_locked_q_atoms=deposit_q_atoms,
             reserved_slot_index=reserved_slot_index,
             queue_policy_snapshot=queue_policy,
             session_policy_snapshot=session_policy_snapshot,
@@ -553,6 +564,21 @@ class SessionService:
             status=status,
         )
         return SessionResult(session=session, deposit=deposit)
+
+    def bind_canonical_funding(
+        self,
+        session_id: str,
+        *,
+        funding_state_hash: str,
+    ) -> EndpointSession:
+        current = self.store.get_session(session_id)
+        if current.economic_profile != "MVP-0001":
+            raise ValueError("Session is not an MVP-0001 economic Session")
+        updated = current.model_copy(
+            update={"canonical_funding_state_hash": funding_state_hash}
+        )
+        self.store.save_session(updated)
+        return updated
 
     def close_session(self, session_id: str) -> SessionResult:
         current = self.store.get_session(session_id)

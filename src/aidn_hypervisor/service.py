@@ -39,6 +39,7 @@ from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.sessions.models import ProxySessionBinding
+from aidn_hypervisor.settlement.models import SessionFundingAccount
 from aidn_hypervisor.state import (
     AllocationSnapshot,
     BundleStateSnapshot,
@@ -56,6 +57,8 @@ from aidn_hypervisor.state import (
     WalletSessionSnapshot,
     WalletUsageSnapshot,
 )
+
+Q_ATOMS_PER_Q = 1_000_000
 from aidn_hypervisor.wallet import quote_usage_q
 from aidn_hypervisor.wallet_models import (
     WalletAllocationActivationEvent,
@@ -426,6 +429,65 @@ class HypervisorService:
         )
         self._persist_state()
         return funding
+
+    def open_mvp_fixed_price_session(
+        self,
+        *,
+        session_service,
+        endpoint,
+        client_wallet: str,
+        deposit_q_atoms: int,
+        fixed_price_q_atoms: int,
+        network_fee_reserve_q_atoms: int = 0,
+        accounting_contract: dict | None = None,
+    ):
+        if deposit_q_atoms <= 0:
+            raise ValueError("MVP Session deposit must be positive")
+        if network_fee_reserve_q_atoms < 0:
+            raise ValueError("Network Fee Reserve cannot be negative")
+        payment_reserve = deposit_q_atoms - network_fee_reserve_q_atoms
+        if payment_reserve < fixed_price_q_atoms:
+            raise ValueError("MVP Session deposit cannot cover fixed price")
+        if self.wallet_q_atom_balance(client_wallet) < deposit_q_atoms:
+            raise ValueError("insufficient q_atoms for MVP Session escrow")
+
+        result = session_service.open_session(
+            endpoint_id=endpoint.endpoint_id,
+            client_wallet=client_wallet,
+            provider_wallet=endpoint.owner_wallet,
+            endpoint_payment_beneficiary=endpoint.owner_wallet,
+            consumer_refund_beneficiary=client_wallet,
+            node_id=self.node_id,
+            deposit_q=deposit_q_atoms / Q_ATOMS_PER_Q,
+            deposit_q_atoms=deposit_q_atoms,
+            economic_profile="MVP-0001",
+            session_policy=endpoint.session.model_dump(mode="json"),
+            accounting_contract=accounting_contract,
+            endpoint_configuration_hash=endpoint.configuration_hash,
+        )
+        funding = SessionFundingAccount(
+            session_id=result.session.session_id,
+            session_contract_hash=result.session.session_contract_hash,
+            funding_class="ESCROW_PREPAID",
+            consumer_funding_account=client_wallet,
+            endpoint_payment_beneficiary=result.session.endpoint_payment_beneficiary,
+            consumer_refund_beneficiary=result.session.consumer_refund_beneficiary,
+            total_locked_amount_q_atoms=deposit_q_atoms,
+            endpoint_payment_reserve_q_atoms=payment_reserve,
+            network_fee_reserve_q_atoms=network_fee_reserve_q_atoms,
+            unsettled_payment_reserve_q_atoms=payment_reserve,
+            unsettled_fee_reserve_q_atoms=network_fee_reserve_q_atoms,
+        )
+        try:
+            locked = self.lock_session_funding(funding)
+        except Exception:
+            session_service.store.discard_open_session(result.session.session_id)
+            raise
+        session = session_service.bind_canonical_funding(
+            result.session.session_id,
+            funding_state_hash=str(locked.funding_state_hash),
+        )
+        return session, result.deposit, locked
 
     def record_ledger_operation(
         self,
