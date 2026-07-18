@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from aidn_hypervisor.validation.models import (
     ValidationReport,
     ValidationReportTransferEnvelope,
+    ValidationReportTransferReplay,
     canonical_validation_hash,
 )
 
@@ -22,7 +23,6 @@ class ValidationReportTransferChannel:
 
     def __init__(self, validation_service) -> None:
         self.validation_service = validation_service
-        self._processed_messages: dict[str, str] = {}
 
     def handle(self, message: ValidationReportTransferMessage) -> dict:
         if message.channel_class != "VALIDATION":
@@ -30,9 +30,11 @@ class ValidationReportTransferChannel:
         if message.message_type != "VALIDATION_REPORT_TRANSFER":
             raise ValueError("unsupported validation channel message type")
         fingerprint = canonical_validation_hash(message.model_dump(mode="json"))
-        existing = self._processed_messages.get(message.message_id)
+        existing = self.validation_service.store.get_report_transfer_replay(
+            message.message_id
+        )
         if existing is not None:
-            if existing != fingerprint:
+            if existing.payload_hash != fingerprint:
                 raise ValueError("validation channel message replay conflicts with prior payload")
             return {
                 "message_id": message.message_id,
@@ -44,7 +46,15 @@ class ValidationReportTransferChannel:
             envelope=message.envelope,
             report=message.report,
         )
-        self._processed_messages[message.message_id] = fingerprint
+        self.validation_service.store.save_report_transfer_replay(
+            ValidationReportTransferReplay(
+                message_id=message.message_id,
+                payload_hash=fingerprint,
+                report_hash=custody_object.report_hash,
+                endpoint_id=message.envelope.endpoint_id,
+                accepted_at=message.envelope.created_at,
+            )
+        )
         return {
             "message_id": message.message_id,
             "acknowledgment": "PROCESSED",

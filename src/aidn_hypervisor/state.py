@@ -34,6 +34,7 @@ from aidn_hypervisor.validation.models import (
     ValidationReport,
     ValidationReportStorageFailure,
     ValidationReportStorageReceipt,
+    ValidationReportTransferReplay,
     ValidationRequest,
     ValidationStatusSnapshot,
     ValidationValidatorEntry,
@@ -303,6 +304,9 @@ class HypervisorStateSnapshot(BaseModel):
         default_factory=list
     )
     validation_report_storage_failures: list[ValidationReportStorageFailure] = Field(
+        default_factory=list
+    )
+    validation_report_transfer_replays: list[ValidationReportTransferReplay] = Field(
         default_factory=list
     )
     validation_report_custody_states: list[ValidationReportCustodyState] = Field(

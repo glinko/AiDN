@@ -129,6 +129,8 @@ Progress 2026-07-18: an endpoint-side receiver contract now verifies the transfe
 
 Progress 2026-07-18: a transport-neutral `VALIDATION_REPORT_TRANSFER` message profile now delegates to the receiver contract and enforces idempotent Message ID handling with conflicting-replay rejection. The adapter is intentionally in-process because the current product has no RFC-0042 Hypervisor network dispatcher; persistence of replay state and real transport integration remain pending.
 
+Progress 2026-07-18: Message ID replay records are now persisted with the Validation state snapshot, so the channel adapter preserves idempotency through Hypervisor restart. Retention bounds, network-level sequence reconciliation and a shared RFC-0042 dispatcher remain pending.
+
 ### Slice 4: Compact Ledger Operations and Dual Write
 
 - Extend `VALIDATION_REPORT_COMMIT` with compact Certification inputs and receipt/failure references.

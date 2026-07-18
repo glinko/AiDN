@@ -272,6 +272,14 @@ class ValidationReportTransferEnvelope(BaseModel):
         return self
 
 
+class ValidationReportTransferReplay(BaseModel):
+    message_id: str
+    payload_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    endpoint_id: str
+    accepted_at: str
+
+
 class ValidationReportCustodyState(BaseModel):
     report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     endpoint_id: str
