@@ -260,6 +260,16 @@ class ValidationReportTransferEnvelope(BaseModel):
     report_size: int = Field(ge=0)
     report_locator: str
     created_at: str
+    validator_public_key: str | None = None
+    validator_signature: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_signature_pair(self):
+        if bool(self.validator_public_key) != bool(self.validator_signature):
+            raise ValueError(
+                "validator_public_key and validator_signature must be provided together"
+            )
+        return self
 
 
 class ValidationReportCustodyState(BaseModel):

@@ -29,6 +29,10 @@ from aidn_hypervisor.validation.custody_signing import (
     storage_receipt_signing_payload,
     verify_storage_receipt,
 )
+from aidn_hypervisor.validation.transfer_signing import (
+    transfer_envelope_signing_payload,
+    verify_report_transfer_envelope,
+)
 
 
 DEFAULT_VALIDATION_BOND_Q = 500.0
@@ -107,6 +111,7 @@ class ValidationService:
         operation_recorder=None,
         custody_store=None,
         custody_signer=None,
+        transfer_signer=None,
         require_storage_receipt_for_positive_certification: bool = False,
     ) -> None:
         self.store = store
@@ -116,6 +121,7 @@ class ValidationService:
         self.operation_recorder = operation_recorder
         self.custody_store = custody_store
         self.custody_signer = custody_signer
+        self.transfer_signer = transfer_signer
         self.require_storage_receipt_for_positive_certification = (
             require_storage_receipt_for_positive_certification
         )
@@ -1052,6 +1058,8 @@ class ValidationService:
             raise ValueError("validation authorization does not bind to report request")
         if authorization.status != "issued":
             raise ValueError("validation authorization is not active")
+        if datetime.fromisoformat(authorization.expires_at) <= datetime.now(timezone.utc):
+            raise ValueError("validation authorization is expired")
         commitment = self.store.get_report_commitment(report_id)
         transfer_seed = canonical_validation_hash(
             {
@@ -1064,7 +1072,7 @@ class ValidationService:
                 "report_hash": commitment.report_hash,
             }
         )
-        return ValidationReportTransferEnvelope(
+        unsigned_envelope = ValidationReportTransferEnvelope(
             transfer_id=f"report-transfer-{transfer_seed.removeprefix('sha256:')}",
             report_id=report.report_id,
             request_id=request.request_id,
@@ -1077,6 +1085,20 @@ class ValidationService:
             report_locator=commitment.report_locator,
             created_at=self._now(),
         )
+        if self.transfer_signer is None:
+            return unsigned_envelope
+        envelope = unsigned_envelope.model_copy(
+            update={"validator_public_key": self.transfer_signer.public_key}
+        )
+        envelope = envelope.model_copy(
+            update={
+                "validator_signature": self.transfer_signer.sign(
+                    transfer_envelope_signing_payload(envelope)
+                )
+            }
+        )
+        verify_report_transfer_envelope(envelope)
+        return envelope
 
     def create_report_storage_receipt(
         self,

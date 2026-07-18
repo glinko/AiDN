@@ -7,6 +7,10 @@ from aidn_hypervisor.validation.custody_signing import (
     Ed25519ValidationReportCustodySigner,
     verify_storage_receipt,
 )
+from aidn_hypervisor.validation.transfer_signing import (
+    Ed25519ValidationReportTransferSigner,
+    verify_report_transfer_envelope,
+)
 from aidn_hypervisor.validation.models import ValidationReport, validation_report_integrity
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.validation.service import ValidationService
@@ -280,6 +284,32 @@ def test_report_transfer_envelope_binds_assignment_and_authorization(tmp_path) -
     assert envelope.assignment_id == assigned.assignments[0].assignment_id
     assert envelope.authorization_id == assigned.authorizations[0].authorization_id
     assert envelope.report_hash == outcome.commitment.report_hash
+
+
+def test_report_transfer_envelope_can_be_signed_by_validator(tmp_path) -> None:
+    service = ValidationService(
+        ValidationStore(),
+        custody_store=ValidationReportCustodyStore(tmp_path / "custody"),
+        transfer_signer=Ed25519ValidationReportTransferSigner("55" * 32),
+    )
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[{"validator_id": "val-1", "validator_label": "validator-a", "shares": 1, "capability_profiles": ["llm_text"], "contribution_q": 500.0}],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(request_id=requested.request.request_id, outcome="pass", validator_label="validator-a", evidence_summary="all checks passed")
+
+    envelope = service.build_report_transfer_envelope(report_id=outcome.report.report_id)
+
+    verify_report_transfer_envelope(envelope)
+    assert envelope.validator_public_key is not None
+    assert envelope.validator_signature is not None
 
 
 def test_storage_receipt_rejects_tampered_custody_payload(tmp_path) -> None:

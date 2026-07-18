@@ -123,6 +123,8 @@ Progress 2026-07-18: a compatibility-preserving service policy can now require a
 
 Progress 2026-07-18: the validation service can build a compact transfer envelope that binds a completed report to its persisted Assignment, Authorization, Endpoint, Configuration Hash and report integrity commitment. It is the future `VALIDATION` channel payload; assignment-key signatures, expiry enforcement and concealed identity handling are still pending.
 
+Progress 2026-07-18: transfer envelopes now reject expired authorizations and optionally carry a separately injected Ed25519 validator signature. Unsigned envelopes remain available only for migration compatibility; canonical validator-key authorization, receiver-side transfer acceptance and RFC-0042 delivery are still pending.
+
 ### Slice 4: Compact Ledger Operations and Dual Write
 
 - Extend `VALIDATION_REPORT_COMMIT` with compact Certification inputs and receipt/failure references.
