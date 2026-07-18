@@ -89,6 +89,27 @@ class ProviderInstallationDiagnosticsRequest(BaseModel):
     selected_secret_handles: list[dict] = Field(default_factory=list)
 
 
+class RegisterProviderPluginReleaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    manifest: dict
+    source_reference: str | None = None
+    release_status: Literal[
+        "AVAILABLE",
+        "DEPRECATED",
+        "SECURITY_WARNING",
+        "SECURITY_BLOCKED",
+        "REVOKED",
+    ] = "AVAILABLE"
+
+
+class InstallProviderPluginReleaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    granted_permissions: list[str] = Field(default_factory=list)
+    installation_source: Literal["PACKAGE", "LEGACY_BUILTIN"] = "PACKAGE"
+
+
 class ApplyProviderInstallationApprovalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1141,6 +1162,46 @@ def build_api_router(
     @router.get("/operators/provider-plugins")
     async def list_provider_plugins() -> dict:
         return {"items": service.provider_inventory.list_plugin_manifests()}
+
+    @router.get("/operators/provider-plugin-releases")
+    async def list_provider_plugin_releases() -> dict:
+        return {"items": service.list_provider_plugin_releases()}
+
+    @router.get("/operators/installed-provider-plugins")
+    async def list_installed_provider_plugins() -> dict:
+        return {"items": service.list_installed_provider_plugins()}
+
+    @router.post("/operators/provider-plugin-releases")
+    async def register_provider_plugin_release(
+        payload: RegisterProviderPluginReleaseRequest,
+    ) -> dict:
+        try:
+            return service.register_provider_plugin_release(
+                manifest=payload.manifest,
+                source_reference=payload.source_reference,
+                release_status=payload.release_status,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-plugin-releases/{release_id}/install")
+    async def install_provider_plugin_release(
+        release_id: str,
+        payload: InstallProviderPluginReleaseRequest,
+    ) -> dict:
+        try:
+            return service.install_provider_plugin_release(
+                release_id=release_id,
+                granted_permissions=payload.granted_permissions,
+                installation_source=payload.installation_source,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown plugin release: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.post("/operators/provider-plugins/{plugin_id}/installation-plan")
     async def build_provider_installation_plan(

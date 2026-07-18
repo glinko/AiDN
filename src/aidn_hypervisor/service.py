@@ -2383,6 +2383,48 @@ class HypervisorService:
             for approval in self.provider_inventory.list_installation_approvals()
         ]
 
+    def list_provider_plugin_releases(self) -> list[dict]:
+        return [
+            release.model_dump(mode="json")
+            for release in self.provider_inventory.list_plugin_releases()
+        ]
+
+    def list_installed_provider_plugins(self) -> list[dict]:
+        return [
+            installed_plugin.model_dump(mode="json")
+            for installed_plugin in self.provider_inventory.list_installed_plugins()
+        ]
+
+    def register_provider_plugin_release(
+        self,
+        *,
+        manifest: dict,
+        source_reference: str | None = None,
+        release_status: str = "AVAILABLE",
+    ) -> dict:
+        release = self.provider_inventory.register_plugin_release(
+            manifest_payload=manifest,
+            source_reference=source_reference,
+            release_status=release_status,
+        )
+        self._persist_state()
+        return release.model_dump(mode="json")
+
+    def install_provider_plugin_release(
+        self,
+        *,
+        release_id: str,
+        granted_permissions: list[str] | None = None,
+        installation_source: str = "PACKAGE",
+    ) -> dict:
+        installed_plugin = self.provider_inventory.install_plugin_release(
+            release_id=release_id,
+            granted_permissions=granted_permissions,
+            installation_source=installation_source,
+        )
+        self._persist_state()
+        return installed_plugin.model_dump(mode="json")
+
     def list_provider_installation_jobs(self) -> list[dict]:
         return [
             job.model_dump(mode="json")
@@ -2867,6 +2909,14 @@ class HypervisorService:
                 ModelInstallSnapshot(**job)
                 for job in self._model_installs.values()
             ],
+            plugin_releases=[
+                release.model_copy(deep=True)
+                for release in self.provider_inventory.list_plugin_releases()
+            ],
+            installed_plugins=[
+                installed_plugin.model_copy(deep=True)
+                for installed_plugin in self.provider_inventory.list_installed_plugins()
+            ],
             provider_instances=[
                 instance.model_copy(deep=True)
                 for instance in self.provider_inventory.list_provider_instances()
@@ -3006,6 +3056,10 @@ class HypervisorService:
             store=InMemoryProviderInventoryStore(),
             installation_executor=installation_executor,
         )
+        for release in snapshot.plugin_releases:
+            self.provider_inventory.store.save_plugin_release(release)
+        for installed_plugin in snapshot.installed_plugins:
+            self.provider_inventory.store.save_installed_plugin(installed_plugin)
         for instance in snapshot.provider_instances:
             self.provider_inventory.store.save_provider_instance(instance)
         for deployment in snapshot.model_deployments:

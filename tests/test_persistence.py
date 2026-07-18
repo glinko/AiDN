@@ -20,6 +20,7 @@ from aidn_hypervisor.main import _build_default_service
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
+from aidn_hypervisor.providers.models import InstalledPlugin, PluginRelease
 from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.remote_endpoints.models import RemoteEndpointReference
@@ -189,6 +190,40 @@ def test_file_state_store_round_trips_snapshot(tmp_path: Path) -> None:
     restored = store.load()
 
     assert restored == snapshot
+
+
+def test_file_state_store_round_trips_plugin_release_and_local_installation(
+    tmp_path: Path,
+) -> None:
+    store = FileStateStore(tmp_path / "plugin-release-state.json")
+    release = PluginRelease(
+        release_id="prl-fake",
+        plugin_id="aidn.provider.fake",
+        plugin_version="1.0.0",
+        manifest_hash="sha256:" + "a" * 64,
+        package_digest="sha256:" + "b" * 64,
+        publisher="AiDN Test",
+        trust_status="CONFORMANCE_TESTED",
+        declared_permissions=["network.private"],
+        published_at="2026-07-18T00:00:00Z",
+    )
+    installed = InstalledPlugin(
+        installed_plugin_id="iplg-fake",
+        release_id=release.release_id,
+        plugin_id=release.plugin_id,
+        plugin_version=release.plugin_version,
+        granted_permissions=["network.private"],
+        installation_source="PACKAGE",
+        installed_at="2026-07-18T00:00:01Z",
+    )
+    snapshot = HypervisorStateSnapshot(
+        plugin_releases=[release],
+        installed_plugins=[installed],
+    )
+
+    store.save(snapshot)
+
+    assert store.load() == snapshot
 
 
 def test_file_state_store_returns_empty_snapshot_when_file_is_missing(

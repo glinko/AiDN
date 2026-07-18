@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 from aidn_hypervisor.dispatcher.models import (
     DeadLetterRecord,
     DeliveryRecord,
@@ -5,7 +7,9 @@ from aidn_hypervisor.dispatcher.models import (
     DispatcherRoute,
     NetworkMessage,
 )
-from aidn_hypervisor.state import HypervisorStateSnapshot
+
+if TYPE_CHECKING:
+    from aidn_hypervisor.state import HypervisorStateSnapshot
 
 
 class DispatcherStore:
@@ -20,7 +24,7 @@ class DispatcherStore:
         self.dead_letters: list[DeadLetterRecord] = []
         self.restore()
 
-    def restore(self, snapshot: HypervisorStateSnapshot | None = None) -> None:
+    def restore(self, snapshot: "HypervisorStateSnapshot | None" = None) -> None:
         if snapshot is None:
             if self._state_store is None:
                 return

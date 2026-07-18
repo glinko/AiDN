@@ -17,7 +17,9 @@ from aidn_hypervisor.dispatcher.models import (
     NetworkMessage,
 )
 from aidn_hypervisor.providers.models import (
+    InstalledPlugin,
     ModelDeployment,
+    PluginRelease,
     ProviderArtifactMaterialization,
     ProviderInstallationApproval,
     ProviderInstallationJob,
@@ -289,6 +291,8 @@ class HypervisorStateSnapshot(BaseModel):
     bundle_states: list[BundleStateSnapshot] = Field(default_factory=list)
     allocations: list[AllocationSnapshot] = Field(default_factory=list)
     model_installs: list[ModelInstallSnapshot] = Field(default_factory=list)
+    plugin_releases: list[PluginRelease] = Field(default_factory=list)
+    installed_plugins: list[InstalledPlugin] = Field(default_factory=list)
     provider_instances: list[ProviderInstance] = Field(default_factory=list)
     model_deployments: list[ModelDeployment] = Field(default_factory=list)
     runtime_bindings: list[RuntimeBinding] = Field(default_factory=list)

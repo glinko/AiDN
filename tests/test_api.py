@@ -3767,6 +3767,38 @@ def test_provider_inventory_operator_routes_attach_discover_and_bind() -> None:
     assert compatibility_bundle.endpoint == "http://127.0.0.1:9999"
 
 
+def test_provider_plugin_release_routes_record_local_installation_without_execution() -> None:
+    service = _service()
+    client = TestClient(build_app(service=service))
+    manifest = service.plugins.get("fake-managed").plugin_manifest()
+
+    register_response = client.post(
+        "/operators/provider-plugin-releases",
+        json={
+            "manifest": manifest,
+            "source_reference": "registry://plugins/fake-managed",
+        },
+    )
+
+    assert register_response.status_code == 200
+    release = register_response.json()
+    assert release["release_status"] == "AVAILABLE"
+    assert client.get("/operators/provider-plugin-releases").json()["items"] == [release]
+
+    install_response = client.post(
+        f"/operators/provider-plugin-releases/{release['release_id']}/install",
+        json={"granted_permissions": release["declared_permissions"]},
+    )
+
+    assert install_response.status_code == 200
+    installed_plugin = install_response.json()
+    assert installed_plugin["release_id"] == release["release_id"]
+    assert installed_plugin["state"] == "INSTALLED"
+    assert client.get("/operators/installed-provider-plugins").json()["items"] == [
+        installed_plugin
+    ]
+
+
 def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:
     client = TestClient(build_app(service=_service()))
 

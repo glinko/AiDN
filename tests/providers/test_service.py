@@ -37,6 +37,65 @@ def _registry() -> PluginRegistry:
     return registry
 
 
+def test_plugin_release_registration_and_local_install_are_metadata_only() -> None:
+    registry = _registry()
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    manifest = registry.get("fake-managed").plugin_manifest()
+
+    release = service.register_plugin_release(
+        manifest_payload=manifest,
+        source_reference="registry://plugins/fake-managed",
+    )
+    installed = service.install_plugin_release(
+        release_id=release.release_id,
+        granted_permissions=release.declared_permissions,
+    )
+
+    assert release.plugin_id == "fake-managed"
+    assert release.release_status == "AVAILABLE"
+    assert installed.release_id == release.release_id
+    assert installed.state == "INSTALLED"
+    assert installed.installation_source == "PACKAGE"
+    assert service.list_plugin_releases() == [release]
+    assert service.list_installed_plugins() == [installed]
+    assert service.register_plugin_release(
+        manifest_payload=manifest,
+        source_reference="registry://plugins/fake-managed",
+    ) == release
+
+
+def test_plugin_release_install_rejects_unapproved_or_blocked_permissions() -> None:
+    registry = _registry()
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    manifest = registry.get("fake-managed").plugin_manifest()
+    release = service.register_plugin_release(manifest_payload=manifest)
+
+    with pytest.raises(ValueError, match="require local approval"):
+        service.install_plugin_release(release_id=release.release_id)
+
+    with pytest.raises(ValueError, match="declared by the plugin release"):
+        service.install_plugin_release(
+            release_id=release.release_id,
+            granted_permissions=[*release.declared_permissions, "wallet.keys"],
+        )
+
+    service.store.save_plugin_release(
+        release.model_copy(update={"release_status": "SECURITY_BLOCKED"})
+    )
+
+    with pytest.raises(ValueError, match="security_blocked"):
+        service.install_plugin_release(
+            release_id=release.release_id,
+            granted_permissions=release.declared_permissions,
+        )
+
+
 class ControlledFilesystemPlugin(FakeManagedPlugin):
     plugin_id = "controlled-fs"
 

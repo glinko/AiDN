@@ -4,23 +4,31 @@ Provider Plugin System and Directory
 
 Status: Draft
 
-Version: 0.18
+Version: 0.19
 
-Revision note: Plugin Manifests declare allowed `PLUGIN_CONTROL` message types,
-Provider Instance scope, managed Runtime IDs and external egress permissions.
-Permission expansion requires approval and increments affected Route Generations.
+Revision note: adds immutable Plugin Release and local Installed Plugin records,
+while preserving exact installation-plan approval, package/sandbox binding, shared
+model-artifact storage and Dispatcher-owned Route Generation.
 
 Supersedes:
 
-* RFC-0055 Version 0.16
+* RFC-0055 Version 0.18
 
 Depends on:
 
 * RFC-0039 Hypervisor Service Model
+* RFC-0040 AiDN Service Verification Framework
+* RFC-0042 AiDN Hypervisor Network Protocol and Dispatcher Architecture
+* RFC-0044 AiDN Session Protocol
 * RFC-0045 AiDN Capability Architecture
+* RFC-0046 AiDN Registry Architecture
 * RFC-0049 Distributed Marketplace and Endpoint Advertisement Registry
 * RFC-0053 Capability Runtime Specification
 * RFC-0054 Capability Runtime Protocol
+* RFC-0058 Participant Eligibility and Sybil Resistance
+* RFC-0059 Ledger Operation Catalog
+* RFC-0063 Proxy Endpoint Protocol
+* RFC-0066 Protocol Upgrade and Emergency Recovery
 
 ---
 
@@ -518,6 +526,81 @@ Package verification remains distinct from plugin trust status.
 
 ---
 
+## 15.1 Plugin Release
+
+A Plugin Release is one immutable package identity. It SHALL bind:
+
+* Plugin ID;
+* Plugin Version;
+* Manifest Hash;
+* Package Digest;
+* Publisher identity;
+* declared permission set;
+* release security state.
+
+Changing any package-identity field creates a new Plugin Release. A security
+state change MAY update the release record, but SHALL NOT replace its historical
+package identity.
+
+Initial release states are:
+
+* AVAILABLE;
+* DEPRECATED;
+* SECURITY_WARNING;
+* SECURITY_BLOCKED;
+* REVOKED.
+
+`SECURITY_BLOCKED` and `REVOKED` Releases SHALL NOT be newly installed or
+activated. They remain historically auditable.
+
+## 15.2 Installed Plugin
+
+An Installed Plugin is a local Hypervisor record that binds one Plugin Release
+to the permissions explicitly approved by the operator. It is distinct from a
+Plugin Release and from a Provider Instance.
+
+```yaml
+installed_plugin:
+  installed_plugin_id:
+  release_id:
+  plugin_id:
+  plugin_version:
+  granted_permissions:
+  state:
+  installation_source:
+  installed_at:
+  activated_at:
+```
+
+Installation records are local state. Directory publication alone SHALL NOT
+create an Installed Plugin, download a package, execute plugin code or grant a
+permission.
+
+The initial MVP recognizes two sources:
+
+* `PACKAGE` for a release acquired through a future verified package store;
+* `LEGACY_BUILTIN` for an adapter compiled into a Hypervisor compatibility
+  build.
+
+`LEGACY_BUILTIN` SHALL NOT be presented as a downloaded or sandboxed community
+package. It exists only to make the migration from built-in adapters explicit.
+
+## 15.3 Directory and Package-Store Boundary
+
+The Registry Directory stores signed Release metadata; it does not prove that
+the corresponding package bytes were downloaded. The Hypervisor SHALL verify:
+
+```text
+HASH(downloaded_package_bytes) == PluginRelease.package_digest
+```
+
+before Package activation. MVP Release registration may record and inspect
+verified metadata without acquiring or executing package bytes. Package Store,
+unpacking and Plugin Host activation are separate lifecycle stages so metadata
+registration can never become accidental code execution.
+
+---
+
 ## 16. Installation Recipes
 
 An Installation Recipe is a preset composed from:
@@ -590,6 +673,9 @@ this RFC.
   Installation Plan.
 * Plugin trust status is not Endpoint Certification.
 * A plugin package digest identifies one exact installable artifact.
+* A Plugin Release is immutable; an Installed Plugin is locally authorized.
+* Existing built-in adapters are visibly distinct from package-installed
+  community plugins until Plugin Host isolation is available.
 
 ---
 
@@ -604,3 +690,4 @@ this RFC.
 * Installation Recipes are presets, not protocol authorities.
 * Approval, apply-job history and executor identity remain auditable even when
   the executor is a safe recorded MVP executor.
+* Plugin Release registration does not acquire or execute package bytes.

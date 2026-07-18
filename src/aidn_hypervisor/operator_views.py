@@ -658,6 +658,8 @@ def build_operator_providers_payload(
     bundles = fleet["bundles"]
     installs = fleet["installs"]
     plugin_directory = service.provider_inventory.list_plugin_manifests()
+    plugin_releases = service.list_provider_plugin_releases()
+    installed_plugins = service.list_installed_provider_plugins()
     installation_executor = {
         "executor_id": service.provider_inventory.installation_executor.executor_id,
         "sandbox_capabilities": service.provider_inventory.executor_sandbox_capabilities(),
@@ -833,6 +835,8 @@ def build_operator_providers_payload(
         "summary": {
             "total": len(items),
             "total_plugins": len(plugin_directory),
+            "total_plugin_releases": len(plugin_releases),
+            "total_installed_plugins": len(installed_plugins),
             "installable_plugin_count": installable_plugin_count,
             "approved_installation_count": sum(
                 1 for approval in installation_approvals if approval["status"] == "APPROVED"
@@ -857,6 +861,8 @@ def build_operator_providers_payload(
         "artifact_materializations": artifact_materializations,
         "empty_state": _providers_empty_state(),
         "plugin_directory": plugin_directory,
+        "plugin_releases": plugin_releases,
+        "installed_plugins": installed_plugins,
         "installation_approvals": installation_approvals,
         "installation_jobs": installation_jobs,
         "provider_instances": enriched_provider_instances,

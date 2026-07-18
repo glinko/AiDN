@@ -15,6 +15,22 @@ PluginTrustStatus = Literal[
     "SECURITY_WARNING",
     "SECURITY_BLOCKED",
 ]
+PluginReleaseStatus = Literal[
+    "AVAILABLE",
+    "DEPRECATED",
+    "SECURITY_WARNING",
+    "SECURITY_BLOCKED",
+    "REVOKED",
+]
+InstalledPluginState = Literal[
+    "INSTALLED",
+    "ACTIVE",
+    "DISABLED",
+    "DEGRADED",
+    "SECURITY_BLOCKED",
+    "REMOVED",
+]
+InstalledPluginSource = Literal["PACKAGE", "LEGACY_BUILTIN"]
 PluginPermissionRisk = Literal["low", "medium", "high"]
 PluginSecretType = Literal[
     "NONE",
@@ -599,6 +615,84 @@ class ProviderPluginManifest(BaseModel):
             else permission
             for permission in value
         ]
+
+
+class PluginRelease(BaseModel):
+    """Immutable package identity published by a plugin source or local catalog."""
+
+    release_id: str
+    plugin_id: str
+    plugin_version: str
+    manifest_hash: str
+    package_digest: str
+    publisher: str
+    trust_status: PluginTrustStatus
+    declared_permissions: list[str] = Field(default_factory=list)
+    release_status: PluginReleaseStatus = "AVAILABLE"
+    source_reference: str | None = None
+    published_at: str
+
+    @field_validator(
+        "release_id",
+        "plugin_id",
+        "plugin_version",
+        "manifest_hash",
+        "package_digest",
+        "publisher",
+        "published_at",
+    )
+    @classmethod
+    def _required_strings_not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+    @field_validator("source_reference")
+    @classmethod
+    def _optional_source_reference_not_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
+    @field_validator("declared_permissions")
+    @classmethod
+    def _normalize_declared_permissions(cls, value: list[str]) -> list[str]:
+        return sorted({_require_non_empty(permission) for permission in value})
+
+
+class InstalledPlugin(BaseModel):
+    """Locally approved activation record for one immutable Plugin Release."""
+
+    installed_plugin_id: str
+    release_id: str
+    plugin_id: str
+    plugin_version: str
+    granted_permissions: list[str] = Field(default_factory=list)
+    state: InstalledPluginState = "INSTALLED"
+    installation_source: InstalledPluginSource
+    installed_at: str
+    activated_at: str | None = None
+
+    @field_validator(
+        "installed_plugin_id",
+        "release_id",
+        "plugin_id",
+        "plugin_version",
+        "installed_at",
+    )
+    @classmethod
+    def _required_strings_not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+    @field_validator("activated_at")
+    @classmethod
+    def _optional_activated_at_not_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
+    @field_validator("granted_permissions")
+    @classmethod
+    def _normalize_granted_permissions(cls, value: list[str]) -> list[str]:
+        return sorted({_require_non_empty(permission) for permission in value})
 
 
 class ProviderInstance(BaseModel):

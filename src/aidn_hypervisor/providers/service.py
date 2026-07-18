@@ -11,6 +11,7 @@ from aidn_hypervisor.providers.executor import (
     SandboxEnforcedProviderInstallationExecutor,
 )
 from aidn_hypervisor.providers.models import (
+    InstalledPlugin,
     InstallationPlan,
     ModelArtifact,
     ModelArtifactInventory,
@@ -19,6 +20,7 @@ from aidn_hypervisor.providers.models import (
     ProviderArtifactMaterialization,
     ModelDeployment,
     PluginPackageVerification,
+    PluginRelease,
     ProviderInstallationApproval,
     ProviderInstallationArtifact,
     ProviderInstallationArchiveExtractionResult,
@@ -76,6 +78,115 @@ class ProviderInventoryService:
 
     def list_plugin_manifests(self) -> list[dict]:
         return [self._plugin_manifest_payload(plugin) for plugin in self._list_plugins()]
+
+    def list_plugin_releases(self) -> list[PluginRelease]:
+        return self.store.list_plugin_releases()
+
+    def list_installed_plugins(self) -> list[InstalledPlugin]:
+        return self.store.list_installed_plugins()
+
+    def register_plugin_release(
+        self,
+        *,
+        manifest_payload: dict,
+        source_reference: str | None = None,
+        release_status: str = "AVAILABLE",
+    ) -> PluginRelease:
+        """Record a directory release without loading or executing its package."""
+        manifest = ProviderPluginManifest.model_validate(manifest_payload)
+        package_verification = self._package_verification(manifest)
+        self._validate_package_verification(package_verification)
+        if manifest.manifest_hash is None:
+            raise ValueError("plugin release requires a declared manifest hash")
+
+        release_identity = {
+            "plugin_id": manifest.plugin_id,
+            "plugin_version": manifest.plugin_version,
+            "manifest_hash": manifest.manifest_hash,
+            "package_digest": manifest.package_digest,
+            "publisher": manifest.publisher,
+        }
+        release_id = f"prl-{_canonical_hash(release_identity).split(':', 1)[1][:20]}"
+        try:
+            return self.store.get_plugin_release(release_id)
+        except KeyError:
+            pass
+        release = PluginRelease(
+            release_id=release_id,
+            plugin_id=manifest.plugin_id,
+            plugin_version=manifest.plugin_version,
+            manifest_hash=manifest.manifest_hash,
+            package_digest=manifest.package_digest,
+            publisher=manifest.publisher,
+            trust_status=manifest.trust_status,
+            declared_permissions=[
+                permission.permission_id for permission in manifest.required_permissions
+            ],
+            release_status=release_status,
+            source_reference=source_reference,
+            published_at=_now_iso(),
+        )
+        self.store.save_plugin_release(release)
+        return release
+
+    def install_plugin_release(
+        self,
+        *,
+        release_id: str,
+        granted_permissions: list[str] | None = None,
+        installation_source: str = "PACKAGE",
+    ) -> InstalledPlugin:
+        """Persist local approval; package acquisition and Plugin Host activation are separate."""
+        release = self.store.get_plugin_release(release_id)
+        if release.release_status in {"SECURITY_BLOCKED", "REVOKED"}:
+            raise ValueError(
+                f"plugin release cannot be installed while {release.release_status.lower()}"
+            )
+        normalized_permissions = sorted(set(granted_permissions or []))
+        if not all(permission.strip() for permission in normalized_permissions):
+            raise ValueError("granted permissions must not contain blank values")
+        undeclared_permissions = sorted(
+            set(normalized_permissions) - set(release.declared_permissions)
+        )
+        if undeclared_permissions:
+            raise ValueError(
+                "granted permissions must be declared by the plugin release: "
+                + ", ".join(undeclared_permissions)
+            )
+        missing_permissions = sorted(
+            set(release.declared_permissions) - set(normalized_permissions)
+        )
+        if missing_permissions:
+            raise ValueError(
+                "all declared plugin permissions require local approval: "
+                + ", ".join(missing_permissions)
+            )
+        existing = next(
+            (
+                installed_plugin
+                for installed_plugin in self.store.list_installed_plugins()
+                if installed_plugin.release_id == release.release_id
+            ),
+            None,
+        )
+        if existing is not None:
+            if existing.granted_permissions != normalized_permissions:
+                raise ValueError(
+                    "installed plugin permissions are immutable; install a new release instead"
+                )
+            return existing
+        installed_plugin = InstalledPlugin(
+            installed_plugin_id=f"iplg-{uuid4().hex[:12]}",
+            release_id=release.release_id,
+            plugin_id=release.plugin_id,
+            plugin_version=release.plugin_version,
+            granted_permissions=normalized_permissions,
+            state="INSTALLED",
+            installation_source=installation_source,
+            installed_at=_now_iso(),
+        )
+        self.store.save_installed_plugin(installed_plugin)
+        return installed_plugin
 
     def list_provider_instances(self) -> list[ProviderInstance]:
         return self.store.list_provider_instances()

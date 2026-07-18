@@ -1,5 +1,7 @@
 from aidn_hypervisor.providers.models import (
+    InstalledPlugin,
     ModelDeployment,
+    PluginRelease,
     ProviderInstallationApproval,
     ProviderInstallationJob,
     ProviderArtifactMaterialization,
@@ -10,12 +12,63 @@ from aidn_hypervisor.providers.models import (
 
 class InMemoryProviderInventoryStore:
     def __init__(self) -> None:
+        self._plugin_releases: dict[str, PluginRelease] = {}
+        self._installed_plugins: dict[str, InstalledPlugin] = {}
         self._provider_instances: dict[str, ProviderInstance] = {}
         self._model_deployments: dict[str, ModelDeployment] = {}
         self._runtime_bindings: dict[str, RuntimeBinding] = {}
         self._installation_approvals: dict[str, ProviderInstallationApproval] = {}
         self._installation_jobs: dict[str, ProviderInstallationJob] = {}
         self._artifact_materializations: dict[str, ProviderArtifactMaterialization] = {}
+
+    def save_plugin_release(self, release: PluginRelease) -> None:
+        current = self._plugin_releases.get(release.release_id)
+        if current is not None and (
+            current.plugin_id != release.plugin_id
+            or current.plugin_version != release.plugin_version
+            or current.manifest_hash != release.manifest_hash
+            or current.package_digest != release.package_digest
+            or current.publisher != release.publisher
+            or current.declared_permissions != release.declared_permissions
+            or current.source_reference != release.source_reference
+            or current.published_at != release.published_at
+        ):
+            raise ValueError("plugin release identity fields are immutable")
+        self._plugin_releases[release.release_id] = release.model_copy(deep=True)
+
+    def get_plugin_release(self, release_id: str) -> PluginRelease:
+        return self._plugin_releases[release_id].model_copy(deep=True)
+
+    def list_plugin_releases(self) -> list[PluginRelease]:
+        return [item.model_copy(deep=True) for item in self._plugin_releases.values()]
+
+    def save_installed_plugin(self, installed_plugin: InstalledPlugin) -> None:
+        if installed_plugin.release_id not in self._plugin_releases:
+            raise ValueError("release_id must reference an existing plugin release")
+        release = self._plugin_releases[installed_plugin.release_id]
+        if (
+            installed_plugin.plugin_id != release.plugin_id
+            or installed_plugin.plugin_version != release.plugin_version
+        ):
+            raise ValueError("installed plugin must match its plugin release")
+        current = self._installed_plugins.get(installed_plugin.installed_plugin_id)
+        if current is not None and (
+            current.release_id != installed_plugin.release_id
+            or current.plugin_id != installed_plugin.plugin_id
+            or current.plugin_version != installed_plugin.plugin_version
+            or current.granted_permissions != installed_plugin.granted_permissions
+            or current.installation_source != installed_plugin.installation_source
+        ):
+            raise ValueError("installed plugin identity and granted permissions are immutable")
+        self._installed_plugins[installed_plugin.installed_plugin_id] = installed_plugin.model_copy(
+            deep=True
+        )
+
+    def get_installed_plugin(self, installed_plugin_id: str) -> InstalledPlugin:
+        return self._installed_plugins[installed_plugin_id].model_copy(deep=True)
+
+    def list_installed_plugins(self) -> list[InstalledPlugin]:
+        return [item.model_copy(deep=True) for item in self._installed_plugins.values()]
 
     def save_artifact_materialization(self, materialization: ProviderArtifactMaterialization) -> None:
         if materialization.provider_instance_id not in self._provider_instances:
