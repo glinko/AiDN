@@ -2,7 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.3`
+Version: `0.4`
+
+Revision note: usage dimensions now carry explicit measurement authority classes
+shared by Runtime and Provider Plugin Adapter capability discovery.
+
+Supersedes:
+
+- `RFC-0051 Version 0.3`
 
 Depends on:
 
@@ -125,6 +132,28 @@ Examples:
 - fixed-price requests may not require resource measurement.
 
 The Settlement Engine SHALL preserve the Accounting Mode and verification status of every billable unit.
+
+### 4.1 Usage Authority Classes
+
+Every reported or discoverable usage dimension SHALL identify one authority
+class:
+
+- `AUTHORITATIVE_PROVIDER`: an upstream Provider is the contractually accepted
+  source;
+- `DETERMINISTIC_LOCAL`: both parties can reproduce the value from a fixed
+  local rule;
+- `OBSERVABLE_LOCAL`: the value is measured from Consumer-visible or
+  Hypervisor-observable work;
+- `ESTIMATED`: the value is informative and non-authoritative;
+- `UNAVAILABLE`: no defensible value is available.
+
+Authority is declared per dimension, not once for an entire Endpoint. A Runtime
+Adapter may report authoritative output tokens and observable execution time in
+the same Request.
+
+An `ESTIMATED` value SHALL NOT be promoted to exact billable usage without an
+Accounting Contract rule that independently makes the calculation
+deterministic. `UNAVAILABLE` remains unavailable.
 
 ## 5. Usage Reporting Obligation
 

@@ -1,6 +1,8 @@
+import hashlib
+import json
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 ProviderConnectionMode = Literal["attached", "managed"]
@@ -94,6 +96,12 @@ def _require_non_empty(value: str) -> str:
     if not value or not value.strip():
         raise ValueError("value must be non-empty")
     return value
+
+
+def plugin_permission_hash(permissions: list[str]) -> str:
+    normalized = sorted({_require_non_empty(permission) for permission in permissions})
+    payload = json.dumps(normalized, separators=(",", ":"), ensure_ascii=True)
+    return f"sha256:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
 
 
 class PluginPermission(BaseModel):
@@ -665,7 +673,11 @@ class InstalledPlugin(BaseModel):
     release_id: str
     plugin_id: str
     plugin_version: str
+    package_digest: str | None = None
     granted_permissions: list[str] = Field(default_factory=list)
+    granted_permission_hash: str | None = None
+    installation_generation: int = Field(default=1, ge=1)
+    activation_credential_key_id: str | None = None
     state: InstalledPluginState = "INSTALLED"
     installation_source: InstalledPluginSource
     installed_at: str
@@ -682,9 +694,14 @@ class InstalledPlugin(BaseModel):
     def _required_strings_not_blank(cls, value: str) -> str:
         return _require_non_empty(value)
 
-    @field_validator("activated_at")
+    @field_validator(
+        "package_digest",
+        "granted_permission_hash",
+        "activation_credential_key_id",
+        "activated_at",
+    )
     @classmethod
-    def _optional_activated_at_not_blank(cls, value: str | None) -> str | None:
+    def _optional_identity_value_not_blank(cls, value: str | None) -> str | None:
         if value is None:
             return None
         return _require_non_empty(value)
@@ -693,6 +710,17 @@ class InstalledPlugin(BaseModel):
     @classmethod
     def _normalize_granted_permissions(cls, value: list[str]) -> list[str]:
         return sorted({_require_non_empty(permission) for permission in value})
+
+    @model_validator(mode="after")
+    def _validate_installation_identity(self) -> "InstalledPlugin":
+        if self.installation_source == "PACKAGE" and self.package_digest is None:
+            raise ValueError("package-installed plugin requires package_digest")
+        expected_permission_hash = plugin_permission_hash(self.granted_permissions)
+        if self.granted_permission_hash is None:
+            self.granted_permission_hash = expected_permission_hash
+        elif self.granted_permission_hash != expected_permission_hash:
+            raise ValueError("granted_permission_hash does not match granted_permissions")
+        return self
 
 
 class ProviderInstance(BaseModel):

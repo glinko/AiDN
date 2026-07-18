@@ -170,9 +170,13 @@ class ProviderInventoryService:
             None,
         )
         if existing is not None:
-            if existing.granted_permissions != normalized_permissions:
+            if (
+                existing.granted_permissions != normalized_permissions
+                or existing.installation_source != installation_source
+            ):
                 raise ValueError(
-                    "installed plugin permissions are immutable; install a new release instead"
+                    "installed plugin permissions and source are immutable; "
+                    "install a new release or advance its installation generation"
                 )
             return existing
         installed_plugin = InstalledPlugin(
@@ -180,6 +184,7 @@ class ProviderInventoryService:
             release_id=release.release_id,
             plugin_id=release.plugin_id,
             plugin_version=release.plugin_version,
+            package_digest=release.package_digest,
             granted_permissions=normalized_permissions,
             state="INSTALLED",
             installation_source=installation_source,
@@ -187,6 +192,28 @@ class ProviderInventoryService:
         )
         self.store.save_installed_plugin(installed_plugin)
         return installed_plugin
+
+    def advance_installed_plugin_generation(
+        self,
+        *,
+        installed_plugin_id: str,
+        activation_credential_key_id: str | None = None,
+    ) -> InstalledPlugin:
+        """Invalidate stale Plugin Host processes before replacement or reauthorization."""
+        installed_plugin = self.store.get_installed_plugin(installed_plugin_id)
+        if installed_plugin.state == "REMOVED":
+            raise ValueError("removed plugin installation cannot advance generation")
+        updated = InstalledPlugin.model_validate(
+            {
+                **installed_plugin.model_dump(mode="json"),
+                "installation_generation": installed_plugin.installation_generation + 1,
+                "activation_credential_key_id": activation_credential_key_id,
+                "state": "INSTALLED",
+                "activated_at": None,
+            }
+        )
+        self.store.save_installed_plugin(updated)
+        return updated
 
     def list_provider_instances(self) -> list[ProviderInstance]:
         return self.store.list_provider_instances()

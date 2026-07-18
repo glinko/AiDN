@@ -49,6 +49,7 @@ class InMemoryProviderInventoryStore:
         if (
             installed_plugin.plugin_id != release.plugin_id
             or installed_plugin.plugin_version != release.plugin_version
+            or installed_plugin.package_digest != release.package_digest
         ):
             raise ValueError("installed plugin must match its plugin release")
         current = self._installed_plugins.get(installed_plugin.installed_plugin_id)
@@ -56,7 +57,9 @@ class InMemoryProviderInventoryStore:
             current.release_id != installed_plugin.release_id
             or current.plugin_id != installed_plugin.plugin_id
             or current.plugin_version != installed_plugin.plugin_version
+            or current.package_digest != installed_plugin.package_digest
             or current.granted_permissions != installed_plugin.granted_permissions
+            or current.granted_permission_hash != installed_plugin.granted_permission_hash
             or current.installation_source != installed_plugin.installation_source
         ):
             raise ValueError("installed plugin identity and granted permissions are immutable")

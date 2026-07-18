@@ -2,11 +2,15 @@
 
 Status: `Draft`
 
-Version: `0.2`
+Version: `0.3`
 
-Revision note: Proxy retries retain Request idempotency and the accepted Session
-route. Provider switching or Runtime replacement increments Route Generation and
-requires retry reauthorization.
+Revision note: Proxy Runtime Adapter profiles disclose upstream egress, Usage
+authority and recovery behavior through RFC-0056 while execution remains on
+RFC-0054.
+
+Supersedes:
+
+- `RFC-0063 Version 0.2`
 
 Depends on:
 
@@ -1509,6 +1513,12 @@ proxy_runtime_health:
 
 Sensitive upstream identity MAY remain concealed according to policy.
 
+A Proxy implemented by a Provider Plugin Adapter SHALL additionally expose a
+Provider-specific Adapter Profile under RFC-0056. The profile declares allowed
+upstream egress classes, credential scope, cancellation support, retry behavior,
+recovery support and Usage authority per dimension. It SHALL NOT disclose raw
+upstream credentials or private Provider addresses.
+
 ## 114. Marketplace Disclosure
 
 Marketplace presentation SHOULD include information derived from the Endpoint Advertisement and its bound proxy policy objects, including:
@@ -1595,6 +1605,11 @@ A separate Proxy registration operation is not required in the MVP.
 - `PROXY_RETRY_STARTED`
 - `PROXY_RETRY_COMPLETED`
 - `PROXY_RETRY_FAILED`
+
+Proxy Plugin management, upstream connection testing and credential setup use
+RFC-0056 `PLUGIN_CONTROL`. Consumer Requests, Runtime events, Usage Reports,
+cancellation and recovery continue to use RFC-0054 `RUNTIME`. A Plugin Manager
+session SHALL NOT become an alternate Proxy execution channel.
 
 ## 119. Session Protocol Integration
 

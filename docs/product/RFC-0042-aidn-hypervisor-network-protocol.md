@@ -4,11 +4,15 @@ AiDN Hypervisor Network Protocol and Dispatcher Architecture
 
 Status: Draft
 
-Version: 0.3
+Version: 0.4
+
+Revision note: `PLUGIN_CONTROL` uses the common RFC-0042 envelope for Plugin
+Host handshake and management payloads. Installed Plugin identity and object
+scope are authorized without creating a second message or replay layer.
 
 Supersedes:
 
-* RFC-0042 Version 0.2 - AiDN Hypervisor Network Protocol
+* RFC-0042 Version 0.3 - AiDN Hypervisor Network Protocol and Dispatcher Architecture
 
 Depends on:
 
@@ -2595,6 +2599,30 @@ and Usage Reports use only explicitly granted Runtime routes.
 External Provider or package egress is a separate policy boundary and MAY be
 restricted to declared Provider hosts, model repositories, package registries,
 OAuth hosts or no egress. Plugin permission expansion requires local approval.
+
+### 173.1 Plugin Host Message Profiles
+
+RFC-0056 handshake, capability, operation, Health, diagnostics and recovery
+objects are application payload profiles inside the common `network_message`
+envelope. They SHALL reuse RFC-0042 Message ID, source sequence, expiration,
+payload integrity, authentication, replay protection and Route Generation.
+
+The Dispatcher SHALL NOT accept a second nested transport identity as a
+replacement for the authenticated envelope source.
+
+An active Plugin control route binds:
+
+* Installed Plugin ID;
+* Installation Generation;
+* Plugin Session Identity;
+* granted permission hash;
+* owned Provider Instance and Model Deployment scope;
+* current Plugin Control Route Generation.
+
+Plugin Manager traffic targets `installed_plugin_id`. Provider and model object
+IDs remain operation scope, not alternate Plugin identities. Runtime Adapters
+register separately under RFC-0054 and use `RUNTIME`, not `PLUGIN_CONTROL`, for
+Session execution.
 
 ## 174. Bounded Queues and Admission
 

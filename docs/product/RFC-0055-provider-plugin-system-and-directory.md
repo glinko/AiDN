@@ -4,15 +4,15 @@ Provider Plugin System and Directory
 
 Status: Draft
 
-Version: 0.19
+Version: 0.20
 
-Revision note: adds immutable Plugin Release and local Installed Plugin records,
-while preserving exact installation-plan approval, package/sandbox binding, shared
-model-artifact storage and Dispatcher-owned Route Generation.
+Revision note: binds Installed Plugin activation to Installation Generation and
+an installation-specific local identity. Detailed control-plane RPC, operations
+and Runtime Adapter registration are delegated to RFC-0056.
 
 Supersedes:
 
-* RFC-0055 Version 0.18
+* RFC-0055 Version 0.19
 
 Depends on:
 
@@ -98,6 +98,11 @@ It is not:
 * an Endpoint offer.
 
 One Provider Plugin MAY support several Provider Instances.
+
+Detailed Plugin Host handshake, management operation, recovery and Runtime
+Adapter registration semantics are defined by RFC-0056. This RFC defines
+package, directory, permission and lifecycle policy rather than duplicating the
+wire interface.
 
 ---
 
@@ -565,7 +570,10 @@ installed_plugin:
   release_id:
   plugin_id:
   plugin_version:
+  package_digest:
   granted_permissions:
+  granted_permission_hash:
+  installation_generation:
   state:
   installation_source:
   installed_at:
@@ -584,6 +592,12 @@ The initial MVP recognizes two sources:
 
 `LEGACY_BUILTIN` SHALL NOT be presented as a downloaded or sandboxed community
 package. It exists only to make the migration from built-in adapters explicit.
+
+Every package-installed Plugin activation SHALL use an installation-specific
+local credential. Publisher keys authenticate Releases and SHALL NOT be used as
+Plugin process credentials. Reinstall, package replacement, incompatible state
+migration or active permission reauthorization increments Installation
+Generation and invalidates older Plugin processes.
 
 ## 15.3 Directory and Package-Store Boundary
 

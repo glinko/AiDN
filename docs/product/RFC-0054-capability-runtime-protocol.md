@@ -2,11 +2,15 @@
 
 Status: `Draft`
 
-Version: `0.3`
+Version: `0.4`
 
-Revision note: Runtime Protocol messages are application profiles over RFC-0042
-`RUNTIME`. The Dispatcher validates Runtime-to-Endpoint binding, message type,
-priority and Route Generation before delivery.
+Revision note: Runtime Protocol remains independent of Plugin management. A
+Plugin-provided Runtime Adapter is one valid Runtime implementation and receives
+its own Runtime Identity and `RUNTIME` route after Hypervisor approval.
+
+Supersedes:
+
+- `RFC-0054 Version 0.3`
 
 Depends on:
 
@@ -16,8 +20,6 @@ Depends on:
 - `RFC-0045 Capability Architecture`
 - `RFC-0051 Usage Reporting and Verification Protocol`
 - `RFC-0053 Capability Runtime Specification`
-- `RFC-0055 Provider Plugin System and Directory`
-- `RFC-0056 Provider Plugin Runtime Interface`
 - `RFC-0059 Ledger Operation Catalog`
 - `RFC-0060 Session Failure, Recovery and Forced Settlement`
 
@@ -126,6 +128,21 @@ updates the underlying Provider Instance, Model Deployment or Runtime Binding.
 
 That control plane SHALL NOT change the message semantics defined by this
 Runtime Protocol.
+
+### 4.1 Provider Runtime Adapter
+
+A Provider Plugin Runtime Adapter MAY implement this protocol. The Adapter SHALL
+register with its own Runtime Identity and authorization. Its ownership metadata
+MAY reference an Installed Plugin, Provider Instance and Model Deployment, but
+those references do not replace Runtime authentication.
+
+Plugin Manager handshake, package lifecycle, installation operations and model
+management are defined by RFC-0055 and RFC-0056. They are not Runtime Protocol
+messages and SHALL NOT traverse `RUNTIME`.
+
+Conversely, ordinary execution Requests, stream events, cancellation, Usage
+Reports and Runtime recovery SHALL NOT traverse a Plugin Manager session merely
+because the Runtime is implemented by a Provider Plugin.
 
 ## 5. Runtime Deployment
 

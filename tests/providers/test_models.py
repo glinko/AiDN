@@ -2,6 +2,7 @@ from pydantic import ValidationError
 
 from aidn_hypervisor.providers.models import (
     ExecutorSandboxCapabilities,
+    InstalledPlugin,
     InstallationPlan,
     InstallationRecipe,
     ModelArtifact,
@@ -22,7 +23,52 @@ from aidn_hypervisor.providers.models import (
     ProviderInstance,
     ProviderPluginManifest,
     RuntimeBinding,
+    plugin_permission_hash,
 )
+
+
+def test_installed_plugin_binds_package_permissions_and_generation() -> None:
+    installed_plugin = InstalledPlugin(
+        installed_plugin_id="iplg-1",
+        release_id="prl-1",
+        plugin_id="aidn.provider.fake",
+        plugin_version="1.0.0",
+        package_digest="sha256:" + "a" * 64,
+        granted_permissions=["network.private", "diagnostics", "network.private"],
+        installation_source="PACKAGE",
+        installed_at="2026-07-18T00:00:00Z",
+    )
+
+    assert installed_plugin.granted_permissions == ["diagnostics", "network.private"]
+    assert installed_plugin.granted_permission_hash == plugin_permission_hash(
+        ["diagnostics", "network.private"]
+    )
+    assert installed_plugin.installation_generation == 1
+
+
+def test_package_installed_plugin_requires_digest_and_matching_permission_hash() -> None:
+    for overrides in (
+        {},
+        {
+            "package_digest": "sha256:" + "a" * 64,
+            "granted_permission_hash": "sha256:" + "b" * 64,
+        },
+    ):
+        try:
+            InstalledPlugin(
+                installed_plugin_id="iplg-1",
+                release_id="prl-1",
+                plugin_id="aidn.provider.fake",
+                plugin_version="1.0.0",
+                granted_permissions=["network.private"],
+                installation_source="PACKAGE",
+                installed_at="2026-07-18T00:00:00Z",
+                **overrides,
+            )
+        except ValidationError:
+            pass
+        else:
+            raise AssertionError("expected package or permission-hash ValidationError")
 
 
 def test_provider_plugin_manifest_stores_digest_and_capability_flags() -> None:

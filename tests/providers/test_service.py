@@ -57,6 +57,9 @@ def test_plugin_release_registration_and_local_install_are_metadata_only() -> No
     assert release.plugin_id == "fake-managed"
     assert release.release_status == "AVAILABLE"
     assert installed.release_id == release.release_id
+    assert installed.package_digest == release.package_digest
+    assert installed.granted_permission_hash is not None
+    assert installed.installation_generation == 1
     assert installed.state == "INSTALLED"
     assert installed.installation_source == "PACKAGE"
     assert service.list_plugin_releases() == [release]
@@ -65,6 +68,16 @@ def test_plugin_release_registration_and_local_install_are_metadata_only() -> No
         manifest_payload=manifest,
         source_reference="registry://plugins/fake-managed",
     ) == release
+
+    advanced = service.advance_installed_plugin_generation(
+        installed_plugin_id=installed.installed_plugin_id,
+        activation_credential_key_id="sha256:" + "c" * 64,
+    )
+
+    assert advanced.installation_generation == 2
+    assert advanced.activation_credential_key_id == "sha256:" + "c" * 64
+    assert advanced.granted_permission_hash == installed.granted_permission_hash
+    assert service.list_installed_plugins() == [advanced]
 
 
 def test_plugin_release_install_rejects_unapproved_or_blocked_permissions() -> None:
