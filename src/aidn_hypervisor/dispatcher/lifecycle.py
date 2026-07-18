@@ -3,8 +3,13 @@
 from collections.abc import Callable, Iterable
 
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
-from aidn_hypervisor.dispatcher.routes import plugin_control_route, runtime_route
+from aidn_hypervisor.dispatcher.routes import (
+    plugin_control_route,
+    runtime_route,
+    session_route,
+)
 from aidn_hypervisor.providers.models import ProviderPluginManifest, RuntimeBinding
+from aidn_hypervisor.sessions.models import EndpointSession
 
 
 RouteHandler = Callable[[dict], object]
@@ -79,6 +84,33 @@ class DispatcherRouteLifecycle:
             )
         if handler is None:
             raise ValueError("active Provider Plugin route requires a local handler")
+        if previous is not None and self._materially_equal(previous, desired):
+            self.dispatcher.register_local_route(previous, handler)
+            return previous
+        self.dispatcher.register_local_route(desired, handler)
+        return desired
+
+    def sync_session(
+        self,
+        session: EndpointSession,
+        handler: RouteHandler | None,
+    ) -> DispatcherRoute | None:
+        destination_type = "SESSION"
+        previous = self.dispatcher.route(
+            destination_type=destination_type,
+            destination_id=session.session_id,
+        )
+        if session.status == "closed":
+            return self.dispatcher.revoke_route(
+                destination_type=destination_type,
+                destination_id=session.session_id,
+            )
+        if handler is None:
+            raise ValueError("open Session requires a local route handler")
+        desired = session_route(
+            session,
+            route_generation=1 if previous is None else previous.route_generation + 1,
+        )
         if previous is not None and self._materially_equal(previous, desired):
             self.dispatcher.register_local_route(previous, handler)
             return previous

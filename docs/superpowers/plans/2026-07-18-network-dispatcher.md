@@ -48,6 +48,14 @@ for material Runtime Binding, Plugin Manifest or approved-permission changes,
 and records revoked generations when a Runtime disappears, becomes non-ready or
 a Plugin loses every approved control permission.
 
+Progress 2026-07-18: Slice 5 now provides Dispatcher route semantics. Session Contracts carry the
+accepted Endpoint Configuration Hash, and scoped Session routes bind the
+Session ID, contract hash, configuration hash and exact Consumer Session or
+Endpoint identity. Queued Sessions admit control only; data starts after the
+Session is active; Session lifecycle rotation and closure advance or revoke the
+route generation. Runtime execution and transport adapters remain separate
+integration work.
+
 ## Current Boundary
 
 The repository currently has application services and an in-process Validation

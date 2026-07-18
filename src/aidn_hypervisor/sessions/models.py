@@ -40,6 +40,7 @@ class EndpointSession(BaseModel):
     accounting_contract_object_id: str | None = None
     accounting_contract_object_version: str | None = None
     accounting_contract_namespace: str | None = None
+    endpoint_configuration_hash: str | None = None
     session_contract_object_id: str | None = None
     session_contract_object_version: str | None = None
     session_contract_namespace: str | None = None

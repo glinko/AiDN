@@ -11,6 +11,7 @@ from aidn_hypervisor.dispatcher import (
     NetworkMessage,
     bind_plugin_control_route,
     bind_runtime_route,
+    bind_session_route,
     canonical_payload_hash,
 )
 from aidn_hypervisor.dispatcher.models import canonical_payload_bytes
@@ -20,6 +21,7 @@ from aidn_hypervisor.providers.models import (
     ProviderPluginManifest,
     RuntimeBinding,
 )
+from aidn_hypervisor.sessions.models import EndpointSession
 
 
 def _message(
@@ -362,3 +364,131 @@ def test_provider_inventory_lifecycle_rotates_plugin_route_on_permission_change(
     assert revoked is not None
     assert revoked.route_generation == 3
     assert revoked.route_state == "REVOKED"
+
+
+def test_session_route_binds_contract_configuration_and_subject_identity() -> None:
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="rev-1",
+    )
+    session = EndpointSession(
+        session_id="sess-1",
+        endpoint_id="ep-1",
+        client_wallet="wallet-1",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        status="active",
+        created_at=datetime.now(timezone.utc).isoformat(),
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        idle_deadline_at=(datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        deposit_locked_q=10.0,
+        queue_policy_snapshot="busy",
+        endpoint_configuration_hash="cfg-accepted",
+        session_contract_hash="sha256:contract-accepted",
+    )
+    route = bind_session_route(dispatcher, session, lambda payload: payload, route_generation=1)
+    assert route.configuration_hash == "cfg-accepted"
+    assert route.session_contract_hash == "sha256:contract-accepted"
+
+    allowed = _message(
+        message_id="session-request",
+        channel_class="SESSION_DATA",
+        message_type="SESSION_REQUEST",
+        source_subject={"subject_type": "CONSUMER_SESSION", "subject_id": "sess-1"},
+        destination_subject={"subject_type": "SESSION", "subject_id": "sess-1"},
+    )
+    assert dispatcher.submit(allowed).delivery_state == "QUEUED"
+
+    wrong_consumer = _message(
+        message_id="session-wrong-consumer",
+        channel_class="SESSION_DATA",
+        message_type="SESSION_REQUEST",
+        source_subject={"subject_type": "CONSUMER_SESSION", "subject_id": "sess-other"},
+        destination_subject={"subject_type": "SESSION", "subject_id": "sess-1"},
+    )
+    with pytest.raises(DispatcherError) as error:
+        dispatcher.submit(wrong_consumer)
+    assert error.value.code == "SOURCE_NOT_AUTHORIZED"
+
+
+def test_queued_session_route_allows_control_but_not_data() -> None:
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="rev-1",
+    )
+    session = EndpointSession(
+        session_id="sess-queued",
+        endpoint_id="ep-1",
+        client_wallet="wallet-1",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        status="queued",
+        created_at=datetime.now(timezone.utc).isoformat(),
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        idle_deadline_at=(datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        deposit_locked_q=10.0,
+        queue_policy_snapshot="queue",
+        endpoint_configuration_hash="cfg-accepted",
+        session_contract_hash="sha256:contract-accepted",
+    )
+    bind_session_route(dispatcher, session, lambda payload: payload, route_generation=1)
+    control = _message(
+        message_id="session-close",
+        channel_class="SESSION_CONTROL",
+        message_type="SESSION_CLOSE",
+        source_subject={"subject_type": "CONSUMER_SESSION", "subject_id": "sess-queued"},
+        destination_subject={"subject_type": "SESSION", "subject_id": "sess-queued"},
+    )
+    assert dispatcher.submit(control).delivery_state == "QUEUED"
+    data = _message(
+        message_id="session-queued-data",
+        channel_class="SESSION_DATA",
+        message_type="SESSION_REQUEST",
+        source_subject={"subject_type": "CONSUMER_SESSION", "subject_id": "sess-queued"},
+        destination_subject={"subject_type": "SESSION", "subject_id": "sess-queued"},
+    )
+    with pytest.raises(DispatcherError) as error:
+        dispatcher.submit(data)
+    assert error.value.code == "CHANNEL_NOT_AUTHORIZED"
+
+
+def test_session_lifecycle_rotates_on_activation_and_revokes_on_close() -> None:
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="rev-1",
+    )
+    lifecycle = DispatcherRouteLifecycle(dispatcher)
+    session = EndpointSession(
+        session_id="sess-lifecycle",
+        endpoint_id="ep-1",
+        client_wallet="wallet-1",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        status="queued",
+        created_at=datetime.now(timezone.utc).isoformat(),
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        idle_deadline_at=(datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        deposit_locked_q=10.0,
+        queue_policy_snapshot="queue",
+        endpoint_configuration_hash="cfg-accepted",
+        session_contract_hash="sha256:contract-accepted",
+    )
+
+    queued = lifecycle.sync_session(session, lambda payload: payload)
+    active = lifecycle.sync_session(
+        session.model_copy(update={"status": "active"}),
+        lambda payload: payload,
+    )
+    closed = lifecycle.sync_session(
+        session.model_copy(update={"status": "closed"}),
+        None,
+    )
+
+    assert queued is not None and queued.route_generation == 1
+    assert active is not None and active.route_generation == 2
+    assert "SESSION_DATA" in active.allowed_channel_classes
+    assert closed is not None and closed.route_generation == 3
+    assert closed.route_state == "REVOKED"

@@ -331,6 +331,7 @@ def test_open_session_binds_accepted_marketplace_contract() -> None:
         advertisement_id="adv-ep-1-v1",
         offer_id="offer-public",
         pricing_policy_hash="sha256:pricing-v1",
+        endpoint_configuration_hash="cfg-accepted",
     )
 
     assert opened.session.advertisement_id == "adv-ep-1-v1"
@@ -367,6 +368,7 @@ def test_open_session_persists_session_contract_registry_object(tmp_path: Path) 
         advertisement_id="adv-ep-1-v1",
         offer_id="offer-public",
         pricing_policy_hash="sha256:pricing-v1",
+        endpoint_configuration_hash="cfg-accepted",
     )
 
     assert opened.session.session_contract_object_id.startswith("sha256:")
@@ -395,6 +397,8 @@ def test_open_session_persists_session_contract_registry_object(tmp_path: Path) 
     assert stored["payload"]["session_id"] == opened.session.session_id
     assert stored["payload"]["advertisement_id"] == "adv-ep-1-v1"
     assert stored["payload"]["offer_id"] == "offer-public"
+    assert stored["payload"]["endpoint_configuration_hash"] == "cfg-accepted"
+    assert opened.session.endpoint_configuration_hash == "cfg-accepted"
     assert (
         stored["payload"]["accounting_contract_object_id"]
         == opened.session.accounting_contract_object_id

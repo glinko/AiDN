@@ -237,6 +237,7 @@ def build_endpoint_router(
                 deposit_q=request.deposit_q,
                 session_policy=endpoint.session.model_dump(mode="json"),
                 accounting_contract=accounting_contract,
+                endpoint_configuration_hash=endpoint.configuration_hash,
             )
         except ValueError as error:
             return _error(409, "session_open_rejected", str(error))
