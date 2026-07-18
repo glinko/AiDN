@@ -119,6 +119,8 @@ Progress 2026-07-18: the local protocol projection records an immutable, idempot
 
 Progress 2026-07-18: local custody verification now records compact availability observations. A verified object is `available`, a missing object is initially `temporarily_unavailable`, and a hash or size mismatch is `corrupted`. The observations are projected as `VALIDATION_REPORT_AVAILABILITY_COMMIT`; epoch scheduling, independent actors, grace windows, Reputation and Certification transitions remain later work.
 
+Progress 2026-07-18: a compatibility-preserving service policy can now require a valid local Storage Receipt before a positive report changes Certification to `CERTIFIED` or `CERTIFIED_WITH_ISSUES`. In that mode an initial report remains `pending_initial` until custody succeeds; negative results remain independent of receipt. The policy is opt-in until canonical Endpoint and assignment identity binding are implemented.
+
 ### Slice 4: Compact Ledger Operations and Dual Write
 
 - Extend `VALIDATION_REPORT_COMMIT` with compact Certification inputs and receipt/failure references.

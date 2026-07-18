@@ -106,6 +106,7 @@ class ValidationService:
         operation_recorder=None,
         custody_store=None,
         custody_signer=None,
+        require_storage_receipt_for_positive_certification: bool = False,
     ) -> None:
         self.store = store
         self.bond_escrow = bond_escrow or LocalOperatorBondEscrowAdapter()
@@ -114,6 +115,9 @@ class ValidationService:
         self.operation_recorder = operation_recorder
         self.custody_store = custody_store
         self.custody_signer = custody_signer
+        self.require_storage_receipt_for_positive_certification = (
+            require_storage_receipt_for_positive_certification
+        )
 
     def request_validation(
         self,
@@ -331,17 +335,15 @@ class ValidationService:
         )
         custody_object = self._store_report_custody(report)
         commitment = self._create_report_commitment(request=request, report=report)
-        certification_status = _derive_certification_status(
-            request_kind="initial",
-            recommendation=report.recommendation,
-            critical_issue_count=report.critical_issue_count,
-        )
+        certification_status = self._certification_status_for_report(report)
         request_status = (
             "passed" if certification_status != "uncertified" else "failed"
         )
         snapshot_status = _canonical_validation_status_for(certification_status)
         validated_at = (
-            report.created_at if certification_status != "uncertified" else None
+            report.created_at
+            if certification_status in {"certified", "certified_with_issues"}
+            else None
         )
         updated_request = request.model_copy(update={"status": request_status})
         updated_snapshot = self.store.get_snapshot(
@@ -853,11 +855,7 @@ class ValidationService:
         self.store.save_report_commitment(commitment)
         if self.operation_recorder is not None:
             self._record_validation_report_commitment(commitment, report)
-        certification_status = _derive_certification_status(
-            request_kind="maintenance",
-            recommendation=report.recommendation,
-            critical_issue_count=report.critical_issue_count,
-        )
+        certification_status = self._certification_status_for_report(report)
         compat_validation_status = _compat_validation_status_for(certification_status)
         if certification_status != "revoked":
             refund_q = round(bond.remaining_locked_q * 0.5, 6)
@@ -884,7 +882,12 @@ class ValidationService:
                     "latest_report_id": report.report_id,
                     "latest_report_at": report.created_at,
                     "maintenance_count": snapshot.maintenance_count + 1,
-                    "validated_at": report.created_at,
+                    "validated_at": (
+                        report.created_at
+                        if certification_status
+                        in {"certified", "certified_with_issues"}
+                        else snapshot.validated_at
+                    ),
                 }
             )
             updated_request = request.model_copy(update={"status": "passed"})
@@ -1075,6 +1078,7 @@ class ValidationService:
         )
         verify_storage_receipt(receipt)
         self.store.save_report_storage_receipt(receipt)
+        self._finalize_certification_after_storage_receipt(report)
         if self.operation_recorder is not None:
             self.operation_recorder(
                 operation_type="VALIDATION_REPORT_STORAGE_RECEIPT",
@@ -1109,6 +1113,71 @@ class ValidationService:
             },
         )
         return receipt
+
+    def _certification_status_for_report(self, report: ValidationReport) -> str:
+        status = _derive_certification_status(
+            request_kind=report.report_kind,
+            recommendation=report.recommendation,
+            critical_issue_count=report.critical_issue_count,
+        )
+        if not self.require_storage_receipt_for_positive_certification:
+            return status
+        if status not in {"certified", "certified_with_issues"}:
+            return status
+        return (
+            "pending_initial"
+            if report.report_kind == "initial"
+            else "maintenance_in_progress"
+        )
+
+    def _finalize_certification_after_storage_receipt(
+        self,
+        report: ValidationReport,
+    ) -> None:
+        if not self.require_storage_receipt_for_positive_certification:
+            return
+        certification_status = _derive_certification_status(
+            request_kind=report.report_kind,
+            recommendation=report.recommendation,
+            critical_issue_count=report.critical_issue_count,
+        )
+        if certification_status not in {"certified", "certified_with_issues"}:
+            return
+        snapshot = self.store.get_snapshot(
+            report.endpoint_id,
+            report.configuration_hash,
+        )
+        if snapshot.latest_report_id != report.report_id:
+            return
+        if snapshot.certification_status == certification_status:
+            return
+        updated_snapshot = snapshot.model_copy(
+            update={
+                "certification_status": certification_status,
+                "validation_status": _canonical_validation_status_for(
+                    certification_status
+                ),
+                "validated_at": report.created_at,
+            }
+        )
+        self.store.save_snapshot(updated_snapshot)
+        self._record_certification_state_update(
+            endpoint_id=report.endpoint_id,
+            configuration_hash=report.configuration_hash,
+            certification_status=certification_status,
+            latest_request_id=report.request_id,
+            latest_report_id=report.report_id,
+            created_at=report.created_at,
+        )
+        self._emit(
+            event_type="validation_certification_finalized_after_custody",
+            message="positive Certification finalized after storage receipt",
+            details={
+                "endpoint_id": report.endpoint_id,
+                "report_id": report.report_id,
+                "certification_status": certification_status,
+            },
+        )
 
     def record_report_storage_failure(
         self,

@@ -198,6 +198,52 @@ def test_storage_receipt_is_signed_and_idempotent(tmp_path) -> None:
     assert operations[-1]["payload"]["receipt_id"] == first.receipt_id
 
 
+def test_positive_certification_can_require_storage_receipt(tmp_path) -> None:
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    signer = Ed25519ValidationReportCustodySigner("44" * 32)
+    service = ValidationService(
+        ValidationStore(),
+        custody_store=custody,
+        custody_signer=signer,
+        require_storage_receipt_for_positive_certification=True,
+    )
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+
+    pending = service.validation_summary("ep-1", configuration_hash="cfg-1")
+    service.create_report_storage_receipt(report_id=outcome.report.report_id)
+    finalized = service.validation_summary("ep-1", configuration_hash="cfg-1")
+
+    assert outcome.snapshot.certification_status == "pending_initial"
+    assert pending["certification_status"] == "pending_initial"
+    assert pending["validated_at"] is None
+    assert finalized["certification_status"] == "certified"
+    assert finalized["validated_at"] == outcome.report.created_at
+
+
 def test_storage_receipt_rejects_tampered_custody_payload(tmp_path) -> None:
     custody = ValidationReportCustodyStore(tmp_path / "custody")
     signer = Ed25519ValidationReportCustodySigner("22" * 32)
