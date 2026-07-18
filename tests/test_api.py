@@ -5627,12 +5627,15 @@ def test_post_session_usage_reports_returns_ack_pending_checkpoint_view() -> Non
         "session_id": opened.session.session_id,
         "status": "ack_pending",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": None,
             "last_ack_hash": None,
             "last_accepted_report_sequence": None,
+            "last_accepted_report_id": None,
             "last_accepted_report_hash": None,
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 0.0,
             "mismatch_open": False,
             "ack_deadline_at": "2026-07-12T12:00:30+00:00",
@@ -5727,6 +5730,7 @@ def test_post_session_usage_acknowledgements_advances_accepted_checkpoint() -> N
         "session_id": opened.session.session_id,
         "status": "open",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
@@ -5734,9 +5738,11 @@ def test_post_session_usage_acknowledgements_advances_accepted_checkpoint() -> N
                 UsageAcknowledgement.model_validate(usage_acknowledgement)
             ),
             "last_accepted_report_sequence": 1,
+            "last_accepted_report_id": "report-1",
             "last_accepted_report_hash": usage_report_hash(
                 UsageReport.model_validate(usage_report)
             ),
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 3.5,
             "mismatch_open": False,
             "ack_deadline_at": None,
@@ -5821,6 +5827,7 @@ def test_post_session_usage_acknowledgements_replay_is_idempotent() -> None:
         "session_id": opened.session.session_id,
         "status": "open",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
@@ -5828,9 +5835,11 @@ def test_post_session_usage_acknowledgements_replay_is_idempotent() -> None:
                 UsageAcknowledgement.model_validate(usage_acknowledgement)
             ),
             "last_accepted_report_sequence": 1,
+            "last_accepted_report_id": "report-1",
             "last_accepted_report_hash": usage_report_hash(
                 UsageReport.model_validate(usage_report)
             ),
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 3.5,
             "mismatch_open": False,
             "ack_deadline_at": None,
@@ -5939,6 +5948,7 @@ def test_post_session_usage_acknowledgements_replay_conflicts_on_different_accep
         "session_id": opened.session.session_id,
         "status": "open",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
@@ -5946,9 +5956,11 @@ def test_post_session_usage_acknowledgements_replay_conflicts_on_different_accep
                 UsageAcknowledgement.model_validate(usage_acknowledgement)
             ),
             "last_accepted_report_sequence": 1,
+            "last_accepted_report_id": "report-1",
             "last_accepted_report_hash": usage_report_hash(
                 UsageReport.model_validate(usage_report)
             ),
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 3.5,
             "mismatch_open": False,
             "ack_deadline_at": None,
@@ -6188,12 +6200,15 @@ def test_post_session_usage_reports_returns_409_for_broken_chain_continuity() ->
         "session_id": opened.session.session_id,
         "status": "mismatch",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(first_report)),
             "last_ack_sequence": None,
             "last_ack_hash": None,
             "last_accepted_report_sequence": None,
+            "last_accepted_report_id": None,
             "last_accepted_report_hash": None,
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 0.0,
             "mismatch_open": True,
             "ack_deadline_at": "2026-07-12T12:00:30+00:00",
@@ -6289,6 +6304,7 @@ def test_post_session_usage_acknowledgements_returns_409_for_report_hash_mismatc
         "session_id": opened.session.session_id,
         "status": "mismatch",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
@@ -6296,7 +6312,9 @@ def test_post_session_usage_acknowledgements_returns_409_for_report_hash_mismatc
                 UsageAcknowledgement.model_validate(mismatched_acknowledgement)
             ),
             "last_accepted_report_sequence": None,
+            "last_accepted_report_id": None,
             "last_accepted_report_hash": None,
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 0.0,
             "mismatch_open": True,
             "ack_deadline_at": "2026-07-12T12:00:30+00:00",
@@ -6390,6 +6408,7 @@ def test_get_session_accounting_returns_canonical_read_model() -> None:
         "session_id": opened.session.session_id,
         "status": "open",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
@@ -6397,9 +6416,11 @@ def test_get_session_accounting_returns_canonical_read_model() -> None:
                 UsageAcknowledgement.model_validate(usage_acknowledgement)
             ),
             "last_accepted_report_sequence": 1,
+            "last_accepted_report_id": "report-1",
             "last_accepted_report_hash": usage_report_hash(
                 UsageReport.model_validate(usage_report)
             ),
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 3.5,
             "mismatch_open": False,
             "ack_deadline_at": None,

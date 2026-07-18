@@ -582,6 +582,10 @@ def test_record_usage_checkpoint_creates_acknowledgement_and_updates_accepted_st
     assert updated.accounting_status == "open"
     assert updated.last_accepted_report_sequence == 1
     assert updated.last_accepted_usage_charged_q == 6.5
+    assert updated.accounting_checkpoint["last_accepted_report_id"] == "rep-1"
+    assert updated.accounting_checkpoint["accounting_contract_hash"] == (
+        opened.session.accounting_contract_hash
+    )
     assert updated.last_usage_acknowledgement_snapshot["verification_status"] == "accepted_unverified"
 
 
@@ -621,6 +625,7 @@ def test_record_usage_report_moves_session_to_ack_pending() -> None:
     assert updated.last_usage_report_snapshot["report_id"] == "rep-1"
     assert updated.last_usage_acknowledgement_snapshot == {}
     assert updated.accounting_checkpoint["last_report_sequence"] == 1
+    assert updated.accounting_checkpoint["last_report_id"] == "rep-1"
     assert updated.accounting_checkpoint["last_report_hash"].startswith("sha256:")
     assert updated.accounting_checkpoint["last_accepted_report_sequence"] is None
     assert updated.accounting_checkpoint["last_accepted_usage_charged_q"] == 0.0

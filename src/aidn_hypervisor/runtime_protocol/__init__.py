@@ -11,7 +11,9 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeRequestAccept,
     RuntimeRequestRecord,
     RuntimeUsageAck,
+    RuntimeUsageConflict,
     RuntimeUsageDimension,
+    RuntimeProviderAttempt,
     RuntimeUsageReport,
     canonical_hash,
 )
@@ -37,7 +39,9 @@ __all__ = [
     "RuntimeRequestAccept",
     "RuntimeRequestRecord",
     "RuntimeUsageAck",
+    "RuntimeUsageConflict",
     "RuntimeUsageDimension",
+    "RuntimeProviderAttempt",
     "RuntimeUsageReport",
     "canonical_hash",
 ]

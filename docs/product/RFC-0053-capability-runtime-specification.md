@@ -2,14 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.7`
+Version: `0.8`
 
-Revision note: all handshake, admission, stream, Usage, cancellation and
-recovery wire semantics are delegated exclusively to RFC-0054.
+Revision note: Runtime Usage Profile uses the normative RFC-0051 schema and a
+cycle-free Profile Hash derivation committed by Runtime Configuration.
 
 Supersedes:
 
-- `RFC-0053 Version 0.6`
+- `RFC-0053 Version 0.7`
 
 Depends on:
 
@@ -573,3 +573,13 @@ model identity MAY be deferred.
 - Active Sessions do not silently move across incompatible Runtime Generations.
 - Endpoint Certification and Runtime Verification remain separate.
 - Provider-specific implementation details do not enter Hypervisor core.
+
+## RFC-0051 Runtime Usage Profile Binding
+
+The Runtime Usage Profile schema and dimension semantics are normative in
+RFC-0051. Runtime Configuration commits to `usage_profile_hash`. To avoid a
+hash cycle, Usage Profile Hash excludes its `runtime_configuration_hash`
+back-reference while the Profile object carries that field and registration
+validates it against the active Runtime Binding. A material change to
+Availability, Authority, billing eligibility, retry or Provider-attempt behavior
+requires a new Profile Hash and Runtime Configuration Hash.

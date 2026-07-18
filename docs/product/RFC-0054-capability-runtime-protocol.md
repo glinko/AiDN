@@ -2,16 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.6`
+Version: `0.7`
 
-Revision note: defines a provider-agnostic execution protocol with approved
-Runtime handshake, semantic message identity, Request admission, streaming,
-dimension-specific Usage, cancellation and bidirectional recovery. Provider and
-Plugin management remain outside this protocol.
+Revision note: RUNTIME_USAGE_REPORT transports the normative RFC-0051 evidence
+object; terminal Result admission requires an accepted matching Final Report.
 
 Supersedes:
 
-- `RFC-0054 Version 0.5`
+- `RFC-0054 Version 0.6`
 
 Depends on:
 
@@ -435,15 +433,23 @@ runtime_usage_report:
   runtime_generation:
   runtime_configuration_hash:
   endpoint_id:
+  endpoint_configuration_hash:
   session_id:
   request_id:
+  accounting_contract_hash:
+  report_type:
   usage_sequence:
   previous_usage_report_hash:
   dimensions:
   provider_attempts:
+  provider_attempt_count:
+  request_state:
   cumulative:
   terminal:
-  observed_at:
+  observed_from:
+  observed_to:
+  limitations:
+  created_at:
   report_hash:
   runtime_signature:
 ```
@@ -454,18 +460,19 @@ behavior, billing eligibility, source and limitations. Authority is one of:
 - `AUTHORITATIVE_PROVIDER`;
 - `DETERMINISTIC_LOCAL`;
 - `OBSERVABLE_LOCAL`;
-- `ESTIMATED`;
-- `UNAVAILABLE`.
+- `ESTIMATED`.
 
-Unavailable Usage has no numeric value and SHALL NOT be encoded as zero.
+Availability is `AVAILABLE`, `PARTIAL`, `UNAVAILABLE` or `NOT_APPLICABLE`.
+Unavailable and not-applicable Usage have no Authority or numeric value and
+SHALL NOT be encoded as zero.
 Estimated values remain estimated. Deterministic token measurement requires an
 explicit tokenizer and accepted construction rules.
 
 ## 24. Usage Chain and Acknowledgment
 
 Multiple Usage Reports form an ordered hash chain. `RUNTIME_USAGE_ACK` returns
-`ACCEPTED`, `DUPLICATE`, `REJECTED`, `CONFLICT` or `OUT_OF_SEQUENCE`, accepted
-sequence and Report Hash.
+`ACCEPTED`, `DUPLICATE`, `REJECTED`, `CONFLICT`, `OUT_OF_SEQUENCE` or
+`PENDING_REVIEW`, accepted sequence and Report Hash.
 
 Conflicting reports remain auditable. Internal retry Usage is reported; billing
 eligibility follows Accounting Contract, Failure Policy, retry disclosure and
@@ -716,3 +723,13 @@ limits/backoff, recovery state limit/timeout and drain/shutdown timeout.
 - Existing Results and Usage may be redelivered without re-execution.
 - Concealed Validation uses ordinary execution messages.
 - Provider-native peculiarities remain behind the Runtime Adapter.
+
+## RFC-0051 Evidence Transport Binding
+
+`RUNTIME_USAGE_REPORT` is the transport representation of the RFC-0051 Usage
+Report, not a separate accounting object. Availability includes `AVAILABLE`,
+`PARTIAL`, `UNAVAILABLE` and `NOT_APPLICABLE`; only available or partial values
+carry Authority. The Hypervisor acknowledges authenticated reports with
+`ACCEPTED`, `DUPLICATE`, `REJECTED`, `CONFLICT`, `OUT_OF_SEQUENCE` or
+`PENDING_REVIEW` and preserves conflict evidence. A terminal Runtime Result
+SHALL NOT be accepted without the matching accepted Final Usage Report.

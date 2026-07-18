@@ -4,11 +4,14 @@ Distributed Marketplace and Endpoint Advertisement Registry
 
 Status: Draft
 
-Version: 0.5
+Version: 0.6
+
+Revision note: Marketplace offers expose Accounting Mode, Usage transparency,
+expected Availability/Authority and unavailable-value fallback policy.
 
 Supersedes:
 
-* RFC-0049 Version 0.3
+* RFC-0049 Version 0.5
 
 Depends on:
 
@@ -65,6 +68,14 @@ It also specifies how Consumers and Marketplace clients:
 * combine Advertisements with Certification and Reputation;
 * apply local ranking policies;
 * avoid stale or misleading offers.
+
+Advertisement and Offer projections SHALL expose RFC-0051 Accounting Mode,
+Accounting Contract reference, billable dimensions, expected Availability and
+Authority, unavailable/partial fallback, retry billing policy, checkpoint
+requirement and maximum Request exposure. `PROXY_OPAQUE` and fixed-price offers
+remain valid when token Usage is unavailable. Marketplace presentation SHALL
+distinguish reported, deterministic, observable, estimated and unavailable
+dimensions.
 
 ⸻
 

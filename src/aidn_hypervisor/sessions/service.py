@@ -694,8 +694,10 @@ class SessionService:
             accounting_status = "mismatch"
             next_checkpoint.mismatch_open = True
         else:
+            next_checkpoint.last_report_id = report.report_id
             next_checkpoint.last_report_sequence = report.sequence
             next_checkpoint.last_report_hash = report_hash
+            next_checkpoint.accounting_contract_hash = current.accounting_contract_hash
             next_checkpoint.mismatch_open = False
             next_checkpoint.ack_deadline_at = (
                 report_created_at
@@ -803,6 +805,9 @@ class SessionService:
             "verified",
             "statistically_plausible",
         }:
+            next_checkpoint.last_accepted_report_id = str(
+                current.last_usage_report_snapshot.get("report_id")
+            )
             next_checkpoint.last_accepted_report_sequence = acknowledgement.sequence
             next_checkpoint.last_accepted_report_hash = acknowledgement.provider_report_hash
             next_checkpoint.last_accepted_usage_charged_q = normalized_accepted_charge_q
@@ -851,6 +856,12 @@ class SessionService:
                 "report_hash": acknowledgement.provider_report_hash,
                 "ack_hash": acknowledgement_hash,
                 "accepted_checkpoint_sequence": updated.last_accepted_report_sequence,
+                "accepted_report_id": updated.accounting_checkpoint.get(
+                    "last_accepted_report_id"
+                ),
+                "accounting_contract_hash": updated.accounting_checkpoint.get(
+                    "accounting_contract_hash"
+                ),
                 "accepted_usage_charged_q": updated.last_accepted_usage_charged_q,
                 "verification_status": acknowledgement.verification_status,
             },
@@ -873,6 +884,12 @@ class SessionService:
                     "accepted_checkpoint_sequence": updated.last_accepted_report_sequence,
                     "report_hash": updated.accounting_checkpoint.get(
                         "last_accepted_report_hash"
+                    ),
+                    "usage_report_id": updated.accounting_checkpoint.get(
+                        "last_accepted_report_id"
+                    ),
+                    "accounting_contract_hash": updated.accounting_checkpoint.get(
+                        "accounting_contract_hash"
                     ),
                     "accepted_usage_charged_q": updated.last_accepted_usage_charged_q,
                 },

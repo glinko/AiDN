@@ -2958,6 +2958,9 @@ class HypervisorService:
             runtime_protocol_usage_acks=list(
                 self.runtime_protocol_store.usage_acks.values()
             ),
+            runtime_protocol_usage_conflicts=list(
+                self.runtime_protocol_store.usage_conflicts.values()
+            ),
             runtime_protocol_recovery_plans=list(
                 self.runtime_protocol_store.recovery_plans.values()
             ),

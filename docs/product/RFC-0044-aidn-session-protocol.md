@@ -4,14 +4,14 @@ AiDN Session Protocol
 
 Status: Draft
 
-Version: 0.7
+Version: 0.8
 
-Revision note: Session Request lifecycle consumes RFC-0054 admission, execution
-and terminal states without treating Runtime acceptance as completion.
+Revision note: Session accounting binds Checkpoints to an accepted RFC-0051
+Usage chain head, Accounting Contract and bounded economic exposure.
 
 Supersedes:
 
-* RFC-0044 Version 0.2 - Reconstructed and Consolidated Edition
+* RFC-0044 Version 0.7
 
 Depends on:
 
@@ -64,6 +64,14 @@ The protocol defines how participants:
 * settle completed work;
 * refund unused collateral;
 * prevent duplicate execution and duplicate Settlement.
+
+Every economic Session Checkpoint SHALL reference the accepted RFC-0051 Usage
+Report ID, chain-head Hash and Sequence, Accounting Contract Hash, calculated
+charge, current Session exposure and remaining Deposit. Checkpoint
+acknowledgment permits continued bounded exposure; it does not assert that the
+Consumer independently reproduced Provider-metered units. Settlement uses the
+last accepted chain head and SHALL NOT treat Runtime Request acceptance as
+completed or billable work.
 
 ---
 

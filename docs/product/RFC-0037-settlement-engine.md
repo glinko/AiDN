@@ -2,7 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.1`
+Version: `0.2`
+
+Revision note: Settlement evaluates only the accepted RFC-0051 Usage chain
+under the accepted Accounting Contract and never treats Usage as payment.
+
+Supersedes:
+
+- `RFC-0037 Version 0.1`
 
 Depends on:
 
@@ -301,3 +308,12 @@ Any node SHALL be capable of independently reproducing:
 - Every Settlement is reproducible.
 - Every Settlement is independently auditable.
 - No balance changes occur outside Settlement.
+
+## RFC-0051 Usage Evidence Boundary
+
+Settlement SHALL evaluate only the accepted Accounting Contract and accepted
+Usage chain head for the Request or Session. A Usage Report is evidence, not a
+charge instruction. Cumulative reports SHALL not be summed as deltas. Missing,
+partial or conflicting required dimensions use the Contract fallback or enter
+RFC-0060 review; they SHALL NOT be converted to zero or guessed. Request Charge
+Ceiling, Session exposure and locked Deposit remain hard upper bounds.

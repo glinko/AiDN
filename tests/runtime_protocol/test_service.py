@@ -2,6 +2,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from aidn_hypervisor.accounting.models import (
+    AccountingContract,
+    AccountingUnitContract,
+    RuntimeUsageProfile,
+    RuntimeUsageProfileDimension,
+)
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.providers.models import RuntimeBinding
@@ -23,6 +29,7 @@ from aidn_hypervisor.runtime_protocol import (
 
 
 def _binding(*, runtime_generation: int = 2) -> RuntimeBinding:
+    profile = _usage_profile_template(runtime_generation=runtime_generation)
     return RuntimeBinding(
         runtime_binding_id="rtb-1",
         runtime_id="runtime-1",
@@ -38,9 +45,73 @@ def _binding(*, runtime_generation: int = 2) -> RuntimeBinding:
         adapter_id="adapter.chat",
         adapter_version="3",
         supported_features=["streaming", "cancellation"],
+        supported_accounting_modes=["provider_metered", "fixed_price"],
+        usage_reporting_profile_hash=profile.profile_hash,
         dispatcher_route_scope={"channel_class": "RUNTIME", "runtime_id": "runtime-1"},
         compatibility_bundle_id="bundle-1",
         status="ready",
+    )
+
+
+def _usage_profile_template(*, runtime_generation: int = 2) -> RuntimeUsageProfile:
+    return RuntimeUsageProfile(
+        runtime_id="runtime-1",
+        runtime_generation=runtime_generation,
+        runtime_configuration_hash="pending-runtime-configuration",
+        adapter_version="3",
+        dimensions=[
+            RuntimeUsageProfileDimension(
+                dimension_id="input_tokens",
+                unit="token",
+                expected_availability="AVAILABLE",
+                authority="AUTHORITATIVE_PROVIDER",
+                billing_eligible=True,
+            ),
+            RuntimeUsageProfileDimension(
+                dimension_id="active_execution_milliseconds",
+                unit="millisecond",
+                expected_availability="AVAILABLE",
+                authority="OBSERVABLE_LOCAL",
+                billing_eligible=False,
+            ),
+            RuntimeUsageProfileDimension(
+                dimension_id="upstream_cost",
+                unit="usd",
+                expected_availability="UNAVAILABLE",
+            ),
+        ],
+    )
+
+
+def _usage_profile(binding: RuntimeBinding) -> RuntimeUsageProfile:
+    profile = _usage_profile_template(runtime_generation=binding.runtime_generation)
+    return RuntimeUsageProfile.model_validate(
+        {
+            **profile.model_dump(mode="json"),
+            "runtime_configuration_hash": binding.runtime_configuration_hash,
+        }
+    )
+
+
+def _accounting_contract() -> AccountingContract:
+    return AccountingContract(
+        contract_version="acct-v1",
+        accounting_mode="provider_metered",
+        capability_id="llm.chat",
+        endpoint_id="endpoint-1",
+        pricing_version="pricing-v1",
+        billable_units=[
+            AccountingUnitContract(
+                unit="input_tokens",
+                mode="provider_metered",
+                price=0.01,
+                measurement_source="provider_api",
+                verification_method="provider_report",
+                required_authority="AUTHORITATIVE_PROVIDER",
+            )
+        ],
+        checkpoint_policy="per_request",
+        maximum_request_charge=2.0,
     )
 
 
@@ -84,7 +155,11 @@ def _service(
     route_holder: dict[str, DispatcherRoute],
     *,
     store: RuntimeProtocolStore | None = None,
+    accounting_contract: AccountingContract | None = None,
+    usage_profile: RuntimeUsageProfile | None = None,
 ) -> RuntimeProtocolService:
+    contract = accounting_contract or _accounting_contract()
+    profile = usage_profile or _usage_profile(binding)
     return RuntimeProtocolService(
         hypervisor_id="hypervisor-1",
         network_revision="revision-1",
@@ -98,6 +173,16 @@ def _service(
         hypervisor_signer=lambda payload: f"hypervisor:{canonical_hash(payload)}",
         request_authorizer=lambda request: request.session_contract_hash
         == "session-contract-1",
+        accounting_contract_resolver=lambda contract_hash: (
+            contract
+            if contract_hash == contract.payload_hash
+            else (_ for _ in ()).throw(KeyError())
+        ),
+        usage_profile_resolver=lambda runtime_id: (
+            profile
+            if runtime_id == binding.runtime_id
+            else (_ for _ in ()).throw(KeyError())
+        ),
         store=store,
         supported_protocol_versions=("1.0", "1.1"),
     )
@@ -145,9 +230,76 @@ def _execute_request(binding: RuntimeBinding, *, request_id: str = "request-1", 
         request_payload_hash=canonical_hash(payload),
         request_payload=payload,
         request_charge_ceiling=2.0,
-        accounting_contract_hash="accounting-1",
+        accounting_contract_hash=_accounting_contract().payload_hash,
         idempotency_key=f"idempotency-{request_id}",
         request_deadline=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+    )
+
+
+def _accept_request(
+    service: RuntimeProtocolService,
+    connection,
+    binding: RuntimeBinding,
+    request: RuntimeExecuteRequest,
+):
+    return service.record_request_accept(
+        connection.runtime_connection_id,
+        RuntimeRequestAccept(
+            runtime_id=binding.runtime_id,
+            runtime_generation=binding.runtime_generation,
+            route_generation=connection.route_generation,
+            session_id=request.session_id,
+            request_id=request.request_id,
+            admission_state="ACCEPTED",
+            runtime_request_handle=f"provider-{request.request_id}",
+            accepted_capability_definition_hash=binding.capability_definition_hash,
+            accepted_features=request.required_features,
+            accepted_at=datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+
+
+def _runtime_usage_report(
+    binding: RuntimeBinding,
+    request: RuntimeExecuteRequest,
+    *,
+    report_id: str,
+    sequence: int = 1,
+    value: int = 12,
+    previous_hash: str | None = None,
+    terminal_state: str | None = None,
+) -> RuntimeUsageReport:
+    return RuntimeUsageReport(
+        usage_report_id=report_id,
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        endpoint_id=request.endpoint_id,
+        endpoint_configuration_hash=request.endpoint_configuration_hash,
+        session_id=request.session_id,
+        request_id=request.request_id,
+        accounting_contract_hash=request.accounting_contract_hash,
+        report_type="FINAL" if terminal_state is not None else "INTERIM",
+        usage_sequence=sequence,
+        previous_usage_report_hash=previous_hash,
+        dimensions=[
+            RuntimeUsageDimension(
+                dimension_id="input_tokens",
+                unit="token",
+                value=value,
+                availability="AVAILABLE",
+                authority="AUTHORITATIVE_PROVIDER",
+                billable_eligible=True,
+                source_reference={
+                    "source_type": "PROVIDER_USAGE_RESPONSE",
+                    "source_id": "provider-request-usage",
+                },
+            )
+        ],
+        request_state=terminal_state,
+        terminal=terminal_state is not None,
+        observed_at=datetime.now(timezone.utc).isoformat(),
+        runtime_signature="runtime-signed",
     )
 
 
@@ -286,6 +438,42 @@ def test_execute_request_is_idempotent_and_acceptance_is_not_completion() -> Non
     assert authorization_error.value.code == "RUNTIME_SESSION_NOT_AUTHORIZED"
 
 
+def test_execute_rejects_accounting_contract_incompatible_with_usage_profile() -> None:
+    binding = _binding()
+    incompatible_contract = AccountingContract(
+        contract_version="acct-output-v1",
+        accounting_mode="provider_metered",
+        capability_id=binding.capability_id,
+        endpoint_id="endpoint-1",
+        pricing_version="pricing-v1",
+        billable_units=[
+            AccountingUnitContract(
+                unit="output_tokens",
+                mode="provider_metered",
+                price=0.02,
+                measurement_source="provider_api",
+                verification_method="provider_report",
+                required_authority="AUTHORITATIVE_PROVIDER",
+            )
+        ],
+        checkpoint_policy="per_request",
+    )
+    service = _service(
+        binding,
+        {binding.runtime_id: _route(binding)},
+        accounting_contract=incompatible_contract,
+    )
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding).model_copy(
+        update={"accounting_contract_hash": incompatible_contract.payload_hash}
+    )
+
+    with pytest.raises(RuntimeProtocolError) as incompatible:
+        service.register_execute_request(connection.runtime_connection_id, request)
+
+    assert incompatible.value.code == "ACCOUNTING_REQUIRED_DIMENSION_UNAVAILABLE"
+
+
 def test_usage_reports_preserve_dimension_authority_and_hash_chain(tmp_path) -> None:
     binding = _binding()
     route_holder = {binding.runtime_id: _route(binding)}
@@ -298,6 +486,7 @@ def test_usage_reports_preserve_dimension_authority_and_hash_chain(tmp_path) -> 
     _, connection = _connect(service, binding)
     request = _execute_request(binding)
     service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
 
     report = RuntimeUsageReport(
         usage_report_id="usage-1",
@@ -305,8 +494,10 @@ def test_usage_reports_preserve_dimension_authority_and_hash_chain(tmp_path) -> 
         runtime_generation=binding.runtime_generation,
         runtime_configuration_hash=binding.runtime_configuration_hash,
         endpoint_id="endpoint-1",
+        endpoint_configuration_hash="endpoint-config-1",
         session_id="session-1",
         request_id=request.request_id,
+        accounting_contract_hash=request.accounting_contract_hash,
         usage_sequence=1,
         dimensions=[
             RuntimeUsageDimension(
@@ -316,12 +507,15 @@ def test_usage_reports_preserve_dimension_authority_and_hash_chain(tmp_path) -> 
                 availability="AVAILABLE",
                 authority="AUTHORITATIVE_PROVIDER",
                 billable_eligible=True,
+                source_reference={
+                    "source_type": "PROVIDER_USAGE_RESPONSE",
+                    "source_id": "provider-request-usage",
+                },
             ),
             RuntimeUsageDimension(
                 dimension_id="upstream_cost",
                 unit="usd",
                 availability="UNAVAILABLE",
-                authority="UNAVAILABLE",
             ),
         ],
         observed_at=datetime.now(timezone.utc).isoformat(),
@@ -418,11 +612,173 @@ def test_recovery_conflicts_keep_connection_recovering() -> None:
 
 
 def test_unavailable_usage_cannot_be_encoded_as_zero() -> None:
-    with pytest.raises(ValueError, match="unavailable Usage"):
+    with pytest.raises(ValueError, match="unavailable or not-applicable Usage"):
         RuntimeUsageDimension(
             dimension_id="tokens",
             unit="token",
             value=0,
             availability="UNAVAILABLE",
-            authority="UNAVAILABLE",
         )
+
+
+def test_usage_conflict_and_sequence_gap_return_auditable_acknowledgments(tmp_path) -> None:
+    binding = _binding()
+    state_store = FileStateStore(tmp_path / "usage-conflicts.json")
+    service = _service(
+        binding,
+        {binding.runtime_id: _route(binding)},
+        store=RuntimeProtocolStore(state_store),
+    )
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    first = _runtime_usage_report(binding, request, report_id="usage-first")
+    assert service.record_usage_report(connection.runtime_connection_id, first).status == (
+        "ACCEPTED"
+    )
+
+    conflicting = _runtime_usage_report(
+        binding,
+        request,
+        report_id="usage-conflicting",
+        value=13,
+    )
+    conflict_ack = service.record_usage_report(
+        connection.runtime_connection_id,
+        conflicting,
+    )
+    gap = _runtime_usage_report(
+        binding,
+        request,
+        report_id="usage-gap",
+        sequence=3,
+        previous_hash=first.report_hash,
+    )
+    gap_ack = service.record_usage_report(connection.runtime_connection_id, gap)
+
+    assert conflict_ack.status == "CONFLICT"
+    assert gap_ack.status == "OUT_OF_SEQUENCE"
+    assert conflict_ack.hypervisor_signature.startswith("hypervisor:")
+    assert len(service.store.usage_conflicts) == 2
+    assert len(RuntimeProtocolStore(state_store).usage_conflicts) == 2
+
+
+def test_usage_report_cannot_expand_profile_billing_eligibility() -> None:
+    binding = _binding()
+    service = _service(binding, {binding.runtime_id: _route(binding)})
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    report_payload = _runtime_usage_report(
+        binding,
+        request,
+        report_id="usage-diagnostic-promoted",
+    ).model_dump(mode="json")
+    report_payload.update(
+        {
+            "dimensions": [
+                {
+                    "dimension_id": "active_execution_milliseconds",
+                    "unit": "millisecond",
+                    "availability": "AVAILABLE",
+                    "authority": "OBSERVABLE_LOCAL",
+                    "value": 100,
+                    "cumulative": True,
+                    "billing_eligible": True,
+                }
+            ],
+            "report_hash": None,
+        }
+    )
+    report = RuntimeUsageReport.model_validate(report_payload)
+
+    ack = service.record_usage_report(connection.runtime_connection_id, report)
+
+    assert ack.status == "REJECTED"
+    assert ack.rejection_code == "USAGE_BILLING_ELIGIBILITY_INVALID"
+
+
+def test_terminal_request_requires_matching_final_usage_report() -> None:
+    binding = _binding()
+    service = _service(binding, {binding.runtime_id: _route(binding)})
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+
+    with pytest.raises(RuntimeProtocolError) as missing_usage:
+        service.record_request_terminal(
+            connection.runtime_connection_id,
+            request_id=request.request_id,
+            terminal_state="COMPLETED",
+            terminal_result_hash="sha256:result",
+            final_usage_report_id="missing-final-usage",
+        )
+    assert missing_usage.value.code == "USAGE_FINAL_REPORT_REQUIRED"
+
+    final = _runtime_usage_report(
+        binding,
+        request,
+        report_id="usage-final",
+        terminal_state="COMPLETED",
+    )
+    ack = service.record_usage_report(connection.runtime_connection_id, final)
+    terminal = service.record_request_terminal(
+        connection.runtime_connection_id,
+        request_id=request.request_id,
+        terminal_state="COMPLETED",
+        terminal_result_hash="sha256:result",
+        final_usage_report_id=final.usage_report_id,
+    )
+
+    assert ack.status == "ACCEPTED"
+    assert terminal.request_state == "COMPLETED"
+    assert terminal.terminal_result_hash == "sha256:result"
+
+
+def test_terminal_request_requires_final_usage_to_be_current_chain_head() -> None:
+    binding = _binding()
+    service = _service(binding, {binding.runtime_id: _route(binding)})
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    final = _runtime_usage_report(
+        binding,
+        request,
+        report_id="usage-final-before-correction",
+        terminal_state="COMPLETED",
+    )
+    assert service.record_usage_report(connection.runtime_connection_id, final).status == (
+        "ACCEPTED"
+    )
+    correction_payload = final.model_dump(mode="json")
+    correction_payload.update(
+        {
+            "usage_report_id": "usage-correction-after-final",
+            "report_type": "CORRECTION",
+            "usage_sequence": 2,
+            "previous_usage_report_hash": final.report_hash,
+            "request_state": None,
+            "terminal": False,
+            "report_hash": None,
+        }
+    )
+    correction = RuntimeUsageReport.model_validate(correction_payload)
+    assert service.record_usage_report(
+        connection.runtime_connection_id,
+        correction,
+    ).status == "ACCEPTED"
+
+    with pytest.raises(RuntimeProtocolError) as stale_final:
+        service.record_request_terminal(
+            connection.runtime_connection_id,
+            request_id=request.request_id,
+            terminal_state="COMPLETED",
+            terminal_result_hash="sha256:result",
+            final_usage_report_id=final.usage_report_id,
+        )
+
+    assert stale_final.value.code == "USAGE_FINAL_REPORT_REQUIRED"

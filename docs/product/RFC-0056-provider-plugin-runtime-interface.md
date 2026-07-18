@@ -4,14 +4,14 @@ AiDN Provider Plugin Runtime Interface
 
 Status: Draft
 
-Version: 0.5
+Version: 0.6
 
-Revision note: Runtime Adapter registration is incomplete until the separately
-authenticated RFC-0054 Hello handshake activates its preapproved Runtime route.
+Revision note: Usage capability discovery uses RFC-0051 Availability, Authority,
+billing eligibility, retry reporting and Provider-attempt semantics.
 
 Supersedes:
 
-* RFC-0056 Version 0.4
+* RFC-0056 Version 0.5
 
 Depends on:
 
@@ -730,3 +730,12 @@ container, package-manager or network execution.
 * Plugin crashes do not crash the Hypervisor control plane.
 * Security blocking can contain code without deleting operator data.
 * Local operator policy is the final installation and permission authority.
+
+## RFC-0051 Usage Capability Discovery
+
+Usage discovery SHALL return the RFC-0051 Runtime Usage Profile fields rather
+than a global exact/estimated flag. Each dimension declares expected
+Availability, Authority when measurable, unit, cumulative behavior, scope,
+billing eligibility, limitations and source behavior. Plugins SHALL disclose
+Provider attempts and retries when material and SHALL report unavailable opaque
+metrics without fabricating token counts.

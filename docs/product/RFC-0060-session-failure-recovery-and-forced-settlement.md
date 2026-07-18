@@ -2,14 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.5`
+Version: `0.6`
 
-Revision note: Session recovery consumes hash-bound RFC-0054 Recovery State,
-Recovery Plan directives, terminal Results and Usage redelivery.
+Revision note: Forced Settlement evaluates the last accepted RFC-0051 Usage
+chain and explicit incomplete/conflicting Usage policy without inventing values.
 
 Supersedes:
 
-- `RFC-0060 Version 0.4`
+- `RFC-0060 Version 0.5`
 
 Depends on:
 
@@ -1574,3 +1574,12 @@ For every terminal Session:
 - Fault attribution is separate from failure classification.
 - Ordinary failures do not automatically cause slashing.
 - Finalized Settlement is replay-protected and irreversible under ordinary protocol operation.
+
+## RFC-0051 Incomplete Usage Handling
+
+Forced Settlement uses the last accepted Usage chain head and the accepted
+Accounting Contract fallback. Conflicting or out-of-sequence reports remain
+evidence but do not extend payable Usage until resolved. `UNAVAILABLE` is never
+converted to zero or an estimate. Fixed fallback, observable fallback, partial
+charge, zero variable component or review may apply only when accepted before
+execution. No result may exceed Request ceiling, Session exposure or Deposit.

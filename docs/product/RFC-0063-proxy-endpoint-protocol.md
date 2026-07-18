@@ -2,14 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.5`
+Version: `0.6`
 
-Revision note: Proxy Runtime retries, opaque Usage and cancellation uncertainty
-use RFC-0054 Request, Usage and Cancellation messages.
+Revision note: unknown upstream Usage requires PROXY_OPAQUE accounting and
+explicit UNAVAILABLE dimensions rather than estimated values presented as fact.
 
 Supersedes:
 
-- `RFC-0063 Version 0.4`
+- `RFC-0063 Version 0.5`
 
 Depends on:
 
@@ -1957,3 +1957,12 @@ The following remain configurable:
 - Certification validates observable Proxy behavior.
 - Validation Sessions are non-compensated even when the Proxy incurs upstream cost.
 - Internal Proxy complexity does not alter Ledger safety.
+
+## RFC-0051 Proxy-Opaque Usage
+
+A Proxy Endpoint SHALL use `PROXY_OPAQUE` whenever required upstream Usage is
+not defensibly available. Token and upstream-cost dimensions are then
+`UNAVAILABLE`, not zero or estimated facts. Consumer pricing may use fixed
+Request price, Request Class or observable bounded dimensions. Provider
+attempts, retries and material failover remain reportable, while inner Provider
+cost never creates direct Consumer liability beyond the outer Contract ceiling.

@@ -473,6 +473,7 @@ def test_service_attaches_usage_report_to_paid_session_task_result() -> None:
         "session_id": opened.session.session_id,
         "status": "open",
         "checkpoint": {
+            "last_report_id": result["usage_report"]["report_id"],
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(
                 UsageReport.model_validate(result["usage_report"])
@@ -482,9 +483,11 @@ def test_service_attaches_usage_report_to_paid_session_task_result() -> None:
                 UsageAcknowledgement.model_validate(result["usage_acknowledgement"])
             ),
             "last_accepted_report_sequence": 1,
+            "last_accepted_report_id": result["usage_report"]["report_id"],
             "last_accepted_report_hash": usage_report_hash(
                 UsageReport.model_validate(result["usage_report"])
             ),
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": accepted_charge_q,
             "mismatch_open": False,
             "ack_deadline_at": None,

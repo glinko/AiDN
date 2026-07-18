@@ -4,10 +4,13 @@ from pydantic import ValidationError
 from aidn_hypervisor.accounting.models import (
     AccountingContract,
     AccountingUnitContract,
+    RuntimeUsageProfile,
+    RuntimeUsageProfileDimension,
     SessionAccountingCheckpoint,
     usage_acknowledgement_hash,
     usage_report_hash,
     UsageAcknowledgement,
+    UsageDimensionEvidence,
     UsageReport,
 )
 from aidn_hypervisor.sessions.models import EndpointSession
@@ -313,3 +316,133 @@ def test_endpoint_session_accounting_checkpoint_remains_dict_shaped() -> None:
     assert isinstance(session.accounting_checkpoint, dict)
     assert session.accounting_checkpoint["last_report_sequence"] == 2
     assert session.accounting_checkpoint["last_report_hash"] == "sha256:report"
+
+
+def test_usage_availability_distinguishes_partial_unavailable_and_not_applicable() -> None:
+    partial = UsageDimensionEvidence(
+        dimension_id="output_bytes",
+        unit="byte",
+        availability="PARTIAL",
+        authority="OBSERVABLE_LOCAL",
+        value=128,
+    )
+    unavailable = UsageDimensionEvidence(
+        dimension_id="input_tokens",
+        unit="token",
+        availability="UNAVAILABLE",
+    )
+    not_applicable = UsageDimensionEvidence(
+        dimension_id="audio_input_milliseconds",
+        unit="millisecond",
+        availability="NOT_APPLICABLE",
+    )
+
+    assert partial.value == 128
+    assert unavailable.value is None and unavailable.authority is None
+    assert not_applicable.value is None and not_applicable.authority is None
+
+
+def test_usage_profile_hash_avoids_runtime_configuration_back_reference_cycle() -> None:
+    profile = RuntimeUsageProfile(
+        runtime_id="runtime-1",
+        runtime_generation=1,
+        runtime_configuration_hash="sha256:configuration-a",
+        dimensions=[
+            RuntimeUsageProfileDimension(
+                dimension_id="input_bytes",
+                unit="byte",
+                expected_availability="AVAILABLE",
+                authority="DETERMINISTIC_LOCAL",
+                billing_eligible=True,
+            )
+        ],
+    )
+    rebound = RuntimeUsageProfile.model_validate(
+        {
+            **profile.model_dump(mode="json"),
+            "runtime_configuration_hash": "sha256:configuration-b",
+        }
+    )
+
+    assert rebound.profile_hash == profile.profile_hash
+
+
+def test_proxy_opaque_fixed_price_accepts_unavailable_tokens() -> None:
+    profile = RuntimeUsageProfile(
+        runtime_id="runtime-opaque",
+        runtime_generation=1,
+        runtime_configuration_hash="sha256:opaque",
+        dimensions=[
+            RuntimeUsageProfileDimension(
+                dimension_id="input_tokens",
+                unit="token",
+                expected_availability="UNAVAILABLE",
+            )
+        ],
+    )
+    contract = AccountingContract(
+        contract_version="opaque-v1",
+        accounting_mode="proxy_opaque",
+        pricing_version="fixed-v1",
+        billable_units=[
+            AccountingUnitContract(
+                unit="request_fee",
+                mode="fixed_price",
+                price=3.0,
+                measurement_source="endpoint_policy",
+                verification_method="fixed_contract",
+            )
+        ],
+        checkpoint_policy="per_request",
+        maximum_request_charge=3.0,
+    )
+
+    assert contract.compatibility_errors(profile) == []
+    assert contract.calculate_charge([], request_charge_ceiling=3.0) == 3.0
+
+
+def test_provider_metered_contract_rejects_profile_with_unavailable_required_tokens() -> None:
+    profile = RuntimeUsageProfile(
+        runtime_id="runtime-opaque",
+        runtime_generation=1,
+        runtime_configuration_hash="sha256:opaque",
+        dimensions=[
+            RuntimeUsageProfileDimension(
+                dimension_id="input_tokens",
+                unit="token",
+                expected_availability="UNAVAILABLE",
+            )
+        ],
+    )
+    contract = AccountingContract(
+        contract_version="metered-v1",
+        accounting_mode="provider_metered",
+        pricing_version="tokens-v1",
+        billable_units=[
+            AccountingUnitContract(
+                unit="input_tokens",
+                mode="provider_metered",
+                price=0.01,
+                measurement_source="provider_api",
+                verification_method="provider_report",
+                required_authority="AUTHORITATIVE_PROVIDER",
+            )
+        ],
+        checkpoint_policy="per_request",
+    )
+
+    assert contract.compatibility_errors(profile) == [
+        "required Usage dimension is unavailable: input_tokens",
+        "Usage authority mismatch: input_tokens",
+    ]
+
+
+def test_authoritative_provider_usage_requires_provider_source() -> None:
+    with pytest.raises(ValidationError, match="Provider usage source"):
+        UsageDimensionEvidence(
+            dimension_id="input_tokens",
+            unit="token",
+            availability="AVAILABLE",
+            authority="AUTHORITATIVE_PROVIDER",
+            value=10,
+        )

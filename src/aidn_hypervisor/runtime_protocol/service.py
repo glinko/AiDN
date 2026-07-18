@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from aidn_hypervisor.accounting.models import AccountingContract, RuntimeUsageProfile
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol.models import (
@@ -19,6 +20,7 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeRequestAccept,
     RuntimeRequestRecord,
     RuntimeUsageAck,
+    RuntimeUsageConflict,
     RuntimeUsageReport,
     canonical_hash,
 )
@@ -45,6 +47,8 @@ class RuntimeProtocolService:
         runtime_authenticator: Callable[[BaseModel], bool],
         hypervisor_signer: Callable[[dict], str],
         request_authorizer: Callable[[RuntimeExecuteRequest], bool],
+        accounting_contract_resolver: Callable[[str], AccountingContract],
+        usage_profile_resolver: Callable[[str], RuntimeUsageProfile],
         store: RuntimeProtocolStore | None = None,
         supported_protocol_versions: tuple[str, ...] = ("1.0",),
         connection_lifetime_seconds: int = 3600,
@@ -60,6 +64,8 @@ class RuntimeProtocolService:
         self.runtime_authenticator = runtime_authenticator
         self.hypervisor_signer = hypervisor_signer
         self.request_authorizer = request_authorizer
+        self.accounting_contract_resolver = accounting_contract_resolver
+        self.usage_profile_resolver = usage_profile_resolver
         self.store = store or RuntimeProtocolStore()
         self.supported_protocol_versions = supported_protocol_versions
         self.connection_lifetime_seconds = connection_lifetime_seconds
@@ -259,6 +265,14 @@ class RuntimeProtocolService:
                 "request",
                 "Capability Definition Hash mismatch",
             )
+        contract = self._accounting_contract(request.accounting_contract_hash)
+        profile = self._usage_profile(request.runtime_id)
+        self._validate_accounting_compatibility(
+            request=request,
+            binding=binding,
+            contract=contract,
+            profile=profile,
+        )
         unsupported = set(request.required_features) - set(binding.supported_features)
         if unsupported:
             raise RuntimeProtocolError(
@@ -366,21 +380,84 @@ class RuntimeProtocolService:
             raise RuntimeProtocolError(
                 "RUNTIME_REQUEST_NOT_FOUND", "usage", "Usage Report Request is unknown"
             )
+        if request.admission_state not in {"ACCEPTED", "QUEUED"}:
+            return self._usage_ack(
+                report,
+                status="REJECTED",
+                rejection_code="USAGE_REPORT_BEFORE_REQUEST_ACCEPTANCE",
+            )
+        if (
+            report.endpoint_id != request.request.endpoint_id
+            or report.endpoint_configuration_hash
+            != request.request.endpoint_configuration_hash
+            or report.accounting_contract_hash
+            != request.request.accounting_contract_hash
+        ):
+            return self._usage_ack(
+                report,
+                status="REJECTED",
+                rejection_code="USAGE_REPORT_IDENTITY_MISMATCH",
+            )
+        profile = self._usage_profile(report.runtime_id)
+        profile_dimensions = {item.dimension_id: item for item in profile.dimensions}
+        seen_dimensions: set[str] = set()
+        for dimension in report.dimensions:
+            if dimension.dimension_id in seen_dimensions:
+                return self._usage_ack(
+                    report,
+                    status="REJECTED",
+                    rejection_code="USAGE_DIMENSION_DUPLICATE",
+                )
+            seen_dimensions.add(dimension.dimension_id)
+            declared = profile_dimensions.get(dimension.dimension_id)
+            if declared is None or declared.unit != dimension.unit:
+                return self._usage_ack(
+                    report,
+                    status="REJECTED",
+                    rejection_code="USAGE_PROFILE_MISMATCH",
+                )
+            if (
+                dimension.authority is not None
+                and declared.authority is not None
+                and dimension.authority != declared.authority
+            ):
+                return self._usage_ack(
+                    report,
+                    status="REJECTED",
+                    rejection_code="USAGE_AUTHORITY_INVALID",
+                )
+            if dimension.billing_eligible and not declared.billing_eligible:
+                return self._usage_ack(
+                    report,
+                    status="REJECTED",
+                    rejection_code="USAGE_BILLING_ELIGIBILITY_INVALID",
+                )
+            if dimension.cumulative != declared.cumulative:
+                return self._usage_ack(
+                    report,
+                    status="REJECTED",
+                    rejection_code="USAGE_CUMULATIVE_SEMANTICS_INVALID",
+                )
         existing = self.store.usage_reports.get(report.usage_report_id)
         if existing is not None:
             if existing.report_hash != report.report_hash:
-                raise RuntimeProtocolError(
-                    "RUNTIME_USAGE_CHAIN_CONFLICT",
-                    "usage",
-                    "Usage Report ID conflicts with existing content",
+                self._record_usage_conflict(
+                    report,
+                    accepted_report_hash=existing.report_hash,
+                    conflict_type="CONTENT",
                 )
-            return RuntimeUsageAck(
-                usage_report_id=report.usage_report_id,
-                request_id=report.request_id,
+                return self._usage_ack(
+                    report,
+                    status="CONFLICT",
+                    accepted_sequence=existing.usage_sequence,
+                    accepted_hash=existing.report_hash,
+                    rejection_code="USAGE_REPORT_CONFLICT",
+                )
+            return self._usage_ack(
+                report,
                 status="DUPLICATE",
-                accepted_usage_sequence=existing.usage_sequence,
-                accepted_report_hash=existing.report_hash,
-                acknowledged_at=datetime.now(timezone.utc).isoformat(),
+                accepted_sequence=existing.usage_sequence,
+                accepted_hash=existing.report_hash,
             )
         request_reports = sorted(
             (
@@ -392,30 +469,271 @@ class RuntimeProtocolService:
         )
         expected_sequence = len(request_reports) + 1
         previous_hash = request_reports[-1].report_hash if request_reports else None
+        same_sequence = next(
+            (
+                item
+                for item in request_reports
+                if item.usage_sequence == report.usage_sequence
+            ),
+            None,
+        )
+        if same_sequence is not None:
+            self._record_usage_conflict(
+                report,
+                accepted_report_hash=same_sequence.report_hash,
+                conflict_type="SEQUENCE",
+            )
+            return self._usage_ack(
+                report,
+                status="CONFLICT",
+                accepted_sequence=same_sequence.usage_sequence,
+                accepted_hash=same_sequence.report_hash,
+                rejection_code="USAGE_CHAIN_CONFLICT",
+            )
         if report.usage_sequence != expected_sequence:
-            raise RuntimeProtocolError(
-                "RUNTIME_USAGE_SEQUENCE_INVALID",
-                "usage",
-                f"Expected Usage sequence {expected_sequence}",
+            self._record_usage_conflict(
+                report,
+                accepted_report_hash=previous_hash,
+                conflict_type="SEQUENCE",
+            )
+            return self._usage_ack(
+                report,
+                status="OUT_OF_SEQUENCE",
+                accepted_sequence=(request_reports[-1].usage_sequence if request_reports else None),
+                accepted_hash=previous_hash,
+                rejection_code="USAGE_SEQUENCE_INVALID",
             )
         if report.previous_usage_report_hash != previous_hash:
-            raise RuntimeProtocolError(
-                "RUNTIME_USAGE_CHAIN_CONFLICT",
-                "usage",
-                "Usage Report does not extend the accepted hash chain",
+            self._record_usage_conflict(
+                report,
+                accepted_report_hash=previous_hash,
+                conflict_type="CHAIN",
             )
-        ack = RuntimeUsageAck(
-            usage_report_id=report.usage_report_id,
-            request_id=report.request_id,
+            return self._usage_ack(
+                report,
+                status="OUT_OF_SEQUENCE",
+                accepted_sequence=(request_reports[-1].usage_sequence if request_reports else None),
+                accepted_hash=previous_hash,
+                rejection_code="USAGE_CHAIN_HASH_MISMATCH",
+            )
+        ack = self._usage_ack(
+            report,
             status="ACCEPTED",
-            accepted_usage_sequence=report.usage_sequence,
-            accepted_report_hash=report.report_hash,
-            acknowledged_at=datetime.now(timezone.utc).isoformat(),
+            accepted_sequence=report.usage_sequence,
+            accepted_hash=report.report_hash,
         )
         self.store.usage_reports[report.usage_report_id] = report.model_copy(deep=True)
-        self.store.usage_acks[report.usage_report_id] = ack
+        self.store.usage_acks[ack.usage_acknowledgment_id] = ack
         self.store.flush()
         return ack
+
+    def record_request_terminal(
+        self,
+        runtime_connection_id: str,
+        *,
+        request_id: str,
+        terminal_state: str,
+        terminal_result_hash: str,
+        final_usage_report_id: str,
+    ) -> RuntimeRequestRecord:
+        record = self.store.requests.get(request_id)
+        if record is None:
+            raise RuntimeProtocolError(
+                "RUNTIME_REQUEST_NOT_FOUND", "result", "Unknown Runtime Request"
+            )
+        self._validate_connection(
+            runtime_connection_id,
+            runtime_id=record.runtime_id,
+            runtime_generation=record.runtime_generation,
+            runtime_configuration_hash=record.request.runtime_configuration_hash,
+            route_generation=record.route_generation,
+        )
+        terminal_states = {
+            "COMPLETED",
+            "PARTIAL",
+            "CANCELLED",
+            "FAILED",
+            "EXPIRED",
+            "UNRECOVERABLE",
+        }
+        if terminal_state not in terminal_states:
+            raise RuntimeProtocolError(
+                "RUNTIME_RESULT_FINALIZATION_FAILED",
+                "result",
+                "Request terminal state is invalid",
+            )
+        report = self.store.usage_reports.get(final_usage_report_id)
+        request_reports = [
+            item
+            for item in self.store.usage_reports.values()
+            if item.request_id == request_id
+        ]
+        chain_head = max(
+            request_reports,
+            key=lambda item: item.usage_sequence,
+            default=None,
+        )
+        if (
+            report is None
+            or chain_head is None
+            or chain_head.usage_report_id != final_usage_report_id
+            or report.request_id != request_id
+            or report.report_type != "FINAL"
+            or not report.terminal
+            or report.request_state != terminal_state
+        ):
+            raise RuntimeProtocolError(
+                "USAGE_FINAL_REPORT_REQUIRED",
+                "result",
+                "Terminal Request requires a matching accepted Final Usage Report",
+            )
+        updated = record.model_copy(
+            update={
+                "request_state": terminal_state,
+                "terminal_result_hash": terminal_result_hash,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        self.store.requests[request_id] = updated
+        self.store.flush()
+        return updated
+
+    def _usage_ack(
+        self,
+        report: RuntimeUsageReport,
+        *,
+        status: str,
+        accepted_sequence: int | None = None,
+        accepted_hash: str | None = None,
+        rejection_code: str | None = None,
+    ) -> RuntimeUsageAck:
+        ack = RuntimeUsageAck(
+            usage_report_id=report.usage_report_id,
+            session_id=report.session_id,
+            request_id=report.request_id,
+            status=status,
+            accepted_usage_sequence=accepted_sequence,
+            accepted_report_hash=accepted_hash,
+            rejection_code=rejection_code,
+            acknowledged_at=datetime.now(timezone.utc).isoformat(),
+        )
+        signature_payload = ack.model_dump(
+            mode="json",
+            exclude={"hypervisor_signature"},
+        )
+        ack = ack.model_copy(
+            update={"hypervisor_signature": self.hypervisor_signer(signature_payload)}
+        )
+        self.store.usage_acks[ack.usage_acknowledgment_id] = ack
+        if status != "ACCEPTED":
+            self.store.flush()
+        return ack
+
+    def _record_usage_conflict(
+        self,
+        report: RuntimeUsageReport,
+        *,
+        accepted_report_hash: str | None,
+        conflict_type: str,
+    ) -> RuntimeUsageConflict:
+        conflict = RuntimeUsageConflict(
+            usage_report_id=report.usage_report_id,
+            runtime_id=report.runtime_id,
+            session_id=report.session_id,
+            request_id=report.request_id,
+            usage_sequence=report.usage_sequence,
+            accepted_report_hash=accepted_report_hash,
+            conflicting_report_hash=report.report_hash,
+            conflict_type=conflict_type,
+            observed_at=datetime.now(timezone.utc).isoformat(),
+        )
+        self.store.usage_conflicts[conflict.conflict_id] = conflict
+        return conflict
+
+    def _accounting_contract(self, contract_hash: str) -> AccountingContract:
+        try:
+            contract = self.accounting_contract_resolver(contract_hash)
+        except KeyError as exc:
+            raise RuntimeProtocolError(
+                "ACCOUNTING_CONTRACT_MISMATCH",
+                "accounting",
+                "Accounting Contract is unknown",
+            ) from exc
+        contract = AccountingContract.model_validate(contract.model_dump(mode="json"))
+        if contract.payload_hash != contract_hash:
+            raise RuntimeProtocolError(
+                "ACCOUNTING_CONTRACT_MISMATCH",
+                "accounting",
+                "Accounting Contract Hash mismatch",
+            )
+        return contract
+
+    def _usage_profile(self, runtime_id: str) -> RuntimeUsageProfile:
+        try:
+            profile = self.usage_profile_resolver(runtime_id)
+        except KeyError as exc:
+            raise RuntimeProtocolError(
+                "USAGE_PROFILE_MISMATCH",
+                "accounting",
+                "Runtime Usage Profile is unknown",
+            ) from exc
+        return RuntimeUsageProfile.model_validate(profile.model_dump(mode="json"))
+
+    def _validate_accounting_compatibility(
+        self,
+        *,
+        request: RuntimeExecuteRequest,
+        binding: RuntimeBinding,
+        contract: AccountingContract,
+        profile: RuntimeUsageProfile,
+    ) -> None:
+        if contract.capability_id not in {None, request.capability_id}:
+            raise RuntimeProtocolError(
+                "ACCOUNTING_CONTRACT_MISMATCH",
+                "accounting",
+                "Accounting Contract Capability mismatch",
+            )
+        if contract.endpoint_id not in {None, request.endpoint_id}:
+            raise RuntimeProtocolError(
+                "ACCOUNTING_CONTRACT_MISMATCH",
+                "accounting",
+                "Accounting Contract Endpoint mismatch",
+            )
+        if (
+            profile.runtime_id != request.runtime_id
+            or profile.runtime_generation != request.runtime_generation
+            or profile.runtime_configuration_hash != request.runtime_configuration_hash
+        ):
+            raise RuntimeProtocolError(
+                "USAGE_PROFILE_MISMATCH",
+                "accounting",
+                "Runtime Usage Profile identity mismatch",
+            )
+        if (
+            binding.usage_reporting_profile_hash is None
+            or profile.profile_hash != binding.usage_reporting_profile_hash
+        ):
+            raise RuntimeProtocolError(
+                "USAGE_PROFILE_MISMATCH",
+                "accounting",
+                "Runtime Binding does not authorize this Usage Profile",
+            )
+        contract_modes = {unit.mode for unit in contract.billable_units}
+        if binding.supported_accounting_modes and not contract_modes.issubset(
+            set(binding.supported_accounting_modes)
+        ):
+            raise RuntimeProtocolError(
+                "ACCOUNTING_MODE_UNSUPPORTED",
+                "accounting",
+                "Runtime Binding does not support the Accounting Mode",
+            )
+        errors = contract.compatibility_errors(profile)
+        if errors:
+            raise RuntimeProtocolError(
+                "ACCOUNTING_REQUIRED_DIMENSION_UNAVAILABLE",
+                "accounting",
+                "; ".join(errors),
+            )
 
     def build_recovery_plan(
         self,

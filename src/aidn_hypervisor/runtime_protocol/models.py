@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from aidn_hypervisor.accounting.models import UsageDimensionEvidence
+
 
 RuntimeConnectionState = Literal[
     "CONNECTING",
@@ -41,20 +43,13 @@ RuntimeRequestState = Literal[
     "RECOVERING",
     "UNRECOVERABLE",
 ]
-UsageAuthority = Literal[
-    "AUTHORITATIVE_PROVIDER",
-    "DETERMINISTIC_LOCAL",
-    "OBSERVABLE_LOCAL",
-    "ESTIMATED",
-    "UNAVAILABLE",
-]
-UsageAvailability = Literal["AVAILABLE", "UNAVAILABLE"]
 UsageAckStatus = Literal[
     "ACCEPTED",
     "DUPLICATE",
     "REJECTED",
     "CONFLICT",
     "OUT_OF_SEQUENCE",
+    "PENDING_REVIEW",
 ]
 
 
@@ -237,25 +232,20 @@ class RuntimeRequestAccept(BaseModel):
     diagnostic_reference: str | None = None
 
 
-class RuntimeUsageDimension(BaseModel):
-    dimension_id: str = Field(min_length=1)
-    unit: str = Field(min_length=1)
-    value: int | float | str | None = None
-    availability: UsageAvailability
-    authority: UsageAuthority
-    cumulative: bool = True
-    billable_eligible: bool = False
-    source_reference: str | None = None
-    limitations: list[str] = Field(default_factory=list)
+class RuntimeUsageDimension(UsageDimensionEvidence):
+    """RFC-0054 wire projection of the RFC-0051 Usage dimension."""
 
-    @model_validator(mode="after")
-    def _validate_availability(self):
-        if self.availability == "UNAVAILABLE":
-            if self.authority != "UNAVAILABLE" or self.value is not None:
-                raise ValueError("unavailable Usage must have no value and UNAVAILABLE authority")
-        elif self.authority == "UNAVAILABLE" or self.value is None:
-            raise ValueError("available Usage requires a value and non-UNAVAILABLE authority")
-        return self
+
+class RuntimeProviderAttempt(BaseModel):
+    attempt_id: str = Field(min_length=1)
+    provider_reference: str | None = None
+    provider_model_reference: str | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    terminal_state: str = Field(min_length=1)
+    usage_dimensions: list[RuntimeUsageDimension] = Field(default_factory=list)
+    billable: bool = False
+    retry_reason: str | None = None
 
 
 class RuntimeUsageReport(BaseModel):
@@ -264,20 +254,66 @@ class RuntimeUsageReport(BaseModel):
     runtime_generation: int = Field(ge=1)
     runtime_configuration_hash: str = Field(min_length=1)
     endpoint_id: str = Field(min_length=1)
+    endpoint_configuration_hash: str | None = None
     session_id: str = Field(min_length=1)
     request_id: str = Field(min_length=1)
+    accounting_contract_hash: str | None = None
+    report_type: Literal[
+        "INTERIM",
+        "CHECKPOINT",
+        "FINAL",
+        "CORRECTION",
+        "RECOVERY",
+        "DIAGNOSTIC",
+    ] = "INTERIM"
     usage_sequence: int = Field(ge=1)
     previous_usage_report_hash: str | None = None
     dimensions: list[RuntimeUsageDimension] = Field(default_factory=list)
-    provider_attempts: int = Field(default=1, ge=0)
+    provider_attempts: list[RuntimeProviderAttempt] = Field(default_factory=list)
+    provider_attempt_count: int = Field(default=0, ge=0)
+    request_state: str | None = None
     cumulative: bool = True
     terminal: bool = False
-    observed_at: str = Field(min_length=1)
+    observed_from: str | None = None
+    observed_to: str | None = None
+    limitations: list[str] = Field(default_factory=list)
+    created_at: str = Field(min_length=1)
+    observed_at: str | None = None
     report_hash: str | None = None
     runtime_signature: str = Field(min_length=1)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_compatibility_fields(cls, value):
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        observed_at = normalized.get("observed_at")
+        normalized.setdefault("created_at", observed_at)
+        normalized.setdefault("observed_at", normalized.get("created_at"))
+        attempts = normalized.get("provider_attempts")
+        if isinstance(attempts, int):
+            normalized["provider_attempt_count"] = attempts
+            normalized["provider_attempts"] = []
+        return normalized
+
     @model_validator(mode="after")
     def _validate_report_hash(self):
+        terminal_states = {
+            "COMPLETED",
+            "PARTIAL",
+            "CANCELLED",
+            "FAILED",
+            "EXPIRED",
+            "UNRECOVERABLE",
+        }
+        if self.terminal:
+            if self.report_type != "FINAL" or self.request_state not in terminal_states:
+                raise ValueError("terminal Usage requires FINAL report and terminal Request state")
+        elif self.report_type == "FINAL":
+            raise ValueError("FINAL Usage Report must be terminal")
+        if self.provider_attempt_count < len(self.provider_attempts):
+            raise ValueError("provider_attempt_count cannot be less than attempt records")
         payload = self.model_dump(mode="json", exclude={"report_hash", "runtime_signature"})
         expected = canonical_hash(payload)
         if self.report_hash is None:
@@ -288,13 +324,52 @@ class RuntimeUsageReport(BaseModel):
 
 
 class RuntimeUsageAck(BaseModel):
+    usage_acknowledgment_id: str | None = None
     usage_report_id: str = Field(min_length=1)
+    session_id: str | None = None
     request_id: str = Field(min_length=1)
     status: UsageAckStatus
     accepted_usage_sequence: int | None = Field(default=None, ge=1)
     accepted_report_hash: str | None = None
     rejection_code: str | None = None
     acknowledged_at: str = Field(min_length=1)
+    hypervisor_signature: str | None = None
+
+    @model_validator(mode="after")
+    def _populate_acknowledgment_id(self):
+        payload = self.model_dump(
+            mode="json",
+            exclude={"usage_acknowledgment_id", "hypervisor_signature"},
+        )
+        expected = canonical_hash(payload)
+        if self.usage_acknowledgment_id is None:
+            self.usage_acknowledgment_id = expected
+        elif self.usage_acknowledgment_id != expected:
+            raise ValueError("usage_acknowledgment_id does not match acknowledgment")
+        return self
+
+
+class RuntimeUsageConflict(BaseModel):
+    conflict_id: str | None = None
+    usage_report_id: str = Field(min_length=1)
+    runtime_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    usage_sequence: int = Field(ge=1)
+    accepted_report_hash: str | None = None
+    conflicting_report_hash: str = Field(min_length=1)
+    conflict_type: Literal["CONTENT", "SEQUENCE", "CHAIN"]
+    observed_at: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _populate_conflict_id(self):
+        payload = self.model_dump(mode="json", exclude={"conflict_id"})
+        expected = canonical_hash(payload)
+        if self.conflict_id is None:
+            self.conflict_id = expected
+        elif self.conflict_id != expected:
+            raise ValueError("conflict_id does not match Usage conflict evidence")
+        return self
 
 
 class RuntimeRecoveryState(BaseModel):

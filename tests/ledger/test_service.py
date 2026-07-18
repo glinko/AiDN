@@ -275,6 +275,8 @@ def test_session_accounting_report_and_acknowledgement_record_canonical_ledger_o
         "report_hash": usage_report_hash(usage_report),
         "ack_hash": usage_acknowledgement_hash(usage_acknowledgement),
         "accepted_checkpoint_sequence": 1,
+        "accepted_report_id": "report-1",
+        "accounting_contract_hash": opened.session.accounting_contract_hash,
         "accepted_usage_charged_q": 4.0,
         "verification_status": "accepted_unverified",
     }
@@ -283,6 +285,8 @@ def test_session_accounting_report_and_acknowledgement_record_canonical_ledger_o
         "endpoint_id": opened.session.endpoint_id,
         "accepted_checkpoint_sequence": 1,
         "report_hash": usage_report_hash(usage_report),
+        "usage_report_id": "report-1",
+        "accounting_contract_hash": opened.session.accounting_contract_hash,
         "accepted_usage_charged_q": 4.0,
     }
 

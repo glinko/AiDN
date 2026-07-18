@@ -2,14 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.5`
+Version: `0.6`
 
-Revision note: concealed Validation executes through ordinary RFC-0054
-`RUNTIME_EXECUTE` without a Runtime-visible validation marker.
+Revision note: concealed Validation retains ordinary RFC-0051 Usage evidence
+without converting it into ordinary Endpoint compensation.
 
 Supersedes:
 
-- `RFC-0064 Version 0.2`
+- `RFC-0064 Version 0.5`
 
 Depends on:
 
@@ -1991,3 +1991,12 @@ Is Separate from Validation Session Deposit
 - Negative reports are economically valuable.
 - Assignment completion and Certification remain separate.
 - Every validation Session and Escrow movement is auditable after reveal.
+
+## RFC-0051 Validation Usage Evidence
+
+Concealed Validation Requests produce ordinary Usage Report envelopes and a
+Final Report where practical. These records may support timing, attempt,
+artifact, capacity and anomaly evidence. Missing optional token Usage does not
+invalidate Validation unless exact token verification is part of the assigned
+test. Validation-specific compensation rules override ordinary Endpoint
+payment; Usage evidence alone SHALL NOT create Provider compensation.
