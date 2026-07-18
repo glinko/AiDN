@@ -2,15 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.4`
+Version: `0.5`
 
-Revision note: Proxy Runtime is the RFC-0053 `PROXY` implementation class and
-commits upstream selection, egress, Usage authority and recovery limitations to
-Runtime and Endpoint configuration.
+Revision note: Proxy Runtime retries, opaque Usage and cancellation uncertainty
+use RFC-0054 Request, Usage and Cancellation messages.
 
 Supersedes:
 
-- `RFC-0063 Version 0.3`
+- `RFC-0063 Version 0.4`
 
 Depends on:
 

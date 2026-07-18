@@ -2,14 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.4`
+Version: `0.5`
 
-Revision note: Session recovery compares Runtime Generation, State Generation
-and Route Generation independently before resuming execution.
+Revision note: Session recovery consumes hash-bound RFC-0054 Recovery State,
+Recovery Plan directives, terminal Results and Usage redelivery.
 
 Supersedes:
 
-- `RFC-0060 Version 0.3`
+- `RFC-0060 Version 0.4`
 
 Depends on:
 
@@ -569,6 +569,12 @@ A Runtime Generation, Configuration Hash or State Generation mismatch SHALL
 require explicit migration evidence or fail recovery. Plugin Manager
 reconciliation is management evidence and cannot independently resume or settle
 a Session.
+
+The Hypervisor SHALL issue an explicit RFC-0054 Recovery Plan. Existing work
+may continue, output or final Results/Usage may be redelivered, idempotent work
+may restart, or work may be cancelled/failed. Missing acknowledgments alone do
+not authorize re-execution. `UNRECOVERABLE` Runtime terminal state enters this
+RFC's failure and Forced Settlement evaluation.
 The snapshot is evidence for the Session recovery decision, not authority to
 alter accepted Session terms.
 

@@ -36,6 +36,7 @@ from aidn_hypervisor.registry_models import (
     RegistryRating,
 )
 from aidn_hypervisor.registry_service import RegistryService
+from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.state import (
@@ -155,6 +156,7 @@ class HypervisorService:
         base_emission_q: float = 5000.0,
         epoch_reward_pool_shares: dict | None = None,
         provider_inventory=None,
+        runtime_protocol_store=None,
     ) -> None:
         self.queue = queue
         self.scheduler = scheduler
@@ -169,6 +171,7 @@ class HypervisorService:
             plugins=self.plugins,
             store=InMemoryProviderInventoryStore(),
         )
+        self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore()
         self.max_active_allocations_per_owner = max_active_allocations_per_owner
         self.max_pending_allocations_per_owner = max_pending_allocations_per_owner
         self.node_id = node_id
@@ -2941,6 +2944,26 @@ class HypervisorService:
                 job.model_copy(deep=True)
                 for job in self.provider_inventory.list_installation_jobs()
             ],
+            runtime_protocol_connections=list(
+                self.runtime_protocol_store.connections.values()
+            ),
+            runtime_protocol_messages=list(self.runtime_protocol_store.messages.values()),
+            runtime_protocol_sequences=dict(
+                self.runtime_protocol_store.runtime_sequences
+            ),
+            runtime_protocol_requests=list(self.runtime_protocol_store.requests.values()),
+            runtime_protocol_usage_reports=list(
+                self.runtime_protocol_store.usage_reports.values()
+            ),
+            runtime_protocol_usage_acks=list(
+                self.runtime_protocol_store.usage_acks.values()
+            ),
+            runtime_protocol_recovery_plans=list(
+                self.runtime_protocol_store.recovery_plans.values()
+            ),
+            runtime_protocol_recovery_results=list(
+                self.runtime_protocol_store.recovery_results.values()
+            ),
             operator_requests_policy=dict(self._operator_requests_policy),
             owner_wallet=(
                 OwnerWalletSnapshot(**self._owner_wallet)
@@ -3072,6 +3095,7 @@ class HypervisorService:
             self.provider_inventory.store.save_installation_approval(approval)
         for job in snapshot.provider_installation_jobs:
             self.provider_inventory.store.save_installation_job(job)
+        self.runtime_protocol_store.restore(snapshot)
         self._wallet_usage_events = [
             event.model_dump(mode="json") for event in snapshot.wallet_usage_events
         ]

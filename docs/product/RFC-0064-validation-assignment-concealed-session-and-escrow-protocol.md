@@ -2,12 +2,10 @@
 
 Status: `Draft`
 
-Version: `0.4`
+Version: `0.5`
 
-Revision note: Assignment, concealed credential, report transfer, Storage
-Receipt, commitment, reveal and availability-challenge messages use RFC-0042
-`VALIDATION`. `VALIDATION_REPORT_TRANSFER` requires persistent Message ID
-deduplication, assignment-scoped authentication and report-hash verification.
+Revision note: concealed Validation executes through ordinary RFC-0054
+`RUNTIME_EXECUTE` without a Runtime-visible validation marker.
 
 Supersedes:
 
@@ -1050,6 +1048,14 @@ The Endpoint MAY reject the Session according to ordinary availability and polic
 Repeated rejection or unavailability becomes validation evidence.
 
 ## 57. Validation Execution Limits
+
+The Hypervisor applies concealed Validation economics and authorization before
+Runtime dispatch. The Capability Runtime receives an ordinary RFC-0054 Execute
+Request carrying the same Endpoint, Session, Capability, deadline, accounting
+and side-effect constraints as applicable ordinary work. RFC-0064 SHALL NOT
+require `is_validation: true` or equivalent Runtime-visible discrimination.
+Operational Usage remains reportable; compensation follows this RFC rather than
+Runtime inference.
 
 Every assignment SHALL define:
 

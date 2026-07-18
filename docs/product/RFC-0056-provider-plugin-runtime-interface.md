@@ -4,15 +4,14 @@ AiDN Provider Plugin Runtime Interface
 
 Status: Draft
 
-Version: 0.4
+Version: 0.5
 
-Revision note: Runtime Binding proposals use the normative RFC-0053 schema and
-exclude mutable Route Generation; Adapter registration binds the approved
-Runtime Generation and Configuration Hash.
+Revision note: Runtime Adapter registration is incomplete until the separately
+authenticated RFC-0054 Hello handshake activates its preapproved Runtime route.
 
 Supersedes:
 
-* RFC-0056 Version 0.3
+* RFC-0056 Version 0.4
 
 Depends on:
 
@@ -479,6 +478,12 @@ The Adapter receives an RFC-0054 `RUNTIME` route scoped to its Runtime ID and
 assigned Sessions. It does not reuse Plugin Session Identity for execution.
 The registration result returns Route Generation separately from the immutable
 Runtime Binding.
+
+RFC-0056 registration creates no execution connection. The Adapter SHALL then
+complete RFC-0054 Runtime Hello using the approved Runtime ID, Runtime
+Generation, Configuration and Binding Hashes, Adapter identity and current
+Dispatcher route. Failure leaves management state intact but Runtime execution
+unavailable.
 
 Runtime execution, streaming, cancellation, Usage Reports and Request recovery
 then use RFC-0054 only.

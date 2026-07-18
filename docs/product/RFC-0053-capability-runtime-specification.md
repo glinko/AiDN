@@ -2,16 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.6`
+Version: `0.7`
 
-Revision note: separates Runtime identity, immutable Runtime Binding,
-process-local Runtime Instance and Dispatcher route state. Provider Plugins
-manage integrations but do not become the execution protocol or own Runtime
-identity.
+Revision note: all handshake, admission, stream, Usage, cancellation and
+recovery wire semantics are delegated exclusively to RFC-0054.
 
 Supersedes:
 
-- `RFC-0053 Version 0.5`
+- `RFC-0053 Version 0.6`
 
 Depends on:
 
@@ -41,6 +39,10 @@ verification, Endpoint integration and Dispatcher authorization.
 
 Wire-level Runtime messages are defined by RFC-0054. Provider Plugin management
 is defined by RFC-0055 and RFC-0056.
+
+RFC-0053 SHALL NOT define an alternative Runtime wire envelope or generic
+Plugin execution call. Runtime Binding approval precedes RFC-0054 handshake;
+the handshake activates but does not create Runtime authority.
 
 ## 2. Core Boundary
 

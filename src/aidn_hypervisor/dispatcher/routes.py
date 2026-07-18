@@ -7,6 +7,14 @@ from aidn_hypervisor.sessions.models import EndpointSession
 
 
 RUNTIME_MESSAGE_TYPES = {
+    "RUNTIME_EXECUTE",
+    "RUNTIME_USAGE_ACK",
+    "RUNTIME_CANCEL",
+    "RUNTIME_STATE_RESET",
+    "RUNTIME_RECOVERY_PLAN",
+    "RUNTIME_DRAIN",
+    "RUNTIME_SHUTDOWN",
+    # Compatibility alias for the pre-RFC-0054 execution projection.
     "RUNTIME_EXECUTION_REQUEST",
     "RUNTIME_CANCELLATION",
     "RUNTIME_RECOVERY_STATE",

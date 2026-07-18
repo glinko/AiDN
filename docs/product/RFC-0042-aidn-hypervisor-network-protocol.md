@@ -4,15 +4,14 @@ AiDN Hypervisor Network Protocol and Dispatcher Architecture
 
 Status: Draft
 
-Version: 0.5
+Version: 0.6
 
-Revision note: application protocols extend the Dispatcher through authorized
-profiles rather than becoming dependencies of the transport foundation. Runtime
-routes bind both Runtime Generation and independently mutable Route Generation.
+Revision note: RFC-0054 Runtime semantic identity and sequence state remain
+distinct from outer network Message ID, delivery sequence and replay state.
 
 Supersedes:
 
-* RFC-0042 Version 0.4 - AiDN Hypervisor Network Protocol and Dispatcher Architecture
+* RFC-0042 Version 0.5 - AiDN Hypervisor Network Protocol and Dispatcher Architecture
 
 Depends on:
 
@@ -2761,6 +2760,15 @@ delivery.
 immutable Runtime Binding or Runtime Configuration Hash. Reconnect may rotate a
 route without changing Runtime identity; incompatible Runtime replacement
 requires an explicit Runtime Generation transition.
+
+## 185. Runtime Semantic Identity
+
+RFC-0054 `runtime_message_id` identifies one execution-level event and remains
+stable across safe outer transport retransmission. RFC-0042 `message_id`
+identifies one routed delivery attempt. The Dispatcher SHALL validate both
+domains without assuming equality. Persistent Request, Result and Usage
+deduplication belongs to RFC-0054 semantic state, not only the transport replay
+cache.
 
 Комментарии к решениям
 

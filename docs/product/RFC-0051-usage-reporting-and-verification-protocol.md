@@ -2,10 +2,10 @@
 
 Status: `Draft`
 
-Version: `0.5`
+Version: `0.6`
 
-Revision note: each Runtime publishes a Configuration-bound Usage Profile with
-authority, scope and billing eligibility defined independently per dimension.
+Revision note: the canonical Runtime wire projection uses RFC-0054
+dimension-specific authority, ordered Report hashes and explicit acknowledgments.
 
 Supersedes:
 
@@ -39,6 +39,13 @@ Configuration Hash. Each dimension independently declares unit, availability,
 authority, cumulative behavior, Request/Session scope, billing eligibility and
 limitations. Unknown values remain unknown; a missing Provider metric SHALL NOT
 be converted to zero.
+
+RFC-0054 `RUNTIME_USAGE_REPORT` SHALL carry Runtime ID and Generation,
+Configuration Hash, Endpoint/Session/Request identity, Usage sequence, previous
+Report Hash, per-dimension authority, provider attempts, cumulative/terminal
+flags, Report Hash and persistent Runtime authentication. Acknowledgment states
+are `ACCEPTED`, `DUPLICATE`, `REJECTED`, `CONFLICT` and `OUT_OF_SEQUENCE`.
+Transport delivery acknowledgment SHALL NOT replace this Usage acknowledgment.
 
 Independent verification of reported usage is desirable but is not universally possible.
 

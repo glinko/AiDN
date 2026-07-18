@@ -26,6 +26,15 @@ from aidn_hypervisor.providers.models import (
     ProviderInstance,
     RuntimeBinding,
 )
+from aidn_hypervisor.runtime_protocol.models import (
+    RuntimeConnection,
+    RuntimeMessage,
+    RuntimeRecoveryPlan,
+    RuntimeRecoveryResult,
+    RuntimeRequestRecord,
+    RuntimeUsageAck,
+    RuntimeUsageReport,
+)
 from aidn_hypervisor.endpoints.state import (
     EndpointConfigurationSnapshotRecord,
     EndpointManifestSnapshot,
@@ -312,6 +321,18 @@ class HypervisorStateSnapshot(BaseModel):
         default_factory=list
     )
     dispatcher_dead_letters: list[DeadLetterRecord] = Field(default_factory=list)
+    runtime_protocol_connections: list[RuntimeConnection] = Field(default_factory=list)
+    runtime_protocol_messages: list[RuntimeMessage] = Field(default_factory=list)
+    runtime_protocol_sequences: dict[str, int] = Field(default_factory=dict)
+    runtime_protocol_requests: list[RuntimeRequestRecord] = Field(default_factory=list)
+    runtime_protocol_usage_reports: list[RuntimeUsageReport] = Field(default_factory=list)
+    runtime_protocol_usage_acks: list[RuntimeUsageAck] = Field(default_factory=list)
+    runtime_protocol_recovery_plans: list[RuntimeRecoveryPlan] = Field(
+        default_factory=list
+    )
+    runtime_protocol_recovery_results: list[RuntimeRecoveryResult] = Field(
+        default_factory=list
+    )
     validation_requests: list[ValidationRequest] = Field(default_factory=list)
     validation_bonds: list[ValidationBond] = Field(default_factory=list)
     validation_reports: list[ValidationReport] = Field(default_factory=list)

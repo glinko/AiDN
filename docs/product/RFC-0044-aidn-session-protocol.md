@@ -4,10 +4,10 @@ AiDN Session Protocol
 
 Status: Draft
 
-Version: 0.6
+Version: 0.7
 
-Revision note: Session routing additionally binds the accepted Runtime Binding
-or compatible Runtime set, Runtime Generation and state pinning policy.
+Revision note: Session Request lifecycle consumes RFC-0054 admission, execution
+and terminal states without treating Runtime acceptance as completion.
 
 Supersedes:
 
@@ -2318,6 +2318,12 @@ SHOULD remain pinned to one Runtime lineage and State Generation. Route
 reconnect SHALL NOT silently migrate Session state. Runtime failover requires
 contract-compatible behavior, preserved Request IDs and Usage continuity, or
 the Session enters explicit RFC-0060 recovery.
+
+`RUNTIME_REQUEST_ACCEPT` records execution responsibility but SHALL NOT advance
+the Session to completed or payable state. Session Request state follows
+RFC-0054 progress and becomes terminal only after a valid `RUNTIME_RESULT` plus
+applicable Usage processing. `PARTIAL`, `CANCELLED`, `FAILED`, `EXPIRED` and
+`UNRECOVERABLE` results enter the corresponding Session and RFC-0060 policy.
 
 ---
 
