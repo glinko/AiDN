@@ -1,4 +1,5 @@
 import stat
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -7,6 +8,13 @@ from aidn_hypervisor.validation.channel import (
     ValidationReportTransferChannel,
     ValidationReportTransferMessage,
 )
+from aidn_hypervisor.dispatcher import (
+    DispatcherRoute,
+    NetworkDispatcher,
+    NetworkMessage,
+    canonical_payload_hash,
+)
+from aidn_hypervisor.dispatcher.models import canonical_payload_bytes
 from aidn_hypervisor.validation.custody_signing import (
     Ed25519ValidationReportCustodySigner,
     verify_storage_receipt,
@@ -385,6 +393,32 @@ def test_validation_channel_replay_survives_store_restore(tmp_path) -> None:
     restored_receiver = ValidationService(ValidationStore(state_store), custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True)
 
     assert ValidationReportTransferChannel(restored_receiver).handle(message)["replayed"] is True
+
+
+def test_validation_transfer_runs_through_network_dispatcher(tmp_path) -> None:
+    signer = Ed25519ValidationReportTransferSigner("99" * 32)
+    sender = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "sender"), transfer_signer=signer)
+    requested = sender.request_validation(endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0)
+    sender.assign_epoch_requests(epoch_id="epoch-1", validator_entries=[{"validator_id": "val-1", "validator_label": "validator-a", "shares": 1, "capability_profiles": ["llm_text"], "contribution_q": 500.0}], seed="seed-1")
+    outcome = sender.submit_validation_report(request_id=requested.request.request_id, outcome="pass", validator_label="validator-a", evidence_summary="all checks passed")
+    receiver = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True)
+    receiver.store.save_request(sender.store.get_request(requested.request.request_id))
+    receiver.store.save_assignment(sender.store.list_assignments()[0])
+    receiver.store.save_authorization(sender.store.list_authorizations()[0])
+    channel = ValidationReportTransferChannel(receiver)
+    transfer = ValidationReportTransferMessage(message_id="inner-msg-1", envelope=sender.build_report_transfer_envelope(report_id=outcome.report.report_id), report=outcome.report)
+    payload = transfer.model_dump(mode="json")
+    dispatcher = NetworkDispatcher(network_id="aidn-test", chain_id="chain-test", network_revision="rev-1")
+    dispatcher.register_local_route(DispatcherRoute(destination_type="ENDPOINT", destination_id="ep-1", route_type="LOCAL_PROTOCOL_HANDLER", route_generation=1, allowed_source_types={"SERVICE"}, allowed_channel_classes={"VALIDATION"}, allowed_message_types={"VALIDATION_REPORT_TRANSFER"}, created_at="2026-07-18T00:00:00+00:00"), channel.dispatcher_handler)
+    now = datetime.now(timezone.utc)
+    network_message = NetworkMessage(message_id="network-msg-1", message_type="VALIDATION_REPORT_TRANSFER", network_id="aidn-test", chain_id="chain-test", network_revision="rev-1", channel_id="validation-1", channel_class="VALIDATION", source_subject={"subject_type": "SERVICE", "subject_id": "val-1"}, destination_subject={"subject_type": "ENDPOINT", "subject_id": "ep-1"}, source_sequence=1, route_generation=1, created_at=now.isoformat(), expiration=(now + timedelta(minutes=5)).isoformat(), payload_hash=canonical_payload_hash(payload), payload_length=len(canonical_payload_bytes(payload)), payload=payload)
+
+    assert dispatcher.submit(network_message).delivery_state == "QUEUED"
+    delivered, result = dispatcher.drain_once()
+
+    assert delivered.delivery_state == "APPLICATION_ACCEPTED"
+    assert result["acknowledgment"] == "PROCESSED"
+    assert receiver.get_custody_report_body(outcome.commitment.report_hash)["endpoint_id"] == "ep-1"
 
 
 def test_storage_receipt_rejects_tampered_custody_payload(tmp_path) -> None:

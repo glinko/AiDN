@@ -1,14 +1,14 @@
 RFC-0042
 
-AiDN Hypervisor Network Protocol
+AiDN Hypervisor Network Protocol and Dispatcher Architecture
 
 Status: Draft
 
-Version: 0.2
+Version: 0.3
 
 Supersedes:
 
-* RFC-0042 Version 0.1
+* RFC-0042 Version 0.2 - AiDN Hypervisor Network Protocol
 
 Depends on:
 
@@ -23,6 +23,7 @@ Depends on:
 * RFC-0049 Distributed Marketplace and Advertisement Registry
 * RFC-0053 Capability Runtime Specification
 * RFC-0054 Capability Runtime Protocol
+* RFC-0055 Provider Plugin System and Directory
 * RFC-0058 Participant Eligibility and Sybil Resistance
 * RFC-0059 Ledger Operation Catalog
 * RFC-0060 Session Failure, Recovery and Forced Settlement
@@ -37,7 +38,8 @@ Depends on:
 
 ## 1. Purpose
 
-This document defines the AiDN Hypervisor Network Protocol.
+This document defines the AiDN Hypervisor Network Protocol and the mandatory
+internal Network Dispatcher architecture used by every conforming Hypervisor.
 
 It specifies how Hypervisors and authorized Services:
 
@@ -57,6 +59,11 @@ It specifies how Hypervisors and authorized Services:
 * preserve application-level protocol boundaries.
 
 This protocol provides the common network layer for AiDN Services.
+
+All external and cross-component AiDN traffic SHALL pass through the Network
+Dispatcher. Services, Runtimes and Provider Plugins SHALL use scoped Dispatcher
+interfaces and SHALL NOT impersonate another protocol subject or bypass
+authorization and route-generation checks.
 
 ---
 
@@ -2456,6 +2463,277 @@ Protocol Eligibility
 * Direct connections are preferred but relays are supported.
 * Consensus remains integrated but not accidentally tunneled through unrelated application channels.
 * The network layer moves authenticated bytes and commitments; it does not become a philosopher interpreting what the model "really meant."
+
+---
+
+# Part II - Network Dispatcher
+
+This Part is normative in RFC-0042 v0.3. Where an earlier section says that a
+Hypervisor routes, queues, authorizes or tracks a message, the responsible
+component is the Network Dispatcher defined here.
+
+## 167. Dispatcher Definition and Trust Boundary
+
+The Network Dispatcher is the sole trusted Hypervisor control-plane component
+for external and cross-component AiDN traffic. It is responsible for:
+
+* ingress validation;
+* identity resolution and authentication;
+* message and channel authorization;
+* replay protection;
+* route resolution and Route Generation checks;
+* bounded admission and priority scheduling;
+* local, remote and Relay delivery;
+* delivery tracking, Dead Letter storage and restart recovery.
+
+Provider Plugins, Runtimes and external Services are outside this trust boundary.
+They SHALL interact through scoped Dispatcher interfaces.
+
+## 168. Dispatcher Components
+
+A conforming implementation SHOULD provide logical components equivalent to:
+
+```text
+Transport Gateway
+  -> Frame Decoder
+  -> Envelope and Domain Validator
+  -> Replay Guard
+  -> Identity Resolver
+  -> Authorization Engine
+  -> Route Resolver and Route Table
+  -> Admission Controller
+  -> Bounded Priority Queues
+  -> Local, Remote or Relay Delivery
+  -> Delivery Tracker
+  -> Dead Letter Store
+  -> Recovery Manager
+```
+
+The components MAY share one process, but their protocol responsibilities SHALL
+remain separately testable.
+
+## 169. Deterministic Ingress Pipeline
+
+Every incoming message SHALL be processed in this logical order:
+
+1. frame and basic encoding limits;
+2. common envelope schema;
+3. Network ID, Chain ID and Network Revision;
+4. expiration and Hop Limit;
+5. Message ID replay state;
+6. payload length and hash;
+7. source identity and authentication;
+8. message, channel and destination authorization;
+9. destination route and Route Generation;
+10. bounded queue admission;
+11. priority and deadline scheduling;
+12. delivery and delivery-state recording;
+13. explicit acknowledgment or stable error.
+
+Cheap checks SHOULD precede cryptographic and stateful work.
+
+## 170. Dispatcher Message Envelope
+
+The Dispatcher SHALL consume the common `network_message` envelope from Section
+50. For v0.3 the authoritative sequence field is `source_sequence` and the
+authoritative priority field is `priority_class`. Compatibility decoders MAY
+accept the v0.2 names `sequence` and `priority`, but SHALL normalize them before
+authentication and authorization.
+
+The Dispatcher SHALL reject payload-length or payload-hash mismatch before
+application delivery. Canonical serialization SHALL be deterministic.
+
+## 171. Route Record and Route Generation
+
+```yaml
+dispatcher_route:
+  destination_type:
+  destination_id:
+  route_type:
+  target_hypervisor_id:
+  target_connection_id:
+  target_channel_id:
+  target_local_handler:
+  configuration_hash:
+  runtime_binding_hash:
+  session_contract_hash:
+  route_generation:
+  route_state:
+  created_at:
+  expires_at:
+```
+
+Route states are `ACTIVE`, `STALE`, `DRAINING`, `UNREACHABLE`, `QUARANTINED`
+and `REVOKED`.
+
+Every material route update SHALL increment `route_generation`. Before final
+delivery the queued generation SHALL equal the current generation. A mismatch
+requires explicit re-resolution, protocol-defined migration, rejection or Dead
+Letter handling; it SHALL NOT silently deliver to a replacement target.
+
+## 172. Endpoint, Session, Runtime and Plugin Routes
+
+Endpoint routes bind Endpoint ID, Endpoint Configuration Hash, authorized
+Runtime Binding and current Runtime connection. Session routes additionally bind
+Session ID, Session Contract Hash, Consumer Session identity and recovery state.
+
+Runtime replacement MAY preserve work only when Capability semantics, Request
+IDs, usage-chain continuity, state and side-effect safety remain compatible.
+
+Plugin routes bind Plugin ID and version, Provider Instance, granted permissions,
+managed Runtime IDs and Route Generation. Plugin updates that change adapters,
+permissions, provider connection or message mapping SHALL increment affected
+Route Generations.
+
+## 173. Provider Plugin Isolation
+
+Provider Plugins SHALL NOT open arbitrary AiDN channels. `PLUGIN_CONTROL` MAY
+carry installation plans and progress, Provider Health, model discovery and
+management, diagnostics and Runtime-binding requests. Runtime execution results
+and Usage Reports use only explicitly granted Runtime routes.
+
+External Provider or package egress is a separate policy boundary and MAY be
+restricted to declared Provider hosts, model repositories, package registries,
+OAuth hosts or no egress. Plugin permission expansion requires local approval.
+
+## 174. Bounded Queues and Admission
+
+The Dispatcher SHALL use bounded logical queues for Critical Control, High,
+Interactive, Normal, Runtime, Validation, Registry Bulk, Background and Dead
+Letter traffic. Every queue SHALL define maximum messages, bytes and message age,
+plus admission and overflow policy.
+
+Admission returns one of `ADMITTED`, `BACKPRESSURED`, `RATE_LIMITED`, `REJECTED`,
+`EXPIRED` or `ROUTE_UNAVAILABLE`. Priority is validated from role and message
+type; sender claims do not grant unlimited capacity. Critical control capacity
+SHALL be protected from Bulk and Background starvation.
+
+Messages creating or resolving economic or security state SHALL be durably
+queued or explicitly rejected, never silently dropped.
+
+## 175. Delivery State and Acknowledgments
+
+Tracked delivery states are:
+
+```text
+RECEIVED -> ENVELOPE_VALIDATED -> AUTHENTICATED -> AUTHORIZED
+-> ROUTE_RESOLVED -> QUEUED -> DELIVERY_ATTEMPTED -> DELIVERED
+-> APPLICATION_ACCEPTED
+```
+
+Alternative states include `APPLICATION_REJECTED`, `EXPIRED`, `RATE_LIMITED`,
+`ROUTE_FAILED`, `DELIVERY_FAILED`, `DEAD_LETTERED`, `DUPLICATE` and `CANCELLED`.
+
+Acknowledgment classes are `RECEIVED`, `VALIDATED`, `AUTHORIZED`, `QUEUED`,
+`DELIVERED`, `PROCESSED` and `REJECTED`. `DELIVERED` does not mean application
+processing completed.
+
+## 176. Delivery Record
+
+```yaml
+delivery_record:
+  message_id:
+  source_subject:
+  destination_subject:
+  route_generation:
+  delivery_state:
+  received_at:
+  queued_at:
+  delivered_at:
+  completed_at:
+  attempt_count:
+  last_error_code:
+  payload_hash:
+```
+
+Private payload content need not be retained.
+
+## 177. Replay and Retry Semantics
+
+The network does not claim physical exactly-once delivery. Connection and channel
+replay state SHALL be bounded. Messages with economic or canonical effects SHALL
+also use persistent application-level deduplication.
+
+Retries are message-profile specific and SHALL define retryable errors, maximum
+attempts, backoff, deadline, Route Generation behavior and side-effect safety.
+Non-idempotent side effects SHALL NOT be retried without an idempotency key or
+proof that the prior attempt did not execute.
+
+## 178. Dead Letter Store
+
+Messages that cannot be safely delivered or discarded MAY enter a Dead Letter
+Store containing envelope metadata, payload hash, failure stage, stable error,
+Route Generation, timestamps, retryability and operator-action requirement.
+
+Raw private payload SHOULD be omitted unless recovery requires it. Dead Letter
+records SHALL NOT be automatically replayed after configuration changes.
+
+## 179. Dispatcher Persistence and Restart
+
+The Dispatcher SHALL persist active routes and generations, durable deduplication,
+durable queued messages, critical delivery records, active transfers, resume
+positions and Dead Letter metadata.
+
+After restart it SHALL restore protocol domain, invalidate old connections,
+restore routes and deduplication, revalidate queued messages against expiration,
+authorization, protocol version, Network Revision and Route Generation, then
+resume or fail them explicitly. No durable queue is replayed blindly.
+
+## 180. Protocol-Specific Routing
+
+`SESSION_CONTROL`, `SESSION_DATA`, `RUNTIME`, `REGISTRY`, `VALIDATION`,
+`GOVERNANCE`, `OBSERVABILITY` and `PLUGIN_CONTROL` are distinct authorized
+profiles. `VALIDATION` carries concealed Assignment traffic, report transfer,
+Storage Receipts, commitments, reveal and availability challenges. Its routing
+SHOULD minimize pre-reveal Validator and target disclosure.
+
+The MVP `VALIDATION_REPORT_TRANSFER` profile SHALL use persistent Message ID
+deduplication and an application-level report hash. A `PROCESSED` acknowledgment
+means the Endpoint custody handler accepted the immutable report, not that the
+Validation commitment finalized.
+
+## 181. Dispatcher Errors
+
+In addition to Section 131, v0.3 requires stable errors for domain, route,
+admission, queue, delivery and plugin-permission failures, including:
+
+`SOURCE_NOT_AUTHORIZED`, `DESTINATION_NOT_FOUND`, `ROUTE_NOT_FOUND`,
+`ROUTE_STALE`, `ROUTE_DRAINING`, `ROUTE_REVOKED`,
+`ROUTE_GENERATION_MISMATCH`, `QUEUE_FULL`, `ADMISSION_REJECTED`,
+`DEADLINE_UNREACHABLE`, `DELIVERY_FAILED`, `APPLICATION_REJECTED`,
+`DEAD_LETTER_CREATED`, `PLUGIN_NOT_AUTHORIZED`, `PLUGIN_PERMISSION_DENIED`,
+`PLUGIN_ROUTE_SCOPE_VIOLATION`, `DISPATCHER_OVERLOADED`,
+`DISPATCHER_RECOVERING` and `DISPATCHER_SAFE_MODE`.
+
+Errors SHALL identify the failure stage without exposing credentials, unrelated
+Service existence, private topology, private Session content or internal paths.
+
+## 182. Dispatcher Conformance and MVP
+
+Conformance tests SHALL cover domain and envelope validation, authorization,
+Route Table resolution, Route Generation races, stale queued messages, Runtime
+replacement, Plugin permission enforcement, bounded queue saturation, priority
+fairness, deadline expiration, persistent deduplication, Dead Letter creation,
+restart recovery and Validation report transfer replay.
+
+The MVP SHALL implement the Dispatcher as a transport-independent core. Physical
+QUIC/TLS, TCP/TLS, WebSocket/TLS and Local IPC gateways MAY be delivered in
+separate implementation slices, but SHALL invoke the same ingress pipeline.
+
+## 183. Dispatcher Invariants
+
+* Authentication precedes authorization.
+* Authorization precedes route admission.
+* Every delivery uses the current valid Route Generation.
+* Every queue is bounded.
+* Expired messages are not delivered.
+* Critical control capacity is protected.
+* Duplicate delivery does not duplicate application effects.
+* Persistent deduplication survives restart.
+* Durable queued messages are revalidated after restart.
+* Provider Plugins cannot impersonate Services, Wallets or Validators.
+* Dead Letter messages are not automatically replayed.
+* Connection recovery does not invent Session or economic state.
 
 Комментарии к решениям
 

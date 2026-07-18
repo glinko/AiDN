@@ -2,7 +2,11 @@
 
 Status: `Draft`
 
-Version: `0.1`
+Version: `0.2`
+
+Revision note: Proxy retries retain Request idempotency and the accepted Session
+route. Provider switching or Runtime replacement increments Route Generation and
+requires retry reauthorization.
 
 Depends on:
 

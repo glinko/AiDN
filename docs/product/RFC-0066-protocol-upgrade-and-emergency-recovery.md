@@ -2,7 +2,11 @@
 
 Status: `Draft`
 
-Version: `0.1`
+Version: `0.2`
+
+Revision note: upgrades declare Route Table, Route Generation, durable queue,
+deduplication and Dead Letter schema migration. Network Revision recovery
+revalidates queued mutable messages and never assumes old connections are alive.
 
 Depends on:
 

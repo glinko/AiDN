@@ -4,7 +4,11 @@ Provider Plugin System and Directory
 
 Status: Draft
 
-Version: 0.17
+Version: 0.18
+
+Revision note: Plugin Manifests declare allowed `PLUGIN_CONTROL` message types,
+Provider Instance scope, managed Runtime IDs and external egress permissions.
+Permission expansion requires approval and increments affected Route Generations.
 
 Supersedes:
 

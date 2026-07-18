@@ -4,7 +4,12 @@ Hypervisor Service Model
 
 Status: Draft
 
-Version: 0.2
+Version: 0.3
+
+Revision note: every Hypervisor includes the RFC-0042 Network Dispatcher as a
+mandatory trusted control-plane component. Services, Runtimes and Provider
+Plugins attach through scoped local routes; route, delivery, replay and Dead
+Letter state participate in Hypervisor recovery.
 
 Depends on:
 

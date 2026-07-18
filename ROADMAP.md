@@ -51,6 +51,11 @@ Registry peer replication, deterministic inventories, completeness manifests, an
 
 Snapshot production, commitment, trusted-checkpoint State Sync, and atomic state restoration must also stay aligned with [docs/product/RFC-0062-snapshot-and-state-sync-protocol.md](./docs/product/RFC-0062-snapshot-and-state-sync-protocol.md).
 
+Authenticated messaging, Route Generation, bounded queues, delivery tracking,
+persistent deduplication, Dead Letter handling and Provider Plugin network
+isolation must also stay aligned with
+[docs/product/RFC-0042-aidn-hypervisor-network-protocol.md](./docs/product/RFC-0042-aidn-hypervisor-network-protocol.md).
+
 Milestones still describe technical delivery order, but feature sequencing and UI priorities should preserve that operator journey whenever reasonably possible.
 
 ## North Star
@@ -94,6 +99,11 @@ Product alignment summary:
 - registry replication is now documented in `RFC-0061`, so future Full Registry eligibility, anti-entropy, completeness proofs, challenge evidence, and repair synchronization can build on one deterministic storage and retrieval model instead of scattered service-local heuristics;
 - snapshot and fast State Sync are now documented in `RFC-0062`, so future node bootstrap, corruption recovery, trusted checkpoint handling, and portable state restoration can build on one verification-first protocol instead of ad hoc database-copy assumptions;
 - validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
+- RFC-0042 v0.3 makes the Network Dispatcher the next infrastructure layer: the
+  first implementation slice covers transport-independent envelopes, domain and
+  payload validation, Route Generation, bounded admission, local delivery,
+  delivery records, replay protection and Dead Letter metadata before physical
+  QUIC/TLS gateways are added.
 
 We already have a working local hypervisor foundation:
 - local task queue and admission control;

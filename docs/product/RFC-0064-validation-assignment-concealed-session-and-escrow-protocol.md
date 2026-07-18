@@ -2,7 +2,12 @@
 
 Status: `Draft`
 
-Version: `0.3`
+Version: `0.4`
+
+Revision note: Assignment, concealed credential, report transfer, Storage
+Receipt, commitment, reveal and availability-challenge messages use RFC-0042
+`VALIDATION`. `VALIDATION_REPORT_TRANSFER` requires persistent Message ID
+deduplication, assignment-scoped authentication and report-hash verification.
 
 Supersedes:
 

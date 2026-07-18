@@ -2,7 +2,11 @@
 
 Status: `Draft`
 
-Version: `0.2`
+Version: `0.3`
+
+Revision note: messages carrying Ledger Operations use Dispatcher persistent
+deduplication, while the State Machine independently enforces Operation ID replay
+protection. Transport acknowledgment never creates canonical finality.
 
 Supersedes:
 

@@ -2,7 +2,11 @@
 
 Status: `Draft`
 
-Version: `0.1`
+Version: `0.2`
+
+Revision note: Session recovery may consume Dispatcher delivery records, Dead
+Letter metadata, last processed Message IDs and Route Generation. Dispatcher
+evidence informs recovery but does not determine economic state.
 
 Depends on:
 

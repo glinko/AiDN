@@ -24,6 +24,10 @@ class ValidationReportTransferChannel:
     def __init__(self, validation_service) -> None:
         self.validation_service = validation_service
 
+    def dispatcher_handler(self, payload: dict) -> dict:
+        """Typed local-delivery adapter for RFC-0042 Network Dispatcher."""
+        return self.handle(ValidationReportTransferMessage.model_validate(payload))
+
     def handle(self, message: ValidationReportTransferMessage) -> dict:
         if message.channel_class != "VALIDATION":
             raise ValueError("validation report transfer requires VALIDATION channel")
