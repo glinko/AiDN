@@ -4,11 +4,11 @@ AiDN Registry Architecture
 
 Status: Draft
 
-Version: 0.2
+Version: 0.3
 
 Supersedes:
 
-* RFC-0046 Version 0.1
+* RFC-0046 Version 0.2
 
 Depends on:
 
@@ -118,7 +118,7 @@ The Registry stores larger or historical objects that would be inefficient or un
 
 Examples include:
 
-* full Validation Reports;
+* Validation Commitments and optional report mirrors;
 * Capability schemas;
 * Advertisement documents;
 * historical Reputation Events;
@@ -545,7 +545,8 @@ May include:
 
 * Validation Assignment commitments;
 * concealed offer records;
-* Validation Reports;
+* Validation Commitments;
+* optional Validation Report mirrors;
 * evidence manifests;
 * report reveal records;
 * assignment failure records.
@@ -741,7 +742,7 @@ A Full Registry SHALL retain at least:
 * current Reputation Profiles;
 * recent Ledger history;
 * recent Epoch Results;
-* required recent Validation and Settlement evidence;
+* required recent Validation Commitments, custody records and Settlement evidence;
 * current Snapshot metadata.
 
 Exact retention windows are versioned.
@@ -962,7 +963,7 @@ Used for important historical audit objects.
 
 Examples include:
 
-* Validation Reports;
+* optional mirrored Validation Reports;
 * Settlement evidence;
 * Reputation corrections;
 * Governance votes.
@@ -1933,15 +1934,20 @@ The Registry SHALL not represent its ranking as protocol Reputation or governanc
 
 ## 128. Validation Integration
 
-Validation Reports and evidence manifests MAY be stored in Registry.
+Compact Validation Commitments and custody-availability records SHALL be indexable through Registry Services.
+
+The complete Validation Report is stored by the validated Endpoint Hypervisor as mandatory origin custody. Registry Services MAY act as immutable mirrors or caches, but Full Registry conformance SHALL NOT require replication of every complete Validation Report or Evidence Bundle.
 
 The Registry SHALL:
 
-* preserve report signatures;
+* preserve commitment and report hashes;
+* preserve Storage Receipt and Storage Failure references;
 * preserve report Configuration Hash references;
 * preserve evidence roots;
 * enforce access policy;
 * distinguish pending and revealed reports.
+
+The stable logical locator SHALL resolve through the current Endpoint-to-Hypervisor route. Registry indexes SHALL NOT replace it with one operator-specific transport URL.
 
 ---
 
@@ -1951,12 +1957,15 @@ Certification derivation uses canonical Validation evidence and protocol rules.
 
 A Registry stores:
 
-* reports;
+* Validation Commitments and custody state;
+* optional report mirrors;
 * Certification Records;
 * observations;
 * history.
 
 It does not independently certify Endpoints.
+
+An optional mirror may preserve evidence after origin loss, but SHALL NOT clear the Endpoint's custody failure or Reputation history.
 
 ---
 

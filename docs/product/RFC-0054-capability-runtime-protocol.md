@@ -2,7 +2,11 @@
 
 Status: `Draft`
 
-Version: `0.2`
+Version: `0.3`
+
+Revision note: Runtime Protocol messages are application profiles over RFC-0042
+`RUNTIME`. The Dispatcher validates Runtime-to-Endpoint binding, message type,
+priority and Route Generation before delivery.
 
 Depends on:
 

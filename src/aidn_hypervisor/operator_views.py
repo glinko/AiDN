@@ -658,11 +658,33 @@ def build_operator_providers_payload(
     bundles = fleet["bundles"]
     installs = fleet["installs"]
     plugin_directory = service.provider_inventory.list_plugin_manifests()
+    plugin_releases = service.list_provider_plugin_releases()
+    installed_plugins = service.list_installed_provider_plugins()
+    installation_executor = {
+        "executor_id": service.provider_inventory.installation_executor.executor_id,
+        "sandbox_capabilities": service.provider_inventory.executor_sandbox_capabilities(),
+    }
+    installation_artifacts = service.list_provider_installation_artifacts()
+    model_artifacts = service.list_model_artifacts()
+    model_artifact_sets = service.list_model_artifact_sets()
+    artifact_materializations = service.list_model_artifact_materializations()
     installable_plugin_count = sum(
         1
         for manifest in plugin_directory
         if "CAN_INSTALL_PROVIDER" in manifest.get("plugin_capability_flags", [])
     )
+    installation_jobs = service.list_provider_installation_jobs()
+    applied_approval_ids = {
+        job["approval_id"] for job in installation_jobs if job["status"] == "SUCCEEDED"
+    }
+    installation_approvals = []
+    for approval in service.list_provider_installation_approvals():
+        status_label = (
+            "Applied with controlled executor"
+            if approval["approval_id"] in applied_approval_ids
+            else "Approved, ready to apply"
+        )
+        installation_approvals.append({**approval, "status_label": status_label})
     provider_instances = service.list_provider_instances()
     model_deployments = service.list_model_deployments()
     runtime_bindings = service.list_runtime_bindings()
@@ -677,6 +699,9 @@ def build_operator_providers_payload(
             deployment
         )
     enriched_model_deployments = []
+    artifact_set_ids = {
+        artifact_set["artifact_set_id"] for artifact_set in model_artifact_sets
+    }
     for deployment in model_deployments:
         deployment_bindings = runtime_bindings_by_model.get(
             deployment["model_deployment_id"],
@@ -689,10 +714,20 @@ def build_operator_providers_payload(
                 "runtime_binding_ready_count": sum(
                     1 for binding in deployment_bindings if binding["status"] == "ready"
                 ),
+                "artifact_set_available": (
+                    deployment.get("artifact_set_id") in artifact_set_ids
+                    if deployment.get("artifact_set_id")
+                    else False
+                ),
             }
         )
     enriched_provider_instances = []
     for instance in provider_instances:
+        instance_materializations = [
+            item
+            for item in artifact_materializations
+            if item["provider_instance_id"] == instance["provider_instance_id"]
+        ]
         instance_models = models_by_instance.get(instance["provider_instance_id"], [])
         instance_model_ids = {
             deployment["model_deployment_id"] for deployment in instance_models
@@ -709,6 +744,10 @@ def build_operator_providers_payload(
                 "runtime_binding_count": len(instance_bindings),
                 "runtime_binding_ready_count": sum(
                     1 for binding in instance_bindings if binding["status"] == "ready"
+                ),
+                "artifact_materialization_count": len(instance_materializations),
+                "artifact_materialization_ready_count": sum(
+                    1 for item in instance_materializations if item["status"] == "READY"
                 ),
             }
         )
@@ -796,9 +835,17 @@ def build_operator_providers_payload(
         "summary": {
             "total": len(items),
             "total_plugins": len(plugin_directory),
+            "total_plugin_releases": len(plugin_releases),
+            "total_installed_plugins": len(installed_plugins),
             "installable_plugin_count": installable_plugin_count,
+            "approved_installation_count": sum(
+                1 for approval in installation_approvals if approval["status"] == "APPROVED"
+            ),
+            "installation_job_count": len(installation_jobs),
             "total_provider_instances": len(provider_instances),
             "total_model_deployments": len(model_deployments),
+            "total_model_artifact_sets": len(model_artifact_sets),
+            "total_artifact_materializations": len(artifact_materializations),
             "total_runtime_bindings": len(runtime_bindings),
             "bundles": len(bundles),
             "installs": len(installs),
@@ -807,8 +854,17 @@ def build_operator_providers_payload(
             ),
             "recommended_action": summary_recommended_action,
         },
+        "installation_executor": installation_executor,
+        "installation_artifacts": installation_artifacts,
+        "model_artifacts": model_artifacts,
+        "model_artifact_sets": model_artifact_sets,
+        "artifact_materializations": artifact_materializations,
         "empty_state": _providers_empty_state(),
         "plugin_directory": plugin_directory,
+        "plugin_releases": plugin_releases,
+        "installed_plugins": installed_plugins,
+        "installation_approvals": installation_approvals,
+        "installation_jobs": installation_jobs,
         "provider_instances": enriched_provider_instances,
         "model_deployments": enriched_model_deployments,
         "runtime_bindings": runtime_bindings,

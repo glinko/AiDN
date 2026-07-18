@@ -4,7 +4,11 @@ Epoch Engine
 
 Status: Draft
 
-Version: 0.1 - Reconstructed Edition
+Version: 0.2
+
+Supersedes:
+
+* RFC-0048 Version 0.1 - Reconstructed Edition
 
 Depends on:
 
@@ -1180,6 +1184,12 @@ The Epoch Engine MAY execute Validation-related Tasks including:
 * Reassign Unaccepted Requests;
 * Monitor Assignment Deadlines;
 * Commit Validation Reports;
+* Verify Validation Report Storage Receipts;
+* Record Validation Report Storage Failures;
+* Schedule Validation Report Availability Challenges;
+* Evaluate Validation Report Availability;
+* Apply Validation Report Custody Grace Periods;
+* Generate Validation Report Retention Reputation Events;
 * Validate Report Assignments;
 * Detect Report Conflicts;
 * Reveal Validator Identities;
@@ -1194,6 +1204,7 @@ The Epoch Engine MAY execute Validation-related Tasks including:
 * Apply Degradation;
 * Apply Revocation;
 * Apply Expiration;
+* Update Certification Report Availability State;
 * Calculate Next Maintenance Windows;
 * Generate Certification State Updates;
 * Trigger Validation Bond Refunds;

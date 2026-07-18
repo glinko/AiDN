@@ -863,7 +863,9 @@
     .wallet-toolbar input,
     .wallet-form input,
     .wallet-form select,
-    .wallet-form textarea {
+    .wallet-form textarea,
+    .wallet-form-grid input,
+    .wallet-form-grid select {
       min-height: 38px;
       padding: 8px 12px;
       border-radius: 12px;
@@ -1039,6 +1041,33 @@
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
+    }
+
+    .wallet-form-grid label,
+    .checkbox-line {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .checkbox-line {
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      min-height: 38px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(7, 18, 28, 0.88);
+      color: var(--ink);
+    }
+
+    .field-label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
     }
 
     .wallet-inline-actions {
@@ -1468,6 +1497,33 @@
     const modelInstallApiBase = "/operators/models/";
     const modelInstallRequestPath = "/operators/models/install";
     const modelInstallProcessPath = "/operators/models/install/process";
+    const providerInstallationApprovalsPath = "/operators/provider-installation-approvals";
+    const providerInstallationJobsPath = "/operators/provider-installation-jobs";
+    const providerInstallationApprovalPath = (pluginId) =>
+      `/operators/provider-plugins/${encodeURIComponent(pluginId)}/installation-approvals`;
+    const providerInstallationDiagnosticsPath = (pluginId) =>
+      `/operators/provider-plugins/${encodeURIComponent(pluginId)}/installation-diagnostics`;
+    const providerInstallationApplyPath = (approvalId) =>
+      `/operators/provider-installation-approvals/${encodeURIComponent(approvalId)}/apply`;
+    const providerInstallationRollbackPath = (jobId) =>
+      `/operators/provider-installation-jobs/${encodeURIComponent(jobId)}/rollback`;
+    const providerInstallationArtifactsPath = "/operators/provider-installation-artifacts";
+    const providerInstallationArtifactRemovePath =
+      "/operators/provider-installation-artifacts/remove";
+    const providerInstallationArtifactExtractPath =
+      "/operators/provider-installation-artifacts/extract";
+    const modelArtifactsPath = "/operators/model-artifacts";
+    const modelArtifactPromotionPath = "/operators/model-artifacts/promote";
+    const modelArtifactRemovePath = "/operators/model-artifacts/remove";
+    const modelArtifactCollectPath = "/operators/model-artifacts/collect";
+    const modelArtifactSetsPath = "/operators/model-artifact-sets";
+    const modelArtifactSetRemovePath = "/operators/model-artifact-sets/remove";
+    const modelDeploymentArtifactSetPath = (modelDeploymentId) =>
+      `/operators/model-deployments/${encodeURIComponent(modelDeploymentId)}/artifact-set`;
+    const providerModelDiscoveryPath = (providerInstanceId) =>
+      `/operators/provider-instances/${encodeURIComponent(providerInstanceId)}/discover-models`;
+    const modelRuntimeBindingPath = (modelDeploymentId) =>
+      `/operators/model-deployments/${encodeURIComponent(modelDeploymentId)}/runtime-bindings`;
     const bundleConfigPath = "/operators/bundles/config";
     const bundleReloadPath = "/operators/bundles/reload";
     const endpointApiBase = "/api/v1/endpoints";
@@ -1507,6 +1563,9 @@
       installActionPending: null,
       installMessage: null,
       providerActionPending: null,
+      providerDiscoveryPendingId: null,
+      providerDiagnosticsPendingId: null,
+      providerDiagnosticsByPluginId: {},
       providerMessage: null,
       marketOriginFilter: "all",
       requireReadyEndpoint: false,
@@ -1591,6 +1650,27 @@
         sourceUrl: "",
         requestedBy: "",
       },
+      providerApplyDraft: {
+        pluginId: null,
+        selectedRecipeId: "",
+        values: {},
+        operatorNote: "",
+      },
+      providerArtifactDraft: {
+        relativePath: "",
+        archiveRelativePath: "",
+        destinationDirectory: "",
+      },
+      providerArtifactSetDraft: {
+        displayName: "",
+        members: {},
+      },
+      runtimeBindingDraft: {
+        modelDeploymentId: null,
+        capabilityId: "",
+        capabilityVersion: "1.0.0",
+        capabilityDefinitionHash: "",
+      },
       bundleEndpointDraft: {
         bundleId: null,
         displayName: "",
@@ -1630,6 +1710,17 @@
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#39;");
+    }
+
+    function arrayBufferToBase64(buffer) {
+      let binary = "";
+      const bytes = new Uint8Array(buffer);
+      const chunkSize = 0x8000;
+      for (let index = 0; index < bytes.length; index += chunkSize) {
+        const chunk = bytes.subarray(index, index + chunkSize);
+        binary += String.fromCharCode(...chunk);
+      }
+      return btoa(binary);
     }
 
     function normalizeQ(value) {
@@ -1822,8 +1913,13 @@
       return (state.payloads.providers || { items: [] }).items || [];
     }
 
+    function providerDirectoryRows() {
+      const payload = state.payloads.providers || {};
+      return payload.plugin_directory || providerRows();
+    }
+
     function selectedProvider() {
-      const items = providerRows();
+      const items = providerDirectoryRows();
       if (!items.length) {
         state.selectedProviderId = null;
         return null;
@@ -2276,6 +2372,74 @@
           }
         </div>
       `;
+    }
+
+    function providerSetupSteps(payload) {
+      const approvals = payload.installation_approvals || [];
+      const jobs = payload.installation_jobs || [];
+      const models = payload.model_deployments || [];
+      const bindings = payload.runtime_bindings || [];
+      const endpoints = endpointDrafts();
+      const hasAppliedProvider = jobs.some((job) => job.status === "SUCCEEDED");
+      const hasModels = models.length > 0;
+      const hasRuntimeBinding = bindings.length > 0;
+      const hasEndpoint = bindings.some((binding) =>
+        endpoints.some((endpoint) => endpoint.bundle_id === binding.compatibility_bundle_id)
+      );
+      const rawSteps = [
+        {
+          key: "apply_provider",
+          title: "Apply Provider",
+          detail: approvals.length
+            ? "A provider install plan has been approved; apply creates local provider inventory state."
+            : "Approve and apply a declarative provider plan through the controlled executor.",
+          done: hasAppliedProvider,
+        },
+        {
+          key: "discover_models",
+          title: "Discover Models",
+          detail: "Query the provider adapter and persist Model Deployment records.",
+          done: hasModels,
+        },
+        {
+          key: "runtime_binding",
+          title: "Create Runtime Binding",
+          detail: "Bind a discovered model to an AiDN Capability before endpoint creation.",
+          done: hasRuntimeBinding,
+        },
+        {
+          key: "endpoint_draft",
+          title: "Create Endpoint",
+          detail: "Create a private Endpoint draft from the runtime binding, then continue in Endpoints.",
+          done: hasEndpoint,
+        },
+      ];
+      const currentIndex = rawSteps.findIndex((step) => !step.done);
+      return rawSteps.map((step, index) => ({
+        ...step,
+        state:
+          step.done
+            ? "Done"
+            : index === currentIndex
+              ? "Current"
+              : "Next",
+      }));
+    }
+
+    function providerSetupRecommendedAction(steps) {
+      const current = steps.find((step) => step.state === "Current");
+      switch (current?.key) {
+        case "apply_provider":
+          return "Select a plugin, optionally choose a recipe, then approve and apply its provider plan.";
+        case "discover_models":
+          return "Use Discover Models on the created Provider Instance or apply job.";
+        case "runtime_binding":
+          return "Create a Runtime Binding from a discovered Model Deployment.";
+        case "endpoint_draft":
+          return "Create an Endpoint from the ready Runtime Binding.";
+        default:
+          return "Provider setup is ready for endpoint lifecycle work.";
+      }
     }
 
     function endpointNextSteps(item) {
@@ -2972,6 +3136,572 @@
         state.providerInstallDraft.requestedBy = ownerWalletId;
       }
       return state.providerInstallDraft;
+    }
+
+    function providerInstallSchema(provider) {
+      return provider?.install_ui_schema || {
+        schema_id: `${provider?.plugin_id || "provider"}.install.local.v1`,
+        fields: [
+          { id: "display_name", type: "text", required: true },
+          { id: "base_url", type: "text", required: true },
+        ],
+      };
+    }
+
+    function schemaFieldOptions(field) {
+      return field.options || field.choices || [];
+    }
+
+    function schemaFieldDefault(field, provider) {
+      if (field.default !== undefined) {
+        return field.default;
+      }
+      if (field.id === "display_name") {
+        return provider?.display_name || provider?.plugin_id || "";
+      }
+      if (field.id === "base_url") {
+        return providerSuggestedEndpoint(provider);
+      }
+      if (field.type === "boolean") {
+        return false;
+      }
+      const options = schemaFieldOptions(field);
+      if (field.type === "select" && options.length) {
+        const first = options[0];
+        return typeof first === "object" ? first.value : first;
+      }
+      return "";
+    }
+
+    function providerPermissionRequirements(provider) {
+      return provider?.required_permissions || [];
+    }
+
+    function providerSandboxPolicy(provider) {
+      return provider?.sandbox_policy || {
+        execution_mode: "RECORDED_ONLY",
+        filesystem_scope: "NONE",
+        network_scope: "NONE",
+        secret_scope: "DECLARED_HANDLES_ONLY",
+      };
+    }
+
+    function providerPackageVerification(provider) {
+      return provider?.package_verification || {
+        status: "UNVERIFIED",
+        verification_mode: "NONE",
+        summary: "No package verification data available.",
+        package_digest: provider?.package_digest || "unknown",
+        declared_manifest_hash: provider?.manifest_hash || null,
+        computed_manifest_hash: null,
+        publisher_key_id: null,
+        signature_present: false,
+        trusted_publisher: false,
+      };
+    }
+
+    function providerInstallationExecutor() {
+      return state.payloads.providers?.installation_executor || {
+        executor_id: "unknown",
+        sandbox_capabilities: {
+          supported_execution_modes: ["RECORDED_ONLY"],
+          supported_filesystem_scopes: ["NONE"],
+          supported_network_scopes: ["NONE"],
+          supported_secret_scopes: ["DECLARED_HANDLES_ONLY"],
+          host_mutation: false,
+        },
+      };
+    }
+
+    function providerSecretRequirements(provider) {
+      return provider?.secret_requirements || [];
+    }
+
+    function providerSecretRequirementKey(requirement) {
+      return `${requirement?.secret_type || "NONE"}:${requirement?.label || ""}`;
+    }
+
+    function syncProviderApplyDraft(provider) {
+      const pluginId = provider?.plugin_id || null;
+      if (state.providerApplyDraft.pluginId !== pluginId) {
+        const values = {};
+        for (const field of providerInstallSchema(provider).fields || []) {
+          values[field.id] = schemaFieldDefault(field, provider);
+        }
+        const latestApproval = latestProviderInstallationApproval(provider);
+        const selectedSecretHandles = {};
+        for (const requirement of providerSecretRequirements(provider)) {
+          const requirementKey = providerSecretRequirementKey(requirement);
+          const previousSelection = (latestApproval?.selected_secret_handles || []).find(
+            (item) => item.requirement_key === requirementKey
+          );
+          selectedSecretHandles[requirementKey] = previousSelection?.secret_handle || "";
+        }
+        state.providerApplyDraft = {
+          pluginId,
+          selectedRecipeId: "",
+          values,
+          approvedPermissionIds: providerPermissionRequirements(provider).map(
+            (permission) => permission.permission_id
+          ),
+          selectedSecretHandles,
+          operatorNote: "approved from operator dashboard",
+          acknowledgedUpgradeReview: false,
+          upgradeSignature: "",
+        };
+      }
+      const upgradeReview = providerUpgradeReview(provider);
+      const nextSignature = providerUpgradeReviewSignature(upgradeReview);
+      if (state.providerApplyDraft.upgradeSignature !== nextSignature) {
+        state.providerApplyDraft.upgradeSignature = nextSignature;
+        state.providerApplyDraft.acknowledgedUpgradeReview = !upgradeReview.requiresAcknowledgement;
+      }
+      return state.providerApplyDraft;
+    }
+
+    function providerInstallationRecipes(provider) {
+      return provider?.installation_recipes || [];
+    }
+
+    function selectedProviderInstallationRecipe(provider) {
+      const draft = syncProviderApplyDraft(provider);
+      return (
+        providerInstallationRecipes(provider).find(
+          (recipe) => recipe.recipe_id === draft.selectedRecipeId
+        ) || null
+      );
+    }
+
+    function applyProviderInstallationRecipe(provider, recipeId) {
+      const draft = syncProviderApplyDraft(provider);
+      const recipe = providerInstallationRecipes(provider).find(
+        (candidate) => candidate.recipe_id === recipeId
+      );
+      draft.selectedRecipeId = recipeId || "";
+      if (!recipe) {
+        return draft;
+      }
+      const nextValues = { ...draft.values };
+      const providerConfiguration = recipe.provider_configuration || {};
+      for (const field of providerInstallSchema(provider).fields || []) {
+        if (Object.prototype.hasOwnProperty.call(providerConfiguration, field.id)) {
+          nextValues[field.id] = providerConfiguration[field.id];
+        }
+      }
+      draft.values = nextValues;
+      draft.operatorNote = `approved from recipe ${recipe.recipe_id}`;
+      return draft;
+    }
+
+    function providerApplyConfiguration(provider) {
+      const draft = syncProviderApplyDraft(provider);
+      const fields = providerInstallSchema(provider).fields || [];
+      return fields.reduce((configuration, field) => {
+        configuration[field.id] = draft.values[field.id] ?? schemaFieldDefault(field, provider);
+        return configuration;
+      }, {});
+    }
+
+    function providerApplyApprovedPermissions(provider) {
+      const draft = syncProviderApplyDraft(provider);
+      const approved = new Set(draft.approvedPermissionIds || []);
+      return providerPermissionRequirements(provider)
+        .map((permission) => permission.permission_id)
+        .filter((permissionId) => approved.has(permissionId));
+    }
+
+    function providerApplySelectedSecretHandles(provider) {
+      const draft = syncProviderApplyDraft(provider);
+      return providerSecretRequirements(provider)
+        .map((requirement) => {
+          const requirementKey = providerSecretRequirementKey(requirement);
+          const secretHandle = String(
+            draft.selectedSecretHandles?.[requirementKey] || ""
+          ).trim();
+          if (!secretHandle) {
+            return null;
+          }
+          return {
+            requirement_key: requirementKey,
+            secret_handle: secretHandle,
+          };
+        })
+        .filter(Boolean);
+    }
+
+    function providerUpgradeReviewSignature(review) {
+      return JSON.stringify({
+        status: review?.status || "INITIAL_APPROVAL",
+        addedPermissions: review?.addedPermissions || [],
+        removedPermissions: review?.removedPermissions || [],
+        packageVerificationChanged: Boolean(review?.packageVerificationChanged),
+        currentPackageVerification: review?.currentPackageVerification || {},
+        sandboxPolicyChanged: Boolean(review?.sandboxPolicyChanged),
+        currentSandboxPolicy: review?.currentSandboxPolicy || {},
+      });
+    }
+
+    function providerUpgradeReview(provider) {
+      const latestApproval = latestProviderInstallationApproval(provider);
+      const permissionDiff = providerPermissionDiff(provider);
+      const sandboxPolicy = providerSandboxPolicy(provider);
+      const packageVerification = providerPackageVerification(provider);
+      if (!latestApproval) {
+        return {
+          status: "INITIAL_APPROVAL",
+          requiresAcknowledgement: false,
+          addedPermissions: [],
+          removedPermissions: [],
+          packageVerificationChanged: false,
+          previousPackageVerification: {},
+          currentPackageVerification: packageVerification,
+          sandboxPolicyChanged: false,
+          previousSandboxPolicy: {},
+          currentSandboxPolicy: sandboxPolicy,
+          summary: "No previous installation approval exists for this plugin.",
+        };
+      }
+      const previousPackageVerification = latestApproval.acknowledged_package_verification || {};
+      const packageVerificationChanged =
+        JSON.stringify(previousPackageVerification) !== JSON.stringify(packageVerification);
+      const previousSandboxPolicy = latestApproval.acknowledged_sandbox_policy || {};
+      const sandboxPolicyChanged =
+        JSON.stringify(previousSandboxPolicy) !== JSON.stringify(sandboxPolicy);
+      if (
+        !permissionDiff.added.length &&
+        !permissionDiff.removed.length &&
+        !packageVerificationChanged &&
+        !sandboxPolicyChanged
+      ) {
+        return {
+          status: "UNCHANGED",
+          requiresAcknowledgement: false,
+          addedPermissions: [],
+          removedPermissions: [],
+          packageVerificationChanged: false,
+          previousPackageVerification,
+          currentPackageVerification: packageVerification,
+          sandboxPolicyChanged: false,
+          previousSandboxPolicy,
+          currentSandboxPolicy: sandboxPolicy,
+          summary: "Permission, sandbox contract, and package identity match the latest approval.",
+        };
+      }
+      return {
+        status: "CHANGED",
+        requiresAcknowledgement: true,
+        addedPermissions: permissionDiff.added,
+        removedPermissions: permissionDiff.removed,
+        packageVerificationChanged,
+        previousPackageVerification,
+        currentPackageVerification: packageVerification,
+        sandboxPolicyChanged,
+        previousSandboxPolicy,
+        currentSandboxPolicy: sandboxPolicy,
+        summary: "Installation permission, sandbox contract, or package identity changed since the latest approval.",
+      };
+    }
+
+    function providerApplyUpgradeAcknowledged(provider) {
+      const draft = syncProviderApplyDraft(provider);
+      const review = providerUpgradeReview(provider);
+      if (!review.requiresAcknowledgement) {
+        return true;
+      }
+      return Boolean(draft.acknowledgedUpgradeReview);
+    }
+
+    function providerApplyPermissionCoverageSatisfied(provider) {
+      const approved = new Set(providerApplyApprovedPermissions(provider));
+      return providerPermissionRequirements(provider).every((permission) =>
+        approved.has(permission.permission_id)
+      );
+    }
+
+    function providerApplyRequiredSecretHandlesSatisfied(provider) {
+      const selectedHandles = new Map(
+        providerApplySelectedSecretHandles(provider).map((item) => [
+          item.requirement_key,
+          item.secret_handle,
+        ])
+      );
+      return providerSecretRequirements(provider).every((requirement) => {
+        if (!requirement.required) {
+          return true;
+        }
+        return Boolean(selectedHandles.get(providerSecretRequirementKey(requirement)));
+      });
+    }
+
+    function providerApplyRequiredFieldsSatisfied(provider) {
+      const configuration = providerApplyConfiguration(provider);
+      const schemaSatisfied = (providerInstallSchema(provider).fields || []).every((field) => {
+        if (!field.required) {
+          return true;
+        }
+        const value = configuration[field.id];
+        if (field.type === "boolean") {
+          return typeof value === "boolean";
+        }
+        return String(value ?? "").trim().length > 0;
+      });
+      return (
+        schemaSatisfied &&
+        providerApplyPermissionCoverageSatisfied(provider) &&
+        providerApplyRequiredSecretHandlesSatisfied(provider) &&
+        providerApplyUpgradeAcknowledged(provider)
+      );
+    }
+
+    function providerPermissionDiff(provider) {
+      const latestApproval = latestProviderInstallationApproval(provider);
+      const previous = new Set(latestApproval?.approved_permissions || []);
+      const current = providerPermissionRequirements(provider).map(
+        (permission) => permission.permission_id
+      );
+      return {
+        added: current.filter((permissionId) => !previous.has(permissionId)),
+        removed: [...previous].filter((permissionId) => !current.includes(permissionId)),
+        unchanged: current.filter((permissionId) => previous.has(permissionId)),
+      };
+    }
+
+    function schemaFieldLabel(field) {
+      if (field.label) {
+        return field.label;
+      }
+      return String(field.id || "field")
+        .replace(/[_-]+/g, " ")
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+    }
+
+    function renderProviderApplySchemaField(field, draft) {
+      const fieldId = String(field.id || "");
+      const fieldType = field.type || "text";
+      const value = draft.values[fieldId] ?? "";
+      const requiredMarker = field.required ? " *" : "";
+      const placeholder = field.placeholder || schemaFieldLabel(field);
+      if (fieldType === "boolean") {
+        return `
+          <label class="checkbox-line">
+            <input type="checkbox" data-provider-apply-field="${escapeHtml(fieldId)}" ${value ? "checked" : ""}>
+            ${escapeHtml(schemaFieldLabel(field))}${requiredMarker}
+          </label>
+        `;
+      }
+      if (fieldType === "select") {
+        return `
+          <label>
+            <span class="field-label">${escapeHtml(schemaFieldLabel(field))}${requiredMarker}</span>
+            <select data-provider-apply-field="${escapeHtml(fieldId)}">
+              ${schemaFieldOptions(field)
+                .map((option) => {
+                  const optionValue = typeof option === "object" ? option.value : option;
+                  const optionLabel = typeof option === "object" ? option.label || option.value : option;
+                  return `<option value="${escapeHtml(optionValue)}" ${String(value) === String(optionValue) ? "selected" : ""}>${escapeHtml(optionLabel)}</option>`;
+                })
+                .join("")}
+            </select>
+          </label>
+        `;
+      }
+      const inputType = fieldType === "number" ? "number" : "text";
+      return `
+        <label>
+          <span class="field-label">${escapeHtml(schemaFieldLabel(field))}${requiredMarker}</span>
+          <input type="${inputType}" data-provider-apply-field="${escapeHtml(fieldId)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}">
+        </label>
+      `;
+    }
+
+    function providerInstallationApprovals() {
+      return state.payloads.providers?.installation_approvals || [];
+    }
+
+    function providerInstallationJobs() {
+      return state.payloads.providers?.installation_jobs || [];
+    }
+
+    function providerInstallationArtifacts() {
+      return (
+        state.payloads.providers?.installation_artifacts || {
+          supported: false,
+          imports_root: null,
+          max_artifact_bytes: null,
+          archive_extract_supported: false,
+          supported_archive_formats: [],
+          max_extracted_bytes: null,
+          max_extracted_files: null,
+          items: [],
+        }
+      );
+    }
+
+    function modelArtifacts() {
+      return (
+        state.payloads.providers?.model_artifacts || {
+          supported: false,
+          store_root: null,
+          max_artifact_bytes: null,
+          items: [],
+        }
+      );
+    }
+
+    function modelArtifactSets() {
+      return state.payloads.providers?.model_artifact_sets || [];
+    }
+
+    function syncModelArtifactSetDraft() {
+      const current = state.providerArtifactSetDraft || { displayName: "", members: {} };
+      const members = { ...(current.members || {}) };
+      (modelArtifacts().items || []).forEach((artifact) => {
+        if (!members[artifact.artifact_id]) {
+          const name = artifact.original_filename || "artifact";
+          members[artifact.artifact_id] = {
+            selected: false,
+            relativePath: name,
+            role: /\.(gguf|safetensors)$/i.test(name) ? "WEIGHTS" : "AUXILIARY",
+          };
+        }
+      });
+      state.providerArtifactSetDraft = { ...current, members };
+      return state.providerArtifactSetDraft;
+    }
+
+    function providerExtractableArchiveItems(artifactInventory) {
+      return (artifactInventory?.items || []).filter((item) =>
+        /\.(zip|tar|tar\.gz|tgz)$/i.test(item.relative_path || "")
+      );
+    }
+
+    function providerInstallationDiagnostics(provider) {
+      const pluginId = provider?.plugin_id || null;
+      if (!pluginId) {
+        return null;
+      }
+      return state.providerDiagnosticsByPluginId[pluginId] || null;
+    }
+
+    function clearProviderInstallationDiagnostics(pluginId) {
+      if (!pluginId) {
+        return;
+      }
+      state.providerDiagnosticsByPluginId = {
+        ...state.providerDiagnosticsByPluginId,
+        [pluginId]: null,
+      };
+    }
+
+    function latestProviderInstallationApproval(provider) {
+      if (!provider?.plugin_id) {
+        return null;
+      }
+      return (
+        providerInstallationApprovals()
+          .filter((approval) => approval.plugin_id === provider.plugin_id)
+          .slice(-1)[0] || null
+      );
+    }
+
+    function providerLocalImportArtifactsCheck(provider) {
+      const diagnostics = providerInstallationDiagnostics(provider);
+      if (!diagnostics) {
+        return null;
+      }
+      return (
+        (diagnostics.checks || []).find(
+          (check) => check.check_id === "local_import_artifacts"
+        ) || null
+      );
+    }
+
+    function syncProviderArtifactDraft(provider) {
+      const artifactInventory = providerInstallationArtifacts();
+      const importCheck = providerLocalImportArtifactsCheck(provider);
+      const localImports = importCheck?.details?.local_imports || [];
+      const missing = localImports.find((item) => !item.exists);
+      const archiveItem = providerExtractableArchiveItems(artifactInventory)[0] || null;
+      const current = state.providerArtifactDraft?.relativePath || "";
+      if ((!current || current === "") && missing?.source_relative_path) {
+        state.providerArtifactDraft = {
+          ...(state.providerArtifactDraft || {}),
+          relativePath: missing.source_relative_path,
+        };
+      }
+      if (!state.providerArtifactDraft) {
+        state.providerArtifactDraft = {
+          relativePath: "",
+          archiveRelativePath: "",
+          destinationDirectory: "",
+        };
+      }
+      if (
+        !state.providerArtifactDraft.archiveRelativePath &&
+        archiveItem?.relative_path
+      ) {
+        state.providerArtifactDraft.archiveRelativePath = archiveItem.relative_path;
+      }
+      if (
+        !state.providerArtifactDraft.destinationDirectory &&
+        archiveItem?.relative_path
+      ) {
+        const archiveName = String(archiveItem.relative_path || "")
+          .replace(/\.(tar\.gz|tgz|tar|zip)$/i, "")
+          .replace(/\\/g, "/");
+        state.providerArtifactDraft.destinationDirectory = archiveName;
+      }
+      return state.providerArtifactDraft;
+    }
+
+    function latestProviderInstallationJob(provider) {
+      if (!provider?.plugin_id) {
+        return null;
+      }
+      return (
+        providerInstallationJobs()
+          .filter((job) => job.plugin_id === provider.plugin_id)
+          .slice(-1)[0] || null
+      );
+    }
+
+    function syncRuntimeBindingDraft(model) {
+      const modelDeploymentId = model?.model_deployment_id || null;
+      if (state.runtimeBindingDraft.modelDeploymentId !== modelDeploymentId) {
+        const capabilityId = (model?.capability_bindings || [])[0] || "llm.chat";
+        const capabilityVersion = "1.0.0";
+        state.runtimeBindingDraft = {
+          modelDeploymentId,
+          capabilityId,
+          capabilityVersion,
+          capabilityDefinitionHash: `capability:${capabilityId}:${capabilityVersion}`,
+        };
+      }
+      return state.runtimeBindingDraft;
+    }
+
+    function modelHasRuntimeBinding(model) {
+      if (!model?.model_deployment_id) {
+        return false;
+      }
+      return (state.payloads.providers?.runtime_bindings || []).some(
+        (binding) => binding.model_deployment_id === model.model_deployment_id
+      );
+    }
+
+    function runtimeBindingById(runtimeBindingId) {
+      return (state.payloads.providers?.runtime_bindings || []).find(
+        (binding) => binding.runtime_binding_id === runtimeBindingId
+      ) || null;
+    }
+
+    function modelForRuntimeBinding(binding) {
+      if (!binding?.model_deployment_id) {
+        return null;
+      }
+      return (state.payloads.providers?.model_deployments || []).find(
+        (model) => model.model_deployment_id === binding.model_deployment_id
+      ) || null;
     }
 
     function providerTypeForDraft(provider) {
@@ -3804,7 +4534,11 @@
       const pluginDirectory = payload.plugin_directory || items;
       const providerInstances = payload.provider_instances || [];
       const modelDeployments = payload.model_deployments || [];
+      const artifactSets = modelArtifactSets();
       const runtimeBindings = payload.runtime_bindings || [];
+      const installationApprovals = payload.installation_approvals || [];
+      const installationJobs = payload.installation_jobs || [];
+      const setupSteps = providerSetupSteps(payload);
       const emptyState = payload.empty_state || {
         title: "No providers installed",
         description: "Attach an existing provider or browse provider plugins.",
@@ -3862,6 +4596,27 @@
             <div class="subpanel-copy">${recommendation.detail}</div>
           </section>
           <section class="subpanel">
+            <div class="panel-heading">Guided Provider Setup</div>
+            <div class="subpanel-copy">Follow the local chain from plugin apply to endpoint draft. Each step remains explicit so provider installation never silently publishes an Endpoint.</div>
+            <div class="list" style="margin-top: 12px;">
+              ${setupSteps
+                .map((step) => `
+                  <div class="list-row" data-provider-setup-step="${step.key}">
+                    <div>
+                      <strong>${step.title}</strong>
+                      <span>${step.detail}</span>
+                    </div>
+                    <span class="chip ${step.state === "Done" ? "good" : step.state === "Current" ? "warn" : ""}">${step.state}</span>
+                  </div>
+                `)
+                .join("")}
+            </div>
+            <div class="notice" style="margin-top: 12px;">
+              <strong>Suggested Provider Step</strong>
+              <span style="display: block; margin-top: 4px;">${providerSetupRecommendedAction(setupSteps)}</span>
+            </div>
+          </section>
+          <section class="subpanel">
             <div class="panel-heading">Provider instances</div>
             <div class="table-shell" style="margin-top: 14px;">
               <div class="table-head">
@@ -3870,6 +4625,7 @@
                 <div>Models</div>
                 <div>Runtime bindings</div>
                 <div>Status</div>
+                <div>Action</div>
               </div>
               ${
                 providerInstances.length
@@ -3884,6 +4640,7 @@
                           <div><span class="chip">${formatCount(instance.model_count)}</span></div>
                           <div><span class="chip ${instance.runtime_binding_ready_count ? "good" : ""}">${formatCount(instance.runtime_binding_ready_count)}</span></div>
                           <div><span class="chip ${instance.operational_state === "ready" ? "good" : ""}">${instance.operational_state || "unknown"}</span></div>
+                          <button class="row-action" type="button" data-provider-discover-models="${escapeHtml(instance.provider_instance_id)}">${state.providerDiscoveryPendingId === instance.provider_instance_id ? "Discovering..." : "Discover Models"}</button>
                         </div>
                       `)
                       .join("")
@@ -3900,22 +4657,43 @@
                 <div>Capabilities</div>
                 <div>Runtime bindings</div>
                 <div>Status</div>
+                <div>Action</div>
               </div>
               ${
                 modelDeployments.length
                   ? modelDeployments
-                      .map((model) => `
-                        <div class="table-row">
-                          <div>
-                            <div class="row-title">${model.operator_display_name || model.provider_model_reference}</div>
-                            <span class="row-copy">${model.provider_model_reference}</span>
+                      .map((model) => {
+                        const draft = syncRuntimeBindingDraft(model);
+                        const hasBinding = modelHasRuntimeBinding(model);
+                        const pending = state.providerActionPending === `runtime-binding:${model.model_deployment_id}`;
+                        return `
+                          <div class="table-row">
+                            <div>
+                              <div class="row-title">${model.operator_display_name || model.provider_model_reference}</div>
+                              <span class="row-copy">${model.provider_model_reference}</span>
+                            </div>
+                            <div class="row-meta">${model.provider_instance_id}</div>
+                            <div class="row-meta">${(model.capability_bindings || []).join(", ") || "-"}</div>
+                            <div><span class="chip ${model.runtime_binding_ready_count ? "good" : ""}">${formatCount(model.runtime_binding_ready_count)}</span></div>
+                            <div><span class="chip ${model.operational_state === "ready" ? "good" : ""}">${model.operational_state || "unknown"}</span></div>
+                            <div class="stack">
+                              ${
+                                model.artifact_set_id
+                                  ? `<span class="row-copy">Artifact set: ${escapeHtml(model.artifact_set_id)}</span>`
+                                  : artifactSets.length
+                                    ? `<select data-model-artifact-set-select="${escapeHtml(model.model_deployment_id)}"><option value="">Bind artifact set</option>${artifactSets.map((artifactSet) => `<option value="${escapeHtml(artifactSet.artifact_set_id)}">${escapeHtml(artifactSet.display_name)}</option>`).join("")}</select>`
+                                    : `<span class="row-copy">No artifact set available</span>`
+                              }
+                              ${
+                                !model.artifact_set_id && artifactSets.length
+                                  ? `<button class="secondary-button" type="button" data-model-artifact-set-bind="${escapeHtml(model.model_deployment_id)}" ${state.providerActionPending === `bind-model-artifact-set:${model.model_deployment_id}` ? "disabled" : ""}>Bind Set</button>`
+                                  : ""
+                              }
+                              <button class="row-action" type="button" data-model-runtime-binding="${escapeHtml(model.model_deployment_id)}" ${hasBinding ? "disabled" : ""}>${pending ? "Creating..." : hasBinding ? "Binding Ready" : `Create Runtime Binding (${escapeHtml(draft.capabilityId)})`}</button>
+                            </div>
                           </div>
-                          <div class="row-meta">${model.provider_instance_id}</div>
-                          <div class="row-meta">${(model.capability_bindings || []).join(", ") || "-"}</div>
-                          <div><span class="chip ${model.runtime_binding_ready_count ? "good" : ""}">${formatCount(model.runtime_binding_ready_count)}</span></div>
-                          <div><span class="chip ${model.operational_state === "ready" ? "good" : ""}">${model.operational_state || "unknown"}</span></div>
-                        </div>
-                      `)
+                        `;
+                      })
                       .join("")
                   : `<div class="empty-state">No model deployments discovered yet.</div>`
               }
@@ -3930,22 +4708,27 @@
                 <div>Capability</div>
                 <div>Bundle bridge</div>
                 <div>Status</div>
+                <div>Action</div>
               </div>
               ${
                 runtimeBindings.length
                   ? runtimeBindings
-                      .map((binding) => `
-                        <div class="table-row">
-                          <div>
-                            <div class="row-title">${binding.runtime_binding_id}</div>
-                            <span class="row-copy">${binding.plugin_id}</span>
+                      .map((binding) => {
+                        const pending = state.providerActionPending === `endpoint:${binding.runtime_binding_id}`;
+                        return `
+                          <div class="table-row">
+                            <div>
+                              <div class="row-title">${binding.runtime_binding_id}</div>
+                              <span class="row-copy">${binding.plugin_id}</span>
+                            </div>
+                            <div class="row-meta">${binding.model_deployment_id}</div>
+                            <div class="row-meta">${binding.capability_id} / ${binding.capability_version}</div>
+                            <div class="row-meta">${binding.compatibility_bundle_id}</div>
+                            <div><span class="chip ${binding.status === "ready" ? "good" : ""}">${binding.status || "unknown"}</span></div>
+                            <button class="row-action" type="button" data-runtime-binding-endpoint="${escapeHtml(binding.runtime_binding_id)}">${pending ? "Creating..." : "Create Endpoint"}</button>
                           </div>
-                          <div class="row-meta">${binding.model_deployment_id}</div>
-                          <div class="row-meta">${binding.capability_id} / ${binding.capability_version}</div>
-                          <div class="row-meta">${binding.compatibility_bundle_id}</div>
-                          <div><span class="chip ${binding.status === "ready" ? "good" : ""}">${binding.status || "unknown"}</span></div>
-                        </div>
-                      `)
+                        `;
+                      })
                       .join("")
                   : `<div class="empty-state">No runtime bindings created yet.</div>`
               }
@@ -3953,6 +4736,12 @@
           </section>
           <section class="subpanel">
             <div class="panel-heading">Plugin directory</div>
+            <div class="subpanel-copy">
+              Apply approved plan uses the controlled executor in this MVP. It records declarative actions through
+              <code>${providerInstallationApprovalsPath}</code> and
+              <code>${providerInstallationJobsPath}</code>, then creates local provider inventory state. It does
+              not run shell, Docker, downloads, or plugin installer code.
+            </div>
             <div class="table-shell" style="margin-top: 14px;">
               <div class="table-head">
                 <div>Plugin</div>
@@ -3974,23 +4763,66 @@
                         const permissionSummary = (provider.required_permissions || [])
                           .map((permission) => escapeHtml(permission.label || permission.permission_id))
                           .join(", ");
+                        const sandboxPolicy = providerSandboxPolicy(provider);
+                        const packageVerification = providerPackageVerification(provider);
                         return `
                           <div class="table-row ${active ? "active" : ""}" data-provider-row="${escapeHtml(provider.plugin_id)}">
                             <div>
                               <div class="row-title">${escapeHtml(provider.display_name || provider.plugin_id)}</div>
                               <span class="row-copy">${provider.pending_install_count ? `${formatCount(provider.pending_install_count)} pending installs` : "No pending installs"}</span>
                             </div>
-                            <div><span class="chip ${provider.trust_status === "CONFORMANCE_TESTED" ? "good" : ""}">${escapeHtml(provider.trust_status || "UNREVIEWED")}</span></div>
+                            <div>
+                              <span class="chip ${provider.trust_status === "CONFORMANCE_TESTED" ? "good" : ""}">${escapeHtml(provider.trust_status || "UNREVIEWED")}</span>
+                              <div class="row-copy" style="margin-top: 6px;">Package: ${escapeHtml(packageVerification.status || "UNVERIFIED")}</div>
+                            </div>
                             <div class="row-meta">${capabilitySummary || "-"}</div>
                             <div class="row-meta">${permissionSummary || "No elevated permissions"}</div>
-                            <div class="row-meta">${canInstallProvider ? "Preview only: declarative install plan" : "Attach only"}</div>
-                            <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Inspect"}</button>
+                            <div class="row-meta">${canInstallProvider ? `Preview only / ${escapeHtml(sandboxPolicy.execution_mode || "RECORDED_ONLY")}` : "Attach only"}</div>
+                            <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Apply approved plan"}</button>
                           </div>
                         `;
                       })
                       .join("")
                   : `<div class="empty-state">No provider plugins are registered on this node yet.</div>`
               }
+            </div>
+          </section>
+          <section class="subpanel">
+            <div class="panel-heading">Provider Installation Apply Jobs</div>
+            <div class="table-shell" style="margin-top: 14px;">
+              <div class="table-head">
+                <div>Approval</div>
+                <div>Plugin</div>
+                <div>Status</div>
+                <div>Provider Instance</div>
+                <div>Executor</div>
+                <div>Action</div>
+              </div>
+              ${
+                installationJobs.length
+                  ? installationJobs
+                      .map((job) => `
+                        <div class="table-row">
+                          <div>
+                            <div class="row-title">${escapeHtml(job.approval_id)}</div>
+                            <span class="row-copy">${escapeHtml(job.job_id)}</span>
+                          </div>
+                          <div class="row-meta">${escapeHtml(job.plugin_id)}</div>
+                          <div><span class="chip ${job.status === "SUCCEEDED" ? "good" : job.status === "FAILED" ? "bad" : ""}">${escapeHtml(job.status)}</span></div>
+                          <div class="row-meta">${escapeHtml(job.provider_instance_id || "-")}</div>
+                          <div class="row-meta">${escapeHtml(job.executor_id || "-")}</div>
+                          <div class="toolbar">
+                            <button class="row-action" type="button" data-provider-discover-models="${escapeHtml(job.provider_instance_id || "")}" ${job.provider_instance_id ? "" : "disabled"}>${state.providerDiscoveryPendingId === job.provider_instance_id ? "Discovering..." : "Discover Models"}</button>
+                            <button class="row-action" type="button" data-provider-rollback-job="${escapeHtml(job.job_id)}" ${["SUCCEEDED", "FAILED"].includes(job.status || "") && job.rollback_status !== "COMPLETED" ? "" : "disabled"}>${state.providerActionPending === `rollback-installation:${job.job_id}` ? "Rolling Back..." : "Rollback"}</button>
+                          </div>
+                        </div>
+                      `)
+                      .join("")
+                  : `<div class="empty-state">No provider installation apply jobs recorded yet. Approve and apply a plan from the selected provider inspector.</div>`
+              }
+            </div>
+            <div class="notice" style="margin-top: 10px;">
+              Approved plans: ${formatCount(installationApprovals.length)} / Apply jobs: ${formatCount(installationJobs.length)}
             </div>
           </section>
         </div>
@@ -6040,6 +6872,18 @@
 
       const draft = syncProviderBundleDraft(provider);
       const installDraft = syncProviderInstallDraft(provider);
+      const applyDraft = syncProviderApplyDraft(provider);
+      const installationRecipes = providerInstallationRecipes(provider);
+      const selectedRecipe = selectedProviderInstallationRecipe(provider);
+      const latestApproval = latestProviderInstallationApproval(provider);
+      const latestJob = latestProviderInstallationJob(provider);
+      const permissionDiff = providerPermissionDiff(provider);
+      const sandboxPolicy = providerSandboxPolicy(provider);
+      const packageVerification = providerPackageVerification(provider);
+      const installationExecutor = providerInstallationExecutor();
+      const executorSandboxCapabilities =
+        installationExecutor.sandbox_capabilities || {};
+      const upgradeReview = providerUpgradeReview(provider);
       const recommendation = providerRecommendedAction(
         state.payloads.providers?.summary || {},
         providerRows(),
@@ -6055,6 +6899,25 @@
         Boolean(installDraft.sourceUrl) &&
         Boolean(installDraft.requestedBy) &&
         state.providerActionPending !== "queue-install";
+      const canApproveInstallation =
+        providerApplyRequiredFieldsSatisfied(provider) &&
+        state.providerActionPending !== "approve-installation";
+      const diagnostics = providerInstallationDiagnostics(provider);
+      const artifactInventory = providerInstallationArtifacts();
+      const artifactDraft = syncProviderArtifactDraft(provider);
+      const artifactSetDraft = syncModelArtifactSetDraft();
+      const localImportCheck = providerLocalImportArtifactsCheck(provider);
+      const canRunInstallationDiagnostics =
+        state.providerDiagnosticsPendingId !== provider.plugin_id;
+      const canApplyInstallation =
+        Boolean(latestApproval?.approval_id) &&
+        latestApproval.status === "APPROVED" &&
+        state.providerActionPending !== "apply-installation";
+      const canRollbackLatestInstallation =
+        Boolean(latestJob?.job_id) &&
+        ["SUCCEEDED", "FAILED"].includes(latestJob.status || "") &&
+        latestJob.rollback_status !== "COMPLETED" &&
+        state.providerActionPending !== `rollback-installation:${latestJob?.job_id || ""}`;
 
       return `
         <div class="panel-heading">Selected Provider</div>
@@ -6083,10 +6946,381 @@
             <strong>Pending Installs</strong>
             <span>${formatCount(provider.pending_install_count)}</span>
           </div>
+          <div class="inspector-stat">
+            <strong>Sandbox Policy</strong>
+            <span>${escapeHtml(sandboxPolicy.execution_mode)} / fs ${escapeHtml(sandboxPolicy.filesystem_scope)} / net ${escapeHtml(sandboxPolicy.network_scope)}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Package Verification</strong>
+            <span>${escapeHtml(packageVerification.status)} / ${escapeHtml(packageVerification.verification_mode || "NONE")} / ${escapeHtml(packageVerification.package_digest || "unknown")}</span>
+          </div>
+          <div class="inspector-stat">
+            <strong>Executor Boundary</strong>
+            <span>${escapeHtml(installationExecutor.executor_id || "unknown")} / modes ${(executorSandboxCapabilities.supported_execution_modes || []).map((item) => escapeHtml(item)).join(", ") || "none"}</span>
+          </div>
+          <div class="notice" style="margin-top: 10px;">
+            <strong>Package Verification Summary</strong>
+            <span style="display: block; margin-top: 4px;">${escapeHtml(packageVerification.summary || "No package verification summary available.")}</span>
+          </div>
           <div class="notice" style="margin-top: 10px;">
             <strong>Recommended Next Action</strong>
             <span style="display: block; margin-top: 4px;">${recommendation.detail}</span>
           </div>
+          <section class="subpanel" style="padding: 16px; margin-top: 10px;">
+            <div class="panel-heading">Managed Provider Apply</div>
+            <div class="inspector-copy">Approve and apply a declarative provider plan through the controlled executor. This creates local Provider Instance inventory state only; it does not run shell, Docker, downloads, or plugin installer code.</div>
+            <div class="notice" style="margin-top: 10px;">Executor boundary: ${escapeHtml(installationExecutor.executor_id || "unknown")} / fs ${(executorSandboxCapabilities.supported_filesystem_scopes || []).map((item) => escapeHtml(item)).join(", ") || "none"} / net ${(executorSandboxCapabilities.supported_network_scopes || []).map((item) => escapeHtml(item)).join(", ") || "none"} / host mutation ${executorSandboxCapabilities.host_mutation ? "enabled" : "disabled"}</div>
+            <div class="notice" style="margin-top: 10px;">Install UI schema: ${escapeHtml(providerInstallSchema(provider).schema_id || "none")}</div>
+            <div class="wallet-form-grid" style="margin-top: 12px;">
+              <label>
+                <span class="field-label">Installation Recipe</span>
+                <select data-provider-apply-recipe>
+                  <option value="">Custom configuration</option>
+                  ${installationRecipes
+                    .map((recipe) => `
+                      <option value="${escapeHtml(recipe.recipe_id)}" ${applyDraft.selectedRecipeId === recipe.recipe_id ? "selected" : ""}>${escapeHtml(recipe.display_name || recipe.recipe_id)}</option>
+                    `)
+                    .join("")}
+                </select>
+              </label>
+              <div class="notice">
+                ${selectedRecipe ? escapeHtml(selectedRecipe.description || selectedRecipe.recipe_id) : "Choose a recipe to prefill provider configuration, then review before approval."}
+              </div>
+            </div>
+            <div class="wallet-form-grid" style="margin-top: 12px;">
+              ${(providerInstallSchema(provider).fields || [])
+                .map((field) => renderProviderApplySchemaField(field, applyDraft))
+                .join("")}
+            </div>
+            <div class="request-history" style="margin-top: 10px;">
+              <div class="request-history-item">
+                <strong>Permission Approval</strong>
+                <div class="notice">Every requested permission must be explicitly acknowledged before approval is accepted.</div>
+                <div class="stack" style="margin-top: 10px;">
+                  ${providerPermissionRequirements(provider).length
+                    ? providerPermissionRequirements(provider)
+                        .map((permission) => `
+                          <label class="checkbox-line">
+                            <input
+                              type="checkbox"
+                              data-provider-apply-permission="${escapeHtml(permission.permission_id)}"
+                              ${providerApplyApprovedPermissions(provider).includes(permission.permission_id) ? "checked" : ""}
+                            >
+                            <span>
+                              ${escapeHtml(permission.label || permission.permission_id)}
+                              <span class="row-copy">${escapeHtml(permission.reason || permission.permission_id)} • risk ${escapeHtml(permission.risk_level || "low")}</span>
+                            </span>
+                          </label>
+                        `)
+                        .join("")
+                    : `<div class="notice">No elevated permissions requested by this install plan.</div>`}
+                </div>
+                <div class="notice">
+                  Permission diff vs latest approval:
+                  +${permissionDiff.added.length}
+                  / -${permissionDiff.removed.length}
+                  / =${permissionDiff.unchanged.length}
+                </div>
+              </div>
+              <div class="request-history-item">
+                <strong>Upgrade Review</strong>
+                <div class="notice">${escapeHtml(upgradeReview.summary)}</div>
+                <div class="stack" style="margin-top: 10px;">
+                  ${
+                    upgradeReview.addedPermissions.length
+                      ? `<div class="row-copy">Added permissions: ${upgradeReview.addedPermissions.map((permissionId) => escapeHtml(permissionId)).join(", ")}</div>`
+                      : ""
+                  }
+                  ${
+                    upgradeReview.removedPermissions.length
+                      ? `<div class="row-copy">Removed permissions: ${upgradeReview.removedPermissions.map((permissionId) => escapeHtml(permissionId)).join(", ")}</div>`
+                      : ""
+                  }
+                  ${
+                    upgradeReview.packageVerificationChanged
+                      ? `<div class="row-copy">Package identity changed: ${escapeHtml(upgradeReview.previousPackageVerification?.status || "unknown")} -> ${escapeHtml(upgradeReview.currentPackageVerification?.status || "unknown")}</div>`
+                      : ""
+                  }
+                  ${
+                    upgradeReview.sandboxPolicyChanged
+                      ? `<div class="row-copy">Sandbox policy changed: ${escapeHtml(upgradeReview.previousSandboxPolicy?.execution_mode || "unknown")} -> ${escapeHtml(upgradeReview.currentSandboxPolicy?.execution_mode || "unknown")}</div>`
+                      : ""
+                  }
+                  ${
+                    upgradeReview.requiresAcknowledgement
+                      ? `
+                        <label class="checkbox-line">
+                          <input
+                            type="checkbox"
+                            data-provider-apply-upgrade-ack="true"
+                            ${providerApplyUpgradeAcknowledged(provider) ? "checked" : ""}
+                          >
+                          <span>
+                            Acknowledge install contract change
+                            <span class="row-copy">Required before diagnostics and approval can proceed after permission, sandbox, or package-identity changes.</span>
+                          </span>
+                        </label>
+                      `
+                      : `<div class="notice">No extra upgrade acknowledgement required.</div>`
+                  }
+                </div>
+              </div>
+              <div class="request-history-item">
+                <strong>Secret Handle Selection</strong>
+                <div class="notice">Secret values are not stored here. Enter only scoped secret handles for this provider instance.</div>
+                <div class="wallet-form-grid" style="margin-top: 10px;">
+                  ${providerSecretRequirements(provider).length
+                    ? providerSecretRequirements(provider)
+                        .map((requirement) => {
+                          const requirementKey = providerSecretRequirementKey(requirement);
+                          const selectedHandle = applyDraft.selectedSecretHandles?.[requirementKey] || "";
+                          return `
+                            <label>
+                              <span class="field-label">${escapeHtml(requirement.label)}${requirement.required ? " *" : ""}</span>
+                              <input
+                                type="text"
+                                data-provider-apply-secret-handle="${escapeHtml(requirementKey)}"
+                                value="${escapeHtml(selectedHandle)}"
+                                placeholder="${escapeHtml(requirement.required ? "Required secret handle" : "Optional secret handle")}"
+                              >
+                              <span class="row-copy">${escapeHtml(requirement.secret_type || "NONE")} / ${(requirement.allowed_usage || []).map((item) => escapeHtml(item)).join(", ") || "no declared usage"}</span>
+                            </label>
+                          `;
+                        })
+                        .join("")
+                    : `<div class="notice">This plugin does not require secret handles for managed install.</div>`}
+                </div>
+              </div>
+            </div>
+            <div class="wallet-form-grid" style="margin-top: 10px;">
+              <input type="text" data-provider-apply-note value="${escapeHtml(applyDraft.operatorNote)}" placeholder="Operator approval note">
+              <button class="primary-button" type="button" data-provider-action="approve-installation" ${canApproveInstallation ? "" : "disabled"}>${state.providerActionPending === "approve-installation" ? "Approving..." : "Approve Install Plan"}</button>
+            </div>
+            <div class="wallet-inline-actions" style="margin-top: 10px;">
+              <button class="secondary-button" type="button" data-provider-action="run-installation-diagnostics" ${canRunInstallationDiagnostics ? "" : "disabled"}>${state.providerDiagnosticsPendingId === provider.plugin_id ? "Running Diagnostics..." : "Run Dry-Run Diagnostics"}</button>
+              <button class="secondary-button" type="button" data-provider-action="apply-installation" ${canApplyInstallation ? "" : "disabled"}>${state.providerActionPending === "apply-installation" ? "Applying..." : "Apply Latest Approval"}</button>
+              <button class="secondary-button" type="button" data-provider-action="rollback-installation" ${canRollbackLatestInstallation ? "" : "disabled"}>${state.providerActionPending === `rollback-installation:${latestJob?.job_id || ""}` ? "Rolling Back..." : "Rollback Latest Job"}</button>
+            </div>
+            <div class="request-history" style="margin-top: 10px;">
+              <div class="request-history-item">
+                <strong>Dry-Run Diagnostics</strong>
+                <div class="notice">${diagnostics ? `${diagnostics.diagnostics_id} / ${diagnostics.readiness_status} / ${diagnostics.executor_id}` : "Run a dry-run before approval to validate config, permission coverage, secret handles, and rollback posture."}</div>
+                ${
+                  diagnostics
+                    ? `
+                      <div class="row-copy" style="margin-top: 8px;">Plan hash: ${escapeHtml(diagnostics.plan_hash)}</div>
+                      <div class="row-copy">Configuration hash: ${escapeHtml(diagnostics.configuration_hash)}</div>
+                      <div class="row-copy">Rollback: ${escapeHtml(diagnostics.rollback_result?.status || "NOT_NEEDED")} / ${escapeHtml(diagnostics.rollback_result?.summary || "No rollback summary")}</div>
+                      <div class="stack" style="margin-top: 10px;">
+                        ${(diagnostics.checks || [])
+                          .map(
+                            (check) => `
+                              <div class="notice">
+                                <strong>${escapeHtml(check.check_id)}</strong>: ${escapeHtml(check.status)} / ${escapeHtml(check.summary)}
+                              </div>
+                            `
+                          )
+                          .join("")}
+                      </div>
+                    `
+                    : ""
+                }
+              </div>
+            </div>
+            <div class="request-history" style="margin-top: 10px;">
+              <div class="request-history-item">
+                <strong>Shared Model Artifact Store</strong>
+                <div class="notice">
+                  ${
+                    modelArtifacts().supported
+                      ? `${escapeHtml(modelArtifacts().store_root || "unknown")} / ${formatCount((modelArtifacts().items || []).length)} immutable artifact${(modelArtifacts().items || []).length === 1 ? "" : "s"}`
+                      : "The current installation executor does not support the shared Model Artifact Store."
+                  }
+                </div>
+                ${
+                  modelArtifacts().supported
+                    ? `
+                      <div class="stack" style="margin-top: 10px;">
+                        ${(artifactInventory.items || []).length
+                          ? artifactInventory.items
+                              .map(
+                                (item) => `
+                                  <div class="list-row">
+                                    <div>
+                                      <strong>${escapeHtml(item.relative_path)}</strong>
+                                      <span>Promote verified bytes into shared storage before reusing them across Provider Instances.</span>
+                                    </div>
+                                    <button class="secondary-button" type="button" data-provider-artifact-promote="${escapeHtml(item.relative_path)}" ${state.providerActionPending === `promote-model-artifact:${item.relative_path}` ? "disabled" : ""}>${state.providerActionPending === `promote-model-artifact:${item.relative_path}` ? "Promoting..." : "Promote"}</button>
+                                  </div>
+                                `
+                              )
+                              .join("")
+                          : `<div class="notice">Stage or extract a file before promoting it.</div>`}
+                      </div>
+                      <div class="stack" style="margin-top: 10px;">
+                        ${(modelArtifacts().items || []).length
+                          ? modelArtifacts().items
+                              .map(
+                                (item) => `
+                                  <div class="list-row">
+                                    <div>
+                                      <strong>${escapeHtml(item.original_filename)}</strong>
+                                      <span>${formatCount(item.size_bytes)} bytes / ${escapeHtml(item.artifact_id)} / ${escapeHtml(item.source_type)}</span>
+                                    </div>
+                                    <button class="secondary-button" type="button" data-model-artifact-remove="${escapeHtml(item.artifact_id)}" ${state.providerActionPending === `delete-model-artifact:${item.artifact_id}` ? "disabled" : ""}>${state.providerActionPending === `delete-model-artifact:${item.artifact_id}` ? "Removing..." : "Remove"}</button>
+                                    <button class="secondary-button" type="button" data-model-artifact-create-set="${escapeHtml(item.artifact_id)}" ${state.providerActionPending === `create-model-artifact-set:${item.artifact_id}` ? "disabled" : ""}>${state.providerActionPending === `create-model-artifact-set:${item.artifact_id}` ? "Creating..." : "Create Set"}</button>
+                                  </div>
+                                `
+                              )
+                              .join("")
+                          : `<div class="notice">No promoted model artifacts yet.</div>`}
+                      </div>
+                      <div class="wallet-inline-actions" style="margin-top: 10px;">
+                        <button class="secondary-button" type="button" data-model-artifact-collect ${state.providerActionPending === "collect-model-artifacts" ? "disabled" : ""}>${state.providerActionPending === "collect-model-artifacts" ? "Collecting..." : "Run Artifact GC"}</button>
+                      </div>
+                      <div class="wallet-form-grid" style="margin-top: 10px;">
+                        <input type="text" data-model-artifact-set-name value="${escapeHtml(artifactSetDraft.displayName || "")}" placeholder="Artifact set name">
+                        <button class="secondary-button" type="button" data-model-artifact-set-create ${state.providerActionPending === "create-model-artifact-set" ? "disabled" : ""}>${state.providerActionPending === "create-model-artifact-set" ? "Creating..." : "Create Selected Set"}</button>
+                      </div>
+                      <div class="stack" style="margin-top: 8px;">
+                        ${(modelArtifacts().items || []).map((item) => {
+                          const member = artifactSetDraft.members?.[item.artifact_id] || {};
+                          return `<div class="wallet-form-grid"><label><input type="checkbox" data-model-artifact-set-member="${escapeHtml(item.artifact_id)}" ${member.selected ? "checked" : ""}> ${escapeHtml(item.original_filename)}</label><input type="text" data-model-artifact-set-path="${escapeHtml(item.artifact_id)}" value="${escapeHtml(member.relativePath || item.original_filename || "")}" placeholder="relative model path"><select data-model-artifact-set-role="${escapeHtml(item.artifact_id)}">${["WEIGHTS", "TOKENIZER", "CONFIG", "ADAPTER", "AUXILIARY"].map((role) => `<option value="${role}" ${member.role === role ? "selected" : ""}>${role}</option>`).join("")}</select></div>`;
+                        }).join("")}
+                      </div>
+                      <div class="stack" style="margin-top: 10px;">
+                        ${(modelArtifactSets().length
+                          ? modelArtifactSets()
+                              .map(
+                                (artifactSet) => `
+                                  <div class="list-row">
+                                    <div>
+                                      <strong>${escapeHtml(artifactSet.display_name)}</strong>
+                                      <span>${formatCount((artifactSet.files || []).length)} file${(artifactSet.files || []).length === 1 ? "" : "s"} / ${escapeHtml(artifactSet.artifact_set_id)}</span>
+                                    </div>
+                                    <button class="secondary-button" type="button" data-model-artifact-set-remove="${escapeHtml(artifactSet.artifact_set_id)}" ${state.providerActionPending === `delete-model-artifact-set:${artifactSet.artifact_set_id}` ? "disabled" : ""}>${state.providerActionPending === `delete-model-artifact-set:${artifactSet.artifact_set_id}` ? "Removing..." : "Remove"}</button>
+                                  </div>
+                                `
+                              )
+                              .join("")
+                          : `<div class="notice">No artifact sets yet. Create one from a stored file, or use the API for a multi-file layout.</div>`}
+                      </div>
+                    `
+                    : ""
+                }
+              </div>
+            </div>
+            <div class="request-history" style="margin-top: 10px;">
+              <div class="request-history-item">
+                <strong>Controlled Imports Root</strong>
+                <div class="notice">
+                  ${
+                    artifactInventory.supported
+                      ? `${escapeHtml(artifactInventory.imports_root || "unknown")} / ${formatCount((artifactInventory.items || []).length)} staged artifact${(artifactInventory.items || []).length === 1 ? "" : "s"} / max ${formatCount(artifactInventory.max_artifact_bytes || 0)} bytes${artifactInventory.archive_extract_supported ? ` / extract ${escapeHtml((artifactInventory.supported_archive_formats || []).join(", "))} up to ${formatCount(artifactInventory.max_extracted_files || 0)} files and ${formatCount(artifactInventory.max_extracted_bytes || 0)} bytes` : ""}`
+                      : "The current installation executor does not support staging local artifacts."
+                  }
+                </div>
+                ${
+                  localImportCheck
+                    ? `
+                      <div class="stack" style="margin-top: 10px;">
+                        ${(localImportCheck.details?.local_imports || [])
+                          .map(
+                            (item) => `
+                              <div class="notice">
+                                <strong>${escapeHtml(item.model || "artifact")}</strong>
+                                <span style="display: block; margin-top: 4px;">
+                                  ${item.exists ? "READY" : "MISSING"} / ${escapeHtml(item.source_relative_path || item.source || "unknown")} -> ${escapeHtml(item.resolved_destination || item.destination || "unknown")}
+                                </span>
+                              </div>
+                            `
+                          )
+                          .join("")}
+                      </div>
+                    `
+                    : ""
+                }
+                ${
+                  artifactInventory.supported
+                    ? `
+                      <div class="wallet-form-grid" style="margin-top: 10px;">
+                        <input type="text" data-provider-artifact-relative-path value="${escapeHtml(artifactDraft.relativePath || "")}" placeholder="models/fake-model.gguf">
+                        <input type="file" data-provider-artifact-file>
+                      </div>
+                      <div class="wallet-inline-actions" style="margin-top: 10px;">
+                        <button class="secondary-button" type="button" data-provider-action="stage-installation-artifact" ${state.providerActionPending === "stage-installation-artifact" ? "disabled" : ""}>${state.providerActionPending === "stage-installation-artifact" ? "Staging..." : "Stage Local Artifact"}</button>
+                      </div>
+                      ${
+                        artifactInventory.archive_extract_supported
+                          ? `
+                            <div class="wallet-form-grid" style="margin-top: 10px;">
+                              <select data-provider-artifact-archive-path>
+                                ${(providerExtractableArchiveItems(artifactInventory).length
+                                  ? providerExtractableArchiveItems(artifactInventory)
+                                      .map(
+                                        (item) => `
+                                          <option value="${escapeHtml(item.relative_path)}" ${artifactDraft.archiveRelativePath === item.relative_path ? "selected" : ""}>${escapeHtml(item.relative_path)}</option>
+                                        `
+                                      )
+                                      .join("")
+                                  : `<option value="">No staged archives</option>`)}
+                              </select>
+                              <input type="text" data-provider-artifact-destination-directory value="${escapeHtml(artifactDraft.destinationDirectory || "")}" placeholder="models/fake-model">
+                            </div>
+                            <div class="wallet-inline-actions" style="margin-top: 10px;">
+                              <button class="secondary-button" type="button" data-provider-action="extract-installation-artifact-archive" ${(providerExtractableArchiveItems(artifactInventory).length && state.providerActionPending !== "extract-installation-artifact-archive") ? "" : "disabled"}>${state.providerActionPending === "extract-installation-artifact-archive" ? "Extracting..." : "Extract Staged Archive"}</button>
+                            </div>
+                          `
+                          : ""
+                      }
+                      <div class="stack" style="margin-top: 10px;">
+                        ${(artifactInventory.items || []).length
+                          ? artifactInventory.items
+                              .map(
+                                (item) => `
+                                  <div class="list-row">
+                                    <div>
+                                      <strong>${escapeHtml(item.relative_path)}</strong>
+                                      <span>${formatCount(item.size_bytes)} bytes / ${escapeHtml(item.sha256)} / ${escapeHtml(item.updated_at)}</span>
+                                    </div>
+                                    <button class="secondary-button" type="button" data-provider-artifact-remove="${escapeHtml(item.relative_path)}" ${state.providerActionPending === `delete-installation-artifact:${item.relative_path}` ? "disabled" : ""}>${state.providerActionPending === `delete-installation-artifact:${item.relative_path}` ? "Removing..." : "Remove"}</button>
+                                  </div>
+                                `
+                              )
+                              .join("")
+                          : `<div class="notice">No staged local artifacts yet.</div>`}
+                      </div>
+                    `
+                    : ""
+                }
+              </div>
+            </div>
+            <div class="request-history" style="margin-top: 10px;">
+              <div class="request-history-item">
+                <strong>Latest Approval</strong>
+                <div class="notice">${latestApproval ? `${latestApproval.approval_id} / ${latestApproval.status_label || latestApproval.status}` : "No approved plan yet"}</div>
+                ${
+                  latestApproval
+                    ? `<div class="row-copy" style="margin-top: 8px;">Permissions: ${(latestApproval.approved_permissions || []).length} / Secret handles: ${(latestApproval.selected_secret_handles || []).length} / Sandbox: ${escapeHtml(latestApproval.acknowledged_sandbox_policy?.execution_mode || "unknown")} / Package: ${escapeHtml(latestApproval.acknowledged_package_verification?.status || "unknown")}</div>`
+                    : ""
+                }
+              </div>
+              <div class="request-history-item">
+                <strong>Latest Apply Job</strong>
+                <div class="notice">${latestJob ? `${latestJob.job_id} / ${latestJob.status} / ${latestJob.provider_instance_id || "no provider instance"}` : "No apply job yet"}</div>
+                ${
+                  latestJob
+                    ? `<div class="row-copy" style="margin-top: 8px;">Rollback: ${escapeHtml(latestJob.rollback_status || "NOT_NEEDED")} / ${escapeHtml(latestJob.rollback_summary || "No rollback summary")}</div>`
+                    : ""
+                }
+                ${
+                  latestJob?.provider_instance_id
+                    ? `<button class="secondary-button" style="margin-top: 10px;" type="button" data-provider-discover-models="${escapeHtml(latestJob.provider_instance_id)}">${state.providerDiscoveryPendingId === latestJob.provider_instance_id ? "Discovering..." : "Discover Models"}</button>`
+                    : ""
+                }
+              </div>
+            </div>
+          </section>
           <section class="subpanel" style="padding: 16px; margin-top: 10px;">
             <div class="panel-heading">Install Model Artifact</div>
             <div class="inspector-copy">Queue a provider-scoped model install before bundle registration. This feeds the install pipeline through ${modelInstallRequestPath} and hands off the artifact to the Installs workspace for processing and registration.</div>
@@ -7872,6 +9106,611 @@
       }
     }
 
+    async function approveProviderInstallationPlan() {
+      const provider = selectedProvider();
+      const draft = syncProviderApplyDraft(provider);
+      if (!provider?.plugin_id) {
+        return;
+      }
+      state.providerActionPending = "approve-installation";
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const approval = await postJson(providerInstallationApprovalPath(provider.plugin_id), {
+          configuration: providerApplyConfiguration(provider),
+          approved_permissions: providerApplyApprovedPermissions(provider),
+          upgrade_acknowledged: providerApplyUpgradeAcknowledged(provider),
+          selected_secret_handles: providerApplySelectedSecretHandles(provider),
+          operator_note: draft.operatorNote || null,
+        });
+        state.providerMessage = {
+          kind: "good",
+          text: `Approved declarative install plan ${approval.approval_id}. Apply it to create controlled local provider inventory state.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function runProviderInstallationDiagnostics() {
+      const provider = selectedProvider();
+      if (!provider?.plugin_id) {
+        return;
+      }
+      const pluginId = provider.plugin_id;
+      state.providerDiagnosticsPendingId = pluginId;
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const diagnostics = await postJson(providerInstallationDiagnosticsPath(pluginId), {
+          configuration: providerApplyConfiguration(provider),
+          approved_permissions: providerApplyApprovedPermissions(provider),
+          upgrade_acknowledged: providerApplyUpgradeAcknowledged(provider),
+          selected_secret_handles: providerApplySelectedSecretHandles(provider),
+        });
+        state.providerDiagnosticsByPluginId = {
+          ...state.providerDiagnosticsByPluginId,
+          [pluginId]: diagnostics,
+        };
+        state.providerMessage = {
+          kind: diagnostics.readiness_status === "BLOCKED" ? "bad" : "good",
+          text: `Dry-run diagnostics ${diagnostics.diagnostics_id} finished with ${diagnostics.readiness_status}.`,
+        };
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerDiagnosticsPendingId = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function stageProviderInstallationArtifact() {
+      const provider = selectedProvider();
+      const inventory = providerInstallationArtifacts();
+      const relativePath = String(
+        state.providerArtifactDraft?.relativePath || ""
+      ).trim();
+      const fileInput = document.querySelector("[data-provider-artifact-file]");
+      const file = fileInput?.files?.[0] || null;
+      if (!inventory.supported) {
+        state.providerMessage = {
+          kind: "bad",
+          text: "The current installation executor does not support staged local artifacts.",
+        };
+        renderInspector();
+        bindInteractiveElements();
+        return;
+      }
+      if (!relativePath) {
+        state.providerMessage = {
+          kind: "bad",
+          text: "Enter a relative artifact path before staging a local artifact.",
+        };
+        renderInspector();
+        bindInteractiveElements();
+        return;
+      }
+      if (!file) {
+        state.providerMessage = {
+          kind: "bad",
+          text: "Choose a local file before staging a provider installation artifact.",
+        };
+        renderInspector();
+        bindInteractiveElements();
+        return;
+      }
+      state.providerActionPending = "stage-installation-artifact";
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const contentBase64 = arrayBufferToBase64(await file.arrayBuffer());
+        const artifact = await postJson(providerInstallationArtifactsPath, {
+          relative_path: relativePath,
+          content_base64: contentBase64,
+        });
+        if (provider?.plugin_id) {
+          const diagnostics = await postJson(
+            providerInstallationDiagnosticsPath(provider.plugin_id),
+            {
+              configuration: providerApplyConfiguration(provider),
+              approved_permissions: providerApplyApprovedPermissions(provider),
+              upgrade_acknowledged: providerApplyUpgradeAcknowledged(provider),
+              selected_secret_handles: providerApplySelectedSecretHandles(provider),
+            }
+          );
+          state.providerDiagnosticsByPluginId = {
+            ...state.providerDiagnosticsByPluginId,
+            [provider.plugin_id]: diagnostics,
+          };
+        }
+        state.providerMessage = {
+          kind: "good",
+          text: `Staged local artifact ${artifact.relative_path} and refreshed install diagnostics.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function deleteProviderInstallationArtifact(relativePath) {
+      if (!relativePath) {
+        return;
+      }
+      const provider = selectedProvider();
+      state.providerActionPending = `delete-installation-artifact:${relativePath}`;
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        await postJson(providerInstallationArtifactRemovePath, {
+          relative_path: relativePath,
+        });
+        clearProviderInstallationDiagnostics(provider?.plugin_id);
+        state.providerMessage = {
+          kind: "good",
+          text: `Removed staged local artifact ${relativePath}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function promoteProviderInstallationArtifact(relativePath) {
+      if (!relativePath) {
+        return;
+      }
+      state.providerActionPending = `promote-model-artifact:${relativePath}`;
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const artifact = await postJson(modelArtifactPromotionPath, {
+          relative_path: relativePath,
+        });
+        state.providerMessage = {
+          kind: "good",
+          text: `Promoted ${relativePath} as shared ${artifact.artifact_id}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function deleteModelArtifact(artifactId) {
+      if (!artifactId) {
+        return;
+      }
+      state.providerActionPending = `delete-model-artifact:${artifactId}`;
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        await postJson(modelArtifactRemovePath, { artifact_id: artifactId });
+        state.providerMessage = {
+          kind: "good",
+          text: `Removed shared model artifact ${artifactId}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function collectModelArtifacts() {
+      state.providerActionPending = "collect-model-artifacts";
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(modelArtifactCollectPath, {});
+        state.providerMessage = {
+          kind: "good",
+          text: `Artifact GC retained ${result.retained_artifact_ids.length}, marked ${result.pending_artifact_ids.length}, and collected ${result.collected_artifact_ids.length}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function createSingleFileModelArtifactSet(artifactId) {
+      const artifact = (modelArtifacts().items || []).find(
+        (item) => item.artifact_id === artifactId
+      );
+      if (!artifact) {
+        return;
+      }
+      state.providerActionPending = `create-model-artifact-set:${artifactId}`;
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const artifactSet = await postJson(modelArtifactSetsPath, {
+          display_name: artifact.original_filename,
+          files: [
+            {
+              relative_path: artifact.original_filename,
+              artifact_id: artifact.artifact_id,
+              role: /\.(gguf|safetensors)$/i.test(artifact.original_filename || "")
+                ? "WEIGHTS"
+                : "AUXILIARY",
+            },
+          ],
+        });
+        state.providerMessage = {
+          kind: "good",
+          text: `Created artifact set ${artifactSet.display_name}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function createSelectedModelArtifactSet() {
+      const draft = syncModelArtifactSetDraft();
+      const files = Object.entries(draft.members || {})
+        .filter(([, member]) => member.selected)
+        .map(([artifactId, member]) => ({
+          artifact_id: artifactId,
+          relative_path: String(member.relativePath || "").trim(),
+          role: member.role || "AUXILIARY",
+        }));
+      if (!draft.displayName || !files.length || files.some((item) => !item.relative_path)) {
+        state.providerMessage = {
+          kind: "bad",
+          text: "Enter a set name and select at least one artifact with a relative path.",
+        };
+        renderInspector();
+        bindInteractiveElements();
+        return;
+      }
+      state.providerActionPending = "create-model-artifact-set";
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const artifactSet = await postJson(modelArtifactSetsPath, {
+          display_name: draft.displayName,
+          files,
+        });
+        state.providerArtifactSetDraft = { displayName: "", members: {} };
+        state.providerMessage = { kind: "good", text: `Created ${artifactSet.display_name}.` };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function deleteModelArtifactSet(artifactSetId) {
+      if (!artifactSetId) {
+        return;
+      }
+      state.providerActionPending = `delete-model-artifact-set:${artifactSetId}`;
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        await postJson(modelArtifactSetRemovePath, { artifact_set_id: artifactSetId });
+        state.providerMessage = {
+          kind: "good",
+          text: `Removed model artifact set ${artifactSetId}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function bindModelArtifactSet(modelDeploymentId, artifactSetId) {
+      if (!modelDeploymentId || !artifactSetId) {
+        return;
+      }
+      state.providerActionPending = `bind-model-artifact-set:${modelDeploymentId}`;
+      state.providerMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        await postJson(modelDeploymentArtifactSetPath(modelDeploymentId), {
+          artifact_set_id: artifactSetId,
+        });
+        state.providerMessage = { kind: "good", text: "Bound Model Artifact Set to deployment." };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function extractProviderInstallationArtifactArchive() {
+      const provider = selectedProvider();
+      const inventory = providerInstallationArtifacts();
+      const archiveRelativePath = String(
+        state.providerArtifactDraft?.archiveRelativePath || ""
+      ).trim();
+      const destinationDirectory = String(
+        state.providerArtifactDraft?.destinationDirectory || ""
+      ).trim();
+      if (!inventory.archive_extract_supported) {
+        state.providerMessage = {
+          kind: "bad",
+          text: "The current installation executor does not support staged archive extraction.",
+        };
+        renderInspector();
+        bindInteractiveElements();
+        return;
+      }
+      if (!archiveRelativePath) {
+        state.providerMessage = {
+          kind: "bad",
+          text: "Select a staged archive before extracting.",
+        };
+        renderInspector();
+        bindInteractiveElements();
+        return;
+      }
+      if (!destinationDirectory) {
+        state.providerMessage = {
+          kind: "bad",
+          text: "Enter a destination directory inside the controlled imports root.",
+        };
+        renderInspector();
+        bindInteractiveElements();
+        return;
+      }
+      state.providerActionPending = "extract-installation-artifact-archive";
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(providerInstallationArtifactExtractPath, {
+          archive_relative_path: archiveRelativePath,
+          destination_directory: destinationDirectory,
+        });
+        if (provider?.plugin_id) {
+          const diagnostics = await postJson(
+            providerInstallationDiagnosticsPath(provider.plugin_id),
+            {
+              configuration: providerApplyConfiguration(provider),
+              approved_permissions: providerApplyApprovedPermissions(provider),
+              upgrade_acknowledged: providerApplyUpgradeAcknowledged(provider),
+              selected_secret_handles: providerApplySelectedSecretHandles(provider),
+            }
+          );
+          state.providerDiagnosticsByPluginId = {
+            ...state.providerDiagnosticsByPluginId,
+            [provider.plugin_id]: diagnostics,
+          };
+        }
+        state.providerMessage = {
+          kind: "good",
+          text: `Extracted ${result.extracted_file_count} file${result.extracted_file_count === 1 ? "" : "s"} from ${result.archive_relative_path} into ${result.destination_directory}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function applyLatestProviderInstallationApproval() {
+      const provider = selectedProvider();
+      const approval = latestProviderInstallationApproval(provider);
+      if (!approval?.approval_id) {
+        state.providerMessage = {
+          kind: "bad",
+          text: "Approve a provider installation plan before applying it.",
+        };
+        renderInspector();
+        bindInteractiveElements();
+        return;
+      }
+      state.providerActionPending = "apply-installation";
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const job = await postJson(providerInstallationApplyPath(approval.approval_id), {});
+        state.providerMessage = {
+          kind: job.status === "SUCCEEDED" ? "good" : "bad",
+          text: `Apply job ${job.job_id} finished with ${job.status}. Provider inventory id: ${job.provider_instance_id || "none"}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function rollbackProviderInstallationJob(jobId) {
+      if (!jobId) {
+        return;
+      }
+      state.providerActionPending = `rollback-installation:${jobId}`;
+      state.providerMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        const job = await postJson(providerInstallationRollbackPath(jobId), {});
+        state.providerMessage = {
+          kind:
+            job.rollback_status === "COMPLETED" ||
+            job.rollback_status === "NOT_NEEDED"
+              ? "good"
+              : "bad",
+          text: `Rollback for job ${job.job_id} finished with ${job.rollback_status || "unknown"}. ${job.rollback_summary || ""}`.trim(),
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function discoverModelsForProviderInstance(providerInstanceId) {
+      if (!providerInstanceId) {
+        return;
+      }
+      state.providerDiscoveryPendingId = providerInstanceId;
+      state.providerMessage = null;
+      renderInspector();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(providerModelDiscoveryPath(providerInstanceId), {});
+        state.providerMessage = {
+          kind: "good",
+          text: `Discovered ${formatCount((result.items || []).length)} model deployment${(result.items || []).length === 1 ? "" : "s"} for ${providerInstanceId}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerDiscoveryPendingId = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function createRuntimeBindingForModel(modelDeploymentId) {
+      const model = (state.payloads.providers?.model_deployments || []).find(
+        (deployment) => deployment.model_deployment_id === modelDeploymentId
+      );
+      const draft = syncRuntimeBindingDraft(model);
+      if (!model?.model_deployment_id) {
+        return;
+      }
+      state.providerActionPending = `runtime-binding:${model.model_deployment_id}`;
+      state.providerMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        const binding = await postJson(modelRuntimeBindingPath(model.model_deployment_id), {
+          capability_id: draft.capabilityId,
+          capability_version: draft.capabilityVersion,
+          capability_definition_hash: draft.capabilityDefinitionHash,
+        });
+        state.providerMessage = {
+          kind: "good",
+          text: `Runtime binding ${binding.runtime_binding_id} created for ${model.model_deployment_id}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function createEndpointFromRuntimeBinding(runtimeBindingId) {
+      const binding = runtimeBindingById(runtimeBindingId);
+      const model = modelForRuntimeBinding(binding);
+      const ownerWalletId = state.payloads.home?.bootstrap?.owner_wallet?.wallet_id;
+      if (!binding?.runtime_binding_id || !ownerWalletId) {
+        state.providerMessage = {
+          kind: "bad",
+          text: "Configure a wallet and create a runtime binding before creating an endpoint.",
+        };
+        render();
+        bindInteractiveElements();
+        return;
+      }
+      state.providerActionPending = `endpoint:${binding.runtime_binding_id}`;
+      state.providerMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        const created = await postJson(endpointApiBase, {
+          owner_wallet: ownerWalletId,
+          runtime_binding_id: binding.runtime_binding_id,
+          display_name:
+            model?.operator_display_name ||
+            model?.provider_model_reference ||
+            `${binding.capability_id} Endpoint`,
+          model_class: binding.capability_id,
+          capabilities: [binding.capability_id],
+          publication: {
+            visibility: "private",
+            shared_with_wallet_ids: [],
+            discoverable: false,
+            accepts_external_requests: false,
+            validation: "disabled",
+          },
+        });
+        const endpoint = created.endpoint || created.data?.endpoint;
+        state.selectedEndpointDraftId = endpoint?.endpoint_id || null;
+        state.screen = "endpoints";
+        state.providerMessage = {
+          kind: "good",
+          text: `Endpoint ${endpoint?.endpoint_id || "draft"} created from runtime binding ${binding.runtime_binding_id}.`,
+        };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.providerActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function processQueuedInstallsForSelectedProvider() {
       const provider = selectedProvider();
       if (!provider?.plugin_id) {
@@ -8279,17 +10118,251 @@
         });
       });
 
+      document.querySelectorAll("[data-provider-apply-field]").forEach((control) => {
+        const key = control.dataset.providerApplyField;
+        const eventName = control.tagName === "SELECT" ? "change" : "input";
+        control.addEventListener(eventName, () => {
+          clearProviderInstallationDiagnostics(selectedProvider()?.plugin_id);
+          if (control.type === "checkbox") {
+            state.providerApplyDraft.values[key] = control.checked;
+          } else if (control.type === "number") {
+            state.providerApplyDraft.values[key] = control.value === "" ? "" : Number(control.value);
+          } else {
+            state.providerApplyDraft.values[key] = control.value;
+          }
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-apply-permission]").forEach((control) => {
+        const permissionId = control.dataset.providerApplyPermission;
+        control.addEventListener("change", () => {
+          clearProviderInstallationDiagnostics(selectedProvider()?.plugin_id);
+          const approved = new Set(state.providerApplyDraft.approvedPermissionIds || []);
+          if (control.checked) {
+            approved.add(permissionId);
+          } else {
+            approved.delete(permissionId);
+          }
+          state.providerApplyDraft.approvedPermissionIds = [...approved];
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-apply-secret-handle]").forEach((control) => {
+        const requirementKey = control.dataset.providerApplySecretHandle;
+        control.addEventListener("input", () => {
+          clearProviderInstallationDiagnostics(selectedProvider()?.plugin_id);
+          state.providerApplyDraft.selectedSecretHandles = {
+            ...(state.providerApplyDraft.selectedSecretHandles || {}),
+            [requirementKey]: control.value,
+          };
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-apply-upgrade-ack]").forEach((control) => {
+        control.addEventListener("change", () => {
+          clearProviderInstallationDiagnostics(selectedProvider()?.plugin_id);
+          state.providerApplyDraft.acknowledgedUpgradeReview = control.checked;
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-apply-recipe]").forEach((control) => {
+        control.addEventListener("change", () => {
+          clearProviderInstallationDiagnostics(selectedProvider()?.plugin_id);
+          applyProviderInstallationRecipe(selectedProvider(), control.value);
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-apply-note]").forEach((control) => {
+        control.addEventListener("input", () => {
+          state.providerApplyDraft.operatorNote = control.value;
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-artifact-relative-path]").forEach((control) => {
+        control.addEventListener("input", () => {
+          state.providerArtifactDraft.relativePath = control.value;
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-provider-artifact-archive-path]").forEach((control) => {
+        control.addEventListener("change", () => {
+          state.providerArtifactDraft.archiveRelativePath = control.value;
+          if (!state.providerArtifactDraft.destinationDirectory) {
+            state.providerArtifactDraft.destinationDirectory = String(control.value || "")
+              .replace(/\.(tar\.gz|tgz|tar|zip)$/i, "")
+              .replace(/\\/g, "/");
+          }
+          renderInspector();
+          bindInteractiveElements();
+        });
+      });
+
+      document
+        .querySelectorAll("[data-provider-artifact-destination-directory]")
+        .forEach((control) => {
+          control.addEventListener("input", () => {
+            state.providerArtifactDraft.destinationDirectory = control.value;
+            renderInspector();
+            bindInteractiveElements();
+          });
+        });
+
       document.querySelectorAll("[data-provider-action]").forEach((button) => {
         button.addEventListener("click", () => {
           if (button.dataset.providerAction === "attach-bundle") {
             void attachBundleToSelectedProvider();
           } else if (button.dataset.providerAction === "queue-install") {
             void queueInstallForSelectedProvider();
+          } else if (button.dataset.providerAction === "approve-installation") {
+            void approveProviderInstallationPlan();
+          } else if (button.dataset.providerAction === "run-installation-diagnostics") {
+            void runProviderInstallationDiagnostics();
+          } else if (button.dataset.providerAction === "apply-installation") {
+            void applyLatestProviderInstallationApproval();
+          } else if (button.dataset.providerAction === "stage-installation-artifact") {
+            void stageProviderInstallationArtifact();
+          } else if (
+            button.dataset.providerAction === "extract-installation-artifact-archive"
+          ) {
+            void extractProviderInstallationArtifactArchive();
+          } else if (button.dataset.providerAction === "rollback-installation") {
+            void rollbackProviderInstallationJob(
+              latestProviderInstallationJob(selectedProvider())?.job_id
+            );
           } else if (button.dataset.providerAction === "process-installs") {
             void processQueuedInstallsForSelectedProvider();
           } else if (button.dataset.providerAction === "reload-bundles") {
             void reloadSelectedProviderBundles();
           }
+        });
+      });
+
+      document.querySelectorAll("[data-provider-discover-models]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void discoverModelsForProviderInstance(button.dataset.providerDiscoverModels);
+        });
+      });
+
+      document.querySelectorAll("[data-provider-rollback-job]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void rollbackProviderInstallationJob(button.dataset.providerRollbackJob);
+        });
+      });
+
+      document.querySelectorAll("[data-provider-artifact-remove]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void deleteProviderInstallationArtifact(button.dataset.providerArtifactRemove);
+        });
+      });
+
+      document.querySelectorAll("[data-provider-artifact-promote]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void promoteProviderInstallationArtifact(button.dataset.providerArtifactPromote);
+        });
+      });
+
+      document.querySelectorAll("[data-model-artifact-remove]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void deleteModelArtifact(button.dataset.modelArtifactRemove);
+        });
+      });
+
+      document.querySelectorAll("[data-model-artifact-collect]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void collectModelArtifacts();
+        });
+      });
+
+      document.querySelectorAll("[data-model-artifact-set-name]").forEach((control) => {
+        control.addEventListener("input", () => {
+          state.providerArtifactSetDraft.displayName = control.value;
+        });
+      });
+
+      document.querySelectorAll("[data-model-artifact-set-member]").forEach((control) => {
+        control.addEventListener("change", () => {
+          const member = state.providerArtifactSetDraft.members[control.dataset.modelArtifactSetMember];
+          member.selected = control.checked;
+        });
+      });
+
+      document.querySelectorAll("[data-model-artifact-set-path]").forEach((control) => {
+        control.addEventListener("input", () => {
+          const member = state.providerArtifactSetDraft.members[control.dataset.modelArtifactSetPath];
+          member.relativePath = control.value;
+        });
+      });
+
+      document.querySelectorAll("[data-model-artifact-set-role]").forEach((control) => {
+        control.addEventListener("change", () => {
+          const member = state.providerArtifactSetDraft.members[control.dataset.modelArtifactSetRole];
+          member.role = control.value;
+        });
+      });
+
+      document.querySelectorAll("[data-model-artifact-set-create]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void createSelectedModelArtifactSet();
+        });
+      });
+
+      document.querySelectorAll("[data-model-artifact-create-set]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void createSingleFileModelArtifactSet(button.dataset.modelArtifactCreateSet);
+        });
+      });
+
+      document.querySelectorAll("[data-model-artifact-set-remove]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void deleteModelArtifactSet(button.dataset.modelArtifactSetRemove);
+        });
+      });
+
+      document.querySelectorAll("[data-model-artifact-set-bind]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const modelDeploymentId = button.dataset.modelArtifactSetBind;
+          const control = document.querySelector(
+            `[data-model-artifact-set-select="${CSS.escape(modelDeploymentId)}"]`
+          );
+          void bindModelArtifactSet(modelDeploymentId, control?.value || "");
+        });
+      });
+
+      document.querySelectorAll("[data-model-runtime-binding]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void createRuntimeBindingForModel(button.dataset.modelRuntimeBinding);
+        });
+      });
+
+      document.querySelectorAll("[data-runtime-binding-endpoint]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void createEndpointFromRuntimeBinding(button.dataset.runtimeBindingEndpoint);
         });
       });
 

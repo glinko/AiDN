@@ -82,6 +82,14 @@ def test_submit_validation_report_with_pass_marks_validated_without_releasing_in
     assert resolved.request.status == "passed"
     assert resolved.snapshot.validation_status == "validated"
     assert resolved.bond.remaining_locked_q == 500.0
+    assert resolved.commitment.report_id == resolved.report.report_id
+    assert resolved.commitment.report_hash.startswith("sha256:")
+    assert resolved.commitment.report_locator == (
+        "aidn://endpoint/ep-1/validation/" + resolved.commitment.report_hash
+    )
+    assert service.store.get_report_commitment(resolved.report.report_id) == (
+        resolved.commitment
+    )
 
 
 def test_submit_validation_report_with_certify_with_issues_marks_certified_with_issues() -> (
@@ -494,6 +502,7 @@ def test_restore_round_trip_then_assign_epoch_requests_succeeds() -> None:
         validation_requests=service.store.list_requests(),
         validation_bonds=service.store.list_bonds(),
         validation_reports=service.store.list_reports(),
+        validation_report_commitments=service.store.list_report_commitments(),
         validation_status_snapshots=service.store.list_snapshots(),
     )
     restored = ValidationStore()
@@ -520,6 +529,45 @@ def test_restore_round_trip_then_assign_epoch_requests_succeeds() -> None:
     assert len(assigned.authorizations) == 1
     assert assigned.authorizations[0].guarantee_q == 25.0
     assert updated_request.status == "authorization_issued"
+    assert restored.list_report_commitments() == []
+
+
+def test_restore_round_trip_preserves_validation_report_commitment() -> None:
+    service = ValidationService(ValidationStore())
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+    snapshot = HypervisorStateSnapshot(
+        validation_reports=service.store.list_reports(),
+        validation_report_commitments=service.store.list_report_commitments(),
+    )
+
+    restored = ValidationStore()
+    restored.restore(snapshot)
+
+    assert restored.get_report_commitment(outcome.report.report_id) == outcome.commitment
 
 
 def test_submit_validation_report_on_unassigned_request_raises() -> None:

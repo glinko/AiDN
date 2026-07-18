@@ -9,8 +9,20 @@ from aidn_hypervisor.economics.models import (
     RecyclableRemoval,
 )
 from aidn_hypervisor.ledger.models import LedgerOperationRecord
+from aidn_hypervisor.dispatcher.models import (
+    DeadLetterRecord,
+    DeliveryRecord,
+    DispatcherReplayRecord,
+    DispatcherRoute,
+    NetworkMessage,
+)
 from aidn_hypervisor.providers.models import (
+    InstalledPlugin,
     ModelDeployment,
+    PluginRelease,
+    ProviderArtifactMaterialization,
+    ProviderInstallationApproval,
+    ProviderInstallationJob,
     ProviderInstance,
     RuntimeBinding,
 )
@@ -24,8 +36,14 @@ from aidn_hypervisor.validation.models import (
     ValidationAssignment,
     ValidationAuthorization,
     ValidationBond,
+    ValidationReportCommitment,
+    ValidationReportCustodyObject,
+    ValidationReportCustodyState,
     ValidationEpoch,
     ValidationReport,
+    ValidationReportStorageFailure,
+    ValidationReportStorageReceipt,
+    ValidationReportTransferReplay,
     ValidationRequest,
     ValidationStatusSnapshot,
     ValidationValidatorEntry,
@@ -273,12 +291,48 @@ class HypervisorStateSnapshot(BaseModel):
     bundle_states: list[BundleStateSnapshot] = Field(default_factory=list)
     allocations: list[AllocationSnapshot] = Field(default_factory=list)
     model_installs: list[ModelInstallSnapshot] = Field(default_factory=list)
+    plugin_releases: list[PluginRelease] = Field(default_factory=list)
+    installed_plugins: list[InstalledPlugin] = Field(default_factory=list)
     provider_instances: list[ProviderInstance] = Field(default_factory=list)
     model_deployments: list[ModelDeployment] = Field(default_factory=list)
     runtime_bindings: list[RuntimeBinding] = Field(default_factory=list)
+    provider_artifact_materializations: list[ProviderArtifactMaterialization] = Field(
+        default_factory=list
+    )
+    provider_installation_approvals: list[ProviderInstallationApproval] = Field(
+        default_factory=list
+    )
+    provider_installation_jobs: list[ProviderInstallationJob] = Field(
+        default_factory=list
+    )
+    dispatcher_routes: list[DispatcherRoute] = Field(default_factory=list)
+    dispatcher_queued_messages: list[NetworkMessage] = Field(default_factory=list)
+    dispatcher_delivery_records: list[DeliveryRecord] = Field(default_factory=list)
+    dispatcher_replay_records: list[DispatcherReplayRecord] = Field(
+        default_factory=list
+    )
+    dispatcher_dead_letters: list[DeadLetterRecord] = Field(default_factory=list)
     validation_requests: list[ValidationRequest] = Field(default_factory=list)
     validation_bonds: list[ValidationBond] = Field(default_factory=list)
     validation_reports: list[ValidationReport] = Field(default_factory=list)
+    validation_report_commitments: list[ValidationReportCommitment] = Field(
+        default_factory=list
+    )
+    validation_report_storage_receipts: list[ValidationReportStorageReceipt] = Field(
+        default_factory=list
+    )
+    validation_report_storage_failures: list[ValidationReportStorageFailure] = Field(
+        default_factory=list
+    )
+    validation_report_transfer_replays: list[ValidationReportTransferReplay] = Field(
+        default_factory=list
+    )
+    validation_report_custody_states: list[ValidationReportCustodyState] = Field(
+        default_factory=list
+    )
+    validation_report_custody_objects: list[ValidationReportCustodyObject] = Field(
+        default_factory=list
+    )
     validation_status_snapshots: list[ValidationStatusSnapshot] = Field(
         default_factory=list
     )

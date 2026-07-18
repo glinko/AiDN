@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-07-14`
+Last updated: `2026-07-17`
 
 This is the main public roadmap for the repository.
 
@@ -51,6 +51,11 @@ Registry peer replication, deterministic inventories, completeness manifests, an
 
 Snapshot production, commitment, trusted-checkpoint State Sync, and atomic state restoration must also stay aligned with [docs/product/RFC-0062-snapshot-and-state-sync-protocol.md](./docs/product/RFC-0062-snapshot-and-state-sync-protocol.md).
 
+Authenticated messaging, Route Generation, bounded queues, delivery tracking,
+persistent deduplication, Dead Letter handling and Provider Plugin network
+isolation must also stay aligned with
+[docs/product/RFC-0042-aidn-hypervisor-network-protocol.md](./docs/product/RFC-0042-aidn-hypervisor-network-protocol.md).
+
 Milestones still describe technical delivery order, but feature sequencing and UI priorities should preserve that operator journey whenever reasonably possible.
 
 ## North Star
@@ -74,12 +79,12 @@ Status: `M2 complete, M3 complete, M4 complete, M5 in progress`
 Product alignment summary:
 - the new RFC set is now authoritative for service, capability, runtime, registry, marketplace, verification, reputation, ledger, and settlement architecture;
 - the current repo is introducing a compatibility-first overlay so existing bundle/provider execution keeps working while canonical service/capability/runtime models become the primary public contract;
-- the next operator-facing architecture slice is a Provider Plugin System with first-class `ProviderPlugin`, `ProviderInstance`, `ModelDeployment`, and `RuntimeBinding` entities layered over the current execution core;
+- the current operator-facing architecture slice is now a Provider Plugin System with first-class `ProviderPlugin`, `ProviderInstance`, `ModelDeployment`, and `RuntimeBinding` entities layered over the current execution core;
 - bundle registration remains important in the current codebase, but it should now be treated as a compatibility execution projection rather than the long-term public operator contract;
 - future registry, marketplace, verification, reputation, and epoch work should build on canonical advertisements and service/runtime records rather than deepening bundle-centric contracts;
 - the repo now has a strong local hypervisor and operator-dashboard foundation;
 - guided onboarding now lands operators inside a working endpoint-first bootstrap loop;
-- `Home`, `Providers`, and `Bundles` now behave as endpoint-first agenda and preparation surfaces that hand deep lifecycle control into `Endpoints`, but the next UX pass should increasingly replace bundle-first setup with provider/plugin/model/runtime-binding workflow;
+- `Home`, `Providers`, and `Bundles` now behave as endpoint-first agenda and preparation surfaces that hand deep lifecycle control into `Endpoints`, and `Providers` now exposes the first guided `plugin -> provider instance -> model deployment -> runtime binding -> endpoint` setup flow while preserving bundle compatibility underneath;
 - the next product layer after this shell consolidation is trust, rating, validation publication, and richer market depth on top of the canonical endpoint workspace;
 - the next product-critical gap is no longer the bare first-run bootstrap loop or shell ownership ambiguity, but trust/reputation publication and endpoint lifecycle depth on top of the consolidated operator surface;
 - endpoint publication is now a first trust layer, and paid consumption now has a working first Session contract;
@@ -94,11 +99,19 @@ Product alignment summary:
 - registry replication is now documented in `RFC-0061`, so future Full Registry eligibility, anti-entropy, completeness proofs, challenge evidence, and repair synchronization can build on one deterministic storage and retrieval model instead of scattered service-local heuristics;
 - snapshot and fast State Sync are now documented in `RFC-0062`, so future node bootstrap, corruption recovery, trusted checkpoint handling, and portable state restoration can build on one verification-first protocol instead of ad hoc database-copy assumptions;
 - validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
+- RFC-0042 v0.3 makes the Network Dispatcher the next infrastructure layer: the
+  first implementation slice covers transport-independent envelopes, domain and
+  payload validation, Route Generation, bounded admission, local delivery,
+  delivery records, replay protection and Dead Letter metadata before physical
+  QUIC/TLS gateways are added.
 
 We already have a working local hypervisor foundation:
 - local task queue and admission control;
 - local resource accounting for `CPU`, `RAM`, and `VRAM`;
 - provider-plugin adapter infrastructure plus bundle-compatibility execution abstraction;
+- first-class Provider Plugin, Provider Instance, Model Deployment, and Runtime Binding inventory with snapshot/restore persistence;
+- schema-driven Provider install forms, Installation Recipe prefill, approval records, permission acknowledgement, explicit permission/sandbox upgrade review acknowledgement, signed package verification, package-identity binding, sandbox-policy binding, executor-declared sandbox boundary compatibility, bounded declarative subset enforcement for `networks`, `health_checks`, and `resource_limits`, secret-handle selection, dry-run diagnostics, executor-level local-import readiness diagnostics, controlled local artifact staging/list/remove APIs, controlled staged-archive extraction, a shared immutable Model Artifact Store with SHA-256 promotion/deduplication, immutable multi-file Model Artifact Sets, deployment binding, reference-aware removal, and explicit fail-closed grace-period GC, plus `model-artifact://` materialization and persisted per-Provider-Instance Artifact Set materialization records, rollback preview, rollback execution/job replay for terminal install jobs, rollback step/timestamp persistence, apply jobs, a first opt-in host-mutating `ControlledFilesystemProviderInstallationExecutor` that prepares controlled volume directories, staged model-download manifests, bounded local artifact imports, and bounded staged-archive extraction inside one root path, and a non-host-mutating `SandboxEnforcedProviderInstallationExecutor` default path;
+- guided provider setup handoff from approved/apply Provider plan to model discovery, Runtime Binding creation, and Endpoint draft creation;
 - subprocess-backed runtime lifecycle and operator controls;
 - agent allocation leases;
 - agent capability catalog for local discovery, including endpoint readiness, resource fit, node pricing/custom-model policy, and bundle provider/model identity;
@@ -114,7 +127,7 @@ We already have a working local hypervisor foundation:
 - a parallel endpoint-first package now exists with snapshot-backed manifest storage, lifecycle service methods, and a versioned `/api/v1/endpoints` API on the main app surface;
 - the `Endpoints` dashboard workspace can now prefer the endpoint-first service and versioned API for visibility, publication, and validation actions, while legacy bootstrap routes remain as transition fallback;
 - guided dashboard onboarding now persists operator bootstrap state, derives a canonical onboarding read model, advances through wallet/provider/bundle/endpoint milestones, and returns to `Home` after the first published local Endpoint;
-- the next onboarding transition should reframe that bootstrap path as `provider plugin -> provider instance -> model deployment -> runtime binding -> endpoint` while preserving the current bundle compatibility layer underneath;
+- the first Provider workspace transition now reframes the setup path as `provider plugin -> provider instance -> model deployment -> runtime binding -> endpoint`, while the older bundle path remains as a compatibility execution surface;
 - wallet-signed endpoint configuration publication now exists as a first trust layer with publish/revoke/export APIs, registry-visible current configuration hashes, and live proof comparison surfaces;
 - the operator dashboard `Endpoints` workspace now exposes local-vs-published configuration sync state, so operators can see whether local edits have drifted from the last published network-visible claim;
 - basic node pricing publication in registry discovery;
@@ -154,7 +167,9 @@ What is still missing in the current stage:
 - decision on whether adapter-declared `usage_contract` becomes an enforced runtime gate, plus a first non-token pricing unit for `whisper`-class workloads;
 - formal `RFC-0051` accounting contracts, signed usage-report and acknowledgement chains, Marketplace accounting-transparency publication, and mismatch-safe settlement checkpoints beyond today’s `measurement_kind` / `measurement_source` metadata;
 - rating publication, reputation policy, and validation economics implementation;
+- Validation Report custody migration: deterministic compact commitments, report hashes, stable logical locators, snapshot metadata, a controlled local content-addressed report store and opt-in Ed25519 Storage Receipts now exist alongside legacy local reports; full report custody still duplicates compatibility data in the general Hypervisor state snapshot, submission still derives Certification in one call, and assignment-key transfer/custody challenges remain to be implemented under `docs/superpowers/plans/2026-07-18-validation-report-custody.md`;
 - network-visible custom model onboarding workflow.
+- broad host-mutating Provider install executors remain deferred: the repo now has an opt-in controlled-filesystem executor that writes installation state, prepares controlled volume directories, stages model-download manifests, promotes local files into a shared immutable Model Artifact Store, and materializes them into provider volumes only inside one configured root path; shell, container, download, package-manager, and plugin-installer execution still need a broader sandboxed apply backend before enablement;
 - final onboarding polish across the remaining operator workspaces, so the new guided layer feels native outside `Home` and handoffs stay consistent across `Providers / Models / Endpoints` even while `Bundles` remains as a compatibility execution surface;
 - full endpoint-first persistence and API beyond the current bootstrap/dashboard slice, so privacy, sharing, publication, and validation remain distinct all the way through the service contract;
 - complete dashboard migration of older bundle-centric affordances onto the endpoint-first trust layer, so bootstrap fallback logic can eventually be removed cleanly;
@@ -194,14 +209,17 @@ What is still missing in the current stage:
 - implementation of `RFC-0054` is still pending beyond current runtime adapters and local lifecycle hooks:
   - the repo already has subprocess-backed runtime lifecycle, provider execution adapters, local health/status surfaces, and endpoint/session orchestration;
   - but there is still no finalized standalone Runtime Protocol with authenticated registration, negotiated features, canonical message envelopes, reconnect/recovery handshakes, or full Hypervisor-to-Runtime streaming and usage-report contracts matching one shared RFC.
-- implementation of `RFC-0055` and `RFC-0056` is still pending:
-  - the repo already has Python provider adapters, model install jobs, operator provider screens, and endpoint publication surfaces;
-  - but there is still no first-class Provider Plugin manifest and permission model, no Provider Instance or Model Deployment lifecycle, no Runtime Binding object layer, no declarative plugin install/attach schemas, and no explicit plugin control-plane/runtime-interface contract matching one shared provider-plugin architecture.
+- implementation of `RFC-0055` and `RFC-0056` is now partially implemented:
+  - the repo now has first-class Provider Plugin metadata, immutable Plugin Release records, local Installed Plugin approval records, Provider Instance and Model Deployment inventory, Runtime Binding objects, declarative install/attach schemas, Installation Recipes, approval/apply job records, permission/sandbox upgrade acknowledgement, sandbox-policy binding, executor-declared sandbox boundary compatibility, runtime-binding-to-bundle compatibility projection, model discovery, Runtime Binding creation, Endpoint draft handoff from the Provider workspace, controlled local artifact staging, bounded staged-archive extraction, shared immutable Model Artifact Store promotion/deduplication, multi-file Model Artifact Sets, deployment binding, reference-aware removal, explicit fail-closed grace-period garbage collection, `model-artifact://` provider-volume materialization, and persisted per-Provider-Instance Artifact Set materialization records;
+  - Release registration records signed metadata only. It does not download, unpack, load or execute a package. Existing in-process adapters remain explicitly transitional and must not be represented as sandboxed community packages;
+  - but a content-addressed Package Store that verifies downloaded bytes, Registry `plugin` Directory replication, external Plugin Host/Local IPC, OCI/container lifecycle, full plugin update/removal/security response and RFC-0056 execution-plane conformance remain unimplemented.
 
 Immediate priorities:
-1. Add the Provider Plugin System MVP foundation with first-class `ProviderPlugin`, `ProviderInstance`, `ModelDeployment`, and `RuntimeBinding` objects while preserving current execution through bundle compatibility.
-2. Migrate the operator provider workflow from `provider/bundle setup` toward `plugin -> provider instance -> model deployment -> runtime binding -> endpoint`.
-3. Continue deepening `M5` trust and remote/proxy lifecycle on top of the new runtime-binding surface instead of adding more bundle-centric contracts.
+1. Add Model Deployment artifact-materialization readiness and enforce it at Runtime Binding or Endpoint Draft admission without breaking deployments that do not require artifact sets.
+2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
+3. Add a content-addressed Plugin Package Store and verify downloaded bytes before any package activation; then project signed Release metadata into the Registry `plugin` namespace.
+4. Replace in-process community plugin loading with a scoped Plugin Host and Local IPC contract before enabling shell, container, download or package-manager executors.
+5. Continue migrating older bundle-centric affordances onto `plugin -> provider instance -> model deployment -> runtime binding -> endpoint`, using bundle projection only as compatibility execution plumbing.
 
 ## Milestones
 
@@ -329,6 +347,10 @@ Checkpoints:
 - [ ] Selection policy that can combine price and rating
 - [ ] Validation Bond, Validator Reward, and Maintenance Validation contract
 - [ ] Validator qualification and deterministic selection policy
+- [ ] Endpoint-origin Validation Report custody with signed Storage Receipts
+- [x] Compact canonical Validation Commitments with deterministic Certification inputs in local persistence and ledger projections
+- [ ] Report availability challenges, custody grace periods, and retention Reputation
+- [ ] Marketplace report-custody freshness and warning surfaces
 
 Exit criteria:
 - nodes and validated Endpoints are ranked by structured signals instead of static preference only;
@@ -421,6 +443,8 @@ Order of work right now:
 - Usage reporting and verification: [docs/product/RFC-0051-usage-reporting-and-verification-protocol.md](./docs/product/RFC-0051-usage-reporting-and-verification-protocol.md)
 - Capability runtime specification: [docs/product/RFC-0053-capability-runtime-specification.md](./docs/product/RFC-0053-capability-runtime-specification.md)
 - Capability runtime protocol: [docs/product/RFC-0054-capability-runtime-protocol.md](./docs/product/RFC-0054-capability-runtime-protocol.md)
+- Provider plugin system and directory: [docs/product/RFC-0055-provider-plugin-system-and-directory.md](./docs/product/RFC-0055-provider-plugin-system-and-directory.md)
+- Provider plugin runtime interface: [docs/product/RFC-0056-provider-plugin-runtime-interface.md](./docs/product/RFC-0056-provider-plugin-runtime-interface.md)
 - Registry replication protocol: [docs/product/RFC-0061-registry-replication-protocol.md](./docs/product/RFC-0061-registry-replication-protocol.md)
 - Snapshot and State Sync protocol: [docs/product/RFC-0062-snapshot-and-state-sync-protocol.md](./docs/product/RFC-0062-snapshot-and-state-sync-protocol.md)
 - Session failure, recovery, and forced settlement: [docs/product/RFC-0060-session-failure-recovery-and-forced-settlement.md](./docs/product/RFC-0060-session-failure-recovery-and-forced-settlement.md)
@@ -437,6 +461,8 @@ Order of work right now:
 - M3 pricing and metering plan: [docs/superpowers/plans/2026-06-19-m3-wallet-pricing-and-usage-metering.md](./docs/superpowers/plans/2026-06-19-m3-wallet-pricing-and-usage-metering.md)
 - M4 endpoint session and payment design: [docs/superpowers/specs/2026-07-01-endpoint-session-payment-flow-design.md](./docs/superpowers/specs/2026-07-01-endpoint-session-payment-flow-design.md)
 - M4 endpoint session and payment plan: [docs/superpowers/plans/2026-07-01-endpoint-session-payment-flow.md](./docs/superpowers/plans/2026-07-01-endpoint-session-payment-flow.md)
+- Provider plugin system MVP plan: [docs/superpowers/plans/2026-07-14-provider-plugin-system-mvp.md](./docs/superpowers/plans/2026-07-14-provider-plugin-system-mvp.md)
+- Provider install approval and apply flow plan: [docs/superpowers/plans/2026-07-15-provider-install-approval-flow.md](./docs/superpowers/plans/2026-07-15-provider-install-approval-flow.md)
 
 ## Maintenance Rule
 

@@ -1,3 +1,4 @@
+import base64
 from collections.abc import Iterable
 from datetime import datetime
 from typing import Literal
@@ -67,6 +68,112 @@ class BuildProviderInstallationPlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     configuration: dict = Field(default_factory=dict)
+
+
+class ApproveProviderInstallationPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    configuration: dict = Field(default_factory=dict)
+    approved_permissions: list[str] = Field(default_factory=list)
+    upgrade_acknowledged: bool = False
+    selected_secret_handles: list[dict] = Field(default_factory=list)
+    operator_note: str | None = None
+
+
+class ProviderInstallationDiagnosticsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    configuration: dict = Field(default_factory=dict)
+    approved_permissions: list[str] = Field(default_factory=list)
+    upgrade_acknowledged: bool = False
+    selected_secret_handles: list[dict] = Field(default_factory=list)
+
+
+class RegisterProviderPluginReleaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    manifest: dict
+    source_reference: str | None = None
+    release_status: Literal[
+        "AVAILABLE",
+        "DEPRECATED",
+        "SECURITY_WARNING",
+        "SECURITY_BLOCKED",
+        "REVOKED",
+    ] = "AVAILABLE"
+
+
+class InstallProviderPluginReleaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    granted_permissions: list[str] = Field(default_factory=list)
+    installation_source: Literal["PACKAGE", "LEGACY_BUILTIN"] = "PACKAGE"
+
+
+class ApplyProviderInstallationApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class RollbackProviderInstallationJobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class StageProviderInstallationArtifactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    relative_path: str
+    content_base64: str
+
+
+class DeleteProviderInstallationArtifactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    relative_path: str
+
+
+class ExtractProviderInstallationArtifactArchiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    archive_relative_path: str
+    destination_directory: str
+
+
+class PromoteProviderInstallationArtifactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    relative_path: str
+
+
+class DeleteModelArtifactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: str
+
+
+class CreateModelArtifactSetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str
+    files: list[dict] = Field(default_factory=list)
+
+
+class DeleteModelArtifactSetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_set_id: str
+
+
+class BindModelArtifactSetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_set_id: str
+
+
+class MaterializeModelArtifactSetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_set_id: str
+    destination: str
 
 
 def _ok(data: dict, *, status_code: int = 200) -> JSONResponse:
@@ -1056,6 +1163,46 @@ def build_api_router(
     async def list_provider_plugins() -> dict:
         return {"items": service.provider_inventory.list_plugin_manifests()}
 
+    @router.get("/operators/provider-plugin-releases")
+    async def list_provider_plugin_releases() -> dict:
+        return {"items": service.list_provider_plugin_releases()}
+
+    @router.get("/operators/installed-provider-plugins")
+    async def list_installed_provider_plugins() -> dict:
+        return {"items": service.list_installed_provider_plugins()}
+
+    @router.post("/operators/provider-plugin-releases")
+    async def register_provider_plugin_release(
+        payload: RegisterProviderPluginReleaseRequest,
+    ) -> dict:
+        try:
+            return service.register_provider_plugin_release(
+                manifest=payload.manifest,
+                source_reference=payload.source_reference,
+                release_status=payload.release_status,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-plugin-releases/{release_id}/install")
+    async def install_provider_plugin_release(
+        release_id: str,
+        payload: InstallProviderPluginReleaseRequest,
+    ) -> dict:
+        try:
+            return service.install_provider_plugin_release(
+                release_id=release_id,
+                granted_permissions=payload.granted_permissions,
+                installation_source=payload.installation_source,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown plugin release: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @router.post("/operators/provider-plugins/{plugin_id}/installation-plan")
     async def build_provider_installation_plan(
         plugin_id: str,
@@ -1070,6 +1217,259 @@ def build_api_router(
             raise HTTPException(
                 status_code=404,
                 detail=f"Unknown plugin: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-plugins/{plugin_id}/installation-approvals")
+    async def approve_provider_installation_plan(
+        plugin_id: str,
+        payload: ApproveProviderInstallationPlanRequest,
+    ) -> dict:
+        try:
+            return service.approve_provider_installation_plan(
+                plugin_id=plugin_id,
+                configuration=payload.configuration,
+                approved_permissions=payload.approved_permissions,
+                upgrade_acknowledged=payload.upgrade_acknowledged,
+                selected_secret_handles=payload.selected_secret_handles,
+                operator_note=payload.operator_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown plugin: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-plugins/{plugin_id}/installation-diagnostics")
+    async def run_provider_installation_diagnostics(
+        plugin_id: str,
+        payload: ProviderInstallationDiagnosticsRequest,
+    ) -> dict:
+        try:
+            return service.run_provider_installation_diagnostics(
+                plugin_id=plugin_id,
+                configuration=payload.configuration,
+                approved_permissions=payload.approved_permissions,
+                upgrade_acknowledged=payload.upgrade_acknowledged,
+                selected_secret_handles=payload.selected_secret_handles,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown plugin: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/operators/provider-installation-approvals")
+    async def list_provider_installation_approvals() -> dict:
+        return {"items": service.list_provider_installation_approvals()}
+
+    @router.post("/operators/provider-installation-approvals/{approval_id}/apply")
+    async def apply_provider_installation_approval(
+        approval_id: str,
+        payload: ApplyProviderInstallationApprovalRequest,
+    ) -> dict:
+        del payload
+        try:
+            return service.apply_provider_installation_approval(approval_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown approval: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/operators/provider-installation-jobs")
+    async def list_provider_installation_jobs() -> dict:
+        return {"items": service.list_provider_installation_jobs()}
+
+    @router.get("/operators/provider-installation-artifacts")
+    async def list_provider_installation_artifacts() -> dict:
+        return service.list_provider_installation_artifacts()
+
+    @router.post("/operators/provider-installation-artifacts")
+    async def stage_provider_installation_artifact(
+        payload: StageProviderInstallationArtifactRequest,
+    ) -> dict:
+        try:
+            content_bytes = base64.b64decode(payload.content_base64, validate=True)
+        except Exception as error:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid base64 artifact content: {error}",
+            ) from error
+        try:
+            return service.stage_provider_installation_artifact(
+                relative_path=payload.relative_path,
+                content_bytes=content_bytes,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-installation-artifacts/remove")
+    async def delete_provider_installation_artifact(
+        payload: DeleteProviderInstallationArtifactRequest,
+    ) -> dict:
+        try:
+            return service.delete_provider_installation_artifact(
+                relative_path=payload.relative_path,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown installation artifact: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-installation-artifacts/extract")
+    async def extract_provider_installation_artifact_archive(
+        payload: ExtractProviderInstallationArtifactArchiveRequest,
+    ) -> dict:
+        try:
+            return service.extract_provider_installation_artifact_archive(
+                archive_relative_path=payload.archive_relative_path,
+                destination_directory=payload.destination_directory,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown installation artifact: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/operators/model-artifacts")
+    async def list_model_artifacts() -> dict:
+        return service.list_model_artifacts()
+
+    @router.post("/operators/model-artifacts/promote")
+    async def promote_provider_installation_artifact(
+        payload: PromoteProviderInstallationArtifactRequest,
+    ) -> dict:
+        try:
+            return service.promote_provider_installation_artifact_to_model_store(
+                relative_path=payload.relative_path,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown installation artifact: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/model-artifacts/remove")
+    async def delete_model_artifact(
+        payload: DeleteModelArtifactRequest,
+    ) -> dict:
+        try:
+            return service.delete_model_artifact(artifact_id=payload.artifact_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown model artifact: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/model-artifacts/collect")
+    async def collect_model_artifact_garbage() -> dict:
+        try:
+            return service.collect_model_artifact_garbage()
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/operators/model-artifact-sets")
+    async def list_model_artifact_sets() -> dict:
+        return {"items": service.list_model_artifact_sets()}
+
+    @router.post("/operators/model-artifact-sets")
+    async def create_model_artifact_set(
+        payload: CreateModelArtifactSetRequest,
+    ) -> dict:
+        try:
+            return service.create_model_artifact_set(
+                display_name=payload.display_name,
+                files=payload.files,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown model artifact: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/model-artifact-sets/remove")
+    async def delete_model_artifact_set(
+        payload: DeleteModelArtifactSetRequest,
+    ) -> dict:
+        try:
+            return service.delete_model_artifact_set(artifact_set_id=payload.artifact_set_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown model artifact set: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/model-deployments/{model_deployment_id}/artifact-set")
+    async def bind_model_artifact_set(
+        model_deployment_id: str,
+        payload: BindModelArtifactSetRequest,
+    ) -> dict:
+        try:
+            return service.bind_model_artifact_set(
+                model_deployment_id=model_deployment_id,
+                artifact_set_id=payload.artifact_set_id,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown model deployment or artifact set: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/operators/model-artifact-materializations")
+    async def list_model_artifact_materializations() -> dict:
+        return {"items": service.list_model_artifact_materializations()}
+
+    @router.post("/operators/provider-instances/{provider_instance_id}/artifact-sets/materialize")
+    async def materialize_model_artifact_set(
+        provider_instance_id: str,
+        payload: MaterializeModelArtifactSetRequest,
+    ) -> dict:
+        try:
+            return service.materialize_model_artifact_set(
+                provider_instance_id=provider_instance_id,
+                artifact_set_id=payload.artifact_set_id,
+                destination=payload.destination,
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=f"Unknown provider or artifact set: {error.args[0]}") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-installation-jobs/{job_id}/rollback")
+    async def rollback_provider_installation_job(
+        job_id: str,
+        payload: RollbackProviderInstallationJobRequest,
+    ) -> dict:
+        del payload
+        try:
+            return service.rollback_provider_installation_job(job_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown installation job: {error.args[0]}",
             ) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

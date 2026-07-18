@@ -13,9 +13,25 @@ from aidn_hypervisor.validation.models import (
     ValidationDetectedIssue,
     ValidationEpoch,
     ValidationReport,
+    ValidationReportCommitment,
+    ValidationReportCustodyObject,
+    ValidationReportCustodyState,
+    ValidationReportStorageFailure,
+    ValidationReportStorageReceipt,
+    ValidationReportTransferEnvelope,
     ValidationRequest,
     ValidationStatusSnapshot,
     ValidationValidatorEntry,
+    canonical_validation_hash,
+    validation_report_integrity,
+)
+from aidn_hypervisor.validation.custody_signing import (
+    storage_receipt_signing_payload,
+    verify_storage_receipt,
+)
+from aidn_hypervisor.validation.transfer_signing import (
+    transfer_envelope_signing_payload,
+    verify_report_transfer_envelope,
 )
 
 
@@ -73,6 +89,8 @@ class ValidationReportOutcome:
     bond: ValidationBond
     snapshot: ValidationStatusSnapshot
     report: ValidationReport
+    commitment: ValidationReportCommitment
+    custody_object: ValidationReportCustodyObject | None = None
 
 
 @dataclass(frozen=True)
@@ -91,12 +109,24 @@ class ValidationService:
         validator_escrow=None,
         event_recorder=None,
         operation_recorder=None,
+        custody_store=None,
+        custody_signer=None,
+        transfer_signer=None,
+        require_signed_transfer_envelope: bool = False,
+        require_storage_receipt_for_positive_certification: bool = False,
     ) -> None:
         self.store = store
         self.bond_escrow = bond_escrow or LocalOperatorBondEscrowAdapter()
         self.validator_escrow = validator_escrow or LocalValidatorEscrowPoolAdapter()
         self.event_recorder = event_recorder
         self.operation_recorder = operation_recorder
+        self.custody_store = custody_store
+        self.custody_signer = custody_signer
+        self.transfer_signer = transfer_signer
+        self.require_signed_transfer_envelope = require_signed_transfer_envelope
+        self.require_storage_receipt_for_positive_certification = (
+            require_storage_receipt_for_positive_certification
+        )
 
     def request_validation(
         self,
@@ -312,17 +342,17 @@ class ValidationService:
             evidence_summary=evidence_summary,
             created_at=self._now(),
         )
-        certification_status = _derive_certification_status(
-            request_kind="initial",
-            recommendation=report.recommendation,
-            critical_issue_count=report.critical_issue_count,
-        )
+        custody_object = self._store_report_custody(report)
+        commitment = self._create_report_commitment(request=request, report=report)
+        certification_status = self._certification_status_for_report(report)
         request_status = (
             "passed" if certification_status != "uncertified" else "failed"
         )
         snapshot_status = _canonical_validation_status_for(certification_status)
         validated_at = (
-            report.created_at if certification_status != "uncertified" else None
+            report.created_at
+            if certification_status in {"certified", "certified_with_issues"}
+            else None
         )
         updated_request = request.model_copy(update={"status": request_status})
         updated_snapshot = self.store.get_snapshot(
@@ -339,27 +369,13 @@ class ValidationService:
             }
         )
         self.store.save_report(report)
+        if custody_object is not None:
+            self.store.save_report_custody_object(custody_object)
+        self.store.save_report_commitment(commitment)
         self.store.save_request(updated_request)
         self.store.save_snapshot(updated_snapshot)
         if self.operation_recorder is not None:
-            self.operation_recorder(
-                operation_type="VALIDATION_REPORT_COMMIT",
-                origin_type="protocol",
-                fee_class="protocol_sponsored",
-                initiator_id=report.report_id,
-                payload={
-                    "report_id": report.report_id,
-                    "validation_request_id": request.request_id,
-                    "assignment_id": request.assignment_id,
-                    "endpoint_id": request.endpoint_id,
-                    "endpoint_configuration_hash": request.configuration_hash,
-                    "validator_service_id": request.assignment_id,
-                    "conclusion_summary": report.recommendation,
-                    "evidence_summary": report.evidence_summary,
-                },
-                created_at=report.created_at,
-                emitted_events=["ValidationReportCommitted"],
-            )
+            self._record_validation_report_commitment(commitment, report)
             self._record_certification_state_update(
                 endpoint_id=request.endpoint_id,
                 configuration_hash=request.configuration_hash,
@@ -388,6 +404,8 @@ class ValidationService:
             bond=bond,
             snapshot=updated_snapshot,
             report=report,
+            commitment=commitment,
+            custody_object=custody_object,
         )
 
     def validation_summary(
@@ -449,6 +467,36 @@ class ValidationService:
             scoped_requests[-1] if scoped_requests else None
         )
         latest_report_for_configuration = scoped_reports[-1] if scoped_reports else None
+        scoped_report_ids = {report.report_id for report in scoped_reports}
+        scoped_commitments = sorted(
+            [
+                item
+                for item in self.store.list_report_commitments()
+                if item.report_id in scoped_report_ids
+            ],
+            key=lambda item: item.created_at,
+        )
+        latest_commitment = scoped_commitments[-1] if scoped_commitments else None
+        custody_objects_by_hash = {
+            item.report_hash: item
+            for item in self.store.list_report_custody_objects()
+        }
+        latest_custody_object = (
+            custody_objects_by_hash.get(latest_commitment.report_hash)
+            if latest_commitment is not None
+            else None
+        )
+        latest_storage_receipt = next(
+            (
+                item
+                for item in self.store.list_report_storage_receipts()
+                if latest_commitment is not None
+                and item.report_hash == latest_commitment.report_hash
+                and item.endpoint_id == endpoint_id
+                and item.endpoint_configuration_hash == resolved_configuration_hash
+            ),
+            None,
+        )
         scoped_request_ids = {request.request_id for request in scoped_requests}
         latest_bond = (
             self.store.get_bond(latest_request_for_configuration.bond_id)
@@ -485,6 +533,23 @@ class ValidationService:
                 if current_snapshot is not None
                 else None
             ),
+            "latest_report_commitment": (
+                latest_commitment.model_dump(mode="json")
+                if latest_commitment is not None
+                else None
+            ),
+            "latest_report_custody": (
+                latest_custody_object.model_dump(mode="json")
+                if latest_custody_object is not None
+                else None
+            ),
+            "latest_report_storage_receipt": (
+                latest_storage_receipt.model_dump(mode="json")
+                if latest_storage_receipt is not None
+                else None
+            ),
+            "custody_object_present": latest_custody_object is not None,
+            "storage_receipt_present": latest_storage_receipt is not None,
             "latest_recommendation": (
                 latest_report_for_configuration.recommendation
                 if latest_report_for_configuration is not None
@@ -627,6 +692,36 @@ class ValidationService:
             self.store.list_reports_for_endpoint(endpoint_id),
             key=lambda item: item.created_at,
         )
+        report_ids = {item.report_id for item in reports}
+        commitments = sorted(
+            [
+                item
+                for item in self.store.list_report_commitments()
+                if item.report_id in report_ids
+            ],
+            key=lambda item: item.created_at,
+        )
+        report_hashes = {item.report_hash for item in commitments}
+        custody_objects = [
+            item
+            for item in self.store.list_report_custody_objects()
+            if item.report_hash in report_hashes
+        ]
+        storage_receipts = [
+            item
+            for item in self.store.list_report_storage_receipts()
+            if item.report_hash in report_hashes and item.endpoint_id == endpoint_id
+        ]
+        storage_failures = [
+            item
+            for item in self.store.list_report_storage_failures()
+            if item.report_hash in report_hashes and item.endpoint_id == endpoint_id
+        ]
+        custody_states = [
+            item
+            for item in self.store.list_report_custody_states()
+            if item.report_hash in report_hashes and item.endpoint_id == endpoint_id
+        ]
         snapshots = [
             item
             for item in self.store.list_snapshots()
@@ -645,6 +740,21 @@ class ValidationService:
                 item.model_dump(mode="json") for item in authorizations
             ],
             "reports": [item.model_dump(mode="json") for item in reports],
+            "report_commitments": [
+                item.model_dump(mode="json") for item in commitments
+            ],
+            "report_custody_objects": [
+                item.model_dump(mode="json") for item in custody_objects
+            ],
+            "report_storage_receipts": [
+                item.model_dump(mode="json") for item in storage_receipts
+            ],
+            "report_storage_failures": [
+                item.model_dump(mode="json") for item in storage_failures
+            ],
+            "report_custody_states": [
+                item.model_dump(mode="json") for item in custody_states
+            ],
             "snapshots": [item.model_dump(mode="json") for item in snapshots],
             "epochs": [item.model_dump(mode="json") for item in epochs],
             "request_count": len(request_ids),
@@ -746,12 +856,15 @@ class ValidationService:
             evidence_summary=evidence_summary,
             created_at=self._now(),
         )
+        custody_object = self._store_report_custody(report)
+        commitment = self._create_report_commitment(request=request, report=report)
         self.store.save_report(report)
-        certification_status = _derive_certification_status(
-            request_kind="maintenance",
-            recommendation=report.recommendation,
-            critical_issue_count=report.critical_issue_count,
-        )
+        if custody_object is not None:
+            self.store.save_report_custody_object(custody_object)
+        self.store.save_report_commitment(commitment)
+        if self.operation_recorder is not None:
+            self._record_validation_report_commitment(commitment, report)
+        certification_status = self._certification_status_for_report(report)
         compat_validation_status = _compat_validation_status_for(certification_status)
         if certification_status != "revoked":
             refund_q = round(bond.remaining_locked_q * 0.5, 6)
@@ -778,7 +891,12 @@ class ValidationService:
                     "latest_report_id": report.report_id,
                     "latest_report_at": report.created_at,
                     "maintenance_count": snapshot.maintenance_count + 1,
-                    "validated_at": report.created_at,
+                    "validated_at": (
+                        report.created_at
+                        if certification_status
+                        in {"certified", "certified_with_issues"}
+                        else snapshot.validated_at
+                    ),
                 }
             )
             updated_request = request.model_copy(update={"status": "passed"})
@@ -901,6 +1019,574 @@ class ValidationService:
             bond=updated_bond,
             snapshot=updated_snapshot,
             report=report,
+            commitment=commitment,
+            custody_object=custody_object,
+        )
+
+    def get_custody_report_body(self, report_hash: str) -> dict:
+        if self.custody_store is None:
+            raise ValueError("Validation report custody store is not configured")
+        return self.custody_store.read_report_body(report_hash)
+
+    def build_report_transfer_envelope(
+        self,
+        *,
+        report_id: str,
+    ) -> ValidationReportTransferEnvelope:
+        """Build the RFC-0064 payload binding a report to its assignment scope."""
+        report = self.store.get_report(report_id)
+        request = self.store.get_request(report.request_id)
+        if request.assignment_id is None or request.authorization_id is None:
+            raise ValueError("validation report has no assignment-scoped authorization")
+        assignment = next(
+            (
+                item
+                for item in self.store.list_assignments()
+                if item.assignment_id == request.assignment_id
+            ),
+            None,
+        )
+        authorization = next(
+            (
+                item
+                for item in self.store.list_authorizations()
+                if item.authorization_id == request.authorization_id
+            ),
+            None,
+        )
+        if assignment is None or assignment.request_id != request.request_id:
+            raise ValueError("validation assignment does not bind to report request")
+        if authorization is None or authorization.request_id != request.request_id:
+            raise ValueError("validation authorization does not bind to report request")
+        if authorization.status != "issued":
+            raise ValueError("validation authorization is not active")
+        if datetime.fromisoformat(authorization.expires_at) <= datetime.now(timezone.utc):
+            raise ValueError("validation authorization is expired")
+        commitment = self.store.get_report_commitment(report_id)
+        transfer_seed = canonical_validation_hash(
+            {
+                "report_id": report.report_id,
+                "request_id": request.request_id,
+                "assignment_id": assignment.assignment_id,
+                "authorization_id": authorization.authorization_id,
+                "endpoint_id": report.endpoint_id,
+                "endpoint_configuration_hash": report.configuration_hash,
+                "report_hash": commitment.report_hash,
+            }
+        )
+        unsigned_envelope = ValidationReportTransferEnvelope(
+            transfer_id=f"report-transfer-{transfer_seed.removeprefix('sha256:')}",
+            report_id=report.report_id,
+            request_id=request.request_id,
+            assignment_id=assignment.assignment_id,
+            authorization_id=authorization.authorization_id,
+            endpoint_id=report.endpoint_id,
+            endpoint_configuration_hash=report.configuration_hash,
+            report_hash=commitment.report_hash,
+            report_size=commitment.report_size,
+            report_locator=commitment.report_locator,
+            created_at=self._now(),
+        )
+        if self.transfer_signer is None:
+            return unsigned_envelope
+        envelope = unsigned_envelope.model_copy(
+            update={"validator_public_key": self.transfer_signer.public_key}
+        )
+        envelope = envelope.model_copy(
+            update={
+                "validator_signature": self.transfer_signer.sign(
+                    transfer_envelope_signing_payload(envelope)
+                )
+            }
+        )
+        verify_report_transfer_envelope(envelope)
+        return envelope
+
+    def accept_report_transfer(
+        self,
+        *,
+        envelope: ValidationReportTransferEnvelope,
+        report: ValidationReport,
+    ) -> ValidationReportCustodyObject:
+        """Validate and durably accept a report transferred over the Validation channel."""
+        if self.require_signed_transfer_envelope and not envelope.validator_signature:
+            raise ValueError("signed validation report transfer envelope is required")
+        verify_report_transfer_envelope(envelope)
+        request = self.store.get_request(envelope.request_id)
+        if request.assignment_id != envelope.assignment_id:
+            raise ValueError("validation transfer assignment does not match request")
+        if request.authorization_id != envelope.authorization_id:
+            raise ValueError("validation transfer authorization does not match request")
+        if request.endpoint_id != envelope.endpoint_id:
+            raise ValueError("validation transfer endpoint does not match request")
+        if request.configuration_hash != envelope.endpoint_configuration_hash:
+            raise ValueError("validation transfer configuration does not match request")
+        if report.report_id != envelope.report_id or report.request_id != request.request_id:
+            raise ValueError("validation transfer report does not match envelope")
+        if report.endpoint_id != request.endpoint_id:
+            raise ValueError("validation transfer report endpoint does not match request")
+        if report.configuration_hash != request.configuration_hash:
+            raise ValueError("validation transfer report configuration does not match request")
+        report_hash, report_size = validation_report_integrity(report)
+        if report_hash != envelope.report_hash or report_size != envelope.report_size:
+            raise ValueError("validation transfer report integrity does not match envelope")
+        if self.custody_store is None:
+            raise ValueError("Validation report custody store is not configured")
+        custody_object = self.custody_store.store_report(report)
+        self.store.save_report(report)
+        self.store.save_report_custody_object(custody_object)
+        commitment = self._create_report_commitment(request=request, report=report)
+        if (
+            commitment.report_hash != envelope.report_hash
+            or commitment.report_locator != envelope.report_locator
+        ):
+            raise ValueError("validation transfer commitment does not match envelope")
+        self.store.save_report_commitment(commitment)
+        self._emit(
+            event_type="validation_report_transfer_accepted",
+            message="validation report transfer accepted into endpoint custody",
+            details={
+                "transfer_id": envelope.transfer_id,
+                "report_id": report.report_id,
+                "report_hash": report_hash,
+                "endpoint_id": report.endpoint_id,
+            },
+        )
+        return custody_object
+
+    def create_report_storage_receipt(
+        self,
+        *,
+        report_id: str,
+    ) -> ValidationReportStorageReceipt:
+        if self.custody_store is None or self.custody_signer is None:
+            raise ValueError("Validation report custody signing is not configured")
+        report = self.store.get_report(report_id)
+        commitment = self.store.get_report_commitment(report_id)
+        custody_object = self.store.get_report_custody_object(commitment.report_hash)
+        verified_object = self.custody_store.verify_report(commitment.report_hash)
+        if verified_object.report_size != commitment.report_size:
+            raise ValueError("Validation report custody metadata does not match commitment")
+        existing = next(
+            (
+                item
+                for item in self.store.list_report_storage_receipts()
+                if item.endpoint_id == report.endpoint_id
+                and item.endpoint_configuration_hash == report.configuration_hash
+                and item.report_hash == commitment.report_hash
+            ),
+            None,
+        )
+        if existing is not None:
+            verify_storage_receipt(existing)
+            return existing
+
+        receipt_seed = canonical_validation_hash(
+            {
+                "validation_id": report.request_id,
+                "endpoint_id": report.endpoint_id,
+                "endpoint_configuration_hash": report.configuration_hash,
+                "report_hash": commitment.report_hash,
+                "report_locator": commitment.report_locator,
+                "retention_policy_id": commitment.retention_policy_id,
+            }
+        )
+        unsigned_receipt = ValidationReportStorageReceipt(
+            receipt_id=f"receipt-{receipt_seed.removeprefix('sha256:')}",
+            validation_id=report.request_id,
+            endpoint_id=report.endpoint_id,
+            endpoint_configuration_hash=report.configuration_hash,
+            report_hash=commitment.report_hash,
+            report_size=custody_object.report_size,
+            stored_at=self._now(),
+            report_locator=commitment.report_locator,
+            retention_policy_id=commitment.retention_policy_id,
+            endpoint_public_key=self.custody_signer.public_key,
+            endpoint_signature="",
+        )
+        receipt = unsigned_receipt.model_copy(
+            update={
+                "endpoint_signature": self.custody_signer.sign(
+                    storage_receipt_signing_payload(unsigned_receipt)
+                )
+            }
+        )
+        verify_storage_receipt(receipt)
+        self.store.save_report_storage_receipt(receipt)
+        self._finalize_certification_after_storage_receipt(report)
+        if self.operation_recorder is not None:
+            self.operation_recorder(
+                operation_type="VALIDATION_REPORT_STORAGE_RECEIPT",
+                origin_type="protocol",
+                fee_class="protocol_sponsored",
+                initiator_id=report.endpoint_id,
+                payload={
+                    "receipt_id": receipt.receipt_id,
+                    "validation_id": receipt.validation_id,
+                    "endpoint_id": receipt.endpoint_id,
+                    "endpoint_configuration_hash": receipt.endpoint_configuration_hash,
+                    "report_hash": receipt.report_hash,
+                    "report_size": receipt.report_size,
+                    "report_locator": receipt.report_locator,
+                    "retention_policy_id": receipt.retention_policy_id,
+                    "endpoint_public_key": receipt.endpoint_public_key,
+                    "receipt_hash": canonical_validation_hash(
+                        receipt.model_dump(mode="json")
+                    ),
+                },
+                created_at=receipt.stored_at,
+                emitted_events=["ValidationReportStorageReceiptCommitted"],
+            )
+        self._emit(
+            event_type="validation_report_custody_accepted",
+            message="validation report stored with a signed custody receipt",
+            details={
+                "report_id": report.report_id,
+                "report_hash": receipt.report_hash,
+                "receipt_id": receipt.receipt_id,
+                "endpoint_id": receipt.endpoint_id,
+            },
+        )
+        return receipt
+
+    def _certification_status_for_report(self, report: ValidationReport) -> str:
+        status = _derive_certification_status(
+            request_kind=report.report_kind,
+            recommendation=report.recommendation,
+            critical_issue_count=report.critical_issue_count,
+        )
+        if not self.require_storage_receipt_for_positive_certification:
+            return status
+        if status not in {"certified", "certified_with_issues"}:
+            return status
+        return (
+            "pending_initial"
+            if report.report_kind == "initial"
+            else "maintenance_in_progress"
+        )
+
+    def _finalize_certification_after_storage_receipt(
+        self,
+        report: ValidationReport,
+    ) -> None:
+        if not self.require_storage_receipt_for_positive_certification:
+            return
+        certification_status = _derive_certification_status(
+            request_kind=report.report_kind,
+            recommendation=report.recommendation,
+            critical_issue_count=report.critical_issue_count,
+        )
+        if certification_status not in {"certified", "certified_with_issues"}:
+            return
+        snapshot = self.store.get_snapshot(
+            report.endpoint_id,
+            report.configuration_hash,
+        )
+        if snapshot.latest_report_id != report.report_id:
+            return
+        if snapshot.certification_status == certification_status:
+            return
+        updated_snapshot = snapshot.model_copy(
+            update={
+                "certification_status": certification_status,
+                "validation_status": _canonical_validation_status_for(
+                    certification_status
+                ),
+                "validated_at": report.created_at,
+            }
+        )
+        self.store.save_snapshot(updated_snapshot)
+        self._record_certification_state_update(
+            endpoint_id=report.endpoint_id,
+            configuration_hash=report.configuration_hash,
+            certification_status=certification_status,
+            latest_request_id=report.request_id,
+            latest_report_id=report.report_id,
+            created_at=report.created_at,
+        )
+        self._emit(
+            event_type="validation_certification_finalized_after_custody",
+            message="positive Certification finalized after storage receipt",
+            details={
+                "endpoint_id": report.endpoint_id,
+                "report_id": report.report_id,
+                "certification_status": certification_status,
+            },
+        )
+
+    def record_report_storage_failure(
+        self,
+        *,
+        report_id: str,
+        failure_code: str,
+        failure_details: dict | None = None,
+        reported_by: str | None = None,
+        attempted_at: str | None = None,
+    ) -> ValidationReportStorageFailure:
+        """Record an endpoint custody refusal without changing report conclusion."""
+        report = self.store.get_report(report_id)
+        commitment = self.store.get_report_commitment(report_id)
+        if any(
+            item.endpoint_id == report.endpoint_id
+            and item.endpoint_configuration_hash == report.configuration_hash
+            and item.report_hash == commitment.report_hash
+            for item in self.store.list_report_storage_receipts()
+        ):
+            raise ValueError("cannot record storage failure after a storage receipt")
+        failure_seed = canonical_validation_hash(
+            {
+                "validation_id": report.request_id,
+                "endpoint_id": report.endpoint_id,
+                "endpoint_configuration_hash": report.configuration_hash,
+                "report_hash": commitment.report_hash,
+                "failure_code": failure_code,
+            }
+        )
+        failure = ValidationReportStorageFailure(
+            failure_id=f"storage-failure-{failure_seed.removeprefix('sha256:')}",
+            validation_id=report.request_id,
+            endpoint_id=report.endpoint_id,
+            endpoint_configuration_hash=report.configuration_hash,
+            report_hash=commitment.report_hash,
+            report_size=commitment.report_size,
+            report_locator=commitment.report_locator,
+            failure_code=failure_code,
+            failure_evidence_root=canonical_validation_hash(failure_details or {}),
+            reported_by=reported_by,
+            attempted_at=attempted_at or self._now(),
+        )
+        existing = next(
+            (
+                item
+                for item in self.store.list_report_storage_failures()
+                if item.failure_id == failure.failure_id
+            ),
+            None,
+        )
+        if existing is not None:
+            return existing
+        self.store.save_report_storage_failure(failure)
+        if self.operation_recorder is not None:
+            self.operation_recorder(
+                operation_type="VALIDATION_REPORT_STORAGE_FAILURE",
+                origin_type="evidence_triggered",
+                fee_class="protocol_sponsored",
+                initiator_id=reported_by or report.report_id,
+                payload={
+                    "failure_id": failure.failure_id,
+                    "validation_id": failure.validation_id,
+                    "endpoint_id": failure.endpoint_id,
+                    "endpoint_configuration_hash": failure.endpoint_configuration_hash,
+                    "report_hash": failure.report_hash,
+                    "report_size": failure.report_size,
+                    "report_locator": failure.report_locator,
+                    "failure_code": failure.failure_code,
+                    "failure_evidence_root": failure.failure_evidence_root,
+                    "reported_by": failure.reported_by,
+                },
+                created_at=failure.attempted_at,
+                emitted_events=["ValidationReportStorageFailureCommitted"],
+            )
+        self._emit(
+            event_type="validation_report_custody_failed",
+            message="validation report storage was refused or failed",
+            details={
+                "report_id": report.report_id,
+                "report_hash": commitment.report_hash,
+                "failure_id": failure.failure_id,
+                "failure_code": failure.failure_code,
+            },
+        )
+        return failure
+
+    def check_report_custody(
+        self,
+        *,
+        report_id: str,
+        challenge_id: str | None = None,
+        checked_at: str | None = None,
+    ) -> ValidationReportCustodyState:
+        """Verify local report availability without changing Certification state."""
+        if self.custody_store is None:
+            raise ValueError("Validation report custody store is not configured")
+        report = self.store.get_report(report_id)
+        commitment = self.store.get_report_commitment(report_id)
+        checked_at = checked_at or self._now()
+        previous = next(
+            (
+                item
+                for item in self.store.list_report_custody_states()
+                if item.report_hash == commitment.report_hash
+            ),
+            None,
+        )
+        try:
+            custody_object = self.custody_store.verify_report(commitment.report_hash)
+            if custody_object.report_size != commitment.report_size:
+                raise ValueError("Validation report custody size does not match commitment")
+            state = ValidationReportCustodyState(
+                report_hash=commitment.report_hash,
+                endpoint_id=report.endpoint_id,
+                configuration_hash=report.configuration_hash,
+                status="available",
+                last_checked_at=checked_at,
+                last_available_at=checked_at,
+                failure_streak=0,
+                latest_challenge_id=challenge_id,
+            )
+        except KeyError:
+            state = ValidationReportCustodyState(
+                report_hash=commitment.report_hash,
+                endpoint_id=report.endpoint_id,
+                configuration_hash=report.configuration_hash,
+                status="temporarily_unavailable",
+                last_checked_at=checked_at,
+                last_available_at=(
+                    previous.last_available_at if previous is not None else None
+                ),
+                failure_streak=(previous.failure_streak if previous is not None else 0)
+                + 1,
+                latest_challenge_id=challenge_id,
+            )
+        except ValueError:
+            state = ValidationReportCustodyState(
+                report_hash=commitment.report_hash,
+                endpoint_id=report.endpoint_id,
+                configuration_hash=report.configuration_hash,
+                status="corrupted",
+                last_checked_at=checked_at,
+                last_available_at=(
+                    previous.last_available_at if previous is not None else None
+                ),
+                failure_streak=(previous.failure_streak if previous is not None else 0)
+                + 1,
+                latest_challenge_id=challenge_id,
+            )
+        self.store.save_report_custody_state(state)
+        if self.operation_recorder is not None:
+            self.operation_recorder(
+                operation_type="VALIDATION_REPORT_AVAILABILITY_COMMIT",
+                origin_type="protocol",
+                fee_class="protocol_sponsored",
+                initiator_id=report.endpoint_id,
+                payload={
+                    "report_id": report.report_id,
+                    "report_hash": state.report_hash,
+                    "endpoint_id": state.endpoint_id,
+                    "endpoint_configuration_hash": state.configuration_hash,
+                    "custody_status": state.status,
+                    "failure_streak": state.failure_streak,
+                    "challenge_id": state.latest_challenge_id,
+                },
+                created_at=checked_at,
+                emitted_events=["ValidationReportAvailabilityCommitted"],
+            )
+        return state
+
+    def _store_report_custody(
+        self,
+        report: ValidationReport,
+    ) -> ValidationReportCustodyObject | None:
+        if self.custody_store is None:
+            return None
+        custody_object = self.custody_store.store_report(report)
+        report_hash, report_size = validation_report_integrity(report)
+        if (
+            custody_object.report_hash != report_hash
+            or custody_object.report_size != report_size
+        ):
+            raise ValueError("Validation report custody store returned invalid metadata")
+        return custody_object
+
+    def _create_report_commitment(
+        self,
+        *,
+        request: ValidationRequest,
+        report: ValidationReport,
+    ) -> ValidationReportCommitment:
+        report_hash, report_size = validation_report_integrity(report)
+        assignment = next(
+            (
+                item
+                for item in self.store.list_assignments()
+                if item.assignment_id == request.assignment_id
+            ),
+            None,
+        )
+
+        def issue_codes(severity: str) -> list[str]:
+            return sorted(
+                {
+                    item.summary or item.issue_id
+                    for item in report.detected_issues
+                    if item.severity == severity
+                }
+            )
+
+        return ValidationReportCommitment(
+            commitment_id=f"vcommit-{report_hash.removeprefix('sha256:')}",
+            report_id=report.report_id,
+            report_hash=report_hash,
+            report_size=report_size,
+            request_id=request.request_id,
+            assignment_id=request.assignment_id,
+            endpoint_id=report.endpoint_id,
+            configuration_hash=report.configuration_hash,
+            capability_id=report.capability_id,
+            validator_service_id=(
+                assignment.validator_id if assignment is not None else report.validator_id
+            ),
+            validation_epoch_id=request.epoch_id,
+            conclusion=report.recommendation,
+            limitation_codes=issue_codes("warning"),
+            failure_codes=issue_codes("critical"),
+            evidence_root=canonical_validation_hash(
+                {
+                    "evidence_summary": report.evidence_summary,
+                    "signed_payload": report.signed_payload,
+                }
+            ),
+            report_locator=(
+                f"aidn://endpoint/{report.endpoint_id}/validation/{report_hash}"
+            ),
+            created_at=report.created_at,
+        )
+
+    def _record_validation_report_commitment(
+        self,
+        commitment: ValidationReportCommitment,
+        report: ValidationReport,
+    ) -> None:
+        if self.operation_recorder is None:
+            return
+        self.operation_recorder(
+            operation_type="VALIDATION_REPORT_COMMIT",
+            origin_type="protocol",
+            fee_class="protocol_sponsored",
+            initiator_id=report.report_id,
+            payload={
+                "report_id": commitment.report_id,
+                "report_hash": commitment.report_hash,
+                "report_size": commitment.report_size,
+                "validation_request_id": commitment.request_id,
+                "assignment_id": commitment.assignment_id,
+                "endpoint_id": commitment.endpoint_id,
+                "endpoint_configuration_hash": commitment.configuration_hash,
+                "validator_service_id": commitment.validator_service_id,
+                "conclusion_summary": commitment.conclusion,
+                "limitation_codes": commitment.limitation_codes,
+                "failure_codes": commitment.failure_codes,
+                "observation_codes": commitment.observation_codes,
+                "evidence_root": commitment.evidence_root,
+                "evidence_access_class": commitment.evidence_access_class,
+                "report_locator": commitment.report_locator,
+                "retention_policy_id": commitment.retention_policy_id,
+                "storage_receipt_hash": commitment.storage_receipt_hash,
+                "storage_failure_reference": commitment.storage_failure_reference,
+                "evidence_summary": report.evidence_summary,
+            },
+            created_at=report.created_at,
+            emitted_events=["ValidationReportCommitted"],
         )
 
     def _normalize_recommendation(

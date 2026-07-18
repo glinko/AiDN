@@ -6,7 +6,12 @@ build-backend = "setuptools.build_meta"
 name = "aidn-hypervisor"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["fastapi>=0.115", "pydantic>=2.8", "uvicorn>=0.30"]
+dependencies = [
+    "cryptography>=43",
+    "fastapi>=0.115",
+    "pydantic>=2.8",
+    "uvicorn>=0.30",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.2", "httpx>=0.27"]

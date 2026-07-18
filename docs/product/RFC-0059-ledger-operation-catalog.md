@@ -2,7 +2,15 @@
 
 Status: `Draft`
 
-Version: `0.1`
+Version: `0.3`
+
+Revision note: messages carrying Ledger Operations use Dispatcher persistent
+deduplication, while the State Machine independently enforces Operation ID replay
+protection. Transport acknowledgment never creates canonical finality.
+
+Supersedes:
+
+- `RFC-0059 Version 0.1`
 
 Depends on:
 
@@ -489,6 +497,10 @@ The MVP catalog contains the following categories:
 | `VALIDATION_REQUEST` | Wallet | Standard |
 | `VALIDATION_ASSIGNMENT_CREATE` | Protocol | Protocol Sponsored |
 | `VALIDATION_REPORT_COMMIT` | Wallet + Assignment Evidence | Protocol Sponsored |
+| `VALIDATION_REPORT_STORAGE_RECEIPT` | Endpoint Hypervisor | Protocol Sponsored |
+| `VALIDATION_REPORT_STORAGE_FAILURE` | Validator + Transfer Evidence | Protocol Sponsored |
+| `VALIDATION_REPORT_AVAILABILITY_COMMIT` | Protocol-assigned Actor | Protocol Sponsored |
+| `VALIDATION_REPORT_CUSTODY_RELEASE` | Protocol | Protocol Sponsored |
 | `CERTIFICATION_STATE_UPDATE` | Protocol | Protocol Sponsored |
 | `VALIDATION_BOND_REFUND` | Protocol | Protocol Sponsored |
 | `VALIDATION_BOND_FORFEIT` | Evidence-triggered | Protocol Sponsored |
@@ -1432,14 +1444,25 @@ Required Payload
 ```yaml
 report_id:
 report_hash:
+report_size:
+report_schema_version:
 validation_request_id:
 assignment_id:
 endpoint_id:
 endpoint_configuration_hash:
+capability_id:
+capability_version:
 validator_service_id:
 conclusion_summary:
+limitation_codes:
+failure_codes:
+observation_codes:
 evidence_root:
-registry_reference:
+report_locator:
+access_class:
+retention_policy_id:
+endpoint_storage_receipt_hash:
+storage_failure_reference:
 ```
 
 Authorization
@@ -1454,7 +1477,8 @@ Preconditions
 - report is within deadline or accepted grace period;
 - Validator was eligible;
 - report schema is valid;
-- report hash matches Registry content;
+- report hash and size match the signed report envelope;
+- exactly one of a valid Endpoint Storage Receipt or an allowed Storage Failure reference is supplied;
 - assignment has not already been completed.
 
 State Changes
@@ -1465,6 +1489,30 @@ State Changes
 - makes report eligible for Certification derivation and rewards.
 
 The operation does not directly decide Certification.
+
+### Validation Report Storage Receipt
+
+`VALIDATION_REPORT_STORAGE_RECEIPT`
+
+Records the validated Endpoint Hypervisor's signed acceptance of origin custody. The receipt SHALL bind the Validation ID, Endpoint ID, Configuration Hash, Report Hash, size, stable logical locator and Retention Policy ID. It does not express agreement with the conclusion.
+
+### Validation Report Storage Failure
+
+`VALIDATION_REPORT_STORAGE_FAILURE`
+
+Records objective evidence that a valid report could not be transferred to or accepted by the validated Endpoint Hypervisor. This operation SHALL NOT suppress the report conclusion. A positive result without a receipt cannot create Certification; adverse and inconclusive evidence remain processable under `RFC-0065`.
+
+### Validation Report Availability Commit
+
+`VALIDATION_REPORT_AVAILABILITY_COMMIT`
+
+Commits a bounded custody challenge result, including Report Hash, challenged locator, actor identity, observed state, attempt boundary and evidence root. Duplicate observations from the same challenge count once.
+
+### Validation Report Custody Release
+
+`VALIDATION_REPORT_CUSTODY_RELEASE`
+
+Records the deterministic end of mandatory origin custody after Endpoint retirement and the configured grace period. It does not delete the canonical commitment, report hash, Certification history or Reputation history.
 
 ## 48. Certification State Update
 
@@ -2032,6 +2080,10 @@ The MVP SHALL implement at minimum:
 - `VALIDATION_REQUEST`;
 - `VALIDATION_ASSIGNMENT_CREATE`;
 - `VALIDATION_REPORT_COMMIT`;
+- `VALIDATION_REPORT_STORAGE_RECEIPT`;
+- `VALIDATION_REPORT_STORAGE_FAILURE`;
+- `VALIDATION_REPORT_AVAILABILITY_COMMIT`;
+- `VALIDATION_REPORT_CUSTODY_RELEASE`;
 - `CERTIFICATION_STATE_UPDATE`;
 - `VALIDATION_BOND_REFUND`;
 - `VALIDATION_BOND_FORFEIT`;

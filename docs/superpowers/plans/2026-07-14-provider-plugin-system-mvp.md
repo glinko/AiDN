@@ -8,9 +8,9 @@
 
 **Tech Stack:** Python, FastAPI, Pydantic, pytest, existing `HypervisorService`, current operator dashboard HTML/JS, existing plugin registry and bundle scheduler.
 
-**Current status:** Provider inventory, runtime-binding compatibility projection, endpoint draft runtime-binding input, plugin-first Providers workspace, and provider inventory snapshot/restore are implemented and verified. The full test suite passed with `740 passed, 1 warning` before starting the declarative install-plan slice. The declarative install-plan slice now adds rich Plugin Directory metadata, permission/secret/UI schema/recipe manifest fields, preview-only Installation Plans, operator API preview, and dashboard metadata surfacing.
+**Current status:** Provider inventory, runtime-binding compatibility projection, endpoint draft runtime-binding input, plugin-first Providers workspace, provider inventory snapshot/restore, rich Plugin Directory metadata, permission/secret/UI schema/recipe manifest fields, preview Installation Plans, approval/apply job records, explicit permission acknowledgement, permission/sandbox upgrade acknowledgement, signed package verification, package-identity binding, sandbox-policy binding, executor-declared sandbox boundary compatibility, bounded declarative subset enforcement for `networks`, `health_checks`, and `resource_limits`, secret-handle selection, dry-run diagnostics, executor-level local-import readiness diagnostics, controlled local artifact staging/list/remove APIs, bounded staged-archive extraction inside the controlled imports root, rollback preview/status reporting, rollback execution for terminal install jobs, rollback step/timestamp persistence, a narrow `ControlledFilesystemProviderInstallationExecutor` for real host-state writes inside one controlled path plus controlled volume-directory prep, staged model-download manifests, bounded local artifact imports, and bounded staged-archive extraction, schema-driven dashboard forms, Installation Recipe prefill, model discovery from an applied Provider Instance, Runtime Binding creation from a Model Deployment, and Endpoint draft creation from a Runtime Binding are implemented and verified. The default managed-install path still uses a non-host-mutating sandbox-enforced executor boundary instead of the older record-anything default.
 
-**Next phase:** convert previewed declarative plans into a guarded operator approval flow: permission diffing, secret-handle selection, dry-run diagnostics, and eventually sandboxed plan application behind explicit confirmations.
+**Next phase:** extend beyond controlled filesystem state into real provider-side host mutation behind explicit confirmations, broader sandbox enforcement, and stronger permission surfaces.
 
 ---
 
@@ -1179,7 +1179,8 @@ git commit -m "feat: persist provider inventory and verify provider plugin MVP"
 - Runtime Binding as the endpoint-draft prerequisite is covered by Task 4.
 - Operator dashboard migration to provider-first workflow is covered by Task 5.
 - Persistence and compatibility validation are covered by Task 6.
-- Managed-install foundation is intentionally limited to manifest/schema/plan scaffolding in Task 2 and Task 3; full plan execution is deferred by design.
+- Managed-install foundation now includes plan preview, approval/apply records, a controlled non-host-mutating executor, schema-rendered install forms, recipe prefill, and guided handoff through model discovery, Runtime Binding, and Endpoint draft creation.
+- Full host-mutating execution remains deferred by design until broader sandbox enforcement, secret-handle, and host-mutating rollback controls are implemented.
 
 ### Placeholder scan
 

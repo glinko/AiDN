@@ -4,7 +4,12 @@ AiDN Session Protocol
 
 Status: Draft
 
-Version: 0.4
+Version: 0.5
+
+Revision note: every Session route binds Session ID, Session Contract Hash,
+accepted Endpoint Configuration Hash, Consumer Session identity and
+`route_generation`. Connection resume does not change Session state, and stale
+queued messages require explicit recovery or rejection.
 
 Supersedes:
 

@@ -244,6 +244,7 @@ class SessionService:
         advertisement_id: str | None,
         offer_id: str | None,
         pricing_policy_hash: str | None,
+        endpoint_configuration_hash: str | None,
         accounting_contract_hash: str,
         accounting_contract_snapshot: dict,
         session_policy_snapshot: dict,
@@ -259,6 +260,7 @@ class SessionService:
             "advertisement_id": advertisement_id,
             "offer_id": offer_id,
             "pricing_policy_hash": pricing_policy_hash,
+            "endpoint_configuration_hash": endpoint_configuration_hash,
             "accounting_contract_hash": accounting_contract_hash,
             "accounting_contract_object_id": accounting_contract_snapshot.get(
                 "registry_object_id"
@@ -383,6 +385,7 @@ class SessionService:
         offer_id: str | None = None,
         pricing_policy_hash: str | None = None,
         accounting_contract_hash: str | None = None,
+        endpoint_configuration_hash: str | None = None,
     ) -> SessionResult:
         session_policy_snapshot = dict(session_policy)
         session_policy_snapshot.setdefault("network_fee_q", self.network_fee_q)
@@ -439,6 +442,7 @@ class SessionService:
             advertisement_id=advertisement_id,
             offer_id=offer_id,
             pricing_policy_hash=pricing_policy_hash,
+            endpoint_configuration_hash=endpoint_configuration_hash,
             accounting_contract_hash=accepted_accounting_contract_hash,
             accounting_contract_snapshot=accounting_contract_snapshot,
             session_policy_snapshot=session_policy_snapshot,
@@ -469,6 +473,7 @@ class SessionService:
             advertisement_id=advertisement_id,
             offer_id=offer_id,
             pricing_policy_hash=pricing_policy_hash,
+            endpoint_configuration_hash=endpoint_configuration_hash,
             accounting_contract_hash=accepted_accounting_contract_hash,
             accounting_contract_object_id=(
                 str(accounting_contract_object_id)

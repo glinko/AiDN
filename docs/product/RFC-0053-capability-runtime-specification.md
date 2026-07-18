@@ -2,7 +2,12 @@
 
 Status: `Draft`
 
-Version: `0.4`
+Version: `0.5`
+
+Revision note: every Runtime Binding exposes Dispatcher destination scope,
+authorized message profiles, Endpoint Configuration binding and current Route
+Generation. Runtime replacement invalidates stale routes unless Session-safe
+migration is explicitly proven.
 
 Depends on:
 

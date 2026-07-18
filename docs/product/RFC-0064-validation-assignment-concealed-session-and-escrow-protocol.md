@@ -2,11 +2,16 @@
 
 Status: `Draft`
 
-Version: `0.2`
+Version: `0.4`
+
+Revision note: Assignment, concealed credential, report transfer, Storage
+Receipt, commitment, reveal and availability-challenge messages use RFC-0042
+`VALIDATION`. `VALIDATION_REPORT_TRANSFER` requires persistent Message ID
+deduplication, assignment-scoped authentication and report-hash verification.
 
 Supersedes:
 
-- `RFC-0064 Version 0.1`
+- `RFC-0064 Version 0.2`
 
 Depends on:
 
@@ -1175,12 +1180,14 @@ Ordinarily:
 1. Validation execution ends.
 2. Session evidence is finalized.
 3. Validator prepares the report.
-4. `VALIDATION_REPORT_COMMIT` is submitted.
-5. Assignment identity is revealed.
-6. `VALIDATION_SESSION_SETTLE` returns Deposit to Escrow.
-7. Validator reward becomes eligible.
+4. Validator transfers the report through an Assignment-Key-authorized envelope to the validated Endpoint Hypervisor.
+5. The Endpoint verifies the concealed Assignment binding, stores the report and returns a signed Storage Receipt.
+6. `VALIDATION_REPORT_COMMIT` is submitted with the receipt hash.
+7. Assignment identity is revealed.
+8. `VALIDATION_SESSION_SETTLE` returns Deposit to Escrow.
+9. Validator reward becomes eligible.
 
-The protocol MAY combine steps 4-6 atomically.
+The protocol MAY combine steps 6-8 atomically.
 
 ## 66. Report Withholding
 
@@ -1206,6 +1213,14 @@ If execution occurred but no report was published:
 - post-execution abandonment consequences apply.
 
 The Endpoint's Certification is not automatically changed by an absent report.
+
+## 67A. Endpoint Storage Refusal
+
+If the Validator produced a valid signed report but the Endpoint refuses, interrupts or selectively blocks custody, the Validator SHALL be able to submit `VALIDATION_REPORT_STORAGE_FAILURE` with the report commitment and transfer-attempt evidence.
+
+Storage refusal SHALL NOT erase or veto the report conclusion. A positive report without accepted Endpoint custody SHALL not create current Certification. A negative or inconclusive conclusion MAY remain eligible for Certification and Reputation processing so that an Endpoint cannot suppress adverse history by refusing storage.
+
+The Validator SHALL retain the immutable report through the dispute window and MAY serve it as a temporary fallback source.
 
 ## 68. Endpoint Failure
 
@@ -1318,13 +1333,18 @@ The report SHALL include:
 - conclusion;
 - Validator signature.
 
+The Public Report and Evidence Bundle separation, canonical hashing and access classes are defined by `RFC-0057`.
+
+Before identity reveal, the transfer MAY carry the permanent Validator signature as sealed content and SHALL carry an Assignment Key signature verifiable against the hidden Assignment Commitment. The Endpoint SHALL NOT require early Validator Service identity disclosure to accept custody.
+
 ## 76. Report Commitment
 
 `VALIDATION_REPORT_COMMIT` SHALL:
 
 - reveal Validator Service ID;
 - prove correspondence with the hidden Assignment Commitment;
-- reference the Registry report;
+- reference the stable Endpoint-origin report locator;
+- include the Endpoint Storage Receipt hash or an objective Storage Failure reference;
 - bind the report to exact Endpoint configuration;
 - make validation settlement possible;
 - close the assignment.
@@ -1341,7 +1361,7 @@ An assignment is complete when:
 
 - execution ended;
 - required Session evidence exists;
-- report is stored;
+- report is stored by the Endpoint or storage refusal is canonically recorded;
 - report commitment finalized;
 - assignment reveal is valid;
 - validation-specific Session settlement finalized.
@@ -1592,11 +1612,14 @@ Registry Services MAY store:
 - encrypted offers;
 - assignment lifecycle data;
 - Session evidence;
-- Validation Reports;
+- compact Validation Commitments and custody availability records;
+- optional immutable Validation Report and Evidence Bundle mirrors;
 - settlement references;
 - reveal proofs.
 
 Sensitive data SHALL follow access and retention policy.
+
+The validated Endpoint Hypervisor is the mandatory origin custodian. Registry mirroring is optional and SHALL NOT be interpreted as release of Endpoint custody.
 
 ## 100. Assignment Messages
 
@@ -1617,6 +1640,9 @@ The MVP SHALL support:
 - `VALIDATION_EXECUTION_COMPLETED`
 - `VALIDATION_EXECUTION_FAILED`
 - `VALIDATION_REPORT_READY`
+- `VALIDATION_REPORT_TRANSFER`
+- `VALIDATION_REPORT_STORAGE_RECEIPT`
+- `VALIDATION_REPORT_STORAGE_FAILURE`
 - `VALIDATION_REPORT_COMMITTED`
 - `VALIDATION_IDENTITY_REVEALED`
 - `VALIDATION_SESSION_SETTLED`
@@ -1630,6 +1656,10 @@ This protocol uses:
 - `SESSION_OPEN`;
 - `SESSION_ACCEPT`;
 - `VALIDATION_REPORT_COMMIT`;
+- `VALIDATION_REPORT_STORAGE_RECEIPT`;
+- `VALIDATION_REPORT_STORAGE_FAILURE`;
+- `VALIDATION_REPORT_AVAILABILITY_COMMIT`;
+- `VALIDATION_REPORT_CUSTODY_RELEASE`;
 - `VALIDATION_SESSION_SETTLE`;
 - `CERTIFICATION_STATE_UPDATE`;
 - `REWARD_MINT`;
@@ -1662,6 +1692,11 @@ The MVP SHALL define at least:
 - `ENDPOINT_CONFIGURATION_CHANGED`
 - `VALIDATION_REPORT_INVALID`
 - `VALIDATION_REPORT_ALREADY_COMMITTED`
+- `VALIDATION_REPORT_HASH_MISMATCH`
+- `VALIDATION_REPORT_STORAGE_REFUSED`
+- `VALIDATION_REPORT_STORAGE_RECEIPT_INVALID`
+- `VALIDATION_REPORT_RETENTION_POLICY_INVALID`
+- `VALIDATION_REPORT_ACCESS_CLASS_INVALID`
 - `IDENTITY_REVEAL_INVALID`
 - `ORDINARY_SETTLEMENT_PROHIBITED`
 - `VALIDATION_SETTLEMENT_INVALID`
@@ -1678,6 +1713,9 @@ The following SHALL be idempotent:
 - collateral reservation;
 - Credential delivery;
 - execution-state reporting;
+- report transfer;
+- Storage Receipt submission;
+- Storage Failure submission;
 - report commitment;
 - identity reveal;
 - Validation Session settlement.
@@ -1702,6 +1740,8 @@ Every:
 - Concealed Session Credential;
 - Session ID;
 - Report ID;
+- Report Hash;
+- Storage Receipt ID;
 
 SHALL be unique and replay-protected.
 
@@ -1757,6 +1797,9 @@ Certification changes only through:
 - Reassign Unaccepted Requests;
 - Monitor Assignment Deadlines;
 - Commit Validation Reports;
+- Verify Validation Report Storage Receipts;
+- Record Validation Report Storage Failures;
+- Schedule Validation Report Availability Challenges;
 - Reveal Validator Identities;
 - Settle Validation Sessions;
 - Calculate Validation Rewards;
@@ -1819,6 +1862,10 @@ The MVP SHALL implement:
 - zero Endpoint payment;
 - Escrow Deposit return;
 - Usage Reporting for observation;
+- Endpoint-origin report transfer;
+- signed Endpoint Storage Receipts;
+- storage-refusal recording without adverse-report suppression;
+- temporary Validator retention through the dispute window;
 - report commitment and reveal;
 - special Validation Session settlement;
 - assignment expiration and reassignment;

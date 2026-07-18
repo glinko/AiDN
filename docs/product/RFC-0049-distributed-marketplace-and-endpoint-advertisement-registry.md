@@ -4,11 +4,11 @@ Distributed Marketplace and Endpoint Advertisement Registry
 
 Status: Draft
 
-Version: 0.3
+Version: 0.4
 
 Supersedes:
 
-* RFC-0049 Version 0.1
+* RFC-0049 Version 0.3
 
 Depends on:
 
@@ -1628,6 +1628,7 @@ marketplace_result:
   endpoint_status:
   capability_status:
   certification_summary:
+  validation_report_custody_summary:
   reputation_summary:
   health_summary:
   price_summary:
@@ -2137,6 +2138,17 @@ A Validation Report SHALL indicate whether the tested offer was:
 When Certification state changes, Marketplace views SHOULD update promptly.
 
 A stale Registry may temporarily show the old state, so clients SHALL verify freshness.
+
+Marketplace Certification summaries SHOULD expose:
+
+* committed report count;
+* reports currently available at the Endpoint origin;
+* last custody check Epoch;
+* active custody grace state;
+* `WITHHELD`, `LOST`, `CORRUPTED` or `ACCESS_RESTRICTED` warnings;
+* optional mirror availability separately from origin availability.
+
+A mirror serving a report SHALL NOT be displayed as proof that the Endpoint satisfies its origin-custody obligation.
 
 ⸻
 
