@@ -41,6 +41,11 @@ from aidn_hypervisor.providers.package_verification import (
     verify_plugin_manifest_package,
 )
 from aidn_hypervisor.providers.package_store import PluginPackageStore
+from aidn_hypervisor.plugins.host import (
+    PluginHostAuthenticator,
+    PluginHostHandshakeService,
+    PluginHostLocalIpcIngress,
+)
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
@@ -87,6 +92,20 @@ class ProviderInventoryService:
 
     def list_installed_plugins(self) -> list[InstalledPlugin]:
         return self.store.list_installed_plugins()
+
+    def plugin_host_local_ingress(self) -> PluginHostLocalIpcIngress:
+        """Expose only identity-bound manifest and validation controls to a Plugin Host."""
+        return PluginHostLocalIpcIngress(
+            PluginHostHandshakeService(
+                authenticator=PluginHostAuthenticator(self.store.get_installed_plugin),
+                activation_proof_verifier=lambda hello: bool(hello.activation_proof),
+                now=_now_iso,
+            ),
+            manifest_resolver=lambda plugin_id: self._get_plugin(plugin_id).plugin_manifest(),
+            configuration_validator=lambda plugin_id, configuration: self._get_plugin(
+                plugin_id
+            ).validate_provider_configuration(configuration),
+        )
 
     def stage_plugin_package(self, *, package_bytes: bytes, expected_digest: str) -> str:
         if self.package_store is None:

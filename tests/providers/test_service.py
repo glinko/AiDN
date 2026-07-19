@@ -23,6 +23,7 @@ from aidn_hypervisor.providers.models import (
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.package_store import PluginPackageStore
 from aidn_hypervisor.providers.package_verification import compute_manifest_hash
+from aidn_hypervisor.plugins.host import PluginHostHello
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
@@ -149,6 +150,33 @@ def test_plugin_package_store_rejects_digest_mismatch() -> None:
 
     with pytest.raises(ValueError, match="digest does not match"):
         store.stage(package_bytes=b"package", expected_digest="sha256:" + "0" * 64)
+
+
+def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:
+    registry = _registry()
+    service = ProviderInventoryService(plugins=registry, store=InMemoryProviderInventoryStore())
+    release = service.register_plugin_release(manifest_payload=registry.get("fake-managed").plugin_manifest())
+    installed = service.install_plugin_release(
+        release_id=release.release_id, granted_permissions=release.declared_permissions
+    )
+    installed = service.advance_installed_plugin_generation(
+        installed_plugin_id=installed.installed_plugin_id,
+        activation_credential_key_id="sha256:" + "d" * 64,
+    )
+    hello = PluginHostHello(
+        installed_plugin_id=installed.installed_plugin_id,
+        plugin_id=installed.plugin_id,
+        installation_generation=installed.installation_generation,
+        activation_credential_key_id=installed.activation_credential_key_id,
+        host_nonce="nonce",
+        activation_proof="proof",
+    )
+
+    connection = service.plugin_host_local_ingress().receive(
+        {"event_type": "PLUGIN_HOST_HELLO", "event": hello.model_dump(mode="json")}
+    )
+
+    assert connection["installed_plugin_id"] == installed.installed_plugin_id
 
 
 class ControlledFilesystemPlugin(FakeManagedPlugin):
