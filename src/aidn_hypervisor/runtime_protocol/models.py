@@ -155,6 +155,92 @@ class RuntimeMessage(BaseModel):
         return self
 
 
+class RuntimeReadinessDimensions(BaseModel):
+    process_ready: bool
+    adapter_ready: bool
+    provider_ready: bool
+    model_ready: bool
+    capability_ready: bool
+    usage_reporting_ready: bool
+    route_ready: bool
+    recovery_ready: bool
+
+    def is_ready(self) -> bool:
+        return all(self.model_dump().values())
+
+
+class RuntimeReady(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    operational_state: str = Field(min_length=1)
+    readiness_dimensions: RuntimeReadinessDimensions
+    capability_definition_hash: str = Field(min_length=1)
+    supported_features: list[str] = Field(default_factory=list)
+    usage_profile_hash: str | None = None
+    health_reference: str | None = None
+    capacity_reference: str | None = None
+    ready_at: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_ready_dimensions(self):
+        if self.operational_state == "READY" and not self.readiness_dimensions.is_ready():
+            raise ValueError("READY Runtime requires every readiness dimension")
+        return self
+
+
+class RuntimeHealth(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    health_sequence: int = Field(ge=1)
+    overall_state: str = Field(min_length=1)
+    runtime_process_health: str = Field(min_length=1)
+    adapter_health: str = Field(min_length=1)
+    provider_health: str = Field(min_length=1)
+    model_health: str = Field(min_length=1)
+    capability_health: str = Field(min_length=1)
+    resource_health: str = Field(min_length=1)
+    usage_reporting_health: str = Field(min_length=1)
+    recovery_health: str = Field(min_length=1)
+    route_health: str = Field(min_length=1)
+    observed_at: str = Field(min_length=1)
+    valid_until: str = Field(min_length=1)
+    diagnostic_references: list[str] = Field(default_factory=list)
+
+
+class RuntimeCapacity(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    capacity_sequence: int = Field(ge=1)
+    maximum_concurrent_requests: int = Field(ge=0)
+    active_requests: int = Field(ge=0)
+    queued_requests: int = Field(ge=0)
+    maximum_queue_depth: int = Field(ge=0)
+    maximum_active_sessions: int = Field(ge=0)
+    active_sessions: int = Field(ge=0)
+    maximum_input_size: int | None = Field(default=None, ge=0)
+    maximum_output_size: int | None = Field(default=None, ge=0)
+    maximum_artifact_size: int | None = Field(default=None, ge=0)
+    temporary_capacity_factor: float = Field(default=1.0, ge=0.0)
+    observed_at: str = Field(min_length=1)
+    valid_until: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_capacity_bounds(self):
+        if self.active_requests > self.maximum_concurrent_requests:
+            raise ValueError("active_requests cannot exceed maximum_concurrent_requests")
+        if self.queued_requests > self.maximum_queue_depth:
+            raise ValueError("queued_requests cannot exceed maximum_queue_depth")
+        if self.active_sessions > self.maximum_active_sessions:
+            raise ValueError("active_sessions cannot exceed maximum_active_sessions")
+        return self
+
+
 class RuntimeExecuteRequest(BaseModel):
     runtime_id: str = Field(min_length=1)
     runtime_generation: int = Field(ge=1)

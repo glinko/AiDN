@@ -12,10 +12,14 @@ from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol import (
+    RuntimeCapacity,
     RuntimeExecuteRequest,
     RuntimeHello,
     RuntimeHelloComplete,
+    RuntimeHealth,
     RuntimeMessage,
+    RuntimeReady,
+    RuntimeReadinessDimensions,
     RuntimeProtocolError,
     RuntimeProtocolService,
     RuntimeProtocolStore,
@@ -259,6 +263,75 @@ def _accept_request(
     )
 
 
+def _ready(binding: RuntimeBinding, *, route_generation: int = 5) -> RuntimeReady:
+    return RuntimeReady(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=route_generation,
+        operational_state="READY",
+        readiness_dimensions=RuntimeReadinessDimensions(
+            process_ready=True,
+            adapter_ready=True,
+            provider_ready=True,
+            model_ready=True,
+            capability_ready=True,
+            usage_reporting_ready=True,
+            route_ready=True,
+            recovery_ready=True,
+        ),
+        capability_definition_hash=binding.capability_definition_hash,
+        supported_features=binding.supported_features,
+        usage_profile_hash=binding.usage_reporting_profile_hash,
+        ready_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def _health(binding: RuntimeBinding, *, sequence: int = 1) -> RuntimeHealth:
+    now = datetime.now(timezone.utc)
+    return RuntimeHealth(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        health_sequence=sequence,
+        overall_state="HEALTHY",
+        runtime_process_health="HEALTHY",
+        adapter_health="HEALTHY",
+        provider_health="HEALTHY",
+        model_health="HEALTHY",
+        capability_health="HEALTHY",
+        resource_health="HEALTHY",
+        usage_reporting_health="HEALTHY",
+        recovery_health="HEALTHY",
+        route_health="HEALTHY",
+        observed_at=now.isoformat(),
+        valid_until=(now + timedelta(minutes=1)).isoformat(),
+    )
+
+
+def _capacity(binding: RuntimeBinding, *, sequence: int = 1) -> RuntimeCapacity:
+    now = datetime.now(timezone.utc)
+    return RuntimeCapacity(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        capacity_sequence=sequence,
+        maximum_concurrent_requests=2,
+        active_requests=1,
+        queued_requests=0,
+        maximum_queue_depth=4,
+        maximum_active_sessions=2,
+        active_sessions=1,
+        maximum_input_size=4096,
+        maximum_output_size=4096,
+        maximum_artifact_size=0,
+        observed_at=now.isoformat(),
+        valid_until=(now + timedelta(minutes=1)).isoformat(),
+    )
+
+
 def _runtime_usage_report(
     binding: RuntimeBinding,
     request: RuntimeExecuteRequest,
@@ -388,6 +461,60 @@ def test_runtime_message_has_semantic_replay_and_sequence_protection() -> None:
     with pytest.raises(RuntimeProtocolError) as sequence_error:
         service.record_runtime_message(gap)
     assert sequence_error.value.code == "RUNTIME_SEQUENCE_INVALID"
+
+
+def test_runtime_ready_promotes_recovered_connection() -> None:
+    binding = _binding()
+    service = _service(binding, {binding.runtime_id: _route(binding)})
+    _, connection = _connect(service, binding, recovery=True)
+
+    recorded = service.record_runtime_ready(
+        connection.runtime_connection_id,
+        _ready(binding),
+    )
+
+    assert recorded.operational_state == "READY"
+    assert service.store.ready_states[binding.runtime_id] == recorded
+    assert (
+        service.store.connections[connection.runtime_connection_id].connection_state
+        == "READY"
+    )
+
+
+def test_runtime_health_and_capacity_require_monotonic_sequences(tmp_path) -> None:
+    binding = _binding()
+    state_store = FileStateStore(tmp_path / "runtime-observations.json")
+    service = _service(
+        binding,
+        {binding.runtime_id: _route(binding)},
+        store=RuntimeProtocolStore(state_store),
+    )
+    _, connection = _connect(service, binding)
+    health = _health(binding)
+    capacity = _capacity(binding)
+
+    assert service.record_runtime_health(connection.runtime_connection_id, health) == health
+    assert service.record_runtime_capacity(connection.runtime_connection_id, capacity) == capacity
+    assert service.record_runtime_health(connection.runtime_connection_id, health) == health
+    assert service.record_runtime_capacity(connection.runtime_connection_id, capacity) == capacity
+
+    with pytest.raises(RuntimeProtocolError) as health_error:
+        service.record_runtime_health(
+            connection.runtime_connection_id,
+            health.model_copy(update={"overall_state": "DEGRADED"}),
+        )
+    assert health_error.value.code == "RUNTIME_HEALTH_CONFLICT"
+
+    with pytest.raises(RuntimeProtocolError) as capacity_error:
+        service.record_runtime_capacity(
+            connection.runtime_connection_id,
+            capacity.model_copy(update={"active_requests": 0}),
+        )
+    assert capacity_error.value.code == "RUNTIME_CAPACITY_CONFLICT"
+
+    restored = RuntimeProtocolStore(state_store)
+    assert restored.health_records[binding.runtime_id].health_sequence == 1
+    assert restored.capacity_records[binding.runtime_id].capacity_sequence == 1
 
 
 def test_execute_request_is_idempotent_and_acceptance_is_not_completion() -> None:

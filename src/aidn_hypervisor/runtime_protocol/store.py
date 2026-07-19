@@ -2,7 +2,10 @@ from typing import TYPE_CHECKING
 
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeConnection,
+    RuntimeCapacity,
+    RuntimeHealth,
     RuntimeMessage,
+    RuntimeReady,
     RuntimeRecoveryPlan,
     RuntimeRecoveryResult,
     RuntimeRequestRecord,
@@ -21,6 +24,9 @@ class RuntimeProtocolStore:
     def __init__(self, state_store=None) -> None:
         self._state_store = state_store
         self.connections: dict[str, RuntimeConnection] = {}
+        self.ready_states: dict[str, RuntimeReady] = {}
+        self.health_records: dict[str, RuntimeHealth] = {}
+        self.capacity_records: dict[str, RuntimeCapacity] = {}
         self.messages: dict[str, RuntimeMessage] = {}
         self.runtime_sequences: dict[str, int] = {}
         self.requests: dict[str, RuntimeRequestRecord] = {}
@@ -41,6 +47,16 @@ class RuntimeProtocolStore:
         self.connections = {
             item.runtime_connection_id: item
             for item in snapshot.runtime_protocol_connections
+        }
+        self.ready_states = {
+            item.runtime_id: item for item in snapshot.runtime_protocol_ready_states
+        }
+        self.health_records = {
+            item.runtime_id: item for item in snapshot.runtime_protocol_health_records
+        }
+        self.capacity_records = {
+            item.runtime_id: item
+            for item in snapshot.runtime_protocol_capacity_records
         }
         self.messages = {
             item.runtime_message_id: item
@@ -79,6 +95,11 @@ class RuntimeProtocolStore:
         snapshot = self._state_store.load().model_copy(
             update={
                 "runtime_protocol_connections": list(self.connections.values()),
+                "runtime_protocol_ready_states": list(self.ready_states.values()),
+                "runtime_protocol_health_records": list(self.health_records.values()),
+                "runtime_protocol_capacity_records": list(
+                    self.capacity_records.values()
+                ),
                 "runtime_protocol_messages": list(self.messages.values()),
                 "runtime_protocol_sequences": dict(self.runtime_sequences),
                 "runtime_protocol_requests": list(self.requests.values()),

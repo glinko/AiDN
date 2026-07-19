@@ -10,10 +10,13 @@ from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol.models import (
     HypervisorRuntimeHello,
     RuntimeConnection,
+    RuntimeCapacity,
     RuntimeExecuteRequest,
+    RuntimeHealth,
     RuntimeHello,
     RuntimeHelloComplete,
     RuntimeMessage,
+    RuntimeReady,
     RuntimeRecoveryPlan,
     RuntimeRecoveryResult,
     RuntimeRecoveryState,
@@ -231,6 +234,118 @@ class RuntimeProtocolService:
         self.store.runtime_sequences[message.runtime_id] = message.runtime_sequence
         self.store.flush()
         return message
+
+    def record_runtime_ready(
+        self,
+        runtime_connection_id: str,
+        ready: RuntimeReady,
+    ) -> RuntimeReady:
+        connection = self._validate_connection(
+            runtime_connection_id,
+            runtime_id=ready.runtime_id,
+            runtime_generation=ready.runtime_generation,
+            runtime_configuration_hash=ready.runtime_configuration_hash,
+            route_generation=ready.route_generation,
+            allow_recovering=True,
+        )
+        binding = self._binding(ready.runtime_id)
+        if ready.capability_definition_hash != binding.capability_definition_hash:
+            raise RuntimeProtocolError(
+                "RUNTIME_CAPABILITY_DEFINITION_MISMATCH",
+                "ready",
+                "Runtime Ready Capability Definition mismatch",
+            )
+        if (
+            ready.usage_profile_hash is not None
+            and ready.usage_profile_hash != binding.usage_reporting_profile_hash
+        ):
+            raise RuntimeProtocolError(
+                "USAGE_PROFILE_MISMATCH",
+                "ready",
+                "Runtime Ready Usage Profile mismatch",
+            )
+        if ready.operational_state != "READY" or not ready.readiness_dimensions.is_ready():
+            raise RuntimeProtocolError(
+                "RUNTIME_NOT_READY",
+                "ready",
+                "Runtime Ready requires operational READY and all readiness dimensions",
+            )
+        existing = self.store.ready_states.get(ready.runtime_id)
+        if existing is not None and existing == ready:
+            return existing
+        self.store.ready_states[ready.runtime_id] = ready.model_copy(deep=True)
+        if connection.connection_state != "READY":
+            self.store.connections[runtime_connection_id] = connection.model_copy(
+                update={"connection_state": "READY"}
+            )
+        self.store.flush()
+        return ready
+
+    def record_runtime_health(
+        self,
+        runtime_connection_id: str,
+        health: RuntimeHealth,
+    ) -> RuntimeHealth:
+        self._validate_connection(
+            runtime_connection_id,
+            runtime_id=health.runtime_id,
+            runtime_generation=health.runtime_generation,
+            runtime_configuration_hash=health.runtime_configuration_hash,
+            route_generation=health.route_generation,
+            allow_recovering=True,
+        )
+        existing = self.store.health_records.get(health.runtime_id)
+        if existing is not None:
+            if health.health_sequence < existing.health_sequence:
+                raise RuntimeProtocolError(
+                    "RUNTIME_HEALTH_SEQUENCE_INVALID",
+                    "health",
+                    "Runtime Health sequence is stale",
+                )
+            if health.health_sequence == existing.health_sequence:
+                if health == existing:
+                    return existing
+                raise RuntimeProtocolError(
+                    "RUNTIME_HEALTH_CONFLICT",
+                    "health",
+                    "Runtime Health sequence conflicts with existing record",
+                )
+        self.store.health_records[health.runtime_id] = health.model_copy(deep=True)
+        self.store.flush()
+        return health
+
+    def record_runtime_capacity(
+        self,
+        runtime_connection_id: str,
+        capacity: RuntimeCapacity,
+    ) -> RuntimeCapacity:
+        self._validate_connection(
+            runtime_connection_id,
+            runtime_id=capacity.runtime_id,
+            runtime_generation=capacity.runtime_generation,
+            runtime_configuration_hash=capacity.runtime_configuration_hash,
+            route_generation=capacity.route_generation,
+            allow_recovering=True,
+        )
+        existing = self.store.capacity_records.get(capacity.runtime_id)
+        if existing is not None:
+            if capacity.capacity_sequence < existing.capacity_sequence:
+                raise RuntimeProtocolError(
+                    "RUNTIME_CAPACITY_SEQUENCE_INVALID",
+                    "capacity",
+                    "Runtime Capacity sequence is stale",
+                )
+            if capacity.capacity_sequence == existing.capacity_sequence:
+                if capacity == existing:
+                    return existing
+                raise RuntimeProtocolError(
+                    "RUNTIME_CAPACITY_CONFLICT",
+                    "capacity",
+                    "Runtime Capacity sequence conflicts with existing record",
+                )
+        self.store.capacity_records[capacity.runtime_id] = capacity.model_copy(deep=True)
+        self.store.flush()
+        return capacity
 
     def register_execute_request(
         self,

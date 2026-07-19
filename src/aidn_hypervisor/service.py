@@ -3431,6 +3431,15 @@ class HypervisorService:
             runtime_protocol_connections=list(
                 self.runtime_protocol_store.connections.values()
             ),
+            runtime_protocol_ready_states=list(
+                self.runtime_protocol_store.ready_states.values()
+            ),
+            runtime_protocol_health_records=list(
+                self.runtime_protocol_store.health_records.values()
+            ),
+            runtime_protocol_capacity_records=list(
+                self.runtime_protocol_store.capacity_records.values()
+            ),
             runtime_protocol_messages=list(self.runtime_protocol_store.messages.values()),
             runtime_protocol_sequences=dict(
                 self.runtime_protocol_store.runtime_sequences

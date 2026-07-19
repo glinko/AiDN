@@ -32,8 +32,11 @@ from aidn_hypervisor.providers.models import (
     RuntimeBinding,
 )
 from aidn_hypervisor.runtime_protocol.models import (
+    RuntimeCapacity,
     RuntimeConnection,
+    RuntimeHealth,
     RuntimeMessage,
+    RuntimeReady,
     RuntimeRecoveryPlan,
     RuntimeRecoveryResult,
     RuntimeRequestRecord,
@@ -328,6 +331,9 @@ class HypervisorStateSnapshot(BaseModel):
     )
     dispatcher_dead_letters: list[DeadLetterRecord] = Field(default_factory=list)
     runtime_protocol_connections: list[RuntimeConnection] = Field(default_factory=list)
+    runtime_protocol_ready_states: list[RuntimeReady] = Field(default_factory=list)
+    runtime_protocol_health_records: list[RuntimeHealth] = Field(default_factory=list)
+    runtime_protocol_capacity_records: list[RuntimeCapacity] = Field(default_factory=list)
     runtime_protocol_messages: list[RuntimeMessage] = Field(default_factory=list)
     runtime_protocol_sequences: dict[str, int] = Field(default_factory=dict)
     runtime_protocol_requests: list[RuntimeRequestRecord] = Field(default_factory=list)
