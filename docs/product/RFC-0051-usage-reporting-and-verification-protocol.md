@@ -1,19 +1,37 @@
-# RFC-0051 Usage Reporting and Verification Protocol
+# RFC-0051 Usage Reporting, Accounting Evidence and Verification Protocol
 
 Status: `Draft`
 
-Version: `0.3`
+Version: `0.8`
+
+Revision note: accepted Usage chain heads feed RFC-0037 Request Settlement
+Records; Usage remains evidence and never redirects Endpoint Payment.
+
+Supersedes:
+
+- `RFC-0051 Version 0.7`
 
 Depends on:
 
 - `RFC-0036 AiDN Ledger State Machine`
 - `RFC-0037 Settlement Engine`
 - `RFC-0041 Reputation Profile Engine`
-- `RFC-0044 Session Protocol`
+- `RFC-0042 AiDN Hypervisor Network Protocol and Dispatcher Architecture`
 - `RFC-0045 Capability Architecture`
-- `RFC-0049 Distributed Marketplace & Advertisement Registry`
-- `RFC-0053 Capability Runtime Specification`
-- `RFC-0057 Validation Report Specification`
+- `RFC-0046 AiDN Registry Architecture`
+
+Extended by:
+
+- `RFC-0044 AiDN Session Protocol`
+- `RFC-0049 Distributed Marketplace and Endpoint Advertisement Registry`
+- `RFC-0053 AiDN Capability Runtime Specification`
+- `RFC-0054 AiDN Capability Runtime Protocol`
+- `RFC-0056 AiDN Provider Plugin Runtime Interface`
+- `RFC-0059 Ledger Operation Catalog`
+- `RFC-0060 Session Failure, Recovery and Forced Settlement`
+- `RFC-0063 Proxy Endpoint Protocol`
+- `RFC-0064 Validation Assignment, Concealed Session and Escrow Protocol`
+- `RFC-0066 Protocol Upgrade and Emergency Recovery`
 
 ## 1. Purpose
 
@@ -25,7 +43,24 @@ The Usage Reporting and Verification Protocol defines how billable usage is:
 - statistically evaluated by the network;
 - applied during Settlement.
 
-Every Endpoint SHALL report usage.
+Every accepted Request SHALL produce at least one Usage Report envelope. Every
+terminal Request SHALL produce one Final Usage Report. A report containing only
+honest `UNAVAILABLE` or `NOT_APPLICABLE` dimensions remains a valid protocol
+object when the accepted Accounting Contract permits that limitation.
+
+An RFC-0053 Runtime Usage Profile SHALL bind to Runtime ID and Runtime
+Configuration Hash. Each dimension independently declares unit, availability,
+authority, cumulative behavior, Request/Session scope, billing eligibility and
+limitations. Unknown values remain unknown; a missing Provider metric SHALL NOT
+be converted to zero.
+
+RFC-0054 transports, but does not redefine, the RFC-0051 Usage Report object.
+`RUNTIME_USAGE_REPORT` SHALL carry Runtime ID and Generation,
+Configuration Hash, Endpoint/Session/Request identity, Usage sequence, previous
+Report Hash, per-dimension authority, provider attempts, cumulative/terminal
+flags, Report Hash and persistent Runtime authentication. Acknowledgment states
+are `ACCEPTED`, `DUPLICATE`, `REJECTED`, `CONFLICT` and `OUT_OF_SEQUENCE`.
+Transport delivery acknowledgment SHALL NOT replace this Usage acknowledgment.
 
 Independent verification of reported usage is desirable but is not universally possible.
 
@@ -126,9 +161,49 @@ Examples:
 
 The Settlement Engine SHALL preserve the Accounting Mode and verification status of every billable unit.
 
+### 4.1 Usage Authority Classes
+
+Every reported or discoverable usage dimension SHALL identify one authority
+class when a value exists:
+
+- `AUTHORITATIVE_PROVIDER`: an upstream Provider is the contractually accepted
+  source;
+- `DETERMINISTIC_LOCAL`: both parties can reproduce the value from a fixed
+  local rule;
+- `OBSERVABLE_LOCAL`: the value is measured from Consumer-visible or
+  Hypervisor-observable work;
+- `ESTIMATED`: the value is informative and non-authoritative;
+
+Authority is declared per dimension, not once for an entire Endpoint. A Runtime
+Adapter may report authoritative output tokens and observable execution time in
+the same Request.
+
+An `ESTIMATED` value SHALL NOT be promoted to exact billable usage without an
+Accounting Contract rule that independently makes the calculation
+deterministic.
+
+### 4.2 Usage Availability
+
+Every dimension has one Availability state:
+
+- `AVAILABLE`: a usable value exists;
+- `PARTIAL`: only part of relevant execution was observed;
+- `UNAVAILABLE`: no defensible value exists;
+- `NOT_APPLICABLE`: the dimension does not apply.
+
+`UNAVAILABLE` and `NOT_APPLICABLE` carry no numeric value and no Authority
+Class. Zero remains a measurement and SHALL NOT represent unavailable data.
+`PARTIAL` carries a value and Authority but SHALL NOT be treated as complete.
+
 ## 5. Usage Reporting Obligation
 
-Every Endpoint SHALL produce signed Usage Reports.
+Every accepted Request SHALL produce authenticated Usage Reports. Report Types
+are `INTERIM`, `CHECKPOINT`, `FINAL`, `CORRECTION`, `RECOVERY` and
+`DIAGNOSTIC`.
+
+Every terminal Request SHALL produce exactly one accepted Final Report for its
+terminal chain position. Runtime Result finalization SHALL fail while the
+matching Final Report is missing, rejected, conflicting or out of sequence.
 
 Each Usage Report SHALL identify:
 
@@ -146,12 +221,33 @@ Each Usage Report SHALL identify:
 - previous report hash;
 - Provider signature.
 
+The canonical report also binds Runtime ID and Generation, Runtime
+Configuration Hash, Endpoint Configuration Hash, Request ID, Accounting
+Contract Hash, Request state, Provider attempts, observation interval,
+limitations and immutable Report Hash.
+
 Failure to issue required Usage Reports MAY:
 
 - pause execution;
 - stop new requests;
 - terminate the Session;
 - reduce operational Reputation Metrics.
+
+### 5.1 Runtime Usage Profile
+
+Every Runtime publishes a hash-bound Usage Profile containing Runtime ID and
+Generation, Runtime Configuration reference, Adapter version, expected
+Availability and Authority per dimension, cumulative semantics, Request/Session
+scope, billing eligibility, retry reporting and Provider-attempt reporting.
+
+`RuntimeConfigurationHash` commits to `UsageProfileHash`. To avoid an impossible
+hash cycle, `UsageProfileHash` commits to profile semantics but excludes the
+back-reference `runtime_configuration_hash`. The Profile object still carries
+that exact Configuration Hash, and admission validates both directions.
+
+Before execution the Hypervisor validates the accepted Accounting Contract
+against the active Runtime Usage Profile. A required unavailable dimension with
+no declared fallback rejects the Request before substantial execution.
 
 ## 6. Accounting Modes
 
@@ -164,6 +260,7 @@ The initial Accounting Modes are:
 - `PROVIDER_METERED`
 - `FIXED_PRICE`
 - `PROXY_OPAQUE`
+- `HYBRID`
 
 A single Endpoint MAY use different modes for different units.
 
@@ -648,6 +745,12 @@ Checkpoints MAY occur:
 
 Endpoint policy SHALL publish checkpoint rules.
 
+A Checkpoint binds Session ID, Request ID, accepted Usage Report ID and Hash,
+Usage Sequence, calculated charge, current Session exposure, remaining Deposit,
+Accounting Contract Hash, Checkpoint Sequence and signatures. Acknowledgment
+authorizes continued bounded exposure; it does not claim independent
+reproduction of Provider-metered values.
+
 ## 27. Rolling Reporting
 
 Long-running Sessions SHALL use rolling Usage Reporting.
@@ -674,7 +777,13 @@ When the threshold is reached:
 
 ## 29. Usage Acknowledgement
 
-The Consumer MAY acknowledge a Usage Report.
+The Hypervisor SHALL acknowledge every authenticated Usage Report with one of:
+`ACCEPTED`, `DUPLICATE`, `REJECTED`, `CONFLICT`, `OUT_OF_SEQUENCE` or
+`PENDING_REVIEW`. Transport delivery acknowledgment SHALL NOT replace this
+semantic Usage acknowledgment.
+
+An accepted Session participant MAY additionally acknowledge a Usage
+Checkpoint.
 
 ```yaml
 usage_ack:
@@ -699,6 +808,10 @@ Initial Verification Status values are:
 Acknowledgement authorizes accepted usage for later Settlement.
 
 It does not imply that every unit was independently reproduced.
+
+Conflicting signed reports and sequence/chain gaps SHALL preserve both hashes
+as durable evidence. Redelivery retains the original Report ID, sequence, hash,
+dimensions and Provider attempts.
 
 ## 30. Verification Is Desirable, Not Mandatory
 
@@ -1474,9 +1587,15 @@ The MVP SHALL support:
 
 - mandatory signed Provider Usage Reports;
 - versioned Accounting Contracts;
-- all five Accounting Modes;
+- all six Accounting Modes, including `HYBRID`;
+- `AVAILABLE`, `PARTIAL`, `UNAVAILABLE` and `NOT_APPLICABLE`;
+- dimension-specific Authority with no Authority on unavailable values;
+- Runtime Usage Profiles and pre-admission Contract compatibility;
+- one Usage envelope for every accepted Request;
+- one Final Usage Report for every terminal Request;
 - cumulative report sequences;
 - Consumer acknowledgements;
+- conflict and out-of-sequence evidence preservation;
 - deterministic verification when available;
 - observable-unit verification;
 - Provider-Metered acceptance;
@@ -1492,6 +1611,7 @@ The MVP SHALL support:
 - robust peer comparison;
 - Marketplace Accounting Transparency;
 - Reputation event generation.
+- correction and dispute records;
 
 The MVP MAY postpone:
 
@@ -1525,6 +1645,11 @@ The following remain Capability-specific or configurable:
 ## 78. Design Invariants
 
 - Every Endpoint reports usage.
+- Every accepted Request produces a Usage Report envelope.
+- Every terminal Request produces an accepted Final Usage Report.
+- Unavailable is not zero and carries no numeric Authority.
+- Partial is not complete and Not Applicable is not Unavailable.
+- Usage Reports, charge calculation and Settlement remain distinct objects.
 - Independent verification is desirable but not universally required.
 - Accounting limitations are declared before Session execution.
 - Unknown upstream usage remains explicitly unknown.
@@ -1542,3 +1667,11 @@ The following remain Capability-specific or configurable:
 - Reputation distinguishes opacity, transparency, and correctness.
 - Budget limits protect Consumers even when exact usage cannot be reproduced.
 - The Proxy Endpoint remains responsible for its published Accounting Contract.
+
+## RFC-0037 Settlement Evidence Binding
+
+Settlement consumes only the accepted Final Usage chain head and the exact
+Accounting Contract Hash for each Request. It applies Availability, Authority,
+fallback, retry and terminal-state rules before Request and Session ceilings.
+Usage Reports SHALL NOT name or redirect the Endpoint Payment Beneficiary;
+Provider cost remains separate from Consumer-facing Endpoint Payment.

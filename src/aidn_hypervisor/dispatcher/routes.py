@@ -7,8 +7,32 @@ from aidn_hypervisor.sessions.models import EndpointSession
 
 
 RUNTIME_MESSAGE_TYPES = {
+    "RUNTIME_EXECUTE",
+    "RUNTIME_USAGE_ACK",
+    "RUNTIME_CANCEL",
+    "RUNTIME_STATE_RESET",
+    "RUNTIME_RECOVERY_PLAN",
+    "RUNTIME_DRAIN",
+    "RUNTIME_SHUTDOWN",
+    # Compatibility alias for the pre-RFC-0054 execution projection.
     "RUNTIME_EXECUTION_REQUEST",
     "RUNTIME_CANCELLATION",
+    "RUNTIME_RECOVERY_STATE",
+    "RUNTIME_DRAIN_STATUS",
+    "RUNTIME_DRAIN_COMPLETE",
+}
+
+RUNTIME_INGRESS_MESSAGE_TYPES = {
+    "RUNTIME_READY",
+    "RUNTIME_HEALTH",
+    "RUNTIME_CAPACITY",
+    "RUNTIME_RESULT",
+    "RUNTIME_CANCEL_RESULT",
+    "RUNTIME_STREAM_OPEN",
+    "RUNTIME_STREAM_CHUNK",
+    "RUNTIME_STREAM_CLOSE",
+    "RUNTIME_ARTIFACT_DECLARE",
+    "RUNTIME_STATE_CHECKPOINT",
     "RUNTIME_RECOVERY_STATE",
 }
 
@@ -42,17 +66,43 @@ def runtime_route(
     *,
     route_generation: int,
 ) -> DispatcherRoute:
-    if binding.status != "ready":
+    binding = RuntimeBinding.model_validate(binding.model_dump(mode="json"))
+    if binding.operational_state != "READY":
         raise ValueError("only ready Runtime Bindings may receive RUNTIME routes")
     return DispatcherRoute(
         destination_type="RUNTIME",
-        destination_id=binding.runtime_binding_id,
+        destination_id=binding.runtime_id,
         route_type="LOCAL_RUNTIME",
         route_generation=route_generation,
+        runtime_generation=binding.runtime_generation,
         allowed_source_types={"HYPERVISOR", "ENDPOINT"},
         allowed_channel_classes={"RUNTIME"},
         allowed_message_types=set(RUNTIME_MESSAGE_TYPES),
-        runtime_binding_hash=binding.compatibility_bundle_id,
+        runtime_binding_hash=binding.binding_hash(),
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def runtime_ingress_route(
+    binding: RuntimeBinding,
+    *,
+    route_generation: int,
+) -> DispatcherRoute:
+    """Scoped Runtime-to-Hypervisor event route for one approved binding."""
+    binding = RuntimeBinding.model_validate(binding.model_dump(mode="json"))
+    if binding.operational_state != "READY":
+        raise ValueError("only ready Runtime Bindings may send Runtime ingress events")
+    return DispatcherRoute(
+        destination_type="HYPERVISOR_RUNTIME_INGRESS",
+        destination_id=binding.runtime_id,
+        route_type="LOCAL_PROTOCOL_HANDLER",
+        route_generation=route_generation,
+        runtime_generation=binding.runtime_generation,
+        allowed_source_types={"RUNTIME"},
+        allowed_source_ids={binding.runtime_id},
+        allowed_channel_classes={"RUNTIME"},
+        allowed_message_types=set(RUNTIME_INGRESS_MESSAGE_TYPES),
+        runtime_binding_hash=binding.binding_hash(),
         created_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -131,6 +181,18 @@ def bind_runtime_route(
     route_generation: int,
 ) -> DispatcherRoute:
     route = runtime_route(binding, route_generation=route_generation)
+    dispatcher.register_local_route(route, handler)
+    return route
+
+
+def bind_runtime_ingress_route(
+    dispatcher,
+    binding: RuntimeBinding,
+    handler: Callable[[dict], object],
+    *,
+    route_generation: int,
+) -> DispatcherRoute:
+    route = runtime_ingress_route(binding, route_generation=route_generation)
     dispatcher.register_local_route(route, handler)
     return route
 

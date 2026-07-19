@@ -1,7 +1,7 @@
 import hashlib
 import json
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import time
 from urllib import error as urllib_error, request as urllib_request
 from uuid import uuid4
@@ -21,10 +21,17 @@ from aidn_hypervisor.economics.models import (
     FaucetClaim,
     RecyclableRemoval,
 )
+from aidn_hypervisor.endpoints.state import (
+    EndpointConfigurationSnapshotRecord,
+    EndpointManifestSnapshot,
+)
 from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
+from aidn_hypervisor.plugins.host import PluginHostJsonWireAdapter
+from aidn_hypervisor.plugins.host_named_pipe import WindowsNamedPipePluginHostListener
+from aidn_hypervisor.plugins.host_unix_socket import UnixSocketPluginHostListener
 from aidn_hypervisor.queue import InMemoryTaskQueue, QueuedTask
 from aidn_hypervisor.reputation import build_reputation_profile
 from aidn_hypervisor.registry_models import (
@@ -36,16 +43,34 @@ from aidn_hypervisor.registry_models import (
     RegistryRating,
 )
 from aidn_hypervisor.registry_service import RegistryService
+from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
+from aidn_hypervisor.runtime_protocol.models import (
+    RuntimeExecuteRequest,
+    RuntimeRequestRecord,
+    RuntimeUsageReport,
+)
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.sessions.models import ProxySessionBinding
+from aidn_hypervisor.settlement.models import (
+    RequestSettlementInput,
+    SessionFundingAccount,
+    SessionSettlementAcceptance,
+    SettlementAccountingTerms,
+    SettlementChargeComponent,
+    TerminalChargePolicy,
+)
+from aidn_hypervisor.settlement.service import SettlementEngine
 from aidn_hypervisor.state import (
     AllocationSnapshot,
     BundleStateSnapshot,
+    EndpointSessionSnapshot,
     HypervisorStateSnapshot,
     JournalEvent,
+    LockedDepositSnapshot,
     OperatorOnboardingSnapshot,
     ModelInstallSnapshot,
     OwnerWalletSnapshot,
+    ProxySessionBindingSnapshot,
     RuntimeSnapshot,
     TaskSnapshot,
     WalletAllocationActivationSnapshot,
@@ -55,6 +80,8 @@ from aidn_hypervisor.state import (
     WalletSessionSnapshot,
     WalletUsageSnapshot,
 )
+
+Q_ATOMS_PER_Q = 1_000_000
 from aidn_hypervisor.wallet import quote_usage_q
 from aidn_hypervisor.wallet_models import (
     WalletAllocationActivationEvent,
@@ -85,6 +112,16 @@ _DEFAULT_EPOCH_REWARD_POOL_SHARES = {
     "validation": 0.3,
     "faucet": 0.1,
 }
+
+
+def _canonical_hash(payload: dict) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def _empty_resource_summary() -> dict[str, dict[str, float | int]]:
@@ -155,6 +192,7 @@ class HypervisorService:
         base_emission_q: float = 5000.0,
         epoch_reward_pool_shares: dict | None = None,
         provider_inventory=None,
+        runtime_protocol_store=None,
     ) -> None:
         self.queue = queue
         self.scheduler = scheduler
@@ -169,6 +207,10 @@ class HypervisorService:
             plugins=self.plugins,
             store=InMemoryProviderInventoryStore(),
         )
+        self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
+            state_store
+        )
+        self._plugin_host_listeners: list[object] = []
         self.max_active_allocations_per_owner = max_active_allocations_per_owner
         self.max_pending_allocations_per_owner = max_pending_allocations_per_owner
         self.node_id = node_id
@@ -364,6 +406,436 @@ class HypervisorService:
 
     def wallet_next_operation_sequence(self, wallet_id: str) -> int:
         return self._ledger_operation_service.wallet_next_sequence(wallet_id)
+
+    def wallet_q_atom_balance(self, wallet_id: str) -> int:
+        return self._ledger_operation_service.wallet_q_atom_balance(wallet_id)
+
+    def get_session_funding_account(self, session_id: str) -> SessionFundingAccount:
+        return self._ledger_operation_service.get_session_funding_account(session_id)
+
+    def credit_wallet_q_atoms(self, *, wallet_id: str, amount_q_atoms: int) -> int:
+        balance = self._ledger_operation_service.credit_wallet_q_atoms(
+            wallet_id=wallet_id,
+            amount_q_atoms=amount_q_atoms,
+        )
+        self._persist_state()
+        return balance
+
+    def lock_session_funding(self, funding, *, created_at: str | None = None):
+        locked = self._ledger_operation_service.lock_session_funding(
+            funding,
+            created_at=created_at,
+        )
+        self._persist_state()
+        return locked
+
+    def apply_settlement_evaluation(self, evaluation, *, created_at: str | None = None):
+        funding = self._ledger_operation_service.apply_settlement_evaluation(
+            evaluation,
+            created_at=created_at,
+        )
+        self._persist_state()
+        return funding
+
+    def propose_settlement(self, evaluation, *, created_at: str | None = None):
+        proposal = self._ledger_operation_service.propose_settlement(
+            evaluation,
+            created_at=created_at,
+        )
+        self._persist_state()
+        return proposal
+
+    def accept_settlement(self, acceptance, *, created_at: str | None = None):
+        accepted = self._ledger_operation_service.accept_settlement(
+            acceptance,
+            created_at=created_at,
+        )
+        self._persist_state()
+        return accepted
+
+    def finalize_accepted_settlement(self, evaluation, *, created_at: str | None = None):
+        funding = self._ledger_operation_service.finalize_accepted_settlement(
+            evaluation,
+            created_at=created_at,
+        )
+        self._persist_state()
+        return funding
+
+    def force_finalize_fixed_price_settlement(self, evaluation, **kwargs):
+        funding = self._ledger_operation_service.force_finalize_fixed_price_settlement(
+            evaluation,
+            **kwargs,
+        )
+        self._persist_state()
+        return funding
+
+    def open_mvp_fixed_price_session(
+        self,
+        *,
+        session_service,
+        endpoint,
+        client_wallet: str,
+        deposit_q_atoms: int,
+        fixed_price_q_atoms: int,
+        network_fee_reserve_q_atoms: int = 0,
+        accounting_contract: dict | None = None,
+    ):
+        if deposit_q_atoms <= 0:
+            raise ValueError("MVP Session deposit must be positive")
+        if network_fee_reserve_q_atoms < 0:
+            raise ValueError("Network Fee Reserve cannot be negative")
+        payment_reserve = deposit_q_atoms - network_fee_reserve_q_atoms
+        if payment_reserve < fixed_price_q_atoms:
+            raise ValueError("MVP Session deposit cannot cover fixed price")
+        if self.wallet_q_atom_balance(client_wallet) < deposit_q_atoms:
+            raise ValueError("insufficient q_atoms for MVP Session escrow")
+
+        result = session_service.open_session(
+            endpoint_id=endpoint.endpoint_id,
+            client_wallet=client_wallet,
+            provider_wallet=endpoint.owner_wallet,
+            endpoint_payment_beneficiary=endpoint.owner_wallet,
+            consumer_refund_beneficiary=client_wallet,
+            node_id=self.node_id,
+            deposit_q=deposit_q_atoms / Q_ATOMS_PER_Q,
+            deposit_q_atoms=deposit_q_atoms,
+            fixed_price_q_atoms=fixed_price_q_atoms,
+            request_charge_ceiling_q_atoms=fixed_price_q_atoms,
+            economic_profile="MVP-0001",
+            session_policy=endpoint.session.model_dump(mode="json"),
+            accounting_contract=accounting_contract,
+            endpoint_configuration_hash=endpoint.configuration_hash,
+        )
+        funding = SessionFundingAccount(
+            session_id=result.session.session_id,
+            session_contract_hash=result.session.session_contract_hash,
+            funding_class="ESCROW_PREPAID",
+            consumer_funding_account=client_wallet,
+            endpoint_payment_beneficiary=result.session.endpoint_payment_beneficiary,
+            consumer_refund_beneficiary=result.session.consumer_refund_beneficiary,
+            total_locked_amount_q_atoms=deposit_q_atoms,
+            endpoint_payment_reserve_q_atoms=payment_reserve,
+            network_fee_reserve_q_atoms=network_fee_reserve_q_atoms,
+            unsettled_payment_reserve_q_atoms=payment_reserve,
+            unsettled_fee_reserve_q_atoms=network_fee_reserve_q_atoms,
+        )
+        try:
+            locked = self.lock_session_funding(funding)
+        except Exception:
+            session_service.store.discard_open_session(result.session.session_id)
+            raise
+        session = session_service.bind_canonical_funding(
+            result.session.session_id,
+            funding_state_hash=str(locked.funding_state_hash),
+        )
+        return session, result.deposit, locked
+
+    def build_mvp_fixed_price_settlement_evaluation(
+        self,
+        *,
+        session_service,
+        session_id: str,
+        request_id: str,
+        actual_network_fees_q_atoms: int = 0,
+        settlement_sequence: int = 1,
+        proposal_expiration: str | None = None,
+    ):
+        session = session_service.store.get_session(session_id)
+        if session.economic_profile != "MVP-0001":
+            raise ValueError("Session is not an MVP-0001 economic Session")
+        if session.fixed_price_q_atoms is None:
+            raise ValueError("MVP Session is missing fixed_price_q_atoms")
+        if session.request_charge_ceiling_q_atoms is None:
+            raise ValueError("MVP Session is missing request_charge_ceiling_q_atoms")
+        if session.accounting_contract_hash is None:
+            raise ValueError("MVP Session is missing accounting_contract_hash")
+        if session.session_contract_hash is None:
+            raise ValueError("MVP Session is missing session_contract_hash")
+        if session.canonical_funding_state_hash is None:
+            raise ValueError("MVP Session is not bound to canonical funding")
+
+        matching_requests = [
+            item
+            for item in self.runtime_protocol_store.requests.values()
+            if item.request.session_id == session_id
+        ]
+        if len(matching_requests) != 1 or matching_requests[0].request_id != request_id:
+            raise ValueError("MVP-0001 supports exactly one Runtime Request per Session")
+        record = matching_requests[0]
+        if record.request.endpoint_id != session.endpoint_id:
+            raise ValueError("Runtime Request Endpoint does not match Session")
+        if record.request.endpoint_configuration_hash != session.endpoint_configuration_hash:
+            raise ValueError("Runtime Request Endpoint Configuration does not match Session")
+        if record.request.session_contract_hash != session.session_contract_hash:
+            raise ValueError("Runtime Request Session Contract does not match Session")
+        if record.request.accounting_contract_hash != session.accounting_contract_hash:
+            raise ValueError("Runtime Request Accounting Contract does not match Session")
+        if record.terminal_result_hash is None or record.terminal_final_usage_report_id is None:
+            raise ValueError("Runtime Request is not terminal with Final Usage")
+
+        final_usage = self.runtime_protocol_store.usage_reports.get(
+            record.terminal_final_usage_report_id
+        )
+        if final_usage is None:
+            raise ValueError("Final Usage Report is missing from Runtime store")
+        request_reports = sorted(
+            (
+                item
+                for item in self.runtime_protocol_store.usage_reports.values()
+                if item.request_id == request_id
+            ),
+            key=lambda item: item.usage_sequence,
+        )
+        if not request_reports or request_reports[-1].usage_report_id != final_usage.usage_report_id:
+            raise ValueError("Final Usage Report is not the current Usage chain head")
+
+        usage_conflicted = any(
+            item.request_id == request_id
+            for item in self.runtime_protocol_store.usage_conflicts.values()
+        )
+        request_input = RequestSettlementInput(
+            session_id=session_id,
+            request_id=request_id,
+            request_charge_ceiling_q_atoms=session.request_charge_ceiling_q_atoms,
+            accounting_contract_hash=session.accounting_contract_hash,
+            terminal_state=record.request_state,
+            result_reference=record.terminal_result_hash,
+            final_usage_report_id=final_usage.usage_report_id,
+            final_usage_report_hash=final_usage.report_hash,
+            usage_sequence=final_usage.usage_sequence,
+            usage_chain_valid=not usage_conflicted,
+            usage_chain_conflicted=usage_conflicted,
+            dimensions=[
+                dimension.model_copy(deep=True)
+                for dimension in final_usage.dimensions
+            ],
+        )
+        terms = SettlementAccountingTerms(
+            accounting_contract_hash=session.accounting_contract_hash,
+            accounting_mode="fixed_price",
+            components=[
+                SettlementChargeComponent(
+                    component_id="mvp_fixed_request_price",
+                    fixed_amount_q_atoms=session.fixed_price_q_atoms,
+                )
+            ],
+            terminal_policies={
+                "COMPLETED": TerminalChargePolicy(mode="FULL_CHARGE"),
+                "PARTIAL": TerminalChargePolicy(mode="NO_CHARGE"),
+                "CANCELLED": TerminalChargePolicy(mode="NO_CHARGE"),
+                "FAILED": TerminalChargePolicy(mode="NO_CHARGE"),
+                "EXPIRED": TerminalChargePolicy(mode="NO_CHARGE"),
+                "UNRECOVERABLE": TerminalChargePolicy(mode="NO_CHARGE"),
+                "REJECTED": TerminalChargePolicy(mode="NO_CHARGE"),
+            },
+        )
+        funding = self.get_session_funding_account(session_id)
+        if funding.funding_state in {"RELEASED", "REFUNDED"}:
+            raise ValueError("MVP Session funding is already finalized")
+        if funding.funding_state_hash != session.canonical_funding_state_hash:
+            raise ValueError("Session funding hash no longer matches Session")
+        close_reference = _canonical_hash(
+            {
+                "economic_profile": "MVP-0001",
+                "session_id": session_id,
+                "request_id": request_id,
+                "terminal_result_hash": record.terminal_result_hash,
+                "final_usage_report_hash": final_usage.report_hash,
+                "settlement_sequence": settlement_sequence,
+            }
+        )
+        return SettlementEngine().evaluate_session(
+            funding=funding,
+            session_contract_hash=session.session_contract_hash,
+            effective_terms_hash=terms.terms_hash,
+            request_inputs=[request_input],
+            terms_by_hash={session.accounting_contract_hash: terms},
+            maximum_session_charge_q_atoms=session.request_charge_ceiling_q_atoms,
+            actual_network_fees_q_atoms=actual_network_fees_q_atoms,
+            session_close_reference=close_reference,
+            settlement_sequence=settlement_sequence,
+            proposal_expiration=proposal_expiration,
+        )
+
+    def build_mvp_endpoint_unavailable_refund_evaluation(
+        self,
+        *,
+        session_service,
+        session_id: str,
+        actual_network_fees_q_atoms: int = 0,
+        settlement_sequence: int = 1,
+        proposal_expiration: str | None = None,
+    ):
+        session = session_service.store.get_session(session_id)
+        if session.economic_profile != "MVP-0001":
+            raise ValueError("Session is not an MVP-0001 economic Session")
+        if session.request_charge_ceiling_q_atoms is None:
+            raise ValueError("MVP Session is missing request_charge_ceiling_q_atoms")
+        if session.session_contract_hash is None:
+            raise ValueError("MVP Session is missing session_contract_hash")
+        if session.canonical_funding_state_hash is None:
+            raise ValueError("MVP Session is not bound to canonical funding")
+        matching_requests = [
+            item
+            for item in self.runtime_protocol_store.requests.values()
+            if item.request.session_id == session_id
+        ]
+        if matching_requests:
+            raise ValueError("Endpoint-unavailable refund requires no accepted Runtime work")
+        funding = self.get_session_funding_account(session_id)
+        if funding.funding_state in {"RELEASED", "REFUNDED"}:
+            raise ValueError("MVP Session funding is already finalized")
+        if funding.funding_state_hash != session.canonical_funding_state_hash:
+            raise ValueError("Session funding hash no longer matches Session")
+        close_reference = _canonical_hash(
+            {
+                "economic_profile": "MVP-0001",
+                "session_id": session_id,
+                "reason": "ENDPOINT_UNAVAILABLE",
+                "settlement_sequence": settlement_sequence,
+            }
+        )
+        return SettlementEngine().evaluate_session(
+            funding=funding,
+            session_contract_hash=session.session_contract_hash,
+            effective_terms_hash=_canonical_hash(
+                {
+                    "economic_profile": "MVP-0001",
+                    "reason": "ENDPOINT_UNAVAILABLE",
+                    "terms": "zero_endpoint_payment",
+                }
+            ),
+            request_inputs=[],
+            terms_by_hash={},
+            maximum_session_charge_q_atoms=session.request_charge_ceiling_q_atoms,
+            actual_network_fees_q_atoms=actual_network_fees_q_atoms,
+            session_close_reference=close_reference,
+            settlement_sequence=settlement_sequence,
+            settlement_mode="FORCED",
+            proposal_expiration=proposal_expiration,
+        )
+
+    def finalize_mvp_fixed_price_session(
+        self,
+        *,
+        session_service,
+        session_id: str,
+        request_id: str,
+        consumer_signature: str,
+        actual_network_fees_q_atoms: int = 0,
+        settlement_sequence: int = 1,
+        proposal_expiration: str | None = None,
+        accepted_at: str | None = None,
+    ):
+        evaluation = self.build_mvp_fixed_price_settlement_evaluation(
+            session_service=session_service,
+            session_id=session_id,
+            request_id=request_id,
+            actual_network_fees_q_atoms=actual_network_fees_q_atoms,
+            settlement_sequence=settlement_sequence,
+            proposal_expiration=proposal_expiration,
+        )
+        if evaluation.proposal.dispute_reserve_q_atoms or any(
+            record.dispute_state != "NONE"
+            for record in evaluation.input_set.request_settlement_records
+        ):
+            raise ValueError(
+                "MVP cooperative Settlement requires undisputed Runtime evidence"
+            )
+        proposal = self.propose_settlement(evaluation)
+        acceptance = SessionSettlementAcceptance(
+            settlement_id=proposal.settlement_id,
+            session_id=session_id,
+            settlement_input_root=proposal.settlement_input_root,
+            accepted_endpoint_payment_q_atoms=proposal.final_endpoint_payment_q_atoms,
+            accepted_consumer_refund_q_atoms=(
+                proposal.consumer_payment_refund_q_atoms
+                + proposal.consumer_fee_refund_q_atoms
+            ),
+            accepted_network_fees_q_atoms=proposal.actual_network_fees_q_atoms,
+            consumer_signature=consumer_signature,
+            accepted_at=accepted_at or datetime.now(timezone.utc).isoformat(),
+        )
+        self.accept_settlement(acceptance)
+        funding = self.finalize_accepted_settlement(evaluation)
+        session_result = session_service.mark_canonical_settlement_finalized(
+            session_id,
+            settlement_evidence_root=evaluation.input_set.settlement_input_root,
+            endpoint_payment_q_atoms=proposal.final_endpoint_payment_q_atoms,
+            consumer_refund_q_atoms=(
+                proposal.consumer_payment_refund_q_atoms
+                + proposal.consumer_fee_refund_q_atoms
+            ),
+            network_fee_q_atoms=proposal.actual_network_fees_q_atoms,
+        )
+        self._persist_state()
+        return {
+            "evaluation": evaluation,
+            "proposal": proposal,
+            "acceptance": acceptance,
+            "funding": funding,
+            "session_result": session_result,
+        }
+
+    def force_finalize_mvp_fixed_price_session(
+        self,
+        *,
+        session_service,
+        session_id: str,
+        reason: str,
+        force_after: str,
+        request_id: str | None = None,
+        now: str | None = None,
+        actual_network_fees_q_atoms: int = 0,
+        settlement_sequence: int = 1,
+    ):
+        if reason == "ENDPOINT_UNAVAILABLE":
+            evaluation = self.build_mvp_endpoint_unavailable_refund_evaluation(
+                session_service=session_service,
+                session_id=session_id,
+                actual_network_fees_q_atoms=actual_network_fees_q_atoms,
+                settlement_sequence=settlement_sequence,
+            )
+            no_request = True
+        elif reason == "CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE":
+            if request_id is None:
+                raise ValueError("forced completed fixed-price payment requires request_id")
+            evaluation = self.build_mvp_fixed_price_settlement_evaluation(
+                session_service=session_service,
+                session_id=session_id,
+                request_id=request_id,
+                actual_network_fees_q_atoms=actual_network_fees_q_atoms,
+                settlement_sequence=settlement_sequence,
+            )
+            no_request = False
+        else:
+            raise ValueError("unsupported forced Settlement reason")
+        funding = self.force_finalize_fixed_price_settlement(
+            evaluation,
+            reason=reason,
+            force_after=force_after,
+            now=now,
+        )
+        proposal = evaluation.proposal
+        session_result = session_service.mark_canonical_settlement_finalized(
+            session_id,
+            settlement_evidence_root=evaluation.input_set.settlement_input_root,
+            endpoint_payment_q_atoms=proposal.final_endpoint_payment_q_atoms,
+            consumer_refund_q_atoms=(
+                proposal.consumer_payment_refund_q_atoms
+                + proposal.consumer_fee_refund_q_atoms
+            ),
+            network_fee_q_atoms=proposal.actual_network_fees_q_atoms,
+            close_reason=f"forced_{reason.lower()}",
+            no_request=no_request,
+        )
+        self._persist_state()
+        return {
+            "evaluation": evaluation,
+            "proposal": proposal,
+            "funding": funding,
+            "session_result": session_result,
+        }
 
     def record_ledger_operation(
         self,
@@ -2431,6 +2903,34 @@ class HypervisorService:
             for job in self.provider_inventory.list_installation_jobs()
         ]
 
+    def plugin_host_local_ingress(self):
+        """Return the install-scoped Plugin Host control ingress for local transports."""
+        return self.provider_inventory.plugin_host_local_ingress()
+
+    def start_windows_plugin_host_listener(self, *, address: str, authkey: bytes):
+        listener = WindowsNamedPipePluginHostListener(
+            address=address,
+            authkey=authkey,
+            wire_adapter=PluginHostJsonWireAdapter(self.plugin_host_local_ingress()),
+        )
+        listener.start()
+        self._plugin_host_listeners.append(listener)
+        return listener
+
+    def start_unix_plugin_host_listener(self, *, address: str):
+        listener = UnixSocketPluginHostListener(
+            address=address,
+            wire_adapter=PluginHostJsonWireAdapter(self.plugin_host_local_ingress()),
+        )
+        listener.start()
+        self._plugin_host_listeners.append(listener)
+        return listener
+
+    def stop_plugin_host_listeners(self) -> None:
+        for listener in self._plugin_host_listeners:
+            listener.stop()  # type: ignore[attr-defined]
+        self._plugin_host_listeners.clear()
+
     def list_provider_installation_artifacts(self) -> dict:
         return self.provider_inventory.installation_artifact_inventory().model_dump(
             mode="json"
@@ -2566,6 +3066,16 @@ class HypervisorService:
     def bundle_hash_for_runtime_binding(self, runtime_binding_id: str) -> str:
         return self.provider_inventory.bundle_hash_for_runtime_binding(
             runtime_binding_id
+        )
+
+    def runtime_binding_endpoint_admission(
+        self,
+        runtime_binding_id: str,
+        endpoint_payload: dict | None = None,
+    ) -> dict:
+        return self.provider_inventory.runtime_binding_endpoint_admission(
+            runtime_binding_id=runtime_binding_id,
+            endpoint_payload=endpoint_payload,
         )
 
     def mark_model_install_completed(self, install_id: str) -> dict:
@@ -2858,6 +3368,15 @@ class HypervisorService:
         return True
 
     def snapshot_state(self) -> HypervisorStateSnapshot:
+        endpoint_service = getattr(self, "endpoint_service", None)
+        endpoint_store = getattr(endpoint_service, "store", None)
+        session_service = getattr(self, "session_service", None)
+        session_store = getattr(session_service, "store", None)
+        persisted_snapshot = (
+            self.state_store.load()
+            if self.state_store is not None and hasattr(self.state_store, "load")
+            else None
+        )
         return HypervisorStateSnapshot(
             tasks=[
                 TaskSnapshot(
@@ -2941,6 +3460,76 @@ class HypervisorService:
                 job.model_copy(deep=True)
                 for job in self.provider_inventory.list_installation_jobs()
             ],
+            plugin_host_connections=self.provider_inventory.plugin_host_connection_store.snapshot(),
+            runtime_protocol_connections=list(
+                self.runtime_protocol_store.connections.values()
+            ),
+            runtime_protocol_ready_states=list(
+                self.runtime_protocol_store.ready_states.values()
+            ),
+            runtime_protocol_health_records=list(
+                self.runtime_protocol_store.health_records.values()
+            ),
+            runtime_protocol_capacity_records=list(
+                self.runtime_protocol_store.capacity_records.values()
+            ),
+            runtime_protocol_messages=list(self.runtime_protocol_store.messages.values()),
+            runtime_protocol_sequences=dict(
+                self.runtime_protocol_store.runtime_sequences
+            ),
+            runtime_protocol_requests=list(self.runtime_protocol_store.requests.values()),
+            runtime_protocol_cancellations=list(
+                self.runtime_protocol_store.cancellations.values()
+            ),
+            runtime_protocol_cancellation_results=list(
+                self.runtime_protocol_store.cancellation_results.values()
+            ),
+            runtime_protocol_results=list(self.runtime_protocol_store.results.values()),
+            runtime_protocol_streams=list(self.runtime_protocol_store.streams.values()),
+            runtime_protocol_stream_chunks=[
+                chunk
+                for chunks in self.runtime_protocol_store.stream_chunks.values()
+                for chunk in chunks.values()
+            ],
+            runtime_protocol_stream_closes=list(
+                self.runtime_protocol_store.stream_closes.values()
+            ),
+            runtime_protocol_artifacts=list(
+                self.runtime_protocol_store.artifacts.values()
+            ),
+            runtime_protocol_state_checkpoints=list(
+                self.runtime_protocol_store.state_checkpoints.values()
+            ),
+            runtime_protocol_recovery_states=list(
+                self.runtime_protocol_store.recovery_states.values()
+            ),
+            runtime_protocol_usage_reports=list(
+                self.runtime_protocol_store.usage_reports.values()
+            ),
+            runtime_protocol_usage_acks=list(
+                self.runtime_protocol_store.usage_acks.values()
+            ),
+            runtime_protocol_usage_conflicts=list(
+                self.runtime_protocol_store.usage_conflicts.values()
+            ),
+            runtime_protocol_recovery_plans=list(
+                self.runtime_protocol_store.recovery_plans.values()
+            ),
+            runtime_protocol_recovery_results=list(
+                self.runtime_protocol_store.recovery_results.values()
+            ),
+            runtime_protocol_drain_requests=list(
+                self.runtime_protocol_store.drain_requests.values()
+            ),
+            runtime_protocol_drain_statuses=list(
+                self.runtime_protocol_store.drain_statuses.values()
+            ),
+            runtime_protocol_drain_completes=list(
+                self.runtime_protocol_store.drain_completes.values()
+            ),
+            runtime_protocol_shutdowns=list(
+                self.runtime_protocol_store.shutdowns.values()
+            ),
             operator_requests_policy=dict(self._operator_requests_policy),
             owner_wallet=(
                 OwnerWalletSnapshot(**self._owner_wallet)
@@ -2987,8 +3576,92 @@ class HypervisorService:
             epoch_reward_budgets=[
                 EpochRewardBudget(**event) for event in self._epoch_reward_budgets
             ],
+            endpoints=(
+                [
+                    EndpointManifestSnapshot.model_validate(
+                        item.model_dump(mode="json")
+                    )
+                    for item in endpoint_store.list_manifests()
+                ]
+                if endpoint_store is not None
+                else (
+                    [item.model_copy(deep=True) for item in persisted_snapshot.endpoints]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
+            endpoint_configuration_snapshots=(
+                [
+                    EndpointConfigurationSnapshotRecord.model_validate(
+                        item.model_dump(mode="json")
+                    )
+                    for item in endpoint_store.list_all_configuration_snapshots()
+                ]
+                if endpoint_store is not None
+                and hasattr(endpoint_store, "list_all_configuration_snapshots")
+                else (
+                    [
+                        item.model_copy(deep=True)
+                        for item in persisted_snapshot.endpoint_configuration_snapshots
+                    ]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
+            endpoint_sessions=(
+                [
+                    EndpointSessionSnapshot.model_validate(
+                        item.model_dump(mode="json")
+                    )
+                    for item in session_store.list_sessions()
+                ]
+                if session_store is not None
+                else (
+                    [
+                        item.model_copy(deep=True)
+                        for item in persisted_snapshot.endpoint_sessions
+                    ]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
+            locked_deposits=(
+                [
+                    LockedDepositSnapshot.model_validate(item.model_dump(mode="json"))
+                    for item in session_store.list_deposits()
+                ]
+                if session_store is not None
+                and hasattr(session_store, "list_deposits")
+                else (
+                    [
+                        item.model_copy(deep=True)
+                        for item in persisted_snapshot.locked_deposits
+                    ]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
+            proxy_session_bindings=(
+                [
+                    ProxySessionBindingSnapshot.model_validate(
+                        item.model_dump(mode="json")
+                    )
+                    for item in session_store.list_proxy_session_bindings()
+                ]
+                if session_store is not None
+                and hasattr(session_store, "list_proxy_session_bindings")
+                else (
+                    [
+                        item.model_copy(deep=True)
+                        for item in persisted_snapshot.proxy_session_bindings
+                    ]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
             ledger_operations=self.list_ledger_operations(),
             wallet_operation_sequences=self._ledger_operation_service.snapshot_wallet_sequences(),
+            **self._ledger_operation_service.snapshot_settlement_state(),
             events=[event.model_copy(deep=True) for event in self._events],
         )
 
@@ -3024,6 +3697,17 @@ class HypervisorService:
                 event.model_dump(mode="json") for event in snapshot.ledger_operations
             ],
             wallet_sequences=dict(snapshot.wallet_operation_sequences),
+            wallet_q_atom_balances=dict(snapshot.wallet_q_atom_balances),
+            session_funding_accounts=[
+                item.model_dump(mode="json") for item in snapshot.session_funding_accounts
+            ],
+            settlement_proposals=[
+                item.model_dump(mode="json") for item in snapshot.settlement_proposals
+            ],
+            settlement_acceptances=[
+                item.model_dump(mode="json") for item in snapshot.settlement_acceptances
+            ],
+            settlement_transition_hashes=dict(snapshot.settlement_transition_hashes),
         )
         self._bundle_states = {
             state.bundle_id: state.model_dump(mode="json")
@@ -3055,6 +3739,7 @@ class HypervisorService:
             plugins=self.plugins,
             store=InMemoryProviderInventoryStore(),
             installation_executor=installation_executor,
+            plugin_host_connections=[item.model_dump(mode="json") for item in snapshot.plugin_host_connections],
         )
         for release in snapshot.plugin_releases:
             self.provider_inventory.store.save_plugin_release(release)
@@ -3072,6 +3757,7 @@ class HypervisorService:
             self.provider_inventory.store.save_installation_approval(approval)
         for job in snapshot.provider_installation_jobs:
             self.provider_inventory.store.save_installation_job(job)
+        self.runtime_protocol_store.restore(snapshot)
         self._wallet_usage_events = [
             event.model_dump(mode="json") for event in snapshot.wallet_usage_events
         ]
@@ -4319,6 +5005,12 @@ class HypervisorService:
                 bundle_id=bundle.bundle_id,
                 runtime_id=runtime.runtime_id if runtime is not None else None,
             )
+            self._record_mvp_runtime_evidence_for_completed_task(
+                task_id=task_id,
+                bundle=bundle,
+                task=task.request,
+                runtime=runtime,
+            )
             self._auto_record_wallet_usage_for_task(
                 task_id=task_id,
                 bundle=bundle,
@@ -4598,6 +5290,156 @@ class HypervisorService:
         if last_error is None:
             raise RuntimeError("invoke failed without an error")
         raise last_error
+
+    def _record_mvp_runtime_evidence_for_completed_task(
+        self,
+        *,
+        task_id: str,
+        bundle: BundleConfig,
+        task: TaskRequest,
+        runtime: RuntimeHandle | None,
+    ) -> RuntimeRequestRecord | None:
+        session_id = task.constraints.get("session_id")
+        endpoint_id = task.constraints.get("endpoint_id")
+        if session_id is None or endpoint_id is None:
+            return None
+        session_service = getattr(self, "session_service", None)
+        endpoint_service = getattr(self, "endpoint_service", None)
+        if session_service is None or endpoint_service is None:
+            return None
+        try:
+            session = session_service.store.get_session(str(session_id))
+            endpoint = endpoint_service.get_endpoint(str(endpoint_id)).endpoint
+        except KeyError:
+            return None
+        if session.economic_profile != "MVP-0001":
+            return None
+        if session.session_contract_hash is None:
+            raise RuntimeError("MVP Session is missing session_contract_hash")
+        if session.accounting_contract_hash is None:
+            raise RuntimeError("MVP Session is missing accounting_contract_hash")
+        if session.request_charge_ceiling_q_atoms is None:
+            raise RuntimeError("MVP Session is missing request_charge_ceiling_q_atoms")
+
+        request_id = str(task.constraints.get("request_id") or task_id)
+        runtime_id = runtime.runtime_id if runtime is not None else f"proxy:{bundle.bundle_id}"
+        runtime_configuration_hash = _canonical_hash(
+            {
+                "bridge": "MVP-0001_TASK_RUNTIME_COMPAT",
+                "bundle_id": bundle.bundle_id,
+                "bundle_model_id": bundle.model_id,
+                "endpoint_configuration_hash": endpoint.configuration_hash,
+            }
+        )
+        payload = {
+            "task_id": task_id,
+            "task_type": task.task_type,
+            "payload": task.payload,
+        }
+        request_deadline = str(
+            task.constraints.get("request_deadline")
+            or (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        )
+        request = RuntimeExecuteRequest(
+            runtime_id=runtime_id,
+            runtime_generation=1,
+            runtime_configuration_hash=runtime_configuration_hash,
+            route_generation=1,
+            endpoint_id=endpoint.endpoint_id,
+            endpoint_configuration_hash=endpoint.configuration_hash,
+            session_id=session.session_id,
+            session_contract_hash=session.session_contract_hash,
+            request_id=request_id,
+            capability_id=(endpoint.capabilities[0] if endpoint.capabilities else endpoint.model_class),
+            capability_version="1.0",
+            capability_definition_hash=_canonical_hash(
+                {
+                    "endpoint_id": endpoint.endpoint_id,
+                    "model_class": endpoint.model_class,
+                    "capabilities": endpoint.capabilities,
+                }
+            ),
+            request_payload_hash=_canonical_hash(payload),
+            request_payload=payload,
+            request_charge_ceiling=(
+                session.request_charge_ceiling_q_atoms / Q_ATOMS_PER_Q
+            ),
+            accounting_contract_hash=session.accounting_contract_hash,
+            idempotency_key=f"task:{task_id}",
+            request_deadline=request_deadline,
+            trace_context={
+                "task_id": task_id,
+                "bundle_id": bundle.bundle_id,
+                "bridge": "MVP-0001_TASK_RUNTIME_COMPAT",
+            },
+        )
+        existing = self.runtime_protocol_store.requests.get(request_id)
+        request_hash = request.semantic_hash()
+        if existing is not None:
+            if existing.request_hash != request_hash:
+                raise RuntimeError("MVP Runtime Request ID conflicts with task evidence")
+            if existing.terminal_result_hash is not None:
+                return existing
+
+        now = datetime.now(timezone.utc).isoformat()
+        result = self._task_results.get(task_id)
+        result_payload = result if isinstance(result, dict) else {"result": result}
+        final_usage = RuntimeUsageReport(
+            usage_report_id=f"usage-final-{request_id}",
+            runtime_id=request.runtime_id,
+            runtime_generation=request.runtime_generation,
+            runtime_configuration_hash=request.runtime_configuration_hash,
+            endpoint_id=request.endpoint_id,
+            endpoint_configuration_hash=request.endpoint_configuration_hash,
+            session_id=request.session_id,
+            request_id=request.request_id,
+            accounting_contract_hash=request.accounting_contract_hash,
+            report_type="FINAL",
+            usage_sequence=1,
+            request_state="COMPLETED",
+            provider_attempt_count=1,
+            terminal=True,
+            observed_from=now,
+            observed_to=now,
+            limitations=[
+                "MVP-0001 fixed-price bridge records execution envelope only; "
+                "token dimensions are not inferred."
+            ],
+            created_at=now,
+            runtime_signature="hypervisor-mvp-bridge",
+        )
+        self.runtime_protocol_store.requests[request_id] = RuntimeRequestRecord(
+            request_id=request_id,
+            runtime_id=request.runtime_id,
+            runtime_generation=request.runtime_generation,
+            route_generation=request.route_generation,
+            request_hash=request_hash,
+            request=request,
+            request_state="COMPLETED",
+            admission_state="ACCEPTED",
+            runtime_request_handle=f"task:{task_id}",
+            accepted_at=now,
+            terminal_result_hash=_canonical_hash(result_payload),
+            terminal_final_usage_report_id=final_usage.usage_report_id,
+            updated_at=now,
+        )
+        self.runtime_protocol_store.usage_reports[final_usage.usage_report_id] = (
+            final_usage
+        )
+        self.runtime_protocol_store.flush()
+        self.record_event(
+            event_type="runtime.mvp_evidence_recorded",
+            message="MVP Runtime evidence recorded from completed task",
+            task_id=task_id,
+            bundle_id=bundle.bundle_id,
+            runtime_id=runtime_id,
+            details={
+                "session_id": session.session_id,
+                "request_id": request_id,
+                "usage_report_id": final_usage.usage_report_id,
+            },
+        )
+        return self.runtime_protocol_store.requests[request_id]
 
     def _auto_record_wallet_usage_for_task(
         self,
@@ -5086,6 +5928,12 @@ class HypervisorService:
                 endpoint_id=manifest.endpoint_id,
                 session_id=str(session_id),
             )
+            session = session_service.store.get_session(str(session_id))
+            if session.economic_profile == "MVP-0001" and any(
+                item.request.session_id == str(session_id)
+                for item in self.runtime_protocol_store.requests.values()
+            ):
+                raise ValueError("MVP-0001 supports exactly one Runtime Request per Session")
         except KeyError as error:
             raise ValueError(f"Unknown session: {session_id}") from error
 
@@ -5278,6 +6126,12 @@ class HypervisorService:
                 message="task completed successfully",
                 task_id=task_id,
                 bundle_id=bundle.bundle_id,
+            )
+            self._record_mvp_runtime_evidence_for_completed_task(
+                task_id=task_id,
+                bundle=bundle,
+                task=task.request,
+                runtime=None,
             )
             self._auto_record_wallet_usage_for_task(
                 task_id=task_id,

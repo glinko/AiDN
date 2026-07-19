@@ -4377,6 +4377,19 @@ def test_service_executes_llm_task_via_ollama_plugin() -> None:
     ]
 
 
+def test_plugin_host_ingress_facade_delegates_to_provider_inventory() -> None:
+    expected = object()
+
+    class ProviderInventory:
+        def plugin_host_local_ingress(self):
+            return expected
+
+    service = object.__new__(HypervisorService)
+    service.provider_inventory = ProviderInventory()
+
+    assert service.plugin_host_local_ingress() is expected
+
+
 def test_service_executes_transcription_task_via_whisper_plugin() -> None:
     registry = PluginRegistry()
     plugin = StubWhisperPlugin()

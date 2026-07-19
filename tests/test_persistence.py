@@ -212,6 +212,7 @@ def test_file_state_store_round_trips_plugin_release_and_local_installation(
         release_id=release.release_id,
         plugin_id=release.plugin_id,
         plugin_version=release.plugin_version,
+        package_digest=release.package_digest,
         granted_permissions=["network.private"],
         installation_source="PACKAGE",
         installed_at="2026-07-18T00:00:01Z",

@@ -4,35 +4,24 @@ AiDN Hypervisor Network Protocol and Dispatcher Architecture
 
 Status: Draft
 
-Version: 0.3
+Version: 0.6
+
+Revision note: RFC-0054 Runtime semantic identity and sequence state remain
+distinct from outer network Message ID, delivery sequence and replay state.
 
 Supersedes:
 
-* RFC-0042 Version 0.2 - AiDN Hypervisor Network Protocol
+* RFC-0042 Version 0.5 - AiDN Hypervisor Network Protocol and Dispatcher Architecture
 
 Depends on:
 
 * RFC-0036 AiDN Ledger State Machine
 * RFC-0039 Hypervisor Service Model
-* RFC-0040 AiDN Service Verification Framework
-* RFC-0044 AiDN Session Protocol
-* RFC-0045 AiDN Capability Architecture
-* RFC-0046 Registry Architecture
-* RFC-0047 CometBFT Consensus Integration
-* RFC-0048 Epoch Engine
-* RFC-0049 Distributed Marketplace and Advertisement Registry
-* RFC-0053 Capability Runtime Specification
-* RFC-0054 Capability Runtime Protocol
-* RFC-0055 Provider Plugin System and Directory
-* RFC-0058 Participant Eligibility and Sybil Resistance
-* RFC-0059 Ledger Operation Catalog
-* RFC-0060 Session Failure, Recovery and Forced Settlement
-* RFC-0061 Registry Replication Protocol
-* RFC-0062 Snapshot and State Sync Protocol
-* RFC-0063 Proxy Endpoint Protocol
-* RFC-0064 Validation Assignment, Concealed Session and Escrow Protocol
-* RFC-0066 Protocol Upgrade and Emergency Recovery
-* RFC-0067 Protocol Governance and Authorization Policy
+
+Extended by:
+
+* RFC-0040 through RFC-0067 application, consensus, Registry, Runtime,
+  Session, Validation, Plugin, recovery and upgrade profiles as applicable.
 
 ---
 
@@ -2596,6 +2585,30 @@ External Provider or package egress is a separate policy boundary and MAY be
 restricted to declared Provider hosts, model repositories, package registries,
 OAuth hosts or no egress. Plugin permission expansion requires local approval.
 
+### 173.1 Plugin Host Message Profiles
+
+RFC-0056 handshake, capability, operation, Health, diagnostics and recovery
+objects are application payload profiles inside the common `network_message`
+envelope. They SHALL reuse RFC-0042 Message ID, source sequence, expiration,
+payload integrity, authentication, replay protection and Route Generation.
+
+The Dispatcher SHALL NOT accept a second nested transport identity as a
+replacement for the authenticated envelope source.
+
+An active Plugin control route binds:
+
+* Installed Plugin ID;
+* Installation Generation;
+* Plugin Session Identity;
+* granted permission hash;
+* owned Provider Instance and Model Deployment scope;
+* current Plugin Control Route Generation.
+
+Plugin Manager traffic targets `installed_plugin_id`. Provider and model object
+IDs remain operation scope, not alternate Plugin identities. Runtime Adapters
+register separately under RFC-0054 and use `RUNTIME`, not `PLUGIN_CONTROL`, for
+Session execution.
+
 ## 174. Bounded Queues and Admission
 
 The Dispatcher SHALL use bounded logical queues for Critical Control, High,
@@ -2734,6 +2747,28 @@ separate implementation slices, but SHALL invoke the same ingress pipeline.
 * Provider Plugins cannot impersonate Services, Wallets or Validators.
 * Dead Letter messages are not automatically replayed.
 * Connection recovery does not invent Session or economic state.
+
+## 184. Runtime Route Binding
+
+An RFC-0053 Runtime route SHALL include `runtime_id`, `runtime_generation`,
+`runtime_binding_hash` and `route_generation`. Runtime Generation authenticates
+the execution lineage; Route Generation authenticates the current delivery
+target. A message failing either comparison SHALL be rejected before Runtime
+delivery.
+
+`route_generation` is Dispatcher state and SHALL NOT be included in the
+immutable Runtime Binding or Runtime Configuration Hash. Reconnect may rotate a
+route without changing Runtime identity; incompatible Runtime replacement
+requires an explicit Runtime Generation transition.
+
+## 185. Runtime Semantic Identity
+
+RFC-0054 `runtime_message_id` identifies one execution-level event and remains
+stable across safe outer transport retransmission. RFC-0042 `message_id`
+identifies one routed delivery attempt. The Dispatcher SHALL validate both
+domains without assuming equality. Persistent Request, Result and Usage
+deduplication belongs to RFC-0054 semantic state, not only the transport replay
+cache.
 
 Комментарии к решениям
 

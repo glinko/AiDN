@@ -9,6 +9,11 @@ from aidn_hypervisor.economics.models import (
     RecyclableRemoval,
 )
 from aidn_hypervisor.ledger.models import LedgerOperationRecord
+from aidn_hypervisor.settlement.models import (
+    SessionFundingAccount,
+    SessionSettlementAcceptance,
+    SessionSettlementProposal,
+)
 from aidn_hypervisor.dispatcher.models import (
     DeadLetterRecord,
     DeliveryRecord,
@@ -25,6 +30,33 @@ from aidn_hypervisor.providers.models import (
     ProviderInstallationJob,
     ProviderInstance,
     RuntimeBinding,
+)
+from aidn_hypervisor.plugins.host import PluginHostConnection
+from aidn_hypervisor.runtime_protocol.models import (
+    RuntimeCapacity,
+    RuntimeArtifactDeclare,
+    RuntimeCancellationRecord,
+    RuntimeCancelResult,
+    RuntimeConnection,
+    RuntimeDrainComplete,
+    RuntimeDrainRequest,
+    RuntimeDrainStatus,
+    RuntimeHealth,
+    RuntimeMessage,
+    RuntimeReady,
+    RuntimeRecoveryPlan,
+    RuntimeRecoveryResult,
+    RuntimeRecoveryState,
+    RuntimeResult,
+    RuntimeShutdown,
+    RuntimeStateCheckpoint,
+    RuntimeStreamChunk,
+    RuntimeStreamClose,
+    RuntimeStreamOpen,
+    RuntimeRequestRecord,
+    RuntimeUsageAck,
+    RuntimeUsageConflict,
+    RuntimeUsageReport,
 )
 from aidn_hypervisor.endpoints.state import (
     EndpointConfigurationSnapshotRecord,
@@ -305,6 +337,7 @@ class HypervisorStateSnapshot(BaseModel):
     provider_installation_jobs: list[ProviderInstallationJob] = Field(
         default_factory=list
     )
+    plugin_host_connections: list[PluginHostConnection] = Field(default_factory=list)
     dispatcher_routes: list[DispatcherRoute] = Field(default_factory=list)
     dispatcher_queued_messages: list[NetworkMessage] = Field(default_factory=list)
     dispatcher_delivery_records: list[DeliveryRecord] = Field(default_factory=list)
@@ -312,6 +345,57 @@ class HypervisorStateSnapshot(BaseModel):
         default_factory=list
     )
     dispatcher_dead_letters: list[DeadLetterRecord] = Field(default_factory=list)
+    runtime_protocol_connections: list[RuntimeConnection] = Field(default_factory=list)
+    runtime_protocol_ready_states: list[RuntimeReady] = Field(default_factory=list)
+    runtime_protocol_health_records: list[RuntimeHealth] = Field(default_factory=list)
+    runtime_protocol_capacity_records: list[RuntimeCapacity] = Field(default_factory=list)
+    runtime_protocol_messages: list[RuntimeMessage] = Field(default_factory=list)
+    runtime_protocol_sequences: dict[str, int] = Field(default_factory=dict)
+    runtime_protocol_requests: list[RuntimeRequestRecord] = Field(default_factory=list)
+    runtime_protocol_cancellations: list[RuntimeCancellationRecord] = Field(
+        default_factory=list
+    )
+    runtime_protocol_cancellation_results: list[RuntimeCancelResult] = Field(
+        default_factory=list
+    )
+    runtime_protocol_results: list[RuntimeResult] = Field(default_factory=list)
+    runtime_protocol_streams: list[RuntimeStreamOpen] = Field(default_factory=list)
+    runtime_protocol_stream_chunks: list[RuntimeStreamChunk] = Field(
+        default_factory=list
+    )
+    runtime_protocol_stream_closes: list[RuntimeStreamClose] = Field(
+        default_factory=list
+    )
+    runtime_protocol_artifacts: list[RuntimeArtifactDeclare] = Field(
+        default_factory=list
+    )
+    runtime_protocol_state_checkpoints: list[RuntimeStateCheckpoint] = Field(
+        default_factory=list
+    )
+    runtime_protocol_recovery_states: list[RuntimeRecoveryState] = Field(
+        default_factory=list
+    )
+    runtime_protocol_usage_reports: list[RuntimeUsageReport] = Field(default_factory=list)
+    runtime_protocol_usage_acks: list[RuntimeUsageAck] = Field(default_factory=list)
+    runtime_protocol_usage_conflicts: list[RuntimeUsageConflict] = Field(
+        default_factory=list
+    )
+    runtime_protocol_recovery_plans: list[RuntimeRecoveryPlan] = Field(
+        default_factory=list
+    )
+    runtime_protocol_recovery_results: list[RuntimeRecoveryResult] = Field(
+        default_factory=list
+    )
+    runtime_protocol_drain_requests: list[RuntimeDrainRequest] = Field(
+        default_factory=list
+    )
+    runtime_protocol_drain_statuses: list[RuntimeDrainStatus] = Field(
+        default_factory=list
+    )
+    runtime_protocol_drain_completes: list[RuntimeDrainComplete] = Field(
+        default_factory=list
+    )
+    runtime_protocol_shutdowns: list[RuntimeShutdown] = Field(default_factory=list)
     validation_requests: list[ValidationRequest] = Field(default_factory=list)
     validation_bonds: list[ValidationBond] = Field(default_factory=list)
     validation_reports: list[ValidationReport] = Field(default_factory=list)
@@ -380,4 +464,9 @@ class HypervisorStateSnapshot(BaseModel):
     proxy_session_bindings: list[ProxySessionBindingSnapshot] = Field(default_factory=list)
     ledger_operations: list[LedgerOperationRecord] = Field(default_factory=list)
     wallet_operation_sequences: dict[str, int] = Field(default_factory=dict)
+    wallet_q_atom_balances: dict[str, int] = Field(default_factory=dict)
+    session_funding_accounts: list[SessionFundingAccount] = Field(default_factory=list)
+    settlement_proposals: list[SessionSettlementProposal] = Field(default_factory=list)
+    settlement_acceptances: list[SessionSettlementAcceptance] = Field(default_factory=list)
+    settlement_transition_hashes: dict[str, str] = Field(default_factory=dict)
     events: list[JournalEvent] = Field(default_factory=list)

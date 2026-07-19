@@ -4,11 +4,14 @@ Distributed Marketplace and Endpoint Advertisement Registry
 
 Status: Draft
 
-Version: 0.4
+Version: 0.6
+
+Revision note: Marketplace offers expose Accounting Mode, Usage transparency,
+expected Availability/Authority and unavailable-value fallback policy.
 
 Supersedes:
 
-* RFC-0049 Version 0.3
+* RFC-0049 Version 0.5
 
 Depends on:
 
@@ -65,6 +68,14 @@ It also specifies how Consumers and Marketplace clients:
 * combine Advertisements with Certification and Reputation;
 * apply local ranking policies;
 * avoid stale or misleading offers.
+
+Advertisement and Offer projections SHALL expose RFC-0051 Accounting Mode,
+Accounting Contract reference, billable dimensions, expected Availability and
+Authority, unavailable/partial fallback, retry billing policy, checkpoint
+requirement and maximum Request exposure. `PROXY_OPAQUE` and fixed-price offers
+remain valid when token Usage is unavailable. Marketplace presentation SHALL
+distinguish reported, deterministic, observable, estimated and unavailable
+dimensions.
 
 ⸻
 
@@ -171,6 +182,9 @@ Every Advertisement SHALL bind to:
 * Data Handling Policy;
 * availability declaration;
 * expiration;
+* one or more authorized RFC-0053 Runtime Binding Hashes or a committed
+  compatible Runtime set;
+* Runtime routing and failover policy;
 * operator signature.
 
 An Advertisement SHALL only be publishable after:
@@ -179,6 +193,12 @@ An Advertisement SHALL only be publishable after:
   advertised Configuration Hash;
 * the operator has created an Endpoint Draft or equivalent pre-publication
   object from that Runtime Binding.
+
+Endpoint Configuration SHALL also commit to Runtime Capability and features,
+accounting compatibility, Proxy and Data Handling implications. Runtime current
+capacity is operational state and is not the Endpoint contractual limit.
+Several Endpoints sharing one Runtime retain independent price, access,
+Certification and Session policy.
 
 ⸻
 

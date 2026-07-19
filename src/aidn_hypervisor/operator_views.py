@@ -35,6 +35,33 @@ def _local_publication_configuration_hash(manifest) -> str:
     return configuration_hash_for_publication(payload)
 
 
+def _mvp_paid_smoke_action_for_manifest(manifest) -> dict:
+    task_type = "audio.transcribe" if manifest.model_class == "speech.stt" else "llm_text.generate"
+    payload = (
+        {"audio_ref": "mvp-smoke.wav"}
+        if task_type == "audio.transcribe"
+        else {"prompt": "AiDN MVP paid smoke test"}
+    )
+    return {
+        "profile": "MVP-0001",
+        "enabled": True,
+        "route": f"/api/v1/endpoints/{manifest.endpoint_id}/mvp-paid-smoke",
+        "method": "POST",
+        "accounting_mode": "FIXED_PRICE",
+        "default_task_type": task_type,
+        "default_payload": payload,
+        "default_deposit_q_atoms": 1000,
+        "default_fixed_price_q_atoms": 900,
+        "default_network_fee_reserve_q_atoms": 100,
+        "auto_finalize_default": True,
+        "evidence": [
+            "runtime_request",
+            "final_usage_report",
+            "settlement_readiness",
+        ],
+    }
+
+
 def _publication_sync_status(
     *,
     local_configuration_hash: str | None,
@@ -687,7 +714,38 @@ def build_operator_providers_payload(
         installation_approvals.append({**approval, "status_label": status_label})
     provider_instances = service.list_provider_instances()
     model_deployments = service.list_model_deployments()
-    runtime_bindings = service.list_runtime_bindings()
+    runtime_bindings = []
+    for binding in service.list_runtime_bindings():
+        try:
+            endpoint_admission = service.runtime_binding_endpoint_admission(
+                binding["runtime_binding_id"]
+            )
+        except (KeyError, ValueError) as error:
+            endpoint_admission = {
+                "runtime_binding_id": binding["runtime_binding_id"],
+                "ready": False,
+                "blockers": [
+                    {
+                        "code": "ENDPOINT_ADMISSION_EVALUATION_FAILED",
+                        "message": str(error),
+                    }
+                ],
+                "warnings": [],
+                "dimensions": {},
+            }
+        runtime_bindings.append(
+            {
+                **binding,
+                "endpoint_admission": endpoint_admission,
+                "endpoint_admission_ready": endpoint_admission["ready"],
+                "endpoint_admission_blocker_count": len(
+                    endpoint_admission["blockers"]
+                ),
+                "endpoint_admission_warning_count": len(
+                    endpoint_admission["warnings"]
+                ),
+            }
+        )
     runtime_bindings_by_model: dict[str, list[dict]] = {}
     for binding in runtime_bindings:
         runtime_bindings_by_model.setdefault(binding["model_deployment_id"], []).append(
@@ -702,11 +760,58 @@ def build_operator_providers_payload(
     artifact_set_ids = {
         artifact_set["artifact_set_id"] for artifact_set in model_artifact_sets
     }
+    materializations_by_provider_and_set: dict[tuple[str, str], list[dict]] = {}
+    for materialization in artifact_materializations:
+        materializations_by_provider_and_set.setdefault(
+            (
+                materialization["provider_instance_id"],
+                materialization["artifact_set_id"],
+            ),
+            [],
+        ).append(materialization)
     for deployment in model_deployments:
         deployment_bindings = runtime_bindings_by_model.get(
             deployment["model_deployment_id"],
             [],
         )
+        artifact_set_id = deployment.get("artifact_set_id")
+        artifact_set_available = (
+            artifact_set_id in artifact_set_ids if artifact_set_id else False
+        )
+        deployment_materializations = (
+            materializations_by_provider_and_set.get(
+                (deployment["provider_instance_id"], artifact_set_id),
+                [],
+            )
+            if artifact_set_id
+            else []
+        )
+        ready_materialization = next(
+            (
+                item
+                for item in deployment_materializations
+                if item["status"] == "READY"
+            ),
+            None,
+        )
+        failed_materialization = next(
+            (
+                item
+                for item in deployment_materializations
+                if item["status"] == "FAILED"
+            ),
+            None,
+        )
+        if artifact_set_id is None:
+            artifact_materialization_status = "NOT_REQUIRED"
+        elif not artifact_set_available:
+            artifact_materialization_status = "ARTIFACT_SET_MISSING"
+        elif ready_materialization is not None:
+            artifact_materialization_status = "READY"
+        elif failed_materialization is not None:
+            artifact_materialization_status = "FAILED"
+        else:
+            artifact_materialization_status = "MISSING"
         enriched_model_deployments.append(
             {
                 **deployment,
@@ -714,11 +819,17 @@ def build_operator_providers_payload(
                 "runtime_binding_ready_count": sum(
                     1 for binding in deployment_bindings if binding["status"] == "ready"
                 ),
-                "artifact_set_available": (
-                    deployment.get("artifact_set_id") in artifact_set_ids
-                    if deployment.get("artifact_set_id")
-                    else False
-                ),
+                "artifact_set_available": artifact_set_available,
+                "artifact_materialization_required": artifact_set_id is not None,
+                "artifact_materialization_ready": ready_materialization is not None
+                or artifact_set_id is None,
+                "artifact_materialization_status": artifact_materialization_status,
+                "artifact_materialization_id": (
+                    ready_materialization or failed_materialization or {}
+                ).get("materialization_id"),
+                "artifact_materialization_destination": (
+                    ready_materialization or failed_materialization or {}
+                ).get("destination"),
             }
         )
     enriched_provider_instances = []
@@ -1177,6 +1288,7 @@ def build_operator_endpoints_payload(
         return _with_endpoint_workspace_defaults(payload)
 
     items = []
+    owner_wallet = service.owner_wallet_state().get("wallet_id")
     for manifest in manifests:
         local_configuration_hash = _local_publication_configuration_hash(manifest)
         current_publication = (
@@ -1228,6 +1340,34 @@ def build_operator_endpoints_payload(
             if current_publication is not None
             else None
         )
+        try:
+            publication_readiness = (
+                endpoint_publication_service.publication_readiness(
+                    endpoint_id=manifest.endpoint_id,
+                    owner_wallet=owner_wallet,
+                    node_id=service.node_id,
+                    wallet_private_key=(
+                        service.owner_wallet_private_key()
+                        if owner_wallet is not None
+                        else None
+                    ),
+                )
+                if endpoint_publication_service is not None
+                else None
+            )
+        except (KeyError, ValueError) as error:
+            publication_readiness = {
+                "endpoint_id": manifest.endpoint_id,
+                "ready": False,
+                "blockers": [
+                    {
+                        "code": "ENDPOINT_PUBLICATION_READINESS_UNAVAILABLE",
+                        "message": str(error),
+                    }
+                ],
+                "warnings": [],
+                "dimensions": {},
+            }
         items.append(
             {
                 "endpoint_id": manifest.endpoint_id,
@@ -1264,9 +1404,26 @@ def build_operator_endpoints_payload(
                 "validation_mode": "requested" if validation_requested else "disabled",
                 "runtime_status": manifest.status,
                 "publication": manifest.publication.model_dump(mode="json"),
+                "publication_readiness": publication_readiness,
+                "publication_ready": (
+                    publication_readiness["ready"]
+                    if publication_readiness is not None
+                    else None
+                ),
+                "publication_blocker_count": (
+                    len(publication_readiness["blockers"])
+                    if publication_readiness is not None
+                    else 0
+                ),
+                "publication_warning_count": (
+                    len(publication_readiness["warnings"])
+                    if publication_readiness is not None
+                    else 0
+                ),
                 "validation": manifest.validation.model_dump(mode="json"),
                 "validation_summary": validation_summary,
                 "published_validation_summary": published_validation_summary,
+                "mvp_paid_smoke": _mvp_paid_smoke_action_for_manifest(manifest),
                 "current_publication": (
                     current_publication.model_dump(mode="json")
                     if current_publication is not None

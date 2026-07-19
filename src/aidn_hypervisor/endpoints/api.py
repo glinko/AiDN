@@ -2,8 +2,9 @@ from uuid import uuid4
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from aidn_hypervisor.domain.models import TaskRequest
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand, UpdateEndpointCommand
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AttachProxyTargetRequest(BaseModel):
@@ -13,6 +14,40 @@ class AttachProxyTargetRequest(BaseModel):
 class OpenSessionRequest(BaseModel):
     client_wallet: str
     deposit_q: float
+
+
+class OpenMvpFixedPriceSessionRequest(BaseModel):
+    client_wallet: str
+    deposit_q_atoms: int = Field(gt=0)
+    fixed_price_q_atoms: int = Field(ge=0)
+    network_fee_reserve_q_atoms: int = Field(default=0, ge=0)
+
+
+class FinalizeMvpFixedPriceSessionRequest(BaseModel):
+    request_id: str = Field(min_length=1)
+    consumer_signature: str = Field(min_length=1)
+    actual_network_fees_q_atoms: int = Field(default=0, ge=0)
+
+
+class ForceFinalizeMvpFixedPriceSessionRequest(BaseModel):
+    reason: str = Field(min_length=1)
+    force_after: str = Field(min_length=1)
+    request_id: str | None = Field(default=None, min_length=1)
+    now: str | None = Field(default=None, min_length=1)
+    actual_network_fees_q_atoms: int = Field(default=0, ge=0)
+
+
+class MvpPaidSmokeRequest(BaseModel):
+    client_wallet: str = Field(min_length=1)
+    deposit_q_atoms: int = Field(gt=0)
+    fixed_price_q_atoms: int = Field(ge=0)
+    network_fee_reserve_q_atoms: int = Field(default=0, ge=0)
+    task_type: str = Field(min_length=1)
+    payload: dict = Field(default_factory=dict)
+    request_id: str | None = Field(default=None, min_length=1)
+    auto_finalize: bool = True
+    consumer_signature: str = Field(default="mvp-smoke-consumer-signed", min_length=1)
+    actual_network_fees_q_atoms: int = Field(default=0, ge=0)
 
 
 def build_endpoint_router(
@@ -34,12 +69,22 @@ def build_endpoint_router(
             },
         )
 
-    def _error(status_code: int, code: str, message: str) -> JSONResponse:
+    def _error(
+        status_code: int,
+        code: str,
+        message: str,
+        *,
+        details: dict | None = None,
+    ) -> JSONResponse:
         return JSONResponse(
             status_code=status_code,
             content={
                 "data": None,
-                "error": {"code": code, "message": message},
+                "error": {
+                    "code": code,
+                    "message": message,
+                    **({"details": details} if details is not None else {}),
+                },
                 "correlation_id": str(uuid4()),
             },
         )
@@ -54,9 +99,34 @@ def build_endpoint_router(
         command_data = dict(payload)
         runtime_binding_id = command_data.get("runtime_binding_id")
         if runtime_binding_id and hypervisor_service is not None:
-            compatibility_bundle = hypervisor_service.bundle_for_runtime_binding(
-                str(runtime_binding_id)
-            )
+            try:
+                admission = hypervisor_service.runtime_binding_endpoint_admission(
+                    str(runtime_binding_id),
+                    endpoint_payload=command_data,
+                )
+            except KeyError:
+                return _error(
+                    404,
+                    "runtime_binding_not_found",
+                    f"Unknown runtime binding: {runtime_binding_id}",
+                )
+            if not admission["ready"]:
+                return _error(
+                    409,
+                    "endpoint_admission_blocked",
+                    "Endpoint draft cannot be created from this Runtime Binding yet.",
+                    details=admission,
+                )
+            try:
+                compatibility_bundle = hypervisor_service.bundle_for_runtime_binding(
+                    str(runtime_binding_id)
+                )
+            except KeyError:
+                return _error(
+                    404,
+                    "runtime_binding_not_found",
+                    f"Unknown runtime binding: {runtime_binding_id}",
+                )
             command_data["bundle_id"] = compatibility_bundle.bundle_id
             command_data["bundle_hash"] = command_data.get("bundle_hash") or (
                 hypervisor_service.bundle_hash_for_runtime_binding(
@@ -247,6 +317,263 @@ def build_endpoint_router(
                 "deposit": result.deposit.model_dump(mode="json"),
             },
             status_code=201,
+        )
+
+    @router.post("/{endpoint_id}/mvp-sessions", status_code=201)
+    async def open_mvp_fixed_price_session(
+        endpoint_id: str,
+        request: OpenMvpFixedPriceSessionRequest,
+    ) -> JSONResponse:
+        if session_service is None or hypervisor_service is None:
+            return _error(
+                503,
+                "mvp_session_unavailable",
+                "MVP economic Session service is not configured",
+            )
+        try:
+            endpoint = service.get_endpoint(endpoint_id).endpoint
+        except KeyError:
+            return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        try:
+            accounting_contract = hypervisor_service.accounting_contract_for_endpoint(
+                endpoint
+            )
+        except KeyError:
+            accounting_contract = None
+        try:
+            session, deposit, funding = hypervisor_service.open_mvp_fixed_price_session(
+                session_service=session_service,
+                endpoint=endpoint,
+                client_wallet=request.client_wallet,
+                deposit_q_atoms=request.deposit_q_atoms,
+                fixed_price_q_atoms=request.fixed_price_q_atoms,
+                network_fee_reserve_q_atoms=request.network_fee_reserve_q_atoms,
+                accounting_contract=accounting_contract,
+            )
+        except ValueError as error:
+            return _error(409, "mvp_session_open_rejected", str(error))
+        return _ok(
+            {
+                "session": session.model_dump(mode="json"),
+                "deposit": deposit.model_dump(mode="json"),
+                "funding": funding.model_dump(mode="json"),
+            },
+            status_code=201,
+        )
+
+    @router.post("/{endpoint_id}/mvp-paid-smoke")
+    async def run_mvp_paid_smoke(
+        endpoint_id: str,
+        request: MvpPaidSmokeRequest,
+    ) -> JSONResponse:
+        if session_service is None or hypervisor_service is None:
+            return _error(
+                503,
+                "mvp_session_unavailable",
+                "MVP economic Session service is not configured",
+            )
+        try:
+            endpoint = service.get_endpoint(endpoint_id).endpoint
+        except KeyError:
+            return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        try:
+            accounting_contract = hypervisor_service.accounting_contract_for_endpoint(
+                endpoint
+            )
+        except KeyError:
+            accounting_contract = None
+        try:
+            session, deposit, funding = hypervisor_service.open_mvp_fixed_price_session(
+                session_service=session_service,
+                endpoint=endpoint,
+                client_wallet=request.client_wallet,
+                deposit_q_atoms=request.deposit_q_atoms,
+                fixed_price_q_atoms=request.fixed_price_q_atoms,
+                network_fee_reserve_q_atoms=request.network_fee_reserve_q_atoms,
+                accounting_contract=accounting_contract,
+            )
+            task_constraints = {
+                "endpoint_id": endpoint.endpoint_id,
+                "session_id": session.session_id,
+            }
+            if request.request_id is not None:
+                task_constraints["request_id"] = request.request_id
+            task = hypervisor_service.submit(
+                TaskRequest(
+                    task_type=request.task_type,
+                    payload=request.payload,
+                    constraints=task_constraints,
+                )
+            )
+            task_after_execution = hypervisor_service.get_task(task.task_id)
+            runtime_request_id = request.request_id or task.task_id
+            runtime_record = hypervisor_service.runtime_protocol_store.requests[
+                runtime_request_id
+            ]
+            final_usage = hypervisor_service.runtime_protocol_store.usage_reports[
+                runtime_record.terminal_final_usage_report_id
+            ]
+            settlement_evaluation = (
+                hypervisor_service.build_mvp_fixed_price_settlement_evaluation(
+                    session_service=session_service,
+                    session_id=session.session_id,
+                    request_id=runtime_request_id,
+                    actual_network_fees_q_atoms=request.actual_network_fees_q_atoms,
+                )
+            )
+            finalized = None
+            if request.auto_finalize:
+                finalized = hypervisor_service.finalize_mvp_fixed_price_session(
+                    session_service=session_service,
+                    session_id=session.session_id,
+                    request_id=runtime_request_id,
+                    consumer_signature=request.consumer_signature,
+                    actual_network_fees_q_atoms=request.actual_network_fees_q_atoms,
+                )
+        except ValueError as error:
+            return _error(409, "mvp_paid_smoke_rejected", str(error))
+        except KeyError as error:
+            return _error(
+                409,
+                "mvp_paid_smoke_evidence_missing",
+                f"MVP paid smoke evidence is missing: {error}",
+            )
+        data = {
+            "session": session.model_dump(mode="json"),
+            "deposit": deposit.model_dump(mode="json"),
+            "funding": funding.model_dump(mode="json"),
+            "task": {
+                "task_id": task_after_execution.task_id,
+                "status": task_after_execution.status,
+                "task_type": task_after_execution.request.task_type,
+                "bundle_id": hypervisor_service.selected_bundle_id(
+                    task_after_execution.task_id
+                ),
+                "result": hypervisor_service.task_result(task_after_execution.task_id),
+            },
+            "runtime_evidence": {
+                "request": runtime_record.model_dump(mode="json"),
+                "final_usage": final_usage.model_dump(mode="json"),
+            },
+            "settlement_readiness": {
+                "ready": True,
+                "proposal": settlement_evaluation.proposal.model_dump(mode="json"),
+                "input_root": settlement_evaluation.input_set.settlement_input_root,
+                "request_settlement_root": (
+                    settlement_evaluation.input_set.request_settlement_root
+                ),
+                "usage_chain_root": settlement_evaluation.input_set.usage_chain_root,
+            },
+            "finalized": None,
+        }
+        if finalized is not None:
+            data["finalized"] = {
+                "proposal": finalized["proposal"].model_dump(mode="json"),
+                "acceptance": finalized["acceptance"].model_dump(mode="json"),
+                "funding": finalized["funding"].model_dump(mode="json"),
+                "session": finalized["session_result"].session.model_dump(mode="json"),
+                "deposit": finalized["session_result"].deposit.model_dump(mode="json"),
+                "settlement": (
+                    finalized["session_result"].settlement.model_dump(mode="json")
+                    if finalized["session_result"].settlement is not None
+                    else None
+                ),
+            }
+        return _ok(data, status_code=201)
+
+    @router.post("/{endpoint_id}/mvp-sessions/{session_id}/finalize")
+    async def finalize_mvp_fixed_price_session(
+        endpoint_id: str,
+        session_id: str,
+        request: FinalizeMvpFixedPriceSessionRequest,
+    ) -> JSONResponse:
+        if session_service is None or hypervisor_service is None:
+            return _error(
+                503,
+                "mvp_session_unavailable",
+                "MVP economic Session service is not configured",
+            )
+        try:
+            session = session_service.store.get_session(session_id)
+        except KeyError:
+            return _error(404, "session_not_found", f"Unknown session: {session_id}")
+        if session.endpoint_id != endpoint_id:
+            return _error(
+                409,
+                "mvp_session_endpoint_mismatch",
+                "MVP Session does not belong to this Endpoint",
+            )
+        try:
+            finalized = hypervisor_service.finalize_mvp_fixed_price_session(
+                session_service=session_service,
+                session_id=session_id,
+                request_id=request.request_id,
+                consumer_signature=request.consumer_signature,
+                actual_network_fees_q_atoms=request.actual_network_fees_q_atoms,
+            )
+        except ValueError as error:
+            return _error(409, "mvp_session_finalize_rejected", str(error))
+        return _ok(
+            {
+                "proposal": finalized["proposal"].model_dump(mode="json"),
+                "acceptance": finalized["acceptance"].model_dump(mode="json"),
+                "funding": finalized["funding"].model_dump(mode="json"),
+                "session": finalized["session_result"].session.model_dump(mode="json"),
+                "deposit": finalized["session_result"].deposit.model_dump(mode="json"),
+                "settlement": (
+                    finalized["session_result"].settlement.model_dump(mode="json")
+                    if finalized["session_result"].settlement is not None
+                    else None
+                ),
+            }
+        )
+
+    @router.post("/{endpoint_id}/mvp-sessions/{session_id}/force-finalize")
+    async def force_finalize_mvp_fixed_price_session(
+        endpoint_id: str,
+        session_id: str,
+        request: ForceFinalizeMvpFixedPriceSessionRequest,
+    ) -> JSONResponse:
+        if session_service is None or hypervisor_service is None:
+            return _error(
+                503,
+                "mvp_session_unavailable",
+                "MVP economic Session service is not configured",
+            )
+        try:
+            session = session_service.store.get_session(session_id)
+        except KeyError:
+            return _error(404, "session_not_found", f"Unknown session: {session_id}")
+        if session.endpoint_id != endpoint_id:
+            return _error(
+                409,
+                "mvp_session_endpoint_mismatch",
+                "MVP Session does not belong to this Endpoint",
+            )
+        try:
+            finalized = hypervisor_service.force_finalize_mvp_fixed_price_session(
+                session_service=session_service,
+                session_id=session_id,
+                reason=request.reason,
+                force_after=request.force_after,
+                request_id=request.request_id,
+                now=request.now,
+                actual_network_fees_q_atoms=request.actual_network_fees_q_atoms,
+            )
+        except ValueError as error:
+            return _error(409, "mvp_session_force_finalize_rejected", str(error))
+        return _ok(
+            {
+                "proposal": finalized["proposal"].model_dump(mode="json"),
+                "funding": finalized["funding"].model_dump(mode="json"),
+                "session": finalized["session_result"].session.model_dump(mode="json"),
+                "deposit": finalized["session_result"].deposit.model_dump(mode="json"),
+                "settlement": (
+                    finalized["session_result"].settlement.model_dump(mode="json")
+                    if finalized["session_result"].settlement is not None
+                    else None
+                ),
+            }
         )
 
     return router

@@ -2,15 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.3`
+Version: `0.4`
 
-Revision note: messages carrying Ledger Operations use Dispatcher persistent
-deduplication, while the State Machine independently enforces Operation ID replay
-protection. Transport acknowledgment never creates canonical finality.
+Revision note: the catalog includes RFC-0037 Funding Account, proposal,
+bounded-dispute, partial-finalization, forced and correction operations.
 
 Supersedes:
 
-- `RFC-0059 Version 0.1`
+- `RFC-0059 Version 0.3`
 
 Depends on:
 
@@ -1283,7 +1282,7 @@ Preconditions
 
 State Changes
 
-- pays Provider;
+- pays the Endpoint Payment Beneficiary;
 - removes Session fee where applicable;
 - refunds unused Deposit;
 - closes Session;
@@ -2012,7 +2011,7 @@ Recyclable emission authorization is not existing `Q` and SHALL NOT be counted i
 
 For every Session:
 
-`Provider Payment + Refund + Session Fees + Applicable Penalties = Locked Deposit`
+`Endpoint Payment + Refund + Session Fees + Applicable Penalties = Locked Deposit`
 
 No final Session Settlement may distribute more `Q` than was locked.
 
@@ -2189,3 +2188,25 @@ The following require further specifications:
 - Every reward, refund, penalty and Settlement is replay-protected.
 - Protocol Operations are independently derivable by every honest Consensus Service.
 - Operation semantics change only through explicit versioning.
+
+## RFC-0037 Settlement Operation Family
+
+The canonical Session Settlement family additionally defines:
+
+- `SESSION_ESCROW_LOCK` and `SESSION_ESCROW_EXTEND` for separate Endpoint
+  Payment and Network Fee reserves;
+- `SESSION_ESCROW_RELEASE` for bounded authorized release;
+- `SESSION_SETTLEMENT_READY_COMMIT` for the immutable Settlement Input Root;
+- `SESSION_SETTLEMENT_PROPOSE` and `SESSION_SETTLEMENT_ACCEPT` for exact amount
+  and root agreement;
+- `SESSION_SETTLEMENT_DISPUTE` for a bounded disputed amount and Evidence Root;
+- `SESSION_SETTLEMENT_PARTIAL_FINALIZE` for atomic undisputed release;
+- `SESSION_FORCED_SETTLEMENT_REQUEST` and
+  `SESSION_FORCED_SETTLEMENT_RESOLVE` for RFC-0060 handling;
+- `SESSION_SETTLEMENT_FINALIZE` for one replay-protected final transition;
+- `SESSION_SETTLEMENT_CORRECT` for an authorized historical delta.
+
+Every finalization operation binds Session ID, Settlement sequence, Input Root,
+Endpoint Payment Beneficiary, Consumer Refund Beneficiary, prior releases,
+Network Fees and reserve conservation. Transport acknowledgment is not
+Settlement authorization or Ledger finality.

@@ -462,7 +462,7 @@
     .table-row,
     .table-head {
       display: grid;
-      grid-template-columns: 1.5fr 0.92fr 0.84fr 0.88fr 0.78fr 0.84fr 0.8fr;
+      grid-template-columns: 1.4fr 0.82fr 0.8fr 1.05fr 0.8fr 0.72fr 0.76fr 0.68fr;
       gap: 12px;
       align-items: center;
       padding: 14px 16px;
@@ -1688,6 +1688,32 @@
         taskType: "",
         inputValue: "",
       },
+      sessionForceSettlementDraft: {
+        sessionId: null,
+        forceAfter: "",
+        forceNow: "",
+        actualNetworkFeesQAtoms: "0",
+      },
+      mvpSmokeDraft: {
+        endpointId: null,
+        clientWallet: "",
+        depositQAtoms: "1000",
+        fixedPriceQAtoms: "900",
+        networkFeeReserveQAtoms: "100",
+        taskType: "llm_text.generate",
+        taskInput: "",
+        autoFinalize: true,
+      },
+      mvpSmokeSettlementDraft: {
+        consumerSignature: "mvp-smoke-consumer-signed",
+        actualNetworkFeesQAtoms: "0",
+        forceReason: "CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE",
+        forceAfter: "",
+        forceNow: "",
+      },
+      mvpSmokePending: false,
+      mvpSmokeSettlementPending: null,
+      mvpSmokeResult: null,
       bootstrapPending: null,
       bootstrapMessage: null,
       walletMessage: null,
@@ -3689,10 +3715,79 @@
       );
     }
 
+    function modelArtifactReadinessTone(model) {
+      if (!model?.artifact_materialization_required) {
+        return "";
+      }
+      return model.artifact_materialization_ready ? "good" : "bad";
+    }
+
+    function modelArtifactReadinessLabel(model) {
+      if (!model?.artifact_materialization_required) {
+        return "not required";
+      }
+      const status = model.artifact_materialization_status || "MISSING";
+      if (status === "READY") {
+        return "artifacts ready";
+      }
+      if (status === "FAILED") {
+        return "materialization failed";
+      }
+      if (status === "ARTIFACT_SET_MISSING") {
+        return "artifact set missing";
+      }
+      return "materialize first";
+    }
+
     function runtimeBindingById(runtimeBindingId) {
       return (state.payloads.providers?.runtime_bindings || []).find(
         (binding) => binding.runtime_binding_id === runtimeBindingId
       ) || null;
+    }
+
+    function runtimeBindingEndpointAdmissionTone(binding) {
+      const admission = binding?.endpoint_admission;
+      if (!admission) {
+        return "";
+      }
+      if (!admission.ready) {
+        return "bad";
+      }
+      return (admission.warnings || []).length ? "" : "good";
+    }
+
+    function runtimeBindingEndpointAdmissionLabel(binding) {
+      const admission = binding?.endpoint_admission;
+      if (!admission) {
+        return "endpoint unchecked";
+      }
+      if (!admission.ready) {
+        const blocker = (admission.blockers || [])[0];
+        return blocker?.code ? blocker.code.replaceAll("_", " ").toLowerCase() : "endpoint blocked";
+      }
+      if ((admission.warnings || []).length) {
+        return "review pricing";
+      }
+      return "endpoint ready";
+    }
+
+    function endpointPublicationReadinessTone(endpoint) {
+      const readiness = endpoint?.publication_readiness;
+      if (!readiness) {
+        return "";
+      }
+      return readiness.ready ? (readiness.warnings?.length ? "warn" : "good") : "bad";
+    }
+
+    function endpointPublicationReadinessLabel(endpoint) {
+      const readiness = endpoint?.publication_readiness;
+      if (!readiness) {
+        return "publication unchecked";
+      }
+      if (!readiness.ready) {
+        return readiness.blockers?.[0]?.code?.toLowerCase().replaceAll("_", " ") || "publication blocked";
+      }
+      return readiness.warnings?.length ? "review publication" : "publish ready";
     }
 
     function modelForRuntimeBinding(binding) {
@@ -3909,6 +4004,93 @@
       return syncSessionSelection();
     }
 
+    function sessionForceDefaultForceAfter() {
+      return new Date(Date.now() - 1000).toISOString();
+    }
+
+    function syncSessionForceSettlementDraft(selected) {
+      if (!selected?.session?.session_id) {
+        state.sessionForceSettlementDraft = {
+          sessionId: null,
+          forceAfter: "",
+          forceNow: "",
+          actualNetworkFeesQAtoms: "0",
+        };
+        return state.sessionForceSettlementDraft;
+      }
+      if (state.sessionForceSettlementDraft.sessionId !== selected.session.session_id) {
+        state.sessionForceSettlementDraft = {
+          sessionId: selected.session.session_id,
+          forceAfter: sessionForceDefaultForceAfter(),
+          forceNow: new Date().toISOString(),
+          actualNetworkFeesQAtoms: "0",
+        };
+      }
+      return state.sessionForceSettlementDraft;
+    }
+
+    function sessionForceSettlementEligibility(selected) {
+      if (!selected?.session) {
+        return { enabled: false, reason: "Select a Session first." };
+      }
+      if (selected.session.status === "closed") {
+        return { enabled: false, reason: "Session is already closed." };
+      }
+      if (selected.session.economic_profile !== "MVP-0001") {
+        return { enabled: false, reason: "Forced refund controls currently require an MVP-0001 Session." };
+      }
+      if (!selected.session.canonical_funding_state_hash) {
+        return { enabled: false, reason: "Session is not bound to canonical funding." };
+      }
+      if (Number(selected.session.request_count || 0) > 0) {
+        return { enabled: false, reason: "Endpoint-unavailable refund requires no accepted Runtime work." };
+      }
+      return { enabled: true, reason: "Eligible for Endpoint-unavailable timeout refund." };
+    }
+
+    function renderSessionForcedSettlementPanel(selected) {
+      const draft = syncSessionForceSettlementDraft(selected);
+      const eligibility = sessionForceSettlementEligibility(selected);
+      const session = selected?.session || {};
+      return `
+        <section class="subpanel" style="margin-bottom: 18px;">
+          <div class="panel-heading">Session Forced Settlement</div>
+          <div class="notice" style="margin-top: 12px;">
+            Timeout refund path for MVP-0001 Sessions where the Endpoint became unavailable before accepting Runtime work.
+          </div>
+          <div class="wallet-form-grid" style="margin-top: 12px;">
+            <input type="text" data-session-force-field="forceAfter" value="${escapeHtml(draft.forceAfter)}" placeholder="Force after ISO timestamp" ${selected ? "" : "disabled"}>
+            <input type="text" data-session-force-field="forceNow" value="${escapeHtml(draft.forceNow)}" placeholder="Now ISO timestamp" ${selected ? "" : "disabled"}>
+          </div>
+          <div class="wallet-form-grid" style="margin-top: 10px;">
+            <input type="number" min="0" step="1" data-session-force-field="actualNetworkFeesQAtoms" value="${escapeHtml(draft.actualNetworkFeesQAtoms)}" placeholder="Actual network fees q_atoms" ${selected ? "" : "disabled"}>
+            <div class="notice">Reason: ENDPOINT_UNAVAILABLE / Session ${formatMaybe(session.session_id)}</div>
+          </div>
+          <div class="list" style="margin-top: 12px;">
+            <div class="list-row">
+              <div>
+                <strong>Eligibility</strong>
+                <span>${eligibility.reason}</span>
+              </div>
+              <span class="chip ${eligibility.enabled ? "good" : "bad"}">${eligibility.enabled ? "ready" : "blocked"}</span>
+            </div>
+            <div class="list-row">
+              <div>
+                <strong>Canonical Funding</strong>
+                <span>${formatMaybe(session.canonical_funding_state_hash)}</span>
+              </div>
+              <span class="chip">${session.economic_profile || "legacy"}</span>
+            </div>
+          </div>
+          <div class="wallet-inline-actions" style="margin-top: 14px;">
+            <button class="secondary-button" type="button" data-session-action="force-unavailable-refund" ${eligibility.enabled && state.sessionActionPending !== "force-unavailable-refund" ? "" : "disabled"}>
+              ${state.sessionActionPending === "force-unavailable-refund" ? "Force Settling..." : "Force Refund Timeout"}
+            </button>
+          </div>
+        </section>
+      `;
+    }
+
     function defaultTaskTypeForSession(selected) {
       const endpoint = endpointDraftById(selected?.session?.endpoint_id);
       const modelClass = endpoint?.model_class || "";
@@ -3927,6 +4109,214 @@
 
     function sessionRequestInputPlaceholder(taskType) {
       return taskType === "audio.transcribe" ? "clip.wav" : "Describe the task or prompt";
+    }
+
+    function defaultTaskTypeForEndpoint(endpoint) {
+      const action = endpoint?.mvp_paid_smoke || {};
+      if (action.default_task_type) {
+        return action.default_task_type;
+      }
+      const modelClass = endpoint?.model_class || "";
+      return modelClass === "speech.stt" ? "audio.transcribe" : "llm_text.generate";
+    }
+
+    function mvpSmokeDefaultInput(action, taskType) {
+      const payload = action?.default_payload || {};
+      if (taskType === "audio.transcribe") {
+        return payload.audio_ref || "mvp-smoke.wav";
+      }
+      return payload.prompt || "AiDN MVP paid smoke test";
+    }
+
+    function syncMvpSmokeDraft(endpoint) {
+      const action = endpoint?.mvp_paid_smoke || {};
+      const ownerWalletId =
+        state.payloads.endpoints?.owner_wallet?.wallet_id ||
+        state.payloads.home?.bootstrap?.owner_wallet?.wallet_id ||
+        "";
+      if (!endpoint?.endpoint_id) {
+        state.mvpSmokeDraft = {
+          endpointId: null,
+          clientWallet: ownerWalletId,
+          depositQAtoms: "1000",
+          fixedPriceQAtoms: "900",
+          networkFeeReserveQAtoms: "100",
+          taskType: "llm_text.generate",
+          taskInput: "",
+          autoFinalize: true,
+        };
+        return state.mvpSmokeDraft;
+      }
+      if (state.mvpSmokeDraft.endpointId !== endpoint.endpoint_id) {
+        const taskType = defaultTaskTypeForEndpoint(endpoint);
+        state.mvpSmokeDraft = {
+          endpointId: endpoint.endpoint_id,
+          clientWallet: ownerWalletId,
+          depositQAtoms: String(action.default_deposit_q_atoms ?? 1000),
+          fixedPriceQAtoms: String(action.default_fixed_price_q_atoms ?? 900),
+          networkFeeReserveQAtoms: String(action.default_network_fee_reserve_q_atoms ?? 100),
+          taskType,
+          taskInput: mvpSmokeDefaultInput(action, taskType),
+          autoFinalize: action.auto_finalize_default !== false,
+        };
+      } else if (!state.mvpSmokeDraft.clientWallet && ownerWalletId) {
+        state.mvpSmokeDraft.clientWallet = ownerWalletId;
+      }
+      return state.mvpSmokeDraft;
+    }
+
+    function mvpSmokeRequestPayload(draft) {
+      return draft.taskType === "audio.transcribe"
+        ? { audio_ref: draft.taskInput || "mvp-smoke.wav" }
+        : { prompt: draft.taskInput || "AiDN MVP paid smoke test" };
+    }
+
+    function mvpSmokeResultIds(result) {
+      return {
+        endpointId: result?.session?.endpoint_id || null,
+        sessionId: result?.session?.session_id || null,
+        requestId: result?.runtime_evidence?.request?.request_id || result?.task?.task_id || null,
+      };
+    }
+
+    function mvpSmokeDefaultForceAfter() {
+      return new Date(Date.now() - 1000).toISOString();
+    }
+
+    function syncMvpSmokeSettlementDraft() {
+      if (!state.mvpSmokeSettlementDraft.forceAfter) {
+        state.mvpSmokeSettlementDraft.forceAfter = mvpSmokeDefaultForceAfter();
+      }
+      if (!state.mvpSmokeSettlementDraft.forceNow) {
+        state.mvpSmokeSettlementDraft.forceNow = new Date().toISOString();
+      }
+      return state.mvpSmokeSettlementDraft;
+    }
+
+    function renderMvpPaidSmokeSettlementControls(result) {
+      if (!result || result.finalized) {
+        return "";
+      }
+      const ids = mvpSmokeResultIds(result);
+      const draft = syncMvpSmokeSettlementDraft();
+      const canFinalize = Boolean(ids.endpointId && ids.sessionId && ids.requestId);
+      return `
+        <div class="panel-heading" style="margin-top: 16px;">MVP Smoke Settlement Controls</div>
+        <div class="notice" style="margin-top: 12px;">
+          Readiness-only smoke can now finish here: cooperative finalize uses Consumer acceptance, while force-finalize applies the timeout rule and preserves the evidence trail.
+        </div>
+        <div class="wallet-form-grid" style="margin-top: 12px;">
+          <input type="text" data-mvp-smoke-settlement-field="consumerSignature" value="${escapeHtml(draft.consumerSignature)}" placeholder="Consumer signature">
+          <input type="number" min="0" step="1" data-mvp-smoke-settlement-field="actualNetworkFeesQAtoms" value="${escapeHtml(draft.actualNetworkFeesQAtoms)}" placeholder="Actual network fees q_atoms">
+        </div>
+        <div class="wallet-form-grid" style="margin-top: 10px;">
+          <div class="notice">Force reason: Consumer timeout after completed fixed-price evidence</div>
+          <input type="text" data-mvp-smoke-settlement-field="forceAfter" value="${escapeHtml(draft.forceAfter)}" placeholder="Force after ISO timestamp">
+        </div>
+        <div class="wallet-form-grid" style="margin-top: 10px;">
+          <input type="text" data-mvp-smoke-settlement-field="forceNow" value="${escapeHtml(draft.forceNow)}" placeholder="Now ISO timestamp">
+          <div class="notice">Session ${formatMaybe(ids.sessionId)} / Request ${formatMaybe(ids.requestId)}</div>
+        </div>
+        <div class="wallet-inline-actions" style="margin-top: 14px;">
+          <button class="primary-button" type="button" data-endpoint-action="finalize-mvp-smoke" ${state.mvpSmokeSettlementPending || !canFinalize || !draft.consumerSignature ? "disabled" : ""}>
+            ${state.mvpSmokeSettlementPending === "finalize" ? "Finalizing..." : "Finalize Smoke Settlement"}
+          </button>
+          <button class="secondary-button" type="button" data-endpoint-action="force-finalize-mvp-smoke" ${state.mvpSmokeSettlementPending || !canFinalize || !draft.forceAfter || !draft.forceNow ? "disabled" : ""}>
+            ${state.mvpSmokeSettlementPending === "force-finalize" ? "Force Finalizing..." : "Force Finalize Timeout"}
+          </button>
+        </div>
+      `;
+    }
+
+    function renderMvpPaidSmokeResult() {
+      const result = state.mvpSmokeResult;
+      if (!result) {
+        return `<div class="notice" style="margin-top: 12px;">No MVP Paid Smoke run yet. Run it to capture Runtime evidence, Final Usage, and Settlement readiness in one operator-visible path.</div>`;
+      }
+      const proposal = result.settlement_readiness?.proposal || result.finalized?.proposal || {};
+      const runtimeRequest = result.runtime_evidence?.request || {};
+      const finalUsage = result.runtime_evidence?.final_usage || {};
+      return `
+        <div class="list" style="margin-top: 12px;">
+          <div class="list-row">
+            <div>
+              <strong>Task Result</strong>
+              <span>${result.task?.task_id || "-"} / ${result.task?.status || "-"}</span>
+            </div>
+            <span class="chip ${result.task?.status === "completed" ? "good" : ""}">${result.task?.task_type || "-"}</span>
+          </div>
+          <div class="list-row">
+            <div>
+              <strong>Runtime Evidence</strong>
+              <span>${runtimeRequest.request_id || "-"} / ${runtimeRequest.request_state || "-"}</span>
+            </div>
+            <span class="chip">${runtimeRequest.admission_state || "-"}</span>
+          </div>
+          <div class="list-row">
+            <div>
+              <strong>Final Usage Report</strong>
+              <span>${finalUsage.usage_report_id || "-"} / sequence ${formatMaybe(finalUsage.usage_sequence)}</span>
+            </div>
+            <span class="chip ${finalUsage.terminal ? "good" : ""}">${finalUsage.report_type || "-"}</span>
+          </div>
+          <div class="list-row">
+            <div>
+              <strong>Settlement Readiness</strong>
+              <span>${result.settlement_readiness?.ready ? "ready" : "not ready"} / input root ${formatMaybe(result.settlement_readiness?.input_root)}</span>
+            </div>
+            <span class="chip ${result.settlement_readiness?.ready ? "good" : "bad"}">${formatQ(proposal.final_endpoint_payment_q_atoms || 0)}</span>
+          </div>
+          <div class="list-row">
+            <div>
+              <strong>Finalization</strong>
+              <span>${result.finalized ? `session ${result.finalized.session?.status || "-"} / deposit ${result.finalized.deposit?.status || "-"}` : "manual mode: ready for explicit finalize"}</span>
+            </div>
+            <span class="chip ${result.finalized ? "good" : ""}">${result.finalized ? "finalized" : "readiness only"}</span>
+          </div>
+        </div>
+        ${renderMvpPaidSmokeSettlementControls(result)}
+      `;
+    }
+
+    function renderMvpPaidSmokePanel(selected) {
+      if (!selected) {
+        return "";
+      }
+      const action = selected.mvp_paid_smoke || {};
+      const draft = syncMvpSmokeDraft(selected);
+      return `
+        <div class="panel-heading" style="margin-top: 16px;">MVP Paid Smoke</div>
+        <div class="notice" style="margin-top: 12px;">
+          One-click ${action.profile || "MVP-0001"} fixed-price execution: open escrow, submit one Runtime Request, collect Final Usage, and evaluate Settlement readiness.
+        </div>
+        <div class="wallet-form-grid" style="margin-top: 12px;">
+          <input type="text" data-mvp-smoke-field="clientWallet" value="${escapeHtml(draft.clientWallet)}" placeholder="Consumer wallet id">
+          <select data-mvp-smoke-field="taskType">
+            <option value="llm_text.generate" ${draft.taskType === "llm_text.generate" ? "selected" : ""}>llm_text.generate</option>
+            <option value="audio.transcribe" ${draft.taskType === "audio.transcribe" ? "selected" : ""}>audio.transcribe</option>
+          </select>
+        </div>
+        <div class="wallet-form-grid" style="margin-top: 10px;">
+          <input type="number" min="1" step="1" data-mvp-smoke-field="depositQAtoms" value="${escapeHtml(draft.depositQAtoms)}" placeholder="Deposit q_atoms">
+          <input type="number" min="0" step="1" data-mvp-smoke-field="fixedPriceQAtoms" value="${escapeHtml(draft.fixedPriceQAtoms)}" placeholder="Fixed price q_atoms">
+        </div>
+        <div class="wallet-form-grid" style="margin-top: 10px;">
+          <input type="number" min="0" step="1" data-mvp-smoke-field="networkFeeReserveQAtoms" value="${escapeHtml(draft.networkFeeReserveQAtoms)}" placeholder="Network fee reserve q_atoms">
+          <input type="text" data-mvp-smoke-field="taskInput" value="${escapeHtml(draft.taskInput)}" placeholder="${sessionRequestInputPlaceholder(draft.taskType)}">
+        </div>
+        <label class="wallet-inline-actions" style="margin-top: 10px; justify-content: flex-start; gap: 10px;">
+          <input type="checkbox" data-mvp-smoke-field="autoFinalize" ${draft.autoFinalize ? "checked" : ""}>
+          <span>Auto-finalize cooperative Settlement after readiness is built</span>
+        </label>
+        <div class="wallet-inline-actions" style="margin-top: 14px;">
+          <button class="primary-button action-focus" type="button" data-endpoint-action="run-mvp-smoke" ${state.mvpSmokePending || !draft.clientWallet ? "disabled" : ""}>
+            ${state.mvpSmokePending ? "Running MVP Smoke..." : "Run MVP Paid Smoke"}
+          </button>
+          <span class="chip">${action.accounting_mode || "FIXED_PRICE"}</span>
+          <span class="chip">${formatQ(Number(draft.fixedPriceQAtoms || 0))} fixed</span>
+        </div>
+        ${renderMvpPaidSmokeResult()}
+      `;
     }
 
     function syncSessionRequestDraft() {
@@ -4666,6 +5056,7 @@
                         const draft = syncRuntimeBindingDraft(model);
                         const hasBinding = modelHasRuntimeBinding(model);
                         const pending = state.providerActionPending === `runtime-binding:${model.model_deployment_id}`;
+                        const artifactsReady = model.artifact_materialization_ready !== false;
                         return `
                           <div class="table-row">
                             <div>
@@ -4675,7 +5066,10 @@
                             <div class="row-meta">${model.provider_instance_id}</div>
                             <div class="row-meta">${(model.capability_bindings || []).join(", ") || "-"}</div>
                             <div><span class="chip ${model.runtime_binding_ready_count ? "good" : ""}">${formatCount(model.runtime_binding_ready_count)}</span></div>
-                            <div><span class="chip ${model.operational_state === "ready" ? "good" : ""}">${model.operational_state || "unknown"}</span></div>
+                            <div class="stack">
+                              <span class="chip ${model.operational_state === "ready" ? "good" : ""}">${model.operational_state || "unknown"}</span>
+                              <span class="chip ${modelArtifactReadinessTone(model)}">${modelArtifactReadinessLabel(model)}</span>
+                            </div>
                             <div class="stack">
                               ${
                                 model.artifact_set_id
@@ -4689,7 +5083,7 @@
                                   ? `<button class="secondary-button" type="button" data-model-artifact-set-bind="${escapeHtml(model.model_deployment_id)}" ${state.providerActionPending === `bind-model-artifact-set:${model.model_deployment_id}` ? "disabled" : ""}>Bind Set</button>`
                                   : ""
                               }
-                              <button class="row-action" type="button" data-model-runtime-binding="${escapeHtml(model.model_deployment_id)}" ${hasBinding ? "disabled" : ""}>${pending ? "Creating..." : hasBinding ? "Binding Ready" : `Create Runtime Binding (${escapeHtml(draft.capabilityId)})`}</button>
+                              <button class="row-action" type="button" data-model-runtime-binding="${escapeHtml(model.model_deployment_id)}" ${hasBinding || !artifactsReady ? "disabled" : ""}>${pending ? "Creating..." : hasBinding ? "Binding Ready" : !artifactsReady ? "Materialize Artifacts First" : `Create Runtime Binding (${escapeHtml(draft.capabilityId)})`}</button>
                             </div>
                           </div>
                         `;
@@ -4715,6 +5109,7 @@
                   ? runtimeBindings
                       .map((binding) => {
                         const pending = state.providerActionPending === `endpoint:${binding.runtime_binding_id}`;
+                        const endpointReady = binding.endpoint_admission_ready !== false;
                         return `
                           <div class="table-row">
                             <div>
@@ -4724,8 +5119,11 @@
                             <div class="row-meta">${binding.model_deployment_id}</div>
                             <div class="row-meta">${binding.capability_id} / ${binding.capability_version}</div>
                             <div class="row-meta">${binding.compatibility_bundle_id}</div>
-                            <div><span class="chip ${binding.status === "ready" ? "good" : ""}">${binding.status || "unknown"}</span></div>
-                            <button class="row-action" type="button" data-runtime-binding-endpoint="${escapeHtml(binding.runtime_binding_id)}">${pending ? "Creating..." : "Create Endpoint"}</button>
+                            <div class="stack">
+                              <span class="chip ${binding.status === "ready" ? "good" : ""}">${binding.status || "unknown"}</span>
+                              <span class="chip ${runtimeBindingEndpointAdmissionTone(binding)}">${runtimeBindingEndpointAdmissionLabel(binding)}</span>
+                            </div>
+                            <button class="row-action" type="button" data-runtime-binding-endpoint="${escapeHtml(binding.runtime_binding_id)}" ${endpointReady ? "" : "disabled"}>${pending ? "Creating..." : endpointReady ? "Create Endpoint" : "Fix Endpoint Readiness"}</button>
                           </div>
                         `;
                       })
@@ -5049,6 +5447,7 @@
                   <div>Endpoint</div>
                   <div>Visibility</div>
                   <div>Publication Trust</div>
+                  <div>Publish Readiness</div>
                   <div>Validation Trust</div>
                   <div>Bundle</div>
                   <div>Route</div>
@@ -5067,6 +5466,7 @@
                               </div>
                               <div><span class="chip ${endpointVisibility(draft) === "private" ? "" : "good"}">${endpointVisibility(draft)}</span></div>
                               <div><span class="chip ${publicationTrustTone(endpointPublicationSyncStatus(draft))}">${trustStatusLabel(endpointPublicationSyncStatus(draft))}</span></div>
+                              <div><span class="chip ${endpointPublicationReadinessTone(draft)}">${endpointPublicationReadinessLabel(draft)}</span></div>
                               <div><span class="chip ${validationTrustTone(endpointLiveValidationSummary(draft))}">${trustStatusLabel(validationStatus(endpointLiveValidationSummary(draft)))}</span></div>
                               <div class="row-meta">${draft.bundle_id}</div>
                               <div class="row-meta">${endpointRouteStatus(draft)}</div>
@@ -5106,6 +5506,13 @@
                             <span>${formatMaybe(selected.published_configuration_hash)}</span>
                           </div>
                           <span class="chip ${publicationTrustTone(endpointPublicationSyncStatus(selected))}">${trustStatusLabel(endpointPublicationSyncStatus(selected))}</span>
+                        </div>
+                        <div class="list-row">
+                          <div>
+                            <strong>Publish Readiness</strong>
+                            <span>${endpointPublicationReadinessLabel(selected)}</span>
+                          </div>
+                          <span class="chip ${endpointPublicationReadinessTone(selected)}">${selected.publication_blocker_count || 0} blockers / ${selected.publication_warning_count || 0} warnings</span>
                         </div>
                         <div class="list-row">
                           <div>
@@ -5165,6 +5572,7 @@
                           suggestedCopy: `${proxyGuidedPrimaryAction?.label || "No guided action"} keeps the route handoff moving while the full endpoint controls remain available below.`,
                         })
                       }
+                      ${renderMvpPaidSmokePanel(selected)}
                       <div class="panel-heading" style="margin-top: 16px;">Endpoint Policy Editor</div>
                       <div class="wallet-form-grid" style="margin-top: 12px;">
                         <select data-endpoint-field="visibility">
@@ -5221,8 +5629,8 @@
                         <button class="primary-button" type="button" data-endpoint-action="save-config">${state.bootstrapPending === "save-endpoint-config" ? "Saving..." : "Save Runtime"}</button>
                         <button class="primary-button ${endpointRecommendedAction(selected) === "attach-proxy-target" ? "action-focus" : ""}" type="button" data-endpoint-action="attach-proxy-target" ${attachedRemotes.length ? "" : "disabled"}>${state.bootstrapPending === "attach-proxy-target" ? "Attaching..." : "Attach Proxy Route"}</button>
                         <button class="secondary-button" type="button" data-endpoint-action="detach-proxy-target" ${selected.execution_strategy === "proxy" ? "" : "disabled"}>${state.bootstrapPending === "detach-proxy-target" ? "Detaching..." : "Detach Proxy Route"}</button>
-                        <button class="secondary-button ${endpointRecommendedAction(selected) === "publish" ? "action-focus" : ""}" type="button" data-endpoint-action="publish">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Endpoint"}</button>
-                        <button class="secondary-button ${endpointRecommendedAction(selected) === "publish-configuration" ? "action-focus" : ""}" type="button" data-endpoint-action="publish-configuration">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Configuration"}</button>
+                        <button class="secondary-button ${endpointRecommendedAction(selected) === "publish" ? "action-focus" : ""}" type="button" data-endpoint-action="publish" ${selected.publication_ready === false ? "disabled" : ""}>${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : selected.publication_ready === false ? "Fix Publish Readiness" : "Publish Endpoint"}</button>
+                        <button class="secondary-button ${endpointRecommendedAction(selected) === "publish-configuration" ? "action-focus" : ""}" type="button" data-endpoint-action="publish-configuration" ${selected.publication_ready === false ? "disabled" : ""}>${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : selected.publication_ready === false ? "Fix Publish Readiness" : "Publish Configuration"}</button>
                         <button class="secondary-button" type="button" data-endpoint-action="revoke-publication">${state.bootstrapPending === "revoke-publication" ? "Revoking..." : "Revoke Publication"}</button>
                         <button class="secondary-button" type="button" data-endpoint-action="view-signed-publication">View Signed Publication</button>
                         <button class="secondary-button ${endpointRecommendedAction(selected) === "request-validation" ? "action-focus" : ""}" type="button" data-endpoint-action="request-validation">${state.bootstrapPending === "request-validation" ? "Requesting..." : "Request Validation"}</button>
@@ -5533,6 +5941,7 @@
               </button>
             </div>
           </section>
+          ${renderSessionForcedSettlementPanel(selected)}
           <section class="subpanel" style="margin-bottom: 18px;">
             <div class="panel-heading">Launch Session Request</div>
             ${
@@ -7575,7 +7984,7 @@
           <div class="inspector-title">${selected.display_name}</div>
           <div class="inspector-copy">No active signed publication exists for this endpoint yet. Publish the current configuration to generate a wallet-signed network-visible artifact.</div>
           <div class="inspector-actions">
-            <button class="primary-button" type="button" data-endpoint-action="publish-configuration">Publish Configuration</button>
+            <button class="primary-button" type="button" data-endpoint-action="publish-configuration" ${selected.publication_ready === false ? "disabled" : ""}>${selected.publication_ready === false ? "Fix Publish Readiness" : "Publish Configuration"}</button>
             <button class="secondary-button" type="button" data-endpoint-action="view-endpoint-summary">Back To Endpoint Summary</button>
           </div>
         `;
@@ -8774,6 +9183,131 @@
       }
     }
 
+    async function runSelectedEndpointMvpPaidSmoke() {
+      const draftEndpoint = selectedEndpointDraft();
+      if (!draftEndpoint?.endpoint_id) {
+        return;
+      }
+      const draft = syncMvpSmokeDraft(draftEndpoint);
+      state.mvpSmokePending = true;
+      state.bootstrapMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(
+          `${endpointApiBase}/${draftEndpoint.endpoint_id}/mvp-paid-smoke`,
+          {
+            client_wallet: draft.clientWallet,
+            deposit_q_atoms: Number(draft.depositQAtoms || 0),
+            fixed_price_q_atoms: Number(draft.fixedPriceQAtoms || 0),
+            network_fee_reserve_q_atoms: Number(draft.networkFeeReserveQAtoms || 0),
+            task_type: draft.taskType,
+            payload: mvpSmokeRequestPayload(draft),
+            auto_finalize: Boolean(draft.autoFinalize),
+          }
+        );
+        state.mvpSmokeResult = result.data || result;
+        state.selectedSessionId = state.mvpSmokeResult.session?.session_id || state.selectedSessionId;
+        state.selectedRequestTaskId = state.mvpSmokeResult.task?.task_id || state.selectedRequestTaskId;
+        const proposal = state.mvpSmokeResult.settlement_readiness?.proposal || {};
+        state.bootstrapMessage = {
+          kind: "good",
+          text: state.mvpSmokeResult.finalized
+            ? `MVP Paid Smoke finalized ${formatQ(proposal.final_endpoint_payment_q_atoms || 0)} for ${draftEndpoint.endpoint_id}.`
+            : `MVP Paid Smoke built Settlement readiness for ${draftEndpoint.endpoint_id}; finalize manually when ready.`,
+        };
+        await Promise.all([
+          loadScreen("endpoints"),
+          loadScreen("sessions"),
+          loadScreen("requests"),
+        ]);
+      } catch (error) {
+        state.bootstrapMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.mvpSmokePending = false;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function finalizeSelectedEndpointMvpPaidSmoke() {
+      const ids = mvpSmokeResultIds(state.mvpSmokeResult);
+      if (!ids.endpointId || !ids.sessionId || !ids.requestId) {
+        return;
+      }
+      const draft = syncMvpSmokeSettlementDraft();
+      state.mvpSmokeSettlementPending = "finalize";
+      state.bootstrapMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(
+          `${endpointApiBase}/${ids.endpointId}/mvp-sessions/${ids.sessionId}/finalize`,
+          {
+            request_id: ids.requestId,
+            consumer_signature: draft.consumerSignature,
+            actual_network_fees_q_atoms: Number(draft.actualNetworkFeesQAtoms || 0),
+          }
+        );
+        state.mvpSmokeResult = {
+          ...state.mvpSmokeResult,
+          finalized: result.data || result,
+        };
+        const proposal = state.mvpSmokeResult.finalized?.proposal || {};
+        state.bootstrapMessage = {
+          kind: "good",
+          text: `MVP Smoke Settlement finalized ${formatQ(proposal.final_endpoint_payment_q_atoms || 0)} for ${ids.sessionId}.`,
+        };
+        await Promise.all([refreshSessionsPayload(), refreshRequestsPayload()]);
+      } catch (error) {
+        state.bootstrapMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.mvpSmokeSettlementPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function forceFinalizeSelectedEndpointMvpPaidSmoke() {
+      const ids = mvpSmokeResultIds(state.mvpSmokeResult);
+      if (!ids.endpointId || !ids.sessionId || !ids.requestId) {
+        return;
+      }
+      const draft = syncMvpSmokeSettlementDraft();
+      state.mvpSmokeSettlementPending = "force-finalize";
+      state.bootstrapMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(
+          `${endpointApiBase}/${ids.endpointId}/mvp-sessions/${ids.sessionId}/force-finalize`,
+          {
+            reason: draft.forceReason,
+            force_after: draft.forceAfter,
+            now: draft.forceNow,
+            request_id: ids.requestId,
+            actual_network_fees_q_atoms: Number(draft.actualNetworkFeesQAtoms || 0),
+          }
+        );
+        state.mvpSmokeResult = {
+          ...state.mvpSmokeResult,
+          finalized: result.data || result,
+        };
+        const proposal = state.mvpSmokeResult.finalized?.proposal || {};
+        state.bootstrapMessage = {
+          kind: "good",
+          text: `MVP Smoke forced Settlement resolved ${formatQ(proposal.final_endpoint_payment_q_atoms || 0)} Endpoint payment for ${ids.sessionId}.`,
+        };
+        await Promise.all([refreshSessionsPayload(), refreshRequestsPayload()]);
+      } catch (error) {
+        state.bootstrapMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.mvpSmokeSettlementPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function revokeBootstrapEndpointPublication() {
       const draft = selectedEndpointDraft();
       if (!draft?.endpoint_id) {
@@ -9825,6 +10359,48 @@
       }
     }
 
+    async function forceRefundSelectedSessionUnavailable() {
+      const selected = selectedSessionRow();
+      const eligibility = sessionForceSettlementEligibility(selected);
+      if (!selected?.session?.session_id || !eligibility.enabled) {
+        state.sessionMessage = {
+          kind: "bad",
+          text: eligibility.reason,
+        };
+        render();
+        bindInteractiveElements();
+        return;
+      }
+      const draft = syncSessionForceSettlementDraft(selected);
+      state.sessionActionPending = "force-unavailable-refund";
+      state.sessionMessage = null;
+      render();
+      try {
+        const result = await postJson(
+          `${endpointApiBase}/${selected.session.endpoint_id}/mvp-sessions/${selected.session.session_id}/force-finalize`,
+          {
+            reason: "ENDPOINT_UNAVAILABLE",
+            force_after: draft.forceAfter,
+            now: draft.forceNow,
+            actual_network_fees_q_atoms: Number(draft.actualNetworkFeesQAtoms || 0),
+          }
+        );
+        state.sessionMessage = {
+          kind: "good",
+          text: `Forced refund finalized for ${result.data.session.session_id}: ${formatQ(result.data.proposal.consumer_payment_refund_q_atoms || 0)} payment refund.`,
+        };
+        state.selectedSessionId = result.data.session.session_id;
+        await refreshSessionsPayload();
+        mergeSessionResultIntoPayload(result.data);
+      } catch (error) {
+        state.sessionMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.sessionActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function openReservedSession() {
       const selectedEndpoint = selectedSessionOpenEndpoint();
       const draft = syncSessionOpenDraft();
@@ -10447,7 +11023,16 @@
             void closeSelectedSession();
           } else if (button.dataset.sessionAction === "sweep-idle") {
             void sweepIdleSessions();
+          } else if (button.dataset.sessionAction === "force-unavailable-refund") {
+            void forceRefundSelectedSessionUnavailable();
           }
+        });
+      });
+
+      document.querySelectorAll("[data-session-force-field]").forEach((control) => {
+        const key = control.dataset.sessionForceField;
+        control.addEventListener("input", () => {
+          state.sessionForceSettlementDraft[key] = control.value;
         });
       });
 
@@ -10727,6 +11312,31 @@
         });
       });
 
+      document.querySelectorAll("[data-mvp-smoke-field]").forEach((control) => {
+        const key = control.dataset.mvpSmokeField;
+        const eventName =
+          control.type === "checkbox" || control.tagName === "SELECT" ? "change" : "input";
+        control.addEventListener(eventName, () => {
+          state.mvpSmokeDraft[key] =
+            control.type === "checkbox" ? control.checked : control.value;
+          if (key === "taskType") {
+            state.mvpSmokeDraft.taskInput = mvpSmokeDefaultInput(
+              selectedEndpointDraft()?.mvp_paid_smoke || {},
+              control.value
+            );
+          }
+          renderWorkspace();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-mvp-smoke-settlement-field]").forEach((control) => {
+        const key = control.dataset.mvpSmokeSettlementField;
+        control.addEventListener("input", () => {
+          state.mvpSmokeSettlementDraft[key] = control.value;
+        });
+      });
+
       document.querySelectorAll("[data-endpoint-action]").forEach((button) => {
         button.addEventListener("click", () => {
           const action = button.dataset.endpointAction;
@@ -10768,6 +11378,15 @@
               return;
             case "request-validation":
               void requestBootstrapEndpointValidation();
+              return;
+            case "run-mvp-smoke":
+              void runSelectedEndpointMvpPaidSmoke();
+              return;
+            case "finalize-mvp-smoke":
+              void finalizeSelectedEndpointMvpPaidSmoke();
+              return;
+            case "force-finalize-mvp-smoke":
+              void forceFinalizeSelectedEndpointMvpPaidSmoke();
               return;
             case "finish-guided-flow":
               clearGuidedProxyFlow();

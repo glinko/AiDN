@@ -189,11 +189,60 @@ def test_store_round_trips_runtime_bindings() -> None:
 
     store.save_runtime_binding(binding)
 
-    updated_binding = binding.model_copy(update={"status": "degraded"})
+    updated_binding = RuntimeBinding.model_validate(
+        {
+            **binding.model_dump(mode="json"),
+            "status": "degraded",
+            "operational_state": "DEGRADED",
+        }
+    )
     store.save_runtime_binding(updated_binding)
 
     assert store.get_runtime_binding("rb-1") == updated_binding
     assert store.list_runtime_bindings() == [updated_binding]
+
+
+def test_store_requires_new_generation_for_runtime_configuration_change() -> None:
+    store = InMemoryProviderInventoryStore()
+    store.save_provider_instance(_provider_instance("pi-1"))
+    store.save_model_deployment(
+        ModelDeployment(
+            model_deployment_id="md-1",
+            provider_instance_id="pi-1",
+            provider_model_reference="qwen3:14b",
+            operator_display_name="Qwen 14B",
+            operational_state="ready",
+        )
+    )
+    binding = RuntimeBinding(
+        runtime_binding_id="rb-generation",
+        runtime_id="runtime-1",
+        provider_instance_id="pi-1",
+        model_deployment_id="md-1",
+        capability_id="cap.primary",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+        plugin_id="aidn.provider.fake",
+        adapter_version="1",
+        compatibility_bundle_id="bundle-rb-1",
+        status="ready",
+    )
+    store.save_runtime_binding(binding)
+
+    with pytest.raises(ValueError, match="runtime_configuration_hash"):
+        store.save_runtime_binding(binding.model_copy(update={"adapter_version": "2"}))
+
+    replacement = RuntimeBinding.model_validate(
+        {
+            **binding.model_dump(mode="json"),
+            "runtime_generation": 2,
+            "adapter_version": "2",
+            "runtime_configuration_hash": None,
+        }
+    )
+    store.save_runtime_binding(replacement)
+
+    assert store.get_runtime_binding(binding.runtime_binding_id) == replacement
 
 
 def test_store_rejects_runtime_binding_provider_change_on_replace() -> None:

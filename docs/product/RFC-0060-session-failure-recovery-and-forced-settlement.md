@@ -2,11 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.2`
+Version: `0.7`
 
-Revision note: Session recovery may consume Dispatcher delivery records, Dead
-Letter metadata, last processed Message IDs and Route Generation. Dispatcher
-evidence informs recovery but does not determine economic state.
+Revision note: Forced Settlement uses the RFC-0037 Settlement Input Root,
+request records, bounded dispute reserve and partial undisputed finalization.
+
+Supersedes:
+
+- `RFC-0060 Version 0.6`
 
 Depends on:
 
@@ -305,7 +308,7 @@ An acknowledgement MAY have status:
 The Last Accepted Checkpoint defines:
 
 - uncontested cumulative usage;
-- minimum Provider payment;
+- minimum Endpoint Payment;
 - maximum ordinary refund before additional policy charges.
 
 It SHALL be the default forced-settlement baseline.
@@ -553,6 +556,28 @@ The Provider Hypervisor SHALL attempt:
 
 If recovery succeeds within the Runtime recovery timeout, the Session MAY resume.
 
+Where a Runtime is implemented by a Provider Plugin Adapter, the Hypervisor MAY
+also reconcile Plugin management state under RFC-0056. That reconciliation does
+not replace the Runtime recovery state required by RFC-0054.
+
+The Runtime recovery snapshot SHOULD identify Runtime ID, current Dispatcher
+Route Generation, Runtime Generation, Runtime Configuration Hash, State
+Generation, active Request mappings, stream position and Usage chain head.
+
+A Route Generation change alone MAY resume the same compatible Runtime lineage.
+A Runtime Generation, Configuration Hash or State Generation mismatch SHALL
+require explicit migration evidence or fail recovery. Plugin Manager
+reconciliation is management evidence and cannot independently resume or settle
+a Session.
+
+The Hypervisor SHALL issue an explicit RFC-0054 Recovery Plan. Existing work
+may continue, output or final Results/Usage may be redelivered, idempotent work
+may restart, or work may be cancelled/failed. Missing acknowledgments alone do
+not authorize re-execution. `UNRECOVERABLE` Runtime terminal state enters this
+RFC's failure and Forced Settlement evaluation.
+The snapshot is evidence for the Session recovery decision, not authority to
+alter accepted Session terms.
+
 ## 29. Runtime Replacement
 
 A replacement Runtime MAY resume a Session only when:
@@ -564,6 +589,10 @@ A replacement Runtime MAY resume a Session only when:
 - the Consumer accepts or protocol policy permits transparent replacement.
 
 A Runtime replacement SHALL not reset usage or pricing.
+
+A Plugin Manager restart alone SHALL NOT increment Session identity or move a
+Session. A material Runtime Adapter replacement requires Runtime reauthorization,
+an explicit Route Generation transition and compatibility checks under RFC-0054.
 
 ## 30. Runtime Recovery Failure
 
@@ -760,7 +789,7 @@ Both parties SHALL preserve:
 
 The default Mismatch Settlement is:
 
-`Provider payment = value of Last Accepted Checkpoint`
+`Endpoint Payment = value of Last Accepted Checkpoint`
 
 plus any independently proven and explicitly authorized fixed or observable charge.
 
@@ -1044,7 +1073,7 @@ forced_settlement_result:
   terminal_state:
   failure_class:
   attribution:
-  provider_payment:
+  endpoint_payment:
   consumer_refund:
   network_fees:
   penalties:
@@ -1203,7 +1232,7 @@ The Ledger SHALL record at minimum:
 - failure class;
 - attribution state;
 - Last Accepted Checkpoint;
-- Provider payment;
+- Endpoint Payment;
 - Consumer refund;
 - fees;
 - penalties;
@@ -1498,9 +1527,18 @@ The following remain versioned protocol parameters:
 
 For every terminal Session:
 
-`Provider Payment + Consumer Refund + Network Fees + Finalized Penalties = Locked Session Deposit`
+`Endpoint Payment + Consumer Refund + Network Fees + Finalized Penalties = Locked Session Deposit`
 
-`Provider Payment <= Accepted and Authorized Usage`
+`Endpoint Payment <= Accepted and Authorized Usage`
+
+## RFC-0037 Forced Settlement Input and Partial Finalization
+
+Every Forced Settlement claim SHALL bind the effective Session terms,
+Settlement Input Root, Request Settlement Root, accepted Checkpoint references,
+prior releases and a bounded disputed amount. Deterministically supported and
+undisputed Endpoint Payment and Consumer refund MAY finalize atomically while
+only the dispute reserve remains locked. Unsupported liability is refunded;
+valid accepted exposure is not erased solely because one participant is absent.
 
 `Total Distribution <= Locked Deposit`
 
@@ -1545,3 +1583,12 @@ For every terminal Session:
 - Fault attribution is separate from failure classification.
 - Ordinary failures do not automatically cause slashing.
 - Finalized Settlement is replay-protected and irreversible under ordinary protocol operation.
+
+## RFC-0051 Incomplete Usage Handling
+
+Forced Settlement uses the last accepted Usage chain head and the accepted
+Accounting Contract fallback. Conflicting or out-of-sequence reports remain
+evidence but do not extend payable Usage until resolved. `UNAVAILABLE` is never
+converted to zero or an estimate. Fixed fallback, observable fallback, partial
+charge, zero variable component or review may apply only when accepted before
+execution. No result may exceed Request ceiling, Session exposure or Deposit.

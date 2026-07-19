@@ -1,11 +1,22 @@
 from fastapi.testclient import TestClient
 
-from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
+from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.main import build_app
+from aidn_hypervisor.persistence import FileStateStore
+from aidn_hypervisor.plugins.fake import FakeManagedPlugin
+from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.queue import InMemoryTaskQueue
+from aidn_hypervisor.resources import ResourceOrchestrator
+from aidn_hypervisor.runtime_protocol.models import (
+    RuntimeExecuteRequest,
+    RuntimeRequestRecord,
+    RuntimeUsageConflict,
+    RuntimeUsageReport,
+    canonical_hash,
+)
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
@@ -36,6 +47,275 @@ def _runtime_binding_bundle(bundle_id: str) -> BundleConfig:
     )
 
 
+def _mvp_api_context():
+    hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+    endpoint = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-endpoint",
+            "bundle_id": "bundle-a",
+            "bundle_hash": "bundle-hash-a",
+            "display_name": "Fixed price endpoint",
+            "model_class": "llm.chat",
+        },
+    ).json()["data"]["endpoint"]
+    hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+    session = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+        },
+    ).json()["data"]["session"]
+    return hypervisor, client, endpoint, session
+
+
+def _mvp_persistent_api_context(tmp_path):
+    state_store = FileStateStore(tmp_path / "hypervisor-state.json")
+    hypervisor = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        state_store=state_store,
+    )
+    endpoint_service = EndpointService(EndpointStore(state_store))
+    session_service = SessionService(SessionStore(state_store))
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+    endpoint = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-endpoint",
+            "bundle_id": "bundle-a",
+            "bundle_hash": "bundle-hash-a",
+            "display_name": "Persistent fixed price endpoint",
+            "model_class": "llm.chat",
+        },
+    ).json()["data"]["endpoint"]
+    hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+    session = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+        },
+    ).json()["data"]["session"]
+    return state_store, hypervisor, client, endpoint, session
+
+
+def _mvp_executable_api_context(*, open_session: bool = True):
+    plugins = PluginRegistry()
+    plugins.register(FakeManagedPlugin())
+    hypervisor = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048)),
+        bundles=[
+            BundleConfig(
+                bundle_id="bundle-a",
+                plugin_id="fake-managed",
+                provider_type="fake",
+                workload_type="llm_text",
+                model_id="fake-model",
+                launch_mode="managed_process",
+                device_affinity="cpu",
+                resource_profile=ResourceProfile(),
+                warm_policy="auto",
+                priority_class=50,
+                enabled=True,
+            )
+        ],
+        plugins=plugins,
+        runtimes=ProviderProcessManager(),
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+    endpoint = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-endpoint",
+            "bundle_id": "bundle-a",
+            "bundle_hash": "bundle-hash-a",
+            "display_name": "Executable fixed price endpoint",
+            "model_class": "llm.chat",
+            "capabilities": ["llm.chat"],
+        },
+    ).json()["data"]["endpoint"]
+    hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+    session = None
+    if open_session:
+        session = client.post(
+            f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions",
+            json={
+                "client_wallet": "wallet-consumer",
+                "deposit_q_atoms": 1_000,
+                "fixed_price_q_atoms": 900,
+                "network_fee_reserve_q_atoms": 100,
+            },
+        ).json()["data"]["session"]
+    return hypervisor, client, endpoint, session
+
+
+def _restored_mvp_api_context(state_store: FileStateStore):
+    hypervisor = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        state_store=state_store,
+    )
+    hypervisor.restore_state(state_store.load())
+    endpoint_service = EndpointService(EndpointStore(state_store))
+    session_service = SessionService(SessionStore(state_store))
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+    return hypervisor, client, endpoint_service, session_service
+
+
+def _seed_terminal_runtime_evidence(
+    hypervisor: HypervisorService,
+    *,
+    endpoint: dict,
+    session: dict,
+    request_id: str = "request-1",
+    include_final_usage: bool = True,
+) -> tuple[RuntimeExecuteRequest, RuntimeUsageReport]:
+    payload = {"prompt": "hello"}
+    request = RuntimeExecuteRequest(
+        runtime_id="runtime-1",
+        runtime_generation=1,
+        runtime_configuration_hash="runtime-config-1",
+        route_generation=1,
+        endpoint_id=endpoint["endpoint_id"],
+        endpoint_configuration_hash=endpoint["configuration_hash"],
+        session_id=session["session_id"],
+        session_contract_hash=session["session_contract_hash"],
+        request_id=request_id,
+        capability_id="llm.chat",
+        capability_version="1.0",
+        capability_definition_hash="capability-definition-1",
+        request_payload_hash=canonical_hash(payload),
+        request_payload=payload,
+        request_charge_ceiling=0.0009,
+        accounting_contract_hash=session["accounting_contract_hash"],
+        idempotency_key=f"idempotency-{request_id}",
+        request_deadline="2026-07-18T12:30:00+00:00",
+    )
+    final_usage = RuntimeUsageReport(
+        usage_report_id=f"usage-final-{request_id}",
+        runtime_id=request.runtime_id,
+        runtime_generation=request.runtime_generation,
+        runtime_configuration_hash=request.runtime_configuration_hash,
+        endpoint_id=request.endpoint_id,
+        endpoint_configuration_hash=request.endpoint_configuration_hash,
+        session_id=session["session_id"],
+        request_id=request.request_id,
+        accounting_contract_hash=session["accounting_contract_hash"],
+        report_type="FINAL",
+        usage_sequence=1,
+        request_state="COMPLETED",
+        terminal=True,
+        created_at="2026-07-18T12:00:05+00:00",
+        runtime_signature="runtime-signed",
+    )
+    hypervisor.runtime_protocol_store.requests[request.request_id] = (
+        RuntimeRequestRecord(
+            request_id=request.request_id,
+            runtime_id=request.runtime_id,
+            runtime_generation=request.runtime_generation,
+            route_generation=request.route_generation,
+            request_hash=request.semantic_hash(),
+            request=request,
+            request_state="COMPLETED",
+            admission_state="ACCEPTED",
+            accepted_at="2026-07-18T12:00:01+00:00",
+            terminal_result_hash="sha256:result-final-1",
+            terminal_final_usage_report_id=final_usage.usage_report_id,
+            updated_at="2026-07-18T12:00:05+00:00",
+        )
+    )
+    if include_final_usage:
+        hypervisor.runtime_protocol_store.usage_reports[final_usage.usage_report_id] = (
+            final_usage
+        )
+    hypervisor.runtime_protocol_store.flush()
+    return request, final_usage
+
+
+def _finalize_mvp_session(client: TestClient, *, endpoint: dict, session: dict, request_id: str):
+    return client.post(
+        (
+            f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions/"
+            f"{session['session_id']}/finalize"
+        ),
+        json={
+            "request_id": request_id,
+            "consumer_signature": "consumer-signed",
+        },
+    )
+
+
+def _force_finalize_mvp_session(
+    client: TestClient,
+    *,
+    endpoint: dict,
+    session: dict,
+    reason: str,
+    force_after: str,
+    now: str,
+    request_id: str | None = None,
+):
+    payload = {
+        "reason": reason,
+        "force_after": force_after,
+        "now": now,
+    }
+    if request_id is not None:
+        payload["request_id"] = request_id
+    return client.post(
+        (
+            f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions/"
+            f"{session['session_id']}/force-finalize"
+        ),
+        json=payload,
+    )
+
+
+def _ledger_operation_count(hypervisor: HypervisorService, operation_type: str) -> int:
+    return sum(
+        1
+        for item in hypervisor.list_ledger_operations()
+        if item["operation_type"] == operation_type
+    )
+
+
 def test_create_endpoint_api_returns_enveloped_response() -> None:
     response = _client().post(
         "/api/v1/endpoints",
@@ -57,6 +337,523 @@ def test_create_endpoint_api_returns_enveloped_response() -> None:
     assert body["correlation_id"]
 
 
+def test_open_mvp_fixed_price_session_locks_canonical_escrow() -> None:
+    hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    endpoint_service = EndpointService(EndpointStore())
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            session_service=SessionService(SessionStore()),
+        )
+    )
+    endpoint = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-endpoint",
+            "bundle_id": "bundle-a",
+            "bundle_hash": "bundle-hash-a",
+            "display_name": "Fixed price endpoint",
+            "model_class": "llm.chat",
+        },
+    ).json()["data"]["endpoint"]
+    hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+        },
+    )
+    body = response.json()
+
+    assert response.status_code == 201
+    assert body["data"]["session"]["economic_profile"] == "MVP-0001"
+    assert body["data"]["session"]["canonical_funding_state_hash"]
+    assert body["data"]["funding"]["total_locked_amount_q_atoms"] == 1_000
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
+
+
+def test_finalize_mvp_fixed_price_session_uses_runtime_evidence_over_api() -> None:
+    hypervisor, client, endpoint, session = _mvp_api_context()
+    request, _ = _seed_terminal_runtime_evidence(
+        hypervisor,
+        endpoint=endpoint,
+        session=session,
+    )
+
+    response = _finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        request_id=request.request_id,
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["data"]["proposal"]["final_endpoint_payment_q_atoms"] == 900
+    assert body["data"]["proposal"]["consumer_fee_refund_q_atoms"] == 100
+    assert body["data"]["funding"]["funding_state"] == "RELEASED"
+    assert body["data"]["session"]["status"] == "closed"
+    assert body["data"]["deposit"]["status"] == "released"
+    assert body["data"]["settlement"]["settlement_evidence_root"] == (
+        body["data"]["proposal"]["settlement_input_root"]
+    )
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
+def test_mvp_fixed_price_session_executes_task_and_finalizes_from_runtime_evidence() -> None:
+    hypervisor, client, endpoint, session = _mvp_executable_api_context()
+
+    task_response = client.post(
+        "/tasks",
+        json={
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "hello"},
+            "constraints": {
+                "endpoint_id": endpoint["endpoint_id"],
+                "session_id": session["session_id"],
+            },
+        },
+    )
+    task_body = task_response.json()
+    request_id = task_body["task_id"]
+    task_detail = client.get(f"/tasks/{request_id}").json()
+    runtime_record = hypervisor.runtime_protocol_store.requests[request_id]
+    final_usage = hypervisor.runtime_protocol_store.usage_reports[
+        runtime_record.terminal_final_usage_report_id
+    ]
+
+    finalize_response = _finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        request_id=request_id,
+    )
+    finalize_body = finalize_response.json()
+
+    assert task_response.status_code == 202
+    assert task_detail["status"] == "completed"
+    assert task_detail["result"]["ok"] is True
+    assert runtime_record.request_state == "COMPLETED"
+    assert runtime_record.admission_state == "ACCEPTED"
+    assert runtime_record.request.session_id == session["session_id"]
+    assert final_usage.report_type == "FINAL"
+    assert final_usage.terminal is True
+    assert final_usage.request_state == "COMPLETED"
+    assert finalize_response.status_code == 200
+    assert finalize_body["data"]["proposal"]["final_endpoint_payment_q_atoms"] == 900
+    assert finalize_body["data"]["proposal"]["consumer_fee_refund_q_atoms"] == 100
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
+def test_mvp_paid_smoke_opens_executes_and_auto_finalizes() -> None:
+    hypervisor, client, endpoint, _ = _mvp_executable_api_context(open_session=False)
+
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-paid-smoke",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "smoke"},
+        },
+    )
+    body = response.json()["data"]
+
+    assert response.status_code == 201
+    assert body["task"]["status"] == "completed"
+    assert body["runtime_evidence"]["request"]["request_state"] == "COMPLETED"
+    assert body["runtime_evidence"]["final_usage"]["report_type"] == "FINAL"
+    assert body["settlement_readiness"]["ready"] is True
+    assert body["settlement_readiness"]["proposal"]["final_endpoint_payment_q_atoms"] == 900
+    assert body["finalized"]["funding"]["funding_state"] == "RELEASED"
+    assert body["finalized"]["session"]["status"] == "closed"
+    assert body["finalized"]["deposit"]["status"] == "released"
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
+def test_mvp_paid_smoke_can_return_readiness_without_finalizing() -> None:
+    hypervisor, client, endpoint, _ = _mvp_executable_api_context(open_session=False)
+
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-paid-smoke",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "readiness only"},
+            "request_id": "request-smoke-manual",
+            "auto_finalize": False,
+        },
+    )
+    body = response.json()["data"]
+    session = body["session"]
+
+    assert response.status_code == 201
+    assert body["finalized"] is None
+    assert body["settlement_readiness"]["ready"] is True
+    assert body["settlement_readiness"]["proposal"]["final_endpoint_payment_q_atoms"] == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 0
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
+
+    finalize_response = _finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        request_id="request-smoke-manual",
+    )
+
+    assert finalize_response.status_code == 200
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
+def test_mvp_fixed_price_session_rejects_second_runtime_request() -> None:
+    hypervisor, client, endpoint, session = _mvp_executable_api_context()
+    first = client.post(
+        "/tasks",
+        json={
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "first"},
+            "constraints": {
+                "endpoint_id": endpoint["endpoint_id"],
+                "session_id": session["session_id"],
+            },
+        },
+    )
+    second = client.post(
+        "/tasks",
+        json={
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "second"},
+            "constraints": {
+                "endpoint_id": endpoint["endpoint_id"],
+                "session_id": session["session_id"],
+            },
+        },
+    )
+
+    assert first.status_code == 202
+    assert second.status_code == 409
+    assert second.json()["detail"] == (
+        "MVP-0001 supports exactly one Runtime Request per Session"
+    )
+    assert len(
+        [
+            item
+            for item in hypervisor.runtime_protocol_store.requests.values()
+            if item.request.session_id == session["session_id"]
+        ]
+    ) == 1
+
+
+def test_finalize_mvp_fixed_price_session_rejects_missing_final_usage() -> None:
+    hypervisor, client, endpoint, session = _mvp_api_context()
+    request, _ = _seed_terminal_runtime_evidence(
+        hypervisor,
+        endpoint=endpoint,
+        session=session,
+        include_final_usage=False,
+    )
+
+    response = _finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        request_id=request.request_id,
+    )
+    body = response.json()
+
+    assert response.status_code == 409
+    assert body["error"]["code"] == "mvp_session_finalize_rejected"
+    assert "Final Usage Report is missing" in body["error"]["message"]
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 0
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
+
+
+def test_finalize_mvp_fixed_price_session_rejects_usage_conflict() -> None:
+    hypervisor, client, endpoint, session = _mvp_api_context()
+    request, final_usage = _seed_terminal_runtime_evidence(
+        hypervisor,
+        endpoint=endpoint,
+        session=session,
+    )
+    conflict = RuntimeUsageConflict(
+        usage_report_id=final_usage.usage_report_id,
+        runtime_id=request.runtime_id,
+        session_id=session["session_id"],
+        request_id=request.request_id,
+        usage_sequence=final_usage.usage_sequence,
+        accepted_report_hash="sha256:accepted",
+        conflicting_report_hash=final_usage.report_hash,
+        conflict_type="CHAIN",
+        observed_at="2026-07-18T12:00:06+00:00",
+    )
+    hypervisor.runtime_protocol_store.usage_conflicts[conflict.conflict_id] = conflict
+
+    response = _finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        request_id=request.request_id,
+    )
+    body = response.json()
+
+    assert response.status_code == 409
+    assert body["error"]["code"] == "mvp_session_finalize_rejected"
+    assert "undisputed Runtime evidence" in body["error"]["message"]
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 0
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
+
+
+def test_finalize_mvp_fixed_price_session_rejects_wrong_endpoint_path() -> None:
+    hypervisor, client, endpoint, session = _mvp_api_context()
+    request, _ = _seed_terminal_runtime_evidence(
+        hypervisor,
+        endpoint=endpoint,
+        session=session,
+    )
+    other_endpoint = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-other",
+            "bundle_id": "bundle-b",
+            "bundle_hash": "bundle-hash-b",
+            "display_name": "Other endpoint",
+            "model_class": "llm.chat",
+        },
+    ).json()["data"]["endpoint"]
+
+    response = _finalize_mvp_session(
+        client,
+        endpoint=other_endpoint,
+        session=session,
+        request_id=request.request_id,
+    )
+    body = response.json()
+
+    assert response.status_code == 409
+    assert body["error"]["code"] == "mvp_session_endpoint_mismatch"
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 0
+
+
+def test_finalize_mvp_fixed_price_session_duplicate_does_not_double_pay() -> None:
+    hypervisor, client, endpoint, session = _mvp_api_context()
+    request, _ = _seed_terminal_runtime_evidence(
+        hypervisor,
+        endpoint=endpoint,
+        session=session,
+    )
+
+    first = _finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        request_id=request.request_id,
+    )
+    second = _finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        request_id=request.request_id,
+    )
+    body = second.json()
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert body["error"]["code"] == "mvp_session_finalize_rejected"
+    assert "already finalized" in body["error"]["message"]
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
+def test_finalize_mvp_fixed_price_session_survives_restore_without_double_pay(
+    tmp_path,
+) -> None:
+    state_store, hypervisor, client, endpoint, session = _mvp_persistent_api_context(
+        tmp_path
+    )
+    request, final_usage = _seed_terminal_runtime_evidence(
+        hypervisor,
+        endpoint=endpoint,
+        session=session,
+    )
+
+    response = _finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        request_id=request.request_id,
+    )
+    assert response.status_code == 200
+
+    restored, restored_client, _, restored_session_service = _restored_mvp_api_context(
+        state_store
+    )
+    funding = restored.get_session_funding_account(session["session_id"])
+    restored_request = restored.runtime_protocol_store.requests[request.request_id]
+    restored_usage = restored.runtime_protocol_store.usage_reports[
+        final_usage.usage_report_id
+    ]
+    restored_session = restored_session_service.store.get_session(session["session_id"])
+    restored_deposit = restored_session_service.store.get_deposit_for_session(
+        session["session_id"]
+    )
+    finalize_operations = _ledger_operation_count(
+        restored, "SESSION_SETTLEMENT_FINALIZE"
+    )
+
+    assert funding.funding_state == "RELEASED"
+    assert restored.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert restored.wallet_q_atom_balance("wallet-consumer") == 100
+    assert restored_request.terminal_final_usage_report_id == final_usage.usage_report_id
+    assert restored_usage.report_hash == final_usage.report_hash
+    assert restored_session.status == "closed"
+    assert restored_deposit.status == "released"
+    assert finalize_operations == 1
+
+    duplicate = _finalize_mvp_session(
+        restored_client,
+        endpoint=endpoint,
+        session=session,
+        request_id=request.request_id,
+    )
+
+    assert duplicate.status_code == 409
+    assert "already finalized" in duplicate.json()["error"]["message"]
+    assert restored.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert restored.wallet_q_atom_balance("wallet-consumer") == 100
+    assert (
+        _ledger_operation_count(restored, "SESSION_SETTLEMENT_FINALIZE")
+        == finalize_operations
+    )
+
+
+def test_force_finalize_mvp_endpoint_unavailable_refunds_after_timeout() -> None:
+    hypervisor, client, endpoint, session = _mvp_api_context()
+
+    early = _force_finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        reason="ENDPOINT_UNAVAILABLE",
+        force_after="2026-07-18T12:01:00+00:00",
+        now="2026-07-18T12:00:59+00:00",
+    )
+    response = _force_finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        reason="ENDPOINT_UNAVAILABLE",
+        force_after="2026-07-18T12:01:00+00:00",
+        now="2026-07-18T12:01:00+00:00",
+    )
+    body = response.json()
+
+    assert early.status_code == 409
+    assert "timeout" in early.json()["error"]["message"]
+    assert response.status_code == 200
+    assert body["data"]["proposal"]["final_endpoint_payment_q_atoms"] == 0
+    assert body["data"]["proposal"]["consumer_payment_refund_q_atoms"] == 900
+    assert body["data"]["proposal"]["consumer_fee_refund_q_atoms"] == 100
+    assert body["data"]["settlement"]["no_request"] is True
+    assert body["data"]["session"]["status"] == "closed"
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 0
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 1_000
+
+
+def test_force_finalize_mvp_endpoint_unavailable_survives_restore_without_double_refund(
+    tmp_path,
+) -> None:
+    state_store, _, client, endpoint, session = _mvp_persistent_api_context(tmp_path)
+
+    response = _force_finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        reason="ENDPOINT_UNAVAILABLE",
+        force_after="2026-07-18T12:01:00+00:00",
+        now="2026-07-18T12:01:00+00:00",
+    )
+    assert response.status_code == 200
+
+    restored, restored_client, _, restored_session_service = _restored_mvp_api_context(
+        state_store
+    )
+    funding = restored.get_session_funding_account(session["session_id"])
+    forced_operations = _ledger_operation_count(restored, "SESSION_FORCED_SETTLEMENT")
+    restored_session = restored_session_service.store.get_session(session["session_id"])
+    restored_deposit = restored_session_service.store.get_deposit_for_session(
+        session["session_id"]
+    )
+
+    assert funding.funding_state == "RELEASED"
+    assert restored.wallet_q_atom_balance("wallet-endpoint") == 0
+    assert restored.wallet_q_atom_balance("wallet-consumer") == 1_000
+    assert restored_session.status == "closed"
+    assert restored_deposit.status == "released"
+    assert forced_operations == 1
+
+    duplicate = _force_finalize_mvp_session(
+        restored_client,
+        endpoint=endpoint,
+        session=session,
+        reason="ENDPOINT_UNAVAILABLE",
+        force_after="2026-07-18T12:01:00+00:00",
+        now="2026-07-18T12:02:00+00:00",
+    )
+
+    assert duplicate.status_code == 409
+    assert "already finalized" in duplicate.json()["error"]["message"]
+    assert restored.wallet_q_atom_balance("wallet-endpoint") == 0
+    assert restored.wallet_q_atom_balance("wallet-consumer") == 1_000
+    assert (
+        _ledger_operation_count(restored, "SESSION_FORCED_SETTLEMENT")
+        == forced_operations
+    )
+
+
+def test_force_finalize_mvp_completed_fixed_price_pays_after_consumer_timeout() -> None:
+    hypervisor, client, endpoint, session = _mvp_api_context()
+    request, _ = _seed_terminal_runtime_evidence(
+        hypervisor,
+        endpoint=endpoint,
+        session=session,
+    )
+
+    response = _force_finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        reason="CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE",
+        force_after="2026-07-18T12:01:00+00:00",
+        now="2026-07-18T12:01:00+00:00",
+        request_id=request.request_id,
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["data"]["proposal"]["final_endpoint_payment_q_atoms"] == 900
+    assert body["data"]["proposal"]["consumer_fee_refund_q_atoms"] == 100
+    assert body["data"]["funding"]["funding_state"] == "RELEASED"
+    assert body["data"]["session"]["close_reason"] == (
+        "forced_consumer_timeout_after_completed_fixed_price"
+    )
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
 def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
     hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
     hypervisor.bundle_for_runtime_binding = (  # type: ignore[attr-defined]
@@ -64,6 +861,15 @@ def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
     )
     hypervisor.bundle_hash_for_runtime_binding = (  # type: ignore[attr-defined]
         lambda runtime_binding_id: f"bundle-hash-{runtime_binding_id}"
+    )
+    hypervisor.runtime_binding_endpoint_admission = (  # type: ignore[attr-defined]
+        lambda runtime_binding_id, endpoint_payload=None: {
+            "runtime_binding_id": runtime_binding_id,
+            "ready": True,
+            "blockers": [],
+            "warnings": [],
+            "dimensions": {},
+        }
     )
     client = TestClient(
         build_app(
@@ -89,6 +895,56 @@ def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
     assert response.status_code == 201
     assert body["data"]["endpoint"]["bundle_id"] == "bundle-rtb-1"
     assert body["data"]["endpoint"]["bundle_hash"] == "bundle-hash-rtb-1"
+
+
+def test_create_endpoint_route_rejects_runtime_binding_admission_blocker() -> None:
+    hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    hypervisor.runtime_binding_endpoint_admission = (  # type: ignore[attr-defined]
+        lambda runtime_binding_id, endpoint_payload=None: {
+            "runtime_binding_id": runtime_binding_id,
+            "ready": False,
+            "blockers": [
+                {
+                    "code": "RUNTIME_BINDING_NOT_READY",
+                    "message": "Runtime Binding must be ready before creating an Endpoint draft.",
+                }
+            ],
+            "warnings": [],
+            "dimensions": {
+                "runtime_binding": {
+                    "ready": False,
+                    "status": "disabled",
+                    "operational_state": "STOPPED",
+                }
+            },
+        }
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=EndpointService(EndpointStore()),
+            session_service=SessionService(SessionStore()),
+        )
+    )
+
+    response = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-a",
+            "runtime_binding_id": "rtb-1",
+            "display_name": "Local Qwen",
+            "model_class": "llm.chat",
+            "capabilities": ["llm.chat"],
+        },
+    )
+
+    body = response.json()
+
+    assert response.status_code == 409
+    assert body["error"]["code"] == "endpoint_admission_blocked"
+    assert body["error"]["details"]["blockers"][0]["code"] == (
+        "RUNTIME_BINDING_NOT_READY"
+    )
 
 
 def test_patch_endpoint_runtime_rotates_configuration_hash() -> None:

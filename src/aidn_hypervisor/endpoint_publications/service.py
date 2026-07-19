@@ -8,6 +8,15 @@ from aidn_hypervisor.endpoint_publications.models import (
 )
 
 
+class EndpointPublicationReadinessError(ValueError):
+    def __init__(self, readiness: dict) -> None:
+        self.readiness = readiness
+        blocker_codes = ", ".join(
+            blocker["code"] for blocker in readiness.get("blockers", [])
+        )
+        super().__init__(f"Endpoint publication is blocked: {blocker_codes}")
+
+
 class EndpointPublicationService:
     def __init__(self, *, store, endpoint_service, operation_recorder=None) -> None:
         self.store = store
@@ -23,6 +32,14 @@ class EndpointPublicationService:
         wallet_private_key: str,
     ) -> PublishedEndpointConfiguration:
         manifest = self.endpoint_service.get_endpoint(endpoint_id).endpoint
+        readiness = self.publication_readiness(
+            endpoint_id=endpoint_id,
+            owner_wallet=owner_wallet,
+            node_id=node_id,
+            wallet_private_key=wallet_private_key,
+        )
+        if not readiness["ready"]:
+            raise EndpointPublicationReadinessError(readiness)
         records = self.store.list_records()
         previous = self._current_publication_from_records(records, endpoint_id)
         execution_payload = self._execution_payload(manifest)
@@ -85,6 +102,150 @@ class EndpointPublicationService:
         updated_records.append(record)
         self.store.replace_records(updated_records)
         return record
+
+    def publication_readiness(
+        self,
+        *,
+        endpoint_id: str,
+        owner_wallet: str | None = None,
+        node_id: str | None = None,
+        wallet_private_key: str | None = None,
+    ) -> dict:
+        manifest = self.endpoint_service.get_endpoint(endpoint_id).endpoint
+        blockers: list[dict] = []
+        warnings: list[dict] = []
+
+        def block(code: str, message: str) -> None:
+            blockers.append({"code": code, "message": message})
+
+        def warn(code: str, message: str) -> None:
+            warnings.append({"code": code, "message": message})
+
+        external_access = (
+            manifest.publication.accepts_external_requests
+            or manifest.publication.visibility == "public"
+        )
+        pricing_configured = any(
+            value is not None
+            for value in (
+                manifest.pricing.fixed_price,
+                manifest.pricing.input_price,
+                manifest.pricing.output_price,
+            )
+        )
+        paid_pricing = any(
+            (value or 0) > 0
+            for value in (
+                manifest.pricing.fixed_price,
+                manifest.pricing.input_price,
+                manifest.pricing.output_price,
+            )
+        )
+        validation_requested = manifest.publication.validation == "enabled"
+        validation_supported = (
+            manifest.validation.enabled
+            and manifest.validation.model_class_supported
+            and manifest.validation.verification_status != "unsupported"
+        )
+
+        if not manifest.owner_wallet.strip():
+            block(
+                "ENDPOINT_OWNER_WALLET_REQUIRED",
+                "Endpoint must declare an owner wallet before publication.",
+            )
+        if owner_wallet is not None and owner_wallet != manifest.owner_wallet:
+            block(
+                "ENDPOINT_PUBLICATION_OWNER_MISMATCH",
+                "Publishing wallet must match the Endpoint owner wallet.",
+            )
+        if node_id is not None and not node_id.strip():
+            block(
+                "ENDPOINT_PUBLICATION_NODE_ID_REQUIRED",
+                "A node identity is required for signed endpoint publication.",
+            )
+        if wallet_private_key is not None and not wallet_private_key.strip():
+            block(
+                "ENDPOINT_PUBLICATION_SIGNATURE_REQUIRED",
+                "A wallet signing key is required for endpoint publication.",
+            )
+        if manifest.publication.visibility == "private" and manifest.publication.accepts_external_requests:
+            block(
+                "ENDPOINT_PUBLICATION_POLICY_CONFLICT",
+                "Private endpoints cannot accept external requests.",
+            )
+        if manifest.execution_strategy == "proxy" and manifest.proxy_target is None:
+            block(
+                "ENDPOINT_PROXY_TARGET_REQUIRED",
+                "Proxy endpoints require a bound remote target before publication.",
+            )
+        if validation_requested and not validation_supported:
+            block(
+                "ENDPOINT_VALIDATION_POLICY_UNSUPPORTED",
+                "Validation is enabled but the Endpoint validation profile is not ready.",
+            )
+        if external_access and not pricing_configured:
+            warn(
+                "ENDPOINT_PRICING_NOT_CONFIGURED",
+                "External Endpoint publication has no explicit price; it will be treated as free until pricing is configured.",
+            )
+        if paid_pricing and manifest.session.minimum_deposit <= 0:
+            warn(
+                "ENDPOINT_MINIMUM_DEPOSIT_NOT_CONFIGURED",
+                "Paid Endpoint publication has no minimum Session deposit policy.",
+            )
+        if manifest.publication.visibility == "public" and not manifest.publication.discoverable:
+            warn(
+                "ENDPOINT_PUBLIC_NOT_DISCOVERABLE",
+                "Public Endpoint is signed but excluded from discovery.",
+            )
+
+        return {
+            "endpoint_id": manifest.endpoint_id,
+            "ready": not blockers,
+            "blockers": blockers,
+            "warnings": warnings,
+            "dimensions": {
+                "owner": {
+                    "endpoint_owner_wallet": manifest.owner_wallet,
+                    "publishing_wallet": owner_wallet,
+                    "matches": owner_wallet is None or owner_wallet == manifest.owner_wallet,
+                },
+                "signature": {
+                    "node_id_present": node_id is None or bool(node_id.strip()),
+                    "signing_key_present": (
+                        wallet_private_key is None or bool(wallet_private_key.strip())
+                    ),
+                },
+                "publication": {
+                    "visibility": manifest.publication.visibility,
+                    "discoverable": manifest.publication.discoverable,
+                    "accepts_external_requests": manifest.publication.accepts_external_requests,
+                    "external_access": external_access,
+                },
+                "pricing": {
+                    "configured": pricing_configured,
+                    "paid": paid_pricing,
+                    "billing_unit": manifest.pricing.billing_unit,
+                },
+                "session": {
+                    "minimum_deposit": manifest.session.minimum_deposit,
+                    "maximum_session_duration_seconds": (
+                        manifest.session.maximum_session_duration_seconds
+                    ),
+                    "max_concurrent_sessions": manifest.session.max_concurrent_sessions,
+                    "queue_policy": manifest.session.queue_policy,
+                },
+                "validation": {
+                    "requested": validation_requested,
+                    "supported": validation_supported,
+                    "verification_status": manifest.validation.verification_status,
+                },
+                "execution": {
+                    "strategy": manifest.execution_strategy,
+                    "proxy_target_bound": manifest.proxy_target is not None,
+                },
+            },
+        }
 
     def current_publication(
         self, endpoint_id: str

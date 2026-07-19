@@ -1,12 +1,40 @@
+import hashlib
+import json
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 ProviderConnectionMode = Literal["attached", "managed"]
 ProviderOperationalState = Literal["created", "ready", "degraded", "error", "removed"]
 ModelOperationalState = Literal["discovered", "installing", "ready", "error", "removed"]
 RuntimeBindingStatus = Literal["draft", "ready", "degraded", "disabled"]
+RuntimeImplementationClass = Literal[
+    "PLUGIN_MANAGED",
+    "NATIVE",
+    "EXTERNAL_DIRECT",
+    "PROXY",
+    "COMPOSITE",
+    "REMOTE_RUNTIME",
+]
+RuntimeOperationalState = Literal[
+    "DRAFT",
+    "STAGING",
+    "REGISTERING",
+    "VERIFYING",
+    "READY",
+    "STARTING",
+    "DEGRADED",
+    "OVERLOADED",
+    "DRAINING",
+    "STOPPED",
+    "RECOVERING",
+    "FAILED",
+    "QUARANTINED",
+    "REVOKED",
+    "REMOVING",
+    "REMOVED",
+]
 PluginTrustStatus = Literal[
     "UNREVIEWED",
     "COMMUNITY_REVIEWED",
@@ -94,6 +122,12 @@ def _require_non_empty(value: str) -> str:
     if not value or not value.strip():
         raise ValueError("value must be non-empty")
     return value
+
+
+def plugin_permission_hash(permissions: list[str]) -> str:
+    normalized = sorted({_require_non_empty(permission) for permission in permissions})
+    payload = json.dumps(normalized, separators=(",", ":"), ensure_ascii=True)
+    return f"sha256:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
 
 
 class PluginPermission(BaseModel):
@@ -665,7 +699,11 @@ class InstalledPlugin(BaseModel):
     release_id: str
     plugin_id: str
     plugin_version: str
+    package_digest: str | None = None
     granted_permissions: list[str] = Field(default_factory=list)
+    granted_permission_hash: str | None = None
+    installation_generation: int = Field(default=1, ge=1)
+    activation_credential_key_id: str | None = None
     state: InstalledPluginState = "INSTALLED"
     installation_source: InstalledPluginSource
     installed_at: str
@@ -682,9 +720,14 @@ class InstalledPlugin(BaseModel):
     def _required_strings_not_blank(cls, value: str) -> str:
         return _require_non_empty(value)
 
-    @field_validator("activated_at")
+    @field_validator(
+        "package_digest",
+        "granted_permission_hash",
+        "activation_credential_key_id",
+        "activated_at",
+    )
     @classmethod
-    def _optional_activated_at_not_blank(cls, value: str | None) -> str | None:
+    def _optional_identity_value_not_blank(cls, value: str | None) -> str | None:
         if value is None:
             return None
         return _require_non_empty(value)
@@ -693,6 +736,17 @@ class InstalledPlugin(BaseModel):
     @classmethod
     def _normalize_granted_permissions(cls, value: list[str]) -> list[str]:
         return sorted({_require_non_empty(permission) for permission in value})
+
+    @model_validator(mode="after")
+    def _validate_installation_identity(self) -> "InstalledPlugin":
+        if self.installation_source == "PACKAGE" and self.package_digest is None:
+            raise ValueError("package-installed plugin requires package_digest")
+        expected_permission_hash = plugin_permission_hash(self.granted_permissions)
+        if self.granted_permission_hash is None:
+            self.granted_permission_hash = expected_permission_hash
+        elif self.granted_permission_hash != expected_permission_hash:
+            raise ValueError("granted_permission_hash does not match granted_permissions")
+        return self
 
 
 class ProviderInstance(BaseModel):
@@ -726,17 +780,113 @@ class ModelDeployment(BaseModel):
 
 class RuntimeBinding(BaseModel):
     runtime_binding_id: str
+    runtime_id: str
+    runtime_generation: int = Field(default=1, ge=1)
+    implementation_class: RuntimeImplementationClass = "PLUGIN_MANAGED"
     provider_instance_id: str
     model_deployment_id: str
     capability_id: str
     capability_version: str
     capability_definition_hash: str
     plugin_id: str
+    installed_plugin_id: str | None = None
+    plugin_version: str | None = None
+    adapter_id: str | None = None
+    adapter_version: str | None = None
+    supported_features: list[str] = Field(default_factory=list)
+    supported_modalities: list[str] = Field(default_factory=list)
+    supported_accounting_modes: list[str] = Field(default_factory=list)
+    usage_reporting_profile_hash: str | None = None
+    resource_profile_hash: str | None = None
+    security_profile_hash: str | None = None
+    recovery_profile_hash: str | None = None
+    dispatcher_route_scope: dict = Field(default_factory=lambda: {"channel_class": "RUNTIME"})
+    runtime_configuration_hash: str | None = None
     compatibility_bundle_id: str
     status: RuntimeBindingStatus
+    operational_state: RuntimeOperationalState | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _populate_compatibility_identity(cls, value):
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        normalized.setdefault("runtime_id", normalized.get("runtime_binding_id"))
+        if normalized.get("operational_state") is None:
+            normalized["operational_state"] = {
+                "draft": "DRAFT",
+                "ready": "READY",
+                "degraded": "DEGRADED",
+                "disabled": "REVOKED",
+            }.get(normalized.get("status"), "DRAFT")
+        return normalized
+
+    @model_validator(mode="after")
+    def _bind_runtime_configuration(self):
+        allowed_states = {
+            "draft": {
+                "DRAFT",
+                "STAGING",
+                "REGISTERING",
+                "VERIFYING",
+                "STARTING",
+                "RECOVERING",
+            },
+            "ready": {"READY"},
+            "degraded": {"DEGRADED", "OVERLOADED", "DRAINING"},
+            "disabled": {
+                "STOPPED",
+                "FAILED",
+                "QUARANTINED",
+                "REVOKED",
+                "REMOVING",
+                "REMOVED",
+            },
+        }
+        if self.operational_state not in allowed_states[self.status]:
+            raise ValueError("status does not match Runtime operational_state")
+        payload = {
+            "implementation_class": self.implementation_class,
+            "provider_instance_id": self.provider_instance_id,
+            "model_deployment_id": self.model_deployment_id,
+            "capability_id": self.capability_id,
+            "capability_version": self.capability_version,
+            "capability_definition_hash": self.capability_definition_hash,
+            "plugin_id": self.plugin_id,
+            "installed_plugin_id": self.installed_plugin_id,
+            "plugin_version": self.plugin_version,
+            "adapter_id": self.adapter_id,
+            "adapter_version": self.adapter_version,
+            "supported_features": sorted(set(self.supported_features)),
+            "supported_modalities": sorted(set(self.supported_modalities)),
+            "supported_accounting_modes": sorted(set(self.supported_accounting_modes)),
+            "usage_reporting_profile_hash": self.usage_reporting_profile_hash,
+            "resource_profile_hash": self.resource_profile_hash,
+            "security_profile_hash": self.security_profile_hash,
+            "recovery_profile_hash": self.recovery_profile_hash,
+            "dispatcher_route_scope": self.dispatcher_route_scope,
+        }
+        expected = f"sha256:{hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('utf-8')).hexdigest()}"
+        if self.runtime_configuration_hash is None:
+            self.runtime_configuration_hash = expected
+        elif self.runtime_configuration_hash != expected:
+            raise ValueError("runtime_configuration_hash does not match Runtime configuration")
+        return self
+
+    def binding_hash(self) -> str:
+        payload = {
+            "runtime_id": self.runtime_id,
+            "runtime_generation": self.runtime_generation,
+            "runtime_configuration_hash": self.runtime_configuration_hash,
+            "capability_definition_hash": self.capability_definition_hash,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return f"sha256:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
 
     @field_validator(
         "runtime_binding_id",
+        "runtime_id",
         "provider_instance_id",
         "model_deployment_id",
         "capability_id",
@@ -744,6 +894,70 @@ class RuntimeBinding(BaseModel):
         "capability_definition_hash",
         "plugin_id",
         "compatibility_bundle_id",
+    )
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+    @field_validator(
+        "installed_plugin_id",
+        "plugin_version",
+        "adapter_id",
+        "adapter_version",
+        "usage_reporting_profile_hash",
+        "resource_profile_hash",
+        "security_profile_hash",
+        "recovery_profile_hash",
+        "runtime_configuration_hash",
+    )
+    @classmethod
+    def _optional_not_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value)
+
+
+class RuntimeIdentity(BaseModel):
+    runtime_id: str
+    runtime_owner: str
+    operator_hypervisor_id: str
+    implementation_class: RuntimeImplementationClass
+    runtime_generation: int = Field(ge=1)
+    capability_id: str
+    capability_major_version: int = Field(ge=0)
+    runtime_configuration_hash: str
+    identity_version: str = "1"
+
+    @field_validator(
+        "runtime_id",
+        "runtime_owner",
+        "operator_hypervisor_id",
+        "capability_id",
+        "runtime_configuration_hash",
+        "identity_version",
+    )
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class RuntimeInstance(BaseModel):
+    runtime_id: str
+    runtime_generation: int = Field(ge=1)
+    instance_id: str
+    runtime_binding_hash: str
+    execution_host_id: str
+    process_reference: str | None = None
+    started_at: str
+    operational_state: RuntimeOperationalState
+    health_reference: str | None = None
+
+    @field_validator(
+        "runtime_id",
+        "instance_id",
+        "runtime_binding_hash",
+        "execution_host_id",
+        "started_at",
     )
     @classmethod
     def _not_blank(cls, value: str) -> str:

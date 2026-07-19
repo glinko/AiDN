@@ -4,16 +4,14 @@ AiDN Session Protocol
 
 Status: Draft
 
-Version: 0.5
+Version: 0.9
 
-Revision note: every Session route binds Session ID, Session Contract Hash,
-accepted Endpoint Configuration Hash, Consumer Session identity and
-`route_generation`. Connection resume does not change Session state, and stale
-queued messages require explicit recovery or rejection.
+Revision note: Session Contract v2 explicitly binds Endpoint Payment and
+Consumer refund beneficiaries and supplies request-level evidence to RFC-0037.
 
 Supersedes:
 
-* RFC-0044 Version 0.2 - Reconstructed and Consolidated Edition
+* RFC-0044 Version 0.8
 
 Depends on:
 
@@ -66,6 +64,14 @@ The protocol defines how participants:
 * settle completed work;
 * refund unused collateral;
 * prevent duplicate execution and duplicate Settlement.
+
+Every economic Session Checkpoint SHALL reference the accepted RFC-0051 Usage
+Report ID, chain-head Hash and Sequence, Accounting Contract Hash, calculated
+charge, current Session exposure and remaining Deposit. Checkpoint
+acknowledgment permits continued bounded exposure; it does not assert that the
+Consumer independently reproduced Provider-metered units. Settlement uses the
+last accepted chain head and SHALL NOT treat Runtime Request acceptance as
+completed or billable work.
 
 ---
 
@@ -295,6 +301,8 @@ session_contract:
   consumer_session_key:
   endpoint_id:
   endpoint_operator:
+  endpoint_payment_beneficiary:
+  consumer_refund_beneficiary:
   endpoint_session_key:
   endpoint_configuration_hash:
   advertisement_reference:
@@ -335,6 +343,8 @@ After Session acceptance, the following SHALL remain immutable:
 
 * Endpoint ID;
 * Endpoint Configuration Hash;
+* Endpoint Payment Beneficiary;
+* Consumer Refund Beneficiary;
 * accepted Advertisement identity (`advertisement_id`);
 * accepted Offer identity (`offer_id`), where present;
 * Capability and version;
@@ -381,7 +391,7 @@ SPONSORED_DEPOSIT
 PROTOCOL_ESCROW_DEPOSIT
 CONCEALED_SPONSORED_DEPOSIT
 
-Funding class does not by itself determine Provider payment.
+Funding class does not by itself determine Endpoint Payment.
 
 Settlement is determined by the accepted Settlement Resolver.
 
@@ -447,7 +457,7 @@ COMMITTED_CONCEALED_SETTLEMENT
 
 The resolver determines:
 
-* Provider payment rules;
+* Endpoint Payment rules;
 * refund destination;
 * fee handling;
 * reveal requirements;
@@ -479,7 +489,7 @@ The exact resolver details remain hidden until valid reveal or protocol timeout 
 
 ## 21. No Unilateral Pre-Reveal Settlement
 
-A Session using COMMITTED_CONCEALED_SETTLEMENT SHALL NOT permit unilateral ordinary Provider Settlement before:
+A Session using COMMITTED_CONCEALED_SETTLEMENT SHALL NOT permit unilateral ordinary Endpoint Settlement before:
 
 * valid resolver reveal;
 * or deterministic protocol timeout resolution.
@@ -714,7 +724,7 @@ MaximumSessionCharge
 LockedDeposit
 ```
 
-Provider payment SHALL never exceed the accepted maximum.
+Endpoint Payment SHALL never exceed the accepted maximum.
 
 ---
 
@@ -1876,7 +1886,7 @@ They serve as:
 * maximum-limit evidence;
 * Validation Report inputs.
 
-They do not create Provider payment.
+They do not create Endpoint Payment.
 
 ---
 
@@ -1915,7 +1925,7 @@ When cooperative close fails, RFC-0060 defines:
 * recovery window;
 * Last Accepted Checkpoint use;
 * later objective evidence;
-* Provider payment;
+* Endpoint Payment;
 * refund;
 * failure attribution.
 
@@ -2139,7 +2149,7 @@ They differ in:
 
 * Funding Authorization;
 * concealed resolver;
-* Provider payment;
+* Endpoint Payment;
 * Assignment reveal;
 * Validation Report linkage.
 
@@ -2311,6 +2321,21 @@ SETTLEMENT_RESOLVER_NOT_REVEALED
 ORDINARY_SETTLEMENT_PROHIBITED
 RECOVERY_STATE_MISMATCH
 SESSION_PROTOCOL_VERSION_UNSUPPORTED
+
+## Runtime Acceptance Binding
+
+A Session route SHALL retain the accepted Endpoint Configuration Hash and its
+authorized Runtime Binding Hash or compatible Runtime set. Stateful Sessions
+SHOULD remain pinned to one Runtime lineage and State Generation. Route
+reconnect SHALL NOT silently migrate Session state. Runtime failover requires
+contract-compatible behavior, preserved Request IDs and Usage continuity, or
+the Session enters explicit RFC-0060 recovery.
+
+`RUNTIME_REQUEST_ACCEPT` records execution responsibility but SHALL NOT advance
+the Session to completed or payable state. Session Request state follows
+RFC-0054 progress and becomes terminal only after a valid `RUNTIME_RESULT` plus
+applicable Usage processing. `PARTIAL`, `CANCELLED`, `FAILED`, `EXPIRED` and
+`UNRECOVERABLE` results enter the corresponding Session and RFC-0060 policy.
 
 ---
 
@@ -2715,7 +2740,7 @@ is_validation: true
 После выполнения раскрывается Resolver:
 
 VALIDATION_SESSION_SETTLE
-Provider Payment = 0Q
+Endpoint Payment = 0Q
 
 Если Validator исчезнет и не опубликует отчёт, Deposit всё равно не зависает навсегда: действует Resolver reveal timeout.
 

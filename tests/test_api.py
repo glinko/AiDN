@@ -2724,6 +2724,11 @@ def test_operator_dashboard_shell_route_exposes_sessions_workspace_controls() ->
     assert "Reserve Paid Session" in response.text
     assert "Deposit Confirmation" in response.text
     assert "Confirm Deposit &amp; Open Session" in response.text
+    assert "Session Forced Settlement" in response.text
+    assert "Force Refund Timeout" in response.text
+    assert 'data-session-action="force-unavailable-refund"' in response.text
+    assert 'data-session-force-field="forceAfter"' in response.text
+    assert "/mvp-sessions/${selected.session.session_id}/force-finalize" in response.text
     assert 'data-session-open-field="endpointId"' in response.text
     assert 'data-session-open-field="clientWallet"' in response.text
     assert 'data-session-open-field="depositQ"' in response.text
@@ -2887,6 +2892,12 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert "/operators/model-deployments/" in response.text
     assert "/runtime-bindings" in response.text
     assert "Create Runtime Binding" in response.text
+    assert "Materialize Artifacts First" in response.text
+    assert "materialize first" in response.text
+    assert "artifacts ready" in response.text
+    assert "Fix Endpoint Readiness" in response.text
+    assert "review pricing" in response.text
+    assert "endpoint ready" in response.text
     assert "data-model-runtime-binding" in response.text
     assert "runtime_binding_id" in response.text
     assert "data-runtime-binding-endpoint" in response.text
@@ -2968,11 +2979,21 @@ def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -
     assert "Validation Requested" in response.text
     assert "Configured Endpoints" in response.text
     assert "Selected Endpoint Actions" in response.text
+    assert "MVP Paid Smoke" in response.text
+    assert "MVP Smoke Settlement Controls" in response.text
+    assert "/mvp-paid-smoke" in response.text
+    assert "/mvp-sessions/${ids.sessionId}/finalize" in response.text
+    assert "/mvp-sessions/${ids.sessionId}/force-finalize" in response.text
     assert "Endpoint Policy Editor" in response.text
     assert "Endpoint Runtime Editor" in response.text
     assert "Configuration History" in response.text
     assert 'data-endpoint-action="publish"' in response.text
     assert 'data-endpoint-action="request-validation"' in response.text
+    assert 'data-endpoint-action="run-mvp-smoke"' in response.text
+    assert 'data-endpoint-action="finalize-mvp-smoke"' in response.text
+    assert 'data-endpoint-action="force-finalize-mvp-smoke"' in response.text
+    assert 'data-mvp-smoke-settlement-field="consumerSignature"' in response.text
+    assert 'data-mvp-smoke-settlement-field="forceAfter"' in response.text
     assert 'data-endpoint-action="save-policy"' in response.text
     assert 'data-endpoint-action="save-config"' in response.text
     assert 'data-endpoint-field="visibility"' in response.text
@@ -3765,6 +3786,82 @@ def test_provider_inventory_operator_routes_attach_discover_and_bind() -> None:
     )
     assert compatibility_bundle.workload_type == "llm.chat"
     assert compatibility_bundle.endpoint == "http://127.0.0.1:9999"
+
+
+def test_provider_inventory_runtime_binding_route_requires_materialized_artifacts(
+    tmp_path,
+) -> None:
+    service = _service()
+    service.provider_inventory = ProviderInventoryService(
+        plugins=service.plugins,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+    client = TestClient(build_app(service=service))
+
+    upload_response = client.post(
+        "/operators/provider-installation-artifacts",
+        json={
+            "relative_path": "models/fake-model.gguf",
+            "content_base64": base64.b64encode(b"model-bytes").decode("ascii"),
+        },
+    )
+    assert upload_response.status_code == 200
+    artifact_response = client.post(
+        "/operators/model-artifacts/promote",
+        json={"relative_path": "models/fake-model.gguf"},
+    )
+    assert artifact_response.status_code == 200
+    artifact_set_response = client.post(
+        "/operators/model-artifact-sets",
+        json={
+            "display_name": "Fake model package",
+            "files": [
+                {
+                    "relative_path": "weights/fake-model.gguf",
+                    "artifact_id": artifact_response.json()["artifact_id"],
+                    "role": "WEIGHTS",
+                }
+            ],
+        },
+    )
+    assert artifact_set_response.status_code == 200
+
+    attach_response = client.post(
+        "/operators/provider-instances/attach",
+        json={
+            "plugin_id": "fake-managed",
+            "display_name": "Local Fake",
+            "configuration": {"base_url": "http://127.0.0.1:9999"},
+        },
+    )
+    assert attach_response.status_code == 200
+    provider_instance_id = attach_response.json()["provider_instance_id"]
+    models_response = client.post(
+        f"/operators/provider-instances/{provider_instance_id}/discover-models"
+    )
+    assert models_response.status_code == 200
+    model_deployment_id = models_response.json()["items"][0]["model_deployment_id"]
+
+    bind_response = client.post(
+        f"/operators/model-deployments/{model_deployment_id}/artifact-set",
+        json={"artifact_set_id": artifact_set_response.json()["artifact_set_id"]},
+    )
+    assert bind_response.status_code == 200
+
+    binding_response = client.post(
+        f"/operators/model-deployments/{model_deployment_id}/runtime-bindings",
+        json={
+            "capability_id": "llm.chat",
+            "capability_version": "1.0.0",
+            "capability_definition_hash": "cap-hash",
+        },
+    )
+
+    assert binding_response.status_code == 409
+    assert "artifact set must be materialized" in binding_response.json()["detail"]
 
 
 def test_provider_plugin_release_routes_record_local_installation_without_execution() -> None:
@@ -5011,6 +5108,18 @@ def test_operator_dashboard_endpoints_endpoint_returns_endpoint_control_payload(
     assert response.json()["summary"]["validation_requested"] == 1
     assert response.json()["items"][0]["visibility"] == "shared"
     assert response.json()["items"][0]["shared_with_wallet_ids"] == ["wallet-a"]
+    assert response.json()["items"][0]["mvp_paid_smoke"]["profile"] == "MVP-0001"
+    assert response.json()["items"][0]["mvp_paid_smoke"]["route"].endswith(
+        "/mvp-paid-smoke"
+    )
+    assert (
+        response.json()["items"][0]["mvp_paid_smoke"]["default_task_type"]
+        == "audio.transcribe"
+    )
+    assert (
+        response.json()["items"][0]["mvp_paid_smoke"]["accounting_mode"]
+        == "FIXED_PRICE"
+    )
     assert response.json()["policy"]["publish_requires_validation"] is False
 
 
@@ -5115,6 +5224,48 @@ def test_operator_dashboard_sessions_endpoint_returns_operator_session_summary()
     assert response.json()["items"][0]["display_name"] == "Paid STT"
     assert response.json()["items"][0]["deposit"]["locked_q"] == 10.0
     assert response.json()["items"][0]["session"]["endpoint_id"] == created.endpoint.endpoint_id
+
+
+def test_operator_dashboard_sessions_endpoint_exposes_mvp_force_refund_eligibility_fields() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    service.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Paid STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    opened, _, funding = service.open_mvp_fixed_price_session(
+        session_service=session_service,
+        endpoint=created.endpoint,
+        client_wallet="wallet-consumer",
+        deposit_q_atoms=1_000,
+        fixed_price_q_atoms=900,
+        network_fee_reserve_q_atoms=100,
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.get("/operators/dashboard/sessions")
+    item = response.json()["items"][0]
+
+    assert response.status_code == 200
+    assert item["session"]["session_id"] == opened.session_id
+    assert item["session"]["economic_profile"] == "MVP-0001"
+    assert item["session"]["request_count"] == 0
+    assert item["session"]["canonical_funding_state_hash"] == funding.funding_state_hash
 
 
 def test_operator_dashboard_sessions_endpoint_includes_related_task_telemetry() -> None:
@@ -5627,12 +5778,15 @@ def test_post_session_usage_reports_returns_ack_pending_checkpoint_view() -> Non
         "session_id": opened.session.session_id,
         "status": "ack_pending",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": None,
             "last_ack_hash": None,
             "last_accepted_report_sequence": None,
+            "last_accepted_report_id": None,
             "last_accepted_report_hash": None,
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 0.0,
             "mismatch_open": False,
             "ack_deadline_at": "2026-07-12T12:00:30+00:00",
@@ -5727,6 +5881,7 @@ def test_post_session_usage_acknowledgements_advances_accepted_checkpoint() -> N
         "session_id": opened.session.session_id,
         "status": "open",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
@@ -5734,9 +5889,11 @@ def test_post_session_usage_acknowledgements_advances_accepted_checkpoint() -> N
                 UsageAcknowledgement.model_validate(usage_acknowledgement)
             ),
             "last_accepted_report_sequence": 1,
+            "last_accepted_report_id": "report-1",
             "last_accepted_report_hash": usage_report_hash(
                 UsageReport.model_validate(usage_report)
             ),
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 3.5,
             "mismatch_open": False,
             "ack_deadline_at": None,
@@ -5821,6 +5978,7 @@ def test_post_session_usage_acknowledgements_replay_is_idempotent() -> None:
         "session_id": opened.session.session_id,
         "status": "open",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
@@ -5828,9 +5986,11 @@ def test_post_session_usage_acknowledgements_replay_is_idempotent() -> None:
                 UsageAcknowledgement.model_validate(usage_acknowledgement)
             ),
             "last_accepted_report_sequence": 1,
+            "last_accepted_report_id": "report-1",
             "last_accepted_report_hash": usage_report_hash(
                 UsageReport.model_validate(usage_report)
             ),
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 3.5,
             "mismatch_open": False,
             "ack_deadline_at": None,
@@ -5939,6 +6099,7 @@ def test_post_session_usage_acknowledgements_replay_conflicts_on_different_accep
         "session_id": opened.session.session_id,
         "status": "open",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
@@ -5946,9 +6107,11 @@ def test_post_session_usage_acknowledgements_replay_conflicts_on_different_accep
                 UsageAcknowledgement.model_validate(usage_acknowledgement)
             ),
             "last_accepted_report_sequence": 1,
+            "last_accepted_report_id": "report-1",
             "last_accepted_report_hash": usage_report_hash(
                 UsageReport.model_validate(usage_report)
             ),
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 3.5,
             "mismatch_open": False,
             "ack_deadline_at": None,
@@ -6188,12 +6351,15 @@ def test_post_session_usage_reports_returns_409_for_broken_chain_continuity() ->
         "session_id": opened.session.session_id,
         "status": "mismatch",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(first_report)),
             "last_ack_sequence": None,
             "last_ack_hash": None,
             "last_accepted_report_sequence": None,
+            "last_accepted_report_id": None,
             "last_accepted_report_hash": None,
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 0.0,
             "mismatch_open": True,
             "ack_deadline_at": "2026-07-12T12:00:30+00:00",
@@ -6289,6 +6455,7 @@ def test_post_session_usage_acknowledgements_returns_409_for_report_hash_mismatc
         "session_id": opened.session.session_id,
         "status": "mismatch",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
@@ -6296,7 +6463,9 @@ def test_post_session_usage_acknowledgements_returns_409_for_report_hash_mismatc
                 UsageAcknowledgement.model_validate(mismatched_acknowledgement)
             ),
             "last_accepted_report_sequence": None,
+            "last_accepted_report_id": None,
             "last_accepted_report_hash": None,
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 0.0,
             "mismatch_open": True,
             "ack_deadline_at": "2026-07-12T12:00:30+00:00",
@@ -6390,6 +6559,7 @@ def test_get_session_accounting_returns_canonical_read_model() -> None:
         "session_id": opened.session.session_id,
         "status": "open",
         "checkpoint": {
+            "last_report_id": "report-1",
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
@@ -6397,9 +6567,11 @@ def test_get_session_accounting_returns_canonical_read_model() -> None:
                 UsageAcknowledgement.model_validate(usage_acknowledgement)
             ),
             "last_accepted_report_sequence": 1,
+            "last_accepted_report_id": "report-1",
             "last_accepted_report_hash": usage_report_hash(
                 UsageReport.model_validate(usage_report)
             ),
+            "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 3.5,
             "mismatch_open": False,
             "ack_deadline_at": None,
@@ -6537,7 +6709,9 @@ def test_session_detail_exposes_session_contract_object_references() -> None:
         session_payload["session_contract_object_id"]
         == opened.session.session_contract_object_id
     )
-    assert session_payload["session_contract_object_version"] == "session-contract.v1"
+    assert session_payload["session_contract_object_version"] == "session-contract.v2"
+    assert session_payload["endpoint_payment_beneficiary"] == "wallet-provider"
+    assert session_payload["consumer_refund_beneficiary"] == "wallet-client"
     assert session_payload["session_contract_namespace"] == "session"
 
 
@@ -6855,6 +7029,47 @@ def test_publish_configuration_endpoint_returns_signed_record() -> None:
         body["data"]["validation_summary"]["configuration_hash"]
         == created.endpoint.configuration_hash
     )
+
+
+def test_publish_configuration_returns_readiness_blockers() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Private External STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            publication={
+                "visibility": "private",
+                "accepts_external_requests": True,
+            },
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration"
+    )
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "endpoint_publication_blocked"
+    assert error["details"]["ready"] is False
+    assert error["details"]["blockers"][0]["code"] == "ENDPOINT_PUBLICATION_POLICY_CONFLICT"
 
 
 def test_publish_configuration_endpoint_refreshes_onboarding_completion() -> None:

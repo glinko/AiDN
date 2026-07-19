@@ -12,6 +12,12 @@ from aidn_hypervisor.endpoints.models import CreateEndpointCommand, UpdateEndpoi
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.queue import InMemoryTaskQueue
+from aidn_hypervisor.runtime_protocol.models import (
+    RuntimeExecuteRequest,
+    RuntimeRequestRecord,
+    RuntimeUsageReport,
+    canonical_hash,
+)
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
@@ -188,6 +194,145 @@ def test_session_open_and_settle_record_canonical_ledger_operations() -> None:
     assert closed.settlement.settlement_evidence_root == operations[1]["payload"]["settlement_evidence_root"]
 
 
+def test_mvp_fixed_price_session_binds_canonical_escrow_to_session_contract() -> None:
+    service = _hypervisor()
+    endpoint_service = EndpointService(EndpointStore())
+    endpoint = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-endpoint",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Fixed price endpoint",
+            model_class="llm.chat",
+        )
+    ).endpoint
+    service.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+
+    session, deposit, funding = service.open_mvp_fixed_price_session(
+        session_service=service.session_service,
+        endpoint=endpoint,
+        client_wallet="wallet-consumer",
+        deposit_q_atoms=1_000,
+        fixed_price_q_atoms=900,
+        network_fee_reserve_q_atoms=100,
+    )
+
+    assert session.economic_profile == "MVP-0001"
+    assert session.deposit_locked_q_atoms == 1_000
+    assert session.fixed_price_q_atoms == 900
+    assert session.request_charge_ceiling_q_atoms == 900
+    assert session.canonical_funding_state_hash == funding.funding_state_hash
+    assert funding.session_contract_hash == session.session_contract_hash
+    assert deposit.locked_q == 0.001
+    assert service.wallet_q_atom_balance("wallet-consumer") == 0
+    assert service.list_ledger_operations()[-1]["operation_type"] == "SESSION_ESCROW_LOCK"
+
+
+def test_mvp_fixed_price_settlement_uses_runtime_result_and_final_usage() -> None:
+    service = _hypervisor()
+    endpoint_service = EndpointService(EndpointStore())
+    endpoint = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-endpoint",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Fixed price endpoint",
+            model_class="llm.chat",
+        )
+    ).endpoint
+    service.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+    session, _, _ = service.open_mvp_fixed_price_session(
+        session_service=service.session_service,
+        endpoint=endpoint,
+        client_wallet="wallet-consumer",
+        deposit_q_atoms=1_000,
+        fixed_price_q_atoms=900,
+        network_fee_reserve_q_atoms=100,
+    )
+    payload = {"prompt": "hello"}
+    request = RuntimeExecuteRequest(
+        runtime_id="runtime-1",
+        runtime_generation=1,
+        runtime_configuration_hash="runtime-config-1",
+        route_generation=1,
+        endpoint_id=endpoint.endpoint_id,
+        endpoint_configuration_hash=endpoint.configuration_hash,
+        session_id=session.session_id,
+        session_contract_hash=session.session_contract_hash,
+        request_id="request-1",
+        capability_id="llm.chat",
+        capability_version="1.0",
+        capability_definition_hash="capability-definition-1",
+        request_payload_hash=canonical_hash(payload),
+        request_payload=payload,
+        request_charge_ceiling=0.0009,
+        accounting_contract_hash=session.accounting_contract_hash,
+        idempotency_key="idempotency-request-1",
+        request_deadline="2026-07-18T12:30:00+00:00",
+    )
+    final_usage = RuntimeUsageReport(
+        usage_report_id="usage-final-1",
+        runtime_id=request.runtime_id,
+        runtime_generation=request.runtime_generation,
+        runtime_configuration_hash=request.runtime_configuration_hash,
+        endpoint_id=request.endpoint_id,
+        endpoint_configuration_hash=request.endpoint_configuration_hash,
+        session_id=session.session_id,
+        request_id=request.request_id,
+        accounting_contract_hash=session.accounting_contract_hash,
+        report_type="FINAL",
+        usage_sequence=1,
+        request_state="COMPLETED",
+        terminal=True,
+        created_at="2026-07-18T12:00:05+00:00",
+        runtime_signature="runtime-signed",
+    )
+    service.runtime_protocol_store.requests[request.request_id] = RuntimeRequestRecord(
+        request_id=request.request_id,
+        runtime_id=request.runtime_id,
+        runtime_generation=request.runtime_generation,
+        route_generation=request.route_generation,
+        request_hash=request.semantic_hash(),
+        request=request,
+        request_state="COMPLETED",
+        admission_state="ACCEPTED",
+        accepted_at="2026-07-18T12:00:01+00:00",
+        terminal_result_hash="sha256:result-final-1",
+        terminal_final_usage_report_id=final_usage.usage_report_id,
+        updated_at="2026-07-18T12:00:05+00:00",
+    )
+    service.runtime_protocol_store.usage_reports[final_usage.usage_report_id] = (
+        final_usage
+    )
+
+    finalized = service.finalize_mvp_fixed_price_session(
+        session_service=service.session_service,
+        session_id=session.session_id,
+        request_id=request.request_id,
+        consumer_signature="consumer-signed",
+        accepted_at="2026-07-18T12:00:06+00:00",
+    )
+
+    evaluation = finalized["evaluation"]
+    proposal = finalized["proposal"]
+    funding = finalized["funding"]
+    session_result = finalized["session_result"]
+    record = evaluation.input_set.request_settlement_records[0]
+    assert record.result_reference == "sha256:result-final-1"
+    assert record.final_usage_report_hash == final_usage.report_hash
+    assert proposal.final_endpoint_payment_q_atoms == 900
+    assert proposal.consumer_payment_refund_q_atoms == 0
+    assert proposal.consumer_fee_refund_q_atoms == 100
+    assert funding.funding_state == "RELEASED"
+    assert session_result.session.status == "closed"
+    assert session_result.deposit.status == "released"
+    assert session_result.settlement.settlement_evidence_root == (
+        evaluation.input_set.settlement_input_root
+    )
+    assert service.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert service.wallet_q_atom_balance("wallet-consumer") == 100
+
+
 def test_session_accounting_report_and_acknowledgement_record_canonical_ledger_operations() -> None:
     service = _hypervisor()
     session_service = service.session_service
@@ -275,6 +420,8 @@ def test_session_accounting_report_and_acknowledgement_record_canonical_ledger_o
         "report_hash": usage_report_hash(usage_report),
         "ack_hash": usage_acknowledgement_hash(usage_acknowledgement),
         "accepted_checkpoint_sequence": 1,
+        "accepted_report_id": "report-1",
+        "accounting_contract_hash": opened.session.accounting_contract_hash,
         "accepted_usage_charged_q": 4.0,
         "verification_status": "accepted_unverified",
     }
@@ -283,6 +430,8 @@ def test_session_accounting_report_and_acknowledgement_record_canonical_ledger_o
         "endpoint_id": opened.session.endpoint_id,
         "accepted_checkpoint_sequence": 1,
         "report_hash": usage_report_hash(usage_report),
+        "usage_report_id": "report-1",
+        "accounting_contract_hash": opened.session.accounting_contract_hash,
         "accepted_usage_charged_q": 4.0,
     }
 

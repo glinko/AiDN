@@ -2,11 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.3`
+Version: `0.4`
+
+Revision note: Usage transparency, chain reliability, Authority accuracy and
+Accounting Contract compliance become separate Reputation dimensions.
 
 Supersedes:
 
-- `RFC-0041 Version 0.2`
+- `RFC-0041 Version 0.3`
 
 Depends on:
 
@@ -1985,3 +1988,12 @@ Does Not Disappear Through Ordinary Decay
 - Reputation does not directly move Q.
 - Reputation does not prove unique human identity.
 - The protocol records what it can observe and does not invent certainty about what it cannot.
+
+## RFC-0051 Usage Reputation Dimensions
+
+Endpoint Reputation SHOULD separately expose Usage Report availability,
+completeness, chain reliability, Authority accuracy, Accounting Contract
+compliance and retry disclosure reliability. Honest declared opaque Usage SHALL
+NOT create a negative event. Repeated missing required reports, hidden billable
+retries or conflicting signed chains MAY create evidence-backed events. A
+single statistical outlier is diagnostic evidence, not automatic guilt.

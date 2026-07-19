@@ -28,6 +28,7 @@ def _message(
     *,
     message_id: str = "msg-1",
     route_generation: int = 1,
+    runtime_generation: int | None = None,
     network_revision: str = "rev-1",
     payload: dict | None = None,
     channel_class: str = "VALIDATION",
@@ -49,6 +50,7 @@ def _message(
         destination_subject=destination_subject or {"subject_type": "ENDPOINT", "subject_id": "ep-1"},
         source_sequence=1,
         route_generation=route_generation,
+        runtime_generation=runtime_generation,
         created_at=now.isoformat(),
         expiration=(now + timedelta(minutes=5)).isoformat(),
         payload_hash=canonical_payload_hash(body),
@@ -214,6 +216,7 @@ def test_runtime_and_plugin_control_routes_are_scoped_by_binding_and_permissions
     bind_runtime_route(dispatcher, binding, lambda payload: payload, route_generation=1)
     runtime_message = _message(
         message_id="runtime-1",
+        runtime_generation=1,
         channel_class="RUNTIME",
         message_type="RUNTIME_EXECUTION_REQUEST",
         source_subject={"subject_type": "ENDPOINT", "subject_id": "ep-1"},
@@ -284,16 +287,32 @@ def test_provider_inventory_lifecycle_rotates_and_revokes_scoped_routes() -> Non
     )
 
     initial = lifecycle.sync_runtime_binding(binding, lambda payload: payload)
-    changed = lifecycle.sync_runtime_binding(
+    compatibility_only = lifecycle.sync_runtime_binding(
         binding.model_copy(update={"compatibility_bundle_id": "bundle-2"}),
         lambda payload: payload,
     )
+    changed_binding = RuntimeBinding.model_validate(
+        {
+            **binding.model_dump(mode="json"),
+            "runtime_generation": 2,
+            "adapter_version": "2",
+            "runtime_configuration_hash": None,
+        }
+    )
+    changed = lifecycle.sync_runtime_binding(changed_binding, lambda payload: payload)
     revoked = lifecycle.sync_runtime_binding(
-        binding.model_copy(update={"status": "disabled"}),
+        RuntimeBinding.model_validate(
+            {
+                **changed_binding.model_dump(mode="json"),
+                "status": "disabled",
+                "operational_state": "REVOKED",
+            }
+        ),
         None,
     )
 
     assert initial is not None and initial.route_generation == 1
+    assert compatibility_only is not None and compatibility_only.route_generation == 1
     assert changed is not None and changed.route_generation == 2
     assert revoked is not None
     assert revoked.route_generation == 3
@@ -302,6 +321,7 @@ def test_provider_inventory_lifecycle_rotates_and_revokes_scoped_routes() -> Non
     stale_runtime_message = _message(
         message_id="runtime-revoked",
         route_generation=2,
+        runtime_generation=1,
         channel_class="RUNTIME",
         message_type="RUNTIME_EXECUTION_REQUEST",
         source_subject={"subject_type": "ENDPOINT", "subject_id": "ep-1"},
@@ -310,6 +330,45 @@ def test_provider_inventory_lifecycle_rotates_and_revokes_scoped_routes() -> Non
     with pytest.raises(DispatcherError) as error:
         dispatcher.submit(stale_runtime_message)
     assert error.value.code == "ROUTE_REVOKED"
+
+
+def test_runtime_route_rejects_stale_runtime_generation() -> None:
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="rev-1",
+    )
+    binding = RuntimeBinding(
+        runtime_binding_id="rtb-generation",
+        runtime_id="runtime-generation",
+        runtime_generation=2,
+        provider_instance_id="pi-1",
+        model_deployment_id="md-1",
+        capability_id="llm.chat",
+        capability_version="1",
+        capability_definition_hash="cap-1",
+        plugin_id="plugin-1",
+        compatibility_bundle_id="bundle-1",
+        status="ready",
+    )
+    bind_runtime_route(dispatcher, binding, lambda payload: payload, route_generation=3)
+
+    stale = _message(
+        message_id="runtime-stale-generation",
+        route_generation=3,
+        runtime_generation=1,
+        channel_class="RUNTIME",
+        message_type="RUNTIME_EXECUTION_REQUEST",
+        source_subject={"subject_type": "ENDPOINT", "subject_id": "ep-1"},
+        destination_subject={
+            "subject_type": "RUNTIME",
+            "subject_id": "runtime-generation",
+        },
+    )
+
+    with pytest.raises(DispatcherError) as error:
+        dispatcher.submit(stale)
+    assert error.value.code == "RUNTIME_GENERATION_MISMATCH"
 
 
 def test_provider_inventory_lifecycle_rotates_plugin_route_on_permission_change() -> None:

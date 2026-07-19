@@ -3,7 +3,12 @@ from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
 )
-from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
+import pytest
+
+from aidn_hypervisor.endpoint_publications.service import (
+    EndpointPublicationReadinessError,
+    EndpointPublicationService,
+)
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
@@ -118,6 +123,78 @@ def test_publish_configuration_creates_signed_current_record() -> None:
     assert record.session == created.endpoint.session.model_dump(mode="json")
     assert record.status == "published"
     assert record.wallet_signature
+
+
+def test_publication_readiness_blocks_conflicting_external_policy() -> None:
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Conflicting Endpoint",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            publication={
+                "visibility": "private",
+                "accepts_external_requests": True,
+            },
+        )
+    )
+    service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+
+    readiness = service.publication_readiness(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet="wallet-1",
+        node_id="node-1",
+        wallet_private_key="sk-1",
+    )
+
+    assert readiness["ready"] is False
+    assert readiness["blockers"][0]["code"] == "ENDPOINT_PUBLICATION_POLICY_CONFLICT"
+    with pytest.raises(EndpointPublicationReadinessError):
+        service.publish_configuration(
+            endpoint_id=created.endpoint.endpoint_id,
+            owner_wallet="wallet-1",
+            node_id="node-1",
+            wallet_private_key="sk-1",
+        )
+
+
+def test_publication_readiness_warns_for_unpriced_external_endpoint() -> None:
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Free Until Priced",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            publication={
+                "visibility": "public",
+                "discoverable": True,
+                "accepts_external_requests": True,
+            },
+        )
+    )
+    service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+
+    readiness = service.publication_readiness(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet="wallet-1",
+        node_id="node-1",
+        wallet_private_key="sk-1",
+    )
+
+    assert readiness["ready"] is True
+    assert readiness["warnings"][0]["code"] == "ENDPOINT_PRICING_NOT_CONFIGURED"
 
 
 def test_publish_configuration_supersedes_prior_publication() -> None:

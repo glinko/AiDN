@@ -40,6 +40,13 @@ from aidn_hypervisor.providers.package_verification import (
     DEFAULT_TRUSTED_PUBLISHER_KEYS,
     verify_plugin_manifest_package,
 )
+from aidn_hypervisor.providers.package_store import PluginPackageStore
+from aidn_hypervisor.plugins.host import (
+    PluginHostAuthenticator,
+    PluginHostHandshakeService,
+    PluginHostConnectionStore,
+    PluginHostLocalIpcIngress,
+)
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
@@ -65,6 +72,8 @@ class ProviderInventoryService:
         store: InMemoryProviderInventoryStore,
         installation_executor: ProviderInstallationExecutor | None = None,
         trusted_publisher_keys: dict[str, list[str]] | None = None,
+        package_store: PluginPackageStore | None = None,
+        plugin_host_connections: list[dict] | None = None,
     ) -> None:
         self.plugins = plugins
         self.store = store
@@ -74,6 +83,8 @@ class ProviderInventoryService:
         self.trusted_publisher_keys = deepcopy(
             trusted_publisher_keys or DEFAULT_TRUSTED_PUBLISHER_KEYS
         )
+        self.package_store = package_store
+        self.plugin_host_connection_store = PluginHostConnectionStore(plugin_host_connections)
         self._runtime_binding_projections: dict[str, dict] = {}
 
     def list_plugin_manifests(self) -> list[dict]:
@@ -84,6 +95,60 @@ class ProviderInventoryService:
 
     def list_installed_plugins(self) -> list[InstalledPlugin]:
         return self.store.list_installed_plugins()
+
+    def plugin_host_local_ingress(self) -> PluginHostLocalIpcIngress:
+        """Expose only identity-bound manifest and validation controls to a Plugin Host."""
+        return PluginHostLocalIpcIngress(
+            PluginHostHandshakeService(
+                authenticator=PluginHostAuthenticator(self.store.get_installed_plugin),
+                activation_proof_verifier=lambda hello: bool(hello.activation_proof),
+                now=_now_iso,
+            ),
+            manifest_resolver=lambda plugin_id: self._get_plugin(plugin_id).plugin_manifest(),
+            configuration_validator=lambda plugin_id, configuration: self._get_plugin(
+                plugin_id
+            ).validate_provider_configuration(configuration),
+            installation_plan_builder=lambda plugin_id, configuration: self.build_installation_plan(
+                plugin_id=plugin_id, configuration=configuration
+            ),
+            attach_existing_provider=lambda plugin_id, display_name, configuration: self.attach_provider_instance(
+                plugin_id=plugin_id, display_name=display_name, configuration=configuration
+            ).model_dump(mode="json"),
+            model_discoverer=lambda plugin_id, provider_instance_id: self._host_discover_models(
+                plugin_id, provider_instance_id
+            ),
+            runtime_binding_creator=lambda plugin_id, model_deployment_id, capability_id, capability_version, capability_definition_hash: self._host_create_runtime_binding(
+                plugin_id, model_deployment_id, capability_id, capability_version, capability_definition_hash
+            ),
+            runtime_binding_admission=lambda plugin_id, runtime_binding_id: self._host_runtime_binding_admission(plugin_id, runtime_binding_id),
+            connection_store=self.plugin_host_connection_store,
+        )
+
+    def _host_discover_models(self, plugin_id: str, provider_instance_id: str) -> list[dict]:
+        instance = self.store.get_provider_instance(provider_instance_id)
+        if instance.plugin_id != plugin_id:
+            raise ValueError("Provider Instance does not belong to the Plugin Host")
+        return [item.model_dump(mode="json") for item in self.discover_models(provider_instance_id)]
+
+    def _host_create_runtime_binding(self, plugin_id: str, model_deployment_id: str, capability_id: str, capability_version: str, capability_definition_hash: str) -> dict:
+        deployment = self.store.get_model_deployment(model_deployment_id)
+        if self.store.get_provider_instance(deployment.provider_instance_id).plugin_id != plugin_id:
+            raise ValueError("Model Deployment does not belong to the Plugin Host")
+        return self.create_runtime_binding(model_deployment_id=model_deployment_id, capability_id=capability_id, capability_version=capability_version, capability_definition_hash=capability_definition_hash).model_dump(mode="json")
+
+    def _host_runtime_binding_admission(self, plugin_id: str, runtime_binding_id: str) -> dict:
+        binding = self.store.get_runtime_binding(runtime_binding_id)
+        if binding.plugin_id != plugin_id:
+            raise ValueError("Runtime Binding does not belong to the Plugin Host")
+        return self.runtime_binding_endpoint_admission(runtime_binding_id)
+
+    def stage_plugin_package(self, *, package_bytes: bytes, expected_digest: str) -> str:
+        if self.package_store is None:
+            raise ValueError("Plugin package store is not configured")
+        return self.package_store.stage(
+            package_bytes=package_bytes,
+            expected_digest=expected_digest,
+        )
 
     def register_plugin_release(
         self,
@@ -138,6 +203,9 @@ class ProviderInventoryService:
     ) -> InstalledPlugin:
         """Persist local approval; package acquisition and Plugin Host activation are separate."""
         release = self.store.get_plugin_release(release_id)
+        if installation_source == "PACKAGE" and self.package_store is not None:
+            if not self.package_store.has(release.package_digest):
+                raise ValueError("verified plugin package is required before activation")
         if release.release_status in {"SECURITY_BLOCKED", "REVOKED"}:
             raise ValueError(
                 f"plugin release cannot be installed while {release.release_status.lower()}"
@@ -170,9 +238,13 @@ class ProviderInventoryService:
             None,
         )
         if existing is not None:
-            if existing.granted_permissions != normalized_permissions:
+            if (
+                existing.granted_permissions != normalized_permissions
+                or existing.installation_source != installation_source
+            ):
                 raise ValueError(
-                    "installed plugin permissions are immutable; install a new release instead"
+                    "installed plugin permissions and source are immutable; "
+                    "install a new release or advance its installation generation"
                 )
             return existing
         installed_plugin = InstalledPlugin(
@@ -180,6 +252,7 @@ class ProviderInventoryService:
             release_id=release.release_id,
             plugin_id=release.plugin_id,
             plugin_version=release.plugin_version,
+            package_digest=release.package_digest,
             granted_permissions=normalized_permissions,
             state="INSTALLED",
             installation_source=installation_source,
@@ -187,6 +260,28 @@ class ProviderInventoryService:
         )
         self.store.save_installed_plugin(installed_plugin)
         return installed_plugin
+
+    def advance_installed_plugin_generation(
+        self,
+        *,
+        installed_plugin_id: str,
+        activation_credential_key_id: str | None = None,
+    ) -> InstalledPlugin:
+        """Invalidate stale Plugin Host processes before replacement or reauthorization."""
+        installed_plugin = self.store.get_installed_plugin(installed_plugin_id)
+        if installed_plugin.state == "REMOVED":
+            raise ValueError("removed plugin installation cannot advance generation")
+        updated = InstalledPlugin.model_validate(
+            {
+                **installed_plugin.model_dump(mode="json"),
+                "installation_generation": installed_plugin.installation_generation + 1,
+                "activation_credential_key_id": activation_credential_key_id,
+                "state": "INSTALLED",
+                "activated_at": None,
+            }
+        )
+        self.store.save_installed_plugin(updated)
+        return updated
 
     def list_provider_instances(self) -> list[ProviderInstance]:
         return self.store.list_provider_instances()
@@ -450,6 +545,251 @@ class ProviderInventoryService:
 
     def list_artifact_materializations(self) -> list[ProviderArtifactMaterialization]:
         return self.store.list_artifact_materializations()
+
+    def model_deployment_artifact_readiness(
+        self, deployment: ModelDeployment
+    ) -> dict:
+        if deployment.artifact_set_id is None:
+            return {
+                "required": False,
+                "ready": True,
+                "status": "NOT_REQUIRED",
+                "artifact_set_id": None,
+                "materialization_id": None,
+                "destination": None,
+            }
+        materializations = [
+            item
+            for item in self.store.list_artifact_materializations(
+                provider_instance_id=deployment.provider_instance_id
+            )
+            if item.artifact_set_id == deployment.artifact_set_id
+        ]
+        ready = next(
+            (item for item in materializations if item.status == "READY"),
+            None,
+        )
+        if ready is not None:
+            return {
+                "required": True,
+                "ready": True,
+                "status": "READY",
+                "artifact_set_id": deployment.artifact_set_id,
+                "materialization_id": ready.materialization_id,
+                "destination": ready.destination,
+            }
+        failed = next(
+            (item for item in materializations if item.status == "FAILED"),
+            None,
+        )
+        return {
+            "required": True,
+            "ready": False,
+            "status": "FAILED" if failed is not None else "MISSING",
+            "artifact_set_id": deployment.artifact_set_id,
+            "materialization_id": (
+                failed.materialization_id if failed is not None else None
+            ),
+            "destination": failed.destination if failed is not None else None,
+        }
+
+    def _ensure_model_deployment_artifacts_ready(
+        self, deployment: ModelDeployment
+    ) -> None:
+        readiness = self.model_deployment_artifact_readiness(deployment)
+        if not readiness["ready"]:
+            raise ValueError(
+                "model deployment artifact set must be materialized before "
+                "creating a Runtime Binding"
+            )
+
+    def runtime_binding_endpoint_admission(
+        self,
+        runtime_binding_id: str,
+        endpoint_payload: dict | None = None,
+    ) -> dict:
+        binding = self.store.get_runtime_binding(runtime_binding_id)
+        deployment = self.store.get_model_deployment(binding.model_deployment_id)
+        blockers: list[dict] = []
+        warnings: list[dict] = []
+        dimensions: dict[str, dict] = {}
+
+        runtime_ready = binding.status == "ready" and binding.operational_state == "READY"
+        dimensions["runtime_binding"] = {
+            "ready": runtime_ready,
+            "status": binding.status,
+            "operational_state": binding.operational_state,
+            "runtime_binding_id": binding.runtime_binding_id,
+            "runtime_id": binding.runtime_id,
+            "runtime_generation": binding.runtime_generation,
+            "runtime_configuration_hash": binding.runtime_configuration_hash,
+        }
+        if not runtime_ready:
+            blockers.append(
+                {
+                    "code": "RUNTIME_BINDING_NOT_READY",
+                    "message": "Runtime Binding must be ready before creating an Endpoint draft.",
+                    "status": binding.status,
+                    "operational_state": binding.operational_state,
+                }
+            )
+
+        artifact_readiness = self.model_deployment_artifact_readiness(deployment)
+        dimensions["artifact_materialization"] = artifact_readiness
+        if not artifact_readiness["ready"]:
+            blockers.append(
+                {
+                    "code": "MODEL_ARTIFACTS_NOT_READY",
+                    "message": "Model artifacts must be materialized before Endpoint draft creation.",
+                    "status": artifact_readiness["status"],
+                    "artifact_set_id": artifact_readiness["artifact_set_id"],
+                }
+            )
+
+        try:
+            compatibility_bundle = self.bundle_config_for_runtime_binding(
+                runtime_binding_id
+            )
+            bundle_hash = self.bundle_hash_for_runtime_binding(runtime_binding_id)
+            bundle_ready = bool(compatibility_bundle.bundle_id and bundle_hash)
+            dimensions["compatibility_bundle"] = {
+                "ready": bundle_ready,
+                "bundle_id": compatibility_bundle.bundle_id,
+                "bundle_hash": bundle_hash,
+                "workload_type": compatibility_bundle.workload_type,
+                "endpoint": compatibility_bundle.endpoint,
+            }
+            if not bundle_ready:
+                blockers.append(
+                    {
+                        "code": "COMPATIBILITY_BUNDLE_INVALID",
+                        "message": "Runtime Binding compatibility bundle projection is incomplete.",
+                    }
+                )
+        except (KeyError, ValueError) as error:
+            dimensions["compatibility_bundle"] = {
+                "ready": False,
+                "status": "ERROR",
+            }
+            blockers.append(
+                {
+                    "code": "COMPATIBILITY_BUNDLE_UNAVAILABLE",
+                    "message": str(error),
+                }
+            )
+
+        payload = endpoint_payload or {}
+        owner_wallet = str(payload.get("owner_wallet") or "").strip()
+        owner_ready = endpoint_payload is None or bool(owner_wallet)
+        dimensions["endpoint_identity"] = {
+            "ready": owner_ready,
+            "owner_wallet_present": bool(owner_wallet),
+        }
+        if not owner_ready:
+            blockers.append(
+                {
+                    "code": "ENDPOINT_OWNER_WALLET_REQUIRED",
+                    "message": "Endpoint draft creation requires an owner wallet.",
+                }
+            )
+
+        model_class = payload.get("model_class")
+        capabilities = payload.get("capabilities")
+        capability_ready = True
+        capability_status = "MATCHED"
+        if model_class is not None and model_class != binding.capability_id:
+            capability_ready = False
+            capability_status = "MODEL_CLASS_MISMATCH"
+            blockers.append(
+                {
+                    "code": "ENDPOINT_CAPABILITY_MISMATCH",
+                    "message": "Endpoint model_class must match the Runtime Binding capability.",
+                    "expected": binding.capability_id,
+                    "actual": model_class,
+                }
+            )
+        if capabilities is not None and binding.capability_id not in capabilities:
+            capability_ready = False
+            capability_status = "CAPABILITIES_MISSING_BINDING"
+            blockers.append(
+                {
+                    "code": "ENDPOINT_CAPABILITY_NOT_ADVERTISED",
+                    "message": "Endpoint capabilities must include the Runtime Binding capability.",
+                    "expected": binding.capability_id,
+                }
+            )
+        dimensions["capability"] = {
+            "ready": capability_ready,
+            "status": capability_status,
+            "capability_id": binding.capability_id,
+            "capability_version": binding.capability_version,
+            "capability_definition_hash": binding.capability_definition_hash,
+        }
+
+        pricing = payload.get("pricing") or {}
+        configured_prices = [
+            pricing.get("fixed_price"),
+            pricing.get("input_price"),
+            pricing.get("output_price"),
+        ]
+        pricing_configured = any(value is not None for value in configured_prices)
+        dimensions["pricing"] = {
+            "ready": True,
+            "status": "CONFIGURED" if pricing_configured else "DRAFT_PRICE_UNSET",
+            "billing_unit": pricing.get("billing_unit", "request"),
+        }
+        if not pricing_configured:
+            warnings.append(
+                {
+                    "code": "ENDPOINT_PRICING_NOT_CONFIGURED",
+                    "message": "Endpoint pricing is unset; keep the draft private until pricing is reviewed.",
+                }
+            )
+
+        publication = payload.get("publication") or {}
+        visibility = publication.get("visibility", "private")
+        shared_wallets = publication.get("shared_with_wallet_ids") or []
+        accepts_external_requests = bool(
+            publication.get("accepts_external_requests", False)
+        )
+        publication_ready = True
+        publication_status = "DRAFT_PRIVATE"
+        if visibility == "public":
+            publication_status = "PUBLIC_READY"
+        elif visibility == "shared":
+            publication_status = "SHARED_READY"
+            if not shared_wallets:
+                publication_ready = False
+                publication_status = "SHARED_ALLOWLIST_MISSING"
+                blockers.append(
+                    {
+                        "code": "ENDPOINT_SHARED_ALLOWLIST_REQUIRED",
+                        "message": "Shared Endpoint drafts require at least one allowed wallet.",
+                    }
+                )
+        if accepts_external_requests and visibility == "private":
+            publication_ready = False
+            publication_status = "PRIVATE_EXTERNAL_REQUESTS_CONFLICT"
+            blockers.append(
+                {
+                    "code": "ENDPOINT_PUBLICATION_POLICY_CONFLICT",
+                    "message": "Private Endpoint drafts cannot accept external requests.",
+                }
+            )
+        dimensions["publication"] = {
+            "ready": publication_ready,
+            "status": publication_status,
+            "visibility": visibility,
+            "accepts_external_requests": accepts_external_requests,
+        }
+
+        return {
+            "runtime_binding_id": binding.runtime_binding_id,
+            "ready": not blockers,
+            "blockers": blockers,
+            "warnings": warnings,
+            "dimensions": dimensions,
+        }
 
     def run_installation_diagnostics(
         self,
@@ -1433,6 +1773,7 @@ class ProviderInventoryService:
         capability_definition_hash: str,
     ) -> RuntimeBinding:
         deployment = self.store.get_model_deployment(model_deployment_id)
+        self._ensure_model_deployment_artifacts_ready(deployment)
         instance = self.store.get_provider_instance(deployment.provider_instance_id)
         plugin = self._get_plugin(instance.plugin_id)
         projection = plugin.create_runtime_binding(
@@ -1448,9 +1789,24 @@ class ProviderInventoryService:
             capability_definition_hash=capability_definition_hash,
         )
         runtime_binding_id = f"rtb-{logical_suffix}"
+        runtime_id = f"runtime-{logical_suffix}"
         compatibility_bundle_id = f"bundle-{runtime_binding_id}"
+        manifest = ProviderPluginManifest.model_validate(plugin.plugin_manifest())
+        installed_plugin = next(
+            (
+                item
+                for item in self.store.list_installed_plugins()
+                if item.plugin_id == instance.plugin_id
+                and item.plugin_version == manifest.plugin_version
+                and item.state in {"INSTALLED", "ACTIVE"}
+            ),
+            None,
+        )
         binding = RuntimeBinding(
             runtime_binding_id=runtime_binding_id,
+            runtime_id=runtime_id,
+            runtime_generation=1,
+            implementation_class="PLUGIN_MANAGED",
             provider_instance_id=instance.provider_instance_id,
             model_deployment_id=deployment.model_deployment_id,
             capability_id=projection.get("capability_id", capability_id),
@@ -1460,6 +1816,26 @@ class ProviderInventoryService:
                 capability_definition_hash,
             ),
             plugin_id=instance.plugin_id,
+            installed_plugin_id=(
+                installed_plugin.installed_plugin_id
+                if installed_plugin is not None
+                else None
+            ),
+            plugin_version=manifest.plugin_version,
+            adapter_id=projection.get("adapter_id"),
+            adapter_version=projection.get("adapter_version"),
+            supported_features=list(projection.get("supported_features") or []),
+            supported_modalities=list(projection.get("supported_modalities") or []),
+            supported_accounting_modes=list(
+                projection.get("supported_accounting_modes") or []
+            ),
+            usage_reporting_profile_hash=projection.get(
+                "usage_reporting_profile_hash"
+            ),
+            dispatcher_route_scope={
+                "channel_class": "RUNTIME",
+                "runtime_id": runtime_id,
+            },
             compatibility_bundle_id=compatibility_bundle_id,
             status=projection.get("status", "ready"),
         )

@@ -2,16 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.4`
+Version: `0.7`
 
-Revision note: Assignment, concealed credential, report transfer, Storage
-Receipt, commitment, reveal and availability-challenge messages use RFC-0042
-`VALIDATION`. `VALIDATION_REPORT_TRANSFER` requires persistent Message ID
-deduplication, assignment-scoped authentication and report-hash verification.
+Revision note: concealed Validation finalizes through RFC-0037
+`VALIDATION_ZERO`; Validator reward and Network Fee funding remain separate.
 
 Supersedes:
 
-- `RFC-0064 Version 0.2`
+- `RFC-0064 Version 0.6`
 
 Depends on:
 
@@ -1051,6 +1049,14 @@ Repeated rejection or unavailability becomes validation evidence.
 
 ## 57. Validation Execution Limits
 
+The Hypervisor applies concealed Validation economics and authorization before
+Runtime dispatch. The Capability Runtime receives an ordinary RFC-0054 Execute
+Request carrying the same Endpoint, Session, Capability, deadline, accounting
+and side-effect constraints as applicable ordinary work. RFC-0064 SHALL NOT
+require `is_validation: true` or equivalent Runtime-visible discrimination.
+Operational Usage remains reportable; compensation follows this RFC rather than
+Runtime inference.
+
 Every assignment SHALL define:
 
 - maximum request count;
@@ -1108,7 +1114,7 @@ A Validation Session SHALL use validation-specific settlement.
 After valid assignment reveal:
 
 ```text
-Provider Payment = 0Q
+Endpoint Payment = 0Q
 Escrow Refund
 =
 Locked Validation Deposit
@@ -1156,12 +1162,12 @@ A Session carrying a valid concealed validation commitment SHALL NOT be settled 
 If an ordinary Settlement attempt conflicts with the revealed validation commitment:
 
 - it SHALL be rejected;
-- no Provider payment SHALL occur;
+- no Endpoint Payment SHALL occur;
 - conflicting evidence SHALL be preserved.
 
 ## 64. Pre-Reveal Settlement Protection
 
-The concealed funding mechanism SHALL prevent the Endpoint from finalizing ordinary Provider payment before the assignment's settlement mode is resolved.
+The concealed funding mechanism SHALL prevent the Endpoint from finalizing ordinary Endpoint Payment before the assignment's settlement mode is resolved.
 
 The MVP MAY implement this through:
 
@@ -1920,6 +1926,14 @@ The following remain configurable:
 
 ```text
 Endpoint Payment for Validation Session = 0Q
+
+## RFC-0037 Validation Zero Funding Boundary
+
+An uncompensated concealed Validation Session SHALL use `VALIDATION_ZERO` and
+produce zero ordinary Endpoint Payment while preserving Runtime Usage as
+evidence. Validator rewards come from the Validation reward allocation. Network
+Fees SHALL identify an explicit payer or protocol reserve and SHALL NOT be
+silently deducted from ordinary Consumer escrow or Endpoint Payment Reserve.
 Validation Session Deposit
 Is Collateral, Not Endpoint Revenue
 Validation Session Execution
@@ -1985,3 +1999,12 @@ Is Separate from Validation Session Deposit
 - Negative reports are economically valuable.
 - Assignment completion and Certification remain separate.
 - Every validation Session and Escrow movement is auditable after reveal.
+
+## RFC-0051 Validation Usage Evidence
+
+Concealed Validation Requests produce ordinary Usage Report envelopes and a
+Final Report where practical. These records may support timing, attempt,
+artifact, capacity and anomaly evidence. Missing optional token Usage does not
+invalidate Validation unless exact token verification is part of the assigned
+test. Validation-specific compensation rules override ordinary Endpoint
+payment; Usage evidence alone SHALL NOT create Provider compensation.

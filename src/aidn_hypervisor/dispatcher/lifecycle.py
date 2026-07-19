@@ -31,15 +31,16 @@ class DispatcherRouteLifecycle:
         binding: RuntimeBinding,
         handler: RouteHandler | None,
     ) -> DispatcherRoute | None:
+        binding = RuntimeBinding.model_validate(binding.model_dump(mode="json"))
         destination_type = "RUNTIME"
         previous = self.dispatcher.route(
             destination_type=destination_type,
-            destination_id=binding.runtime_binding_id,
+            destination_id=binding.runtime_id,
         )
-        if binding.status != "ready":
+        if binding.operational_state != "READY":
             return self.dispatcher.revoke_route(
                 destination_type=destination_type,
-                destination_id=binding.runtime_binding_id,
+                destination_id=binding.runtime_id,
             )
         if handler is None:
             raise ValueError("ready Runtime Binding requires a local route handler")
@@ -118,9 +119,9 @@ class DispatcherRouteLifecycle:
         return desired
 
     def revoke_missing_runtime_bindings(
-        self, active_runtime_binding_ids: Iterable[str]
+        self, active_runtime_ids: Iterable[str]
     ) -> list[DispatcherRoute]:
-        active_ids = set(active_runtime_binding_ids)
+        active_ids = set(active_runtime_ids)
         revoked: list[DispatcherRoute] = []
         for route in list(self.dispatcher.store.routes.values()):
             if route.destination_type != "RUNTIME" or route.destination_id in active_ids:

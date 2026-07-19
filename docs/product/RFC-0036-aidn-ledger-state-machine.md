@@ -2,7 +2,14 @@
 
 Status: `Draft`
 
-Version: `0.1`
+Version: `0.2`
+
+Revision note: Ledger state includes Session Funding Accounts and applies
+Settlement finalization as one atomic, replay-protected balance transition.
+
+Supersedes:
+
+- `RFC-0036 Version 0.1`
 
 Depends on:
 
@@ -289,3 +296,14 @@ All business rules belong exclusively to the Ledger State Machine.
 - `Q` exists only as Ledger state.
 - Consensus orders operations but never interprets them.
 - Every honest node independently reaches the identical network state.
+
+## RFC-0037 Session Funding and Atomic Settlement
+
+The Ledger SHALL maintain a canonical Session Funding Account with separate
+Endpoint Payment and Network Fee reserves. `SESSION_SETTLEMENT_FINALIZE` and
+`SESSION_SETTLEMENT_PARTIAL_FINALIZE` atomically verify the Settlement Input
+Root, beneficiaries, prior releases, charge bounds and reserve conservation;
+then credit Endpoint Payment, refund the Consumer, consume Network Fees and
+retain only the bounded dispute reserve. No intermediate balance state becomes
+canonical. A finalized Settlement sequence is replay-protected, and correction
+creates a new authorized delta without erasing the original transition.

@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 import json
 from pathlib import Path
@@ -20,6 +21,9 @@ from aidn_hypervisor.providers.models import (
     ProviderInstallationJob,
 )
 from aidn_hypervisor.providers.service import ProviderInventoryService
+from aidn_hypervisor.providers.package_store import PluginPackageStore
+from aidn_hypervisor.providers.package_verification import compute_manifest_hash
+from aidn_hypervisor.plugins.host import PluginHostHello
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
@@ -57,6 +61,9 @@ def test_plugin_release_registration_and_local_install_are_metadata_only() -> No
     assert release.plugin_id == "fake-managed"
     assert release.release_status == "AVAILABLE"
     assert installed.release_id == release.release_id
+    assert installed.package_digest == release.package_digest
+    assert installed.granted_permission_hash is not None
+    assert installed.installation_generation == 1
     assert installed.state == "INSTALLED"
     assert installed.installation_source == "PACKAGE"
     assert service.list_plugin_releases() == [release]
@@ -65,6 +72,16 @@ def test_plugin_release_registration_and_local_install_are_metadata_only() -> No
         manifest_payload=manifest,
         source_reference="registry://plugins/fake-managed",
     ) == release
+
+    advanced = service.advance_installed_plugin_generation(
+        installed_plugin_id=installed.installed_plugin_id,
+        activation_credential_key_id="sha256:" + "c" * 64,
+    )
+
+    assert advanced.installation_generation == 2
+    assert advanced.activation_credential_key_id == "sha256:" + "c" * 64
+    assert advanced.granted_permission_hash == installed.granted_permission_hash
+    assert service.list_installed_plugins() == [advanced]
 
 
 def test_plugin_release_install_rejects_unapproved_or_blocked_permissions() -> None:
@@ -84,7 +101,6 @@ def test_plugin_release_install_rejects_unapproved_or_blocked_permissions() -> N
             release_id=release.release_id,
             granted_permissions=[*release.declared_permissions, "wallet.keys"],
         )
-
     service.store.save_plugin_release(
         release.model_copy(update={"release_status": "SECURITY_BLOCKED"})
     )
@@ -94,6 +110,120 @@ def test_plugin_release_install_rejects_unapproved_or_blocked_permissions() -> N
             release_id=release.release_id,
             granted_permissions=release.declared_permissions,
         )
+
+
+def test_package_install_requires_verified_content_addressed_payload() -> None:
+    registry = _registry()
+    package_store = PluginPackageStore()
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+        package_store=package_store,
+    )
+    package_bytes = b"fake-provider-package-v1"
+    package_digest = f"sha256:{hashlib.sha256(package_bytes).hexdigest()}"
+    manifest = registry.get("fake-managed").plugin_manifest()
+    manifest = {**manifest, "package_digest": package_digest, "publisher_signature": None}
+    manifest["manifest_hash"] = compute_manifest_hash(manifest)
+    release = service.register_plugin_release(manifest_payload=manifest)
+
+    with pytest.raises(ValueError, match="verified plugin package"):
+        service.install_plugin_release(
+            release_id=release.release_id,
+            granted_permissions=release.declared_permissions,
+        )
+
+    assert service.stage_plugin_package(
+        package_bytes=package_bytes,
+        expected_digest=package_digest,
+    ) == package_digest
+    installed = service.install_plugin_release(
+        release_id=release.release_id,
+        granted_permissions=release.declared_permissions,
+    )
+
+    assert installed.package_digest == package_digest
+
+
+def test_plugin_package_store_rejects_digest_mismatch() -> None:
+    store = PluginPackageStore()
+
+    with pytest.raises(ValueError, match="digest does not match"):
+        store.stage(package_bytes=b"package", expected_digest="sha256:" + "0" * 64)
+
+
+def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:
+    registry = _registry()
+    service = ProviderInventoryService(plugins=registry, store=InMemoryProviderInventoryStore())
+    release = service.register_plugin_release(manifest_payload=registry.get("fake-managed").plugin_manifest())
+    installed = service.install_plugin_release(
+        release_id=release.release_id, granted_permissions=release.declared_permissions
+    )
+    installed = service.advance_installed_plugin_generation(
+        installed_plugin_id=installed.installed_plugin_id,
+        activation_credential_key_id="sha256:" + "d" * 64,
+    )
+    hello = PluginHostHello(
+        installed_plugin_id=installed.installed_plugin_id,
+        plugin_id=installed.plugin_id,
+        installation_generation=installed.installation_generation,
+        activation_credential_key_id=installed.activation_credential_key_id,
+        host_nonce="nonce",
+        activation_proof="proof",
+    )
+
+    ingress = service.plugin_host_local_ingress()
+    connection = ingress.receive(
+        {"event_type": "PLUGIN_HOST_HELLO", "event": hello.model_dump(mode="json")}
+    )
+
+    assert connection["installed_plugin_id"] == installed.installed_plugin_id
+    plan = ingress.receive(
+        {
+            "event_type": "PLUGIN_CONTROL",
+            "event": {
+                "plugin_host_connection_id": connection["plugin_host_connection_id"],
+                "installed_plugin_id": installed.installed_plugin_id,
+                "installation_generation": installed.installation_generation,
+                "command": "BUILD_INSTALLATION_PLAN",
+                "configuration": {"base_url": "http://localhost"},
+            },
+        }
+    )
+    assert plan["installation_plan"]["plugin_id"] == installed.plugin_id
+    attached = ingress.receive(
+        {"event_type": "PLUGIN_CONTROL", "event": {
+            "plugin_host_connection_id": connection["plugin_host_connection_id"],
+            "installed_plugin_id": installed.installed_plugin_id,
+            "installation_generation": installed.installation_generation,
+            "command": "ATTACH_EXISTING_PROVIDER", "display_name": "Local Fake",
+            "configuration": {"base_url": "http://localhost"},
+        }}
+    )
+    assert attached["provider_instance"]["connection_mode"] == "attached"
+    models = ingress.receive(
+        {"event_type": "PLUGIN_CONTROL", "event": {
+            "plugin_host_connection_id": connection["plugin_host_connection_id"],
+            "installed_plugin_id": installed.installed_plugin_id,
+            "installation_generation": installed.installation_generation,
+            "command": "DISCOVER_MODELS",
+            "provider_instance_id": attached["provider_instance"]["provider_instance_id"],
+        }}
+    )
+    assert models["command"] == "DISCOVER_MODELS"
+    binding = ingress.receive({"event_type": "PLUGIN_CONTROL", "event": {
+        "plugin_host_connection_id": connection["plugin_host_connection_id"], "installed_plugin_id": installed.installed_plugin_id,
+        "installation_generation": installed.installation_generation, "command": "CREATE_RUNTIME_BINDING",
+        "model_deployment_id": models["model_deployments"][0]["model_deployment_id"], "capability_id": "llm.chat",
+        "capability_version": "2.1", "capability_definition_hash": "cap-definition-1",
+    }})
+    assert binding["runtime_binding"]["plugin_id"] == installed.plugin_id
+    admission = ingress.receive({"event_type": "PLUGIN_CONTROL", "event": {
+        "plugin_host_connection_id": connection["plugin_host_connection_id"], "installed_plugin_id": installed.installed_plugin_id,
+        "installation_generation": installed.installation_generation, "command": "GET_RUNTIME_BINDING_ADMISSION",
+        "runtime_binding_id": binding["runtime_binding"]["runtime_binding_id"],
+    }})
+    assert admission["admission"]["dimensions"]["runtime_binding"]["runtime_binding_id"] == binding["runtime_binding"]["runtime_binding_id"]
 
 
 class ControlledFilesystemPlugin(FakeManagedPlugin):
@@ -268,6 +398,15 @@ def test_provider_inventory_service_attaches_discovers_and_projects_runtime_bind
     assert models[0].provider_instance_id == instance.provider_instance_id
     assert service.store.get_model_deployment(models[0].model_deployment_id).provider_model_reference == "fake-model"
     assert binding.provider_instance_id == instance.provider_instance_id
+    assert binding.runtime_id.startswith("runtime-")
+    assert binding.runtime_id != binding.runtime_binding_id
+    assert binding.runtime_generation == 1
+    assert binding.implementation_class == "PLUGIN_MANAGED"
+    assert binding.runtime_configuration_hash.startswith("sha256:")
+    assert binding.dispatcher_route_scope == {
+        "channel_class": "RUNTIME",
+        "runtime_id": binding.runtime_id,
+    }
     assert service.store.get_runtime_binding(binding.runtime_binding_id).compatibility_bundle_id == binding.compatibility_bundle_id
     assert bundle.bundle_id == binding.compatibility_bundle_id
     assert bundle.plugin_id == "fake-managed"
@@ -275,6 +414,95 @@ def test_provider_inventory_service_attaches_discovers_and_projects_runtime_bind
     assert bundle.workload_type == "llm.chat"
     assert bundle.model_id == "fake-model"
     assert bundle.endpoint == "http://127.0.0.1:9999"
+
+
+def test_provider_inventory_service_evaluates_runtime_binding_endpoint_admission() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+    instance = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    model = service.discover_models(instance.provider_instance_id)[0]
+    binding = service.create_runtime_binding(
+        model_deployment_id=model.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+
+    admission = service.runtime_binding_endpoint_admission(
+        binding.runtime_binding_id,
+        endpoint_payload={
+            "owner_wallet": "wallet-operator",
+            "model_class": "llm.chat",
+            "capabilities": ["llm.chat"],
+        },
+    )
+
+    assert admission["ready"] is True
+    assert admission["dimensions"]["runtime_binding"]["ready"] is True
+    assert admission["dimensions"]["artifact_materialization"]["status"] == "NOT_REQUIRED"
+    assert admission["dimensions"]["compatibility_bundle"]["bundle_id"] == (
+        binding.compatibility_bundle_id
+    )
+    assert admission["dimensions"]["pricing"]["status"] == "DRAFT_PRICE_UNSET"
+    assert admission["warnings"][0]["code"] == "ENDPOINT_PRICING_NOT_CONFIGURED"
+
+    mismatch = service.runtime_binding_endpoint_admission(
+        binding.runtime_binding_id,
+        endpoint_payload={
+            "owner_wallet": "wallet-operator",
+            "model_class": "image.generate",
+            "capabilities": ["image.generate"],
+        },
+    )
+
+    assert mismatch["ready"] is False
+    assert {
+        blocker["code"] for blocker in mismatch["blockers"]
+    } == {
+        "ENDPOINT_CAPABILITY_MISMATCH",
+        "ENDPOINT_CAPABILITY_NOT_ADVERTISED",
+    }
+
+
+def test_provider_inventory_service_blocks_endpoint_admission_for_stopped_runtime_binding() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+    instance = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    model = service.discover_models(instance.provider_instance_id)[0]
+    binding = service.create_runtime_binding(
+        model_deployment_id=model.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+    service.store.save_runtime_binding(
+        binding.model_copy(update={"status": "disabled", "operational_state": "STOPPED"})
+    )
+
+    admission = service.runtime_binding_endpoint_admission(
+        binding.runtime_binding_id,
+        endpoint_payload={
+            "owner_wallet": "wallet-operator",
+            "model_class": "llm.chat",
+            "capabilities": ["llm.chat"],
+        },
+    )
+
+    assert admission["ready"] is False
+    assert admission["blockers"][0]["code"] == "RUNTIME_BINDING_NOT_READY"
+    assert admission["dimensions"]["runtime_binding"]["operational_state"] == "STOPPED"
 
 
 def test_provider_inventory_service_validates_configuration_before_attach() -> None:
@@ -1316,6 +1544,109 @@ def test_model_artifact_sets_protect_referenced_bytes_and_bind_deployments(tmp_p
 
     with pytest.raises(ValueError, match="referenced by model deployment"):
         service.delete_model_artifact_set(artifact_set_id=artifact_set.artifact_set_id)
+
+
+def test_runtime_binding_requires_materialized_model_artifact_set(tmp_path) -> None:
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+    executor.stage_local_artifact(
+        relative_path="models/weights.gguf",
+        content_bytes=b"weights",
+    )
+    weights = executor.promote_local_artifact_to_model_store(
+        relative_path="models/weights.gguf"
+    )
+    artifact_set = executor.create_model_artifact_set(
+        display_name="Fake model package",
+        files=[
+            {
+                "relative_path": "weights/model.gguf",
+                "artifact_id": weights.artifact_id,
+                "role": "WEIGHTS",
+            },
+        ],
+    )
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=executor,
+    )
+    instance = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    deployment = service.discover_models(instance.provider_instance_id)[0]
+    bound = service.bind_model_artifact_set(
+        model_deployment_id=deployment.model_deployment_id,
+        artifact_set_id=artifact_set.artifact_set_id,
+    )
+
+    readiness = service.model_deployment_artifact_readiness(bound)
+
+    assert readiness["required"] is True
+    assert readiness["ready"] is False
+    assert readiness["status"] == "MISSING"
+    with pytest.raises(ValueError, match="artifact set must be materialized"):
+        service.create_runtime_binding(
+            model_deployment_id=bound.model_deployment_id,
+            capability_id="llm.chat",
+            capability_version="1.0.0",
+            capability_definition_hash="cap-hash",
+        )
+
+
+def test_runtime_binding_allows_ready_model_artifact_materialization(tmp_path) -> None:
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+    executor.stage_local_artifact(
+        relative_path="models/weights.gguf",
+        content_bytes=b"weights",
+    )
+    weights = executor.promote_local_artifact_to_model_store(
+        relative_path="models/weights.gguf"
+    )
+    artifact_set = executor.create_model_artifact_set(
+        display_name="Fake model package",
+        files=[
+            {
+                "relative_path": "weights/model.gguf",
+                "artifact_id": weights.artifact_id,
+                "role": "WEIGHTS",
+            },
+        ],
+    )
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=executor,
+    )
+    instance = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    deployment = service.discover_models(instance.provider_instance_id)[0]
+    bound = service.bind_model_artifact_set(
+        model_deployment_id=deployment.model_deployment_id,
+        artifact_set_id=artifact_set.artifact_set_id,
+    )
+    materialization = service.materialize_model_artifact_set(
+        provider_instance_id=instance.provider_instance_id,
+        artifact_set_id=artifact_set.artifact_set_id,
+        destination="models",
+    )
+
+    readiness = service.model_deployment_artifact_readiness(bound)
+    binding = service.create_runtime_binding(
+        model_deployment_id=bound.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+
+    assert materialization.status == "READY"
+    assert readiness["ready"] is True
+    assert readiness["materialization_id"] == materialization.materialization_id
+    assert binding.model_deployment_id == bound.model_deployment_id
 
 
 def test_model_artifact_garbage_collection_respects_references_and_grace_period(

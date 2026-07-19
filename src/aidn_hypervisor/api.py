@@ -21,6 +21,9 @@ from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
 )
+from aidn_hypervisor.endpoint_publications.service import (
+    EndpointPublicationReadinessError,
+)
 from aidn_hypervisor.domain.types import TaskStatus
 from aidn_hypervisor.operator_views import (
     build_operator_bundles_payload,
@@ -1820,6 +1823,13 @@ def build_api_router(
                 404,
                 "endpoint_not_found",
                 f"Unknown endpoint: {endpoint_id}",
+            )
+        except EndpointPublicationReadinessError as error:
+            return _error(
+                409,
+                "endpoint_publication_blocked",
+                str(error),
+                details=error.readiness,
             )
         except ValueError as error:
             return _error(409, "publication_conflict", str(error))
