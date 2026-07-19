@@ -10,6 +10,9 @@ from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol.models import (
     HypervisorRuntimeHello,
     RuntimeConnection,
+    RuntimeCancellationRecord,
+    RuntimeCancelRequest,
+    RuntimeCancelResult,
     RuntimeCapacity,
     RuntimeExecuteRequest,
     RuntimeHealth,
@@ -660,6 +663,166 @@ class RuntimeProtocolService:
         self.store.usage_acks[ack.usage_acknowledgment_id] = ack
         self.store.flush()
         return ack
+
+    def request_runtime_cancellation(
+        self,
+        runtime_connection_id: str,
+        cancellation: RuntimeCancelRequest,
+    ) -> RuntimeCancelRequest:
+        """Persist a Hypervisor cancellation command before it reaches the Runtime."""
+        self._validate_connection(
+            runtime_connection_id,
+            runtime_id=cancellation.runtime_id,
+            runtime_generation=cancellation.runtime_generation,
+            runtime_configuration_hash=cancellation.runtime_configuration_hash,
+            route_generation=cancellation.route_generation,
+        )
+        record = self.store.requests.get(cancellation.request_id)
+        if record is None:
+            raise RuntimeProtocolError(
+                "RUNTIME_REQUEST_NOT_FOUND", "cancellation", "Unknown Runtime Request"
+            )
+        if (
+            record.request.session_id != cancellation.session_id
+            or record.runtime_id != cancellation.runtime_id
+            or record.runtime_generation != cancellation.runtime_generation
+            or record.route_generation != cancellation.route_generation
+            or record.request.runtime_configuration_hash
+            != cancellation.runtime_configuration_hash
+        ):
+            raise RuntimeProtocolError(
+                "RUNTIME_CANCELLATION_FAILED",
+                "cancellation",
+                "Cancellation identity does not match accepted Request",
+            )
+        if "cancellation" not in self._binding(cancellation.runtime_id).supported_features:
+            raise RuntimeProtocolError(
+                "RUNTIME_CANCELLATION_UNSUPPORTED",
+                "cancellation",
+                "Runtime Binding does not declare cancellation support",
+            )
+        if datetime.fromisoformat(cancellation.deadline) <= datetime.now(timezone.utc):
+            raise RuntimeProtocolError(
+                "RUNTIME_CANCELLATION_TOO_LATE",
+                "cancellation",
+                "Cancellation deadline has expired",
+            )
+        terminal_states = {
+            "COMPLETED",
+            "PARTIAL",
+            "CANCELLED",
+            "FAILED",
+            "EXPIRED",
+            "UNRECOVERABLE",
+        }
+        if record.request_state in terminal_states:
+            raise RuntimeProtocolError(
+                "RUNTIME_CANCELLATION_TOO_LATE",
+                "cancellation",
+                "Runtime Request is already terminal",
+            )
+        existing = self.store.cancellations.get(cancellation.cancellation_id)
+        if existing is not None:
+            if existing.cancellation.cancellation_hash != cancellation.cancellation_hash:
+                raise RuntimeProtocolError(
+                    "RUNTIME_CANCELLATION_FAILED",
+                    "cancellation",
+                    "Cancellation ID conflicts with existing command",
+                )
+            return existing.cancellation
+        if any(
+            item.cancellation.request_id == cancellation.request_id
+            and item.cancellation.cancellation_id not in self.store.cancellation_results
+            for item in self.store.cancellations.values()
+        ):
+            raise RuntimeProtocolError(
+                "RUNTIME_CANCELLATION_FAILED",
+                "cancellation",
+                "Runtime Request already has a pending cancellation",
+            )
+        self.store.cancellations[cancellation.cancellation_id] = RuntimeCancellationRecord(
+            cancellation=cancellation.model_copy(deep=True),
+            request_state_before_cancel=record.request_state,
+            updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        self.store.requests[cancellation.request_id] = record.model_copy(
+            update={
+                "request_state": "CANCEL_REQUESTED",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        self.store.flush()
+        return cancellation
+
+    def record_runtime_cancel_result(
+        self,
+        runtime_connection_id: str,
+        result: RuntimeCancelResult,
+    ) -> RuntimeCancelResult:
+        if not self.runtime_authenticator(result):
+            raise RuntimeProtocolError(
+                "RUNTIME_IDENTITY_INVALID",
+                "cancellation",
+                "Runtime Cancel Result authentication failed",
+            )
+        cancellation_record = self.store.cancellations.get(result.cancellation_id)
+        if cancellation_record is None:
+            raise RuntimeProtocolError(
+                "RUNTIME_CANCELLATION_FAILED",
+                "cancellation",
+                "Unknown Runtime cancellation command",
+            )
+        cancellation = cancellation_record.cancellation
+        self._validate_connection(
+            runtime_connection_id,
+            runtime_id=result.runtime_id,
+            runtime_generation=result.runtime_generation,
+            runtime_configuration_hash=result.runtime_configuration_hash,
+            route_generation=result.route_generation,
+            allow_recovering=True,
+        )
+        if (
+            result.runtime_id != cancellation.runtime_id
+            or result.runtime_generation != cancellation.runtime_generation
+            or result.runtime_configuration_hash
+            != cancellation.runtime_configuration_hash
+            or result.route_generation != cancellation.route_generation
+            or result.session_id != cancellation.session_id
+            or result.request_id != cancellation.request_id
+        ):
+            raise RuntimeProtocolError(
+                "RUNTIME_CANCELLATION_FAILED",
+                "cancellation",
+                "Runtime Cancel Result identity does not match cancellation command",
+            )
+        existing = self.store.cancellation_results.get(result.cancellation_id)
+        if existing is not None:
+            if existing.cancellation_result_hash != result.cancellation_result_hash:
+                raise RuntimeProtocolError(
+                    "RUNTIME_CANCELLATION_FAILED",
+                    "cancellation",
+                    "Runtime Cancel Result conflicts with accepted result",
+                )
+            return existing
+        if result.cancellation_state in {
+            "CANCELLATION_TOO_LATE",
+            "CANCELLATION_UNSUPPORTED",
+            "ALREADY_TERMINAL",
+            "FAILED",
+        }:
+            request = self.store.requests[result.request_id]
+            if request.request_state == "CANCEL_REQUESTED":
+                self.store.requests[result.request_id] = request.model_copy(
+                    update={
+                        "request_state": cancellation_record.request_state_before_cancel,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+        self.store.cancellation_results[result.cancellation_id] = result.model_copy(
+            deep=True
+        )
+        self.store.flush()
+        return result
 
     def record_request_terminal(
         self,

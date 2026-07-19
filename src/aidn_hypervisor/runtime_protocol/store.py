@@ -2,6 +2,8 @@ from typing import TYPE_CHECKING
 
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeConnection,
+    RuntimeCancellationRecord,
+    RuntimeCancelResult,
     RuntimeCapacity,
     RuntimeHealth,
     RuntimeMessage,
@@ -31,6 +33,8 @@ class RuntimeProtocolStore:
         self.messages: dict[str, RuntimeMessage] = {}
         self.runtime_sequences: dict[str, int] = {}
         self.requests: dict[str, RuntimeRequestRecord] = {}
+        self.cancellations: dict[str, RuntimeCancellationRecord] = {}
+        self.cancellation_results: dict[str, RuntimeCancelResult] = {}
         self.results: dict[str, RuntimeResult] = {}
         self.usage_reports: dict[str, RuntimeUsageReport] = {}
         self.usage_acks: dict[str, RuntimeUsageAck] = {}
@@ -67,6 +71,14 @@ class RuntimeProtocolStore:
         self.runtime_sequences = dict(snapshot.runtime_protocol_sequences)
         self.requests = {
             item.request_id: item for item in snapshot.runtime_protocol_requests
+        }
+        self.cancellations = {
+            item.cancellation.cancellation_id: item
+            for item in snapshot.runtime_protocol_cancellations
+        }
+        self.cancellation_results = {
+            item.cancellation_id: item
+            for item in snapshot.runtime_protocol_cancellation_results
         }
         self.results = {
             item.request_id: item for item in snapshot.runtime_protocol_results
@@ -108,6 +120,10 @@ class RuntimeProtocolStore:
                 "runtime_protocol_messages": list(self.messages.values()),
                 "runtime_protocol_sequences": dict(self.runtime_sequences),
                 "runtime_protocol_requests": list(self.requests.values()),
+                "runtime_protocol_cancellations": list(self.cancellations.values()),
+                "runtime_protocol_cancellation_results": list(
+                    self.cancellation_results.values()
+                ),
                 "runtime_protocol_results": list(self.results.values()),
                 "runtime_protocol_usage_reports": list(self.usage_reports.values()),
                 "runtime_protocol_usage_acks": list(self.usage_acks.values()),

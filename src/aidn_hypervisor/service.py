@@ -3445,6 +3445,12 @@ class HypervisorService:
                 self.runtime_protocol_store.runtime_sequences
             ),
             runtime_protocol_requests=list(self.runtime_protocol_store.requests.values()),
+            runtime_protocol_cancellations=list(
+                self.runtime_protocol_store.cancellations.values()
+            ),
+            runtime_protocol_cancellation_results=list(
+                self.runtime_protocol_store.cancellation_results.values()
+            ),
             runtime_protocol_results=list(self.runtime_protocol_store.results.values()),
             runtime_protocol_usage_reports=list(
                 self.runtime_protocol_store.usage_reports.values()

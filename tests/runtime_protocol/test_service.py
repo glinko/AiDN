@@ -18,6 +18,8 @@ from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol import (
     RuntimeCapacity,
+    RuntimeCancelRequest,
+    RuntimeCancelResult,
     RuntimeExecuteRequest,
     RuntimeHello,
     RuntimeHelloComplete,
@@ -392,6 +394,7 @@ def _runtime_result(
     *,
     final_usage_report_id: str,
     payload: dict | None = None,
+    terminal_state: str = "COMPLETED",
 ) -> RuntimeResult:
     return RuntimeResult(
         runtime_id=binding.runtime_id,
@@ -402,11 +405,63 @@ def _runtime_result(
         endpoint_configuration_hash=request.endpoint_configuration_hash,
         session_id=request.session_id,
         request_id=request.request_id,
-        terminal_state="COMPLETED",
-        result_payload=payload or {"text": "completed"},
+        terminal_state=terminal_state,
+        result_payload=(payload or {"text": "completed"})
+        if terminal_state in {"COMPLETED", "PARTIAL"}
+        else None,
         final_usage_report_id=final_usage_report_id,
         provider_attempt_count=1,
         completed_at=datetime.now(timezone.utc).isoformat(),
+        runtime_signature="runtime-signed",
+    )
+
+
+def _runtime_cancel_request(
+    binding: RuntimeBinding,
+    request: RuntimeExecuteRequest,
+    *,
+    cancellation_id: str = "cancel-1",
+) -> RuntimeCancelRequest:
+    now = datetime.now(timezone.utc)
+    return RuntimeCancelRequest(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        session_id=request.session_id,
+        request_id=request.request_id,
+        cancellation_id=cancellation_id,
+        cancellation_reason="consumer_requested",
+        requested_at=now.isoformat(),
+        deadline=(now + timedelta(minutes=1)).isoformat(),
+        authorization_reference="session-cancel-authority",
+        hypervisor_signature="hypervisor-signed",
+    )
+
+
+def _runtime_cancel_result(
+    binding: RuntimeBinding,
+    request: RuntimeExecuteRequest,
+    *,
+    cancellation_id: str = "cancel-1",
+    cancellation_state: str = "CANCELLATION_PENDING",
+    output_stopped: bool = False,
+    provider_confirmed_stopped: bool = False,
+) -> RuntimeCancelResult:
+    return RuntimeCancelResult(
+        cancellation_id=cancellation_id,
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        session_id=request.session_id,
+        request_id=request.request_id,
+        cancellation_state=cancellation_state,
+        provider_execution_state="RUNNING",
+        output_stopped=output_stopped,
+        provider_confirmed_stopped=provider_confirmed_stopped,
+        side_effect_state="NONE",
+        observed_at=datetime.now(timezone.utc).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -695,6 +750,69 @@ def test_local_ipc_runtime_ingress_routes_terminal_result() -> None:
     assert service.store.requests[request.request_id].terminal_result_hash == (
         runtime_result.result_hash
     )
+
+
+def test_local_ipc_runtime_ingress_routes_cancel_result() -> None:
+    binding = _binding()
+    service = _service(binding, {binding.runtime_id: _route(binding)})
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    cancellation = _runtime_cancel_request(binding, request)
+    service.request_runtime_cancellation(connection.runtime_connection_id, cancellation)
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="revision-1",
+    )
+    ingress = LocalIpcRuntimeIngress(
+        dispatcher=dispatcher,
+        runtime_protocol_service=service,
+        peer_authenticator=lambda message: (
+            message.authentication.get("peer_runtime_id") == binding.runtime_id
+        ),
+    )
+    ingress.bind_runtime(binding, route_generation=5)
+    cancel_result = _runtime_cancel_result(binding, request)
+    payload = {
+        "event_type": "RUNTIME_CANCEL_RESULT",
+        "runtime_connection_id": connection.runtime_connection_id,
+        "event": cancel_result.model_dump(mode="json"),
+    }
+    now = datetime.now(timezone.utc)
+    message = NetworkMessage(
+        message_id="local-ipc-cancel-result-1",
+        message_type="RUNTIME_CANCEL_RESULT",
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="revision-1",
+        connection_id=connection.runtime_connection_id,
+        channel_id="runtime-local-ipc",
+        channel_class="RUNTIME",
+        source_subject={"subject_type": "RUNTIME", "subject_id": binding.runtime_id},
+        destination_subject={
+            "subject_type": "HYPERVISOR_RUNTIME_INGRESS",
+            "subject_id": binding.runtime_id,
+        },
+        source_sequence=1,
+        route_generation=5,
+        runtime_generation=binding.runtime_generation,
+        created_at=now.isoformat(),
+        expiration=(now + timedelta(minutes=5)).isoformat(),
+        payload_hash=canonical_payload_hash(payload),
+        payload_length=len(canonical_payload_bytes(payload)),
+        payload=payload,
+        authentication={
+            "transport": "LOCAL_IPC",
+            "peer_runtime_id": binding.runtime_id,
+        },
+    )
+
+    accepted = ingress.receive(message)
+
+    assert accepted == cancel_result
+    assert service.store.cancellation_results[cancellation.cancellation_id] == cancel_result
 
 
 def test_execute_request_is_idempotent_and_acceptance_is_not_completion() -> None:
@@ -1094,6 +1212,86 @@ def test_runtime_result_is_idempotent_and_persists_after_restart(tmp_path) -> No
 
     restored = RuntimeProtocolStore(state_store)
     assert restored.results[request.request_id].result_hash == result.result_hash
+
+
+def test_runtime_cancellation_preserves_evidence_and_restores_rejected_cancel(tmp_path) -> None:
+    binding = _binding()
+    state_store = FileStateStore(tmp_path / "runtime-cancel-state.json")
+    store = RuntimeProtocolStore(state_store)
+    service = _service(
+        binding,
+        {binding.runtime_id: _route(binding)},
+        store=store,
+    )
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    cancellation = _runtime_cancel_request(binding, request)
+
+    assert service.request_runtime_cancellation(
+        connection.runtime_connection_id,
+        cancellation,
+    ) == cancellation
+    assert service.store.requests[request.request_id].request_state == "CANCEL_REQUESTED"
+
+    cancelled = _runtime_cancel_result(
+        binding,
+        request,
+        cancellation_state="CANCELLED",
+        output_stopped=True,
+        provider_confirmed_stopped=False,
+    )
+    assert service.record_runtime_cancel_result(
+        connection.runtime_connection_id,
+        cancelled,
+    ) == cancelled
+    assert service.record_runtime_cancel_result(
+        connection.runtime_connection_id,
+        cancelled,
+    ) == cancelled
+    assert service.store.requests[request.request_id].request_state == "CANCEL_REQUESTED"
+
+    final_usage = _runtime_usage_report(
+        binding,
+        request,
+        report_id="usage-cancelled-final",
+        terminal_state="CANCELLED",
+    )
+    assert service.record_usage_report(connection.runtime_connection_id, final_usage).status == (
+        "ACCEPTED"
+    )
+    final_result = _runtime_result(
+        binding,
+        request,
+        final_usage_report_id=final_usage.usage_report_id,
+        terminal_state="CANCELLED",
+    )
+    service.record_runtime_result(connection.runtime_connection_id, final_result)
+    assert service.store.requests[request.request_id].request_state == "CANCELLED"
+
+    restored = RuntimeProtocolStore(state_store)
+    assert restored.cancellation_results[cancellation.cancellation_id] == cancelled
+
+    second_request = _execute_request(binding).model_copy(
+        update={"request_id": "request-cancel-unsupported", "idempotency_key": "cancel-unsupported"}
+    )
+    service.register_execute_request(connection.runtime_connection_id, second_request)
+    _accept_request(service, connection, binding, second_request)
+    second_cancellation = _runtime_cancel_request(
+        binding,
+        second_request,
+        cancellation_id="cancel-unsupported",
+    )
+    service.request_runtime_cancellation(connection.runtime_connection_id, second_cancellation)
+    unsupported = _runtime_cancel_result(
+        binding,
+        second_request,
+        cancellation_id=second_cancellation.cancellation_id,
+        cancellation_state="CANCELLATION_UNSUPPORTED",
+    )
+    service.record_runtime_cancel_result(connection.runtime_connection_id, unsupported)
+    assert service.store.requests[second_request.request_id].request_state == "ACCEPTED"
 
 
 def test_terminal_request_requires_final_usage_to_be_current_chain_head() -> None:

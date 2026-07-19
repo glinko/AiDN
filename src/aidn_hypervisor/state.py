@@ -33,6 +33,8 @@ from aidn_hypervisor.providers.models import (
 )
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeCapacity,
+    RuntimeCancellationRecord,
+    RuntimeCancelResult,
     RuntimeConnection,
     RuntimeHealth,
     RuntimeMessage,
@@ -338,6 +340,12 @@ class HypervisorStateSnapshot(BaseModel):
     runtime_protocol_messages: list[RuntimeMessage] = Field(default_factory=list)
     runtime_protocol_sequences: dict[str, int] = Field(default_factory=dict)
     runtime_protocol_requests: list[RuntimeRequestRecord] = Field(default_factory=list)
+    runtime_protocol_cancellations: list[RuntimeCancellationRecord] = Field(
+        default_factory=list
+    )
+    runtime_protocol_cancellation_results: list[RuntimeCancelResult] = Field(
+        default_factory=list
+    )
     runtime_protocol_results: list[RuntimeResult] = Field(default_factory=list)
     runtime_protocol_usage_reports: list[RuntimeUsageReport] = Field(default_factory=list)
     runtime_protocol_usage_acks: list[RuntimeUsageAck] = Field(default_factory=list)

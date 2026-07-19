@@ -322,6 +322,80 @@ class RuntimeRequestAccept(BaseModel):
     diagnostic_reference: str | None = None
 
 
+class RuntimeCancelRequest(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    session_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    cancellation_id: str = Field(min_length=1)
+    cancellation_reason: str = Field(min_length=1)
+    requested_terminal_state: Literal["CANCELLED"] = "CANCELLED"
+    requested_at: str = Field(min_length=1)
+    deadline: str = Field(min_length=1)
+    authorization_reference: str | None = None
+    hypervisor_signature: str = Field(min_length=1)
+    cancellation_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_cancellation_hash(self):
+        payload = self.model_dump(mode="json", exclude={"cancellation_hash"})
+        expected = canonical_hash(payload)
+        if self.cancellation_hash is None:
+            self.cancellation_hash = expected
+        elif self.cancellation_hash != expected:
+            raise ValueError("cancellation_hash does not match Runtime Cancel Request")
+        return self
+
+
+class RuntimeCancellationRecord(BaseModel):
+    cancellation: RuntimeCancelRequest
+    request_state_before_cancel: RuntimeRequestState
+    updated_at: str = Field(min_length=1)
+
+
+class RuntimeCancelResult(BaseModel):
+    cancellation_id: str = Field(min_length=1)
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    session_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    cancellation_state: Literal[
+        "CANCELLED",
+        "CANCELLATION_PENDING",
+        "CANCELLATION_TOO_LATE",
+        "CANCELLATION_UNSUPPORTED",
+        "ALREADY_TERMINAL",
+        "FAILED",
+    ]
+    provider_execution_state: str = Field(min_length=1)
+    output_stopped: bool
+    provider_confirmed_stopped: bool
+    side_effect_state: str = Field(min_length=1)
+    terminal_usage_report_id: str | None = None
+    terminal_result_reference: str | None = None
+    observed_at: str = Field(min_length=1)
+    runtime_signature: str = Field(min_length=1)
+    cancellation_result_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_cancellation_result(self):
+        if self.cancellation_state == "CANCELLED" and not self.output_stopped:
+            raise ValueError("confirmed cancellation requires output_stopped")
+        if self.provider_confirmed_stopped and not self.output_stopped:
+            raise ValueError("provider stop confirmation requires output_stopped")
+        payload = self.model_dump(mode="json", exclude={"cancellation_result_hash"})
+        expected = canonical_hash(payload)
+        if self.cancellation_result_hash is None:
+            self.cancellation_result_hash = expected
+        elif self.cancellation_result_hash != expected:
+            raise ValueError("cancellation_result_hash does not match Runtime Cancel Result")
+        return self
+
+
 class RuntimeResult(BaseModel):
     runtime_id: str = Field(min_length=1)
     runtime_generation: int = Field(ge=1)
