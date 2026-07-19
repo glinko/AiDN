@@ -43,6 +43,11 @@ from aidn_hypervisor.runtime_protocol.local_ipc import (
     LocalIpcRuntimeIngress,
 )
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
+from aidn_hypervisor.runtime_protocol.conformance import (
+    RuntimeConformanceCase,
+    RuntimeConformanceReport,
+    RuntimeProtocolConformanceHarness,
+)
 
 __all__ = [
     "HypervisorRuntimeHello",
@@ -65,6 +70,9 @@ __all__ = [
     "RuntimeProtocolError",
     "RuntimeProtocolService",
     "RuntimeProtocolStore",
+    "RuntimeConformanceCase",
+    "RuntimeConformanceReport",
+    "RuntimeProtocolConformanceHarness",
     "LocalIpcRuntimeEvent",
     "LocalIpcRuntimeIngress",
     "RuntimeRecoveryPlan",
