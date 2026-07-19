@@ -31,6 +31,7 @@ from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.plugins.host import PluginHostJsonWireAdapter
 from aidn_hypervisor.plugins.host_named_pipe import WindowsNamedPipePluginHostListener
+from aidn_hypervisor.plugins.host_unix_socket import UnixSocketPluginHostListener
 from aidn_hypervisor.queue import InMemoryTaskQueue, QueuedTask
 from aidn_hypervisor.reputation import build_reputation_profile
 from aidn_hypervisor.registry_models import (
@@ -209,7 +210,7 @@ class HypervisorService:
         self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
             state_store
         )
-        self._plugin_host_listeners: list[WindowsNamedPipePluginHostListener] = []
+        self._plugin_host_listeners: list[object] = []
         self.max_active_allocations_per_owner = max_active_allocations_per_owner
         self.max_pending_allocations_per_owner = max_pending_allocations_per_owner
         self.node_id = node_id
@@ -2916,9 +2917,18 @@ class HypervisorService:
         self._plugin_host_listeners.append(listener)
         return listener
 
+    def start_unix_plugin_host_listener(self, *, address: str):
+        listener = UnixSocketPluginHostListener(
+            address=address,
+            wire_adapter=PluginHostJsonWireAdapter(self.plugin_host_local_ingress()),
+        )
+        listener.start()
+        self._plugin_host_listeners.append(listener)
+        return listener
+
     def stop_plugin_host_listeners(self) -> None:
         for listener in self._plugin_host_listeners:
-            listener.stop()
+            listener.stop()  # type: ignore[attr-defined]
         self._plugin_host_listeners.clear()
 
     def list_provider_installation_artifacts(self) -> dict:
