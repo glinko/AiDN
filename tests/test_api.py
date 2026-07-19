@@ -2968,11 +2968,14 @@ def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -
     assert "Validation Requested" in response.text
     assert "Configured Endpoints" in response.text
     assert "Selected Endpoint Actions" in response.text
+    assert "MVP Paid Smoke" in response.text
+    assert "/mvp-paid-smoke" in response.text
     assert "Endpoint Policy Editor" in response.text
     assert "Endpoint Runtime Editor" in response.text
     assert "Configuration History" in response.text
     assert 'data-endpoint-action="publish"' in response.text
     assert 'data-endpoint-action="request-validation"' in response.text
+    assert 'data-endpoint-action="run-mvp-smoke"' in response.text
     assert 'data-endpoint-action="save-policy"' in response.text
     assert 'data-endpoint-action="save-config"' in response.text
     assert 'data-endpoint-field="visibility"' in response.text
@@ -5011,6 +5014,18 @@ def test_operator_dashboard_endpoints_endpoint_returns_endpoint_control_payload(
     assert response.json()["summary"]["validation_requested"] == 1
     assert response.json()["items"][0]["visibility"] == "shared"
     assert response.json()["items"][0]["shared_with_wallet_ids"] == ["wallet-a"]
+    assert response.json()["items"][0]["mvp_paid_smoke"]["profile"] == "MVP-0001"
+    assert response.json()["items"][0]["mvp_paid_smoke"]["route"].endswith(
+        "/mvp-paid-smoke"
+    )
+    assert (
+        response.json()["items"][0]["mvp_paid_smoke"]["default_task_type"]
+        == "audio.transcribe"
+    )
+    assert (
+        response.json()["items"][0]["mvp_paid_smoke"]["accounting_mode"]
+        == "FIXED_PRICE"
+    )
     assert response.json()["policy"]["publish_requires_validation"] is False
 
 

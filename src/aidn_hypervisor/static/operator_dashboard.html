@@ -1688,6 +1688,18 @@
         taskType: "",
         inputValue: "",
       },
+      mvpSmokeDraft: {
+        endpointId: null,
+        clientWallet: "",
+        depositQAtoms: "1000",
+        fixedPriceQAtoms: "900",
+        networkFeeReserveQAtoms: "100",
+        taskType: "llm_text.generate",
+        taskInput: "",
+        autoFinalize: true,
+      },
+      mvpSmokePending: false,
+      mvpSmokeResult: null,
       bootstrapPending: null,
       bootstrapMessage: null,
       walletMessage: null,
@@ -3929,6 +3941,156 @@
       return taskType === "audio.transcribe" ? "clip.wav" : "Describe the task or prompt";
     }
 
+    function defaultTaskTypeForEndpoint(endpoint) {
+      const action = endpoint?.mvp_paid_smoke || {};
+      if (action.default_task_type) {
+        return action.default_task_type;
+      }
+      const modelClass = endpoint?.model_class || "";
+      return modelClass === "speech.stt" ? "audio.transcribe" : "llm_text.generate";
+    }
+
+    function mvpSmokeDefaultInput(action, taskType) {
+      const payload = action?.default_payload || {};
+      if (taskType === "audio.transcribe") {
+        return payload.audio_ref || "mvp-smoke.wav";
+      }
+      return payload.prompt || "AiDN MVP paid smoke test";
+    }
+
+    function syncMvpSmokeDraft(endpoint) {
+      const action = endpoint?.mvp_paid_smoke || {};
+      const ownerWalletId =
+        state.payloads.endpoints?.owner_wallet?.wallet_id ||
+        state.payloads.home?.bootstrap?.owner_wallet?.wallet_id ||
+        "";
+      if (!endpoint?.endpoint_id) {
+        state.mvpSmokeDraft = {
+          endpointId: null,
+          clientWallet: ownerWalletId,
+          depositQAtoms: "1000",
+          fixedPriceQAtoms: "900",
+          networkFeeReserveQAtoms: "100",
+          taskType: "llm_text.generate",
+          taskInput: "",
+          autoFinalize: true,
+        };
+        return state.mvpSmokeDraft;
+      }
+      if (state.mvpSmokeDraft.endpointId !== endpoint.endpoint_id) {
+        const taskType = defaultTaskTypeForEndpoint(endpoint);
+        state.mvpSmokeDraft = {
+          endpointId: endpoint.endpoint_id,
+          clientWallet: ownerWalletId,
+          depositQAtoms: String(action.default_deposit_q_atoms ?? 1000),
+          fixedPriceQAtoms: String(action.default_fixed_price_q_atoms ?? 900),
+          networkFeeReserveQAtoms: String(action.default_network_fee_reserve_q_atoms ?? 100),
+          taskType,
+          taskInput: mvpSmokeDefaultInput(action, taskType),
+          autoFinalize: action.auto_finalize_default !== false,
+        };
+      } else if (!state.mvpSmokeDraft.clientWallet && ownerWalletId) {
+        state.mvpSmokeDraft.clientWallet = ownerWalletId;
+      }
+      return state.mvpSmokeDraft;
+    }
+
+    function mvpSmokeRequestPayload(draft) {
+      return draft.taskType === "audio.transcribe"
+        ? { audio_ref: draft.taskInput || "mvp-smoke.wav" }
+        : { prompt: draft.taskInput || "AiDN MVP paid smoke test" };
+    }
+
+    function renderMvpPaidSmokeResult() {
+      const result = state.mvpSmokeResult;
+      if (!result) {
+        return `<div class="notice" style="margin-top: 12px;">No MVP Paid Smoke run yet. Run it to capture Runtime evidence, Final Usage, and Settlement readiness in one operator-visible path.</div>`;
+      }
+      const proposal = result.settlement_readiness?.proposal || result.finalized?.proposal || {};
+      const runtimeRequest = result.runtime_evidence?.request || {};
+      const finalUsage = result.runtime_evidence?.final_usage || {};
+      return `
+        <div class="list" style="margin-top: 12px;">
+          <div class="list-row">
+            <div>
+              <strong>Task Result</strong>
+              <span>${result.task?.task_id || "-"} / ${result.task?.status || "-"}</span>
+            </div>
+            <span class="chip ${result.task?.status === "completed" ? "good" : ""}">${result.task?.task_type || "-"}</span>
+          </div>
+          <div class="list-row">
+            <div>
+              <strong>Runtime Evidence</strong>
+              <span>${runtimeRequest.request_id || "-"} / ${runtimeRequest.request_state || "-"}</span>
+            </div>
+            <span class="chip">${runtimeRequest.admission_state || "-"}</span>
+          </div>
+          <div class="list-row">
+            <div>
+              <strong>Final Usage Report</strong>
+              <span>${finalUsage.usage_report_id || "-"} / sequence ${formatMaybe(finalUsage.usage_sequence)}</span>
+            </div>
+            <span class="chip ${finalUsage.terminal ? "good" : ""}">${finalUsage.report_type || "-"}</span>
+          </div>
+          <div class="list-row">
+            <div>
+              <strong>Settlement Readiness</strong>
+              <span>${result.settlement_readiness?.ready ? "ready" : "not ready"} / input root ${formatMaybe(result.settlement_readiness?.input_root)}</span>
+            </div>
+            <span class="chip ${result.settlement_readiness?.ready ? "good" : "bad"}">${formatQ(proposal.final_endpoint_payment_q_atoms || 0)}</span>
+          </div>
+          <div class="list-row">
+            <div>
+              <strong>Finalization</strong>
+              <span>${result.finalized ? `session ${result.finalized.session?.status || "-"} / deposit ${result.finalized.deposit?.status || "-"}` : "manual mode: ready for explicit finalize"}</span>
+            </div>
+            <span class="chip ${result.finalized ? "good" : ""}">${result.finalized ? "finalized" : "readiness only"}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderMvpPaidSmokePanel(selected) {
+      if (!selected) {
+        return "";
+      }
+      const action = selected.mvp_paid_smoke || {};
+      const draft = syncMvpSmokeDraft(selected);
+      return `
+        <div class="panel-heading" style="margin-top: 16px;">MVP Paid Smoke</div>
+        <div class="notice" style="margin-top: 12px;">
+          One-click ${action.profile || "MVP-0001"} fixed-price execution: open escrow, submit one Runtime Request, collect Final Usage, and evaluate Settlement readiness.
+        </div>
+        <div class="wallet-form-grid" style="margin-top: 12px;">
+          <input type="text" data-mvp-smoke-field="clientWallet" value="${escapeHtml(draft.clientWallet)}" placeholder="Consumer wallet id">
+          <select data-mvp-smoke-field="taskType">
+            <option value="llm_text.generate" ${draft.taskType === "llm_text.generate" ? "selected" : ""}>llm_text.generate</option>
+            <option value="audio.transcribe" ${draft.taskType === "audio.transcribe" ? "selected" : ""}>audio.transcribe</option>
+          </select>
+        </div>
+        <div class="wallet-form-grid" style="margin-top: 10px;">
+          <input type="number" min="1" step="1" data-mvp-smoke-field="depositQAtoms" value="${escapeHtml(draft.depositQAtoms)}" placeholder="Deposit q_atoms">
+          <input type="number" min="0" step="1" data-mvp-smoke-field="fixedPriceQAtoms" value="${escapeHtml(draft.fixedPriceQAtoms)}" placeholder="Fixed price q_atoms">
+        </div>
+        <div class="wallet-form-grid" style="margin-top: 10px;">
+          <input type="number" min="0" step="1" data-mvp-smoke-field="networkFeeReserveQAtoms" value="${escapeHtml(draft.networkFeeReserveQAtoms)}" placeholder="Network fee reserve q_atoms">
+          <input type="text" data-mvp-smoke-field="taskInput" value="${escapeHtml(draft.taskInput)}" placeholder="${sessionRequestInputPlaceholder(draft.taskType)}">
+        </div>
+        <label class="wallet-inline-actions" style="margin-top: 10px; justify-content: flex-start; gap: 10px;">
+          <input type="checkbox" data-mvp-smoke-field="autoFinalize" ${draft.autoFinalize ? "checked" : ""}>
+          <span>Auto-finalize cooperative Settlement after readiness is built</span>
+        </label>
+        <div class="wallet-inline-actions" style="margin-top: 14px;">
+          <button class="primary-button action-focus" type="button" data-endpoint-action="run-mvp-smoke" ${state.mvpSmokePending || !draft.clientWallet ? "disabled" : ""}>
+            ${state.mvpSmokePending ? "Running MVP Smoke..." : "Run MVP Paid Smoke"}
+          </button>
+          <span class="chip">${action.accounting_mode || "FIXED_PRICE"}</span>
+          <span class="chip">${formatQ(Number(draft.fixedPriceQAtoms || 0))} fixed</span>
+        </div>
+        ${renderMvpPaidSmokeResult()}
+      `;
+    }
+
     function syncSessionRequestDraft() {
       const selected = selectedSessionRow();
       if (!selected || selected.session.status !== "active") {
@@ -5165,6 +5327,7 @@
                           suggestedCopy: `${proxyGuidedPrimaryAction?.label || "No guided action"} keeps the route handoff moving while the full endpoint controls remain available below.`,
                         })
                       }
+                      ${renderMvpPaidSmokePanel(selected)}
                       <div class="panel-heading" style="margin-top: 16px;">Endpoint Policy Editor</div>
                       <div class="wallet-form-grid" style="margin-top: 12px;">
                         <select data-endpoint-field="visibility">
@@ -8774,6 +8937,53 @@
       }
     }
 
+    async function runSelectedEndpointMvpPaidSmoke() {
+      const draftEndpoint = selectedEndpointDraft();
+      if (!draftEndpoint?.endpoint_id) {
+        return;
+      }
+      const draft = syncMvpSmokeDraft(draftEndpoint);
+      state.mvpSmokePending = true;
+      state.bootstrapMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(
+          `${endpointApiBase}/${draftEndpoint.endpoint_id}/mvp-paid-smoke`,
+          {
+            client_wallet: draft.clientWallet,
+            deposit_q_atoms: Number(draft.depositQAtoms || 0),
+            fixed_price_q_atoms: Number(draft.fixedPriceQAtoms || 0),
+            network_fee_reserve_q_atoms: Number(draft.networkFeeReserveQAtoms || 0),
+            task_type: draft.taskType,
+            payload: mvpSmokeRequestPayload(draft),
+            auto_finalize: Boolean(draft.autoFinalize),
+          }
+        );
+        state.mvpSmokeResult = result.data || result;
+        state.selectedSessionId = state.mvpSmokeResult.session?.session_id || state.selectedSessionId;
+        state.selectedRequestTaskId = state.mvpSmokeResult.task?.task_id || state.selectedRequestTaskId;
+        const proposal = state.mvpSmokeResult.settlement_readiness?.proposal || {};
+        state.bootstrapMessage = {
+          kind: "good",
+          text: state.mvpSmokeResult.finalized
+            ? `MVP Paid Smoke finalized ${formatQ(proposal.final_endpoint_payment_q_atoms || 0)} for ${draftEndpoint.endpoint_id}.`
+            : `MVP Paid Smoke built Settlement readiness for ${draftEndpoint.endpoint_id}; finalize manually when ready.`,
+        };
+        await Promise.all([
+          loadScreen("endpoints"),
+          loadScreen("sessions"),
+          loadScreen("requests"),
+        ]);
+      } catch (error) {
+        state.bootstrapMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.mvpSmokePending = false;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function revokeBootstrapEndpointPublication() {
       const draft = selectedEndpointDraft();
       if (!draft?.endpoint_id) {
@@ -10727,6 +10937,24 @@
         });
       });
 
+      document.querySelectorAll("[data-mvp-smoke-field]").forEach((control) => {
+        const key = control.dataset.mvpSmokeField;
+        const eventName =
+          control.type === "checkbox" || control.tagName === "SELECT" ? "change" : "input";
+        control.addEventListener(eventName, () => {
+          state.mvpSmokeDraft[key] =
+            control.type === "checkbox" ? control.checked : control.value;
+          if (key === "taskType") {
+            state.mvpSmokeDraft.taskInput = mvpSmokeDefaultInput(
+              selectedEndpointDraft()?.mvp_paid_smoke || {},
+              control.value
+            );
+          }
+          renderWorkspace();
+          bindInteractiveElements();
+        });
+      });
+
       document.querySelectorAll("[data-endpoint-action]").forEach((button) => {
         button.addEventListener("click", () => {
           const action = button.dataset.endpointAction;
@@ -10768,6 +10996,9 @@
               return;
             case "request-validation":
               void requestBootstrapEndpointValidation();
+              return;
+            case "run-mvp-smoke":
+              void runSelectedEndpointMvpPaidSmoke();
               return;
             case "finish-guided-flow":
               clearGuidedProxyFlow();

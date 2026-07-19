@@ -35,6 +35,33 @@ def _local_publication_configuration_hash(manifest) -> str:
     return configuration_hash_for_publication(payload)
 
 
+def _mvp_paid_smoke_action_for_manifest(manifest) -> dict:
+    task_type = "audio.transcribe" if manifest.model_class == "speech.stt" else "llm_text.generate"
+    payload = (
+        {"audio_ref": "mvp-smoke.wav"}
+        if task_type == "audio.transcribe"
+        else {"prompt": "AiDN MVP paid smoke test"}
+    )
+    return {
+        "profile": "MVP-0001",
+        "enabled": True,
+        "route": f"/api/v1/endpoints/{manifest.endpoint_id}/mvp-paid-smoke",
+        "method": "POST",
+        "accounting_mode": "FIXED_PRICE",
+        "default_task_type": task_type,
+        "default_payload": payload,
+        "default_deposit_q_atoms": 1000,
+        "default_fixed_price_q_atoms": 900,
+        "default_network_fee_reserve_q_atoms": 100,
+        "auto_finalize_default": True,
+        "evidence": [
+            "runtime_request",
+            "final_usage_report",
+            "settlement_readiness",
+        ],
+    }
+
+
 def _publication_sync_status(
     *,
     local_configuration_hash: str | None,
@@ -1267,6 +1294,7 @@ def build_operator_endpoints_payload(
                 "validation": manifest.validation.model_dump(mode="json"),
                 "validation_summary": validation_summary,
                 "published_validation_summary": published_validation_summary,
+                "mvp_paid_smoke": _mvp_paid_smoke_action_for_manifest(manifest),
                 "current_publication": (
                     current_publication.model_dump(mode="json")
                     if current_publication is not None
