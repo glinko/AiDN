@@ -161,6 +161,7 @@ We already have a working local hypervisor foundation:
 - MVP-0001 task execution now records a compatibility Runtime evidence envelope from real completed endpoint tasks, producing a terminal Runtime Request plus mandatory Final Usage Report for the existing finalize API without seeded test evidence, while rejecting a second Runtime Request for the same MVP Session;
 - MVP-0001 now has a one-call paid smoke API that opens a fixed-price Session, submits the first endpoint task, returns Result/Runtime evidence/Final Usage/Settlement readiness, and can either auto-finalize or leave the Session ready for explicit finalize;
 - the operator dashboard `Endpoints` workspace now exposes the one-call `MVP-0001` paid smoke path with fixed-price defaults, auto/manual finalization mode, visible Task Result, Runtime evidence, Final Usage, Settlement readiness, cooperative finalize, and completed fixed-price timeout force-finalize controls;
+- the operator dashboard `Sessions` workspace now exposes the MVP-0001 Endpoint-unavailable timeout refund path for no-request Sessions with canonical funding, including force-after/now controls and explicit eligibility diagnostics;
 - canonical capability definitions now ship with stable definition hashes, and published endpoint advertisements now bind to projected feature, limit, and implementation profile hashes inside registry-visible canonical overlays;
 - canonical overlay and node advertisement payloads now also expose immutable local Registry Object envelopes for capability definitions, endpoint profiles, and accounting contracts, giving later persistence and replication work a stable object identity layer to build on;
 - registry-backed object views now support deduplicated `object_id` lookup, filtered listing, durable local snapshot persistence, and a versioned local completeness summary over the standalone store, while manifest identity, retention policy enforcement, and replication remain the next gaps;
@@ -432,7 +433,7 @@ Order of work right now:
 1. Close the operator bootstrap loop from `install -> wallet ownership -> provider attach -> model/bundle setup -> first endpoint publish`
 2. Make endpoint management the primary operator object, including privacy mode, publication mode, and validation as separate actions
 3. Finish migrating the operator shell onto the endpoint-first trust layer, so publish/proof/sync state are first-class controls across `Home`, `Endpoints`, and later marketplace flows
-4. Add Session-workspace forced-settlement controls for non-smoke timeout/refund cases, especially Endpoint unavailable before execution
+4. Add Model Deployment artifact-materialization readiness and enforce it at Runtime Binding or Endpoint Draft admission without breaking deployments that do not require artifact sets
 5. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
 6. Finish the remaining `M3/M4` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
 7. Define `M5` rating, validation economics, and `M6` custom model onboarding contracts around the endpoint-centric operator experience

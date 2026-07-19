@@ -1688,6 +1688,12 @@
         taskType: "",
         inputValue: "",
       },
+      sessionForceSettlementDraft: {
+        sessionId: null,
+        forceAfter: "",
+        forceNow: "",
+        actualNetworkFeesQAtoms: "0",
+      },
       mvpSmokeDraft: {
         endpointId: null,
         clientWallet: "",
@@ -3929,6 +3935,93 @@
       return syncSessionSelection();
     }
 
+    function sessionForceDefaultForceAfter() {
+      return new Date(Date.now() - 1000).toISOString();
+    }
+
+    function syncSessionForceSettlementDraft(selected) {
+      if (!selected?.session?.session_id) {
+        state.sessionForceSettlementDraft = {
+          sessionId: null,
+          forceAfter: "",
+          forceNow: "",
+          actualNetworkFeesQAtoms: "0",
+        };
+        return state.sessionForceSettlementDraft;
+      }
+      if (state.sessionForceSettlementDraft.sessionId !== selected.session.session_id) {
+        state.sessionForceSettlementDraft = {
+          sessionId: selected.session.session_id,
+          forceAfter: sessionForceDefaultForceAfter(),
+          forceNow: new Date().toISOString(),
+          actualNetworkFeesQAtoms: "0",
+        };
+      }
+      return state.sessionForceSettlementDraft;
+    }
+
+    function sessionForceSettlementEligibility(selected) {
+      if (!selected?.session) {
+        return { enabled: false, reason: "Select a Session first." };
+      }
+      if (selected.session.status === "closed") {
+        return { enabled: false, reason: "Session is already closed." };
+      }
+      if (selected.session.economic_profile !== "MVP-0001") {
+        return { enabled: false, reason: "Forced refund controls currently require an MVP-0001 Session." };
+      }
+      if (!selected.session.canonical_funding_state_hash) {
+        return { enabled: false, reason: "Session is not bound to canonical funding." };
+      }
+      if (Number(selected.session.request_count || 0) > 0) {
+        return { enabled: false, reason: "Endpoint-unavailable refund requires no accepted Runtime work." };
+      }
+      return { enabled: true, reason: "Eligible for Endpoint-unavailable timeout refund." };
+    }
+
+    function renderSessionForcedSettlementPanel(selected) {
+      const draft = syncSessionForceSettlementDraft(selected);
+      const eligibility = sessionForceSettlementEligibility(selected);
+      const session = selected?.session || {};
+      return `
+        <section class="subpanel" style="margin-bottom: 18px;">
+          <div class="panel-heading">Session Forced Settlement</div>
+          <div class="notice" style="margin-top: 12px;">
+            Timeout refund path for MVP-0001 Sessions where the Endpoint became unavailable before accepting Runtime work.
+          </div>
+          <div class="wallet-form-grid" style="margin-top: 12px;">
+            <input type="text" data-session-force-field="forceAfter" value="${escapeHtml(draft.forceAfter)}" placeholder="Force after ISO timestamp" ${selected ? "" : "disabled"}>
+            <input type="text" data-session-force-field="forceNow" value="${escapeHtml(draft.forceNow)}" placeholder="Now ISO timestamp" ${selected ? "" : "disabled"}>
+          </div>
+          <div class="wallet-form-grid" style="margin-top: 10px;">
+            <input type="number" min="0" step="1" data-session-force-field="actualNetworkFeesQAtoms" value="${escapeHtml(draft.actualNetworkFeesQAtoms)}" placeholder="Actual network fees q_atoms" ${selected ? "" : "disabled"}>
+            <div class="notice">Reason: ENDPOINT_UNAVAILABLE / Session ${formatMaybe(session.session_id)}</div>
+          </div>
+          <div class="list" style="margin-top: 12px;">
+            <div class="list-row">
+              <div>
+                <strong>Eligibility</strong>
+                <span>${eligibility.reason}</span>
+              </div>
+              <span class="chip ${eligibility.enabled ? "good" : "bad"}">${eligibility.enabled ? "ready" : "blocked"}</span>
+            </div>
+            <div class="list-row">
+              <div>
+                <strong>Canonical Funding</strong>
+                <span>${formatMaybe(session.canonical_funding_state_hash)}</span>
+              </div>
+              <span class="chip">${session.economic_profile || "legacy"}</span>
+            </div>
+          </div>
+          <div class="wallet-inline-actions" style="margin-top: 14px;">
+            <button class="secondary-button" type="button" data-session-action="force-unavailable-refund" ${eligibility.enabled && state.sessionActionPending !== "force-unavailable-refund" ? "" : "disabled"}>
+              ${state.sessionActionPending === "force-unavailable-refund" ? "Force Settling..." : "Force Refund Timeout"}
+            </button>
+          </div>
+        </section>
+      `;
+    }
+
     function defaultTaskTypeForSession(selected) {
       const endpoint = endpointDraftById(selected?.session?.endpoint_id);
       const modelClass = endpoint?.model_class || "";
@@ -5762,6 +5855,7 @@
               </button>
             </div>
           </section>
+          ${renderSessionForcedSettlementPanel(selected)}
           <section class="subpanel" style="margin-bottom: 18px;">
             <div class="panel-heading">Launch Session Request</div>
             ${
@@ -10179,6 +10273,48 @@
       }
     }
 
+    async function forceRefundSelectedSessionUnavailable() {
+      const selected = selectedSessionRow();
+      const eligibility = sessionForceSettlementEligibility(selected);
+      if (!selected?.session?.session_id || !eligibility.enabled) {
+        state.sessionMessage = {
+          kind: "bad",
+          text: eligibility.reason,
+        };
+        render();
+        bindInteractiveElements();
+        return;
+      }
+      const draft = syncSessionForceSettlementDraft(selected);
+      state.sessionActionPending = "force-unavailable-refund";
+      state.sessionMessage = null;
+      render();
+      try {
+        const result = await postJson(
+          `${endpointApiBase}/${selected.session.endpoint_id}/mvp-sessions/${selected.session.session_id}/force-finalize`,
+          {
+            reason: "ENDPOINT_UNAVAILABLE",
+            force_after: draft.forceAfter,
+            now: draft.forceNow,
+            actual_network_fees_q_atoms: Number(draft.actualNetworkFeesQAtoms || 0),
+          }
+        );
+        state.sessionMessage = {
+          kind: "good",
+          text: `Forced refund finalized for ${result.data.session.session_id}: ${formatQ(result.data.proposal.consumer_payment_refund_q_atoms || 0)} payment refund.`,
+        };
+        state.selectedSessionId = result.data.session.session_id;
+        await refreshSessionsPayload();
+        mergeSessionResultIntoPayload(result.data);
+      } catch (error) {
+        state.sessionMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.sessionActionPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function openReservedSession() {
       const selectedEndpoint = selectedSessionOpenEndpoint();
       const draft = syncSessionOpenDraft();
@@ -10801,7 +10937,16 @@
             void closeSelectedSession();
           } else if (button.dataset.sessionAction === "sweep-idle") {
             void sweepIdleSessions();
+          } else if (button.dataset.sessionAction === "force-unavailable-refund") {
+            void forceRefundSelectedSessionUnavailable();
           }
+        });
+      });
+
+      document.querySelectorAll("[data-session-force-field]").forEach((control) => {
+        const key = control.dataset.sessionForceField;
+        control.addEventListener("input", () => {
+          state.sessionForceSettlementDraft[key] = control.value;
         });
       });
 

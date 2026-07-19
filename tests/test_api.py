@@ -2724,6 +2724,11 @@ def test_operator_dashboard_shell_route_exposes_sessions_workspace_controls() ->
     assert "Reserve Paid Session" in response.text
     assert "Deposit Confirmation" in response.text
     assert "Confirm Deposit &amp; Open Session" in response.text
+    assert "Session Forced Settlement" in response.text
+    assert "Force Refund Timeout" in response.text
+    assert 'data-session-action="force-unavailable-refund"' in response.text
+    assert 'data-session-force-field="forceAfter"' in response.text
+    assert "/mvp-sessions/${selected.session.session_id}/force-finalize" in response.text
     assert 'data-session-open-field="endpointId"' in response.text
     assert 'data-session-open-field="clientWallet"' in response.text
     assert 'data-session-open-field="depositQ"' in response.text
@@ -5137,6 +5142,48 @@ def test_operator_dashboard_sessions_endpoint_returns_operator_session_summary()
     assert response.json()["items"][0]["display_name"] == "Paid STT"
     assert response.json()["items"][0]["deposit"]["locked_q"] == 10.0
     assert response.json()["items"][0]["session"]["endpoint_id"] == created.endpoint.endpoint_id
+
+
+def test_operator_dashboard_sessions_endpoint_exposes_mvp_force_refund_eligibility_fields() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    service.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Paid STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    opened, _, funding = service.open_mvp_fixed_price_session(
+        session_service=session_service,
+        endpoint=created.endpoint,
+        client_wallet="wallet-consumer",
+        deposit_q_atoms=1_000,
+        fixed_price_q_atoms=900,
+        network_fee_reserve_q_atoms=100,
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.get("/operators/dashboard/sessions")
+    item = response.json()["items"][0]
+
+    assert response.status_code == 200
+    assert item["session"]["session_id"] == opened.session_id
+    assert item["session"]["economic_profile"] == "MVP-0001"
+    assert item["session"]["request_count"] == 0
+    assert item["session"]["canonical_funding_state_hash"] == funding.funding_state_hash
 
 
 def test_operator_dashboard_sessions_endpoint_includes_related_task_telemetry() -> None:
