@@ -11,6 +11,9 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeRecoveryPlan,
     RuntimeRecoveryResult,
     RuntimeResult,
+    RuntimeStreamChunk,
+    RuntimeStreamClose,
+    RuntimeStreamOpen,
     RuntimeRequestRecord,
     RuntimeUsageAck,
     RuntimeUsageConflict,
@@ -36,6 +39,9 @@ class RuntimeProtocolStore:
         self.cancellations: dict[str, RuntimeCancellationRecord] = {}
         self.cancellation_results: dict[str, RuntimeCancelResult] = {}
         self.results: dict[str, RuntimeResult] = {}
+        self.streams: dict[str, RuntimeStreamOpen] = {}
+        self.stream_chunks: dict[str, dict[int, RuntimeStreamChunk]] = {}
+        self.stream_closes: dict[str, RuntimeStreamClose] = {}
         self.usage_reports: dict[str, RuntimeUsageReport] = {}
         self.usage_acks: dict[str, RuntimeUsageAck] = {}
         self.usage_conflicts: dict[str, RuntimeUsageConflict] = {}
@@ -83,6 +89,15 @@ class RuntimeProtocolStore:
         self.results = {
             item.request_id: item for item in snapshot.runtime_protocol_results
         }
+        self.streams = {
+            item.stream_id: item for item in snapshot.runtime_protocol_streams
+        }
+        self.stream_chunks = {}
+        for item in snapshot.runtime_protocol_stream_chunks:
+            self.stream_chunks.setdefault(item.stream_id, {})[item.chunk_sequence] = item
+        self.stream_closes = {
+            item.stream_id: item for item in snapshot.runtime_protocol_stream_closes
+        }
         self.usage_reports = {
             item.usage_report_id: item
             for item in snapshot.runtime_protocol_usage_reports
@@ -125,6 +140,13 @@ class RuntimeProtocolStore:
                     self.cancellation_results.values()
                 ),
                 "runtime_protocol_results": list(self.results.values()),
+                "runtime_protocol_streams": list(self.streams.values()),
+                "runtime_protocol_stream_chunks": [
+                    chunk
+                    for chunks in self.stream_chunks.values()
+                    for chunk in chunks.values()
+                ],
+                "runtime_protocol_stream_closes": list(self.stream_closes.values()),
                 "runtime_protocol_usage_reports": list(self.usage_reports.values()),
                 "runtime_protocol_usage_acks": list(self.usage_acks.values()),
                 "runtime_protocol_usage_conflicts": list(

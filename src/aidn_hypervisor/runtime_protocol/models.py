@@ -396,6 +396,106 @@ class RuntimeCancelResult(BaseModel):
         return self
 
 
+RuntimeStreamTerminalState = Literal[
+    "COMPLETED",
+    "PARTIAL",
+    "CANCELLED",
+    "FAILED",
+    "EXPIRED",
+]
+
+
+class RuntimeStreamOpen(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    session_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    stream_id: str = Field(min_length=1)
+    stream_type: str = Field(min_length=1)
+    modality: str = Field(min_length=1)
+    content_type: str = Field(min_length=1)
+    ordering_model: Literal[
+        "STRICT_ORDERED", "INDEPENDENT_SEGMENTS", "ARTIFACT_CHUNKS", "EVENT_STREAM"
+    ] = "STRICT_ORDERED"
+    expected_length: int | None = Field(default=None, ge=0)
+    result_root_policy: str = Field(min_length=1)
+    opened_at: str = Field(min_length=1)
+    runtime_signature: str = Field(min_length=1)
+    stream_open_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_stream_open_hash(self):
+        payload = self.model_dump(mode="json", exclude={"stream_open_hash"})
+        expected = canonical_hash(payload)
+        if self.stream_open_hash is None:
+            self.stream_open_hash = expected
+        elif self.stream_open_hash != expected:
+            raise ValueError("stream_open_hash does not match Runtime Stream Open")
+        return self
+
+
+class RuntimeStreamChunk(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    session_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    stream_id: str = Field(min_length=1)
+    chunk_sequence: int = Field(ge=1)
+    chunk_hash: str = Field(min_length=1)
+    chunk_length: int = Field(ge=0)
+    content: str | None = None
+    content_reference: str | None = None
+    cumulative_output_units: int | None = Field(default=None, ge=0)
+    emitted_at: str = Field(min_length=1)
+    runtime_signature: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_chunk_content(self):
+        locations = [self.content is not None, self.content_reference is not None]
+        if sum(locations) != 1:
+            raise ValueError("exactly one Stream Chunk content location is required")
+        if self.content is not None:
+            encoded = self.content.encode("utf-8")
+            if len(encoded) != self.chunk_length:
+                raise ValueError("chunk_length does not match inline content")
+            expected = f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+            if self.chunk_hash != expected:
+                raise ValueError("chunk_hash does not match inline content")
+        return self
+
+
+class RuntimeStreamClose(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    session_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    stream_id: str = Field(min_length=1)
+    terminal_state: RuntimeStreamTerminalState
+    final_sequence: int = Field(ge=0)
+    final_content_root: str = Field(min_length=1)
+    delivered_length: int = Field(ge=0)
+    close_reason: str = Field(min_length=1)
+    closed_at: str = Field(min_length=1)
+    runtime_signature: str = Field(min_length=1)
+    stream_close_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_stream_close_hash(self):
+        payload = self.model_dump(mode="json", exclude={"stream_close_hash"})
+        expected = canonical_hash(payload)
+        if self.stream_close_hash is None:
+            self.stream_close_hash = expected
+        elif self.stream_close_hash != expected:
+            raise ValueError("stream_close_hash does not match Runtime Stream Close")
+        return self
+
+
 class RuntimeResult(BaseModel):
     runtime_id: str = Field(min_length=1)
     runtime_generation: int = Field(ge=1)

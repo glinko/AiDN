@@ -3452,6 +3452,15 @@ class HypervisorService:
                 self.runtime_protocol_store.cancellation_results.values()
             ),
             runtime_protocol_results=list(self.runtime_protocol_store.results.values()),
+            runtime_protocol_streams=list(self.runtime_protocol_store.streams.values()),
+            runtime_protocol_stream_chunks=[
+                chunk
+                for chunks in self.runtime_protocol_store.stream_chunks.values()
+                for chunk in chunks.values()
+            ],
+            runtime_protocol_stream_closes=list(
+                self.runtime_protocol_store.stream_closes.values()
+            ),
             runtime_protocol_usage_reports=list(
                 self.runtime_protocol_store.usage_reports.values()
             ),

@@ -26,6 +26,9 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeRequestAccept,
     RuntimeRequestRecord,
     RuntimeResult,
+    RuntimeStreamChunk,
+    RuntimeStreamClose,
+    RuntimeStreamOpen,
     RuntimeUsageAck,
     RuntimeUsageConflict,
     RuntimeUsageReport,
@@ -824,6 +827,126 @@ class RuntimeProtocolService:
         self.store.flush()
         return result
 
+    def record_runtime_stream_open(
+        self,
+        runtime_connection_id: str,
+        stream: RuntimeStreamOpen,
+    ) -> RuntimeStreamOpen:
+        self._validate_stream_event(
+            runtime_connection_id,
+            stream,
+            stage="stream",
+        )
+        if "streaming" not in self._binding(stream.runtime_id).supported_features:
+            raise RuntimeProtocolError(
+                "RUNTIME_REQUIRED_FEATURE_UNAVAILABLE",
+                "stream",
+                "Runtime Binding does not declare streaming support",
+            )
+        existing = self.store.streams.get(stream.stream_id)
+        if existing is not None:
+            if existing.stream_open_hash != stream.stream_open_hash:
+                raise RuntimeProtocolError(
+                    "RUNTIME_STREAM_SEQUENCE_CONFLICT",
+                    "stream",
+                    "Stream ID conflicts with existing Stream Open",
+                )
+            return existing
+        self.store.streams[stream.stream_id] = stream.model_copy(deep=True)
+        self.store.flush()
+        return stream
+
+    def record_runtime_stream_chunk(
+        self,
+        runtime_connection_id: str,
+        chunk: RuntimeStreamChunk,
+    ) -> RuntimeStreamChunk:
+        stream = self._validate_stream_event(
+            runtime_connection_id,
+            chunk,
+            stage="stream",
+            require_open=True,
+        )
+        if chunk.stream_id in self.store.stream_closes:
+            raise RuntimeProtocolError(
+                "RUNTIME_STREAM_INTERRUPTED",
+                "stream",
+                "Stream is already closed",
+            )
+        chunks = self.store.stream_chunks.setdefault(chunk.stream_id, {})
+        existing = chunks.get(chunk.chunk_sequence)
+        if existing is not None:
+            if existing == chunk:
+                return existing
+            raise RuntimeProtocolError(
+                "RUNTIME_STREAM_SEQUENCE_CONFLICT",
+                "stream",
+                "Stream Chunk conflicts with an existing sequence",
+            )
+        if stream.ordering_model == "STRICT_ORDERED":
+            expected_sequence = max(chunks, default=0) + 1
+            if chunk.chunk_sequence != expected_sequence:
+                raise RuntimeProtocolError(
+                    "RUNTIME_STREAM_SEQUENCE_INVALID",
+                    "stream",
+                    "Strictly ordered Stream Chunk sequence is invalid",
+                )
+        chunks[chunk.chunk_sequence] = chunk.model_copy(deep=True)
+        self.store.flush()
+        return chunk
+
+    def record_runtime_stream_close(
+        self,
+        runtime_connection_id: str,
+        close: RuntimeStreamClose,
+    ) -> RuntimeStreamClose:
+        stream = self._validate_stream_event(
+            runtime_connection_id,
+            close,
+            stage="stream",
+            require_open=True,
+        )
+        existing = self.store.stream_closes.get(close.stream_id)
+        if existing is not None:
+            if existing.stream_close_hash != close.stream_close_hash:
+                raise RuntimeProtocolError(
+                    "RUNTIME_STREAM_SEQUENCE_CONFLICT",
+                    "stream",
+                    "Stream Close conflicts with the accepted terminal event",
+                )
+            return existing
+        chunks = self.store.stream_chunks.get(close.stream_id, {})
+        if close.final_sequence != max(chunks, default=0):
+            raise RuntimeProtocolError(
+                "RUNTIME_STREAM_SEQUENCE_INVALID",
+                "stream",
+                "Stream Close final sequence does not match received chunks",
+            )
+        if stream.ordering_model == "STRICT_ORDERED" and set(chunks) != set(
+            range(1, close.final_sequence + 1)
+        ):
+            raise RuntimeProtocolError(
+                "RUNTIME_STREAM_SEQUENCE_INVALID",
+                "stream",
+                "Strictly ordered Stream has a sequence gap",
+            )
+        delivered_length = sum(item.chunk_length for item in chunks.values())
+        if close.delivered_length != delivered_length:
+            raise RuntimeProtocolError(
+                "RUNTIME_STREAM_HASH_MISMATCH",
+                "stream",
+                "Stream Close delivered length does not match chunks",
+            )
+        if close.final_content_root != self._stream_root(close.stream_id, chunks):
+            raise RuntimeProtocolError(
+                "RUNTIME_STREAM_HASH_MISMATCH",
+                "stream",
+                "Stream Close content root does not match chunks",
+            )
+        self.store.stream_closes[close.stream_id] = close.model_copy(deep=True)
+        self.store.flush()
+        return close
+
     def record_request_terminal(
         self,
         runtime_connection_id: str,
@@ -937,6 +1060,17 @@ class RuntimeProtocolService:
                     "Runtime Result conflicts with the accepted terminal Result",
                 )
             return existing
+        for stream_root in result.stream_roots:
+            if not any(
+                close.request_id == result.request_id
+                and close.final_content_root == stream_root
+                for close in self.store.stream_closes.values()
+            ):
+                raise RuntimeProtocolError(
+                    "RUNTIME_STREAM_NOT_FOUND",
+                    "result",
+                    "Runtime Result references an unknown closed Stream root",
+                )
         self.record_request_terminal(
             runtime_connection_id,
             request_id=result.request_id,
@@ -947,6 +1081,78 @@ class RuntimeProtocolService:
         self.store.results[result.request_id] = result.model_copy(deep=True)
         self.store.flush()
         return result
+
+    def _validate_stream_event(
+        self,
+        runtime_connection_id: str,
+        event: RuntimeStreamOpen | RuntimeStreamChunk | RuntimeStreamClose,
+        *,
+        stage: str,
+        require_open: bool = False,
+    ) -> RuntimeStreamOpen:
+        if not self.runtime_authenticator(event):
+            raise RuntimeProtocolError(
+                "RUNTIME_IDENTITY_INVALID", stage, "Runtime Stream authentication failed"
+            )
+        self._validate_connection(
+            runtime_connection_id,
+            runtime_id=event.runtime_id,
+            runtime_generation=event.runtime_generation,
+            runtime_configuration_hash=event.runtime_configuration_hash,
+            route_generation=event.route_generation,
+            allow_recovering=True,
+        )
+        request = self.store.requests.get(event.request_id)
+        if request is None or request.request.session_id != event.session_id:
+            raise RuntimeProtocolError(
+                "RUNTIME_REQUEST_NOT_FOUND", stage, "Runtime Stream Request is unknown"
+            )
+        if request.admission_state not in {"ACCEPTED", "QUEUED"}:
+            raise RuntimeProtocolError(
+                "RUNTIME_REQUEST_REJECTED",
+                stage,
+                "Runtime Stream Request was not accepted",
+            )
+        if require_open:
+            stream = self.store.streams.get(event.stream_id)
+            if stream is None:
+                raise RuntimeProtocolError(
+                    "RUNTIME_STREAM_NOT_FOUND", stage, "Runtime Stream is not open"
+                )
+            if (
+                stream.runtime_id != event.runtime_id
+                or stream.runtime_generation != event.runtime_generation
+                or stream.runtime_configuration_hash != event.runtime_configuration_hash
+                or stream.route_generation != event.route_generation
+                or stream.session_id != event.session_id
+                or stream.request_id != event.request_id
+            ):
+                raise RuntimeProtocolError(
+                    "RUNTIME_STREAM_SEQUENCE_CONFLICT",
+                    stage,
+                    "Runtime Stream event identity does not match Stream Open",
+                )
+            return stream
+        return event
+
+    @staticmethod
+    def _stream_root(
+        stream_id: str,
+        chunks: dict[int, RuntimeStreamChunk],
+    ) -> str:
+        return canonical_hash(
+            {
+                "stream_id": stream_id,
+                "chunks": [
+                    {
+                        "sequence": sequence,
+                        "chunk_hash": chunk.chunk_hash,
+                        "chunk_length": chunk.chunk_length,
+                    }
+                    for sequence, chunk in sorted(chunks.items())
+                ],
+            }
+        )
 
     def _usage_ack(
         self,

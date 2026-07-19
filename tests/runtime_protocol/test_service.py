@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -34,6 +35,9 @@ from aidn_hypervisor.runtime_protocol import (
     RuntimeRecoveryResult,
     RuntimeRequestAccept,
     RuntimeResult,
+    RuntimeStreamChunk,
+    RuntimeStreamClose,
+    RuntimeStreamOpen,
     RuntimeUsageDimension,
     RuntimeUsageReport,
     LocalIpcRuntimeIngress,
@@ -395,6 +399,7 @@ def _runtime_result(
     final_usage_report_id: str,
     payload: dict | None = None,
     terminal_state: str = "COMPLETED",
+    stream_roots: list[str] | None = None,
 ) -> RuntimeResult:
     return RuntimeResult(
         runtime_id=binding.runtime_id,
@@ -409,6 +414,7 @@ def _runtime_result(
         result_payload=(payload or {"text": "completed"})
         if terminal_state in {"COMPLETED", "PARTIAL"}
         else None,
+        stream_roots=stream_roots or [],
         final_usage_report_id=final_usage_report_id,
         provider_attempt_count=1,
         completed_at=datetime.now(timezone.utc).isoformat(),
@@ -462,6 +468,96 @@ def _runtime_cancel_result(
         provider_confirmed_stopped=provider_confirmed_stopped,
         side_effect_state="NONE",
         observed_at=datetime.now(timezone.utc).isoformat(),
+        runtime_signature="runtime-signed",
+    )
+
+
+def _runtime_stream_open(
+    binding: RuntimeBinding,
+    request: RuntimeExecuteRequest,
+    *,
+    stream_id: str = "stream-1",
+) -> RuntimeStreamOpen:
+    return RuntimeStreamOpen(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        session_id=request.session_id,
+        request_id=request.request_id,
+        stream_id=stream_id,
+        stream_type="result",
+        modality="text",
+        content_type="text/plain",
+        result_root_policy="FULL_CONTENT_HASH",
+        opened_at=datetime.now(timezone.utc).isoformat(),
+        runtime_signature="runtime-signed",
+    )
+
+
+def _runtime_stream_chunk(
+    binding: RuntimeBinding,
+    request: RuntimeExecuteRequest,
+    *,
+    stream_id: str = "stream-1",
+    sequence: int = 1,
+    content: str = "hello",
+) -> RuntimeStreamChunk:
+    encoded = content.encode("utf-8")
+    return RuntimeStreamChunk(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        session_id=request.session_id,
+        request_id=request.request_id,
+        stream_id=stream_id,
+        chunk_sequence=sequence,
+        chunk_hash=f"sha256:{hashlib.sha256(encoded).hexdigest()}",
+        chunk_length=len(encoded),
+        content=content,
+        emitted_at=datetime.now(timezone.utc).isoformat(),
+        runtime_signature="runtime-signed",
+    )
+
+
+def _stream_root(stream_id: str, chunks: list[RuntimeStreamChunk]) -> str:
+    return canonical_hash(
+        {
+            "stream_id": stream_id,
+            "chunks": [
+                {
+                    "sequence": chunk.chunk_sequence,
+                    "chunk_hash": chunk.chunk_hash,
+                    "chunk_length": chunk.chunk_length,
+                }
+                for chunk in sorted(chunks, key=lambda item: item.chunk_sequence)
+            ],
+        }
+    )
+
+
+def _runtime_stream_close(
+    binding: RuntimeBinding,
+    request: RuntimeExecuteRequest,
+    chunks: list[RuntimeStreamChunk],
+    *,
+    stream_id: str = "stream-1",
+) -> RuntimeStreamClose:
+    return RuntimeStreamClose(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        session_id=request.session_id,
+        request_id=request.request_id,
+        stream_id=stream_id,
+        terminal_state="COMPLETED",
+        final_sequence=max((item.chunk_sequence for item in chunks), default=0),
+        final_content_root=_stream_root(stream_id, chunks),
+        delivered_length=sum(item.chunk_length for item in chunks),
+        close_reason="completed",
+        closed_at=datetime.now(timezone.utc).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -813,6 +909,65 @@ def test_local_ipc_runtime_ingress_routes_cancel_result() -> None:
 
     assert accepted == cancel_result
     assert service.store.cancellation_results[cancellation.cancellation_id] == cancel_result
+
+
+def test_local_ipc_runtime_ingress_routes_stream_open() -> None:
+    binding = _binding()
+    service = _service(binding, {binding.runtime_id: _route(binding)})
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="revision-1",
+    )
+    ingress = LocalIpcRuntimeIngress(
+        dispatcher=dispatcher,
+        runtime_protocol_service=service,
+        peer_authenticator=lambda message: (
+            message.authentication.get("peer_runtime_id") == binding.runtime_id
+        ),
+    )
+    ingress.bind_runtime(binding, route_generation=5)
+    stream = _runtime_stream_open(binding, request)
+    payload = {
+        "event_type": "RUNTIME_STREAM_OPEN",
+        "runtime_connection_id": connection.runtime_connection_id,
+        "event": stream.model_dump(mode="json"),
+    }
+    now = datetime.now(timezone.utc)
+    message = NetworkMessage(
+        message_id="local-ipc-stream-open-1",
+        message_type="RUNTIME_STREAM_OPEN",
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="revision-1",
+        connection_id=connection.runtime_connection_id,
+        channel_id="runtime-local-ipc",
+        channel_class="RUNTIME",
+        source_subject={"subject_type": "RUNTIME", "subject_id": binding.runtime_id},
+        destination_subject={
+            "subject_type": "HYPERVISOR_RUNTIME_INGRESS",
+            "subject_id": binding.runtime_id,
+        },
+        source_sequence=1,
+        route_generation=5,
+        runtime_generation=binding.runtime_generation,
+        created_at=now.isoformat(),
+        expiration=(now + timedelta(minutes=5)).isoformat(),
+        payload_hash=canonical_payload_hash(payload),
+        payload_length=len(canonical_payload_bytes(payload)),
+        payload=payload,
+        authentication={
+            "transport": "LOCAL_IPC",
+            "peer_runtime_id": binding.runtime_id,
+        },
+    )
+
+    assert ingress.receive(message) == stream
+    assert service.store.streams[stream.stream_id] == stream
 
 
 def test_execute_request_is_idempotent_and_acceptance_is_not_completion() -> None:
@@ -1292,6 +1447,58 @@ def test_runtime_cancellation_preserves_evidence_and_restores_rejected_cancel(tm
     )
     service.record_runtime_cancel_result(connection.runtime_connection_id, unsupported)
     assert service.store.requests[second_request.request_id].request_state == "ACCEPTED"
+
+
+def test_runtime_stream_requires_ordered_chunks_and_closed_root(tmp_path) -> None:
+    binding = _binding()
+    state_store = FileStateStore(tmp_path / "runtime-stream-state.json")
+    store = RuntimeProtocolStore(state_store)
+    service = _service(
+        binding,
+        {binding.runtime_id: _route(binding)},
+        store=store,
+    )
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    stream = _runtime_stream_open(binding, request)
+    assert service.record_runtime_stream_open(connection.runtime_connection_id, stream) == stream
+    first = _runtime_stream_chunk(binding, request, sequence=1, content="hello")
+    assert service.record_runtime_stream_chunk(connection.runtime_connection_id, first) == first
+    assert service.record_runtime_stream_chunk(connection.runtime_connection_id, first) == first
+
+    gap = _runtime_stream_chunk(binding, request, sequence=3, content="gap")
+    with pytest.raises(RuntimeProtocolError) as sequence_error:
+        service.record_runtime_stream_chunk(connection.runtime_connection_id, gap)
+    assert sequence_error.value.code == "RUNTIME_STREAM_SEQUENCE_INVALID"
+
+    second = _runtime_stream_chunk(binding, request, sequence=2, content=" world")
+    assert service.record_runtime_stream_chunk(connection.runtime_connection_id, second) == second
+    close = _runtime_stream_close(binding, request, [first, second])
+    assert service.record_runtime_stream_close(connection.runtime_connection_id, close) == close
+    assert service.record_runtime_stream_close(connection.runtime_connection_id, close) == close
+
+    final_usage = _runtime_usage_report(
+        binding,
+        request,
+        report_id="usage-stream-final",
+        terminal_state="COMPLETED",
+    )
+    assert service.record_usage_report(connection.runtime_connection_id, final_usage).status == (
+        "ACCEPTED"
+    )
+    result = _runtime_result(
+        binding,
+        request,
+        final_usage_report_id=final_usage.usage_report_id,
+        stream_roots=[close.final_content_root],
+    )
+    assert service.record_runtime_result(connection.runtime_connection_id, result) == result
+
+    restored = RuntimeProtocolStore(state_store)
+    assert restored.stream_chunks[stream.stream_id][2] == second
+    assert restored.stream_closes[stream.stream_id] == close
 
 
 def test_terminal_request_requires_final_usage_to_be_current_chain_head() -> None:

@@ -22,6 +22,9 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeHealth,
     RuntimeReady,
     RuntimeResult,
+    RuntimeStreamChunk,
+    RuntimeStreamClose,
+    RuntimeStreamOpen,
 )
 
 
@@ -31,6 +34,9 @@ RuntimeIngressEventType = Literal[
     "RUNTIME_CAPACITY",
     "RUNTIME_RESULT",
     "RUNTIME_CANCEL_RESULT",
+    "RUNTIME_STREAM_OPEN",
+    "RUNTIME_STREAM_CHUNK",
+    "RUNTIME_STREAM_CLOSE",
 ]
 
 
@@ -99,6 +105,21 @@ class LocalIpcRuntimeIngress:
             return self.runtime_protocol_service.record_runtime_cancel_result(
                 envelope.runtime_connection_id,
                 RuntimeCancelResult.model_validate(envelope.event),
+            )
+        if envelope.event_type == "RUNTIME_STREAM_OPEN":
+            return self.runtime_protocol_service.record_runtime_stream_open(
+                envelope.runtime_connection_id,
+                RuntimeStreamOpen.model_validate(envelope.event),
+            )
+        if envelope.event_type == "RUNTIME_STREAM_CHUNK":
+            return self.runtime_protocol_service.record_runtime_stream_chunk(
+                envelope.runtime_connection_id,
+                RuntimeStreamChunk.model_validate(envelope.event),
+            )
+        if envelope.event_type == "RUNTIME_STREAM_CLOSE":
+            return self.runtime_protocol_service.record_runtime_stream_close(
+                envelope.runtime_connection_id,
+                RuntimeStreamClose.model_validate(envelope.event),
             )
         return self.runtime_protocol_service.record_runtime_capacity(
             envelope.runtime_connection_id,
