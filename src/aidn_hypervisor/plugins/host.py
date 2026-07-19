@@ -62,6 +62,7 @@ class PluginHostControlCommand(BaseModel):
     installation_generation: int = Field(ge=1)
     command: str = Field(min_length=1)
     configuration: dict | None = None
+    display_name: str | None = None
 
 
 class PluginHostAuthenticator:
@@ -124,12 +125,14 @@ class PluginHostLocalIpcIngress:
         manifest_resolver: Callable[[str], dict] | None = None,
         configuration_validator: Callable[[str, dict], None] | None = None,
         installation_plan_builder: Callable[[str, dict], dict] | None = None,
+        attach_existing_provider: Callable[[str, str, dict], dict] | None = None,
         connection_store: PluginHostConnectionStore | None = None,
     ) -> None:
         self.handshake_service = handshake_service
         self.manifest_resolver = manifest_resolver
         self.configuration_validator = configuration_validator
         self.installation_plan_builder = installation_plan_builder
+        self.attach_existing_provider = attach_existing_provider
         self.connection_store = connection_store or PluginHostConnectionStore()
 
     def receive(self, envelope: dict) -> dict:
@@ -200,6 +203,18 @@ class PluginHostLocalIpcIngress:
                     "plugin_host_connection_id": connection.plugin_host_connection_id,
                     "installation_plan": self.installation_plan_builder(
                         connection.plugin_id, command.configuration
+                    ),
+                }
+            if command.command == "ATTACH_EXISTING_PROVIDER":
+                if self.attach_existing_provider is None:
+                    raise PluginHostAuthenticationError("Plugin Host provider attach is not configured")
+                if command.configuration is None or not command.display_name:
+                    raise PluginHostAuthenticationError("Plugin Host attach configuration and display name are required")
+                return {
+                    "status": "OK", "command": "ATTACH_EXISTING_PROVIDER",
+                    "plugin_host_connection_id": connection.plugin_host_connection_id,
+                    "provider_instance": self.attach_existing_provider(
+                        connection.plugin_id, command.display_name, command.configuration
                     ),
                 }
             raise PluginHostAuthenticationError("Plugin Host control command is not permitted")

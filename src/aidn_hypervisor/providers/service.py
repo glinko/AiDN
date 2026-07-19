@@ -111,6 +111,9 @@ class ProviderInventoryService:
             installation_plan_builder=lambda plugin_id, configuration: self.build_installation_plan(
                 plugin_id=plugin_id, configuration=configuration
             ),
+            attach_existing_provider=lambda plugin_id, display_name, configuration: self.attach_provider_instance(
+                plugin_id=plugin_id, display_name=display_name, configuration=configuration
+            ).model_dump(mode="json"),
             connection_store=self.plugin_host_connection_store,
         )
 
