@@ -320,6 +320,40 @@ def test_home_payload_surfaces_endpoint_pipeline_for_first_draft(
     )
 
 
+def test_endpoint_workspace_surfaces_publication_readiness(
+    service: HypervisorService,
+    endpoint_service: EndpointService,
+    endpoint_publication_service: EndpointPublicationService,
+) -> None:
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Private External STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            publication={
+                "visibility": "private",
+                "accepts_external_requests": True,
+            },
+        )
+    )
+
+    payload = build_operator_endpoints_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=endpoint_publication_service,
+        validation_service=None,
+    )
+
+    item = payload["items"][0]
+    assert item["publication_ready"] is False
+    assert item["publication_blocker_count"] == 1
+    assert item["publication_readiness"]["blockers"][0]["code"] == "ENDPOINT_PUBLICATION_POLICY_CONFLICT"
+
+
 def test_home_payload_surfaces_drifted_publication_as_the_primary_attention_state(
     service: HypervisorService,
     endpoint_service: EndpointService,

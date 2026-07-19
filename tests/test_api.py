@@ -7031,6 +7031,47 @@ def test_publish_configuration_endpoint_returns_signed_record() -> None:
     )
 
 
+def test_publish_configuration_returns_readiness_blockers() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Private External STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            publication={
+                "visibility": "private",
+                "accepts_external_requests": True,
+            },
+        )
+    )
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration"
+    )
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "endpoint_publication_blocked"
+    assert error["details"]["ready"] is False
+    assert error["details"]["blockers"][0]["code"] == "ENDPOINT_PUBLICATION_POLICY_CONFLICT"
+
+
 def test_publish_configuration_endpoint_refreshes_onboarding_completion() -> None:
     service = _service(whisper_endpoint="http://127.0.0.1:9000")
     service.configure_owner_wallet(mode="create", label="Primary Wallet")

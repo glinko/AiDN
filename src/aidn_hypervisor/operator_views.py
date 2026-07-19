@@ -1288,6 +1288,7 @@ def build_operator_endpoints_payload(
         return _with_endpoint_workspace_defaults(payload)
 
     items = []
+    owner_wallet = service.owner_wallet_state().get("wallet_id")
     for manifest in manifests:
         local_configuration_hash = _local_publication_configuration_hash(manifest)
         current_publication = (
@@ -1339,6 +1340,34 @@ def build_operator_endpoints_payload(
             if current_publication is not None
             else None
         )
+        try:
+            publication_readiness = (
+                endpoint_publication_service.publication_readiness(
+                    endpoint_id=manifest.endpoint_id,
+                    owner_wallet=owner_wallet,
+                    node_id=service.node_id,
+                    wallet_private_key=(
+                        service.owner_wallet_private_key()
+                        if owner_wallet is not None
+                        else None
+                    ),
+                )
+                if endpoint_publication_service is not None
+                else None
+            )
+        except (KeyError, ValueError) as error:
+            publication_readiness = {
+                "endpoint_id": manifest.endpoint_id,
+                "ready": False,
+                "blockers": [
+                    {
+                        "code": "ENDPOINT_PUBLICATION_READINESS_UNAVAILABLE",
+                        "message": str(error),
+                    }
+                ],
+                "warnings": [],
+                "dimensions": {},
+            }
         items.append(
             {
                 "endpoint_id": manifest.endpoint_id,
@@ -1375,6 +1404,22 @@ def build_operator_endpoints_payload(
                 "validation_mode": "requested" if validation_requested else "disabled",
                 "runtime_status": manifest.status,
                 "publication": manifest.publication.model_dump(mode="json"),
+                "publication_readiness": publication_readiness,
+                "publication_ready": (
+                    publication_readiness["ready"]
+                    if publication_readiness is not None
+                    else None
+                ),
+                "publication_blocker_count": (
+                    len(publication_readiness["blockers"])
+                    if publication_readiness is not None
+                    else 0
+                ),
+                "publication_warning_count": (
+                    len(publication_readiness["warnings"])
+                    if publication_readiness is not None
+                    else 0
+                ),
                 "validation": manifest.validation.model_dump(mode="json"),
                 "validation_summary": validation_summary,
                 "published_validation_summary": published_validation_summary,

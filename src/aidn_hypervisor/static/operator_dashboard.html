@@ -462,7 +462,7 @@
     .table-row,
     .table-head {
       display: grid;
-      grid-template-columns: 1.5fr 0.92fr 0.84fr 0.88fr 0.78fr 0.84fr 0.8fr;
+      grid-template-columns: 1.4fr 0.82fr 0.8fr 1.05fr 0.8fr 0.72fr 0.76fr 0.68fr;
       gap: 12px;
       align-items: center;
       padding: 14px 16px;
@@ -3771,6 +3771,25 @@
       return "endpoint ready";
     }
 
+    function endpointPublicationReadinessTone(endpoint) {
+      const readiness = endpoint?.publication_readiness;
+      if (!readiness) {
+        return "";
+      }
+      return readiness.ready ? (readiness.warnings?.length ? "warn" : "good") : "bad";
+    }
+
+    function endpointPublicationReadinessLabel(endpoint) {
+      const readiness = endpoint?.publication_readiness;
+      if (!readiness) {
+        return "publication unchecked";
+      }
+      if (!readiness.ready) {
+        return readiness.blockers?.[0]?.code?.toLowerCase().replaceAll("_", " ") || "publication blocked";
+      }
+      return readiness.warnings?.length ? "review publication" : "publish ready";
+    }
+
     function modelForRuntimeBinding(binding) {
       if (!binding?.model_deployment_id) {
         return null;
@@ -5428,6 +5447,7 @@
                   <div>Endpoint</div>
                   <div>Visibility</div>
                   <div>Publication Trust</div>
+                  <div>Publish Readiness</div>
                   <div>Validation Trust</div>
                   <div>Bundle</div>
                   <div>Route</div>
@@ -5446,6 +5466,7 @@
                               </div>
                               <div><span class="chip ${endpointVisibility(draft) === "private" ? "" : "good"}">${endpointVisibility(draft)}</span></div>
                               <div><span class="chip ${publicationTrustTone(endpointPublicationSyncStatus(draft))}">${trustStatusLabel(endpointPublicationSyncStatus(draft))}</span></div>
+                              <div><span class="chip ${endpointPublicationReadinessTone(draft)}">${endpointPublicationReadinessLabel(draft)}</span></div>
                               <div><span class="chip ${validationTrustTone(endpointLiveValidationSummary(draft))}">${trustStatusLabel(validationStatus(endpointLiveValidationSummary(draft)))}</span></div>
                               <div class="row-meta">${draft.bundle_id}</div>
                               <div class="row-meta">${endpointRouteStatus(draft)}</div>
@@ -5485,6 +5506,13 @@
                             <span>${formatMaybe(selected.published_configuration_hash)}</span>
                           </div>
                           <span class="chip ${publicationTrustTone(endpointPublicationSyncStatus(selected))}">${trustStatusLabel(endpointPublicationSyncStatus(selected))}</span>
+                        </div>
+                        <div class="list-row">
+                          <div>
+                            <strong>Publish Readiness</strong>
+                            <span>${endpointPublicationReadinessLabel(selected)}</span>
+                          </div>
+                          <span class="chip ${endpointPublicationReadinessTone(selected)}">${selected.publication_blocker_count || 0} blockers / ${selected.publication_warning_count || 0} warnings</span>
                         </div>
                         <div class="list-row">
                           <div>
@@ -5601,8 +5629,8 @@
                         <button class="primary-button" type="button" data-endpoint-action="save-config">${state.bootstrapPending === "save-endpoint-config" ? "Saving..." : "Save Runtime"}</button>
                         <button class="primary-button ${endpointRecommendedAction(selected) === "attach-proxy-target" ? "action-focus" : ""}" type="button" data-endpoint-action="attach-proxy-target" ${attachedRemotes.length ? "" : "disabled"}>${state.bootstrapPending === "attach-proxy-target" ? "Attaching..." : "Attach Proxy Route"}</button>
                         <button class="secondary-button" type="button" data-endpoint-action="detach-proxy-target" ${selected.execution_strategy === "proxy" ? "" : "disabled"}>${state.bootstrapPending === "detach-proxy-target" ? "Detaching..." : "Detach Proxy Route"}</button>
-                        <button class="secondary-button ${endpointRecommendedAction(selected) === "publish" ? "action-focus" : ""}" type="button" data-endpoint-action="publish">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Endpoint"}</button>
-                        <button class="secondary-button ${endpointRecommendedAction(selected) === "publish-configuration" ? "action-focus" : ""}" type="button" data-endpoint-action="publish-configuration">${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : "Publish Configuration"}</button>
+                        <button class="secondary-button ${endpointRecommendedAction(selected) === "publish" ? "action-focus" : ""}" type="button" data-endpoint-action="publish" ${selected.publication_ready === false ? "disabled" : ""}>${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : selected.publication_ready === false ? "Fix Publish Readiness" : "Publish Endpoint"}</button>
+                        <button class="secondary-button ${endpointRecommendedAction(selected) === "publish-configuration" ? "action-focus" : ""}" type="button" data-endpoint-action="publish-configuration" ${selected.publication_ready === false ? "disabled" : ""}>${state.bootstrapPending === "publish-endpoint" ? "Publishing..." : selected.publication_ready === false ? "Fix Publish Readiness" : "Publish Configuration"}</button>
                         <button class="secondary-button" type="button" data-endpoint-action="revoke-publication">${state.bootstrapPending === "revoke-publication" ? "Revoking..." : "Revoke Publication"}</button>
                         <button class="secondary-button" type="button" data-endpoint-action="view-signed-publication">View Signed Publication</button>
                         <button class="secondary-button ${endpointRecommendedAction(selected) === "request-validation" ? "action-focus" : ""}" type="button" data-endpoint-action="request-validation">${state.bootstrapPending === "request-validation" ? "Requesting..." : "Request Validation"}</button>
@@ -7956,7 +7984,7 @@
           <div class="inspector-title">${selected.display_name}</div>
           <div class="inspector-copy">No active signed publication exists for this endpoint yet. Publish the current configuration to generate a wallet-signed network-visible artifact.</div>
           <div class="inspector-actions">
-            <button class="primary-button" type="button" data-endpoint-action="publish-configuration">Publish Configuration</button>
+            <button class="primary-button" type="button" data-endpoint-action="publish-configuration" ${selected.publication_ready === false ? "disabled" : ""}>${selected.publication_ready === false ? "Fix Publish Readiness" : "Publish Configuration"}</button>
             <button class="secondary-button" type="button" data-endpoint-action="view-endpoint-summary">Back To Endpoint Summary</button>
           </div>
         `;
