@@ -120,6 +120,7 @@ class ProviderInventoryService:
             runtime_binding_creator=lambda plugin_id, model_deployment_id, capability_id, capability_version, capability_definition_hash: self._host_create_runtime_binding(
                 plugin_id, model_deployment_id, capability_id, capability_version, capability_definition_hash
             ),
+            runtime_binding_admission=lambda plugin_id, runtime_binding_id: self._host_runtime_binding_admission(plugin_id, runtime_binding_id),
             connection_store=self.plugin_host_connection_store,
         )
 
@@ -134,6 +135,12 @@ class ProviderInventoryService:
         if self.store.get_provider_instance(deployment.provider_instance_id).plugin_id != plugin_id:
             raise ValueError("Model Deployment does not belong to the Plugin Host")
         return self.create_runtime_binding(model_deployment_id=model_deployment_id, capability_id=capability_id, capability_version=capability_version, capability_definition_hash=capability_definition_hash).model_dump(mode="json")
+
+    def _host_runtime_binding_admission(self, plugin_id: str, runtime_binding_id: str) -> dict:
+        binding = self.store.get_runtime_binding(runtime_binding_id)
+        if binding.plugin_id != plugin_id:
+            raise ValueError("Runtime Binding does not belong to the Plugin Host")
+        return self.runtime_binding_endpoint_admission(runtime_binding_id)
 
     def stage_plugin_package(self, *, package_bytes: bytes, expected_digest: str) -> str:
         if self.package_store is None:

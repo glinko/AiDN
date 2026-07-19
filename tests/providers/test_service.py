@@ -218,6 +218,12 @@ def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:
         "capability_version": "2.1", "capability_definition_hash": "cap-definition-1",
     }})
     assert binding["runtime_binding"]["plugin_id"] == installed.plugin_id
+    admission = ingress.receive({"event_type": "PLUGIN_CONTROL", "event": {
+        "plugin_host_connection_id": connection["plugin_host_connection_id"], "installed_plugin_id": installed.installed_plugin_id,
+        "installation_generation": installed.installation_generation, "command": "GET_RUNTIME_BINDING_ADMISSION",
+        "runtime_binding_id": binding["runtime_binding"]["runtime_binding_id"],
+    }})
+    assert admission["admission"]["dimensions"]["runtime_binding"]["runtime_binding_id"] == binding["runtime_binding"]["runtime_binding_id"]
 
 
 class ControlledFilesystemPlugin(FakeManagedPlugin):
