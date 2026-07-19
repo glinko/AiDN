@@ -11,7 +11,12 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeReady,
     RuntimeRecoveryPlan,
     RuntimeRecoveryResult,
+    RuntimeRecoveryState,
     RuntimeResult,
+    RuntimeDrainComplete,
+    RuntimeDrainRequest,
+    RuntimeDrainStatus,
+    RuntimeShutdown,
     RuntimeStateCheckpoint,
     RuntimeStreamChunk,
     RuntimeStreamClose,
@@ -52,6 +57,10 @@ class RuntimeProtocolStore:
         self.usage_conflicts: dict[str, RuntimeUsageConflict] = {}
         self.recovery_plans: dict[str, RuntimeRecoveryPlan] = {}
         self.recovery_results: dict[str, RuntimeRecoveryResult] = {}
+        self.drain_requests: dict[str, RuntimeDrainRequest] = {}
+        self.drain_statuses: dict[str, RuntimeDrainStatus] = {}
+        self.drain_completes: dict[str, RuntimeDrainComplete] = {}
+        self.shutdowns: dict[str, RuntimeShutdown] = {}
         self.restore()
 
     def restore(self, snapshot: "HypervisorStateSnapshot | None" = None) -> None:
@@ -131,6 +140,18 @@ class RuntimeProtocolStore:
         self.recovery_results = {
             item.plan_id: item for item in snapshot.runtime_protocol_recovery_results
         }
+        self.drain_requests = {
+            item.drain_id: item for item in snapshot.runtime_protocol_drain_requests
+        }
+        self.drain_statuses = {
+            item.drain_id: item for item in snapshot.runtime_protocol_drain_statuses
+        }
+        self.drain_completes = {
+            item.drain_id: item for item in snapshot.runtime_protocol_drain_completes
+        }
+        self.shutdowns = {
+            item.shutdown_id: item for item in snapshot.runtime_protocol_shutdowns
+        }
 
     def flush(self) -> None:
         if self._state_store is None:
@@ -178,6 +199,12 @@ class RuntimeProtocolStore:
                 "runtime_protocol_recovery_results": list(
                     self.recovery_results.values()
                 ),
+                "runtime_protocol_drain_requests": list(self.drain_requests.values()),
+                "runtime_protocol_drain_statuses": list(self.drain_statuses.values()),
+                "runtime_protocol_drain_completes": list(
+                    self.drain_completes.values()
+                ),
+                "runtime_protocol_shutdowns": list(self.shutdowns.values()),
             }
         )
         self._state_store.save(snapshot)

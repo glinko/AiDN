@@ -11,6 +11,9 @@ from aidn_hypervisor.runtime_protocol.models import (
     HypervisorRuntimeHello,
     RuntimeArtifactDeclare,
     RuntimeConnection,
+    RuntimeDrainComplete,
+    RuntimeDrainRequest,
+    RuntimeDrainStatus,
     RuntimeCancellationRecord,
     RuntimeCancelRequest,
     RuntimeCancelResult,
@@ -27,6 +30,7 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeRequestAccept,
     RuntimeRequestRecord,
     RuntimeResult,
+    RuntimeShutdown,
     RuntimeStateCheckpoint,
     RuntimeStreamChunk,
     RuntimeStreamClose,
@@ -1056,6 +1060,157 @@ class RuntimeProtocolService:
         self.store.flush()
         return checkpoint
 
+    def request_runtime_drain(
+        self,
+        runtime_connection_id: str,
+        drain: RuntimeDrainRequest,
+    ) -> RuntimeDrainRequest:
+        connection = self._validate_connection(
+            runtime_connection_id,
+            runtime_id=drain.runtime_id,
+            runtime_generation=drain.runtime_generation,
+            runtime_configuration_hash=drain.runtime_configuration_hash,
+            route_generation=drain.route_generation,
+            allow_recovering=True,
+        )
+        existing = self.store.drain_requests.get(drain.drain_id)
+        if existing is not None:
+            if existing.drain_hash != drain.drain_hash:
+                raise RuntimeProtocolError(
+                    "RUNTIME_DRAINING", "drain", "Drain ID conflicts with existing command"
+                )
+            return existing
+        if any(
+            item.runtime_id == drain.runtime_id
+            and item.drain_id not in self.store.drain_completes
+            for item in self.store.drain_requests.values()
+        ):
+            raise RuntimeProtocolError(
+                "RUNTIME_DRAINING", "drain", "Runtime already has an active drain"
+            )
+        self.store.drain_requests[drain.drain_id] = drain.model_copy(deep=True)
+        self.store.connections[runtime_connection_id] = connection.model_copy(
+            update={"connection_state": "DRAINING"}
+        )
+        self.store.flush()
+        return drain
+
+    def record_runtime_drain_status(
+        self,
+        runtime_connection_id: str,
+        status: RuntimeDrainStatus,
+    ) -> RuntimeDrainStatus:
+        if not self.runtime_authenticator(status):
+            raise RuntimeProtocolError(
+                "RUNTIME_IDENTITY_INVALID", "drain", "Runtime Drain Status authentication failed"
+            )
+        self._validate_connection(
+            runtime_connection_id,
+            runtime_id=status.runtime_id,
+            runtime_generation=status.runtime_generation,
+            runtime_configuration_hash=status.runtime_configuration_hash,
+            route_generation=status.route_generation,
+            allow_recovering=True,
+        )
+        drain = self.store.drain_requests.get(status.drain_id)
+        if drain is None or (
+            drain.runtime_id != status.runtime_id
+            or drain.runtime_generation != status.runtime_generation
+            or drain.route_generation != status.route_generation
+        ):
+            raise RuntimeProtocolError(
+                "RUNTIME_DRAINING", "drain", "Runtime Drain Status references an unknown drain"
+            )
+        existing = self.store.drain_statuses.get(status.drain_id)
+        if existing is not None:
+            if status.status_sequence < existing.status_sequence:
+                raise RuntimeProtocolError(
+                    "RUNTIME_DRAINING", "drain", "Runtime Drain Status is stale"
+                )
+            if status.status_sequence == existing.status_sequence:
+                if status.status_hash == existing.status_hash:
+                    return existing
+                raise RuntimeProtocolError(
+                    "RUNTIME_DRAINING", "drain", "Runtime Drain Status conflicts"
+                )
+        self.store.drain_statuses[status.drain_id] = status.model_copy(deep=True)
+        self.store.flush()
+        return status
+
+    def record_runtime_drain_complete(
+        self,
+        runtime_connection_id: str,
+        complete: RuntimeDrainComplete,
+    ) -> RuntimeDrainComplete:
+        if not self.runtime_authenticator(complete):
+            raise RuntimeProtocolError(
+                "RUNTIME_IDENTITY_INVALID", "drain", "Runtime Drain Complete authentication failed"
+            )
+        self._validate_connection(
+            runtime_connection_id,
+            runtime_id=complete.runtime_id,
+            runtime_generation=complete.runtime_generation,
+            runtime_configuration_hash=complete.runtime_configuration_hash,
+            route_generation=complete.route_generation,
+            allow_recovering=True,
+        )
+        drain = self.store.drain_requests.get(complete.drain_id)
+        if drain is None or (
+            drain.runtime_id != complete.runtime_id
+            or drain.runtime_generation != complete.runtime_generation
+            or drain.route_generation != complete.route_generation
+        ):
+            raise RuntimeProtocolError(
+                "RUNTIME_DRAINING", "drain", "Runtime Drain Complete references an unknown drain"
+            )
+        existing = self.store.drain_completes.get(complete.drain_id)
+        if existing is not None:
+            if existing.completion_hash != complete.completion_hash:
+                raise RuntimeProtocolError(
+                    "RUNTIME_DRAINING", "drain", "Runtime Drain Complete conflicts"
+                )
+            return existing
+        self.store.drain_completes[complete.drain_id] = complete.model_copy(deep=True)
+        self.store.flush()
+        return complete
+
+    def request_runtime_shutdown(
+        self,
+        runtime_connection_id: str,
+        shutdown: RuntimeShutdown,
+    ) -> RuntimeShutdown:
+        connection = self._validate_connection(
+            runtime_connection_id,
+            runtime_id=shutdown.runtime_id,
+            runtime_generation=shutdown.runtime_generation,
+            runtime_configuration_hash=shutdown.runtime_configuration_hash,
+            route_generation=shutdown.route_generation,
+            allow_recovering=True,
+        )
+        existing = self.store.shutdowns.get(shutdown.shutdown_id)
+        if existing is not None:
+            if existing.shutdown_hash != shutdown.shutdown_hash:
+                raise RuntimeProtocolError(
+                    "RUNTIME_STOPPED", "shutdown", "Shutdown ID conflicts with existing command"
+                )
+            return existing
+        if shutdown.shutdown_mode == "GRACEFUL" and not any(
+            drain.runtime_id == shutdown.runtime_id
+            for drain in self.store.drain_completes.values()
+        ):
+            raise RuntimeProtocolError(
+                "RUNTIME_DRAINING",
+                "shutdown",
+                "Graceful Runtime Shutdown requires a completed drain",
+            )
+        self.store.shutdowns[shutdown.shutdown_id] = shutdown.model_copy(deep=True)
+        if shutdown.shutdown_mode != "GRACEFUL":
+            self.store.connections[runtime_connection_id] = connection.model_copy(
+                update={"connection_state": "CLOSED"}
+            )
+        self.store.flush()
+        return shutdown
+
     def record_request_terminal(
         self,
         runtime_connection_id: str,
@@ -1076,6 +1231,7 @@ class RuntimeProtocolService:
             runtime_generation=record.runtime_generation,
             runtime_configuration_hash=record.request.runtime_configuration_hash,
             route_generation=record.route_generation,
+            allow_recovering=True,
         )
         terminal_states = {
             "COMPLETED",
@@ -1704,7 +1860,7 @@ class RuntimeProtocolService:
             )
         permitted_states = {"READY"}
         if allow_recovering:
-            permitted_states.add("RECOVERING")
+            permitted_states.update({"RECOVERING", "DRAINING"})
         if connection.connection_state not in permitted_states:
             raise RuntimeProtocolError(
                 "RUNTIME_NOT_READY", "connection", "Runtime connection is not ready"

@@ -833,3 +833,107 @@ class RuntimeRecoveryResult(BaseModel):
         elif self.result_hash != expected:
             raise ValueError("result_hash does not match Runtime Recovery Result")
         return self
+
+
+class RuntimeDrainRequest(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    drain_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    stop_new_requests: bool = True
+    stop_new_sessions: bool = True
+    allow_active_completion: bool = True
+    drain_deadline: str = Field(min_length=1)
+    forced_stop_after_deadline: bool = False
+    hypervisor_signature: str = Field(min_length=1)
+    drain_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_drain_hash(self):
+        payload = self.model_dump(mode="json", exclude={"drain_hash"})
+        expected = canonical_hash(payload)
+        if self.drain_hash is None:
+            self.drain_hash = expected
+        elif self.drain_hash != expected:
+            raise ValueError("drain_hash does not match Runtime Drain Request")
+        return self
+
+
+class RuntimeDrainStatus(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    drain_id: str = Field(min_length=1)
+    drain_state: Literal["DRAIN_REQUESTED", "DRAINING", "BLOCKED", "COMPLETE", "FORCED", "FAILED"]
+    status_sequence: int = Field(ge=1)
+    active_requests: int = Field(ge=0)
+    active_sessions: int = Field(ge=0)
+    queued_requests: int = Field(ge=0)
+    recoverable_requests: int = Field(ge=0)
+    blocked_requests: int = Field(ge=0)
+    updated_at: str = Field(min_length=1)
+    runtime_signature: str = Field(min_length=1)
+    status_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_status_hash(self):
+        payload = self.model_dump(mode="json", exclude={"status_hash"})
+        expected = canonical_hash(payload)
+        if self.status_hash is None:
+            self.status_hash = expected
+        elif self.status_hash != expected:
+            raise ValueError("status_hash does not match Runtime Drain Status")
+        return self
+
+
+class RuntimeDrainComplete(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    drain_id: str = Field(min_length=1)
+    completed_requests: list[str] = Field(default_factory=list)
+    cancelled_requests: list[str] = Field(default_factory=list)
+    failed_requests: list[str] = Field(default_factory=list)
+    recovered_requests: list[str] = Field(default_factory=list)
+    final_usage_chain_heads: dict[str, str] = Field(default_factory=dict)
+    completed_at: str = Field(min_length=1)
+    runtime_signature: str = Field(min_length=1)
+    completion_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_completion_hash(self):
+        payload = self.model_dump(mode="json", exclude={"completion_hash"})
+        expected = canonical_hash(payload)
+        if self.completion_hash is None:
+            self.completion_hash = expected
+        elif self.completion_hash != expected:
+            raise ValueError("completion_hash does not match Runtime Drain Complete")
+        return self
+
+
+class RuntimeShutdown(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    shutdown_id: str = Field(min_length=1)
+    shutdown_mode: Literal["GRACEFUL", "IMMEDIATE", "SECURITY", "RESOURCE_EMERGENCY"]
+    reason: str = Field(min_length=1)
+    deadline: str = Field(min_length=1)
+    preserve_recovery_state: bool
+    hypervisor_signature: str = Field(min_length=1)
+    shutdown_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_shutdown_hash(self):
+        payload = self.model_dump(mode="json", exclude={"shutdown_hash"})
+        expected = canonical_hash(payload)
+        if self.shutdown_hash is None:
+            self.shutdown_hash = expected
+        elif self.shutdown_hash != expected:
+            raise ValueError("shutdown_hash does not match Runtime Shutdown")
+        return self

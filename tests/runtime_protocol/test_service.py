@@ -22,6 +22,9 @@ from aidn_hypervisor.runtime_protocol import (
     RuntimeArtifactDeclare,
     RuntimeCancelRequest,
     RuntimeCancelResult,
+    RuntimeDrainComplete,
+    RuntimeDrainRequest,
+    RuntimeDrainStatus,
     RuntimeExecuteRequest,
     RuntimeHello,
     RuntimeHelloComplete,
@@ -36,6 +39,7 @@ from aidn_hypervisor.runtime_protocol import (
     RuntimeRecoveryResult,
     RuntimeRequestAccept,
     RuntimeResult,
+    RuntimeShutdown,
     RuntimeStreamChunk,
     RuntimeStreamClose,
     RuntimeStreamOpen,
@@ -611,6 +615,70 @@ def _runtime_state_checkpoint(
         retention="SESSION_RETENTION",
         created_at=datetime.now(timezone.utc).isoformat(),
         runtime_signature="runtime-signed",
+    )
+
+
+def _runtime_drain_request(binding: RuntimeBinding) -> RuntimeDrainRequest:
+    return RuntimeDrainRequest(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        drain_id="drain-1",
+        reason="rolling_update",
+        drain_deadline=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        hypervisor_signature="hypervisor-signed",
+    )
+
+
+def _runtime_drain_status(
+    binding: RuntimeBinding,
+    *,
+    sequence: int = 1,
+    state: str = "DRAINING",
+) -> RuntimeDrainStatus:
+    return RuntimeDrainStatus(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        drain_id="drain-1",
+        drain_state=state,
+        status_sequence=sequence,
+        active_requests=1 if state == "DRAINING" else 0,
+        active_sessions=1 if state == "DRAINING" else 0,
+        queued_requests=0,
+        recoverable_requests=0,
+        blocked_requests=0,
+        updated_at=datetime.now(timezone.utc).isoformat(),
+        runtime_signature="runtime-signed",
+    )
+
+
+def _runtime_drain_complete(binding: RuntimeBinding) -> RuntimeDrainComplete:
+    return RuntimeDrainComplete(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        drain_id="drain-1",
+        completed_at=datetime.now(timezone.utc).isoformat(),
+        runtime_signature="runtime-signed",
+    )
+
+
+def _runtime_shutdown(binding: RuntimeBinding, *, mode: str = "GRACEFUL") -> RuntimeShutdown:
+    return RuntimeShutdown(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        shutdown_id=f"shutdown-{mode.lower()}",
+        shutdown_mode=mode,
+        reason="maintenance",
+        deadline=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        preserve_recovery_state=True,
+        hypervisor_signature="hypervisor-signed",
     )
 
 
@@ -1726,6 +1794,77 @@ def test_runtime_state_checkpoint_is_session_scoped_and_persistent(tmp_path) -> 
 
     restored = RuntimeProtocolStore(state_store)
     assert restored.state_checkpoints
+
+
+def test_runtime_drain_blocks_admission_and_preserves_terminal_events(tmp_path) -> None:
+    binding = _binding()
+    state_store = FileStateStore(tmp_path / "runtime-drain-state.json")
+    service = _service(
+        binding,
+        {binding.runtime_id: _route(binding)},
+        store=RuntimeProtocolStore(state_store),
+    )
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    drain = _runtime_drain_request(binding)
+
+    assert service.request_runtime_drain(connection.runtime_connection_id, drain) == drain
+    assert service.request_runtime_drain(connection.runtime_connection_id, drain) == drain
+    assert service.store.connections[connection.runtime_connection_id].connection_state == (
+        "DRAINING"
+    )
+
+    new_request = _execute_request(binding).model_copy(
+        update={"request_id": "request-after-drain", "idempotency_key": "after-drain"}
+    )
+    with pytest.raises(RuntimeProtocolError) as not_ready:
+        service.register_execute_request(connection.runtime_connection_id, new_request)
+    assert not_ready.value.code == "RUNTIME_NOT_READY"
+
+    status = _runtime_drain_status(binding)
+    assert service.record_runtime_drain_status(connection.runtime_connection_id, status) == status
+    complete_status = _runtime_drain_status(binding, sequence=2, state="COMPLETE")
+    assert service.record_runtime_drain_status(
+        connection.runtime_connection_id,
+        complete_status,
+    ) == complete_status
+
+    final_usage = _runtime_usage_report(
+        binding,
+        request,
+        report_id="usage-drain-final",
+        terminal_state="COMPLETED",
+    )
+    assert service.record_usage_report(connection.runtime_connection_id, final_usage).status == (
+        "ACCEPTED"
+    )
+    final_result = _runtime_result(
+        binding,
+        request,
+        final_usage_report_id=final_usage.usage_report_id,
+    )
+    assert service.record_runtime_result(connection.runtime_connection_id, final_result) == final_result
+
+    complete = _runtime_drain_complete(binding)
+    assert service.record_runtime_drain_complete(
+        connection.runtime_connection_id,
+        complete,
+    ) == complete
+    graceful = _runtime_shutdown(binding)
+    assert service.request_runtime_shutdown(
+        connection.runtime_connection_id,
+        graceful,
+    ) == graceful
+
+    emergency = _runtime_shutdown(binding, mode="IMMEDIATE")
+    service.request_runtime_shutdown(connection.runtime_connection_id, emergency)
+    assert service.store.connections[connection.runtime_connection_id].connection_state == "CLOSED"
+
+    restored = RuntimeProtocolStore(state_store)
+    assert restored.drain_completes[drain.drain_id] == complete
+    assert restored.shutdowns[emergency.shutdown_id] == emergency
 
 
 def test_terminal_request_requires_final_usage_to_be_current_chain_head() -> None:

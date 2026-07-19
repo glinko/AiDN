@@ -28,6 +28,8 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeStreamOpen,
     RuntimeStateCheckpoint,
     RuntimeRecoveryState,
+    RuntimeDrainStatus,
+    RuntimeDrainComplete,
 )
 
 
@@ -43,6 +45,8 @@ RuntimeIngressEventType = Literal[
     "RUNTIME_ARTIFACT_DECLARE",
     "RUNTIME_STATE_CHECKPOINT",
     "RUNTIME_RECOVERY_STATE",
+    "RUNTIME_DRAIN_STATUS",
+    "RUNTIME_DRAIN_COMPLETE",
 ]
 
 
@@ -141,6 +145,16 @@ class LocalIpcRuntimeIngress:
             return self.runtime_protocol_service.record_runtime_recovery_state(
                 envelope.runtime_connection_id,
                 RuntimeRecoveryState.model_validate(envelope.event),
+            )
+        if envelope.event_type == "RUNTIME_DRAIN_STATUS":
+            return self.runtime_protocol_service.record_runtime_drain_status(
+                envelope.runtime_connection_id,
+                RuntimeDrainStatus.model_validate(envelope.event),
+            )
+        if envelope.event_type == "RUNTIME_DRAIN_COMPLETE":
+            return self.runtime_protocol_service.record_runtime_drain_complete(
+                envelope.runtime_connection_id,
+                RuntimeDrainComplete.model_validate(envelope.event),
             )
         return self.runtime_protocol_service.record_runtime_capacity(
             envelope.runtime_connection_id,

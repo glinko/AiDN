@@ -37,6 +37,9 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeCancellationRecord,
     RuntimeCancelResult,
     RuntimeConnection,
+    RuntimeDrainComplete,
+    RuntimeDrainRequest,
+    RuntimeDrainStatus,
     RuntimeHealth,
     RuntimeMessage,
     RuntimeReady,
@@ -44,6 +47,7 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeRecoveryResult,
     RuntimeRecoveryState,
     RuntimeResult,
+    RuntimeShutdown,
     RuntimeStateCheckpoint,
     RuntimeStreamChunk,
     RuntimeStreamClose,
@@ -380,6 +384,16 @@ class HypervisorStateSnapshot(BaseModel):
     runtime_protocol_recovery_results: list[RuntimeRecoveryResult] = Field(
         default_factory=list
     )
+    runtime_protocol_drain_requests: list[RuntimeDrainRequest] = Field(
+        default_factory=list
+    )
+    runtime_protocol_drain_statuses: list[RuntimeDrainStatus] = Field(
+        default_factory=list
+    )
+    runtime_protocol_drain_completes: list[RuntimeDrainComplete] = Field(
+        default_factory=list
+    )
+    runtime_protocol_shutdowns: list[RuntimeShutdown] = Field(default_factory=list)
     validation_requests: list[ValidationRequest] = Field(default_factory=list)
     validation_bonds: list[ValidationBond] = Field(default_factory=list)
     validation_reports: list[ValidationReport] = Field(default_factory=list)

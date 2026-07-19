@@ -3485,6 +3485,18 @@ class HypervisorService:
             runtime_protocol_recovery_results=list(
                 self.runtime_protocol_store.recovery_results.values()
             ),
+            runtime_protocol_drain_requests=list(
+                self.runtime_protocol_store.drain_requests.values()
+            ),
+            runtime_protocol_drain_statuses=list(
+                self.runtime_protocol_store.drain_statuses.values()
+            ),
+            runtime_protocol_drain_completes=list(
+                self.runtime_protocol_store.drain_completes.values()
+            ),
+            runtime_protocol_shutdowns=list(
+                self.runtime_protocol_store.shutdowns.values()
+            ),
             operator_requests_policy=dict(self._operator_requests_policy),
             owner_wallet=(
                 OwnerWalletSnapshot(**self._owner_wallet)
