@@ -56,6 +56,10 @@ from aidn_hypervisor.runtime_protocol.unix_socket import (
     UnixSocketRuntimeClient,
     UnixSocketRuntimeListener,
 )
+from aidn_hypervisor.runtime_protocol.remote_tls import (
+    TlsRuntimeClient,
+    TlsRuntimeListener,
+)
 
 __all__ = [
     "HypervisorRuntimeHello",
@@ -85,6 +89,8 @@ __all__ = [
     "WindowsNamedPipeRuntimeListener",
     "UnixSocketRuntimeClient",
     "UnixSocketRuntimeListener",
+    "TlsRuntimeClient",
+    "TlsRuntimeListener",
     "LocalIpcRuntimeEvent",
     "LocalIpcRuntimeIngress",
     "RuntimeRecoveryPlan",
