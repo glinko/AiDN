@@ -3461,6 +3461,9 @@ class HypervisorService:
             runtime_protocol_stream_closes=list(
                 self.runtime_protocol_store.stream_closes.values()
             ),
+            runtime_protocol_artifacts=list(
+                self.runtime_protocol_store.artifacts.values()
+            ),
             runtime_protocol_usage_reports=list(
                 self.runtime_protocol_store.usage_reports.values()
             ),

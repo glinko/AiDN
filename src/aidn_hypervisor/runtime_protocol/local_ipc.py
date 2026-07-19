@@ -18,6 +18,7 @@ from aidn_hypervisor.dispatcher import (
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeCapacity,
+    RuntimeArtifactDeclare,
     RuntimeCancelResult,
     RuntimeHealth,
     RuntimeReady,
@@ -37,6 +38,7 @@ RuntimeIngressEventType = Literal[
     "RUNTIME_STREAM_OPEN",
     "RUNTIME_STREAM_CHUNK",
     "RUNTIME_STREAM_CLOSE",
+    "RUNTIME_ARTIFACT_DECLARE",
 ]
 
 
@@ -120,6 +122,11 @@ class LocalIpcRuntimeIngress:
             return self.runtime_protocol_service.record_runtime_stream_close(
                 envelope.runtime_connection_id,
                 RuntimeStreamClose.model_validate(envelope.event),
+            )
+        if envelope.event_type == "RUNTIME_ARTIFACT_DECLARE":
+            return self.runtime_protocol_service.record_runtime_artifact(
+                envelope.runtime_connection_id,
+                RuntimeArtifactDeclare.model_validate(envelope.event),
             )
         return self.runtime_protocol_service.record_runtime_capacity(
             envelope.runtime_connection_id,

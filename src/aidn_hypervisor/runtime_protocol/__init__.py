@@ -1,5 +1,6 @@
 from aidn_hypervisor.runtime_protocol.models import (
     HypervisorRuntimeHello,
+    RuntimeArtifactDeclare,
     RuntimeCapacity,
     RuntimeCancellationRecord,
     RuntimeCancelRequest,
@@ -40,6 +41,7 @@ from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
 
 __all__ = [
     "HypervisorRuntimeHello",
+    "RuntimeArtifactDeclare",
     "RuntimeCapacity",
     "RuntimeCancellationRecord",
     "RuntimeCancelRequest",

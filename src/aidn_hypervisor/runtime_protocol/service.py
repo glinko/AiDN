@@ -9,6 +9,7 @@ from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol.models import (
     HypervisorRuntimeHello,
+    RuntimeArtifactDeclare,
     RuntimeConnection,
     RuntimeCancellationRecord,
     RuntimeCancelRequest,
@@ -947,6 +948,51 @@ class RuntimeProtocolService:
         self.store.flush()
         return close
 
+    def record_runtime_artifact(
+        self,
+        runtime_connection_id: str,
+        artifact: RuntimeArtifactDeclare,
+    ) -> RuntimeArtifactDeclare:
+        if not self.runtime_authenticator(artifact):
+            raise RuntimeProtocolError(
+                "RUNTIME_IDENTITY_INVALID",
+                "artifact",
+                "Runtime Artifact authentication failed",
+            )
+        self._validate_connection(
+            runtime_connection_id,
+            runtime_id=artifact.runtime_id,
+            runtime_generation=artifact.runtime_generation,
+            runtime_configuration_hash=artifact.runtime_configuration_hash,
+            route_generation=artifact.route_generation,
+            allow_recovering=True,
+        )
+        request = self.store.requests.get(artifact.request_id)
+        if request is None or request.request.session_id != artifact.session_id:
+            raise RuntimeProtocolError(
+                "RUNTIME_REQUEST_NOT_FOUND",
+                "artifact",
+                "Runtime Artifact Request is unknown",
+            )
+        if request.admission_state not in {"ACCEPTED", "QUEUED"}:
+            raise RuntimeProtocolError(
+                "RUNTIME_REQUEST_REJECTED",
+                "artifact",
+                "Runtime Artifact Request was not accepted",
+            )
+        existing = self.store.artifacts.get(artifact.artifact_id)
+        if existing is not None:
+            if existing.declaration_hash != artifact.declaration_hash:
+                raise RuntimeProtocolError(
+                    "RUNTIME_ARTIFACT_INVALID",
+                    "artifact",
+                    "Artifact ID conflicts with an existing declaration",
+                )
+            return existing
+        self.store.artifacts[artifact.artifact_id] = artifact.model_copy(deep=True)
+        self.store.flush()
+        return artifact
+
     def record_request_terminal(
         self,
         runtime_connection_id: str,
@@ -1070,6 +1116,23 @@ class RuntimeProtocolService:
                     "RUNTIME_STREAM_NOT_FOUND",
                     "result",
                     "Runtime Result references an unknown closed Stream root",
+                )
+        for reference in result.artifact_references:
+            artifact_id = reference.get("artifact_id")
+            artifact = self.store.artifacts.get(artifact_id)
+            if (
+                artifact is None
+                or artifact.request_id != result.request_id
+                or artifact.session_id != result.session_id
+                or (
+                    "content_hash" in reference
+                    and reference["content_hash"] != artifact.content_hash
+                )
+            ):
+                raise RuntimeProtocolError(
+                    "RUNTIME_ARTIFACT_INVALID",
+                    "result",
+                    "Runtime Result references an unknown Artifact declaration",
                 )
         self.record_request_terminal(
             runtime_connection_id,

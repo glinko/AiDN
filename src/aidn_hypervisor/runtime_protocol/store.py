@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING
 
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeConnection,
+    RuntimeArtifactDeclare,
     RuntimeCancellationRecord,
     RuntimeCancelResult,
     RuntimeCapacity,
@@ -42,6 +43,7 @@ class RuntimeProtocolStore:
         self.streams: dict[str, RuntimeStreamOpen] = {}
         self.stream_chunks: dict[str, dict[int, RuntimeStreamChunk]] = {}
         self.stream_closes: dict[str, RuntimeStreamClose] = {}
+        self.artifacts: dict[str, RuntimeArtifactDeclare] = {}
         self.usage_reports: dict[str, RuntimeUsageReport] = {}
         self.usage_acks: dict[str, RuntimeUsageAck] = {}
         self.usage_conflicts: dict[str, RuntimeUsageConflict] = {}
@@ -98,6 +100,9 @@ class RuntimeProtocolStore:
         self.stream_closes = {
             item.stream_id: item for item in snapshot.runtime_protocol_stream_closes
         }
+        self.artifacts = {
+            item.artifact_id: item for item in snapshot.runtime_protocol_artifacts
+        }
         self.usage_reports = {
             item.usage_report_id: item
             for item in snapshot.runtime_protocol_usage_reports
@@ -147,6 +152,7 @@ class RuntimeProtocolStore:
                     for chunk in chunks.values()
                 ],
                 "runtime_protocol_stream_closes": list(self.stream_closes.values()),
+                "runtime_protocol_artifacts": list(self.artifacts.values()),
                 "runtime_protocol_usage_reports": list(self.usage_reports.values()),
                 "runtime_protocol_usage_acks": list(self.usage_acks.values()),
                 "runtime_protocol_usage_conflicts": list(

@@ -19,6 +19,7 @@ from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol import (
     RuntimeCapacity,
+    RuntimeArtifactDeclare,
     RuntimeCancelRequest,
     RuntimeCancelResult,
     RuntimeExecuteRequest,
@@ -400,6 +401,7 @@ def _runtime_result(
     payload: dict | None = None,
     terminal_state: str = "COMPLETED",
     stream_roots: list[str] | None = None,
+    artifact_references: list[dict] | None = None,
 ) -> RuntimeResult:
     return RuntimeResult(
         runtime_id=binding.runtime_id,
@@ -415,6 +417,7 @@ def _runtime_result(
         if terminal_state in {"COMPLETED", "PARTIAL"}
         else None,
         stream_roots=stream_roots or [],
+        artifact_references=artifact_references or [],
         final_usage_report_id=final_usage_report_id,
         provider_attempt_count=1,
         completed_at=datetime.now(timezone.utc).isoformat(),
@@ -558,6 +561,31 @@ def _runtime_stream_close(
         delivered_length=sum(item.chunk_length for item in chunks),
         close_reason="completed",
         closed_at=datetime.now(timezone.utc).isoformat(),
+        runtime_signature="runtime-signed",
+    )
+
+
+def _runtime_artifact(
+    binding: RuntimeBinding,
+    request: RuntimeExecuteRequest,
+    *,
+    content_hash: str = "sha256:artifact-content",
+    storage_reference: str = "artifact://session-private/artifact-content",
+) -> RuntimeArtifactDeclare:
+    return RuntimeArtifactDeclare(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        session_id=request.session_id,
+        request_id=request.request_id,
+        content_hash=content_hash,
+        content_type="text/plain",
+        content_size=17,
+        storage_reference=storage_reference,
+        access_class="SESSION_PARTICIPANTS",
+        retention_policy="SESSION_RETENTION",
+        declared_at=datetime.now(timezone.utc).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -968,6 +996,65 @@ def test_local_ipc_runtime_ingress_routes_stream_open() -> None:
 
     assert ingress.receive(message) == stream
     assert service.store.streams[stream.stream_id] == stream
+
+
+def test_local_ipc_runtime_ingress_routes_artifact_declaration() -> None:
+    binding = _binding()
+    service = _service(binding, {binding.runtime_id: _route(binding)})
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="revision-1",
+    )
+    ingress = LocalIpcRuntimeIngress(
+        dispatcher=dispatcher,
+        runtime_protocol_service=service,
+        peer_authenticator=lambda message: (
+            message.authentication.get("peer_runtime_id") == binding.runtime_id
+        ),
+    )
+    ingress.bind_runtime(binding, route_generation=5)
+    artifact = _runtime_artifact(binding, request)
+    payload = {
+        "event_type": "RUNTIME_ARTIFACT_DECLARE",
+        "runtime_connection_id": connection.runtime_connection_id,
+        "event": artifact.model_dump(mode="json"),
+    }
+    now = datetime.now(timezone.utc)
+    message = NetworkMessage(
+        message_id="local-ipc-artifact-1",
+        message_type="RUNTIME_ARTIFACT_DECLARE",
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="revision-1",
+        connection_id=connection.runtime_connection_id,
+        channel_id="runtime-local-ipc",
+        channel_class="RUNTIME",
+        source_subject={"subject_type": "RUNTIME", "subject_id": binding.runtime_id},
+        destination_subject={
+            "subject_type": "HYPERVISOR_RUNTIME_INGRESS",
+            "subject_id": binding.runtime_id,
+        },
+        source_sequence=1,
+        route_generation=5,
+        runtime_generation=binding.runtime_generation,
+        created_at=now.isoformat(),
+        expiration=(now + timedelta(minutes=5)).isoformat(),
+        payload_hash=canonical_payload_hash(payload),
+        payload_length=len(canonical_payload_bytes(payload)),
+        payload=payload,
+        authentication={
+            "transport": "LOCAL_IPC",
+            "peer_runtime_id": binding.runtime_id,
+        },
+    )
+
+    assert ingress.receive(message) == artifact
+    assert service.store.artifacts[artifact.artifact_id] == artifact
 
 
 def test_execute_request_is_idempotent_and_acceptance_is_not_completion() -> None:
@@ -1499,6 +1586,56 @@ def test_runtime_stream_requires_ordered_chunks_and_closed_root(tmp_path) -> Non
     restored = RuntimeProtocolStore(state_store)
     assert restored.stream_chunks[stream.stream_id][2] == second
     assert restored.stream_closes[stream.stream_id] == close
+
+
+def test_runtime_artifact_is_content_addressed_persistent_and_result_bound(tmp_path) -> None:
+    binding = _binding()
+    state_store = FileStateStore(tmp_path / "runtime-artifact-state.json")
+    store = RuntimeProtocolStore(state_store)
+    service = _service(
+        binding,
+        {binding.runtime_id: _route(binding)},
+        store=store,
+    )
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    artifact = _runtime_artifact(binding, request)
+
+    assert service.record_runtime_artifact(connection.runtime_connection_id, artifact) == artifact
+    assert service.record_runtime_artifact(connection.runtime_connection_id, artifact) == artifact
+
+    conflicting = _runtime_artifact(
+        binding,
+        request,
+        storage_reference="artifact://other-location",
+    )
+    with pytest.raises(RuntimeProtocolError) as conflict:
+        service.record_runtime_artifact(connection.runtime_connection_id, conflicting)
+    assert conflict.value.code == "RUNTIME_ARTIFACT_INVALID"
+
+    final_usage = _runtime_usage_report(
+        binding,
+        request,
+        report_id="usage-artifact-final",
+        terminal_state="COMPLETED",
+    )
+    assert service.record_usage_report(connection.runtime_connection_id, final_usage).status == (
+        "ACCEPTED"
+    )
+    result = _runtime_result(
+        binding,
+        request,
+        final_usage_report_id=final_usage.usage_report_id,
+        artifact_references=[
+            {"artifact_id": artifact.artifact_id, "content_hash": artifact.content_hash}
+        ],
+    )
+    assert service.record_runtime_result(connection.runtime_connection_id, result) == result
+
+    restored = RuntimeProtocolStore(state_store)
+    assert restored.artifacts[artifact.artifact_id] == artifact
 
 
 def test_terminal_request_requires_final_usage_to_be_current_chain_head() -> None:

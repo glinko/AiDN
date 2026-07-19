@@ -496,6 +496,47 @@ class RuntimeStreamClose(BaseModel):
         return self
 
 
+class RuntimeArtifactDeclare(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    session_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    artifact_id: str | None = None
+    content_hash: str = Field(min_length=1)
+    content_type: str = Field(min_length=1)
+    content_size: int = Field(ge=0)
+    storage_reference: str = Field(min_length=1)
+    access_class: str = Field(min_length=1)
+    retention_policy: str = Field(min_length=1)
+    artifact_metadata: dict = Field(default_factory=dict)
+    declared_at: str = Field(min_length=1)
+    runtime_signature: str = Field(min_length=1)
+    declaration_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_artifact_declaration(self):
+        expected_id = canonical_hash(
+            {
+                "request_id": self.request_id,
+                "content_hash": self.content_hash,
+                "content_type": self.content_type,
+            }
+        )
+        if self.artifact_id is None:
+            self.artifact_id = expected_id
+        elif self.artifact_id != expected_id:
+            raise ValueError("artifact_id does not match content-addressed identity")
+        payload = self.model_dump(mode="json", exclude={"declaration_hash"})
+        expected_hash = canonical_hash(payload)
+        if self.declaration_hash is None:
+            self.declaration_hash = expected_hash
+        elif self.declaration_hash != expected_hash:
+            raise ValueError("declaration_hash does not match Runtime Artifact")
+        return self
+
+
 class RuntimeResult(BaseModel):
     runtime_id: str = Field(min_length=1)
     runtime_generation: int = Field(ge=1)
