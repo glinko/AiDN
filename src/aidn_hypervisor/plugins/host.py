@@ -99,10 +99,12 @@ class PluginHostLocalIpcIngress:
         *,
         manifest_resolver: Callable[[str], dict] | None = None,
         configuration_validator: Callable[[str, dict], None] | None = None,
+        installation_plan_builder: Callable[[str, dict], dict] | None = None,
     ) -> None:
         self.handshake_service = handshake_service
         self.manifest_resolver = manifest_resolver
         self.configuration_validator = configuration_validator
+        self.installation_plan_builder = installation_plan_builder
         self._connections: dict[str, PluginHostConnection] = {}
 
     def receive(self, envelope: dict) -> dict:
@@ -146,6 +148,19 @@ class PluginHostLocalIpcIngress:
                     "status": "OK",
                     "command": "VALIDATE_CONFIGURATION",
                     "plugin_host_connection_id": connection.plugin_host_connection_id,
+                }
+            if command.command == "BUILD_INSTALLATION_PLAN":
+                if self.installation_plan_builder is None:
+                    raise PluginHostAuthenticationError("Plugin Host installation planning is not configured")
+                if command.configuration is None:
+                    raise PluginHostAuthenticationError("Plugin Host configuration is required")
+                return {
+                    "status": "OK",
+                    "command": "BUILD_INSTALLATION_PLAN",
+                    "plugin_host_connection_id": connection.plugin_host_connection_id,
+                    "installation_plan": self.installation_plan_builder(
+                        connection.plugin_id, command.configuration
+                    ),
                 }
             raise PluginHostAuthenticationError("Plugin Host control command is not permitted")
         return {

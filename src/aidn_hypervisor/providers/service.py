@@ -105,6 +105,9 @@ class ProviderInventoryService:
             configuration_validator=lambda plugin_id, configuration: self._get_plugin(
                 plugin_id
             ).validate_provider_configuration(configuration),
+            installation_plan_builder=lambda plugin_id, configuration: self.build_installation_plan(
+                plugin_id=plugin_id, configuration=configuration
+            ),
         )
 
     def stage_plugin_package(self, *, package_bytes: bytes, expected_digest: str) -> str:
