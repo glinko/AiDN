@@ -2969,13 +2969,20 @@ def test_operator_dashboard_shell_route_exposes_endpoints_workspace_controls() -
     assert "Configured Endpoints" in response.text
     assert "Selected Endpoint Actions" in response.text
     assert "MVP Paid Smoke" in response.text
+    assert "MVP Smoke Settlement Controls" in response.text
     assert "/mvp-paid-smoke" in response.text
+    assert "/mvp-sessions/${ids.sessionId}/finalize" in response.text
+    assert "/mvp-sessions/${ids.sessionId}/force-finalize" in response.text
     assert "Endpoint Policy Editor" in response.text
     assert "Endpoint Runtime Editor" in response.text
     assert "Configuration History" in response.text
     assert 'data-endpoint-action="publish"' in response.text
     assert 'data-endpoint-action="request-validation"' in response.text
     assert 'data-endpoint-action="run-mvp-smoke"' in response.text
+    assert 'data-endpoint-action="finalize-mvp-smoke"' in response.text
+    assert 'data-endpoint-action="force-finalize-mvp-smoke"' in response.text
+    assert 'data-mvp-smoke-settlement-field="consumerSignature"' in response.text
+    assert 'data-mvp-smoke-settlement-field="forceAfter"' in response.text
     assert 'data-endpoint-action="save-policy"' in response.text
     assert 'data-endpoint-action="save-config"' in response.text
     assert 'data-endpoint-field="visibility"' in response.text

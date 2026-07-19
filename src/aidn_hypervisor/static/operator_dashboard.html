@@ -1698,7 +1698,15 @@
         taskInput: "",
         autoFinalize: true,
       },
+      mvpSmokeSettlementDraft: {
+        consumerSignature: "mvp-smoke-consumer-signed",
+        actualNetworkFeesQAtoms: "0",
+        forceReason: "CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE",
+        forceAfter: "",
+        forceNow: "",
+      },
       mvpSmokePending: false,
+      mvpSmokeSettlementPending: null,
       mvpSmokeResult: null,
       bootstrapPending: null,
       bootstrapMessage: null,
@@ -4001,6 +4009,63 @@
         : { prompt: draft.taskInput || "AiDN MVP paid smoke test" };
     }
 
+    function mvpSmokeResultIds(result) {
+      return {
+        endpointId: result?.session?.endpoint_id || null,
+        sessionId: result?.session?.session_id || null,
+        requestId: result?.runtime_evidence?.request?.request_id || result?.task?.task_id || null,
+      };
+    }
+
+    function mvpSmokeDefaultForceAfter() {
+      return new Date(Date.now() - 1000).toISOString();
+    }
+
+    function syncMvpSmokeSettlementDraft() {
+      if (!state.mvpSmokeSettlementDraft.forceAfter) {
+        state.mvpSmokeSettlementDraft.forceAfter = mvpSmokeDefaultForceAfter();
+      }
+      if (!state.mvpSmokeSettlementDraft.forceNow) {
+        state.mvpSmokeSettlementDraft.forceNow = new Date().toISOString();
+      }
+      return state.mvpSmokeSettlementDraft;
+    }
+
+    function renderMvpPaidSmokeSettlementControls(result) {
+      if (!result || result.finalized) {
+        return "";
+      }
+      const ids = mvpSmokeResultIds(result);
+      const draft = syncMvpSmokeSettlementDraft();
+      const canFinalize = Boolean(ids.endpointId && ids.sessionId && ids.requestId);
+      return `
+        <div class="panel-heading" style="margin-top: 16px;">MVP Smoke Settlement Controls</div>
+        <div class="notice" style="margin-top: 12px;">
+          Readiness-only smoke can now finish here: cooperative finalize uses Consumer acceptance, while force-finalize applies the timeout rule and preserves the evidence trail.
+        </div>
+        <div class="wallet-form-grid" style="margin-top: 12px;">
+          <input type="text" data-mvp-smoke-settlement-field="consumerSignature" value="${escapeHtml(draft.consumerSignature)}" placeholder="Consumer signature">
+          <input type="number" min="0" step="1" data-mvp-smoke-settlement-field="actualNetworkFeesQAtoms" value="${escapeHtml(draft.actualNetworkFeesQAtoms)}" placeholder="Actual network fees q_atoms">
+        </div>
+        <div class="wallet-form-grid" style="margin-top: 10px;">
+          <div class="notice">Force reason: Consumer timeout after completed fixed-price evidence</div>
+          <input type="text" data-mvp-smoke-settlement-field="forceAfter" value="${escapeHtml(draft.forceAfter)}" placeholder="Force after ISO timestamp">
+        </div>
+        <div class="wallet-form-grid" style="margin-top: 10px;">
+          <input type="text" data-mvp-smoke-settlement-field="forceNow" value="${escapeHtml(draft.forceNow)}" placeholder="Now ISO timestamp">
+          <div class="notice">Session ${formatMaybe(ids.sessionId)} / Request ${formatMaybe(ids.requestId)}</div>
+        </div>
+        <div class="wallet-inline-actions" style="margin-top: 14px;">
+          <button class="primary-button" type="button" data-endpoint-action="finalize-mvp-smoke" ${state.mvpSmokeSettlementPending || !canFinalize || !draft.consumerSignature ? "disabled" : ""}>
+            ${state.mvpSmokeSettlementPending === "finalize" ? "Finalizing..." : "Finalize Smoke Settlement"}
+          </button>
+          <button class="secondary-button" type="button" data-endpoint-action="force-finalize-mvp-smoke" ${state.mvpSmokeSettlementPending || !canFinalize || !draft.forceAfter || !draft.forceNow ? "disabled" : ""}>
+            ${state.mvpSmokeSettlementPending === "force-finalize" ? "Force Finalizing..." : "Force Finalize Timeout"}
+          </button>
+        </div>
+      `;
+    }
+
     function renderMvpPaidSmokeResult() {
       const result = state.mvpSmokeResult;
       if (!result) {
@@ -4047,6 +4112,7 @@
             <span class="chip ${result.finalized ? "good" : ""}">${result.finalized ? "finalized" : "readiness only"}</span>
           </div>
         </div>
+        ${renderMvpPaidSmokeSettlementControls(result)}
       `;
     }
 
@@ -8984,6 +9050,84 @@
       }
     }
 
+    async function finalizeSelectedEndpointMvpPaidSmoke() {
+      const ids = mvpSmokeResultIds(state.mvpSmokeResult);
+      if (!ids.endpointId || !ids.sessionId || !ids.requestId) {
+        return;
+      }
+      const draft = syncMvpSmokeSettlementDraft();
+      state.mvpSmokeSettlementPending = "finalize";
+      state.bootstrapMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(
+          `${endpointApiBase}/${ids.endpointId}/mvp-sessions/${ids.sessionId}/finalize`,
+          {
+            request_id: ids.requestId,
+            consumer_signature: draft.consumerSignature,
+            actual_network_fees_q_atoms: Number(draft.actualNetworkFeesQAtoms || 0),
+          }
+        );
+        state.mvpSmokeResult = {
+          ...state.mvpSmokeResult,
+          finalized: result.data || result,
+        };
+        const proposal = state.mvpSmokeResult.finalized?.proposal || {};
+        state.bootstrapMessage = {
+          kind: "good",
+          text: `MVP Smoke Settlement finalized ${formatQ(proposal.final_endpoint_payment_q_atoms || 0)} for ${ids.sessionId}.`,
+        };
+        await Promise.all([refreshSessionsPayload(), refreshRequestsPayload()]);
+      } catch (error) {
+        state.bootstrapMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.mvpSmokeSettlementPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function forceFinalizeSelectedEndpointMvpPaidSmoke() {
+      const ids = mvpSmokeResultIds(state.mvpSmokeResult);
+      if (!ids.endpointId || !ids.sessionId || !ids.requestId) {
+        return;
+      }
+      const draft = syncMvpSmokeSettlementDraft();
+      state.mvpSmokeSettlementPending = "force-finalize";
+      state.bootstrapMessage = null;
+      render();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(
+          `${endpointApiBase}/${ids.endpointId}/mvp-sessions/${ids.sessionId}/force-finalize`,
+          {
+            reason: draft.forceReason,
+            force_after: draft.forceAfter,
+            now: draft.forceNow,
+            request_id: ids.requestId,
+            actual_network_fees_q_atoms: Number(draft.actualNetworkFeesQAtoms || 0),
+          }
+        );
+        state.mvpSmokeResult = {
+          ...state.mvpSmokeResult,
+          finalized: result.data || result,
+        };
+        const proposal = state.mvpSmokeResult.finalized?.proposal || {};
+        state.bootstrapMessage = {
+          kind: "good",
+          text: `MVP Smoke forced Settlement resolved ${formatQ(proposal.final_endpoint_payment_q_atoms || 0)} Endpoint payment for ${ids.sessionId}.`,
+        };
+        await Promise.all([refreshSessionsPayload(), refreshRequestsPayload()]);
+      } catch (error) {
+        state.bootstrapMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.mvpSmokeSettlementPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
     async function revokeBootstrapEndpointPublication() {
       const draft = selectedEndpointDraft();
       if (!draft?.endpoint_id) {
@@ -10955,6 +11099,13 @@
         });
       });
 
+      document.querySelectorAll("[data-mvp-smoke-settlement-field]").forEach((control) => {
+        const key = control.dataset.mvpSmokeSettlementField;
+        control.addEventListener("input", () => {
+          state.mvpSmokeSettlementDraft[key] = control.value;
+        });
+      });
+
       document.querySelectorAll("[data-endpoint-action]").forEach((button) => {
         button.addEventListener("click", () => {
           const action = button.dataset.endpointAction;
@@ -10999,6 +11150,12 @@
               return;
             case "run-mvp-smoke":
               void runSelectedEndpointMvpPaidSmoke();
+              return;
+            case "finalize-mvp-smoke":
+              void finalizeSelectedEndpointMvpPaidSmoke();
+              return;
+            case "force-finalize-mvp-smoke":
+              void forceFinalizeSelectedEndpointMvpPaidSmoke();
               return;
             case "finish-guided-flow":
               clearGuidedProxyFlow();
