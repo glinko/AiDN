@@ -2931,6 +2931,22 @@ class HypervisorService:
             listener.stop()  # type: ignore[attr-defined]
         self._plugin_host_listeners.clear()
 
+    def plugin_host_status(self) -> dict:
+        connections = self.provider_inventory.plugin_host_connection_store.snapshot()
+        return {
+            "active_connection_count": len(connections),
+            "connections": [
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key != "activation_credential_key_id"
+                }
+                for item in connections
+            ],
+            "listener_count": len(self._plugin_host_listeners),
+            "listener_transports": [type(item).__name__ for item in self._plugin_host_listeners],
+        }
+
     def list_provider_installation_artifacts(self) -> dict:
         return self.provider_inventory.installation_artifact_inventory().model_dump(
             mode="json"

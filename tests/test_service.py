@@ -4390,6 +4390,26 @@ def test_plugin_host_ingress_facade_delegates_to_provider_inventory() -> None:
     assert service.plugin_host_local_ingress() is expected
 
 
+def test_plugin_host_status_redacts_activation_credential() -> None:
+    class ConnectionStore:
+        def snapshot(self):
+            return [{"installed_plugin_id": "installed-1", "activation_credential_key_id": "secret"}]
+
+    class ProviderInventory:
+        plugin_host_connection_store = ConnectionStore()
+
+    service = object.__new__(HypervisorService)
+    service.provider_inventory = ProviderInventory()
+    service._plugin_host_listeners = []
+
+    assert service.plugin_host_status() == {
+        "active_connection_count": 1,
+        "connections": [{"installed_plugin_id": "installed-1"}],
+        "listener_count": 0,
+        "listener_transports": [],
+    }
+
+
 def test_service_executes_transcription_task_via_whisper_plugin() -> None:
     registry = PluginRegistry()
     plugin = StubWhisperPlugin()
