@@ -114,8 +114,17 @@ class ProviderInventoryService:
             attach_existing_provider=lambda plugin_id, display_name, configuration: self.attach_provider_instance(
                 plugin_id=plugin_id, display_name=display_name, configuration=configuration
             ).model_dump(mode="json"),
+            model_discoverer=lambda plugin_id, provider_instance_id: self._host_discover_models(
+                plugin_id, provider_instance_id
+            ),
             connection_store=self.plugin_host_connection_store,
         )
+
+    def _host_discover_models(self, plugin_id: str, provider_instance_id: str) -> list[dict]:
+        instance = self.store.get_provider_instance(provider_instance_id)
+        if instance.plugin_id != plugin_id:
+            raise ValueError("Provider Instance does not belong to the Plugin Host")
+        return [item.model_dump(mode="json") for item in self.discover_models(provider_instance_id)]
 
     def stage_plugin_package(self, *, package_bytes: bytes, expected_digest: str) -> str:
         if self.package_store is None:

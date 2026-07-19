@@ -63,6 +63,7 @@ class PluginHostControlCommand(BaseModel):
     command: str = Field(min_length=1)
     configuration: dict | None = None
     display_name: str | None = None
+    provider_instance_id: str | None = None
 
 
 class PluginHostAuthenticator:
@@ -126,6 +127,7 @@ class PluginHostLocalIpcIngress:
         configuration_validator: Callable[[str, dict], None] | None = None,
         installation_plan_builder: Callable[[str, dict], dict] | None = None,
         attach_existing_provider: Callable[[str, str, dict], dict] | None = None,
+        model_discoverer: Callable[[str, str], list[dict]] | None = None,
         connection_store: PluginHostConnectionStore | None = None,
     ) -> None:
         self.handshake_service = handshake_service
@@ -133,6 +135,7 @@ class PluginHostLocalIpcIngress:
         self.configuration_validator = configuration_validator
         self.installation_plan_builder = installation_plan_builder
         self.attach_existing_provider = attach_existing_provider
+        self.model_discoverer = model_discoverer
         self.connection_store = connection_store or PluginHostConnectionStore()
 
     def receive(self, envelope: dict) -> dict:
@@ -215,6 +218,18 @@ class PluginHostLocalIpcIngress:
                     "plugin_host_connection_id": connection.plugin_host_connection_id,
                     "provider_instance": self.attach_existing_provider(
                         connection.plugin_id, command.display_name, command.configuration
+                    ),
+                }
+            if command.command == "DISCOVER_MODELS":
+                if self.model_discoverer is None:
+                    raise PluginHostAuthenticationError("Plugin Host model discovery is not configured")
+                if not command.provider_instance_id:
+                    raise PluginHostAuthenticationError("Plugin Host provider instance is required")
+                return {
+                    "status": "OK", "command": "DISCOVER_MODELS",
+                    "plugin_host_connection_id": connection.plugin_host_connection_id,
+                    "model_deployments": self.model_discoverer(
+                        connection.plugin_id, command.provider_instance_id
                     ),
                 }
             raise PluginHostAuthenticationError("Plugin Host control command is not permitted")

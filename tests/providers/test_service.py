@@ -201,6 +201,16 @@ def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:
         }}
     )
     assert attached["provider_instance"]["connection_mode"] == "attached"
+    models = ingress.receive(
+        {"event_type": "PLUGIN_CONTROL", "event": {
+            "plugin_host_connection_id": connection["plugin_host_connection_id"],
+            "installed_plugin_id": installed.installed_plugin_id,
+            "installation_generation": installed.installation_generation,
+            "command": "DISCOVER_MODELS",
+            "provider_instance_id": attached["provider_instance"]["provider_instance_id"],
+        }}
+    )
+    assert models["command"] == "DISCOVER_MODELS"
 
 
 class ControlledFilesystemPlugin(FakeManagedPlugin):
