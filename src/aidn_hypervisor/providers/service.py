@@ -117,6 +117,9 @@ class ProviderInventoryService:
             model_discoverer=lambda plugin_id, provider_instance_id: self._host_discover_models(
                 plugin_id, provider_instance_id
             ),
+            runtime_binding_creator=lambda plugin_id, model_deployment_id, capability_id, capability_version, capability_definition_hash: self._host_create_runtime_binding(
+                plugin_id, model_deployment_id, capability_id, capability_version, capability_definition_hash
+            ),
             connection_store=self.plugin_host_connection_store,
         )
 
@@ -125,6 +128,12 @@ class ProviderInventoryService:
         if instance.plugin_id != plugin_id:
             raise ValueError("Provider Instance does not belong to the Plugin Host")
         return [item.model_dump(mode="json") for item in self.discover_models(provider_instance_id)]
+
+    def _host_create_runtime_binding(self, plugin_id: str, model_deployment_id: str, capability_id: str, capability_version: str, capability_definition_hash: str) -> dict:
+        deployment = self.store.get_model_deployment(model_deployment_id)
+        if self.store.get_provider_instance(deployment.provider_instance_id).plugin_id != plugin_id:
+            raise ValueError("Model Deployment does not belong to the Plugin Host")
+        return self.create_runtime_binding(model_deployment_id=model_deployment_id, capability_id=capability_id, capability_version=capability_version, capability_definition_hash=capability_definition_hash).model_dump(mode="json")
 
     def stage_plugin_package(self, *, package_bytes: bytes, expected_digest: str) -> str:
         if self.package_store is None:

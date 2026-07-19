@@ -64,6 +64,10 @@ class PluginHostControlCommand(BaseModel):
     configuration: dict | None = None
     display_name: str | None = None
     provider_instance_id: str | None = None
+    model_deployment_id: str | None = None
+    capability_id: str | None = None
+    capability_version: str | None = None
+    capability_definition_hash: str | None = None
 
 
 class PluginHostAuthenticator:
@@ -128,6 +132,7 @@ class PluginHostLocalIpcIngress:
         installation_plan_builder: Callable[[str, dict], dict] | None = None,
         attach_existing_provider: Callable[[str, str, dict], dict] | None = None,
         model_discoverer: Callable[[str, str], list[dict]] | None = None,
+        runtime_binding_creator: Callable[[str, str, str, str, str], dict] | None = None,
         connection_store: PluginHostConnectionStore | None = None,
     ) -> None:
         self.handshake_service = handshake_service
@@ -136,6 +141,7 @@ class PluginHostLocalIpcIngress:
         self.installation_plan_builder = installation_plan_builder
         self.attach_existing_provider = attach_existing_provider
         self.model_discoverer = model_discoverer
+        self.runtime_binding_creator = runtime_binding_creator
         self.connection_store = connection_store or PluginHostConnectionStore()
 
     def receive(self, envelope: dict) -> dict:
@@ -232,6 +238,13 @@ class PluginHostLocalIpcIngress:
                         connection.plugin_id, command.provider_instance_id
                     ),
                 }
+            if command.command == "CREATE_RUNTIME_BINDING":
+                fields = (command.model_deployment_id, command.capability_id, command.capability_version, command.capability_definition_hash)
+                if self.runtime_binding_creator is None or not all(fields):
+                    raise PluginHostAuthenticationError("Plugin Host Runtime Binding parameters are required")
+                return {"status": "OK", "command": "CREATE_RUNTIME_BINDING",
+                    "plugin_host_connection_id": connection.plugin_host_connection_id,
+                    "runtime_binding": self.runtime_binding_creator(connection.plugin_id, *fields)}
             raise PluginHostAuthenticationError("Plugin Host control command is not permitted")
         return {
             "status": "OK",

@@ -211,6 +211,13 @@ def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:
         }}
     )
     assert models["command"] == "DISCOVER_MODELS"
+    binding = ingress.receive({"event_type": "PLUGIN_CONTROL", "event": {
+        "plugin_host_connection_id": connection["plugin_host_connection_id"], "installed_plugin_id": installed.installed_plugin_id,
+        "installation_generation": installed.installation_generation, "command": "CREATE_RUNTIME_BINDING",
+        "model_deployment_id": models["model_deployments"][0]["model_deployment_id"], "capability_id": "llm.chat",
+        "capability_version": "2.1", "capability_definition_hash": "cap-definition-1",
+    }})
+    assert binding["runtime_binding"]["plugin_id"] == installed.plugin_id
 
 
 class ControlledFilesystemPlugin(FakeManagedPlugin):
