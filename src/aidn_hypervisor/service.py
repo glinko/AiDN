@@ -2899,6 +2899,10 @@ class HypervisorService:
             for job in self.provider_inventory.list_installation_jobs()
         ]
 
+    def plugin_host_local_ingress(self):
+        """Return the install-scoped Plugin Host control ingress for local transports."""
+        return self.provider_inventory.plugin_host_local_ingress()
+
     def list_provider_installation_artifacts(self) -> dict:
         return self.provider_inventory.installation_artifact_inventory().model_dump(
             mode="json"
