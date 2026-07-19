@@ -47,6 +47,7 @@ from aidn_hypervisor.runtime_protocol import (
     RuntimeUsageDimension,
     RuntimeUsageReport,
     LocalIpcRuntimeIngress,
+    RuntimeProtocolConformanceHarness,
     canonical_hash,
 )
 
@@ -1426,6 +1427,45 @@ def test_usage_conflict_and_sequence_gap_return_auditable_acknowledgments(tmp_pa
     assert conflict_ack.hypervisor_signature.startswith("hypervisor:")
     assert len(service.store.usage_conflicts) == 2
     assert len(RuntimeProtocolStore(state_store).usage_conflicts) == 2
+
+
+def test_runtime_conformance_fault_injection_preserves_usage_and_rejects_stale_route() -> None:
+    binding = _binding()
+    service = _service(binding, {binding.runtime_id: _route(binding)})
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    report = _runtime_usage_report(binding, request, report_id="usage-lost-ack")
+    harness = RuntimeProtocolConformanceHarness()
+
+    def submit_then_lose_ack() -> None:
+        accepted = service.record_usage_report(connection.runtime_connection_id, report)
+        assert accepted.status == "ACCEPTED"
+        raise TimeoutError("simulated Usage acknowledgment loss")
+
+    harness.assert_transport_failure(
+        "usage_ack_lost_after_persistence",
+        submit_then_lose_ack,
+        TimeoutError,
+    )
+    redelivered = harness.assert_success(
+        "usage_report_redelivery",
+        lambda: service.record_usage_report(connection.runtime_connection_id, report),
+    )
+    harness.assert_protocol_error(
+        "stale_route_health",
+        lambda: service.record_runtime_health(
+            connection.runtime_connection_id,
+            _health(binding).model_copy(update={"route_generation": 4}),
+        ),
+        "RUNTIME_ROUTE_GENERATION_MISMATCH",
+    )
+
+    assert redelivered.status == "DUPLICATE"
+    assert redelivered.accepted_report_hash == report.report_hash
+    assert len(service.store.usage_reports) == 1
+    assert harness.report().passed is True
 
 
 def test_usage_report_cannot_expand_profile_billing_eligibility() -> None:

@@ -58,6 +58,24 @@ class RuntimeProtocolConformanceHarness:
         self._record(case_id, False, f"expected {expected_code}, operation succeeded")
         raise AssertionError(f"{case_id}: expected Runtime Protocol error {expected_code}")
 
+    def assert_transport_failure(
+        self,
+        case_id: str,
+        operation: Callable[[], Any],
+        expected_exception: type[Exception] | tuple[type[Exception], ...] = ConnectionError,
+    ) -> Exception:
+        """Record an expected transport failure after an attempted protocol operation."""
+        try:
+            operation()
+        except expected_exception as exc:
+            self._record(case_id, True, f"transport failed with {type(exc).__name__}")
+            return exc
+        except Exception as exc:
+            self._record(case_id, False, f"unexpected {type(exc).__name__}: {exc}")
+            raise AssertionError(f"{case_id}: unexpected error") from exc
+        self._record(case_id, False, "expected transport failure, operation succeeded")
+        raise AssertionError(f"{case_id}: expected transport failure")
+
     def assert_idempotent(
         self,
         case_id: str,

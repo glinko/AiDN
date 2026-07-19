@@ -55,3 +55,17 @@ def test_conformance_harness_fails_when_wrong_error_is_returned() -> None:
         )
 
     assert harness.report().passed is False
+
+
+def test_conformance_harness_records_expected_transport_failure() -> None:
+    harness = RuntimeProtocolConformanceHarness()
+
+    error = harness.assert_transport_failure(
+        "usage_ack_lost",
+        lambda: (_ for _ in ()).throw(TimeoutError("ack response lost")),
+        TimeoutError,
+    )
+
+    assert isinstance(error, TimeoutError)
+    assert harness.report().passed is True
+    assert harness.report().cases[0].detail == "transport failed with TimeoutError"
