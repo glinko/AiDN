@@ -48,6 +48,10 @@ from aidn_hypervisor.runtime_protocol.conformance import (
     RuntimeConformanceReport,
     RuntimeProtocolConformanceHarness,
 )
+from aidn_hypervisor.runtime_protocol.named_pipe import (
+    WindowsNamedPipeRuntimeClient,
+    WindowsNamedPipeRuntimeListener,
+)
 
 __all__ = [
     "HypervisorRuntimeHello",
@@ -73,6 +77,8 @@ __all__ = [
     "RuntimeConformanceCase",
     "RuntimeConformanceReport",
     "RuntimeProtocolConformanceHarness",
+    "WindowsNamedPipeRuntimeClient",
+    "WindowsNamedPipeRuntimeListener",
     "LocalIpcRuntimeEvent",
     "LocalIpcRuntimeIngress",
     "RuntimeRecoveryPlan",
