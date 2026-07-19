@@ -2892,6 +2892,9 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert "/operators/model-deployments/" in response.text
     assert "/runtime-bindings" in response.text
     assert "Create Runtime Binding" in response.text
+    assert "Materialize Artifacts First" in response.text
+    assert "materialize first" in response.text
+    assert "artifacts ready" in response.text
     assert "data-model-runtime-binding" in response.text
     assert "runtime_binding_id" in response.text
     assert "data-runtime-binding-endpoint" in response.text
@@ -3780,6 +3783,82 @@ def test_provider_inventory_operator_routes_attach_discover_and_bind() -> None:
     )
     assert compatibility_bundle.workload_type == "llm.chat"
     assert compatibility_bundle.endpoint == "http://127.0.0.1:9999"
+
+
+def test_provider_inventory_runtime_binding_route_requires_materialized_artifacts(
+    tmp_path,
+) -> None:
+    service = _service()
+    service.provider_inventory = ProviderInventoryService(
+        plugins=service.plugins,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(
+            tmp_path / "executor-root"
+        ),
+    )
+    client = TestClient(build_app(service=service))
+
+    upload_response = client.post(
+        "/operators/provider-installation-artifacts",
+        json={
+            "relative_path": "models/fake-model.gguf",
+            "content_base64": base64.b64encode(b"model-bytes").decode("ascii"),
+        },
+    )
+    assert upload_response.status_code == 200
+    artifact_response = client.post(
+        "/operators/model-artifacts/promote",
+        json={"relative_path": "models/fake-model.gguf"},
+    )
+    assert artifact_response.status_code == 200
+    artifact_set_response = client.post(
+        "/operators/model-artifact-sets",
+        json={
+            "display_name": "Fake model package",
+            "files": [
+                {
+                    "relative_path": "weights/fake-model.gguf",
+                    "artifact_id": artifact_response.json()["artifact_id"],
+                    "role": "WEIGHTS",
+                }
+            ],
+        },
+    )
+    assert artifact_set_response.status_code == 200
+
+    attach_response = client.post(
+        "/operators/provider-instances/attach",
+        json={
+            "plugin_id": "fake-managed",
+            "display_name": "Local Fake",
+            "configuration": {"base_url": "http://127.0.0.1:9999"},
+        },
+    )
+    assert attach_response.status_code == 200
+    provider_instance_id = attach_response.json()["provider_instance_id"]
+    models_response = client.post(
+        f"/operators/provider-instances/{provider_instance_id}/discover-models"
+    )
+    assert models_response.status_code == 200
+    model_deployment_id = models_response.json()["items"][0]["model_deployment_id"]
+
+    bind_response = client.post(
+        f"/operators/model-deployments/{model_deployment_id}/artifact-set",
+        json={"artifact_set_id": artifact_set_response.json()["artifact_set_id"]},
+    )
+    assert bind_response.status_code == 200
+
+    binding_response = client.post(
+        f"/operators/model-deployments/{model_deployment_id}/runtime-bindings",
+        json={
+            "capability_id": "llm.chat",
+            "capability_version": "1.0.0",
+            "capability_definition_hash": "cap-hash",
+        },
+    )
+
+    assert binding_response.status_code == 409
+    assert "artifact set must be materialized" in binding_response.json()["detail"]
 
 
 def test_provider_plugin_release_routes_record_local_installation_without_execution() -> None:

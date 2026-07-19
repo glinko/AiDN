@@ -478,6 +478,63 @@ class ProviderInventoryService:
     def list_artifact_materializations(self) -> list[ProviderArtifactMaterialization]:
         return self.store.list_artifact_materializations()
 
+    def model_deployment_artifact_readiness(
+        self, deployment: ModelDeployment
+    ) -> dict:
+        if deployment.artifact_set_id is None:
+            return {
+                "required": False,
+                "ready": True,
+                "status": "NOT_REQUIRED",
+                "artifact_set_id": None,
+                "materialization_id": None,
+                "destination": None,
+            }
+        materializations = [
+            item
+            for item in self.store.list_artifact_materializations(
+                provider_instance_id=deployment.provider_instance_id
+            )
+            if item.artifact_set_id == deployment.artifact_set_id
+        ]
+        ready = next(
+            (item for item in materializations if item.status == "READY"),
+            None,
+        )
+        if ready is not None:
+            return {
+                "required": True,
+                "ready": True,
+                "status": "READY",
+                "artifact_set_id": deployment.artifact_set_id,
+                "materialization_id": ready.materialization_id,
+                "destination": ready.destination,
+            }
+        failed = next(
+            (item for item in materializations if item.status == "FAILED"),
+            None,
+        )
+        return {
+            "required": True,
+            "ready": False,
+            "status": "FAILED" if failed is not None else "MISSING",
+            "artifact_set_id": deployment.artifact_set_id,
+            "materialization_id": (
+                failed.materialization_id if failed is not None else None
+            ),
+            "destination": failed.destination if failed is not None else None,
+        }
+
+    def _ensure_model_deployment_artifacts_ready(
+        self, deployment: ModelDeployment
+    ) -> None:
+        readiness = self.model_deployment_artifact_readiness(deployment)
+        if not readiness["ready"]:
+            raise ValueError(
+                "model deployment artifact set must be materialized before "
+                "creating a Runtime Binding"
+            )
+
     def run_installation_diagnostics(
         self,
         *,
@@ -1460,6 +1517,7 @@ class ProviderInventoryService:
         capability_definition_hash: str,
     ) -> RuntimeBinding:
         deployment = self.store.get_model_deployment(model_deployment_id)
+        self._ensure_model_deployment_artifacts_ready(deployment)
         instance = self.store.get_provider_instance(deployment.provider_instance_id)
         plugin = self._get_plugin(instance.plugin_id)
         projection = plugin.create_runtime_binding(

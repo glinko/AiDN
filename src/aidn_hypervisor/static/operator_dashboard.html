@@ -3715,6 +3715,30 @@
       );
     }
 
+    function modelArtifactReadinessTone(model) {
+      if (!model?.artifact_materialization_required) {
+        return "";
+      }
+      return model.artifact_materialization_ready ? "good" : "bad";
+    }
+
+    function modelArtifactReadinessLabel(model) {
+      if (!model?.artifact_materialization_required) {
+        return "not required";
+      }
+      const status = model.artifact_materialization_status || "MISSING";
+      if (status === "READY") {
+        return "artifacts ready";
+      }
+      if (status === "FAILED") {
+        return "materialization failed";
+      }
+      if (status === "ARTIFACT_SET_MISSING") {
+        return "artifact set missing";
+      }
+      return "materialize first";
+    }
+
     function runtimeBindingById(runtimeBindingId) {
       return (state.payloads.providers?.runtime_bindings || []).find(
         (binding) => binding.runtime_binding_id === runtimeBindingId
@@ -4987,6 +5011,7 @@
                         const draft = syncRuntimeBindingDraft(model);
                         const hasBinding = modelHasRuntimeBinding(model);
                         const pending = state.providerActionPending === `runtime-binding:${model.model_deployment_id}`;
+                        const artifactsReady = model.artifact_materialization_ready !== false;
                         return `
                           <div class="table-row">
                             <div>
@@ -4996,7 +5021,10 @@
                             <div class="row-meta">${model.provider_instance_id}</div>
                             <div class="row-meta">${(model.capability_bindings || []).join(", ") || "-"}</div>
                             <div><span class="chip ${model.runtime_binding_ready_count ? "good" : ""}">${formatCount(model.runtime_binding_ready_count)}</span></div>
-                            <div><span class="chip ${model.operational_state === "ready" ? "good" : ""}">${model.operational_state || "unknown"}</span></div>
+                            <div class="stack">
+                              <span class="chip ${model.operational_state === "ready" ? "good" : ""}">${model.operational_state || "unknown"}</span>
+                              <span class="chip ${modelArtifactReadinessTone(model)}">${modelArtifactReadinessLabel(model)}</span>
+                            </div>
                             <div class="stack">
                               ${
                                 model.artifact_set_id
@@ -5010,7 +5038,7 @@
                                   ? `<button class="secondary-button" type="button" data-model-artifact-set-bind="${escapeHtml(model.model_deployment_id)}" ${state.providerActionPending === `bind-model-artifact-set:${model.model_deployment_id}` ? "disabled" : ""}>Bind Set</button>`
                                   : ""
                               }
-                              <button class="row-action" type="button" data-model-runtime-binding="${escapeHtml(model.model_deployment_id)}" ${hasBinding ? "disabled" : ""}>${pending ? "Creating..." : hasBinding ? "Binding Ready" : `Create Runtime Binding (${escapeHtml(draft.capabilityId)})`}</button>
+                              <button class="row-action" type="button" data-model-runtime-binding="${escapeHtml(model.model_deployment_id)}" ${hasBinding || !artifactsReady ? "disabled" : ""}>${pending ? "Creating..." : hasBinding ? "Binding Ready" : !artifactsReady ? "Materialize Artifacts First" : `Create Runtime Binding (${escapeHtml(draft.capabilityId)})`}</button>
                             </div>
                           </div>
                         `;

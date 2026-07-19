@@ -1340,6 +1340,109 @@ def test_model_artifact_sets_protect_referenced_bytes_and_bind_deployments(tmp_p
         service.delete_model_artifact_set(artifact_set_id=artifact_set.artifact_set_id)
 
 
+def test_runtime_binding_requires_materialized_model_artifact_set(tmp_path) -> None:
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+    executor.stage_local_artifact(
+        relative_path="models/weights.gguf",
+        content_bytes=b"weights",
+    )
+    weights = executor.promote_local_artifact_to_model_store(
+        relative_path="models/weights.gguf"
+    )
+    artifact_set = executor.create_model_artifact_set(
+        display_name="Fake model package",
+        files=[
+            {
+                "relative_path": "weights/model.gguf",
+                "artifact_id": weights.artifact_id,
+                "role": "WEIGHTS",
+            },
+        ],
+    )
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=executor,
+    )
+    instance = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    deployment = service.discover_models(instance.provider_instance_id)[0]
+    bound = service.bind_model_artifact_set(
+        model_deployment_id=deployment.model_deployment_id,
+        artifact_set_id=artifact_set.artifact_set_id,
+    )
+
+    readiness = service.model_deployment_artifact_readiness(bound)
+
+    assert readiness["required"] is True
+    assert readiness["ready"] is False
+    assert readiness["status"] == "MISSING"
+    with pytest.raises(ValueError, match="artifact set must be materialized"):
+        service.create_runtime_binding(
+            model_deployment_id=bound.model_deployment_id,
+            capability_id="llm.chat",
+            capability_version="1.0.0",
+            capability_definition_hash="cap-hash",
+        )
+
+
+def test_runtime_binding_allows_ready_model_artifact_materialization(tmp_path) -> None:
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+    executor.stage_local_artifact(
+        relative_path="models/weights.gguf",
+        content_bytes=b"weights",
+    )
+    weights = executor.promote_local_artifact_to_model_store(
+        relative_path="models/weights.gguf"
+    )
+    artifact_set = executor.create_model_artifact_set(
+        display_name="Fake model package",
+        files=[
+            {
+                "relative_path": "weights/model.gguf",
+                "artifact_id": weights.artifact_id,
+                "role": "WEIGHTS",
+            },
+        ],
+    )
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=executor,
+    )
+    instance = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    deployment = service.discover_models(instance.provider_instance_id)[0]
+    bound = service.bind_model_artifact_set(
+        model_deployment_id=deployment.model_deployment_id,
+        artifact_set_id=artifact_set.artifact_set_id,
+    )
+    materialization = service.materialize_model_artifact_set(
+        provider_instance_id=instance.provider_instance_id,
+        artifact_set_id=artifact_set.artifact_set_id,
+        destination="models",
+    )
+
+    readiness = service.model_deployment_artifact_readiness(bound)
+    binding = service.create_runtime_binding(
+        model_deployment_id=bound.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+
+    assert materialization.status == "READY"
+    assert readiness["ready"] is True
+    assert readiness["materialization_id"] == materialization.materialization_id
+    assert binding.model_deployment_id == bound.model_deployment_id
+
+
 def test_model_artifact_garbage_collection_respects_references_and_grace_period(
     tmp_path,
 ) -> None:

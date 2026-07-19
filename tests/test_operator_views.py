@@ -21,6 +21,11 @@ from aidn_hypervisor.operator_views import (
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager, RuntimeHandle
+from aidn_hypervisor.providers.executor import (
+    ControlledFilesystemProviderInstallationExecutor,
+)
+from aidn_hypervisor.providers.service import ProviderInventoryService
+from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.registry_models import RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
@@ -743,6 +748,73 @@ def test_providers_payload_exposes_models_and_runtime_binding_readiness() -> Non
     assert payload["summary"]["total_model_deployments"] == 1
     assert payload["summary"]["total_runtime_bindings"] == 1
     assert payload["recommended_action"]["action"] == "create_endpoint"
+
+
+def test_providers_payload_exposes_model_artifact_materialization_readiness(
+    tmp_path: Path,
+) -> None:
+    executor = ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root")
+    executor.stage_local_artifact(
+        relative_path="models/weights.gguf",
+        content_bytes=b"weights",
+    )
+    weights = executor.promote_local_artifact_to_model_store(
+        relative_path="models/weights.gguf"
+    )
+    artifact_set = executor.create_model_artifact_set(
+        display_name="Fake model package",
+        files=[
+            {
+                "relative_path": "weights/model.gguf",
+                "artifact_id": weights.artifact_id,
+                "role": "WEIGHTS",
+            },
+        ],
+    )
+    inventory = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=executor,
+    )
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+        provider_inventory=inventory,
+    )
+    attached = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    models = service.discover_provider_models(attached["provider_instance_id"])
+    service.bind_model_artifact_set(
+        model_deployment_id=models[0]["model_deployment_id"],
+        artifact_set_id=artifact_set.artifact_set_id,
+    )
+
+    missing_payload = build_operator_providers_payload(service=service)
+    missing_model = missing_payload["model_deployments"][0]
+
+    assert missing_model["artifact_materialization_required"] is True
+    assert missing_model["artifact_materialization_ready"] is False
+    assert missing_model["artifact_materialization_status"] == "MISSING"
+
+    materialization = service.materialize_model_artifact_set(
+        provider_instance_id=attached["provider_instance_id"],
+        artifact_set_id=artifact_set.artifact_set_id,
+        destination="models",
+    )
+    ready_payload = build_operator_providers_payload(service=service)
+    ready_model = ready_payload["model_deployments"][0]
+
+    assert ready_model["artifact_materialization_ready"] is True
+    assert ready_model["artifact_materialization_status"] == "READY"
+    assert (
+        ready_model["artifact_materialization_id"]
+        == materialization["materialization_id"]
+    )
 
 
 def test_providers_payload_matches_install_aliases_from_bundle_provider_type(

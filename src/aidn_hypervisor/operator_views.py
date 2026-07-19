@@ -729,11 +729,58 @@ def build_operator_providers_payload(
     artifact_set_ids = {
         artifact_set["artifact_set_id"] for artifact_set in model_artifact_sets
     }
+    materializations_by_provider_and_set: dict[tuple[str, str], list[dict]] = {}
+    for materialization in artifact_materializations:
+        materializations_by_provider_and_set.setdefault(
+            (
+                materialization["provider_instance_id"],
+                materialization["artifact_set_id"],
+            ),
+            [],
+        ).append(materialization)
     for deployment in model_deployments:
         deployment_bindings = runtime_bindings_by_model.get(
             deployment["model_deployment_id"],
             [],
         )
+        artifact_set_id = deployment.get("artifact_set_id")
+        artifact_set_available = (
+            artifact_set_id in artifact_set_ids if artifact_set_id else False
+        )
+        deployment_materializations = (
+            materializations_by_provider_and_set.get(
+                (deployment["provider_instance_id"], artifact_set_id),
+                [],
+            )
+            if artifact_set_id
+            else []
+        )
+        ready_materialization = next(
+            (
+                item
+                for item in deployment_materializations
+                if item["status"] == "READY"
+            ),
+            None,
+        )
+        failed_materialization = next(
+            (
+                item
+                for item in deployment_materializations
+                if item["status"] == "FAILED"
+            ),
+            None,
+        )
+        if artifact_set_id is None:
+            artifact_materialization_status = "NOT_REQUIRED"
+        elif not artifact_set_available:
+            artifact_materialization_status = "ARTIFACT_SET_MISSING"
+        elif ready_materialization is not None:
+            artifact_materialization_status = "READY"
+        elif failed_materialization is not None:
+            artifact_materialization_status = "FAILED"
+        else:
+            artifact_materialization_status = "MISSING"
         enriched_model_deployments.append(
             {
                 **deployment,
@@ -741,11 +788,17 @@ def build_operator_providers_payload(
                 "runtime_binding_ready_count": sum(
                     1 for binding in deployment_bindings if binding["status"] == "ready"
                 ),
-                "artifact_set_available": (
-                    deployment.get("artifact_set_id") in artifact_set_ids
-                    if deployment.get("artifact_set_id")
-                    else False
-                ),
+                "artifact_set_available": artifact_set_available,
+                "artifact_materialization_required": artifact_set_id is not None,
+                "artifact_materialization_ready": ready_materialization is not None
+                or artifact_set_id is None,
+                "artifact_materialization_status": artifact_materialization_status,
+                "artifact_materialization_id": (
+                    ready_materialization or failed_materialization or {}
+                ).get("materialization_id"),
+                "artifact_materialization_destination": (
+                    ready_materialization or failed_materialization or {}
+                ).get("destination"),
             }
         )
     enriched_provider_instances = []
