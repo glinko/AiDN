@@ -29,6 +29,8 @@ from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
+from aidn_hypervisor.plugins.host import PluginHostJsonWireAdapter
+from aidn_hypervisor.plugins.host_named_pipe import WindowsNamedPipePluginHostListener
 from aidn_hypervisor.queue import InMemoryTaskQueue, QueuedTask
 from aidn_hypervisor.reputation import build_reputation_profile
 from aidn_hypervisor.registry_models import (
@@ -207,6 +209,7 @@ class HypervisorService:
         self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
             state_store
         )
+        self._plugin_host_listeners: list[WindowsNamedPipePluginHostListener] = []
         self.max_active_allocations_per_owner = max_active_allocations_per_owner
         self.max_pending_allocations_per_owner = max_pending_allocations_per_owner
         self.node_id = node_id
@@ -2902,6 +2905,21 @@ class HypervisorService:
     def plugin_host_local_ingress(self):
         """Return the install-scoped Plugin Host control ingress for local transports."""
         return self.provider_inventory.plugin_host_local_ingress()
+
+    def start_windows_plugin_host_listener(self, *, address: str, authkey: bytes):
+        listener = WindowsNamedPipePluginHostListener(
+            address=address,
+            authkey=authkey,
+            wire_adapter=PluginHostJsonWireAdapter(self.plugin_host_local_ingress()),
+        )
+        listener.start()
+        self._plugin_host_listeners.append(listener)
+        return listener
+
+    def stop_plugin_host_listeners(self) -> None:
+        for listener in self._plugin_host_listeners:
+            listener.stop()
+        self._plugin_host_listeners.clear()
 
     def list_provider_installation_artifacts(self) -> dict:
         return self.provider_inventory.installation_artifact_inventory().model_dump(
