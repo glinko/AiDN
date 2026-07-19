@@ -1,6 +1,7 @@
 """Install-scoped identity checks for a future isolated Provider Plugin Host."""
 
 from collections.abc import Callable
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +17,19 @@ class PluginHostIdentity(BaseModel):
     plugin_id: str = Field(min_length=1)
     installation_generation: int = Field(ge=1)
     activation_credential_key_id: str = Field(min_length=1)
+
+
+class PluginHostHello(PluginHostIdentity):
+    host_nonce: str = Field(min_length=1)
+    activation_proof: str = Field(min_length=1)
+
+
+class PluginHostConnection(BaseModel):
+    plugin_host_connection_id: str = Field(min_length=1)
+    installed_plugin_id: str = Field(min_length=1)
+    plugin_id: str = Field(min_length=1)
+    installation_generation: int = Field(ge=1)
+    established_at: str = Field(min_length=1)
 
 
 class PluginHostAuthenticator:
@@ -38,3 +52,30 @@ class PluginHostAuthenticator:
         if installed.activation_credential_key_id != identity.activation_credential_key_id:
             raise PluginHostAuthenticationError("Plugin Host activation credential is invalid")
         return installed
+
+
+class PluginHostHandshakeService:
+    """Transport-neutral local IPC admission for one isolated Plugin Host."""
+
+    def __init__(
+        self,
+        *,
+        authenticator: PluginHostAuthenticator,
+        activation_proof_verifier: Callable[[PluginHostHello], bool],
+        now: Callable[[], str],
+    ) -> None:
+        self.authenticator = authenticator
+        self.activation_proof_verifier = activation_proof_verifier
+        self.now = now
+
+    def accept(self, hello: PluginHostHello) -> PluginHostConnection:
+        installed = self.authenticator.authenticate(hello)
+        if not self.activation_proof_verifier(hello):
+            raise PluginHostAuthenticationError("Plugin Host activation proof is invalid")
+        return PluginHostConnection(
+            plugin_host_connection_id=f"phc-{uuid4().hex}",
+            installed_plugin_id=installed.installed_plugin_id,
+            plugin_id=installed.plugin_id,
+            installation_generation=installed.installation_generation,
+            established_at=self.now(),
+        )
