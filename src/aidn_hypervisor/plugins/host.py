@@ -1,6 +1,7 @@
 """Install-scoped identity checks for a future isolated Provider Plugin Host."""
 
 from collections.abc import Callable
+import json
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -123,3 +124,29 @@ class PluginHostLocalIpcIngress:
             "command": "PING",
             "plugin_host_connection_id": connection.plugin_host_connection_id,
         }
+
+
+class PluginHostJsonWireAdapter:
+    """Bounded JSON adapter for Plugin Host local transports."""
+
+    def __init__(self, ingress: PluginHostLocalIpcIngress, *, maximum_message_bytes: int = 1_048_576) -> None:
+        if maximum_message_bytes <= 0:
+            raise ValueError("maximum_message_bytes must be positive")
+        self.ingress = ingress
+        self.maximum_message_bytes = maximum_message_bytes
+
+    def receive_bytes(self, payload: bytes) -> bytes:
+        if len(payload) > self.maximum_message_bytes:
+            return self._response(False, error="MESSAGE_TOO_LARGE")
+        try:
+            envelope = json.loads(payload.decode("utf-8"))
+            if not isinstance(envelope, dict):
+                raise ValueError("Plugin Host envelope must be an object")
+            result = self.ingress.receive(envelope)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            return self._response(False, error="PLUGIN_HOST_IPC_INVALID", message=str(exc))
+        return self._response(True, result=result)
+
+    @staticmethod
+    def _response(ok: bool, **payload: object) -> bytes:
+        return json.dumps({"ok": ok, **payload}, separators=(",", ":")).encode("utf-8")

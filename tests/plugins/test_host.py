@@ -1,4 +1,5 @@
 import pytest
+import json
 
 from aidn_hypervisor.plugins.host import (
     PluginHostAuthenticationError,
@@ -6,6 +7,7 @@ from aidn_hypervisor.plugins.host import (
     PluginHostHandshakeService,
     PluginHostHello,
     PluginHostLocalIpcIngress,
+    PluginHostJsonWireAdapter,
     PluginHostIdentity,
 )
 from aidn_hypervisor.providers.models import InstalledPlugin
@@ -121,3 +123,21 @@ def test_plugin_host_local_ipc_ingress_accepts_only_handshake_envelopes() -> Non
         )
     with pytest.raises(PluginHostAuthenticationError, match="not permitted"):
         ingress.receive({"event_type": "PLUGIN_EXECUTE", "event": event})
+
+
+def test_plugin_host_json_wire_adapter_is_bounded_and_fail_closed() -> None:
+    installed = _installed_plugin()
+    ingress = PluginHostLocalIpcIngress(
+        PluginHostHandshakeService(
+            authenticator=PluginHostAuthenticator(lambda _: installed),
+            activation_proof_verifier=lambda _: True,
+            now=lambda: "2026-07-19T00:00:00Z",
+        )
+    )
+    adapter = PluginHostJsonWireAdapter(ingress, maximum_message_bytes=128)
+
+    invalid = json.loads(adapter.receive_bytes(b"not-json"))
+    oversized = json.loads(adapter.receive_bytes(b"x" * 129))
+
+    assert invalid["error"] == "PLUGIN_HOST_IPC_INVALID"
+    assert oversized == {"ok": False, "error": "MESSAGE_TOO_LARGE"}
