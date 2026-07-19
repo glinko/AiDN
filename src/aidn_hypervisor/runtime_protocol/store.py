@@ -35,6 +35,8 @@ class RuntimeProtocolStore:
         if snapshot is None:
             if self._state_store is None:
                 return
+            if not hasattr(self._state_store, "load"):
+                return
             snapshot = self._state_store.load()
         self.connections = {
             item.runtime_connection_id: item
@@ -69,6 +71,10 @@ class RuntimeProtocolStore:
 
     def flush(self) -> None:
         if self._state_store is None:
+            return
+        if not hasattr(self._state_store, "load") or not hasattr(
+            self._state_store, "save"
+        ):
             return
         snapshot = self._state_store.load().model_copy(
             update={

@@ -4,6 +4,7 @@ from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.main import build_app
+from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.runtime_protocol.models import (
@@ -77,6 +78,64 @@ def _mvp_api_context():
     return hypervisor, client, endpoint, session
 
 
+def _mvp_persistent_api_context(tmp_path):
+    state_store = FileStateStore(tmp_path / "hypervisor-state.json")
+    hypervisor = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        state_store=state_store,
+    )
+    endpoint_service = EndpointService(EndpointStore(state_store))
+    session_service = SessionService(SessionStore(state_store))
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+    endpoint = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-endpoint",
+            "bundle_id": "bundle-a",
+            "bundle_hash": "bundle-hash-a",
+            "display_name": "Persistent fixed price endpoint",
+            "model_class": "llm.chat",
+        },
+    ).json()["data"]["endpoint"]
+    hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+    session = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+        },
+    ).json()["data"]["session"]
+    return state_store, hypervisor, client, endpoint, session
+
+
+def _restored_mvp_api_context(state_store: FileStateStore):
+    hypervisor = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        state_store=state_store,
+    )
+    hypervisor.restore_state(state_store.load())
+    endpoint_service = EndpointService(EndpointStore(state_store))
+    session_service = SessionService(SessionStore(state_store))
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+    return hypervisor, client, endpoint_service, session_service
+
+
 def _seed_terminal_runtime_evidence(
     hypervisor: HypervisorService,
     *,
@@ -143,6 +202,7 @@ def _seed_terminal_runtime_evidence(
         hypervisor.runtime_protocol_store.usage_reports[final_usage.usage_report_id] = (
             final_usage
         )
+    hypervisor.runtime_protocol_store.flush()
     return request, final_usage
 
 
@@ -182,6 +242,14 @@ def _force_finalize_mvp_session(
             f"{session['session_id']}/force-finalize"
         ),
         json=payload,
+    )
+
+
+def _ledger_operation_count(hypervisor: HypervisorService, operation_type: str) -> int:
+    return sum(
+        1
+        for item in hypervisor.list_ledger_operations()
+        if item["operation_type"] == operation_type
     )
 
 
@@ -395,6 +463,68 @@ def test_finalize_mvp_fixed_price_session_duplicate_does_not_double_pay() -> Non
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
 
 
+def test_finalize_mvp_fixed_price_session_survives_restore_without_double_pay(
+    tmp_path,
+) -> None:
+    state_store, hypervisor, client, endpoint, session = _mvp_persistent_api_context(
+        tmp_path
+    )
+    request, final_usage = _seed_terminal_runtime_evidence(
+        hypervisor,
+        endpoint=endpoint,
+        session=session,
+    )
+
+    response = _finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        request_id=request.request_id,
+    )
+    assert response.status_code == 200
+
+    restored, restored_client, _, restored_session_service = _restored_mvp_api_context(
+        state_store
+    )
+    funding = restored.get_session_funding_account(session["session_id"])
+    restored_request = restored.runtime_protocol_store.requests[request.request_id]
+    restored_usage = restored.runtime_protocol_store.usage_reports[
+        final_usage.usage_report_id
+    ]
+    restored_session = restored_session_service.store.get_session(session["session_id"])
+    restored_deposit = restored_session_service.store.get_deposit_for_session(
+        session["session_id"]
+    )
+    finalize_operations = _ledger_operation_count(
+        restored, "SESSION_SETTLEMENT_FINALIZE"
+    )
+
+    assert funding.funding_state == "RELEASED"
+    assert restored.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert restored.wallet_q_atom_balance("wallet-consumer") == 100
+    assert restored_request.terminal_final_usage_report_id == final_usage.usage_report_id
+    assert restored_usage.report_hash == final_usage.report_hash
+    assert restored_session.status == "closed"
+    assert restored_deposit.status == "released"
+    assert finalize_operations == 1
+
+    duplicate = _finalize_mvp_session(
+        restored_client,
+        endpoint=endpoint,
+        session=session,
+        request_id=request.request_id,
+    )
+
+    assert duplicate.status_code == 409
+    assert "already finalized" in duplicate.json()["error"]["message"]
+    assert restored.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert restored.wallet_q_atom_balance("wallet-consumer") == 100
+    assert (
+        _ledger_operation_count(restored, "SESSION_SETTLEMENT_FINALIZE")
+        == finalize_operations
+    )
+
+
 def test_force_finalize_mvp_endpoint_unavailable_refunds_after_timeout() -> None:
     hypervisor, client, endpoint, session = _mvp_api_context()
 
@@ -426,6 +556,57 @@ def test_force_finalize_mvp_endpoint_unavailable_refunds_after_timeout() -> None
     assert body["data"]["session"]["status"] == "closed"
     assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 0
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 1_000
+
+
+def test_force_finalize_mvp_endpoint_unavailable_survives_restore_without_double_refund(
+    tmp_path,
+) -> None:
+    state_store, _, client, endpoint, session = _mvp_persistent_api_context(tmp_path)
+
+    response = _force_finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        reason="ENDPOINT_UNAVAILABLE",
+        force_after="2026-07-18T12:01:00+00:00",
+        now="2026-07-18T12:01:00+00:00",
+    )
+    assert response.status_code == 200
+
+    restored, restored_client, _, restored_session_service = _restored_mvp_api_context(
+        state_store
+    )
+    funding = restored.get_session_funding_account(session["session_id"])
+    forced_operations = _ledger_operation_count(restored, "SESSION_FORCED_SETTLEMENT")
+    restored_session = restored_session_service.store.get_session(session["session_id"])
+    restored_deposit = restored_session_service.store.get_deposit_for_session(
+        session["session_id"]
+    )
+
+    assert funding.funding_state == "RELEASED"
+    assert restored.wallet_q_atom_balance("wallet-endpoint") == 0
+    assert restored.wallet_q_atom_balance("wallet-consumer") == 1_000
+    assert restored_session.status == "closed"
+    assert restored_deposit.status == "released"
+    assert forced_operations == 1
+
+    duplicate = _force_finalize_mvp_session(
+        restored_client,
+        endpoint=endpoint,
+        session=session,
+        reason="ENDPOINT_UNAVAILABLE",
+        force_after="2026-07-18T12:01:00+00:00",
+        now="2026-07-18T12:02:00+00:00",
+    )
+
+    assert duplicate.status_code == 409
+    assert "already finalized" in duplicate.json()["error"]["message"]
+    assert restored.wallet_q_atom_balance("wallet-endpoint") == 0
+    assert restored.wallet_q_atom_balance("wallet-consumer") == 1_000
+    assert (
+        _ledger_operation_count(restored, "SESSION_FORCED_SETTLEMENT")
+        == forced_operations
+    )
 
 
 def test_force_finalize_mvp_completed_fixed_price_pays_after_consumer_timeout() -> None:

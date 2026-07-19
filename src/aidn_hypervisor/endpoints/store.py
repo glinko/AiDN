@@ -44,6 +44,9 @@ class EndpointStore:
     ) -> list[EndpointConfigurationSnapshot]:
         return [item for item in self._snapshots if item.endpoint_id == endpoint_id]
 
+    def list_all_configuration_snapshots(self) -> list[EndpointConfigurationSnapshot]:
+        return list(self._snapshots)
+
     def _flush(self) -> None:
         if self._state_store is None:
             return

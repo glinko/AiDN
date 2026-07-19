@@ -36,6 +36,12 @@ class SessionStore:
     def list_sessions(self) -> list[EndpointSession]:
         return list(self._sessions.values())
 
+    def list_deposits(self) -> list[LockedDeposit]:
+        return list(self._deposits.values())
+
+    def list_proxy_session_bindings(self) -> list[ProxySessionBinding]:
+        return list(self._proxy_bindings.values())
+
     def get_session(self, session_id: str) -> EndpointSession:
         return self._sessions[session_id]
 

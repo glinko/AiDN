@@ -21,6 +21,10 @@ from aidn_hypervisor.economics.models import (
     FaucetClaim,
     RecyclableRemoval,
 )
+from aidn_hypervisor.endpoints.state import (
+    EndpointConfigurationSnapshotRecord,
+    EndpointManifestSnapshot,
+)
 from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.providers.service import ProviderInventoryService
@@ -51,11 +55,14 @@ from aidn_hypervisor.settlement.service import SettlementEngine
 from aidn_hypervisor.state import (
     AllocationSnapshot,
     BundleStateSnapshot,
+    EndpointSessionSnapshot,
     HypervisorStateSnapshot,
     JournalEvent,
+    LockedDepositSnapshot,
     OperatorOnboardingSnapshot,
     ModelInstallSnapshot,
     OwnerWalletSnapshot,
+    ProxySessionBindingSnapshot,
     RuntimeSnapshot,
     TaskSnapshot,
     WalletAllocationActivationSnapshot,
@@ -192,7 +199,9 @@ class HypervisorService:
             plugins=self.plugins,
             store=InMemoryProviderInventoryStore(),
         )
-        self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore()
+        self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
+            state_store
+        )
         self.max_active_allocations_per_owner = max_active_allocations_per_owner
         self.max_pending_allocations_per_owner = max_pending_allocations_per_owner
         self.node_id = node_id
@@ -3312,6 +3321,15 @@ class HypervisorService:
         return True
 
     def snapshot_state(self) -> HypervisorStateSnapshot:
+        endpoint_service = getattr(self, "endpoint_service", None)
+        endpoint_store = getattr(endpoint_service, "store", None)
+        session_service = getattr(self, "session_service", None)
+        session_store = getattr(session_service, "store", None)
+        persisted_snapshot = (
+            self.state_store.load()
+            if self.state_store is not None and hasattr(self.state_store, "load")
+            else None
+        )
         return HypervisorStateSnapshot(
             tasks=[
                 TaskSnapshot(
@@ -3464,6 +3482,89 @@ class HypervisorService:
             epoch_reward_budgets=[
                 EpochRewardBudget(**event) for event in self._epoch_reward_budgets
             ],
+            endpoints=(
+                [
+                    EndpointManifestSnapshot.model_validate(
+                        item.model_dump(mode="json")
+                    )
+                    for item in endpoint_store.list_manifests()
+                ]
+                if endpoint_store is not None
+                else (
+                    [item.model_copy(deep=True) for item in persisted_snapshot.endpoints]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
+            endpoint_configuration_snapshots=(
+                [
+                    EndpointConfigurationSnapshotRecord.model_validate(
+                        item.model_dump(mode="json")
+                    )
+                    for item in endpoint_store.list_all_configuration_snapshots()
+                ]
+                if endpoint_store is not None
+                and hasattr(endpoint_store, "list_all_configuration_snapshots")
+                else (
+                    [
+                        item.model_copy(deep=True)
+                        for item in persisted_snapshot.endpoint_configuration_snapshots
+                    ]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
+            endpoint_sessions=(
+                [
+                    EndpointSessionSnapshot.model_validate(
+                        item.model_dump(mode="json")
+                    )
+                    for item in session_store.list_sessions()
+                ]
+                if session_store is not None
+                else (
+                    [
+                        item.model_copy(deep=True)
+                        for item in persisted_snapshot.endpoint_sessions
+                    ]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
+            locked_deposits=(
+                [
+                    LockedDepositSnapshot.model_validate(item.model_dump(mode="json"))
+                    for item in session_store.list_deposits()
+                ]
+                if session_store is not None
+                and hasattr(session_store, "list_deposits")
+                else (
+                    [
+                        item.model_copy(deep=True)
+                        for item in persisted_snapshot.locked_deposits
+                    ]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
+            proxy_session_bindings=(
+                [
+                    ProxySessionBindingSnapshot.model_validate(
+                        item.model_dump(mode="json")
+                    )
+                    for item in session_store.list_proxy_session_bindings()
+                ]
+                if session_store is not None
+                and hasattr(session_store, "list_proxy_session_bindings")
+                else (
+                    [
+                        item.model_copy(deep=True)
+                        for item in persisted_snapshot.proxy_session_bindings
+                    ]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
             ledger_operations=self.list_ledger_operations(),
             wallet_operation_sequences=self._ledger_operation_service.snapshot_wallet_sequences(),
             **self._ledger_operation_service.snapshot_settlement_state(),
