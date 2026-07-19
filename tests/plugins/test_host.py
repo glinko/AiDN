@@ -1,5 +1,6 @@
 import pytest
 import json
+from uuid import uuid4
 
 from aidn_hypervisor.plugins.host import (
     PluginHostAuthenticationError,
@@ -9,6 +10,10 @@ from aidn_hypervisor.plugins.host import (
     PluginHostLocalIpcIngress,
     PluginHostJsonWireAdapter,
     PluginHostIdentity,
+)
+from aidn_hypervisor.plugins.host_named_pipe import (
+    WindowsNamedPipePluginHostClient,
+    WindowsNamedPipePluginHostListener,
 )
 from aidn_hypervisor.providers.models import InstalledPlugin
 
@@ -141,3 +146,35 @@ def test_plugin_host_json_wire_adapter_is_bounded_and_fail_closed() -> None:
 
     assert invalid["error"] == "PLUGIN_HOST_IPC_INVALID"
     assert oversized == {"ok": False, "error": "MESSAGE_TOO_LARGE"}
+
+
+def test_windows_named_pipe_plugin_host_routes_hello() -> None:
+    installed = _installed_plugin()
+    ingress = PluginHostLocalIpcIngress(
+        PluginHostHandshakeService(
+            authenticator=PluginHostAuthenticator(lambda _: installed),
+            activation_proof_verifier=lambda _: True,
+            now=lambda: "2026-07-19T00:00:00Z",
+        )
+    )
+    listener = WindowsNamedPipePluginHostListener(
+        address=rf"\\.\pipe\aidn-plugin-host-{uuid4().hex}",
+        authkey=b"plugin-host-test-key",
+        wire_adapter=PluginHostJsonWireAdapter(ingress),
+    )
+    payload = json.dumps({"event_type": "PLUGIN_HOST_HELLO", "event": {
+        "installed_plugin_id": installed.installed_plugin_id, "plugin_id": installed.plugin_id,
+        "installation_generation": installed.installation_generation,
+        "activation_credential_key_id": installed.activation_credential_key_id,
+        "host_nonce": "nonce", "activation_proof": "proof",
+    }}).encode()
+    listener.start()
+    try:
+        response = json.loads(WindowsNamedPipePluginHostClient(
+            address=listener.address, authkey=b"plugin-host-test-key"
+        ).send(payload))
+    finally:
+        listener.stop()
+
+    assert response["ok"] is True
+    assert response["result"]["installed_plugin_id"] == installed.installed_plugin_id
