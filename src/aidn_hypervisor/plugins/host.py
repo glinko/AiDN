@@ -32,6 +32,13 @@ class PluginHostConnection(BaseModel):
     established_at: str = Field(min_length=1)
 
 
+class PluginHostControlCommand(BaseModel):
+    plugin_host_connection_id: str = Field(min_length=1)
+    installed_plugin_id: str = Field(min_length=1)
+    installation_generation: int = Field(ge=1)
+    command: str = Field(min_length=1)
+
+
 class PluginHostAuthenticator:
     """Authorize one Host identity against immutable installed-plugin state."""
 
@@ -86,9 +93,33 @@ class PluginHostLocalIpcIngress:
 
     def __init__(self, handshake_service: PluginHostHandshakeService) -> None:
         self.handshake_service = handshake_service
+        self._connections: dict[str, PluginHostConnection] = {}
 
     def receive(self, envelope: dict) -> dict:
-        if envelope.get("event_type") != "PLUGIN_HOST_HELLO":
-            raise PluginHostAuthenticationError("Plugin Host event type is not permitted")
-        hello = PluginHostHello.model_validate(envelope.get("event"))
-        return self.handshake_service.accept(hello).model_dump(mode="json")
+        event_type = envelope.get("event_type")
+        if event_type == "PLUGIN_HOST_HELLO":
+            hello = PluginHostHello.model_validate(envelope.get("event"))
+            connection = self.handshake_service.accept(hello)
+            self._connections[connection.plugin_host_connection_id] = connection
+            return connection.model_dump(mode="json")
+        if event_type == "PLUGIN_CONTROL":
+            command = PluginHostControlCommand.model_validate(envelope.get("event"))
+            return self._receive_control(command)
+        raise PluginHostAuthenticationError("Plugin Host event type is not permitted")
+
+    def _receive_control(self, command: PluginHostControlCommand) -> dict:
+        connection = self._connections.get(command.plugin_host_connection_id)
+        if connection is None:
+            raise PluginHostAuthenticationError("Plugin Host connection is not known")
+        if (
+            connection.installed_plugin_id != command.installed_plugin_id
+            or connection.installation_generation != command.installation_generation
+        ):
+            raise PluginHostAuthenticationError("Plugin Host control identity does not match connection")
+        if command.command != "PING":
+            raise PluginHostAuthenticationError("Plugin Host control command is not permitted")
+        return {
+            "status": "OK",
+            "command": "PING",
+            "plugin_host_connection_id": connection.plugin_host_connection_id,
+        }

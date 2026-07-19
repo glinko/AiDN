@@ -96,5 +96,28 @@ def test_plugin_host_local_ipc_ingress_accepts_only_handshake_envelopes() -> Non
     response = ingress.receive({"event_type": "PLUGIN_HOST_HELLO", "event": event})
 
     assert response["installed_plugin_id"] == installed.installed_plugin_id
+    assert ingress.receive(
+        {
+            "event_type": "PLUGIN_CONTROL",
+            "event": {
+                "plugin_host_connection_id": response["plugin_host_connection_id"],
+                "installed_plugin_id": installed.installed_plugin_id,
+                "installation_generation": installed.installation_generation,
+                "command": "PING",
+            },
+        }
+    )["status"] == "OK"
+    with pytest.raises(PluginHostAuthenticationError, match="command is not permitted"):
+        ingress.receive(
+            {
+                "event_type": "PLUGIN_CONTROL",
+                "event": {
+                    "plugin_host_connection_id": response["plugin_host_connection_id"],
+                    "installed_plugin_id": installed.installed_plugin_id,
+                    "installation_generation": installed.installation_generation,
+                    "command": "EXECUTE_ANYTHING",
+                },
+            }
+        )
     with pytest.raises(PluginHostAuthenticationError, match="not permitted"):
         ingress.receive({"event_type": "PLUGIN_EXECUTE", "event": event})
