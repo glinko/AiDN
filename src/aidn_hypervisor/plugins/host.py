@@ -38,6 +38,7 @@ class PluginHostControlCommand(BaseModel):
     installed_plugin_id: str = Field(min_length=1)
     installation_generation: int = Field(ge=1)
     command: str = Field(min_length=1)
+    configuration: dict | None = None
 
 
 class PluginHostAuthenticator:
@@ -97,9 +98,11 @@ class PluginHostLocalIpcIngress:
         handshake_service: PluginHostHandshakeService,
         *,
         manifest_resolver: Callable[[str], dict] | None = None,
+        configuration_validator: Callable[[str, dict], None] | None = None,
     ) -> None:
         self.handshake_service = handshake_service
         self.manifest_resolver = manifest_resolver
+        self.configuration_validator = configuration_validator
         self._connections: dict[str, PluginHostConnection] = {}
 
     def receive(self, envelope: dict) -> dict:
@@ -132,6 +135,17 @@ class PluginHostLocalIpcIngress:
                     "command": "GET_MANIFEST",
                     "plugin_host_connection_id": connection.plugin_host_connection_id,
                     "manifest": self.manifest_resolver(connection.plugin_id),
+                }
+            if command.command == "VALIDATE_CONFIGURATION":
+                if self.configuration_validator is None:
+                    raise PluginHostAuthenticationError("Plugin Host configuration validation is not configured")
+                if command.configuration is None:
+                    raise PluginHostAuthenticationError("Plugin Host configuration is required")
+                self.configuration_validator(connection.plugin_id, command.configuration)
+                return {
+                    "status": "OK",
+                    "command": "VALIDATE_CONFIGURATION",
+                    "plugin_host_connection_id": connection.plugin_host_connection_id,
                 }
             raise PluginHostAuthenticationError("Plugin Host control command is not permitted")
         return {
