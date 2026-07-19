@@ -92,8 +92,14 @@ class PluginHostHandshakeService:
 class PluginHostLocalIpcIngress:
     """Strict control-envelope ingress shared by Plugin Host local transports."""
 
-    def __init__(self, handshake_service: PluginHostHandshakeService) -> None:
+    def __init__(
+        self,
+        handshake_service: PluginHostHandshakeService,
+        *,
+        manifest_resolver: Callable[[str], dict] | None = None,
+    ) -> None:
         self.handshake_service = handshake_service
+        self.manifest_resolver = manifest_resolver
         self._connections: dict[str, PluginHostConnection] = {}
 
     def receive(self, envelope: dict) -> dict:
@@ -118,6 +124,15 @@ class PluginHostLocalIpcIngress:
         ):
             raise PluginHostAuthenticationError("Plugin Host control identity does not match connection")
         if command.command != "PING":
+            if command.command == "GET_MANIFEST":
+                if self.manifest_resolver is None:
+                    raise PluginHostAuthenticationError("Plugin Host manifest access is not configured")
+                return {
+                    "status": "OK",
+                    "command": "GET_MANIFEST",
+                    "plugin_host_connection_id": connection.plugin_host_connection_id,
+                    "manifest": self.manifest_resolver(connection.plugin_id),
+                }
             raise PluginHostAuthenticationError("Plugin Host control command is not permitted")
         return {
             "status": "OK",

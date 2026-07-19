@@ -91,7 +91,8 @@ def test_plugin_host_local_ipc_ingress_accepts_only_handshake_envelopes() -> Non
             authenticator=PluginHostAuthenticator(lambda _: installed),
             activation_proof_verifier=lambda _: True,
             now=lambda: "2026-07-19T00:00:00Z",
-        )
+        ),
+        manifest_resolver=lambda plugin_id: {"plugin_id": plugin_id, "version": "1.0.0"},
     )
     event = {
         "installed_plugin_id": installed.installed_plugin_id,
@@ -116,6 +117,17 @@ def test_plugin_host_local_ipc_ingress_accepts_only_handshake_envelopes() -> Non
             },
         }
     )["status"] == "OK"
+    assert ingress.receive(
+        {
+            "event_type": "PLUGIN_CONTROL",
+            "event": {
+                "plugin_host_connection_id": response["plugin_host_connection_id"],
+                "installed_plugin_id": installed.installed_plugin_id,
+                "installation_generation": installed.installation_generation,
+                "command": "GET_MANIFEST",
+            },
+        }
+    )["manifest"]["plugin_id"] == installed.plugin_id
     with pytest.raises(PluginHostAuthenticationError, match="command is not permitted"):
         ingress.receive(
             {
