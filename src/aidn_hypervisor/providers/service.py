@@ -40,6 +40,7 @@ from aidn_hypervisor.providers.package_verification import (
     DEFAULT_TRUSTED_PUBLISHER_KEYS,
     verify_plugin_manifest_package,
 )
+from aidn_hypervisor.providers.package_store import PluginPackageStore
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
@@ -65,6 +66,7 @@ class ProviderInventoryService:
         store: InMemoryProviderInventoryStore,
         installation_executor: ProviderInstallationExecutor | None = None,
         trusted_publisher_keys: dict[str, list[str]] | None = None,
+        package_store: PluginPackageStore | None = None,
     ) -> None:
         self.plugins = plugins
         self.store = store
@@ -74,6 +76,7 @@ class ProviderInventoryService:
         self.trusted_publisher_keys = deepcopy(
             trusted_publisher_keys or DEFAULT_TRUSTED_PUBLISHER_KEYS
         )
+        self.package_store = package_store
         self._runtime_binding_projections: dict[str, dict] = {}
 
     def list_plugin_manifests(self) -> list[dict]:
@@ -84,6 +87,14 @@ class ProviderInventoryService:
 
     def list_installed_plugins(self) -> list[InstalledPlugin]:
         return self.store.list_installed_plugins()
+
+    def stage_plugin_package(self, *, package_bytes: bytes, expected_digest: str) -> str:
+        if self.package_store is None:
+            raise ValueError("Plugin package store is not configured")
+        return self.package_store.stage(
+            package_bytes=package_bytes,
+            expected_digest=expected_digest,
+        )
 
     def register_plugin_release(
         self,
@@ -138,6 +149,9 @@ class ProviderInventoryService:
     ) -> InstalledPlugin:
         """Persist local approval; package acquisition and Plugin Host activation are separate."""
         release = self.store.get_plugin_release(release_id)
+        if installation_source == "PACKAGE" and self.package_store is not None:
+            if not self.package_store.has(release.package_digest):
+                raise ValueError("verified plugin package is required before activation")
         if release.release_status in {"SECURITY_BLOCKED", "REVOKED"}:
             raise ValueError(
                 f"plugin release cannot be installed while {release.release_status.lower()}"

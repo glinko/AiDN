@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 import json
 from pathlib import Path
@@ -20,6 +21,8 @@ from aidn_hypervisor.providers.models import (
     ProviderInstallationJob,
 )
 from aidn_hypervisor.providers.service import ProviderInventoryService
+from aidn_hypervisor.providers.package_store import PluginPackageStore
+from aidn_hypervisor.providers.package_verification import compute_manifest_hash
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
@@ -97,7 +100,6 @@ def test_plugin_release_install_rejects_unapproved_or_blocked_permissions() -> N
             release_id=release.release_id,
             granted_permissions=[*release.declared_permissions, "wallet.keys"],
         )
-
     service.store.save_plugin_release(
         release.model_copy(update={"release_status": "SECURITY_BLOCKED"})
     )
@@ -107,6 +109,46 @@ def test_plugin_release_install_rejects_unapproved_or_blocked_permissions() -> N
             release_id=release.release_id,
             granted_permissions=release.declared_permissions,
         )
+
+
+def test_package_install_requires_verified_content_addressed_payload() -> None:
+    registry = _registry()
+    package_store = PluginPackageStore()
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+        package_store=package_store,
+    )
+    package_bytes = b"fake-provider-package-v1"
+    package_digest = f"sha256:{hashlib.sha256(package_bytes).hexdigest()}"
+    manifest = registry.get("fake-managed").plugin_manifest()
+    manifest = {**manifest, "package_digest": package_digest, "publisher_signature": None}
+    manifest["manifest_hash"] = compute_manifest_hash(manifest)
+    release = service.register_plugin_release(manifest_payload=manifest)
+
+    with pytest.raises(ValueError, match="verified plugin package"):
+        service.install_plugin_release(
+            release_id=release.release_id,
+            granted_permissions=release.declared_permissions,
+        )
+
+    assert service.stage_plugin_package(
+        package_bytes=package_bytes,
+        expected_digest=package_digest,
+    ) == package_digest
+    installed = service.install_plugin_release(
+        release_id=release.release_id,
+        granted_permissions=release.declared_permissions,
+    )
+
+    assert installed.package_digest == package_digest
+
+
+def test_plugin_package_store_rejects_digest_mismatch() -> None:
+    store = PluginPackageStore()
+
+    with pytest.raises(ValueError, match="digest does not match"):
+        store.stage(package_bytes=b"package", expected_digest="sha256:" + "0" * 64)
 
 
 class ControlledFilesystemPlugin(FakeManagedPlugin):
