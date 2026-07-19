@@ -10,6 +10,7 @@ from aidn_hypervisor.plugins.host import (
     PluginHostHello,
     PluginHostLocalIpcIngress,
     PluginHostJsonWireAdapter,
+    PluginHostConnectionStore,
     PluginHostIdentity,
 )
 from aidn_hypervisor.plugins.host_named_pipe import (
@@ -186,6 +187,26 @@ def test_plugin_host_control_connection_is_revoked_after_generation_change() -> 
             "installation_generation": installed.installation_generation,
             "command": "PING",
         }})
+
+
+def test_plugin_host_connection_store_restores_snapshot() -> None:
+    installed = _installed_plugin()
+    ingress = PluginHostLocalIpcIngress(
+        PluginHostHandshakeService(
+            authenticator=PluginHostAuthenticator(lambda _: installed),
+            activation_proof_verifier=lambda _: True,
+            now=lambda: "2026-07-19T00:00:00Z",
+        )
+    )
+    connection = ingress.receive({"event_type": "PLUGIN_HOST_HELLO", "event": {
+        "installed_plugin_id": installed.installed_plugin_id, "plugin_id": installed.plugin_id,
+        "installation_generation": installed.installation_generation,
+        "activation_credential_key_id": installed.activation_credential_key_id,
+        "host_nonce": "nonce", "activation_proof": "proof",
+    }})
+    restored = PluginHostConnectionStore(ingress.connection_store.snapshot())
+
+    assert restored.get(connection["plugin_host_connection_id"]).plugin_id == installed.plugin_id
 
 
 def test_plugin_host_json_wire_adapter_is_bounded_and_fail_closed() -> None:

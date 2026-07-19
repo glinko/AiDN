@@ -34,6 +34,25 @@ class PluginHostConnection(BaseModel):
     established_at: str = Field(min_length=1)
 
 
+class PluginHostConnectionStore:
+    """Snapshot-capable local state for authenticated Plugin Host connections."""
+
+    def __init__(self, connections: list[dict] | None = None) -> None:
+        self._connections = {
+            item["plugin_host_connection_id"]: PluginHostConnection.model_validate(item)
+            for item in (connections or [])
+        }
+
+    def save(self, connection: PluginHostConnection) -> None:
+        self._connections[connection.plugin_host_connection_id] = connection
+
+    def get(self, connection_id: str) -> PluginHostConnection | None:
+        return self._connections.get(connection_id)
+
+    def snapshot(self) -> list[dict]:
+        return [item.model_dump(mode="json") for item in self._connections.values()]
+
+
 class PluginHostControlCommand(BaseModel):
     plugin_host_connection_id: str = Field(min_length=1)
     installed_plugin_id: str = Field(min_length=1)
@@ -102,19 +121,20 @@ class PluginHostLocalIpcIngress:
         manifest_resolver: Callable[[str], dict] | None = None,
         configuration_validator: Callable[[str, dict], None] | None = None,
         installation_plan_builder: Callable[[str, dict], dict] | None = None,
+        connection_store: PluginHostConnectionStore | None = None,
     ) -> None:
         self.handshake_service = handshake_service
         self.manifest_resolver = manifest_resolver
         self.configuration_validator = configuration_validator
         self.installation_plan_builder = installation_plan_builder
-        self._connections: dict[str, PluginHostConnection] = {}
+        self.connection_store = connection_store or PluginHostConnectionStore()
 
     def receive(self, envelope: dict) -> dict:
         event_type = envelope.get("event_type")
         if event_type == "PLUGIN_HOST_HELLO":
             hello = PluginHostHello.model_validate(envelope.get("event"))
             connection = self.handshake_service.accept(hello)
-            self._connections[connection.plugin_host_connection_id] = connection
+            self.connection_store.save(connection)
             return connection.model_dump(mode="json")
         if event_type == "PLUGIN_CONTROL":
             command = PluginHostControlCommand.model_validate(envelope.get("event"))
@@ -122,7 +142,7 @@ class PluginHostLocalIpcIngress:
         raise PluginHostAuthenticationError("Plugin Host event type is not permitted")
 
     def _receive_control(self, command: PluginHostControlCommand) -> dict:
-        connection = self._connections.get(command.plugin_host_connection_id)
+        connection = self.connection_store.get(command.plugin_host_connection_id)
         if connection is None:
             raise PluginHostAuthenticationError("Plugin Host connection is not known")
         if (
