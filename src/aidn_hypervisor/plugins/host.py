@@ -79,3 +79,16 @@ class PluginHostHandshakeService:
             installation_generation=installed.installation_generation,
             established_at=self.now(),
         )
+
+
+class PluginHostLocalIpcIngress:
+    """Strict control-envelope ingress shared by Plugin Host local transports."""
+
+    def __init__(self, handshake_service: PluginHostHandshakeService) -> None:
+        self.handshake_service = handshake_service
+
+    def receive(self, envelope: dict) -> dict:
+        if envelope.get("event_type") != "PLUGIN_HOST_HELLO":
+            raise PluginHostAuthenticationError("Plugin Host event type is not permitted")
+        hello = PluginHostHello.model_validate(envelope.get("event"))
+        return self.handshake_service.accept(hello).model_dump(mode="json")

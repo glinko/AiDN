@@ -5,6 +5,7 @@ from aidn_hypervisor.plugins.host import (
     PluginHostAuthenticator,
     PluginHostHandshakeService,
     PluginHostHello,
+    PluginHostLocalIpcIngress,
     PluginHostIdentity,
 )
 from aidn_hypervisor.providers.models import InstalledPlugin
@@ -72,3 +73,28 @@ def test_plugin_host_handshake_requires_activation_proof() -> None:
 
     with pytest.raises(PluginHostAuthenticationError, match="activation proof"):
         handshake.accept(hello.model_copy(update={"activation_proof": "invalid"}))
+
+
+def test_plugin_host_local_ipc_ingress_accepts_only_handshake_envelopes() -> None:
+    installed = _installed_plugin()
+    ingress = PluginHostLocalIpcIngress(
+        PluginHostHandshakeService(
+            authenticator=PluginHostAuthenticator(lambda _: installed),
+            activation_proof_verifier=lambda _: True,
+            now=lambda: "2026-07-19T00:00:00Z",
+        )
+    )
+    event = {
+        "installed_plugin_id": installed.installed_plugin_id,
+        "plugin_id": installed.plugin_id,
+        "installation_generation": installed.installation_generation,
+        "activation_credential_key_id": installed.activation_credential_key_id,
+        "host_nonce": "nonce",
+        "activation_proof": "proof",
+    }
+
+    response = ingress.receive({"event_type": "PLUGIN_HOST_HELLO", "event": event})
+
+    assert response["installed_plugin_id"] == installed.installed_plugin_id
+    with pytest.raises(PluginHostAuthenticationError, match="not permitted"):
+        ingress.receive({"event_type": "PLUGIN_EXECUTE", "event": event})
