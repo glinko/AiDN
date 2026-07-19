@@ -3036,6 +3036,16 @@ class HypervisorService:
             runtime_binding_id
         )
 
+    def runtime_binding_endpoint_admission(
+        self,
+        runtime_binding_id: str,
+        endpoint_payload: dict | None = None,
+    ) -> dict:
+        return self.provider_inventory.runtime_binding_endpoint_admission(
+            runtime_binding_id=runtime_binding_id,
+            endpoint_payload=endpoint_payload,
+        )
+
     def mark_model_install_completed(self, install_id: str) -> dict:
         job = self._model_installs[install_id]
         job["status"] = "completed"

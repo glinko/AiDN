@@ -112,6 +112,7 @@ We already have a working local hypervisor foundation:
 - first-class Provider Plugin, Provider Instance, Model Deployment, and Runtime Binding inventory with snapshot/restore persistence;
 - schema-driven Provider install forms, Installation Recipe prefill, approval records, permission acknowledgement, explicit permission/sandbox upgrade review acknowledgement, signed package verification, package-identity binding, sandbox-policy binding, executor-declared sandbox boundary compatibility, bounded declarative subset enforcement for `networks`, `health_checks`, and `resource_limits`, secret-handle selection, dry-run diagnostics, executor-level local-import readiness diagnostics, controlled local artifact staging/list/remove APIs, controlled staged-archive extraction, a shared immutable Model Artifact Store with SHA-256 promotion/deduplication, immutable multi-file Model Artifact Sets, deployment binding, reference-aware removal, and explicit fail-closed grace-period GC, plus `model-artifact://` materialization and persisted per-Provider-Instance Artifact Set materialization records, rollback preview, rollback execution/job replay for terminal install jobs, rollback step/timestamp persistence, apply jobs, a first opt-in host-mutating `ControlledFilesystemProviderInstallationExecutor` that prepares controlled volume directories, staged model-download manifests, bounded local artifact imports, and bounded staged-archive extraction inside one root path, and a non-host-mutating `SandboxEnforcedProviderInstallationExecutor` default path;
 - Model Deployment artifact-materialization readiness now gates Runtime Binding creation for artifact-backed deployments, while artifact-free deployments remain compatible and the Provider dashboard exposes missing/ready/failed materialization state before operators create a Runtime Binding;
+- Endpoint Draft creation from Runtime Binding now uses a single provider-to-endpoint admission result covering Runtime readiness, Artifact materialization, compatibility bundle projection, owner wallet, Capability compatibility, pricing warnings and publication-policy blockers, with API `409` details and dashboard readiness chips before operators create the draft;
 - guided provider setup handoff from approved/apply Provider plan to model discovery, Runtime Binding creation, and Endpoint draft creation;
 - subprocess-backed runtime lifecycle and operator controls;
 - agent allocation leases;
@@ -235,7 +236,7 @@ Immediate priorities:
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
 3. Add a content-addressed Plugin Package Store and verify downloaded bytes before any package activation; then project signed Release metadata into the Registry `plugin` namespace.
 4. Replace in-process community plugin loading with a scoped Plugin Host and Local IPC contract before enabling shell, container, download or package-manager executors.
-5. Expand provider-to-endpoint admission checks so Endpoint Draft creation also explains incompatible Runtime, artifact, pricing and publication blockers in one operator-facing readiness result.
+5. Expand Endpoint readiness beyond draft admission into publish-time checks for pricing, validation policy, visibility, Session limits and signed-publication compatibility.
 
 ## Milestones
 
@@ -434,7 +435,7 @@ Order of work right now:
 1. Close the operator bootstrap loop from `install -> wallet ownership -> provider attach -> model/bundle setup -> first endpoint publish`
 2. Make endpoint management the primary operator object, including privacy mode, publication mode, and validation as separate actions
 3. Finish migrating the operator shell onto the endpoint-first trust layer, so publish/proof/sync state are first-class controls across `Home`, `Endpoints`, and later marketplace flows
-4. Expand provider-to-endpoint admission checks so Endpoint Draft creation explains incompatible Runtime, artifact, pricing and publication blockers in one operator-facing readiness result
+4. Expand Endpoint readiness beyond draft admission into publish-time checks for pricing, validation policy, visibility, Session limits and signed-publication compatibility
 5. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
 6. Finish the remaining `M3/M4` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
 7. Define `M5` rating, validation economics, and `M6` custom model onboarding contracts around the endpoint-centric operator experience

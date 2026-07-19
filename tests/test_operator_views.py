@@ -744,6 +744,13 @@ def test_providers_payload_exposes_models_and_runtime_binding_readiness() -> Non
     assert instance["runtime_binding_ready_count"] == 1
     assert payload["model_deployments"][0]["provider_instance_id"] == attached["provider_instance_id"]
     assert payload["runtime_bindings"][0]["runtime_binding_id"] == binding["runtime_binding_id"]
+    assert payload["runtime_bindings"][0]["endpoint_admission_ready"] is True
+    assert payload["runtime_bindings"][0]["endpoint_admission"]["dimensions"][
+        "compatibility_bundle"
+    ]["bundle_id"] == binding["compatibility_bundle_id"]
+    assert payload["runtime_bindings"][0]["endpoint_admission"]["warnings"][0][
+        "code"
+    ] == "ENDPOINT_PRICING_NOT_CONFIGURED"
     assert payload["summary"]["total_provider_instances"] == 1
     assert payload["summary"]["total_model_deployments"] == 1
     assert payload["summary"]["total_runtime_bindings"] == 1

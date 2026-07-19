@@ -299,6 +299,95 @@ def test_provider_inventory_service_attaches_discovers_and_projects_runtime_bind
     assert bundle.endpoint == "http://127.0.0.1:9999"
 
 
+def test_provider_inventory_service_evaluates_runtime_binding_endpoint_admission() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+    instance = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    model = service.discover_models(instance.provider_instance_id)[0]
+    binding = service.create_runtime_binding(
+        model_deployment_id=model.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+
+    admission = service.runtime_binding_endpoint_admission(
+        binding.runtime_binding_id,
+        endpoint_payload={
+            "owner_wallet": "wallet-operator",
+            "model_class": "llm.chat",
+            "capabilities": ["llm.chat"],
+        },
+    )
+
+    assert admission["ready"] is True
+    assert admission["dimensions"]["runtime_binding"]["ready"] is True
+    assert admission["dimensions"]["artifact_materialization"]["status"] == "NOT_REQUIRED"
+    assert admission["dimensions"]["compatibility_bundle"]["bundle_id"] == (
+        binding.compatibility_bundle_id
+    )
+    assert admission["dimensions"]["pricing"]["status"] == "DRAFT_PRICE_UNSET"
+    assert admission["warnings"][0]["code"] == "ENDPOINT_PRICING_NOT_CONFIGURED"
+
+    mismatch = service.runtime_binding_endpoint_admission(
+        binding.runtime_binding_id,
+        endpoint_payload={
+            "owner_wallet": "wallet-operator",
+            "model_class": "image.generate",
+            "capabilities": ["image.generate"],
+        },
+    )
+
+    assert mismatch["ready"] is False
+    assert {
+        blocker["code"] for blocker in mismatch["blockers"]
+    } == {
+        "ENDPOINT_CAPABILITY_MISMATCH",
+        "ENDPOINT_CAPABILITY_NOT_ADVERTISED",
+    }
+
+
+def test_provider_inventory_service_blocks_endpoint_admission_for_stopped_runtime_binding() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+    instance = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+    model = service.discover_models(instance.provider_instance_id)[0]
+    binding = service.create_runtime_binding(
+        model_deployment_id=model.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0.0",
+        capability_definition_hash="cap-hash",
+    )
+    service.store.save_runtime_binding(
+        binding.model_copy(update={"status": "disabled", "operational_state": "STOPPED"})
+    )
+
+    admission = service.runtime_binding_endpoint_admission(
+        binding.runtime_binding_id,
+        endpoint_payload={
+            "owner_wallet": "wallet-operator",
+            "model_class": "llm.chat",
+            "capabilities": ["llm.chat"],
+        },
+    )
+
+    assert admission["ready"] is False
+    assert admission["blockers"][0]["code"] == "RUNTIME_BINDING_NOT_READY"
+    assert admission["dimensions"]["runtime_binding"]["operational_state"] == "STOPPED"
+
+
 def test_provider_inventory_service_validates_configuration_before_attach() -> None:
     class ValidationTrackingPlugin(FakeManagedPlugin):
         plugin_id = "fake-validation-tracking"

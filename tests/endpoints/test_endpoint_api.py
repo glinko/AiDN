@@ -862,6 +862,15 @@ def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
     hypervisor.bundle_hash_for_runtime_binding = (  # type: ignore[attr-defined]
         lambda runtime_binding_id: f"bundle-hash-{runtime_binding_id}"
     )
+    hypervisor.runtime_binding_endpoint_admission = (  # type: ignore[attr-defined]
+        lambda runtime_binding_id, endpoint_payload=None: {
+            "runtime_binding_id": runtime_binding_id,
+            "ready": True,
+            "blockers": [],
+            "warnings": [],
+            "dimensions": {},
+        }
+    )
     client = TestClient(
         build_app(
             service=hypervisor,
@@ -886,6 +895,56 @@ def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
     assert response.status_code == 201
     assert body["data"]["endpoint"]["bundle_id"] == "bundle-rtb-1"
     assert body["data"]["endpoint"]["bundle_hash"] == "bundle-hash-rtb-1"
+
+
+def test_create_endpoint_route_rejects_runtime_binding_admission_blocker() -> None:
+    hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    hypervisor.runtime_binding_endpoint_admission = (  # type: ignore[attr-defined]
+        lambda runtime_binding_id, endpoint_payload=None: {
+            "runtime_binding_id": runtime_binding_id,
+            "ready": False,
+            "blockers": [
+                {
+                    "code": "RUNTIME_BINDING_NOT_READY",
+                    "message": "Runtime Binding must be ready before creating an Endpoint draft.",
+                }
+            ],
+            "warnings": [],
+            "dimensions": {
+                "runtime_binding": {
+                    "ready": False,
+                    "status": "disabled",
+                    "operational_state": "STOPPED",
+                }
+            },
+        }
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=EndpointService(EndpointStore()),
+            session_service=SessionService(SessionStore()),
+        )
+    )
+
+    response = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-a",
+            "runtime_binding_id": "rtb-1",
+            "display_name": "Local Qwen",
+            "model_class": "llm.chat",
+            "capabilities": ["llm.chat"],
+        },
+    )
+
+    body = response.json()
+
+    assert response.status_code == 409
+    assert body["error"]["code"] == "endpoint_admission_blocked"
+    assert body["error"]["details"]["blockers"][0]["code"] == (
+        "RUNTIME_BINDING_NOT_READY"
+    )
 
 
 def test_patch_endpoint_runtime_rotates_configuration_hash() -> None:

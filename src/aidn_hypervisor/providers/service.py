@@ -535,6 +535,194 @@ class ProviderInventoryService:
                 "creating a Runtime Binding"
             )
 
+    def runtime_binding_endpoint_admission(
+        self,
+        runtime_binding_id: str,
+        endpoint_payload: dict | None = None,
+    ) -> dict:
+        binding = self.store.get_runtime_binding(runtime_binding_id)
+        deployment = self.store.get_model_deployment(binding.model_deployment_id)
+        blockers: list[dict] = []
+        warnings: list[dict] = []
+        dimensions: dict[str, dict] = {}
+
+        runtime_ready = binding.status == "ready" and binding.operational_state == "READY"
+        dimensions["runtime_binding"] = {
+            "ready": runtime_ready,
+            "status": binding.status,
+            "operational_state": binding.operational_state,
+            "runtime_binding_id": binding.runtime_binding_id,
+            "runtime_id": binding.runtime_id,
+            "runtime_generation": binding.runtime_generation,
+            "runtime_configuration_hash": binding.runtime_configuration_hash,
+        }
+        if not runtime_ready:
+            blockers.append(
+                {
+                    "code": "RUNTIME_BINDING_NOT_READY",
+                    "message": "Runtime Binding must be ready before creating an Endpoint draft.",
+                    "status": binding.status,
+                    "operational_state": binding.operational_state,
+                }
+            )
+
+        artifact_readiness = self.model_deployment_artifact_readiness(deployment)
+        dimensions["artifact_materialization"] = artifact_readiness
+        if not artifact_readiness["ready"]:
+            blockers.append(
+                {
+                    "code": "MODEL_ARTIFACTS_NOT_READY",
+                    "message": "Model artifacts must be materialized before Endpoint draft creation.",
+                    "status": artifact_readiness["status"],
+                    "artifact_set_id": artifact_readiness["artifact_set_id"],
+                }
+            )
+
+        try:
+            compatibility_bundle = self.bundle_config_for_runtime_binding(
+                runtime_binding_id
+            )
+            bundle_hash = self.bundle_hash_for_runtime_binding(runtime_binding_id)
+            bundle_ready = bool(compatibility_bundle.bundle_id and bundle_hash)
+            dimensions["compatibility_bundle"] = {
+                "ready": bundle_ready,
+                "bundle_id": compatibility_bundle.bundle_id,
+                "bundle_hash": bundle_hash,
+                "workload_type": compatibility_bundle.workload_type,
+                "endpoint": compatibility_bundle.endpoint,
+            }
+            if not bundle_ready:
+                blockers.append(
+                    {
+                        "code": "COMPATIBILITY_BUNDLE_INVALID",
+                        "message": "Runtime Binding compatibility bundle projection is incomplete.",
+                    }
+                )
+        except (KeyError, ValueError) as error:
+            dimensions["compatibility_bundle"] = {
+                "ready": False,
+                "status": "ERROR",
+            }
+            blockers.append(
+                {
+                    "code": "COMPATIBILITY_BUNDLE_UNAVAILABLE",
+                    "message": str(error),
+                }
+            )
+
+        payload = endpoint_payload or {}
+        owner_wallet = str(payload.get("owner_wallet") or "").strip()
+        owner_ready = endpoint_payload is None or bool(owner_wallet)
+        dimensions["endpoint_identity"] = {
+            "ready": owner_ready,
+            "owner_wallet_present": bool(owner_wallet),
+        }
+        if not owner_ready:
+            blockers.append(
+                {
+                    "code": "ENDPOINT_OWNER_WALLET_REQUIRED",
+                    "message": "Endpoint draft creation requires an owner wallet.",
+                }
+            )
+
+        model_class = payload.get("model_class")
+        capabilities = payload.get("capabilities")
+        capability_ready = True
+        capability_status = "MATCHED"
+        if model_class is not None and model_class != binding.capability_id:
+            capability_ready = False
+            capability_status = "MODEL_CLASS_MISMATCH"
+            blockers.append(
+                {
+                    "code": "ENDPOINT_CAPABILITY_MISMATCH",
+                    "message": "Endpoint model_class must match the Runtime Binding capability.",
+                    "expected": binding.capability_id,
+                    "actual": model_class,
+                }
+            )
+        if capabilities is not None and binding.capability_id not in capabilities:
+            capability_ready = False
+            capability_status = "CAPABILITIES_MISSING_BINDING"
+            blockers.append(
+                {
+                    "code": "ENDPOINT_CAPABILITY_NOT_ADVERTISED",
+                    "message": "Endpoint capabilities must include the Runtime Binding capability.",
+                    "expected": binding.capability_id,
+                }
+            )
+        dimensions["capability"] = {
+            "ready": capability_ready,
+            "status": capability_status,
+            "capability_id": binding.capability_id,
+            "capability_version": binding.capability_version,
+            "capability_definition_hash": binding.capability_definition_hash,
+        }
+
+        pricing = payload.get("pricing") or {}
+        configured_prices = [
+            pricing.get("fixed_price"),
+            pricing.get("input_price"),
+            pricing.get("output_price"),
+        ]
+        pricing_configured = any(value is not None for value in configured_prices)
+        dimensions["pricing"] = {
+            "ready": True,
+            "status": "CONFIGURED" if pricing_configured else "DRAFT_PRICE_UNSET",
+            "billing_unit": pricing.get("billing_unit", "request"),
+        }
+        if not pricing_configured:
+            warnings.append(
+                {
+                    "code": "ENDPOINT_PRICING_NOT_CONFIGURED",
+                    "message": "Endpoint pricing is unset; keep the draft private until pricing is reviewed.",
+                }
+            )
+
+        publication = payload.get("publication") or {}
+        visibility = publication.get("visibility", "private")
+        shared_wallets = publication.get("shared_with_wallet_ids") or []
+        accepts_external_requests = bool(
+            publication.get("accepts_external_requests", False)
+        )
+        publication_ready = True
+        publication_status = "DRAFT_PRIVATE"
+        if visibility == "public":
+            publication_status = "PUBLIC_READY"
+        elif visibility == "shared":
+            publication_status = "SHARED_READY"
+            if not shared_wallets:
+                publication_ready = False
+                publication_status = "SHARED_ALLOWLIST_MISSING"
+                blockers.append(
+                    {
+                        "code": "ENDPOINT_SHARED_ALLOWLIST_REQUIRED",
+                        "message": "Shared Endpoint drafts require at least one allowed wallet.",
+                    }
+                )
+        if accepts_external_requests and visibility == "private":
+            publication_ready = False
+            publication_status = "PRIVATE_EXTERNAL_REQUESTS_CONFLICT"
+            blockers.append(
+                {
+                    "code": "ENDPOINT_PUBLICATION_POLICY_CONFLICT",
+                    "message": "Private Endpoint drafts cannot accept external requests.",
+                }
+            )
+        dimensions["publication"] = {
+            "ready": publication_ready,
+            "status": publication_status,
+            "visibility": visibility,
+            "accepts_external_requests": accepts_external_requests,
+        }
+
+        return {
+            "runtime_binding_id": binding.runtime_binding_id,
+            "ready": not blockers,
+            "blockers": blockers,
+            "warnings": warnings,
+            "dimensions": dimensions,
+        }
+
     def run_installation_diagnostics(
         self,
         *,

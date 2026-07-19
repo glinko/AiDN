@@ -69,12 +69,22 @@ def build_endpoint_router(
             },
         )
 
-    def _error(status_code: int, code: str, message: str) -> JSONResponse:
+    def _error(
+        status_code: int,
+        code: str,
+        message: str,
+        *,
+        details: dict | None = None,
+    ) -> JSONResponse:
         return JSONResponse(
             status_code=status_code,
             content={
                 "data": None,
-                "error": {"code": code, "message": message},
+                "error": {
+                    "code": code,
+                    "message": message,
+                    **({"details": details} if details is not None else {}),
+                },
                 "correlation_id": str(uuid4()),
             },
         )
@@ -89,9 +99,34 @@ def build_endpoint_router(
         command_data = dict(payload)
         runtime_binding_id = command_data.get("runtime_binding_id")
         if runtime_binding_id and hypervisor_service is not None:
-            compatibility_bundle = hypervisor_service.bundle_for_runtime_binding(
-                str(runtime_binding_id)
-            )
+            try:
+                admission = hypervisor_service.runtime_binding_endpoint_admission(
+                    str(runtime_binding_id),
+                    endpoint_payload=command_data,
+                )
+            except KeyError:
+                return _error(
+                    404,
+                    "runtime_binding_not_found",
+                    f"Unknown runtime binding: {runtime_binding_id}",
+                )
+            if not admission["ready"]:
+                return _error(
+                    409,
+                    "endpoint_admission_blocked",
+                    "Endpoint draft cannot be created from this Runtime Binding yet.",
+                    details=admission,
+                )
+            try:
+                compatibility_bundle = hypervisor_service.bundle_for_runtime_binding(
+                    str(runtime_binding_id)
+                )
+            except KeyError:
+                return _error(
+                    404,
+                    "runtime_binding_not_found",
+                    f"Unknown runtime binding: {runtime_binding_id}",
+                )
             command_data["bundle_id"] = compatibility_bundle.bundle_id
             command_data["bundle_hash"] = command_data.get("bundle_hash") or (
                 hypervisor_service.bundle_hash_for_runtime_binding(

@@ -2895,6 +2895,9 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert "Materialize Artifacts First" in response.text
     assert "materialize first" in response.text
     assert "artifacts ready" in response.text
+    assert "Fix Endpoint Readiness" in response.text
+    assert "review pricing" in response.text
+    assert "endpoint ready" in response.text
     assert "data-model-runtime-binding" in response.text
     assert "runtime_binding_id" in response.text
     assert "data-runtime-binding-endpoint" in response.text

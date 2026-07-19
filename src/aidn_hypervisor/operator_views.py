@@ -714,7 +714,38 @@ def build_operator_providers_payload(
         installation_approvals.append({**approval, "status_label": status_label})
     provider_instances = service.list_provider_instances()
     model_deployments = service.list_model_deployments()
-    runtime_bindings = service.list_runtime_bindings()
+    runtime_bindings = []
+    for binding in service.list_runtime_bindings():
+        try:
+            endpoint_admission = service.runtime_binding_endpoint_admission(
+                binding["runtime_binding_id"]
+            )
+        except (KeyError, ValueError) as error:
+            endpoint_admission = {
+                "runtime_binding_id": binding["runtime_binding_id"],
+                "ready": False,
+                "blockers": [
+                    {
+                        "code": "ENDPOINT_ADMISSION_EVALUATION_FAILED",
+                        "message": str(error),
+                    }
+                ],
+                "warnings": [],
+                "dimensions": {},
+            }
+        runtime_bindings.append(
+            {
+                **binding,
+                "endpoint_admission": endpoint_admission,
+                "endpoint_admission_ready": endpoint_admission["ready"],
+                "endpoint_admission_blocker_count": len(
+                    endpoint_admission["blockers"]
+                ),
+                "endpoint_admission_warning_count": len(
+                    endpoint_admission["warnings"]
+                ),
+            }
+        )
     runtime_bindings_by_model: dict[str, list[dict]] = {}
     for binding in runtime_bindings:
         runtime_bindings_by_model.setdefault(binding["model_deployment_id"], []).append(

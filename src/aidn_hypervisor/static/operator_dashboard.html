@@ -3745,6 +3745,32 @@
       ) || null;
     }
 
+    function runtimeBindingEndpointAdmissionTone(binding) {
+      const admission = binding?.endpoint_admission;
+      if (!admission) {
+        return "";
+      }
+      if (!admission.ready) {
+        return "bad";
+      }
+      return (admission.warnings || []).length ? "" : "good";
+    }
+
+    function runtimeBindingEndpointAdmissionLabel(binding) {
+      const admission = binding?.endpoint_admission;
+      if (!admission) {
+        return "endpoint unchecked";
+      }
+      if (!admission.ready) {
+        const blocker = (admission.blockers || [])[0];
+        return blocker?.code ? blocker.code.replaceAll("_", " ").toLowerCase() : "endpoint blocked";
+      }
+      if ((admission.warnings || []).length) {
+        return "review pricing";
+      }
+      return "endpoint ready";
+    }
+
     function modelForRuntimeBinding(binding) {
       if (!binding?.model_deployment_id) {
         return null;
@@ -5064,6 +5090,7 @@
                   ? runtimeBindings
                       .map((binding) => {
                         const pending = state.providerActionPending === `endpoint:${binding.runtime_binding_id}`;
+                        const endpointReady = binding.endpoint_admission_ready !== false;
                         return `
                           <div class="table-row">
                             <div>
@@ -5073,8 +5100,11 @@
                             <div class="row-meta">${binding.model_deployment_id}</div>
                             <div class="row-meta">${binding.capability_id} / ${binding.capability_version}</div>
                             <div class="row-meta">${binding.compatibility_bundle_id}</div>
-                            <div><span class="chip ${binding.status === "ready" ? "good" : ""}">${binding.status || "unknown"}</span></div>
-                            <button class="row-action" type="button" data-runtime-binding-endpoint="${escapeHtml(binding.runtime_binding_id)}">${pending ? "Creating..." : "Create Endpoint"}</button>
+                            <div class="stack">
+                              <span class="chip ${binding.status === "ready" ? "good" : ""}">${binding.status || "unknown"}</span>
+                              <span class="chip ${runtimeBindingEndpointAdmissionTone(binding)}">${runtimeBindingEndpointAdmissionLabel(binding)}</span>
+                            </div>
+                            <button class="row-action" type="button" data-runtime-binding-endpoint="${escapeHtml(binding.runtime_binding_id)}" ${endpointReady ? "" : "disabled"}>${pending ? "Creating..." : endpointReady ? "Create Endpoint" : "Fix Endpoint Readiness"}</button>
                           </div>
                         `;
                       })
