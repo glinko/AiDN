@@ -44,6 +44,7 @@ from aidn_hypervisor.providers.package_store import PluginPackageStore
 from aidn_hypervisor.plugins.host import (
     PluginHostAuthenticator,
     PluginHostHandshakeService,
+    PluginHostConnectionStore,
     PluginHostLocalIpcIngress,
 )
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
@@ -72,6 +73,7 @@ class ProviderInventoryService:
         installation_executor: ProviderInstallationExecutor | None = None,
         trusted_publisher_keys: dict[str, list[str]] | None = None,
         package_store: PluginPackageStore | None = None,
+        plugin_host_connections: list[dict] | None = None,
     ) -> None:
         self.plugins = plugins
         self.store = store
@@ -82,6 +84,7 @@ class ProviderInventoryService:
             trusted_publisher_keys or DEFAULT_TRUSTED_PUBLISHER_KEYS
         )
         self.package_store = package_store
+        self.plugin_host_connection_store = PluginHostConnectionStore(plugin_host_connections)
         self._runtime_binding_projections: dict[str, dict] = {}
 
     def list_plugin_manifests(self) -> list[dict]:
@@ -108,6 +111,7 @@ class ProviderInventoryService:
             installation_plan_builder=lambda plugin_id, configuration: self.build_installation_plan(
                 plugin_id=plugin_id, configuration=configuration
             ),
+            connection_store=self.plugin_host_connection_store,
         )
 
     def stage_plugin_package(self, *, package_bytes: bytes, expected_digest: str) -> str:

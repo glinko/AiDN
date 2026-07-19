@@ -31,6 +31,7 @@ from aidn_hypervisor.providers.models import (
     ProviderInstance,
     RuntimeBinding,
 )
+from aidn_hypervisor.plugins.host import PluginHostConnection
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeCapacity,
     RuntimeArtifactDeclare,
@@ -336,6 +337,7 @@ class HypervisorStateSnapshot(BaseModel):
     provider_installation_jobs: list[ProviderInstallationJob] = Field(
         default_factory=list
     )
+    plugin_host_connections: list[PluginHostConnection] = Field(default_factory=list)
     dispatcher_routes: list[DispatcherRoute] = Field(default_factory=list)
     dispatcher_queued_messages: list[NetworkMessage] = Field(default_factory=list)
     dispatcher_delivery_records: list[DeliveryRecord] = Field(default_factory=list)

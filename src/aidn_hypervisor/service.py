@@ -3428,6 +3428,7 @@ class HypervisorService:
                 job.model_copy(deep=True)
                 for job in self.provider_inventory.list_installation_jobs()
             ],
+            plugin_host_connections=self.provider_inventory.plugin_host_connection_store.snapshot(),
             runtime_protocol_connections=list(
                 self.runtime_protocol_store.connections.values()
             ),
@@ -3706,6 +3707,7 @@ class HypervisorService:
             plugins=self.plugins,
             store=InMemoryProviderInventoryStore(),
             installation_executor=installation_executor,
+            plugin_host_connections=[item.model_dump(mode="json") for item in snapshot.plugin_host_connections],
         )
         for release in snapshot.plugin_releases:
             self.provider_inventory.store.save_plugin_release(release)
