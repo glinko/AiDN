@@ -1,5 +1,6 @@
 import pytest
 import json
+import os
 from uuid import uuid4
 
 from aidn_hypervisor.plugins.host import (
@@ -15,6 +16,7 @@ from aidn_hypervisor.plugins.host_named_pipe import (
     WindowsNamedPipePluginHostClient,
     WindowsNamedPipePluginHostListener,
 )
+from aidn_hypervisor.plugins.host_unix_socket import UnixSocketPluginHostListener
 from aidn_hypervisor.providers.models import InstalledPlugin
 
 
@@ -178,3 +180,10 @@ def test_windows_named_pipe_plugin_host_routes_hello() -> None:
 
     assert response["ok"] is True
     assert response["result"]["installed_plugin_id"] == installed.installed_plugin_id
+
+
+def test_unix_socket_plugin_host_rejects_windows() -> None:
+    if os.name != "nt":
+        pytest.skip("Windows-specific guard")
+    with pytest.raises(RuntimeError, match="unavailable on Windows"):
+        UnixSocketPluginHostListener(address="/tmp/aidn-plugin.sock", wire_adapter=None)
