@@ -1,7 +1,7 @@
 import hashlib
 import json
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import time
 from urllib import error as urllib_error, request as urllib_request
 from uuid import uuid4
@@ -41,6 +41,11 @@ from aidn_hypervisor.registry_models import (
 )
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
+from aidn_hypervisor.runtime_protocol.models import (
+    RuntimeExecuteRequest,
+    RuntimeRequestRecord,
+    RuntimeUsageReport,
+)
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.settlement.models import (
@@ -4910,6 +4915,12 @@ class HypervisorService:
                 bundle_id=bundle.bundle_id,
                 runtime_id=runtime.runtime_id if runtime is not None else None,
             )
+            self._record_mvp_runtime_evidence_for_completed_task(
+                task_id=task_id,
+                bundle=bundle,
+                task=task.request,
+                runtime=runtime,
+            )
             self._auto_record_wallet_usage_for_task(
                 task_id=task_id,
                 bundle=bundle,
@@ -5189,6 +5200,156 @@ class HypervisorService:
         if last_error is None:
             raise RuntimeError("invoke failed without an error")
         raise last_error
+
+    def _record_mvp_runtime_evidence_for_completed_task(
+        self,
+        *,
+        task_id: str,
+        bundle: BundleConfig,
+        task: TaskRequest,
+        runtime: RuntimeHandle | None,
+    ) -> RuntimeRequestRecord | None:
+        session_id = task.constraints.get("session_id")
+        endpoint_id = task.constraints.get("endpoint_id")
+        if session_id is None or endpoint_id is None:
+            return None
+        session_service = getattr(self, "session_service", None)
+        endpoint_service = getattr(self, "endpoint_service", None)
+        if session_service is None or endpoint_service is None:
+            return None
+        try:
+            session = session_service.store.get_session(str(session_id))
+            endpoint = endpoint_service.get_endpoint(str(endpoint_id)).endpoint
+        except KeyError:
+            return None
+        if session.economic_profile != "MVP-0001":
+            return None
+        if session.session_contract_hash is None:
+            raise RuntimeError("MVP Session is missing session_contract_hash")
+        if session.accounting_contract_hash is None:
+            raise RuntimeError("MVP Session is missing accounting_contract_hash")
+        if session.request_charge_ceiling_q_atoms is None:
+            raise RuntimeError("MVP Session is missing request_charge_ceiling_q_atoms")
+
+        request_id = str(task.constraints.get("request_id") or task_id)
+        runtime_id = runtime.runtime_id if runtime is not None else f"proxy:{bundle.bundle_id}"
+        runtime_configuration_hash = _canonical_hash(
+            {
+                "bridge": "MVP-0001_TASK_RUNTIME_COMPAT",
+                "bundle_id": bundle.bundle_id,
+                "bundle_model_id": bundle.model_id,
+                "endpoint_configuration_hash": endpoint.configuration_hash,
+            }
+        )
+        payload = {
+            "task_id": task_id,
+            "task_type": task.task_type,
+            "payload": task.payload,
+        }
+        request_deadline = str(
+            task.constraints.get("request_deadline")
+            or (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        )
+        request = RuntimeExecuteRequest(
+            runtime_id=runtime_id,
+            runtime_generation=1,
+            runtime_configuration_hash=runtime_configuration_hash,
+            route_generation=1,
+            endpoint_id=endpoint.endpoint_id,
+            endpoint_configuration_hash=endpoint.configuration_hash,
+            session_id=session.session_id,
+            session_contract_hash=session.session_contract_hash,
+            request_id=request_id,
+            capability_id=(endpoint.capabilities[0] if endpoint.capabilities else endpoint.model_class),
+            capability_version="1.0",
+            capability_definition_hash=_canonical_hash(
+                {
+                    "endpoint_id": endpoint.endpoint_id,
+                    "model_class": endpoint.model_class,
+                    "capabilities": endpoint.capabilities,
+                }
+            ),
+            request_payload_hash=_canonical_hash(payload),
+            request_payload=payload,
+            request_charge_ceiling=(
+                session.request_charge_ceiling_q_atoms / Q_ATOMS_PER_Q
+            ),
+            accounting_contract_hash=session.accounting_contract_hash,
+            idempotency_key=f"task:{task_id}",
+            request_deadline=request_deadline,
+            trace_context={
+                "task_id": task_id,
+                "bundle_id": bundle.bundle_id,
+                "bridge": "MVP-0001_TASK_RUNTIME_COMPAT",
+            },
+        )
+        existing = self.runtime_protocol_store.requests.get(request_id)
+        request_hash = request.semantic_hash()
+        if existing is not None:
+            if existing.request_hash != request_hash:
+                raise RuntimeError("MVP Runtime Request ID conflicts with task evidence")
+            if existing.terminal_result_hash is not None:
+                return existing
+
+        now = datetime.now(timezone.utc).isoformat()
+        result = self._task_results.get(task_id)
+        result_payload = result if isinstance(result, dict) else {"result": result}
+        final_usage = RuntimeUsageReport(
+            usage_report_id=f"usage-final-{request_id}",
+            runtime_id=request.runtime_id,
+            runtime_generation=request.runtime_generation,
+            runtime_configuration_hash=request.runtime_configuration_hash,
+            endpoint_id=request.endpoint_id,
+            endpoint_configuration_hash=request.endpoint_configuration_hash,
+            session_id=request.session_id,
+            request_id=request.request_id,
+            accounting_contract_hash=request.accounting_contract_hash,
+            report_type="FINAL",
+            usage_sequence=1,
+            request_state="COMPLETED",
+            provider_attempt_count=1,
+            terminal=True,
+            observed_from=now,
+            observed_to=now,
+            limitations=[
+                "MVP-0001 fixed-price bridge records execution envelope only; "
+                "token dimensions are not inferred."
+            ],
+            created_at=now,
+            runtime_signature="hypervisor-mvp-bridge",
+        )
+        self.runtime_protocol_store.requests[request_id] = RuntimeRequestRecord(
+            request_id=request_id,
+            runtime_id=request.runtime_id,
+            runtime_generation=request.runtime_generation,
+            route_generation=request.route_generation,
+            request_hash=request_hash,
+            request=request,
+            request_state="COMPLETED",
+            admission_state="ACCEPTED",
+            runtime_request_handle=f"task:{task_id}",
+            accepted_at=now,
+            terminal_result_hash=_canonical_hash(result_payload),
+            terminal_final_usage_report_id=final_usage.usage_report_id,
+            updated_at=now,
+        )
+        self.runtime_protocol_store.usage_reports[final_usage.usage_report_id] = (
+            final_usage
+        )
+        self.runtime_protocol_store.flush()
+        self.record_event(
+            event_type="runtime.mvp_evidence_recorded",
+            message="MVP Runtime evidence recorded from completed task",
+            task_id=task_id,
+            bundle_id=bundle.bundle_id,
+            runtime_id=runtime_id,
+            details={
+                "session_id": session.session_id,
+                "request_id": request_id,
+                "usage_report_id": final_usage.usage_report_id,
+            },
+        )
+        return self.runtime_protocol_store.requests[request_id]
 
     def _auto_record_wallet_usage_for_task(
         self,
@@ -5677,6 +5838,12 @@ class HypervisorService:
                 endpoint_id=manifest.endpoint_id,
                 session_id=str(session_id),
             )
+            session = session_service.store.get_session(str(session_id))
+            if session.economic_profile == "MVP-0001" and any(
+                item.request.session_id == str(session_id)
+                for item in self.runtime_protocol_store.requests.values()
+            ):
+                raise ValueError("MVP-0001 supports exactly one Runtime Request per Session")
         except KeyError as error:
             raise ValueError(f"Unknown session: {session_id}") from error
 
@@ -5869,6 +6036,12 @@ class HypervisorService:
                 message="task completed successfully",
                 task_id=task_id,
                 bundle_id=bundle.bundle_id,
+            )
+            self._record_mvp_runtime_evidence_for_completed_task(
+                task_id=task_id,
+                bundle=bundle,
+                task=task.request,
+                runtime=None,
             )
             self._auto_record_wallet_usage_for_task(
                 task_id=task_id,

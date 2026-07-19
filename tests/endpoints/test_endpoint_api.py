@@ -1,12 +1,15 @@
 from fastapi.testclient import TestClient
 
-from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
+from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.main import build_app
 from aidn_hypervisor.persistence import FileStateStore
+from aidn_hypervisor.plugins.fake import FakeManagedPlugin
+from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.queue import InMemoryTaskQueue
+from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeExecuteRequest,
     RuntimeRequestRecord,
@@ -115,6 +118,64 @@ def _mvp_persistent_api_context(tmp_path):
         },
     ).json()["data"]["session"]
     return state_store, hypervisor, client, endpoint, session
+
+
+def _mvp_executable_api_context():
+    plugins = PluginRegistry()
+    plugins.register(FakeManagedPlugin())
+    hypervisor = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048)),
+        bundles=[
+            BundleConfig(
+                bundle_id="bundle-a",
+                plugin_id="fake-managed",
+                provider_type="fake",
+                workload_type="llm_text",
+                model_id="fake-model",
+                launch_mode="managed_process",
+                device_affinity="cpu",
+                resource_profile=ResourceProfile(),
+                warm_policy="auto",
+                priority_class=50,
+                enabled=True,
+            )
+        ],
+        plugins=plugins,
+        runtimes=ProviderProcessManager(),
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+    endpoint = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-endpoint",
+            "bundle_id": "bundle-a",
+            "bundle_hash": "bundle-hash-a",
+            "display_name": "Executable fixed price endpoint",
+            "model_class": "llm.chat",
+            "capabilities": ["llm.chat"],
+        },
+    ).json()["data"]["endpoint"]
+    hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+    session = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+        },
+    ).json()["data"]["session"]
+    return hypervisor, client, endpoint, session
 
 
 def _restored_mvp_api_context(state_store: FileStateStore):
@@ -341,6 +402,91 @@ def test_finalize_mvp_fixed_price_session_uses_runtime_evidence_over_api() -> No
     )
     assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
+def test_mvp_fixed_price_session_executes_task_and_finalizes_from_runtime_evidence() -> None:
+    hypervisor, client, endpoint, session = _mvp_executable_api_context()
+
+    task_response = client.post(
+        "/tasks",
+        json={
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "hello"},
+            "constraints": {
+                "endpoint_id": endpoint["endpoint_id"],
+                "session_id": session["session_id"],
+            },
+        },
+    )
+    task_body = task_response.json()
+    request_id = task_body["task_id"]
+    task_detail = client.get(f"/tasks/{request_id}").json()
+    runtime_record = hypervisor.runtime_protocol_store.requests[request_id]
+    final_usage = hypervisor.runtime_protocol_store.usage_reports[
+        runtime_record.terminal_final_usage_report_id
+    ]
+
+    finalize_response = _finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        request_id=request_id,
+    )
+    finalize_body = finalize_response.json()
+
+    assert task_response.status_code == 202
+    assert task_detail["status"] == "completed"
+    assert task_detail["result"]["ok"] is True
+    assert runtime_record.request_state == "COMPLETED"
+    assert runtime_record.admission_state == "ACCEPTED"
+    assert runtime_record.request.session_id == session["session_id"]
+    assert final_usage.report_type == "FINAL"
+    assert final_usage.terminal is True
+    assert final_usage.request_state == "COMPLETED"
+    assert finalize_response.status_code == 200
+    assert finalize_body["data"]["proposal"]["final_endpoint_payment_q_atoms"] == 900
+    assert finalize_body["data"]["proposal"]["consumer_fee_refund_q_atoms"] == 100
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
+def test_mvp_fixed_price_session_rejects_second_runtime_request() -> None:
+    hypervisor, client, endpoint, session = _mvp_executable_api_context()
+    first = client.post(
+        "/tasks",
+        json={
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "first"},
+            "constraints": {
+                "endpoint_id": endpoint["endpoint_id"],
+                "session_id": session["session_id"],
+            },
+        },
+    )
+    second = client.post(
+        "/tasks",
+        json={
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "second"},
+            "constraints": {
+                "endpoint_id": endpoint["endpoint_id"],
+                "session_id": session["session_id"],
+            },
+        },
+    )
+
+    assert first.status_code == 202
+    assert second.status_code == 409
+    assert second.json()["detail"] == (
+        "MVP-0001 supports exactly one Runtime Request per Session"
+    )
+    assert len(
+        [
+            item
+            for item in hypervisor.runtime_protocol_store.requests.values()
+            if item.request.session_id == session["session_id"]
+        ]
+    ) == 1
 
 
 def test_finalize_mvp_fixed_price_session_rejects_missing_final_usage() -> None:
