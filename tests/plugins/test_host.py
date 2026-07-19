@@ -209,6 +209,31 @@ def test_plugin_host_connection_store_restores_snapshot() -> None:
     assert restored.get(connection["plugin_host_connection_id"]).plugin_id == installed.plugin_id
 
 
+def test_plugin_host_disconnect_revokes_connection() -> None:
+    installed = _installed_plugin()
+    ingress = PluginHostLocalIpcIngress(
+        PluginHostHandshakeService(
+            authenticator=PluginHostAuthenticator(lambda _: installed),
+            activation_proof_verifier=lambda _: True,
+            now=lambda: "2026-07-19T00:00:00Z",
+        )
+    )
+    connection = ingress.receive({"event_type": "PLUGIN_HOST_HELLO", "event": {
+        "installed_plugin_id": installed.installed_plugin_id, "plugin_id": installed.plugin_id,
+        "installation_generation": installed.installation_generation,
+        "activation_credential_key_id": installed.activation_credential_key_id,
+        "host_nonce": "nonce", "activation_proof": "proof",
+    }})
+    control = {
+        "plugin_host_connection_id": connection["plugin_host_connection_id"],
+        "installed_plugin_id": installed.installed_plugin_id,
+        "installation_generation": installed.installation_generation,
+    }
+    assert ingress.receive({"event_type": "PLUGIN_CONTROL", "event": {**control, "command": "DISCONNECT"}})["status"] == "OK"
+    with pytest.raises(PluginHostAuthenticationError, match="not known"):
+        ingress.receive({"event_type": "PLUGIN_CONTROL", "event": {**control, "command": "PING"}})
+
+
 def test_plugin_host_json_wire_adapter_is_bounded_and_fail_closed() -> None:
     installed = _installed_plugin()
     ingress = PluginHostLocalIpcIngress(

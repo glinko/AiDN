@@ -49,6 +49,9 @@ class PluginHostConnectionStore:
     def get(self, connection_id: str) -> PluginHostConnection | None:
         return self._connections.get(connection_id)
 
+    def remove(self, connection_id: str) -> None:
+        self._connections.pop(connection_id, None)
+
     def snapshot(self) -> list[dict]:
         return [item.model_dump(mode="json") for item in self._connections.values()]
 
@@ -158,6 +161,13 @@ class PluginHostLocalIpcIngress:
                 activation_credential_key_id=connection.activation_credential_key_id,
             )
         )
+        if command.command == "DISCONNECT":
+            self.connection_store.remove(connection.plugin_host_connection_id)
+            return {
+                "status": "OK",
+                "command": "DISCONNECT",
+                "plugin_host_connection_id": connection.plugin_host_connection_id,
+            }
         if command.command != "PING":
             if command.command == "GET_MANIFEST":
                 if self.manifest_resolver is None:
