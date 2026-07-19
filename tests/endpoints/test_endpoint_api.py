@@ -120,7 +120,7 @@ def _mvp_persistent_api_context(tmp_path):
     return state_store, hypervisor, client, endpoint, session
 
 
-def _mvp_executable_api_context():
+def _mvp_executable_api_context(*, open_session: bool = True):
     plugins = PluginRegistry()
     plugins.register(FakeManagedPlugin())
     hypervisor = HypervisorService(
@@ -166,15 +166,17 @@ def _mvp_executable_api_context():
         },
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
-    session = client.post(
-        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions",
-        json={
-            "client_wallet": "wallet-consumer",
-            "deposit_q_atoms": 1_000,
-            "fixed_price_q_atoms": 900,
-            "network_fee_reserve_q_atoms": 100,
-        },
-    ).json()["data"]["session"]
+    session = None
+    if open_session:
+        session = client.post(
+            f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions",
+            json={
+                "client_wallet": "wallet-consumer",
+                "deposit_q_atoms": 1_000,
+                "fixed_price_q_atoms": 900,
+                "network_fee_reserve_q_atoms": 100,
+            },
+        ).json()["data"]["session"]
     return hypervisor, client, endpoint, session
 
 
@@ -446,6 +448,73 @@ def test_mvp_fixed_price_session_executes_task_and_finalizes_from_runtime_eviden
     assert finalize_response.status_code == 200
     assert finalize_body["data"]["proposal"]["final_endpoint_payment_q_atoms"] == 900
     assert finalize_body["data"]["proposal"]["consumer_fee_refund_q_atoms"] == 100
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
+def test_mvp_paid_smoke_opens_executes_and_auto_finalizes() -> None:
+    hypervisor, client, endpoint, _ = _mvp_executable_api_context(open_session=False)
+
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-paid-smoke",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "smoke"},
+        },
+    )
+    body = response.json()["data"]
+
+    assert response.status_code == 201
+    assert body["task"]["status"] == "completed"
+    assert body["runtime_evidence"]["request"]["request_state"] == "COMPLETED"
+    assert body["runtime_evidence"]["final_usage"]["report_type"] == "FINAL"
+    assert body["settlement_readiness"]["ready"] is True
+    assert body["settlement_readiness"]["proposal"]["final_endpoint_payment_q_atoms"] == 900
+    assert body["finalized"]["funding"]["funding_state"] == "RELEASED"
+    assert body["finalized"]["session"]["status"] == "closed"
+    assert body["finalized"]["deposit"]["status"] == "released"
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
+def test_mvp_paid_smoke_can_return_readiness_without_finalizing() -> None:
+    hypervisor, client, endpoint, _ = _mvp_executable_api_context(open_session=False)
+
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-paid-smoke",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "readiness only"},
+            "request_id": "request-smoke-manual",
+            "auto_finalize": False,
+        },
+    )
+    body = response.json()["data"]
+    session = body["session"]
+
+    assert response.status_code == 201
+    assert body["finalized"] is None
+    assert body["settlement_readiness"]["ready"] is True
+    assert body["settlement_readiness"]["proposal"]["final_endpoint_payment_q_atoms"] == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 0
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
+
+    finalize_response = _finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        request_id="request-smoke-manual",
+    )
+
+    assert finalize_response.status_code == 200
     assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
 
