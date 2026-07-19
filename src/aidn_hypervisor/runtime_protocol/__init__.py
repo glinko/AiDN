@@ -52,6 +52,10 @@ from aidn_hypervisor.runtime_protocol.named_pipe import (
     WindowsNamedPipeRuntimeClient,
     WindowsNamedPipeRuntimeListener,
 )
+from aidn_hypervisor.runtime_protocol.unix_socket import (
+    UnixSocketRuntimeClient,
+    UnixSocketRuntimeListener,
+)
 
 __all__ = [
     "HypervisorRuntimeHello",
@@ -79,6 +83,8 @@ __all__ = [
     "RuntimeProtocolConformanceHarness",
     "WindowsNamedPipeRuntimeClient",
     "WindowsNamedPipeRuntimeListener",
+    "UnixSocketRuntimeClient",
+    "UnixSocketRuntimeListener",
     "LocalIpcRuntimeEvent",
     "LocalIpcRuntimeIngress",
     "RuntimeRecoveryPlan",
