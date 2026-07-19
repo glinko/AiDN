@@ -20,6 +20,12 @@ RUNTIME_MESSAGE_TYPES = {
     "RUNTIME_RECOVERY_STATE",
 }
 
+RUNTIME_INGRESS_MESSAGE_TYPES = {
+    "RUNTIME_READY",
+    "RUNTIME_HEALTH",
+    "RUNTIME_CAPACITY",
+}
+
 PLUGIN_CONTROL_PERMISSION_TYPES = {
     "PLUGIN_INSTALLATION_PROGRESS": "container_management",
     "PLUGIN_PROVIDER_HEALTH": "private_network",
@@ -62,6 +68,30 @@ def runtime_route(
         allowed_source_types={"HYPERVISOR", "ENDPOINT"},
         allowed_channel_classes={"RUNTIME"},
         allowed_message_types=set(RUNTIME_MESSAGE_TYPES),
+        runtime_binding_hash=binding.binding_hash(),
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def runtime_ingress_route(
+    binding: RuntimeBinding,
+    *,
+    route_generation: int,
+) -> DispatcherRoute:
+    """Scoped Runtime-to-Hypervisor event route for one approved binding."""
+    binding = RuntimeBinding.model_validate(binding.model_dump(mode="json"))
+    if binding.operational_state != "READY":
+        raise ValueError("only ready Runtime Bindings may send Runtime ingress events")
+    return DispatcherRoute(
+        destination_type="HYPERVISOR_RUNTIME_INGRESS",
+        destination_id=binding.runtime_id,
+        route_type="LOCAL_PROTOCOL_HANDLER",
+        route_generation=route_generation,
+        runtime_generation=binding.runtime_generation,
+        allowed_source_types={"RUNTIME"},
+        allowed_source_ids={binding.runtime_id},
+        allowed_channel_classes={"RUNTIME"},
+        allowed_message_types=set(RUNTIME_INGRESS_MESSAGE_TYPES),
         runtime_binding_hash=binding.binding_hash(),
         created_at=datetime.now(timezone.utc).isoformat(),
     )
@@ -141,6 +171,18 @@ def bind_runtime_route(
     route_generation: int,
 ) -> DispatcherRoute:
     route = runtime_route(binding, route_generation=route_generation)
+    dispatcher.register_local_route(route, handler)
+    return route
+
+
+def bind_runtime_ingress_route(
+    dispatcher,
+    binding: RuntimeBinding,
+    handler: Callable[[dict], object],
+    *,
+    route_generation: int,
+) -> DispatcherRoute:
+    route = runtime_ingress_route(binding, route_generation=route_generation)
     dispatcher.register_local_route(route, handler)
     return route
 

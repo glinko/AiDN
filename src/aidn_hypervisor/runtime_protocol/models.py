@@ -182,6 +182,7 @@ class RuntimeReady(BaseModel):
     health_reference: str | None = None
     capacity_reference: str | None = None
     ready_at: str = Field(min_length=1)
+    runtime_signature: str = Field(min_length=1)
 
     @model_validator(mode="after")
     def _validate_ready_dimensions(self):
@@ -209,6 +210,7 @@ class RuntimeHealth(BaseModel):
     observed_at: str = Field(min_length=1)
     valid_until: str = Field(min_length=1)
     diagnostic_references: list[str] = Field(default_factory=list)
+    runtime_signature: str = Field(min_length=1)
 
 
 class RuntimeCapacity(BaseModel):
@@ -229,6 +231,7 @@ class RuntimeCapacity(BaseModel):
     temporary_capacity_factor: float = Field(default=1.0, ge=0.0)
     observed_at: str = Field(min_length=1)
     valid_until: str = Field(min_length=1)
+    runtime_signature: str = Field(min_length=1)
 
     @model_validator(mode="after")
     def _validate_capacity_bounds(self):

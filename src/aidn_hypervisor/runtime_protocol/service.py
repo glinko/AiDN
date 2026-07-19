@@ -240,6 +240,12 @@ class RuntimeProtocolService:
         runtime_connection_id: str,
         ready: RuntimeReady,
     ) -> RuntimeReady:
+        if not self.runtime_authenticator(ready):
+            raise RuntimeProtocolError(
+                "RUNTIME_IDENTITY_INVALID",
+                "ready",
+                "Runtime Ready authentication failed",
+            )
         connection = self._validate_connection(
             runtime_connection_id,
             runtime_id=ready.runtime_id,
@@ -286,6 +292,12 @@ class RuntimeProtocolService:
         runtime_connection_id: str,
         health: RuntimeHealth,
     ) -> RuntimeHealth:
+        if not self.runtime_authenticator(health):
+            raise RuntimeProtocolError(
+                "RUNTIME_IDENTITY_INVALID",
+                "health",
+                "Runtime Health authentication failed",
+            )
         self._validate_connection(
             runtime_connection_id,
             runtime_id=health.runtime_id,
@@ -319,6 +331,12 @@ class RuntimeProtocolService:
         runtime_connection_id: str,
         capacity: RuntimeCapacity,
     ) -> RuntimeCapacity:
+        if not self.runtime_authenticator(capacity):
+            raise RuntimeProtocolError(
+                "RUNTIME_IDENTITY_INVALID",
+                "capacity",
+                "Runtime Capacity authentication failed",
+            )
         self._validate_connection(
             runtime_connection_id,
             runtime_id=capacity.runtime_id,

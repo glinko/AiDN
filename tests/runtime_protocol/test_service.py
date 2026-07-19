@@ -8,7 +8,12 @@ from aidn_hypervisor.accounting.models import (
     RuntimeUsageProfile,
     RuntimeUsageProfileDimension,
 )
-from aidn_hypervisor.dispatcher.models import DispatcherRoute
+from aidn_hypervisor.dispatcher import (
+    NetworkDispatcher,
+    NetworkMessage,
+    canonical_payload_hash,
+)
+from aidn_hypervisor.dispatcher.models import DispatcherRoute, canonical_payload_bytes
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol import (
@@ -28,6 +33,7 @@ from aidn_hypervisor.runtime_protocol import (
     RuntimeRequestAccept,
     RuntimeUsageDimension,
     RuntimeUsageReport,
+    LocalIpcRuntimeIngress,
     canonical_hash,
 )
 
@@ -284,6 +290,7 @@ def _ready(binding: RuntimeBinding, *, route_generation: int = 5) -> RuntimeRead
         supported_features=binding.supported_features,
         usage_profile_hash=binding.usage_reporting_profile_hash,
         ready_at=datetime.now(timezone.utc).isoformat(),
+        runtime_signature="runtime-signed",
     )
 
 
@@ -307,6 +314,7 @@ def _health(binding: RuntimeBinding, *, sequence: int = 1) -> RuntimeHealth:
         route_health="HEALTHY",
         observed_at=now.isoformat(),
         valid_until=(now + timedelta(minutes=1)).isoformat(),
+        runtime_signature="runtime-signed",
     )
 
 
@@ -329,6 +337,7 @@ def _capacity(binding: RuntimeBinding, *, sequence: int = 1) -> RuntimeCapacity:
         maximum_artifact_size=0,
         observed_at=now.isoformat(),
         valid_until=(now + timedelta(minutes=1)).isoformat(),
+        runtime_signature="runtime-signed",
     )
 
 
@@ -515,6 +524,74 @@ def test_runtime_health_and_capacity_require_monotonic_sequences(tmp_path) -> No
     restored = RuntimeProtocolStore(state_store)
     assert restored.health_records[binding.runtime_id].health_sequence == 1
     assert restored.capacity_records[binding.runtime_id].capacity_sequence == 1
+
+
+def test_local_ipc_runtime_ingress_uses_dispatcher_route_and_peer_authentication() -> None:
+    binding = _binding()
+    service = _service(binding, {binding.runtime_id: _route(binding)})
+    _, connection = _connect(service, binding)
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="revision-1",
+    )
+    ingress = LocalIpcRuntimeIngress(
+        dispatcher=dispatcher,
+        runtime_protocol_service=service,
+        peer_authenticator=lambda message: (
+            message.authentication.get("peer_runtime_id") == binding.runtime_id
+        ),
+    )
+    ingress.bind_runtime(binding, route_generation=5)
+    health = _health(binding)
+    payload = {
+        "event_type": "RUNTIME_HEALTH",
+        "runtime_connection_id": connection.runtime_connection_id,
+        "event": health.model_dump(mode="json"),
+    }
+    now = datetime.now(timezone.utc)
+    message = NetworkMessage(
+        message_id="local-ipc-health-1",
+        message_type="RUNTIME_HEALTH",
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="revision-1",
+        connection_id=connection.runtime_connection_id,
+        channel_id="runtime-local-ipc",
+        channel_class="RUNTIME",
+        source_subject={"subject_type": "RUNTIME", "subject_id": binding.runtime_id},
+        destination_subject={
+            "subject_type": "HYPERVISOR_RUNTIME_INGRESS",
+            "subject_id": binding.runtime_id,
+        },
+        source_sequence=1,
+        route_generation=5,
+        runtime_generation=binding.runtime_generation,
+        created_at=now.isoformat(),
+        expiration=(now + timedelta(minutes=5)).isoformat(),
+        payload_hash=canonical_payload_hash(payload),
+        payload_length=len(canonical_payload_bytes(payload)),
+        payload=payload,
+        authentication={
+            "transport": "LOCAL_IPC",
+            "peer_runtime_id": binding.runtime_id,
+        },
+    )
+
+    result = ingress.receive(message)
+
+    assert result == health
+    assert service.store.health_records[binding.runtime_id] == health
+    assert dispatcher.delivery_record(message.message_id).delivery_state == "APPLICATION_ACCEPTED"
+
+    rejected = message.model_copy(
+        update={
+            "message_id": "local-ipc-health-2",
+            "authentication": {"transport": "TCP_TLS"},
+        }
+    )
+    with pytest.raises(ValueError, match="LOCAL_IPC"):
+        ingress.receive(rejected)
 
 
 def test_execute_request_is_idempotent_and_acceptance_is_not_completion() -> None:

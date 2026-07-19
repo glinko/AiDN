@@ -25,6 +25,10 @@ from aidn_hypervisor.runtime_protocol.service import (
     RuntimeProtocolError,
     RuntimeProtocolService,
 )
+from aidn_hypervisor.runtime_protocol.local_ipc import (
+    LocalIpcRuntimeEvent,
+    LocalIpcRuntimeIngress,
+)
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
 
 __all__ = [
@@ -41,6 +45,8 @@ __all__ = [
     "RuntimeProtocolError",
     "RuntimeProtocolService",
     "RuntimeProtocolStore",
+    "LocalIpcRuntimeEvent",
+    "LocalIpcRuntimeIngress",
     "RuntimeRecoveryPlan",
     "RuntimeRecoveryResult",
     "RuntimeRecoveryState",
