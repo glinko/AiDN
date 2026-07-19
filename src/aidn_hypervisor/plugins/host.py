@@ -30,6 +30,7 @@ class PluginHostConnection(BaseModel):
     installed_plugin_id: str = Field(min_length=1)
     plugin_id: str = Field(min_length=1)
     installation_generation: int = Field(ge=1)
+    activation_credential_key_id: str = Field(min_length=1)
     established_at: str = Field(min_length=1)
 
 
@@ -86,6 +87,7 @@ class PluginHostHandshakeService:
             installed_plugin_id=installed.installed_plugin_id,
             plugin_id=installed.plugin_id,
             installation_generation=installed.installation_generation,
+            activation_credential_key_id=hello.activation_credential_key_id,
             established_at=self.now(),
         )
 
@@ -128,6 +130,14 @@ class PluginHostLocalIpcIngress:
             or connection.installation_generation != command.installation_generation
         ):
             raise PluginHostAuthenticationError("Plugin Host control identity does not match connection")
+        self.handshake_service.authenticator.authenticate(
+            PluginHostIdentity(
+                installed_plugin_id=connection.installed_plugin_id,
+                plugin_id=connection.plugin_id,
+                installation_generation=connection.installation_generation,
+                activation_credential_key_id=connection.activation_credential_key_id,
+            )
+        )
         if command.command != "PING":
             if command.command == "GET_MANIFEST":
                 if self.manifest_resolver is None:
