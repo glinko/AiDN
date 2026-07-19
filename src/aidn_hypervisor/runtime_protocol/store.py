@@ -8,6 +8,7 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeReady,
     RuntimeRecoveryPlan,
     RuntimeRecoveryResult,
+    RuntimeResult,
     RuntimeRequestRecord,
     RuntimeUsageAck,
     RuntimeUsageConflict,
@@ -30,6 +31,7 @@ class RuntimeProtocolStore:
         self.messages: dict[str, RuntimeMessage] = {}
         self.runtime_sequences: dict[str, int] = {}
         self.requests: dict[str, RuntimeRequestRecord] = {}
+        self.results: dict[str, RuntimeResult] = {}
         self.usage_reports: dict[str, RuntimeUsageReport] = {}
         self.usage_acks: dict[str, RuntimeUsageAck] = {}
         self.usage_conflicts: dict[str, RuntimeUsageConflict] = {}
@@ -65,6 +67,9 @@ class RuntimeProtocolStore:
         self.runtime_sequences = dict(snapshot.runtime_protocol_sequences)
         self.requests = {
             item.request_id: item for item in snapshot.runtime_protocol_requests
+        }
+        self.results = {
+            item.request_id: item for item in snapshot.runtime_protocol_results
         }
         self.usage_reports = {
             item.usage_report_id: item
@@ -103,6 +108,7 @@ class RuntimeProtocolStore:
                 "runtime_protocol_messages": list(self.messages.values()),
                 "runtime_protocol_sequences": dict(self.runtime_sequences),
                 "runtime_protocol_requests": list(self.requests.values()),
+                "runtime_protocol_results": list(self.results.values()),
                 "runtime_protocol_usage_reports": list(self.usage_reports.values()),
                 "runtime_protocol_usage_acks": list(self.usage_acks.values()),
                 "runtime_protocol_usage_conflicts": list(

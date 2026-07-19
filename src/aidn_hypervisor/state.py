@@ -39,6 +39,7 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeReady,
     RuntimeRecoveryPlan,
     RuntimeRecoveryResult,
+    RuntimeResult,
     RuntimeRequestRecord,
     RuntimeUsageAck,
     RuntimeUsageConflict,
@@ -337,6 +338,7 @@ class HypervisorStateSnapshot(BaseModel):
     runtime_protocol_messages: list[RuntimeMessage] = Field(default_factory=list)
     runtime_protocol_sequences: dict[str, int] = Field(default_factory=dict)
     runtime_protocol_requests: list[RuntimeRequestRecord] = Field(default_factory=list)
+    runtime_protocol_results: list[RuntimeResult] = Field(default_factory=list)
     runtime_protocol_usage_reports: list[RuntimeUsageReport] = Field(default_factory=list)
     runtime_protocol_usage_acks: list[RuntimeUsageAck] = Field(default_factory=list)
     runtime_protocol_usage_conflicts: list[RuntimeUsageConflict] = Field(

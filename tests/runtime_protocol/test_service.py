@@ -31,6 +31,7 @@ from aidn_hypervisor.runtime_protocol import (
     RuntimeRecoveryState,
     RuntimeRecoveryResult,
     RuntimeRequestAccept,
+    RuntimeResult,
     RuntimeUsageDimension,
     RuntimeUsageReport,
     LocalIpcRuntimeIngress,
@@ -385,6 +386,31 @@ def _runtime_usage_report(
     )
 
 
+def _runtime_result(
+    binding: RuntimeBinding,
+    request: RuntimeExecuteRequest,
+    *,
+    final_usage_report_id: str,
+    payload: dict | None = None,
+) -> RuntimeResult:
+    return RuntimeResult(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        endpoint_id=request.endpoint_id,
+        endpoint_configuration_hash=request.endpoint_configuration_hash,
+        session_id=request.session_id,
+        request_id=request.request_id,
+        terminal_state="COMPLETED",
+        result_payload=payload or {"text": "completed"},
+        final_usage_report_id=final_usage_report_id,
+        provider_attempt_count=1,
+        completed_at=datetime.now(timezone.utc).isoformat(),
+        runtime_signature="runtime-signed",
+    )
+
+
 def test_handshake_activates_only_preapproved_binding_and_route() -> None:
     binding = _binding()
     route = _route(binding)
@@ -592,6 +618,83 @@ def test_local_ipc_runtime_ingress_uses_dispatcher_route_and_peer_authentication
     )
     with pytest.raises(ValueError, match="LOCAL_IPC"):
         ingress.receive(rejected)
+
+
+def test_local_ipc_runtime_ingress_routes_terminal_result() -> None:
+    binding = _binding()
+    service = _service(binding, {binding.runtime_id: _route(binding)})
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    final_usage = _runtime_usage_report(
+        binding,
+        request,
+        report_id="usage-local-ipc-result",
+        terminal_state="COMPLETED",
+    )
+    assert service.record_usage_report(connection.runtime_connection_id, final_usage).status == (
+        "ACCEPTED"
+    )
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="revision-1",
+    )
+    ingress = LocalIpcRuntimeIngress(
+        dispatcher=dispatcher,
+        runtime_protocol_service=service,
+        peer_authenticator=lambda message: (
+            message.authentication.get("peer_runtime_id") == binding.runtime_id
+        ),
+    )
+    ingress.bind_runtime(binding, route_generation=5)
+    runtime_result = _runtime_result(
+        binding,
+        request,
+        final_usage_report_id=final_usage.usage_report_id,
+    )
+    payload = {
+        "event_type": "RUNTIME_RESULT",
+        "runtime_connection_id": connection.runtime_connection_id,
+        "event": runtime_result.model_dump(mode="json"),
+    }
+    now = datetime.now(timezone.utc)
+    message = NetworkMessage(
+        message_id="local-ipc-result-1",
+        message_type="RUNTIME_RESULT",
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="revision-1",
+        connection_id=connection.runtime_connection_id,
+        channel_id="runtime-local-ipc",
+        channel_class="RUNTIME",
+        source_subject={"subject_type": "RUNTIME", "subject_id": binding.runtime_id},
+        destination_subject={
+            "subject_type": "HYPERVISOR_RUNTIME_INGRESS",
+            "subject_id": binding.runtime_id,
+        },
+        source_sequence=1,
+        route_generation=5,
+        runtime_generation=binding.runtime_generation,
+        created_at=now.isoformat(),
+        expiration=(now + timedelta(minutes=5)).isoformat(),
+        payload_hash=canonical_payload_hash(payload),
+        payload_length=len(canonical_payload_bytes(payload)),
+        payload=payload,
+        authentication={
+            "transport": "LOCAL_IPC",
+            "peer_runtime_id": binding.runtime_id,
+        },
+    )
+
+    accepted = ingress.receive(message)
+
+    assert accepted == runtime_result
+    assert service.store.results[request.request_id] == runtime_result
+    assert service.store.requests[request.request_id].terminal_result_hash == (
+        runtime_result.result_hash
+    )
 
 
 def test_execute_request_is_idempotent_and_acceptance_is_not_completion() -> None:
@@ -940,6 +1043,57 @@ def test_terminal_request_requires_matching_final_usage_report() -> None:
     assert ack.status == "ACCEPTED"
     assert terminal.request_state == "COMPLETED"
     assert terminal.terminal_result_hash == "sha256:result"
+
+
+def test_runtime_result_is_idempotent_and_persists_after_restart(tmp_path) -> None:
+    binding = _binding()
+    state_store = FileStateStore(tmp_path / "runtime-result-state.json")
+    store = RuntimeProtocolStore(state_store)
+    service = _service(
+        binding,
+        {binding.runtime_id: _route(binding)},
+        store=store,
+    )
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    result = _runtime_result(
+        binding,
+        request,
+        final_usage_report_id="usage-result-final",
+    )
+
+    with pytest.raises(RuntimeProtocolError) as missing_usage:
+        service.record_runtime_result(connection.runtime_connection_id, result)
+    assert missing_usage.value.code == "USAGE_FINAL_REPORT_REQUIRED"
+
+    final_usage = _runtime_usage_report(
+        binding,
+        request,
+        report_id="usage-result-final",
+        terminal_state="COMPLETED",
+    )
+    assert service.record_usage_report(connection.runtime_connection_id, final_usage).status == (
+        "ACCEPTED"
+    )
+    accepted = service.record_runtime_result(connection.runtime_connection_id, result)
+
+    assert service.record_runtime_result(connection.runtime_connection_id, result) == accepted
+    assert store.requests[request.request_id].terminal_result_hash == result.result_hash
+
+    conflicting = _runtime_result(
+        binding,
+        request,
+        final_usage_report_id=final_usage.usage_report_id,
+        payload={"text": "conflicting"},
+    )
+    with pytest.raises(RuntimeProtocolError) as conflict:
+        service.record_runtime_result(connection.runtime_connection_id, conflicting)
+    assert conflict.value.code == "RUNTIME_RESULT_FINALIZATION_FAILED"
+
+    restored = RuntimeProtocolStore(state_store)
+    assert restored.results[request.request_id].result_hash == result.result_hash
 
 
 def test_terminal_request_requires_final_usage_to_be_current_chain_head() -> None:

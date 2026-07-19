@@ -322,6 +322,63 @@ class RuntimeRequestAccept(BaseModel):
     diagnostic_reference: str | None = None
 
 
+class RuntimeResult(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    endpoint_id: str = Field(min_length=1)
+    endpoint_configuration_hash: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    terminal_state: Literal[
+        "COMPLETED",
+        "PARTIAL",
+        "CANCELLED",
+        "FAILED",
+        "EXPIRED",
+        "UNRECOVERABLE",
+    ]
+    result_payload_hash: str | None = None
+    result_payload: dict | None = None
+    result_reference: str | None = None
+    stream_roots: list[str] = Field(default_factory=list)
+    artifact_references: list[dict] = Field(default_factory=list)
+    state_reference: dict | None = None
+    final_usage_report_id: str = Field(min_length=1)
+    provider_attempt_count: int = Field(default=0, ge=0)
+    completed_at: str = Field(min_length=1)
+    runtime_signature: str = Field(min_length=1)
+    result_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_result(self):
+        if self.result_payload is not None:
+            expected = canonical_hash(self.result_payload)
+            if self.result_payload_hash is None:
+                self.result_payload_hash = expected
+            elif self.result_payload_hash != expected:
+                raise ValueError("result_payload_hash does not match Result payload")
+        elif self.result_payload_hash is not None:
+            raise ValueError("result_payload_hash requires inline Result payload")
+        if self.terminal_state in {"COMPLETED", "PARTIAL"} and not any(
+            (
+                self.result_payload is not None,
+                self.result_reference is not None,
+                self.stream_roots,
+                self.artifact_references,
+            )
+        ):
+            raise ValueError("successful Result requires output evidence")
+        payload = self.model_dump(mode="json", exclude={"result_hash"})
+        expected_hash = canonical_hash(payload)
+        if self.result_hash is None:
+            self.result_hash = expected_hash
+        elif self.result_hash != expected_hash:
+            raise ValueError("result_hash does not match Runtime Result")
+        return self
+
+
 class RuntimeUsageDimension(UsageDimensionEvidence):
     """RFC-0054 wire projection of the RFC-0051 Usage dimension."""
 

@@ -20,6 +20,7 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeCapacity,
     RuntimeHealth,
     RuntimeReady,
+    RuntimeResult,
 )
 
 
@@ -27,6 +28,7 @@ RuntimeIngressEventType = Literal[
     "RUNTIME_READY",
     "RUNTIME_HEALTH",
     "RUNTIME_CAPACITY",
+    "RUNTIME_RESULT",
 ]
 
 
@@ -85,6 +87,11 @@ class LocalIpcRuntimeIngress:
             return self.runtime_protocol_service.record_runtime_health(
                 envelope.runtime_connection_id,
                 RuntimeHealth.model_validate(envelope.event),
+            )
+        if envelope.event_type == "RUNTIME_RESULT":
+            return self.runtime_protocol_service.record_runtime_result(
+                envelope.runtime_connection_id,
+                RuntimeResult.model_validate(envelope.event),
             )
         return self.runtime_protocol_service.record_runtime_capacity(
             envelope.runtime_connection_id,

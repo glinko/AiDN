@@ -22,6 +22,7 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeRecoveryState,
     RuntimeRequestAccept,
     RuntimeRequestRecord,
+    RuntimeResult,
     RuntimeUsageAck,
     RuntimeUsageConflict,
     RuntimeUsageReport,
@@ -731,6 +732,58 @@ class RuntimeProtocolService:
         self.store.requests[request_id] = updated
         self.store.flush()
         return updated
+
+    def record_runtime_result(
+        self,
+        runtime_connection_id: str,
+        result: RuntimeResult,
+    ) -> RuntimeResult:
+        if not self.runtime_authenticator(result):
+            raise RuntimeProtocolError(
+                "RUNTIME_IDENTITY_INVALID",
+                "result",
+                "Runtime Result authentication failed",
+            )
+        record = self.store.requests.get(result.request_id)
+        if record is None:
+            raise RuntimeProtocolError(
+                "RUNTIME_REQUEST_NOT_FOUND", "result", "Unknown Runtime Request"
+            )
+        if (
+            result.runtime_id != record.runtime_id
+            or result.runtime_generation != record.runtime_generation
+            or result.runtime_configuration_hash
+            != record.request.runtime_configuration_hash
+            or result.route_generation != record.route_generation
+            or result.endpoint_id != record.request.endpoint_id
+            or result.endpoint_configuration_hash
+            != record.request.endpoint_configuration_hash
+            or result.session_id != record.request.session_id
+        ):
+            raise RuntimeProtocolError(
+                "RUNTIME_RESULT_FINALIZATION_FAILED",
+                "result",
+                "Runtime Result identity does not match accepted Request",
+            )
+        existing = self.store.results.get(result.request_id)
+        if existing is not None:
+            if existing.result_hash != result.result_hash:
+                raise RuntimeProtocolError(
+                    "RUNTIME_RESULT_FINALIZATION_FAILED",
+                    "result",
+                    "Runtime Result conflicts with the accepted terminal Result",
+                )
+            return existing
+        self.record_request_terminal(
+            runtime_connection_id,
+            request_id=result.request_id,
+            terminal_state=result.terminal_state,
+            terminal_result_hash=result.result_hash,
+            final_usage_report_id=result.final_usage_report_id,
+        )
+        self.store.results[result.request_id] = result.model_copy(deep=True)
+        self.store.flush()
+        return result
 
     def _usage_ack(
         self,
