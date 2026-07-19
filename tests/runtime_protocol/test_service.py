@@ -39,6 +39,7 @@ from aidn_hypervisor.runtime_protocol import (
     RuntimeStreamChunk,
     RuntimeStreamClose,
     RuntimeStreamOpen,
+    RuntimeStateCheckpoint,
     RuntimeUsageDimension,
     RuntimeUsageReport,
     LocalIpcRuntimeIngress,
@@ -586,6 +587,29 @@ def _runtime_artifact(
         access_class="SESSION_PARTICIPANTS",
         retention_policy="SESSION_RETENTION",
         declared_at=datetime.now(timezone.utc).isoformat(),
+        runtime_signature="runtime-signed",
+    )
+
+
+def _runtime_state_checkpoint(
+    binding: RuntimeBinding,
+    request: RuntimeExecuteRequest,
+    *,
+    sequence: int = 1,
+    state_generation: int = 1,
+) -> RuntimeStateCheckpoint:
+    return RuntimeStateCheckpoint(
+        runtime_id=binding.runtime_id,
+        runtime_generation=binding.runtime_generation,
+        runtime_configuration_hash=binding.runtime_configuration_hash,
+        route_generation=5,
+        session_id=request.session_id,
+        state_reference={"provider_thread": "thread-1"},
+        state_generation=state_generation,
+        checkpoint_sequence=sequence,
+        recoverability="CHECKPOINT_RECOVERABLE",
+        retention="SESSION_RETENTION",
+        created_at=datetime.now(timezone.utc).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -1218,6 +1242,7 @@ def test_recovery_requires_explicit_route_rebind(tmp_path) -> None:
         route_generation=5,
         instance_id="instance-1",
         active_requests=[request.request_id, "runtime-only"],
+        runtime_signature="runtime-signed",
     )
 
     with pytest.raises(RuntimeProtocolError) as route_error:
@@ -1246,6 +1271,9 @@ def test_recovery_requires_explicit_route_rebind(tmp_path) -> None:
     assert service.store.recovery_results[plan.plan_id].result_hash == result.result_hash
     restored = RuntimeProtocolStore(state_store)
     assert restored.recovery_results[plan.plan_id].result_hash == result.result_hash
+    assert restored.recovery_states[binding.runtime_id].recovery_state_hash == (
+        state.recovery_state_hash
+    )
 
 
 def test_recovery_conflicts_keep_connection_recovering() -> None:
@@ -1259,6 +1287,7 @@ def test_recovery_conflicts_keep_connection_recovering() -> None:
         runtime_configuration_hash=binding.runtime_configuration_hash,
         route_generation=5,
         instance_id="instance-1",
+        runtime_signature="runtime-signed",
     )
     plan = service.build_recovery_plan(connection.runtime_connection_id, state)
     result = RuntimeRecoveryResult(
@@ -1636,6 +1665,67 @@ def test_runtime_artifact_is_content_addressed_persistent_and_result_bound(tmp_p
 
     restored = RuntimeProtocolStore(state_store)
     assert restored.artifacts[artifact.artifact_id] == artifact
+
+
+def test_runtime_state_checkpoint_is_session_scoped_and_persistent(tmp_path) -> None:
+    binding = _binding()
+    state_store = FileStateStore(tmp_path / "runtime-state-checkpoint.json")
+    service = _service(
+        binding,
+        {binding.runtime_id: _route(binding)},
+        store=RuntimeProtocolStore(state_store),
+    )
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding)
+    service.register_execute_request(connection.runtime_connection_id, request)
+    _accept_request(service, connection, binding, request)
+    checkpoint = _runtime_state_checkpoint(binding, request)
+
+    assert service.record_runtime_state_checkpoint(
+        connection.runtime_connection_id,
+        checkpoint,
+    ) == checkpoint
+    assert service.record_runtime_state_checkpoint(
+        connection.runtime_connection_id,
+        checkpoint,
+    ) == checkpoint
+
+    gap = _runtime_state_checkpoint(binding, request, sequence=3)
+    with pytest.raises(RuntimeProtocolError) as sequence_error:
+        service.record_runtime_state_checkpoint(connection.runtime_connection_id, gap)
+    assert sequence_error.value.code == "RUNTIME_STATE_GENERATION_MISMATCH"
+
+    resumed_request = _execute_request(binding).model_copy(
+        update={
+            "request_id": "request-with-state",
+            "idempotency_key": "request-with-state",
+            "state_reference": {
+                "checkpoint_hash": checkpoint.checkpoint_hash,
+                "state_generation": checkpoint.state_generation,
+            },
+        }
+    )
+    assert service.register_execute_request(
+        connection.runtime_connection_id,
+        resumed_request,
+    ).request_id == resumed_request.request_id
+
+    invalid_state_request = resumed_request.model_copy(
+        update={
+            "request_id": "request-with-invalid-state",
+            "idempotency_key": "request-with-invalid-state",
+            "state_reference": {"checkpoint_hash": "sha256:unknown", "state_generation": 1},
+        }
+    )
+    with pytest.raises(RuntimeProtocolError) as state_error:
+        service.register_execute_request(
+            connection.runtime_connection_id,
+            invalid_state_request,
+        )
+    assert state_error.value.code == "RUNTIME_STATE_REFERENCE_INVALID"
+
+    restored = RuntimeProtocolStore(state_store)
+    assert restored.state_checkpoints
 
 
 def test_terminal_request_requires_final_usage_to_be_current_chain_head() -> None:

@@ -27,6 +27,7 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeRequestAccept,
     RuntimeRequestRecord,
     RuntimeResult,
+    RuntimeStateCheckpoint,
     RuntimeStreamChunk,
     RuntimeStreamClose,
     RuntimeStreamOpen,
@@ -425,6 +426,8 @@ class RuntimeProtocolService:
             raise RuntimeProtocolError(
                 "RUNTIME_REQUEST_EXPIRED", "request", "Request deadline expired"
             )
+        if request.state_reference is not None:
+            self._validate_request_state_reference(request)
         request_hash = request.semantic_hash()
         existing = self.store.requests.get(request.request_id)
         if existing is not None:
@@ -993,6 +996,66 @@ class RuntimeProtocolService:
         self.store.flush()
         return artifact
 
+    def record_runtime_state_checkpoint(
+        self,
+        runtime_connection_id: str,
+        checkpoint: RuntimeStateCheckpoint,
+    ) -> RuntimeStateCheckpoint:
+        if not self.runtime_authenticator(checkpoint):
+            raise RuntimeProtocolError(
+                "RUNTIME_IDENTITY_INVALID",
+                "state",
+                "Runtime State Checkpoint authentication failed",
+            )
+        self._validate_connection(
+            runtime_connection_id,
+            runtime_id=checkpoint.runtime_id,
+            runtime_generation=checkpoint.runtime_generation,
+            runtime_configuration_hash=checkpoint.runtime_configuration_hash,
+            route_generation=checkpoint.route_generation,
+            allow_recovering=True,
+        )
+        session_requests = [
+            record
+            for record in self.store.requests.values()
+            if record.runtime_id == checkpoint.runtime_id
+            and record.request.session_id == checkpoint.session_id
+            and record.admission_state in {"ACCEPTED", "QUEUED"}
+        ]
+        if not session_requests:
+            raise RuntimeProtocolError(
+                "RUNTIME_STATE_NOT_FOUND",
+                "state",
+                "State Checkpoint Session has no accepted Runtime Request",
+            )
+        key = self.store._checkpoint_key(checkpoint)
+        existing = self.store.state_checkpoints.get(key)
+        if existing is not None:
+            if existing.checkpoint_hash != checkpoint.checkpoint_hash:
+                raise RuntimeProtocolError(
+                    "RUNTIME_STATE_GENERATION_MISMATCH",
+                    "state",
+                    "State Checkpoint conflicts with an existing sequence",
+                )
+            return existing
+        prior_sequences = [
+            item.checkpoint_sequence
+            for item in self.store.state_checkpoints.values()
+            if item.runtime_id == checkpoint.runtime_id
+            and item.session_id == checkpoint.session_id
+            and item.state_generation == checkpoint.state_generation
+        ]
+        expected_sequence = max(prior_sequences, default=0) + 1
+        if checkpoint.checkpoint_sequence != expected_sequence:
+            raise RuntimeProtocolError(
+                "RUNTIME_STATE_GENERATION_MISMATCH",
+                "state",
+                "State Checkpoint sequence is invalid",
+            )
+        self.store.state_checkpoints[key] = checkpoint.model_copy(deep=True)
+        self.store.flush()
+        return checkpoint
+
     def record_request_terminal(
         self,
         runtime_connection_id: str,
@@ -1354,6 +1417,29 @@ class RuntimeProtocolService:
                 "; ".join(errors),
             )
 
+    def _validate_request_state_reference(self, request: RuntimeExecuteRequest) -> None:
+        reference = request.state_reference or {}
+        checkpoint_hash = reference.get("checkpoint_hash")
+        state_generation = reference.get("state_generation")
+        if not checkpoint_hash or not isinstance(state_generation, int):
+            raise RuntimeProtocolError(
+                "RUNTIME_STATE_REFERENCE_INVALID",
+                "state",
+                "State Reference requires checkpoint_hash and state_generation",
+            )
+        if not any(
+            checkpoint.runtime_id == request.runtime_id
+            and checkpoint.session_id == request.session_id
+            and checkpoint.state_generation == state_generation
+            and checkpoint.checkpoint_hash == checkpoint_hash
+            for checkpoint in self.store.state_checkpoints.values()
+        ):
+            raise RuntimeProtocolError(
+                "RUNTIME_STATE_REFERENCE_INVALID",
+                "state",
+                "State Reference does not match a Session-scoped checkpoint",
+            )
+
     def build_recovery_plan(
         self,
         runtime_connection_id: str,
@@ -1361,20 +1447,12 @@ class RuntimeProtocolService:
         *,
         allow_route_rebind: bool = False,
     ) -> RuntimeRecoveryPlan:
-        connection = self._validate_connection(
+        state = self.record_runtime_recovery_state(
             runtime_connection_id,
-            runtime_id=state.runtime_id,
-            runtime_generation=state.runtime_generation,
-            runtime_configuration_hash=state.runtime_configuration_hash,
-            allow_recovering=True,
-            skip_route_check=allow_route_rebind,
+            state,
+            allow_route_rebind=allow_route_rebind,
         )
-        if state.route_generation != connection.route_generation and not allow_route_rebind:
-            raise RuntimeProtocolError(
-                "RUNTIME_ROUTE_GENERATION_MISMATCH",
-                "recovery",
-                "Recovery state uses a stale Route Generation",
-            )
+        connection = self.store.connections[runtime_connection_id]
         current_route = self._route(state.runtime_id)
         runtime_request_ids = set(state.active_requests) | set(state.terminal_requests)
         runtime_request_ids.update(
@@ -1434,6 +1512,40 @@ class RuntimeProtocolService:
         )
         self.store.flush()
         return plan
+
+    def record_runtime_recovery_state(
+        self,
+        runtime_connection_id: str,
+        state: RuntimeRecoveryState,
+        *,
+        allow_route_rebind: bool = False,
+    ) -> RuntimeRecoveryState:
+        if not self.runtime_authenticator(state):
+            raise RuntimeProtocolError(
+                "RUNTIME_IDENTITY_INVALID",
+                "recovery",
+                "Runtime Recovery State authentication failed",
+            )
+        connection = self._validate_connection(
+            runtime_connection_id,
+            runtime_id=state.runtime_id,
+            runtime_generation=state.runtime_generation,
+            runtime_configuration_hash=state.runtime_configuration_hash,
+            allow_recovering=True,
+            skip_route_check=allow_route_rebind,
+        )
+        if state.route_generation != connection.route_generation and not allow_route_rebind:
+            raise RuntimeProtocolError(
+                "RUNTIME_ROUTE_GENERATION_MISMATCH",
+                "recovery",
+                "Recovery state uses a stale Route Generation",
+            )
+        existing = self.store.recovery_states.get(state.runtime_id)
+        if existing is not None and existing.recovery_state_hash == state.recovery_state_hash:
+            return existing
+        self.store.recovery_states[state.runtime_id] = state.model_copy(deep=True)
+        self.store.flush()
+        return state
 
     def record_recovery_result(
         self,

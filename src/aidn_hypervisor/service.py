@@ -3464,6 +3464,12 @@ class HypervisorService:
             runtime_protocol_artifacts=list(
                 self.runtime_protocol_store.artifacts.values()
             ),
+            runtime_protocol_state_checkpoints=list(
+                self.runtime_protocol_store.state_checkpoints.values()
+            ),
+            runtime_protocol_recovery_states=list(
+                self.runtime_protocol_store.recovery_states.values()
+            ),
             runtime_protocol_usage_reports=list(
                 self.runtime_protocol_store.usage_reports.values()
             ),

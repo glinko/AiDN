@@ -42,7 +42,9 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeReady,
     RuntimeRecoveryPlan,
     RuntimeRecoveryResult,
+    RuntimeRecoveryState,
     RuntimeResult,
+    RuntimeStateCheckpoint,
     RuntimeStreamChunk,
     RuntimeStreamClose,
     RuntimeStreamOpen,
@@ -359,6 +361,12 @@ class HypervisorStateSnapshot(BaseModel):
         default_factory=list
     )
     runtime_protocol_artifacts: list[RuntimeArtifactDeclare] = Field(
+        default_factory=list
+    )
+    runtime_protocol_state_checkpoints: list[RuntimeStateCheckpoint] = Field(
+        default_factory=list
+    )
+    runtime_protocol_recovery_states: list[RuntimeRecoveryState] = Field(
         default_factory=list
     )
     runtime_protocol_usage_reports: list[RuntimeUsageReport] = Field(default_factory=list)

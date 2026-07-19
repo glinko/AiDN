@@ -537,6 +537,32 @@ class RuntimeArtifactDeclare(BaseModel):
         return self
 
 
+class RuntimeStateCheckpoint(BaseModel):
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    session_id: str = Field(min_length=1)
+    state_reference: dict = Field(min_length=1)
+    state_generation: int = Field(ge=1)
+    checkpoint_sequence: int = Field(ge=1)
+    checkpoint_hash: str | None = None
+    recoverability: str = Field(min_length=1)
+    retention: str = Field(min_length=1)
+    created_at: str = Field(min_length=1)
+    runtime_signature: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_checkpoint_hash(self):
+        payload = self.model_dump(mode="json", exclude={"checkpoint_hash"})
+        expected = canonical_hash(payload)
+        if self.checkpoint_hash is None:
+            self.checkpoint_hash = expected
+        elif self.checkpoint_hash != expected:
+            raise ValueError("checkpoint_hash does not match Runtime State Checkpoint")
+        return self
+
+
 class RuntimeResult(BaseModel):
     runtime_id: str = Field(min_length=1)
     runtime_generation: int = Field(ge=1)
@@ -750,6 +776,7 @@ class RuntimeRecoveryState(BaseModel):
     artifact_references: list[dict] = Field(default_factory=list)
     last_runtime_event_sequence: int = Field(default=0, ge=0)
     last_hypervisor_command_sequence: int = Field(default=0, ge=0)
+    runtime_signature: str = Field(min_length=1)
     recovery_state_hash: str | None = None
 
     @model_validator(mode="after")

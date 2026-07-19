@@ -12,6 +12,7 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeRecoveryPlan,
     RuntimeRecoveryResult,
     RuntimeResult,
+    RuntimeStateCheckpoint,
     RuntimeStreamChunk,
     RuntimeStreamClose,
     RuntimeStreamOpen,
@@ -44,6 +45,8 @@ class RuntimeProtocolStore:
         self.stream_chunks: dict[str, dict[int, RuntimeStreamChunk]] = {}
         self.stream_closes: dict[str, RuntimeStreamClose] = {}
         self.artifacts: dict[str, RuntimeArtifactDeclare] = {}
+        self.state_checkpoints: dict[str, RuntimeStateCheckpoint] = {}
+        self.recovery_states: dict[str, RuntimeRecoveryState] = {}
         self.usage_reports: dict[str, RuntimeUsageReport] = {}
         self.usage_acks: dict[str, RuntimeUsageAck] = {}
         self.usage_conflicts: dict[str, RuntimeUsageConflict] = {}
@@ -103,6 +106,13 @@ class RuntimeProtocolStore:
         self.artifacts = {
             item.artifact_id: item for item in snapshot.runtime_protocol_artifacts
         }
+        self.state_checkpoints = {
+            self._checkpoint_key(item): item
+            for item in snapshot.runtime_protocol_state_checkpoints
+        }
+        self.recovery_states = {
+            item.runtime_id: item for item in snapshot.runtime_protocol_recovery_states
+        }
         self.usage_reports = {
             item.usage_report_id: item
             for item in snapshot.runtime_protocol_usage_reports
@@ -153,6 +163,12 @@ class RuntimeProtocolStore:
                 ],
                 "runtime_protocol_stream_closes": list(self.stream_closes.values()),
                 "runtime_protocol_artifacts": list(self.artifacts.values()),
+                "runtime_protocol_state_checkpoints": list(
+                    self.state_checkpoints.values()
+                ),
+                "runtime_protocol_recovery_states": list(
+                    self.recovery_states.values()
+                ),
                 "runtime_protocol_usage_reports": list(self.usage_reports.values()),
                 "runtime_protocol_usage_acks": list(self.usage_acks.values()),
                 "runtime_protocol_usage_conflicts": list(
@@ -165,3 +181,10 @@ class RuntimeProtocolStore:
             }
         )
         self._state_store.save(snapshot)
+
+    @staticmethod
+    def _checkpoint_key(checkpoint: RuntimeStateCheckpoint) -> str:
+        return (
+            f"{checkpoint.runtime_id}:{checkpoint.session_id}:"
+            f"{checkpoint.state_generation}:{checkpoint.checkpoint_sequence}"
+        )
