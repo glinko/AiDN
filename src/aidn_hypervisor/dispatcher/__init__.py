@@ -13,10 +13,12 @@ from aidn_hypervisor.dispatcher.routes import (
     bind_plugin_control_route,
     bind_runtime_ingress_route,
     bind_runtime_route,
+    bind_remote_runtime_route,
     bind_session_route,
     plugin_control_route,
     runtime_ingress_route,
     runtime_route,
+    remote_runtime_route,
     session_route,
 )
 
@@ -33,10 +35,12 @@ __all__ = [
     "bind_plugin_control_route",
     "bind_runtime_ingress_route",
     "bind_runtime_route",
+    "bind_remote_runtime_route",
     "bind_session_route",
     "plugin_control_route",
     "runtime_ingress_route",
     "runtime_route",
+    "remote_runtime_route",
     "session_route",
     "canonical_payload_hash",
 ]

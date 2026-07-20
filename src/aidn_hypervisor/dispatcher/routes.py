@@ -83,6 +83,29 @@ def runtime_route(
     )
 
 
+def remote_runtime_route(
+    binding: RuntimeBinding,
+    *,
+    route_generation: int,
+) -> DispatcherRoute:
+    """Create the scoped Dispatcher route for one direct remote Runtime."""
+    binding = RuntimeBinding.model_validate(binding.model_dump(mode="json"))
+    if binding.operational_state != "READY":
+        raise ValueError("only ready Runtime Bindings may receive RUNTIME routes")
+    return DispatcherRoute(
+        destination_type="RUNTIME",
+        destination_id=binding.runtime_id,
+        route_type="REMOTE_RUNTIME",
+        route_generation=route_generation,
+        runtime_generation=binding.runtime_generation,
+        allowed_source_types={"HYPERVISOR", "ENDPOINT"},
+        allowed_channel_classes={"RUNTIME"},
+        allowed_message_types=set(RUNTIME_MESSAGE_TYPES),
+        runtime_binding_hash=binding.binding_hash(),
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
 def runtime_ingress_route(
     binding: RuntimeBinding,
     *,
@@ -182,6 +205,18 @@ def bind_runtime_route(
 ) -> DispatcherRoute:
     route = runtime_route(binding, route_generation=route_generation)
     dispatcher.register_local_route(route, handler)
+    return route
+
+
+def bind_remote_runtime_route(
+    dispatcher,
+    binding: RuntimeBinding,
+    sender: Callable[[dict], object],
+    *,
+    route_generation: int,
+) -> DispatcherRoute:
+    route = remote_runtime_route(binding, route_generation=route_generation)
+    dispatcher.register_remote_route(route, sender)
     return route
 
 

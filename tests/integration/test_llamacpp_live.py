@@ -159,7 +159,7 @@ def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:
     route = DispatcherRoute(
         destination_type="RUNTIME",
         destination_id=binding.runtime_id,
-        route_type="LOCAL_RUNTIME",
+        route_type="REMOTE_RUNTIME",
         route_generation=1,
         runtime_generation=binding.runtime_generation,
         allowed_source_types={"HYPERVISOR"},
