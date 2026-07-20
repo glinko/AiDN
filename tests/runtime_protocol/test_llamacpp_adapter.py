@@ -43,6 +43,9 @@ class _Protocol:
                 "cancellation_results": {},
                 "usage_reports": {},
                 "recovery_results": {},
+                "streams": {},
+                "stream_chunks": {},
+                "stream_closes": {},
             },
         )()
         self.acceptances = []
@@ -70,6 +73,18 @@ class _Protocol:
     def record_recovery_result(self, connection_id, result):
         self.store.recovery_results[result.plan_id] = result
         return result
+
+    def record_runtime_stream_open(self, connection_id, stream):
+        self.store.streams[stream.stream_id] = stream
+        return stream
+
+    def record_runtime_stream_chunk(self, connection_id, chunk):
+        self.store.stream_chunks.setdefault(chunk.stream_id, {})[chunk.chunk_sequence] = chunk
+        return chunk
+
+    def record_runtime_stream_close(self, connection_id, close):
+        self.store.stream_closes[close.stream_id] = close
+        return close
 
 
 def _cancellation(request: RuntimeExecuteRequest) -> RuntimeCancelRequest:
@@ -138,6 +153,53 @@ def test_llamacpp_adapter_records_failed_terminal_evidence_for_upstream_error(mo
     assert result.terminal_state == "FAILED"
     assert protocol.usage_reports[0].terminal is True
     assert protocol.usage_reports[0].limitations == ["UPSTREAM_ERROR:TimeoutError"]
+
+
+def test_llamacpp_adapter_maps_sse_events_to_ordered_stream_evidence(monkeypatch) -> None:
+    adapter = LlamaCppOpenAIAdapter(
+        endpoint="http://provider",
+        model="qwen",
+        runtime_signature="runtime-signed",
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_stream_completion",
+        lambda _: iter(
+            [
+                {"model": "qwen", "choices": [{"text": "hel", "finish_reason": None}]},
+                {"model": "qwen", "choices": [{"text": "lo", "finish_reason": "stop"}]},
+            ]
+        ),
+    )
+    protocol = _Protocol()
+
+    result = adapter.execute_streaming(protocol, "connection-1", _request(request_id="stream-1"))
+
+    assert result.terminal_state == "COMPLETED"
+    assert result.result_payload == {"text": "hello", "model": "qwen", "finish_reason": "stop"}
+    stream = protocol.store.streams["llamacpp-stream-stream-1"]
+    assert stream.ordering_model == "STRICT_ORDERED"
+    chunks = protocol.store.stream_chunks[stream.stream_id]
+    assert [chunks[index].content for index in sorted(chunks)] == ["hel", "lo"]
+    close = protocol.store.stream_closes[stream.stream_id]
+    assert result.stream_roots == [close.final_content_root]
+    assert protocol.usage_reports[0].dimensions[0].model_dump() == {
+        "dimension_id": "output_bytes",
+        "unit": "byte",
+        "availability": "AVAILABLE",
+        "authority": "OBSERVABLE_LOCAL",
+        "value": 5,
+        "cumulative": True,
+        "billing_eligible": False,
+        "source_reference": {
+            "source_type": "RUNTIME_COUNTER",
+            "source_id": "llamacpp-sse-output",
+            "source_version": None,
+            "source_hash": None,
+            "observation_boundary": "adapter-delivered-stream",
+        },
+        "limitations": [],
+    }
 
 
 def test_llamacpp_adapter_reports_unconfirmed_best_effort_cancellation() -> None:

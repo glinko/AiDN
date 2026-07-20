@@ -113,6 +113,13 @@ def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:
                 authority="AUTHORITATIVE_PROVIDER",
                 billing_eligible=False,
             ),
+            RuntimeUsageProfileDimension(
+                dimension_id="output_bytes",
+                unit="byte",
+                expected_availability="AVAILABLE",
+                authority="OBSERVABLE_LOCAL",
+                billing_eligible=False,
+            ),
         ],
     )
     binding = RuntimeBinding(
@@ -129,6 +136,7 @@ def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:
         plugin_version="live",
         adapter_id="llamacpp-openai",
         adapter_version="llamacpp-openai.v1",
+        supported_features=["streaming"],
         supported_accounting_modes=["provider_metered"],
         usage_reporting_profile_hash=profile.profile_hash,
         dispatcher_route_scope={"channel_class": "RUNTIME", "runtime_id": "live-runtime"},
@@ -263,3 +271,24 @@ def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:
         execution_request.request_id: "REDELIVERED_FINAL_RESULT"
     }
     assert recovery.remaining_conflicts == []
+
+    stream_request = execution_request.model_copy(
+        update={
+            "request_id": "live-stream-request-1",
+            "idempotency_key": "live-stream-request-1",
+            "required_features": ["streaming"],
+        }
+    )
+    stream_result = adapter.execute_streaming(
+        protocol,
+        connection.runtime_connection_id,
+        stream_request,
+    )
+    assert stream_result.terminal_state == "COMPLETED"
+    assert len(stream_result.stream_roots) == 1
+    stream_id = f"llamacpp-stream-{stream_request.request_id}"
+    assert protocol.store.stream_closes[stream_id].final_content_root == stream_result.stream_roots[0]
+    stream_report = protocol.store.usage_reports[stream_result.final_usage_report_id]
+    assert [(item.dimension_id, item.authority) for item in stream_report.dimensions] == [
+        ("output_bytes", "OBSERVABLE_LOCAL")
+    ]

@@ -10,7 +10,7 @@ The target server must expose:
 
 - `GET /health` returning `{"status":"ok"}`;
 - `GET /v1/models` with the configured model ID;
-- `POST /v1/completions` with provider Usage and timings.
+- `POST /v1/completions` with provider Usage, timings and OpenAI SSE streaming.
 
 Run from PowerShell:
 
@@ -22,14 +22,18 @@ python -m pytest -q tests/integration/test_llamacpp_live.py
 ```
 
 The profile sends short completions. It verifies Health, model discovery,
-completion response shape, provider-reported token Usage and timings, final
-Result redelivery, and a Recovery State/Plan/Result cycle without another
-adapter execution. It does not start, stop or reconfigure the provider.
+completion response shape, provider-reported token Usage and timings, ordered
+SSE stream chunks with a final content root, final Result redelivery, and a
+Recovery State/Plan/Result cycle without another adapter execution. It does not
+start, stop or reconfigure the provider.
 
-The current non-streaming adapter declares best-effort cancellation only. A
-cancel result remains `CANCELLATION_PENDING` with an unknown Provider execution
-state until a Provider-specific operation handle or recovery observation can
-confirm the outcome; it never claims a confirmed Provider stop for ordinary
+Streaming endpoints normally do not disclose final Provider token usage. The
+adapter therefore reports only locally observed delivered output bytes for a
+stream and does not emit Provider token dimensions. The adapter also declares
+best-effort cancellation only: a cancel result remains
+`CANCELLATION_PENDING` with an unknown Provider execution state until a
+Provider-specific operation handle or recovery observation can confirm the
+outcome; it never claims a confirmed Provider stop for ordinary
 `/v1/completions` traffic.
 
 Unset `AIDN_LLAMACPP_LIVE` to skip the test. Do not put credentials in these

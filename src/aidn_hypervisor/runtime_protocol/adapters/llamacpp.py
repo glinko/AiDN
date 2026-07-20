@@ -1,8 +1,8 @@
 """RFC-0054 executor for a non-streaming OpenAI-compatible llama.cpp server."""
 
 from datetime import datetime, timezone
+import hashlib
 import json
-import time
 from urllib import request as urllib_request
 
 from aidn_hypervisor.runtime_protocol.models import (
@@ -14,8 +14,12 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeRecoveryResult,
     RuntimeRecoveryState,
     RuntimeResult,
+    RuntimeStreamChunk,
+    RuntimeStreamClose,
+    RuntimeStreamOpen,
     RuntimeUsageDimension,
     RuntimeUsageReport,
+    canonical_hash,
 )
 
 
@@ -39,23 +43,7 @@ class LlamaCppOpenAIAdapter:
         existing = protocol.store.results.get(request.request_id)
         if existing is not None:
             return existing
-        protocol.register_execute_request(runtime_connection_id, request)
-        protocol.record_request_accept(
-            runtime_connection_id,
-            RuntimeRequestAccept(
-                runtime_id=request.runtime_id,
-                runtime_generation=request.runtime_generation,
-                route_generation=request.route_generation,
-                session_id=request.session_id,
-                request_id=request.request_id,
-                admission_state="ACCEPTED",
-                runtime_request_handle=f"llamacpp-{request.request_id}",
-                accepted_capability_definition_hash=request.capability_definition_hash,
-                accepted_features=[],
-                accepted_at=self._now(),
-                progress_authority="MEASURED",
-            ),
-        )
+        self._admit(protocol, runtime_connection_id, request, accepted_features=[])
         started_at = self._now()
         try:
             response = self._completion(request)
@@ -108,6 +96,156 @@ class LlamaCppOpenAIAdapter:
                 request_id=request.request_id,
                 terminal_state=terminal_state,
                 result_payload=result_payload,
+                final_usage_report_id=report.usage_report_id,
+                provider_attempt_count=1,
+                completed_at=self._now(),
+                runtime_signature=self.runtime_signature,
+            ),
+        )
+
+    def execute_streaming(
+        self,
+        protocol,
+        runtime_connection_id: str,
+        request: RuntimeExecuteRequest,
+    ) -> RuntimeResult:
+        """Translate OpenAI SSE completion events into RFC-0054 stream evidence."""
+        existing = protocol.store.results.get(request.request_id)
+        if existing is not None:
+            return existing
+        self._admit(protocol, runtime_connection_id, request, accepted_features=["streaming"])
+        stream_id = f"llamacpp-stream-{request.request_id}"
+        protocol.record_runtime_stream_open(
+            runtime_connection_id,
+            RuntimeStreamOpen(
+                runtime_id=request.runtime_id,
+                runtime_generation=request.runtime_generation,
+                runtime_configuration_hash=request.runtime_configuration_hash,
+                route_generation=request.route_generation,
+                session_id=request.session_id,
+                request_id=request.request_id,
+                stream_id=stream_id,
+                stream_type="result",
+                modality="text",
+                content_type="text/plain",
+                result_root_policy="FULL_CONTENT_HASH",
+                opened_at=self._now(),
+                runtime_signature=self.runtime_signature,
+            ),
+        )
+        started_at = self._now()
+        chunks: list[RuntimeStreamChunk] = []
+        model = self.model
+        finish_reason = None
+        try:
+            for event in self._stream_completion(request):
+                model = str(event.get("model", model))
+                choices = event.get("choices", [])
+                if not choices:
+                    continue
+                choice = choices[0]
+                finish_reason = choice.get("finish_reason") or finish_reason
+                text = choice.get("text")
+                if not isinstance(text, str) or not text:
+                    continue
+                encoded = text.encode("utf-8")
+                chunk = RuntimeStreamChunk(
+                    runtime_id=request.runtime_id,
+                    runtime_generation=request.runtime_generation,
+                    runtime_configuration_hash=request.runtime_configuration_hash,
+                    route_generation=request.route_generation,
+                    session_id=request.session_id,
+                    request_id=request.request_id,
+                    stream_id=stream_id,
+                    chunk_sequence=len(chunks) + 1,
+                    chunk_hash=f"sha256:{hashlib.sha256(encoded).hexdigest()}",
+                    chunk_length=len(encoded),
+                    content=text,
+                    cumulative_output_units=sum(item.chunk_length for item in chunks) + len(encoded),
+                    emitted_at=self._now(),
+                    runtime_signature=self.runtime_signature,
+                )
+                protocol.record_runtime_stream_chunk(runtime_connection_id, chunk)
+                chunks.append(chunk)
+            terminal_state = "COMPLETED"
+            result_payload = {
+                "text": "".join(item.content or "" for item in chunks),
+                "model": model,
+                "finish_reason": finish_reason,
+            }
+            limitations = ["PROVIDER_STREAM_USAGE_UNAVAILABLE"]
+        except Exception as exc:
+            terminal_state = "FAILED"
+            result_payload = None
+            limitations = [f"UPSTREAM_STREAM_ERROR:{type(exc).__name__}"]
+        close = RuntimeStreamClose(
+            runtime_id=request.runtime_id,
+            runtime_generation=request.runtime_generation,
+            runtime_configuration_hash=request.runtime_configuration_hash,
+            route_generation=request.route_generation,
+            session_id=request.session_id,
+            request_id=request.request_id,
+            stream_id=stream_id,
+            terminal_state=terminal_state,
+            final_sequence=len(chunks),
+            final_content_root=self._stream_root(stream_id, chunks),
+            delivered_length=sum(item.chunk_length for item in chunks),
+            close_reason=terminal_state.lower(),
+            closed_at=self._now(),
+            runtime_signature=self.runtime_signature,
+        )
+        protocol.record_runtime_stream_close(runtime_connection_id, close)
+        report = RuntimeUsageReport(
+            usage_report_id=f"llamacpp-usage-{request.request_id}",
+            runtime_id=request.runtime_id,
+            runtime_generation=request.runtime_generation,
+            runtime_configuration_hash=request.runtime_configuration_hash,
+            endpoint_id=request.endpoint_id,
+            endpoint_configuration_hash=request.endpoint_configuration_hash,
+            session_id=request.session_id,
+            request_id=request.request_id,
+            accounting_contract_hash=request.accounting_contract_hash,
+            report_type="FINAL",
+            usage_sequence=1,
+            dimensions=[
+                RuntimeUsageDimension(
+                    dimension_id="output_bytes",
+                    unit="byte",
+                    availability="AVAILABLE",
+                    authority="OBSERVABLE_LOCAL",
+                    value=close.delivered_length,
+                    billing_eligible=False,
+                    source_reference={
+                        "source_type": "RUNTIME_COUNTER",
+                        "source_id": "llamacpp-sse-output",
+                        "observation_boundary": "adapter-delivered-stream",
+                    },
+                )
+            ],
+            provider_attempt_count=1,
+            request_state=terminal_state,
+            terminal=True,
+            observed_from=started_at,
+            observed_to=self._now(),
+            limitations=limitations,
+            created_at=self._now(),
+            runtime_signature=self.runtime_signature,
+        )
+        protocol.record_usage_report(runtime_connection_id, report)
+        return protocol.record_runtime_result(
+            runtime_connection_id,
+            RuntimeResult(
+                runtime_id=request.runtime_id,
+                runtime_generation=request.runtime_generation,
+                runtime_configuration_hash=request.runtime_configuration_hash,
+                route_generation=request.route_generation,
+                endpoint_id=request.endpoint_id,
+                endpoint_configuration_hash=request.endpoint_configuration_hash,
+                session_id=request.session_id,
+                request_id=request.request_id,
+                terminal_state=terminal_state,
+                result_payload=result_payload,
+                stream_roots=[close.final_content_root],
                 final_usage_report_id=report.usage_report_id,
                 provider_attempt_count=1,
                 completed_at=self._now(),
@@ -238,6 +376,78 @@ class LlamaCppOpenAIAdapter:
         )
         with urllib_request.urlopen(request, timeout=self.timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def _stream_completion(self, execution_request: RuntimeExecuteRequest):
+        prompt = (execution_request.request_payload or {}).get("prompt")
+        if not isinstance(prompt, str) or not prompt:
+            raise ValueError("llama.cpp adapter requires a non-empty prompt")
+        payload = json.dumps(
+            {
+                "model": self.model,
+                "prompt": prompt,
+                "max_tokens": 64,
+                "temperature": 0,
+                "stream": True,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        request = urllib_request.Request(
+            f"{self.endpoint}/v1/completions",
+            method="POST",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib_request.urlopen(request, timeout=self.timeout_seconds) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line.removeprefix("data:").strip()
+                if data == "[DONE]":
+                    return
+                yield json.loads(data)
+
+    def _admit(
+        self,
+        protocol,
+        runtime_connection_id: str,
+        request: RuntimeExecuteRequest,
+        *,
+        accepted_features: list[str],
+    ) -> None:
+        protocol.register_execute_request(runtime_connection_id, request)
+        protocol.record_request_accept(
+            runtime_connection_id,
+            RuntimeRequestAccept(
+                runtime_id=request.runtime_id,
+                runtime_generation=request.runtime_generation,
+                route_generation=request.route_generation,
+                session_id=request.session_id,
+                request_id=request.request_id,
+                admission_state="ACCEPTED",
+                runtime_request_handle=f"llamacpp-{request.request_id}",
+                accepted_capability_definition_hash=request.capability_definition_hash,
+                accepted_features=accepted_features,
+                accepted_at=self._now(),
+                progress_authority="MEASURED",
+            ),
+        )
+
+    @staticmethod
+    def _stream_root(stream_id: str, chunks: list[RuntimeStreamChunk]) -> str:
+        return canonical_hash(
+            {
+                "stream_id": stream_id,
+                "chunks": [
+                    {
+                        "sequence": chunk.chunk_sequence,
+                        "chunk_hash": chunk.chunk_hash,
+                        "chunk_length": chunk.chunk_length,
+                    }
+                    for chunk in chunks
+                ],
+            }
+        )
 
     def _usage_dimensions(self, usage: dict) -> list[RuntimeUsageDimension]:
         dimensions = []
