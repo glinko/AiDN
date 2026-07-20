@@ -134,6 +134,40 @@ class LlamaCppPlugin(ProviderPlugin):
             "missing_usage_behavior": "skip",
         }
 
+    def create_runtime_binding(
+        self,
+        *,
+        model_deployment: dict,
+        capability_id: str,
+        capability_version: str,
+        capability_definition_hash: str,
+    ) -> dict:
+        """Project a llama.cpp deployment onto the RFC-0054 adapter surface."""
+        return {
+            "model_deployment_id": model_deployment["model_deployment_id"],
+            "provider_instance_id": model_deployment["provider_instance_id"],
+            "capability_id": capability_id,
+            "capability_version": capability_version,
+            "capability_definition_hash": capability_definition_hash,
+            "adapter_id": "llamacpp-openai",
+            "adapter_version": "llamacpp-openai.v1",
+            "supported_features": ["streaming", "cancellation"],
+            "supported_modalities": ["text"],
+            "supported_accounting_modes": [
+                "provider_metered",
+                "fixed_price",
+                "observable",
+            ],
+            "compatibility_bundle": {
+                "plugin_id": self.plugin_id,
+                "provider_type": "llama.cpp",
+                "model_id": model_deployment["provider_model_reference"],
+                "launch_mode": "managed_process",
+                "device_affinity": "cpu",
+            },
+            "status": "ready",
+        }
+
     def _endpoint(self, runtime_handle) -> str:
         return runtime_handle.metadata.get("endpoint", self._default_endpoint).rstrip("/")
 

@@ -82,6 +82,35 @@ def test_llamacpp_plugin_validate_bundle_rejects_non_managed_launch_mode() -> No
         plugin.validate_bundle(_bundle(launch_mode="attached_service"))
 
 
+def test_llamacpp_plugin_projects_deployment_to_rfc0054_runtime_adapter() -> None:
+    projection = LlamaCppPlugin().create_runtime_binding(
+        model_deployment={
+            "model_deployment_id": "model-1",
+            "provider_instance_id": "provider-1",
+            "provider_model_reference": "qwen3.6",
+        },
+        capability_id="llm.chat",
+        capability_version="1.0",
+        capability_definition_hash="capability-hash",
+    )
+
+    assert projection["adapter_id"] == "llamacpp-openai"
+    assert projection["adapter_version"] == "llamacpp-openai.v1"
+    assert projection["supported_features"] == ["streaming", "cancellation"]
+    assert projection["supported_accounting_modes"] == [
+        "provider_metered",
+        "fixed_price",
+        "observable",
+    ]
+    assert projection["compatibility_bundle"] == {
+        "plugin_id": "llama.cpp",
+        "provider_type": "llama.cpp",
+        "model_id": "qwen3.6",
+        "launch_mode": "managed_process",
+        "device_affinity": "cpu",
+    }
+
+
 def test_llamacpp_plugin_build_launch_spec_derives_host_and_port_from_endpoint() -> None:
     plugin = LlamaCppPlugin()
 
