@@ -1,6 +1,8 @@
 """Install-scoped identity checks for a future isolated Provider Plugin Host."""
 
 from collections.abc import Callable
+import hashlib
+import hmac
 import json
 from uuid import uuid4
 
@@ -23,6 +25,66 @@ class PluginHostIdentity(BaseModel):
 class PluginHostHello(PluginHostIdentity):
     host_nonce: str = Field(min_length=1)
     activation_proof: str = Field(min_length=1)
+
+
+def build_plugin_host_activation_proof(
+    *,
+    activation_secret: bytes,
+    identity: PluginHostIdentity,
+    host_nonce: str,
+) -> str:
+    """Create the local Host proof without exposing its activation secret."""
+    payload = json.dumps(
+        {
+            "activation_credential_key_id": identity.activation_credential_key_id,
+            "host_nonce": host_nonce,
+            "installation_generation": identity.installation_generation,
+            "installed_plugin_id": identity.installed_plugin_id,
+            "plugin_id": identity.plugin_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hmac.new(activation_secret, payload, hashlib.sha256).hexdigest()
+
+
+class PluginHostActivationCredentialStore:
+    """Ephemeral activation secrets for locally launched Plugin Hosts."""
+
+    def __init__(self) -> None:
+        self._secrets: dict[str, bytes] = {}
+
+    def save(self, *, credential_key_id: str, activation_secret: bytes) -> None:
+        if not credential_key_id:
+            raise ValueError("Plugin Host credential key ID is required")
+        if not activation_secret:
+            raise ValueError("Plugin Host activation secret is required")
+        self._secrets[credential_key_id] = activation_secret
+
+    def get(self, credential_key_id: str) -> bytes | None:
+        return self._secrets.get(credential_key_id)
+
+    def remove(self, credential_key_id: str) -> None:
+        self._secrets.pop(credential_key_id, None)
+
+
+class HmacPluginHostActivationProofVerifier:
+    """Verify that a Host possesses its install-scoped activation secret."""
+
+    def __init__(self, secret_resolver: Callable[[str], bytes | None]) -> None:
+        self.secret_resolver = secret_resolver
+
+    def __call__(self, hello: PluginHostHello) -> bool:
+        activation_secret = self.secret_resolver(hello.activation_credential_key_id)
+        if activation_secret is None:
+            return False
+        expected = build_plugin_host_activation_proof(
+            activation_secret=activation_secret,
+            identity=PluginHostIdentity.model_validate(hello.model_dump()),
+            host_nonce=hello.host_nonce,
+        )
+        return hmac.compare_digest(expected, hello.activation_proof)
 
 
 class PluginHostConnection(BaseModel):
@@ -106,11 +168,20 @@ class PluginHostHandshakeService:
         self.authenticator = authenticator
         self.activation_proof_verifier = activation_proof_verifier
         self.now = now
+        self._used_nonces: set[tuple[str, int, str]] = set()
 
     def accept(self, hello: PluginHostHello) -> PluginHostConnection:
         installed = self.authenticator.authenticate(hello)
         if not self.activation_proof_verifier(hello):
             raise PluginHostAuthenticationError("Plugin Host activation proof is invalid")
+        nonce_key = (
+            installed.installed_plugin_id,
+            installed.installation_generation,
+            hello.host_nonce,
+        )
+        if nonce_key in self._used_nonces:
+            raise PluginHostAuthenticationError("Plugin Host activation nonce was already used")
+        self._used_nonces.add(nonce_key)
         return PluginHostConnection(
             plugin_host_connection_id=f"phc-{uuid4().hex}",
             installed_plugin_id=installed.installed_plugin_id,

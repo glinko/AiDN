@@ -23,7 +23,11 @@ from aidn_hypervisor.providers.models import (
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.package_store import PluginPackageStore
 from aidn_hypervisor.providers.package_verification import compute_manifest_hash
-from aidn_hypervisor.plugins.host import PluginHostHello
+from aidn_hypervisor.plugins.host import (
+    PluginHostHello,
+    PluginHostIdentity,
+    build_plugin_host_activation_proof,
+)
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
@@ -159,17 +163,25 @@ def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:
     installed = service.install_plugin_release(
         release_id=release.release_id, granted_permissions=release.declared_permissions
     )
-    installed = service.advance_installed_plugin_generation(
+    activation = service.provision_plugin_host_activation_credential(
         installed_plugin_id=installed.installed_plugin_id,
-        activation_credential_key_id="sha256:" + "d" * 64,
     )
-    hello = PluginHostHello(
+    installed = service.store.get_installed_plugin(installed.installed_plugin_id)
+    assert "activation_secret" not in installed.model_dump(mode="json")
+    identity = PluginHostIdentity(
         installed_plugin_id=installed.installed_plugin_id,
         plugin_id=installed.plugin_id,
         installation_generation=installed.installation_generation,
         activation_credential_key_id=installed.activation_credential_key_id,
+    )
+    hello = PluginHostHello(
+        **identity.model_dump(),
         host_nonce="nonce",
-        activation_proof="proof",
+        activation_proof=build_plugin_host_activation_proof(
+        activation_secret=activation["activation_secret"],
+            identity=identity,
+            host_nonce="nonce",
+        ),
     )
 
     ingress = service.plugin_host_local_ingress()

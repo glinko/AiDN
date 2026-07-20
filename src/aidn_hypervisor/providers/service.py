@@ -1,5 +1,6 @@
 import hashlib
 import json
+import secrets
 from copy import deepcopy
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -42,6 +43,8 @@ from aidn_hypervisor.providers.package_verification import (
 )
 from aidn_hypervisor.providers.package_store import PluginPackageStore
 from aidn_hypervisor.plugins.host import (
+    HmacPluginHostActivationProofVerifier,
+    PluginHostActivationCredentialStore,
     PluginHostAuthenticator,
     PluginHostHandshakeService,
     PluginHostConnectionStore,
@@ -84,6 +87,7 @@ class ProviderInventoryService:
             trusted_publisher_keys or DEFAULT_TRUSTED_PUBLISHER_KEYS
         )
         self.package_store = package_store
+        self.plugin_host_activation_credentials = PluginHostActivationCredentialStore()
         self.plugin_host_connection_store = PluginHostConnectionStore(plugin_host_connections)
         self._runtime_binding_projections: dict[str, dict] = {}
 
@@ -101,7 +105,9 @@ class ProviderInventoryService:
         return PluginHostLocalIpcIngress(
             PluginHostHandshakeService(
                 authenticator=PluginHostAuthenticator(self.store.get_installed_plugin),
-                activation_proof_verifier=lambda hello: bool(hello.activation_proof),
+                activation_proof_verifier=HmacPluginHostActivationProofVerifier(
+                    self.plugin_host_activation_credentials.get
+                ),
                 now=_now_iso,
             ),
             manifest_resolver=lambda plugin_id: self._get_plugin(plugin_id).plugin_manifest(),
@@ -123,6 +129,30 @@ class ProviderInventoryService:
             runtime_binding_admission=lambda plugin_id, runtime_binding_id: self._host_runtime_binding_admission(plugin_id, runtime_binding_id),
             connection_store=self.plugin_host_connection_store,
         )
+
+    def provision_plugin_host_activation_credential(
+        self,
+        *,
+        installed_plugin_id: str,
+    ) -> dict:
+        """Rotate an install generation and return its one-time Host launch secret."""
+        activation_secret = secrets.token_bytes(32)
+        credential_key_id = "sha256:" + hashlib.sha256(activation_secret).hexdigest()
+        installed = self.advance_installed_plugin_generation(
+            installed_plugin_id=installed_plugin_id,
+            activation_credential_key_id=credential_key_id,
+        )
+        self.plugin_host_activation_credentials.save(
+            credential_key_id=credential_key_id,
+            activation_secret=activation_secret,
+        )
+        return {
+            "installed_plugin_id": installed.installed_plugin_id,
+            "plugin_id": installed.plugin_id,
+            "installation_generation": installed.installation_generation,
+            "activation_credential_key_id": credential_key_id,
+            "activation_secret": activation_secret,
+        }
 
     def _host_discover_models(self, plugin_id: str, provider_instance_id: str) -> list[dict]:
         instance = self.store.get_provider_instance(provider_instance_id)
