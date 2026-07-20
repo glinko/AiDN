@@ -21,9 +21,16 @@ $env:AIDN_LLAMACPP_MODEL = "provider-model-id"
 python -m pytest -q tests/integration/test_llamacpp_live.py
 ```
 
-The profile sends one short completion. It verifies Health, model discovery,
-completion response shape, provider-reported token Usage and timings. It does
+The profile sends short completions. It verifies Health, model discovery,
+completion response shape, provider-reported token Usage and timings, and
+RFC-0054 final Result redelivery without another adapter execution. It does
 not start, stop or reconfigure the provider.
+
+The current non-streaming adapter declares best-effort cancellation only. A
+cancel result remains `CANCELLATION_PENDING` with an unknown Provider execution
+state until a Provider-specific operation handle or recovery observation can
+confirm the outcome; it never claims a confirmed Provider stop for ordinary
+`/v1/completions` traffic.
 
 Unset `AIDN_LLAMACPP_LIVE` to skip the test. Do not put credentials in these
 environment variables; authenticated upstream support belongs to the scoped

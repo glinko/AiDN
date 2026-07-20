@@ -6,6 +6,8 @@ import time
 from urllib import request as urllib_request
 
 from aidn_hypervisor.runtime_protocol.models import (
+    RuntimeCancelRequest,
+    RuntimeCancelResult,
     RuntimeExecuteRequest,
     RuntimeRequestAccept,
     RuntimeResult,
@@ -106,6 +108,42 @@ class LlamaCppOpenAIAdapter:
                 final_usage_report_id=report.usage_report_id,
                 provider_attempt_count=1,
                 completed_at=self._now(),
+                runtime_signature=self.runtime_signature,
+            ),
+        )
+
+    def cancel(
+        self,
+        protocol,
+        runtime_connection_id: str,
+        cancellation: RuntimeCancelRequest,
+    ) -> RuntimeCancelResult:
+        """Report best-effort cancellation without claiming upstream confirmation.
+
+        The non-streaming OpenAI-compatible endpoint has no portable operation
+        handle for a later cancellation request.  The adapter therefore leaves
+        the Request in cancellation-pending state until recovery can observe
+        the Provider outcome.
+        """
+        existing = protocol.store.cancellation_results.get(cancellation.cancellation_id)
+        if existing is not None:
+            return existing
+        return protocol.record_runtime_cancel_result(
+            runtime_connection_id,
+            RuntimeCancelResult(
+                cancellation_id=cancellation.cancellation_id,
+                runtime_id=cancellation.runtime_id,
+                runtime_generation=cancellation.runtime_generation,
+                runtime_configuration_hash=cancellation.runtime_configuration_hash,
+                route_generation=cancellation.route_generation,
+                session_id=cancellation.session_id,
+                request_id=cancellation.request_id,
+                cancellation_state="CANCELLATION_PENDING",
+                provider_execution_state="UNKNOWN",
+                output_stopped=False,
+                provider_confirmed_stopped=False,
+                side_effect_state="UNKNOWN",
+                observed_at=self._now(),
                 runtime_signature=self.runtime_signature,
             ),
         )

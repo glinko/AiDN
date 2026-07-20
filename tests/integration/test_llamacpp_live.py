@@ -230,11 +230,12 @@ def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:
         request_deadline=(datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
     )
 
-    result = LlamaCppOpenAIAdapter(
+    adapter = LlamaCppOpenAIAdapter(
         endpoint=endpoint,
         model=model,
         runtime_signature="live-signed",
-    ).execute(protocol, connection.runtime_connection_id, execution_request)
+    )
+    result = adapter.execute(protocol, connection.runtime_connection_id, execution_request)
 
     assert result.terminal_state == "COMPLETED"
     assert result.result_payload is not None
@@ -242,3 +243,4 @@ def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:
     report = protocol.store.usage_reports[result.final_usage_report_id]
     assert report.terminal is True
     assert {item.dimension_id for item in report.dimensions} == {"input_tokens", "output_tokens"}
+    assert adapter.execute(protocol, connection.runtime_connection_id, execution_request) == result

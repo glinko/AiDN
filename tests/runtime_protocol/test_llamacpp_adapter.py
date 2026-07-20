@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from aidn_hypervisor.runtime_protocol import (
     LlamaCppOpenAIAdapter,
+    RuntimeCancelRequest,
     RuntimeExecuteRequest,
     canonical_hash,
 )
@@ -33,7 +34,7 @@ def _request(*, request_id: str = "request-1") -> RuntimeExecuteRequest:
 
 class _Protocol:
     def __init__(self) -> None:
-        self.store = type("Store", (), {"results": {}})()
+        self.store = type("Store", (), {"results": {}, "cancellation_results": {}})()
         self.acceptances = []
         self.usage_reports = []
 
@@ -51,6 +52,27 @@ class _Protocol:
         self.store.results[result.request_id] = result
         return result
 
+    def record_runtime_cancel_result(self, connection_id, result):
+        self.store.cancellation_results[result.cancellation_id] = result
+        return result
+
+
+def _cancellation(request: RuntimeExecuteRequest) -> RuntimeCancelRequest:
+    now = datetime.now(timezone.utc)
+    return RuntimeCancelRequest(
+        runtime_id=request.runtime_id,
+        runtime_generation=request.runtime_generation,
+        runtime_configuration_hash=request.runtime_configuration_hash,
+        route_generation=request.route_generation,
+        session_id=request.session_id,
+        request_id=request.request_id,
+        cancellation_id="cancel-1",
+        cancellation_reason="consumer_requested",
+        requested_at=now.isoformat(),
+        deadline=(now + timedelta(minutes=1)).isoformat(),
+        hypervisor_signature="hypervisor-signed",
+    )
+
 
 def test_llamacpp_adapter_maps_provider_usage_into_final_runtime_evidence(monkeypatch) -> None:
     adapter = LlamaCppOpenAIAdapter(
@@ -58,15 +80,17 @@ def test_llamacpp_adapter_maps_provider_usage_into_final_runtime_evidence(monkey
         model="qwen",
         runtime_signature="runtime-signed",
     )
-    monkeypatch.setattr(
-        adapter,
-        "_completion",
-        lambda _: {
+    calls = []
+
+    def completion(_):
+        calls.append(True)
+        return {
             "model": "qwen",
             "choices": [{"text": "ok", "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 3, "completion_tokens": 2},
-        },
-    )
+        }
+
+    monkeypatch.setattr(adapter, "_completion", completion)
     protocol = _Protocol()
 
     result = adapter.execute(protocol, "connection-1", _request())
@@ -82,6 +106,7 @@ def test_llamacpp_adapter_maps_provider_usage_into_final_runtime_evidence(monkey
     ]
     assert all(item.authority == "AUTHORITATIVE_PROVIDER" for item in report.dimensions)
     assert adapter.execute(protocol, "connection-1", _request()) == result
+    assert calls == [True]
 
 
 def test_llamacpp_adapter_records_failed_terminal_evidence_for_upstream_error(monkeypatch) -> None:
@@ -98,3 +123,22 @@ def test_llamacpp_adapter_records_failed_terminal_evidence_for_upstream_error(mo
     assert result.terminal_state == "FAILED"
     assert protocol.usage_reports[0].terminal is True
     assert protocol.usage_reports[0].limitations == ["UPSTREAM_ERROR:TimeoutError"]
+
+
+def test_llamacpp_adapter_reports_unconfirmed_best_effort_cancellation() -> None:
+    adapter = LlamaCppOpenAIAdapter(
+        endpoint="http://provider",
+        model="qwen",
+        runtime_signature="runtime-signed",
+    )
+    protocol = _Protocol()
+    cancellation = _cancellation(_request())
+
+    result = adapter.cancel(protocol, "connection-1", cancellation)
+
+    assert result.cancellation_state == "CANCELLATION_PENDING"
+    assert result.provider_execution_state == "UNKNOWN"
+    assert result.output_stopped is False
+    assert result.provider_confirmed_stopped is False
+    assert result.side_effect_state == "UNKNOWN"
+    assert adapter.cancel(protocol, "connection-1", cancellation) == result
