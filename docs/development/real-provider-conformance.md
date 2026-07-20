@@ -22,9 +22,9 @@ python -m pytest -q tests/integration/test_llamacpp_live.py
 ```
 
 The profile sends short completions. It verifies Health, model discovery,
-completion response shape, provider-reported token Usage and timings, and
-RFC-0054 final Result redelivery without another adapter execution. It does
-not start, stop or reconfigure the provider.
+completion response shape, provider-reported token Usage and timings, final
+Result redelivery, and a Recovery State/Plan/Result cycle without another
+adapter execution. It does not start, stop or reconfigure the provider.
 
 The current non-streaming adapter declares best-effort cancellation only. A
 cancel result remains `CANCELLATION_PENDING` with an unknown Provider execution

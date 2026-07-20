@@ -244,3 +244,22 @@ def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:
     assert report.terminal is True
     assert {item.dimension_id for item in report.dimensions} == {"input_tokens", "output_tokens"}
     assert adapter.execute(protocol, connection.runtime_connection_id, execution_request) == result
+
+    recovery_state = adapter.recovery_state(
+        protocol,
+        execution_request,
+        instance_id="live-restarted-instance",
+    )
+    recovery_plan = protocol.build_recovery_plan(
+        connection.runtime_connection_id,
+        recovery_state,
+    )
+    recovery = adapter.apply_recovery_plan(
+        protocol,
+        connection.runtime_connection_id,
+        recovery_plan,
+    )
+    assert recovery.request_results == {
+        execution_request.request_id: "REDELIVERED_FINAL_RESULT"
+    }
+    assert recovery.remaining_conflicts == []

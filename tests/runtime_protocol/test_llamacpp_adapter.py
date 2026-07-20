@@ -4,6 +4,7 @@ from aidn_hypervisor.runtime_protocol import (
     LlamaCppOpenAIAdapter,
     RuntimeCancelRequest,
     RuntimeExecuteRequest,
+    RuntimeRecoveryPlan,
     canonical_hash,
 )
 
@@ -34,7 +35,16 @@ def _request(*, request_id: str = "request-1") -> RuntimeExecuteRequest:
 
 class _Protocol:
     def __init__(self) -> None:
-        self.store = type("Store", (), {"results": {}, "cancellation_results": {}})()
+        self.store = type(
+            "Store",
+            (),
+            {
+                "results": {},
+                "cancellation_results": {},
+                "usage_reports": {},
+                "recovery_results": {},
+            },
+        )()
         self.acceptances = []
         self.usage_reports = []
 
@@ -47,6 +57,7 @@ class _Protocol:
 
     def record_usage_report(self, connection_id, report):
         self.usage_reports.append(report)
+        self.store.usage_reports[report.usage_report_id] = report
 
     def record_runtime_result(self, connection_id, result):
         self.store.results[result.request_id] = result
@@ -54,6 +65,10 @@ class _Protocol:
 
     def record_runtime_cancel_result(self, connection_id, result):
         self.store.cancellation_results[result.cancellation_id] = result
+        return result
+
+    def record_recovery_result(self, connection_id, result):
+        self.store.recovery_results[result.plan_id] = result
         return result
 
 
@@ -142,3 +157,42 @@ def test_llamacpp_adapter_reports_unconfirmed_best_effort_cancellation() -> None
     assert result.provider_confirmed_stopped is False
     assert result.side_effect_state == "UNKNOWN"
     assert adapter.cancel(protocol, "connection-1", cancellation) == result
+
+
+def test_llamacpp_adapter_recovers_only_durable_terminal_evidence(monkeypatch) -> None:
+    adapter = LlamaCppOpenAIAdapter(
+        endpoint="http://provider",
+        model="qwen",
+        runtime_signature="runtime-signed",
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_completion",
+        lambda _: {
+            "model": "qwen",
+            "choices": [{"text": "ok", "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+        },
+    )
+    protocol = _Protocol()
+    execution_request = _request()
+    adapter.execute(protocol, "connection-1", execution_request)
+
+    state = adapter.recovery_state(protocol, execution_request, instance_id="restarted")
+    assert state.terminal_requests == [execution_request.request_id]
+    assert state.usage_chain_heads[execution_request.request_id]
+    recovered = adapter.apply_recovery_plan(
+        protocol,
+        "connection-2",
+        RuntimeRecoveryPlan(
+            runtime_id=execution_request.runtime_id,
+            runtime_generation=execution_request.runtime_generation,
+            route_generation=execution_request.route_generation,
+            plan_id="plan-1",
+            request_directives={execution_request.request_id: "REDELIVER_FINAL_RESULT"},
+            issued_at=datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+
+    assert recovered.request_results == {execution_request.request_id: "REDELIVERED_FINAL_RESULT"}
+    assert recovered.remaining_conflicts == []

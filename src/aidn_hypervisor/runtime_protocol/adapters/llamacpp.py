@@ -10,6 +10,9 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeCancelResult,
     RuntimeExecuteRequest,
     RuntimeRequestAccept,
+    RuntimeRecoveryPlan,
+    RuntimeRecoveryResult,
+    RuntimeRecoveryState,
     RuntimeResult,
     RuntimeUsageDimension,
     RuntimeUsageReport,
@@ -147,6 +150,77 @@ class LlamaCppOpenAIAdapter:
                 runtime_signature=self.runtime_signature,
             ),
         )
+
+    def recovery_state(
+        self,
+        protocol,
+        request: RuntimeExecuteRequest,
+        *,
+        instance_id: str,
+    ) -> RuntimeRecoveryState:
+        """Describe only terminal evidence that this synchronous adapter can recover."""
+        terminal_requests = sorted(
+            result.request_id
+            for result in protocol.store.results.values()
+            if result.runtime_id == request.runtime_id
+        )
+        usage_chain_heads = {
+            report.request_id: report.report_hash
+            for report in protocol.store.usage_reports.values()
+            if report.runtime_id == request.runtime_id and report.terminal
+        }
+        return RuntimeRecoveryState(
+            runtime_id=request.runtime_id,
+            runtime_generation=request.runtime_generation,
+            runtime_configuration_hash=request.runtime_configuration_hash,
+            route_generation=request.route_generation,
+            instance_id=instance_id,
+            terminal_requests=terminal_requests,
+            usage_chain_heads=usage_chain_heads,
+            runtime_signature=self.runtime_signature,
+        )
+
+    def apply_recovery_plan(
+        self,
+        protocol,
+        runtime_connection_id: str,
+        plan: RuntimeRecoveryPlan,
+    ) -> RuntimeRecoveryResult:
+        """Redeliver durable terminal evidence without restarting Provider work."""
+        existing = protocol.store.recovery_results.get(plan.plan_id)
+        if existing is not None:
+            return existing
+        request_results: dict[str, str] = {}
+        remaining_conflicts: list[str] = []
+        for request_id, directive in plan.request_directives.items():
+            if directive == "REDELIVER_FINAL_RESULT":
+                if request_id in protocol.store.results:
+                    request_results[request_id] = "REDELIVERED_FINAL_RESULT"
+                else:
+                    remaining_conflicts.append(f"{request_id}:RESULT_NOT_FOUND")
+            elif directive == "REDELIVER_USAGE":
+                if any(
+                    report.request_id == request_id
+                    for report in protocol.store.usage_reports.values()
+                ):
+                    request_results[request_id] = "USAGE_REDELIVERY_AVAILABLE"
+                else:
+                    remaining_conflicts.append(f"{request_id}:USAGE_NOT_FOUND")
+            elif directive == "CONTINUE_EXISTING_EXECUTION":
+                remaining_conflicts.append(f"{request_id}:ACTIVE_EXECUTION_UNRECOVERABLE")
+            else:
+                request_results[request_id] = directive
+        result = RuntimeRecoveryResult(
+            runtime_id=plan.runtime_id,
+            runtime_generation=plan.runtime_generation,
+            route_generation=plan.route_generation,
+            plan_id=plan.plan_id,
+            request_results=request_results,
+            remaining_conflicts=remaining_conflicts,
+            completed_at=self._now(),
+        )
+        protocol.record_recovery_result(runtime_connection_id, result)
+        return result
 
     def _completion(self, execution_request: RuntimeExecuteRequest) -> dict:
         prompt = (execution_request.request_payload or {}).get("prompt")
