@@ -119,6 +119,29 @@ def test_plugin_release_install_rejects_unapproved_or_blocked_permissions() -> N
         )
 
 
+def test_plugin_release_registry_projection_is_public_and_deterministic() -> None:
+    registry = _registry()
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    release = service.register_plugin_release(
+        manifest_payload=registry.get("fake-managed").plugin_manifest(),
+        source_reference="registry://plugins/fake-managed",
+    )
+
+    records = service.plugin_release_registry_objects()
+
+    assert records == service.plugin_release_registry_objects()
+    assert records[0]["object_type"] == "plugin_release"
+    assert records[0]["object_version"] == "plugin-release.v1"
+    assert records[0]["namespace"] == "plugin"
+    assert records[0]["source_reference"] == release.source_reference
+    assert records[0]["payload"]["release_id"] == release.release_id
+    assert "installed_plugin_id" not in records[0]["payload"]
+    assert "activation_credential_key_id" not in records[0]["payload"]
+
+
 def test_package_install_requires_verified_content_addressed_payload() -> None:
     registry = _registry()
     package_store = PluginPackageStore()

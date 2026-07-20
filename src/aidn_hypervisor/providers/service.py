@@ -100,6 +100,44 @@ class ProviderInventoryService:
     def list_installed_plugins(self) -> list[InstalledPlugin]:
         return self.store.list_installed_plugins()
 
+    def plugin_release_registry_objects(self) -> list[dict]:
+        """Project immutable, public Plugin Release metadata into Registry objects."""
+        records: list[dict] = []
+        for release in self.store.list_plugin_releases():
+            payload = {
+                "release_id": release.release_id,
+                "plugin_id": release.plugin_id,
+                "plugin_version": release.plugin_version,
+                "manifest_hash": release.manifest_hash,
+                "package_digest": release.package_digest,
+                "publisher": release.publisher,
+                "trust_status": release.trust_status,
+                "declared_permissions": list(release.declared_permissions),
+                "release_status": release.release_status,
+                "source_reference": release.source_reference,
+                "published_at": release.published_at,
+            }
+            payload_hash = _canonical_hash(payload)
+            records.append(
+                {
+                    "object_id": _canonical_hash(
+                        {
+                            "object_type": "plugin_release",
+                            "object_version": "plugin-release.v1",
+                            "payload_hash": payload_hash,
+                        }
+                    ),
+                    "object_type": "plugin_release",
+                    "object_version": "plugin-release.v1",
+                    "namespace": "plugin",
+                    "payload_hash": payload_hash,
+                    "payload_encoding": "canonical_json",
+                    "source_reference": release.source_reference or release.release_id,
+                    "payload": payload,
+                }
+            )
+        return records
+
     def plugin_host_local_ingress(self) -> PluginHostLocalIpcIngress:
         """Expose only identity-bound manifest and validation controls to a Plugin Host."""
         return PluginHostLocalIpcIngress(

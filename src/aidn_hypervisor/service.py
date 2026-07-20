@@ -2865,6 +2865,15 @@ class HypervisorService:
             for release in self.provider_inventory.list_plugin_releases()
         ]
 
+    def provider_plugin_registry_objects(self) -> list[dict]:
+        return self.provider_inventory.plugin_release_registry_objects()
+
+    def publish_provider_plugin_releases_to_registry(self, registry_service) -> list[dict]:
+        """Persist public immutable Release metadata without exposing local installs."""
+        return registry_service.ingest_registry_objects(
+            self.provider_plugin_registry_objects()
+        )
+
     def list_installed_provider_plugins(self) -> list[dict]:
         return [
             installed_plugin.model_dump(mode="json")
