@@ -21,7 +21,10 @@ from aidn_hypervisor.providers.models import (
     ProviderInstallationJob,
 )
 from aidn_hypervisor.providers.service import ProviderInventoryService
-from aidn_hypervisor.providers.package_store import PluginPackageStore
+from aidn_hypervisor.providers.package_store import (
+    FilesystemPluginPackageStore,
+    PluginPackageStore,
+)
 from aidn_hypervisor.providers.package_verification import compute_manifest_hash
 from aidn_hypervisor.plugins.host import (
     PluginHostHello,
@@ -154,6 +157,25 @@ def test_plugin_package_store_rejects_digest_mismatch() -> None:
 
     with pytest.raises(ValueError, match="digest does not match"):
         store.stage(package_bytes=b"package", expected_digest="sha256:" + "0" * 64)
+
+
+def test_filesystem_plugin_package_store_survives_reconstruction_and_rejects_tampering(
+    tmp_path,
+) -> None:
+    package_bytes = b"verified plugin package"
+    package_digest = "sha256:" + hashlib.sha256(package_bytes).hexdigest()
+    store = FilesystemPluginPackageStore(tmp_path / "packages")
+
+    assert store.stage(package_bytes=package_bytes, expected_digest=package_digest) == package_digest
+    reconstructed_store = FilesystemPluginPackageStore(tmp_path / "packages")
+    assert reconstructed_store.has(package_digest) is True
+    assert reconstructed_store.read(package_digest) == package_bytes
+
+    package_path = reconstructed_store._path_for(package_digest)
+    package_path.write_bytes(b"tampered")
+    assert reconstructed_store.has(package_digest) is False
+    with pytest.raises(ValueError, match="does not match"):
+        reconstructed_store.read(package_digest)
 
 
 def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:

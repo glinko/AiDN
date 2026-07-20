@@ -28,6 +28,7 @@ from aidn_hypervisor.endpoints.state import (
 from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.providers.service import ProviderInventoryService
+from aidn_hypervisor.providers.package_store import PluginPackageStore
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.plugins.host import PluginHostJsonWireAdapter
 from aidn_hypervisor.plugins.host_named_pipe import WindowsNamedPipePluginHostListener
@@ -192,6 +193,7 @@ class HypervisorService:
         base_emission_q: float = 5000.0,
         epoch_reward_pool_shares: dict | None = None,
         provider_inventory=None,
+        plugin_package_store: PluginPackageStore | None = None,
         runtime_protocol_store=None,
     ) -> None:
         self.queue = queue
@@ -203,9 +205,11 @@ class HypervisorService:
         self.state_store = state_store
         self.bundle_registry = bundle_registry
         self.model_store = model_store
+        self._plugin_package_store = plugin_package_store
         self.provider_inventory = provider_inventory or ProviderInventoryService(
             plugins=self.plugins,
             store=InMemoryProviderInventoryStore(),
+            package_store=plugin_package_store,
         )
         self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
             state_store
@@ -3755,6 +3759,7 @@ class HypervisorService:
             plugins=self.plugins,
             store=InMemoryProviderInventoryStore(),
             installation_executor=installation_executor,
+            package_store=self._plugin_package_store,
             plugin_host_connections=[item.model_dump(mode="json") for item in snapshot.plugin_host_connections],
         )
         for release in snapshot.plugin_releases:
