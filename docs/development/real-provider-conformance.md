@@ -27,6 +27,10 @@ SSE stream chunks with a final content root, final Result redelivery, and a
 Recovery State/Plan/Result cycle without another adapter execution. It does not
 start, stop or reconfigure the provider.
 
+The same opt-in profile also verifies the operator attach path: it attaches the
+server without lifecycle authority, discovers the configured model through
+`/v1/models`, and creates a `llamacpp-openai.v1` Runtime Binding.
+
 Streaming endpoints normally do not disclose final Provider token usage. The
 adapter therefore reports only locally observed delivered output bytes for a
 stream and does not emit Provider token dimensions. The adapter also declares

@@ -14,6 +14,10 @@ from aidn_hypervisor.accounting.models import (
     RuntimeUsageProfileDimension,
 )
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
+from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
+from aidn_hypervisor.plugins.registry import PluginRegistry
+from aidn_hypervisor.providers.service import ProviderInventoryService
+from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol import (
     LlamaCppOpenAIAdapter,
@@ -89,6 +93,39 @@ def test_llamacpp_live_openai_completion_profile() -> None:
     )
     assert completion["timings"]["predicted_n"] == completion["usage"]["completion_tokens"]
     assert harness.report().passed is True
+
+
+def test_llamacpp_live_operator_attach_discover_and_bind() -> None:
+    endpoint, model = _live_configuration()
+    plugins = PluginRegistry()
+    plugins.register(LlamaCppPlugin())
+    service = ProviderInventoryService(
+        plugins=plugins,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    instance = service.attach_provider_instance(
+        plugin_id="llama.cpp",
+        display_name="Live llama.cpp",
+        configuration={"endpoint": endpoint},
+    )
+    deployments = service.discover_models(instance.provider_instance_id)
+    deployment = next(item for item in deployments if item.provider_model_reference == model)
+    binding = service.create_runtime_binding(
+        model_deployment_id=deployment.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0",
+        capability_definition_hash="live-capability-definition",
+    )
+    bundle = service.bundle_config_for_runtime_binding(binding.runtime_binding_id)
+
+    assert instance.connection_mode == "attached"
+    assert instance.configuration["endpoint"] == endpoint
+    assert binding.adapter_id == "llamacpp-openai"
+    assert binding.adapter_version == "llamacpp-openai.v1"
+    assert binding.supported_features == ["streaming", "cancellation"]
+    assert bundle.endpoint == endpoint
+    assert bundle.model_id == model
 
 
 def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:

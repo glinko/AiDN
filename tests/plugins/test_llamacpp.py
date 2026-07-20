@@ -41,6 +41,8 @@ class StubLlamaCppPlugin(LlamaCppPlugin):
             return self.health_payload or {"status": "ok"}
         if url.endswith("/completion"):
             return self.completion_payload or {"content": ""}
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "qwen3.6"}]}
         raise AssertionError(f"unexpected url: {url}")
 
 
@@ -49,6 +51,12 @@ def test_llamacpp_plugin_describes_llm_text_capability() -> None:
 
     assert plugin.describe() == {
         "plugin_id": "llama.cpp",
+        "plugin_version": "0.1.0",
+        "display_name": "llama.cpp OpenAI-compatible",
+        "provider_type": "llama.cpp",
+        "provider_families": ["llama.cpp", "openai-compatible"],
+        "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
+        "supported_aidn_capabilities": ["llm.chat"],
         "workload_types": ["llm_text"],
         "usage_contract": {
             "supports_exact": True,
@@ -109,6 +117,47 @@ def test_llamacpp_plugin_projects_deployment_to_rfc0054_runtime_adapter() -> Non
         "launch_mode": "managed_process",
         "device_affinity": "cpu",
     }
+
+
+def test_llamacpp_plugin_attaches_existing_openai_compatible_provider() -> None:
+    attached = LlamaCppPlugin().attach_existing_provider(
+        {"base_url": "http://127.0.0.1:9000/"}
+    )
+
+    assert attached == {
+        "configuration": {
+            "base_url": "http://127.0.0.1:9000/",
+            "endpoint": "http://127.0.0.1:9000",
+        },
+        "connection_mode": "attached",
+        "operational_state": "ready",
+    }
+
+
+def test_llamacpp_plugin_rejects_credentialed_or_non_http_attach_endpoint() -> None:
+    plugin = LlamaCppPlugin()
+
+    with pytest.raises(ValueError, match="credentials"):
+        plugin.attach_existing_provider({"endpoint": "https://user:secret@example.test"})
+    with pytest.raises(ValueError, match="absolute HTTP"):
+        plugin.attach_existing_provider({"endpoint": "ssh://example.test"})
+
+
+def test_llamacpp_plugin_discovers_openai_compatible_models() -> None:
+    plugin = StubLlamaCppPlugin()
+
+    models = plugin.discover_models({"configuration": {"endpoint": "http://127.0.0.1:9000"}})
+
+    assert models == [
+        {
+            "provider_model_reference": "qwen3.6",
+            "operator_display_name": "qwen3.6",
+            "metadata_sources": {"provider": "llamacpp-v1-models"},
+            "capability_bindings": ["llm.chat"],
+            "operational_state": "ready",
+        }
+    ]
+    assert plugin.calls == [("GET", "http://127.0.0.1:9000/v1/models", None)]
 
 
 def test_llamacpp_plugin_build_launch_spec_derives_host_and_port_from_endpoint() -> None:
