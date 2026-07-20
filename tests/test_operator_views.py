@@ -699,6 +699,13 @@ def test_providers_payload_exposes_plugin_directory_install_metadata() -> None:
         == ["RECORDED_ONLY", "SANDBOX_REQUIRED"]
     )
     assert payload["summary"]["installable_plugin_count"] == 1
+    assert payload["summary"]["active_plugin_host_connections"] == 0
+    assert payload["plugin_host_status"] == {
+        "active_connection_count": 0,
+        "connections": [],
+        "listener_count": 0,
+        "listener_transports": [],
+    }
 
 
 def test_provider_workspace_payload_includes_installation_apply_summary() -> None:

@@ -3896,6 +3896,21 @@ def test_provider_plugin_release_routes_record_local_installation_without_execut
     ]
 
 
+def test_plugin_host_status_route_returns_sanitized_observability() -> None:
+    service = _service()
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/plugin-host/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "active_connection_count": 0,
+        "connections": [],
+        "listener_count": 0,
+        "listener_transports": [],
+    }
+
+
 def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:
     client = TestClient(build_app(service=_service()))
 

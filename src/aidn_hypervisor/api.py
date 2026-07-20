@@ -1174,6 +1174,10 @@ def build_api_router(
     async def list_installed_provider_plugins() -> dict:
         return {"items": service.list_installed_provider_plugins()}
 
+    @router.get("/operators/plugin-host/status")
+    async def provider_plugin_host_status() -> dict:
+        return service.plugin_host_status()
+
     @router.post("/operators/provider-plugin-releases")
     async def register_provider_plugin_release(
         payload: RegisterProviderPluginReleaseRequest,
