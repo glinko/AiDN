@@ -118,6 +118,7 @@ class DispatcherRoute(BaseModel):
         "LOCAL_RUNTIME",
         "LOCAL_PLUGIN",
         "REMOTE_HYPERVISOR",
+        "REMOTE_RUNTIME",
         "RELAY_PATH",
         "REGISTRY_OBJECT_TRANSFER",
         "UNREACHABLE",

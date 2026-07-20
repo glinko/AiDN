@@ -12,7 +12,10 @@ from aidn_hypervisor.providers.models import (
     plugin_permission_hash,
 )
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
-from aidn_hypervisor.providers.package_store import PluginPackageStore
+from aidn_hypervisor.providers.package_store import (
+    FilesystemPluginPackageStore,
+    PluginPackageStore,
+)
 
 __all__ = [
     "ProviderPluginManifest",
@@ -28,4 +31,5 @@ __all__ = [
     "plugin_permission_hash",
     "InMemoryProviderInventoryStore",
     "PluginPackageStore",
+    "FilesystemPluginPackageStore",
 ]

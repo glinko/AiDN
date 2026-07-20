@@ -28,6 +28,7 @@ from aidn_hypervisor.endpoints.state import (
 from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.providers.service import ProviderInventoryService
+from aidn_hypervisor.providers.package_store import PluginPackageStore
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.plugins.host import PluginHostJsonWireAdapter
 from aidn_hypervisor.plugins.host_named_pipe import WindowsNamedPipePluginHostListener
@@ -192,6 +193,7 @@ class HypervisorService:
         base_emission_q: float = 5000.0,
         epoch_reward_pool_shares: dict | None = None,
         provider_inventory=None,
+        plugin_package_store: PluginPackageStore | None = None,
         runtime_protocol_store=None,
     ) -> None:
         self.queue = queue
@@ -203,9 +205,11 @@ class HypervisorService:
         self.state_store = state_store
         self.bundle_registry = bundle_registry
         self.model_store = model_store
+        self._plugin_package_store = plugin_package_store
         self.provider_inventory = provider_inventory or ProviderInventoryService(
             plugins=self.plugins,
             store=InMemoryProviderInventoryStore(),
+            package_store=plugin_package_store,
         )
         self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
             state_store
@@ -2861,6 +2865,15 @@ class HypervisorService:
             for release in self.provider_inventory.list_plugin_releases()
         ]
 
+    def provider_plugin_registry_objects(self) -> list[dict]:
+        return self.provider_inventory.plugin_release_registry_objects()
+
+    def publish_provider_plugin_releases_to_registry(self, registry_service) -> list[dict]:
+        """Persist public immutable Release metadata without exposing local installs."""
+        return registry_service.ingest_registry_objects(
+            self.provider_plugin_registry_objects()
+        )
+
     def list_installed_provider_plugins(self) -> list[dict]:
         return [
             installed_plugin.model_dump(mode="json")
@@ -2930,6 +2943,22 @@ class HypervisorService:
         for listener in self._plugin_host_listeners:
             listener.stop()  # type: ignore[attr-defined]
         self._plugin_host_listeners.clear()
+
+    def plugin_host_status(self) -> dict:
+        connections = self.provider_inventory.plugin_host_connection_store.snapshot()
+        return {
+            "active_connection_count": len(connections),
+            "connections": [
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key != "activation_credential_key_id"
+                }
+                for item in connections
+            ],
+            "listener_count": len(self._plugin_host_listeners),
+            "listener_transports": [type(item).__name__ for item in self._plugin_host_listeners],
+        }
 
     def list_provider_installation_artifacts(self) -> dict:
         return self.provider_inventory.installation_artifact_inventory().model_dump(
@@ -3739,6 +3768,7 @@ class HypervisorService:
             plugins=self.plugins,
             store=InMemoryProviderInventoryStore(),
             installation_executor=installation_executor,
+            package_store=self._plugin_package_store,
             plugin_host_connections=[item.model_dump(mode="json") for item in snapshot.plugin_host_connections],
         )
         for release in snapshot.plugin_releases:

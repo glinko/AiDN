@@ -2817,6 +2817,9 @@ def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_contr
     assert "Provider instances" in response.text
     assert "Model deployments" in response.text
     assert "Runtime bindings" in response.text
+    assert "Plugin Host connections" in response.text
+    assert "Plugin Host Status" in response.text
+    assert "Local Plugin Host control-plane observability." in response.text
     assert "Plugin directory" in response.text
     assert "Trust" in response.text
     assert "Install plan preview" in response.text
@@ -3894,6 +3897,21 @@ def test_provider_plugin_release_routes_record_local_installation_without_execut
     assert client.get("/operators/installed-provider-plugins").json()["items"] == [
         installed_plugin
     ]
+
+
+def test_plugin_host_status_route_returns_sanitized_observability() -> None:
+    service = _service()
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/plugin-host/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "active_connection_count": 0,
+        "connections": [],
+        "listener_count": 0,
+        "listener_transports": [],
+    }
 
 
 def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:

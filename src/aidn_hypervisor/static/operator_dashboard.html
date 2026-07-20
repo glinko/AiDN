@@ -4928,6 +4928,9 @@
       const runtimeBindings = payload.runtime_bindings || [];
       const installationApprovals = payload.installation_approvals || [];
       const installationJobs = payload.installation_jobs || [];
+      const pluginHostStatus = payload.plugin_host_status || {};
+      const pluginHostConnections = pluginHostStatus.connections || [];
+      const pluginHostListeners = pluginHostStatus.listener_transports || [];
       const setupSteps = providerSetupSteps(payload);
       const emptyState = payload.empty_state || {
         title: "No providers installed",
@@ -4966,6 +4969,11 @@
               <div class="summary-value">${formatCount(summary.total_runtime_bindings)}</div>
               <div class="summary-copy">Capability-ready runtime bindings that can become endpoint drafts.</div>
             </section>
+            <section class="summary-card">
+              <div class="panel-heading">Plugin Host connections</div>
+              <div class="summary-value">${formatCount(summary.active_plugin_host_connections)}</div>
+              <div class="summary-copy">Authenticated local control-plane sessions. Runtime execution remains separately routed.</div>
+            </section>
           </div>
           ${
             providerInstances.length
@@ -4984,6 +4992,32 @@
           <section class="subpanel">
             <div class="panel-heading">Recommended Next Action</div>
             <div class="subpanel-copy">${recommendation.detail}</div>
+          </section>
+          <section class="subpanel">
+            <div class="panel-heading">Plugin Host Status</div>
+            <div class="subpanel-copy">Local Plugin Host control-plane observability. Credentials and activation material are never displayed here.</div>
+            <div class="list" style="margin-top: 12px;">
+              <div class="list-row">
+                <div>
+                  <strong>Local listeners</strong>
+                  <span>${pluginHostListeners.length ? pluginHostListeners.map((item) => escapeHtml(item)).join(", ") : "No Plugin Host listener started"}</span>
+                </div>
+                <span class="chip ${pluginHostListeners.length ? "good" : ""}">${formatCount(pluginHostListeners.length)}</span>
+              </div>
+              ${
+                pluginHostConnections.length
+                  ? pluginHostConnections.map((connection) => `
+                    <div class="list-row">
+                      <div>
+                        <strong>${escapeHtml(connection.plugin_id || connection.installed_plugin_id)}</strong>
+                        <span>${escapeHtml(connection.installed_plugin_id)} / generation ${escapeHtml(String(connection.installation_generation || "unknown"))}</span>
+                      </div>
+                      <span class="chip good">Connected</span>
+                    </div>
+                  `).join("")
+                  : `<div class="empty-state">No authenticated Plugin Host sessions.</div>`
+              }
+            </div>
           </section>
           <section class="subpanel">
             <div class="panel-heading">Guided Provider Setup</div>

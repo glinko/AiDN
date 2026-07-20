@@ -4390,6 +4390,51 @@ def test_plugin_host_ingress_facade_delegates_to_provider_inventory() -> None:
     assert service.plugin_host_local_ingress() is expected
 
 
+def test_plugin_host_status_redacts_activation_credential() -> None:
+    class ConnectionStore:
+        def snapshot(self):
+            return [{"installed_plugin_id": "installed-1", "activation_credential_key_id": "secret"}]
+
+    class ProviderInventory:
+        plugin_host_connection_store = ConnectionStore()
+
+    service = object.__new__(HypervisorService)
+    service.provider_inventory = ProviderInventory()
+    service._plugin_host_listeners = []
+
+    assert service.plugin_host_status() == {
+        "active_connection_count": 1,
+        "connections": [{"installed_plugin_id": "installed-1"}],
+        "listener_count": 0,
+        "listener_transports": [],
+    }
+
+
+def test_hypervisor_publishes_plugin_release_registry_objects() -> None:
+    from aidn_hypervisor.registry_service import RegistryService
+
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=_registry(),
+    )
+    release = service.register_provider_plugin_release(
+        manifest=service.plugins.get("fake-managed").plugin_manifest(),
+        source_reference="registry://plugins/fake-managed",
+    )
+    registry = RegistryService()
+
+    stored = service.publish_provider_plugin_releases_to_registry(registry)
+
+    assert stored[0]["namespace"] == "plugin"
+    assert stored[0]["payload"]["release_id"] == release["release_id"]
+    listed = registry.list_registry_objects(query={"namespace": "plugin"})
+    assert [item["object_id"] for item in listed] == [stored[0]["object_id"]]
+    assert registry.get_registry_object(
+        stored[0]["object_id"], include_payload=True
+    )["payload"] == stored[0]["payload"]
+
+
 def test_service_executes_transcription_task_via_whisper_plugin() -> None:
     registry = PluginRegistry()
     plugin = StubWhisperPlugin()

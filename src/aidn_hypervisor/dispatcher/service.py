@@ -50,6 +50,8 @@ class NetworkDispatcher:
         route: DispatcherRoute,
         handler: Callable[[dict], object],
     ) -> None:
+        if not route.route_type.startswith("LOCAL_"):
+            raise ValueError("register_local_route requires a local route type")
         key = (route.destination_type, route.destination_id)
         previous = self._routes.get(key)
         if previous is not None and route.route_generation <= previous.route_generation:
@@ -61,10 +63,31 @@ class NetworkDispatcher:
                 "route_update",
                 "replacement route must increment route_generation",
             )
-        if not route.route_type.startswith("LOCAL_"):
-            raise ValueError("register_local_route requires a local route type")
         self._routes[key] = route
         self._handlers[key] = handler
+        self.store.flush()
+
+    def register_remote_route(
+        self,
+        route: DispatcherRoute,
+        sender: Callable[[dict], object],
+    ) -> None:
+        """Bind an authenticated transport sender to one scoped remote route."""
+        if not route.route_type.startswith("REMOTE_"):
+            raise ValueError("register_remote_route requires a remote route type")
+        key = (route.destination_type, route.destination_id)
+        previous = self._routes.get(key)
+        if previous is not None and route.route_generation <= previous.route_generation:
+            if previous == route:
+                self._handlers[key] = sender
+                return
+            raise DispatcherError(
+                "ROUTE_GENERATION_MISMATCH",
+                "route_update",
+                "replacement route must increment route_generation",
+            )
+        self._routes[key] = route
+        self._handlers[key] = sender
         self.store.flush()
 
     def revoke_route(self, *, destination_type: str, destination_id: str) -> DispatcherRoute | None:

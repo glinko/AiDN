@@ -48,6 +48,7 @@ from aidn_hypervisor.runtime_protocol.conformance import (
     RuntimeConformanceReport,
     RuntimeProtocolConformanceHarness,
 )
+from aidn_hypervisor.runtime_protocol.adapters import LlamaCppOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.named_pipe import (
     WindowsNamedPipeRuntimeClient,
     WindowsNamedPipeRuntimeListener,
@@ -85,6 +86,7 @@ __all__ = [
     "RuntimeConformanceCase",
     "RuntimeConformanceReport",
     "RuntimeProtocolConformanceHarness",
+    "LlamaCppOpenAIAdapter",
     "WindowsNamedPipeRuntimeClient",
     "WindowsNamedPipeRuntimeListener",
     "UnixSocketRuntimeClient",

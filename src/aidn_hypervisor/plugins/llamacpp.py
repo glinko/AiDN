@@ -23,9 +23,71 @@ class LlamaCppPlugin(ProviderPlugin):
     def describe(self) -> dict:
         return {
             "plugin_id": self.plugin_id,
+            "plugin_version": "0.1.0",
+            "display_name": "llama.cpp OpenAI-compatible",
+            "provider_type": "llama.cpp",
+            "provider_families": ["llama.cpp", "openai-compatible"],
+            "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
+            "supported_aidn_capabilities": ["llm.chat"],
             "workload_types": ["llm_text"],
             "usage_contract": self.usage_contract(),
         }
+
+    def attach_provider_schema(self) -> dict:
+        return {
+            "schema_id": "llamacpp.attach.v1",
+            "fields": [
+                {
+                    "id": "endpoint",
+                    "type": "url",
+                    "label": "OpenAI-compatible endpoint",
+                    "required": True,
+                }
+            ],
+        }
+
+    def validate_provider_configuration(self, configuration: dict) -> None:
+        endpoint = configuration.get("endpoint") or configuration.get("base_url")
+        if not isinstance(endpoint, str) or not endpoint.strip():
+            raise ValueError("llama.cpp provider requires an endpoint")
+        parsed = parse.urlparse(endpoint)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("llama.cpp endpoint must be an absolute HTTP URL")
+        if parsed.username or parsed.password:
+            raise ValueError("llama.cpp endpoint must not include credentials")
+
+    def attach_existing_provider(self, configuration: dict) -> dict:
+        self.validate_provider_configuration(configuration)
+        endpoint = str(configuration.get("endpoint") or configuration["base_url"]).rstrip("/")
+        return {
+            "configuration": {**configuration, "endpoint": endpoint},
+            "connection_mode": "attached",
+            "operational_state": "ready",
+        }
+
+    def discover_models(self, provider_instance: dict) -> list[dict]:
+        configuration = provider_instance.get("configuration") or {}
+        endpoint = configuration.get("endpoint") or configuration.get("base_url")
+        self.validate_provider_configuration({"endpoint": endpoint})
+        payload = self._request_json("GET", f"{str(endpoint).rstrip('/')}/v1/models")
+        models = payload.get("data")
+        if not isinstance(models, list):
+            raise ValueError("llama.cpp model discovery returned invalid data")
+        discovered = []
+        for item in models:
+            model_id = item.get("id") if isinstance(item, dict) else None
+            if not isinstance(model_id, str) or not model_id:
+                continue
+            discovered.append(
+                {
+                    "provider_model_reference": model_id,
+                    "operator_display_name": model_id,
+                    "metadata_sources": {"provider": "llamacpp-v1-models"},
+                    "capability_bindings": ["llm.chat"],
+                    "operational_state": "ready",
+                }
+            )
+        return discovered
 
     def validate_bundle(self, bundle_config) -> None:
         if bundle_config.workload_type != "llm_text":
@@ -132,6 +194,40 @@ class LlamaCppPlugin(ProviderPlugin):
             "fallback_measurement_source": "provider_api_partial",
             "fallback_policy": "partial_response_estimate",
             "missing_usage_behavior": "skip",
+        }
+
+    def create_runtime_binding(
+        self,
+        *,
+        model_deployment: dict,
+        capability_id: str,
+        capability_version: str,
+        capability_definition_hash: str,
+    ) -> dict:
+        """Project a llama.cpp deployment onto the RFC-0054 adapter surface."""
+        return {
+            "model_deployment_id": model_deployment["model_deployment_id"],
+            "provider_instance_id": model_deployment["provider_instance_id"],
+            "capability_id": capability_id,
+            "capability_version": capability_version,
+            "capability_definition_hash": capability_definition_hash,
+            "adapter_id": "llamacpp-openai",
+            "adapter_version": "llamacpp-openai.v1",
+            "supported_features": ["streaming", "cancellation"],
+            "supported_modalities": ["text"],
+            "supported_accounting_modes": [
+                "provider_metered",
+                "fixed_price",
+                "observable",
+            ],
+            "compatibility_bundle": {
+                "plugin_id": self.plugin_id,
+                "provider_type": "llama.cpp",
+                "model_id": model_deployment["provider_model_reference"],
+                "launch_mode": "managed_process",
+                "device_affinity": "cpu",
+            },
+            "status": "ready",
         }
 
     def _endpoint(self, runtime_handle) -> str:

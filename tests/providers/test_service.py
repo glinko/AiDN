@@ -21,9 +21,16 @@ from aidn_hypervisor.providers.models import (
     ProviderInstallationJob,
 )
 from aidn_hypervisor.providers.service import ProviderInventoryService
-from aidn_hypervisor.providers.package_store import PluginPackageStore
+from aidn_hypervisor.providers.package_store import (
+    FilesystemPluginPackageStore,
+    PluginPackageStore,
+)
 from aidn_hypervisor.providers.package_verification import compute_manifest_hash
-from aidn_hypervisor.plugins.host import PluginHostHello
+from aidn_hypervisor.plugins.host import (
+    PluginHostHello,
+    PluginHostIdentity,
+    build_plugin_host_activation_proof,
+)
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
@@ -112,6 +119,29 @@ def test_plugin_release_install_rejects_unapproved_or_blocked_permissions() -> N
         )
 
 
+def test_plugin_release_registry_projection_is_public_and_deterministic() -> None:
+    registry = _registry()
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    release = service.register_plugin_release(
+        manifest_payload=registry.get("fake-managed").plugin_manifest(),
+        source_reference="registry://plugins/fake-managed",
+    )
+
+    records = service.plugin_release_registry_objects()
+
+    assert records == service.plugin_release_registry_objects()
+    assert records[0]["object_type"] == "plugin_release"
+    assert records[0]["object_version"] == "plugin-release.v1"
+    assert records[0]["namespace"] == "plugin"
+    assert records[0]["source_reference"] == release.source_reference
+    assert records[0]["payload"]["release_id"] == release.release_id
+    assert "installed_plugin_id" not in records[0]["payload"]
+    assert "activation_credential_key_id" not in records[0]["payload"]
+
+
 def test_package_install_requires_verified_content_addressed_payload() -> None:
     registry = _registry()
     package_store = PluginPackageStore()
@@ -152,6 +182,25 @@ def test_plugin_package_store_rejects_digest_mismatch() -> None:
         store.stage(package_bytes=b"package", expected_digest="sha256:" + "0" * 64)
 
 
+def test_filesystem_plugin_package_store_survives_reconstruction_and_rejects_tampering(
+    tmp_path,
+) -> None:
+    package_bytes = b"verified plugin package"
+    package_digest = "sha256:" + hashlib.sha256(package_bytes).hexdigest()
+    store = FilesystemPluginPackageStore(tmp_path / "packages")
+
+    assert store.stage(package_bytes=package_bytes, expected_digest=package_digest) == package_digest
+    reconstructed_store = FilesystemPluginPackageStore(tmp_path / "packages")
+    assert reconstructed_store.has(package_digest) is True
+    assert reconstructed_store.read(package_digest) == package_bytes
+
+    package_path = reconstructed_store._path_for(package_digest)
+    package_path.write_bytes(b"tampered")
+    assert reconstructed_store.has(package_digest) is False
+    with pytest.raises(ValueError, match="does not match"):
+        reconstructed_store.read(package_digest)
+
+
 def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:
     registry = _registry()
     service = ProviderInventoryService(plugins=registry, store=InMemoryProviderInventoryStore())
@@ -159,17 +208,25 @@ def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:
     installed = service.install_plugin_release(
         release_id=release.release_id, granted_permissions=release.declared_permissions
     )
-    installed = service.advance_installed_plugin_generation(
+    activation = service.provision_plugin_host_activation_credential(
         installed_plugin_id=installed.installed_plugin_id,
-        activation_credential_key_id="sha256:" + "d" * 64,
     )
-    hello = PluginHostHello(
+    installed = service.store.get_installed_plugin(installed.installed_plugin_id)
+    assert "activation_secret" not in installed.model_dump(mode="json")
+    identity = PluginHostIdentity(
         installed_plugin_id=installed.installed_plugin_id,
         plugin_id=installed.plugin_id,
         installation_generation=installed.installation_generation,
         activation_credential_key_id=installed.activation_credential_key_id,
+    )
+    hello = PluginHostHello(
+        **identity.model_dump(),
         host_nonce="nonce",
-        activation_proof="proof",
+        activation_proof=build_plugin_host_activation_proof(
+        activation_secret=activation["activation_secret"],
+            identity=identity,
+            host_nonce="nonce",
+        ),
     )
 
     ingress = service.plugin_host_local_ingress()

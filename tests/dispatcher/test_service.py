@@ -11,6 +11,7 @@ from aidn_hypervisor.dispatcher import (
     NetworkMessage,
     bind_plugin_control_route,
     bind_runtime_route,
+    bind_remote_runtime_route,
     bind_session_route,
     canonical_payload_hash,
 )
@@ -265,6 +266,53 @@ def test_runtime_and_plugin_control_routes_are_scoped_by_binding_and_permissions
     with pytest.raises(DispatcherError) as error:
         dispatcher.submit(denied)
     assert error.value.code == "MESSAGE_PROFILE_UNSUPPORTED"
+
+
+def test_remote_runtime_route_delivers_only_scoped_runtime_messages() -> None:
+    dispatcher = NetworkDispatcher(
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="rev-1",
+    )
+    binding = RuntimeBinding(
+        runtime_binding_id="rtb-remote",
+        runtime_id="runtime-remote",
+        runtime_generation=3,
+        provider_instance_id="pi-remote",
+        model_deployment_id="md-remote",
+        capability_id="llm.chat",
+        capability_version="1",
+        capability_definition_hash="cap-remote",
+        plugin_id="llama.cpp",
+        compatibility_bundle_id="bundle-remote",
+        status="ready",
+    )
+    delivered = []
+    route = bind_remote_runtime_route(
+        dispatcher,
+        binding,
+        lambda payload: delivered.append(payload) or {"forwarded": True},
+        route_generation=4,
+    )
+    message = _message(
+        message_id="remote-runtime-1",
+        route_generation=route.route_generation,
+        runtime_generation=binding.runtime_generation,
+        channel_class="RUNTIME",
+        message_type="RUNTIME_EXECUTE",
+        source_subject={"subject_type": "HYPERVISOR", "subject_id": "local"},
+        destination_subject={"subject_type": "RUNTIME", "subject_id": binding.runtime_id},
+    )
+
+    assert dispatcher.submit(message).delivery_state == "QUEUED"
+    record, result = dispatcher.drain_once()
+
+    assert route.route_type == "REMOTE_RUNTIME"
+    assert record.delivery_state == "APPLICATION_ACCEPTED"
+    assert result == {"forwarded": True}
+    assert delivered == [message.payload]
+    with pytest.raises(ValueError, match="local route type"):
+        dispatcher.register_local_route(route, lambda _: None)
 
 
 def test_provider_inventory_lifecycle_rotates_and_revokes_scoped_routes() -> None:

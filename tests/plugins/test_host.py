@@ -4,6 +4,8 @@ import os
 from uuid import uuid4
 
 from aidn_hypervisor.plugins.host import (
+    HmacPluginHostActivationProofVerifier,
+    PluginHostActivationCredentialStore,
     PluginHostAuthenticationError,
     PluginHostAuthenticator,
     PluginHostHandshakeService,
@@ -12,6 +14,7 @@ from aidn_hypervisor.plugins.host import (
     PluginHostJsonWireAdapter,
     PluginHostConnectionStore,
     PluginHostIdentity,
+    build_plugin_host_activation_proof,
 )
 from aidn_hypervisor.plugins.host_named_pipe import (
     WindowsNamedPipePluginHostClient,
@@ -83,6 +86,42 @@ def test_plugin_host_handshake_requires_activation_proof() -> None:
 
     with pytest.raises(PluginHostAuthenticationError, match="activation proof"):
         handshake.accept(hello.model_copy(update={"activation_proof": "invalid"}))
+
+
+def test_hmac_activation_proof_binds_identity_and_rejects_nonce_replay() -> None:
+    installed = _installed_plugin()
+    identity = PluginHostIdentity(
+        installed_plugin_id=installed.installed_plugin_id,
+        plugin_id=installed.plugin_id,
+        installation_generation=installed.installation_generation,
+        activation_credential_key_id=installed.activation_credential_key_id,
+    )
+    activation_secret = b"hmac-activation-secret"
+    credentials = PluginHostActivationCredentialStore()
+    credentials.save(
+        credential_key_id=identity.activation_credential_key_id,
+        activation_secret=activation_secret,
+    )
+    hello = PluginHostHello(
+        **identity.model_dump(),
+        host_nonce="host-nonce",
+        activation_proof=build_plugin_host_activation_proof(
+            activation_secret=activation_secret,
+            identity=identity,
+            host_nonce="host-nonce",
+        ),
+    )
+    handshake = PluginHostHandshakeService(
+        authenticator=PluginHostAuthenticator(lambda _: installed),
+        activation_proof_verifier=HmacPluginHostActivationProofVerifier(credentials.get),
+        now=lambda: "2026-07-19T00:00:00Z",
+    )
+
+    assert handshake.accept(hello).installed_plugin_id == installed.installed_plugin_id
+    with pytest.raises(PluginHostAuthenticationError, match="nonce was already used"):
+        handshake.accept(hello)
+    with pytest.raises(PluginHostAuthenticationError, match="activation proof"):
+        handshake.accept(hello.model_copy(update={"host_nonce": "different-nonce"}))
 
 
 def test_plugin_host_local_ipc_ingress_accepts_only_handshake_envelopes() -> None:
