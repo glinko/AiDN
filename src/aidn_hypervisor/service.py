@@ -486,6 +486,7 @@ class HypervisorService:
         fixed_price_q_atoms: int,
         network_fee_reserve_q_atoms: int = 0,
         accounting_contract: dict | None = None,
+        consumer_authorization_public_key: str | None = None,
     ):
         if deposit_q_atoms <= 0:
             raise ValueError("MVP Session deposit must be positive")
@@ -512,6 +513,7 @@ class HypervisorService:
             session_policy=endpoint.session.model_dump(mode="json"),
             accounting_contract=accounting_contract,
             endpoint_configuration_hash=endpoint.configuration_hash,
+            consumer_authorization_public_key=consumer_authorization_public_key,
         )
         funding = SessionFundingAccount(
             session_id=result.session.session_id,
@@ -771,6 +773,7 @@ class HypervisorService:
         proposal_expiration: str | None = None,
         accepted_at: str | None = None,
     ):
+        session = session_service.store.get_session(session_id)
         evaluation = self.build_mvp_fixed_price_settlement_evaluation(
             session_service=session_service,
             session_id=session_id,
@@ -800,6 +803,13 @@ class HypervisorService:
             consumer_signature=consumer_signature,
             accepted_at=accepted_at or datetime.now(timezone.utc).isoformat(),
         )
+        if session.consumer_authorization_public_key is not None:
+            from aidn_hypervisor.settlement.signing import verify_settlement_acceptance
+
+            verify_settlement_acceptance(
+                acceptance,
+                consumer_public_key=session.consumer_authorization_public_key,
+            )
         self.accept_settlement(acceptance)
         funding = self.finalize_accepted_settlement(evaluation)
         session_result = session_service.mark_canonical_settlement_finalized(

@@ -21,11 +21,13 @@ class OpenMvpFixedPriceSessionRequest(BaseModel):
     deposit_q_atoms: int = Field(gt=0)
     fixed_price_q_atoms: int = Field(ge=0)
     network_fee_reserve_q_atoms: int = Field(default=0, ge=0)
+    consumer_authorization_public_key: str | None = None
 
 
 class FinalizeMvpFixedPriceSessionRequest(BaseModel):
     request_id: str = Field(min_length=1)
     consumer_signature: str = Field(min_length=1)
+    accepted_at: str | None = Field(default=None, min_length=1)
     actual_network_fees_q_atoms: int = Field(default=0, ge=0)
 
 
@@ -349,6 +351,7 @@ def build_endpoint_router(
                 fixed_price_q_atoms=request.fixed_price_q_atoms,
                 network_fee_reserve_q_atoms=request.network_fee_reserve_q_atoms,
                 accounting_contract=accounting_contract,
+                consumer_authorization_public_key=request.consumer_authorization_public_key,
             )
         except ValueError as error:
             return _error(409, "mvp_session_open_rejected", str(error))
@@ -510,6 +513,7 @@ def build_endpoint_router(
                 request_id=request.request_id,
                 consumer_signature=request.consumer_signature,
                 actual_network_fees_q_atoms=request.actual_network_fees_q_atoms,
+                accepted_at=request.accepted_at,
             )
         except ValueError as error:
             return _error(409, "mvp_session_finalize_rejected", str(error))

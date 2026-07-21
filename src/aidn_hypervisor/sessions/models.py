@@ -41,6 +41,7 @@ class EndpointSession(BaseModel):
     provider_wallet: str
     endpoint_payment_beneficiary: str = Field(min_length=1)
     consumer_refund_beneficiary: str = Field(min_length=1)
+    consumer_authorization_public_key: str | None = None
     node_id: str
     status: SessionStatus
     created_at: str

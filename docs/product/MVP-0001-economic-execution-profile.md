@@ -63,6 +63,9 @@ Implemented now:
   runtime-bound Endpoint.
 - Canonical `q_atoms` funding accounts, escrow lock, proposal, acceptance,
   cooperative finalization and the two conservative forced-settlement rules.
+- A Session may bind a Consumer Ed25519 authorization key. For such Sessions,
+  cooperative Settlement accepts only a signature over the exact Settlement
+  identity, input root, amounts and acceptance time.
 - Public `POST /api/v1/endpoints/{endpoint_id}/mvp-sessions` creates an
   `MVP-0001` Session Contract, locks canonical escrow and records the Funding
   Account hash; the legacy float-Q deposit is display-only on that path.
@@ -71,7 +74,7 @@ Implemented now:
 
 Still required before public paid-MVP launch:
 
-1. Expose consumer proposal acceptance and timeout actions through the public
-   API/dashboard with authenticated signatures.
+1. Make Consumer Ed25519 authorization mandatory for public Session admission;
+   legacy unsigned Sessions remain local-only compatibility behavior.
 2. Add an end-to-end smoke test: endpoint publish, session, escrow, request,
    result, final Usage, proposal, acceptance and Ledger finalization.
