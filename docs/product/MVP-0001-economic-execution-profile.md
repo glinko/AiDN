@@ -74,7 +74,13 @@ Implemented now:
 
 Still required before public paid-MVP launch:
 
-1. Make Consumer Ed25519 authorization mandatory for public Session admission;
-   legacy unsigned Sessions remain local-only compatibility behavior.
+1. Deliver Wallet Identity Binding for public Session admission:
+   - bind every `client_wallet` to a registered Ed25519 public key;
+   - require a signature over the Session Contract and funding authorization;
+   - require Settlement acceptance to verify against that same wallet key;
+   - bind the Endpoint Payment Beneficiary to an operator wallet identity;
+   - reject API-supplied wallet identifiers and unrelated public keys.
+   Legacy unsigned and key-only Sessions remain local-only compatibility
+   behavior.
 2. Add an end-to-end smoke test: endpoint publish, session, escrow, request,
    result, final Usage, proposal, acceptance and Ledger finalization.
