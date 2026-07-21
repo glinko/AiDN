@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from urllib import request
 
 import pytest
+from fastapi.testclient import TestClient
 
 from aidn_hypervisor.accounting.models import (
     AccountingContract,
@@ -14,6 +15,7 @@ from aidn_hypervisor.accounting.models import (
     RuntimeUsageProfileDimension,
 )
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
+from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
@@ -21,8 +23,10 @@ from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
+from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
+from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol import (
     LlamaCppOpenAIAdapter,
@@ -33,6 +37,12 @@ from aidn_hypervisor.runtime_protocol import (
     RuntimeProtocolService,
     canonical_hash,
 )
+from aidn_hypervisor.scheduler import Scheduler
+from aidn_hypervisor.resources import ResourceOrchestrator
+from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.sessions.service import SessionService
+from aidn_hypervisor.sessions.store import SessionStore
+from aidn_hypervisor.main import build_app
 
 
 pytestmark = pytest.mark.integration
@@ -177,6 +187,77 @@ def test_llamacpp_live_operator_attach_discover_and_bind() -> None:
     )
     assert publication.endpoint_id == created.endpoint.endpoint_id
     assert publication.status == "published"
+
+
+def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
+    endpoint, model = _live_configuration()
+    plugins = PluginRegistry()
+    plugins.register(LlamaCppPlugin())
+    hypervisor = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048)),
+        bundles=[
+            BundleConfig(
+                bundle_id="live-llamacpp-bundle",
+                plugin_id="llama.cpp",
+                provider_type="llama.cpp",
+                workload_type="llm_text",
+                model_id=model,
+                launch_mode="managed_process",
+                endpoint=endpoint,
+                device_affinity="cpu",
+                resource_profile=ResourceProfile(),
+                warm_policy="auto",
+            )
+        ],
+        plugins=plugins,
+        runtimes=ProviderProcessManager(),
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            session_service=SessionService(SessionStore()),
+        )
+    )
+    created = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "live-endpoint-wallet",
+            "bundle_id": "live-llamacpp-bundle",
+            "bundle_hash": "live-llamacpp-bundle-hash",
+            "display_name": "Live llama.cpp Session",
+            "model_class": "llm.chat",
+            "capabilities": ["llm.chat"],
+        },
+    )
+    assert created.status_code == 201
+    endpoint_id = created.json()["data"]["endpoint"]["endpoint_id"]
+    hypervisor.credit_wallet_q_atoms(wallet_id="live-consumer-wallet", amount_q_atoms=1000)
+
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint_id}/mvp-paid-smoke",
+        json={
+            "client_wallet": "live-consumer-wallet",
+            "deposit_q_atoms": 1000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+            "task_type": "llm_text.generate",
+            "payload": {"prompt": "Reply with one short word."},
+        },
+    )
+    body = response.json()["data"]
+
+    assert response.status_code == 201
+    assert body["task"]["status"] == "completed"
+    assert body["task"]["result"]["output_text"]
+    assert body["runtime_evidence"]["request"]["request_state"] == "COMPLETED"
+    assert body["runtime_evidence"]["final_usage"]["terminal"] is True
+    assert body["finalized"]["funding"]["funding_state"] == "RELEASED"
+    assert hypervisor.wallet_q_atom_balance("live-endpoint-wallet") == 900
+    assert hypervisor.wallet_q_atom_balance("live-consumer-wallet") == 100
 
 
 def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:

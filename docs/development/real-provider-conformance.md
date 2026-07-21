@@ -33,6 +33,12 @@ server without lifecycle authority, discovers the configured model through
 Endpoint admission, creates an Endpoint draft and records its signed
 publication commitment.
 
+It also runs an opt-in one-request fixed-price Session through the existing MVP
+economic path: test escrow lock, provider execution, terminal Runtime evidence
+and Settlement finalization. This path currently records RFC-0054-compatible
+evidence after the legacy task executor returns; direct Session dispatch into
+`LlamaCppOpenAIAdapter` remains a separate follow-up.
+
 Streaming endpoints normally do not disclose final Provider token usage. The
 adapter therefore reports only locally observed delivered output bytes for a
 stream and does not emit Provider token dimensions. The adapter also declares
