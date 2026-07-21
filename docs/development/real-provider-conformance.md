@@ -33,11 +33,17 @@ server without lifecycle authority, discovers the configured model through
 Endpoint admission, creates an Endpoint draft and records its signed
 publication commitment.
 
-It also runs an opt-in one-request fixed-price Session through the existing MVP
-economic path: test escrow lock, provider execution, terminal Runtime evidence
-and Settlement finalization. This path currently records RFC-0054-compatible
-evidence after the legacy task executor returns; direct Session dispatch into
-`LlamaCppOpenAIAdapter` remains a separate follow-up.
+It also verifies direct approved-Binding execution: a Session is bound to the
+signed Endpoint Runtime Binding, the Hypervisor performs the RFC-0054
+handshake, and `LlamaCppOpenAIAdapter` produces the terminal Result and Usage
+evidence. The queue selects this direct path for an Endpoint bound to
+`llamacpp-openai`; it does not invoke the legacy task-plugin RPC or synthesize
+compatibility evidence afterwards.
+
+The same opt-in profile runs a one-request fixed-price Session through that
+approved-Binding path: escrow lock, queue dispatch, provider execution, terminal
+Runtime evidence and Settlement finalization. The Session therefore has no
+post-execution compatibility-evidence bridge.
 
 Streaming endpoints normally do not disclose final Provider token usage. The
 adapter therefore reports only locally observed delivered output bytes for a

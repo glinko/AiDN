@@ -1944,7 +1944,7 @@ class ProviderInventoryService:
             bundle_id=binding.compatibility_bundle_id,
             plugin_id=projection.get("plugin_id", instance.plugin_id),
             provider_type=projection.get("provider_type", instance.provider_family),
-            workload_type=binding.capability_id,
+            workload_type=projection.get("workload_type", binding.capability_id),
             model_id=projection.get("model_id", deployment.provider_model_reference),
             launch_mode=projection.get("launch_mode", "managed_process"),
             endpoint=endpoint,

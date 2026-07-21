@@ -113,6 +113,7 @@ def test_llamacpp_plugin_projects_deployment_to_rfc0054_runtime_adapter() -> Non
     assert projection["compatibility_bundle"] == {
         "plugin_id": "llama.cpp",
         "provider_type": "llama.cpp",
+        "workload_type": "llm_text",
         "model_id": "qwen3.6",
         "launch_mode": "managed_process",
         "device_affinity": "cpu",

@@ -15,7 +15,7 @@ from aidn_hypervisor.accounting.models import (
     RuntimeUsageProfileDimension,
 )
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
-from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
+from aidn_hypervisor.domain.models import NodeCapacity
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
@@ -282,26 +282,34 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
     endpoint, model = _live_configuration()
     plugins = PluginRegistry()
     plugins.register(LlamaCppPlugin())
+    inventory = ProviderInventoryService(
+        plugins=plugins,
+        store=InMemoryProviderInventoryStore(),
+    )
+    provider = inventory.attach_provider_instance(
+        plugin_id="llama.cpp",
+        display_name="Live llama.cpp paid Session",
+        configuration={"endpoint": endpoint},
+    )
+    deployment = next(
+        item
+        for item in inventory.discover_models(provider.provider_instance_id)
+        if item.provider_model_reference == model
+    )
+    binding = inventory.create_runtime_binding(
+        model_deployment_id=deployment.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0",
+        capability_definition_hash="live-paid-session-capability",
+    )
     hypervisor = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
         resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048)),
-        bundles=[
-            BundleConfig(
-                bundle_id="live-llamacpp-bundle",
-                plugin_id="llama.cpp",
-                provider_type="llama.cpp",
-                workload_type="llm_text",
-                model_id=model,
-                launch_mode="managed_process",
-                endpoint=endpoint,
-                device_affinity="cpu",
-                resource_profile=ResourceProfile(),
-                warm_policy="auto",
-            )
-        ],
+        bundles=[inventory.bundle_config_for_runtime_binding(binding.runtime_binding_id)],
         plugins=plugins,
         runtimes=ProviderProcessManager(),
+        provider_inventory=inventory,
     )
     endpoint_service = EndpointService(EndpointStore())
     client = TestClient(
@@ -315,8 +323,11 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
         "/api/v1/endpoints",
         json={
             "owner_wallet": "live-endpoint-wallet",
-            "bundle_id": "live-llamacpp-bundle",
-            "bundle_hash": "live-llamacpp-bundle-hash",
+            "runtime_binding_id": binding.runtime_binding_id,
+            "bundle_id": binding.compatibility_bundle_id,
+            "bundle_hash": inventory.bundle_hash_for_runtime_binding(
+                binding.runtime_binding_id
+            ),
             "display_name": "Live llama.cpp Session",
             "model_class": "llm.chat",
             "capabilities": ["llm.chat"],
@@ -339,7 +350,7 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
     )
     body = response.json()["data"]
 
-    assert response.status_code == 201
+    assert response.status_code == 201, response.text
     assert body["task"]["status"] == "completed"
     assert body["task"]["result"]["output_text"]
     assert body["runtime_evidence"]["request"]["request_state"] == "COMPLETED"

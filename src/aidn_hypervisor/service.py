@@ -45,6 +45,9 @@ from aidn_hypervisor.registry_models import (
 )
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
+from aidn_hypervisor.runtime_protocol.approved_dispatch import (
+    ApprovedRuntimeDispatcher,
+)
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeExecuteRequest,
     RuntimeRequestRecord,
@@ -4891,6 +4894,13 @@ class HypervisorService:
             and endpoint_manifest.proxy_target is not None
         ):
             return self._attempt_proxy_task(task_id, task, bundle, endpoint_manifest)
+        if self._uses_approved_llamacpp_runtime(endpoint_manifest):
+            return self._attempt_approved_runtime_task(
+                task_id,
+                task,
+                bundle,
+                endpoint_manifest,
+            )
         plugin = self._get_plugin(bundle.plugin_id)
         runtime = self._runtime_for_bundle(bundle.bundle_id)
 
@@ -5987,6 +5997,89 @@ class HypervisorService:
         if endpoint_service is None:
             return None
         return endpoint_service.get_endpoint(str(endpoint_id)).endpoint
+
+    def _uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:
+        if endpoint_manifest is None or endpoint_manifest.runtime_binding_id is None:
+            return False
+        try:
+            binding = self.provider_inventory.store.get_runtime_binding(
+                endpoint_manifest.runtime_binding_id
+            )
+        except KeyError:
+            return False
+        return binding.adapter_id == "llamacpp-openai"
+
+    def _attempt_approved_runtime_task(
+        self,
+        task_id: str,
+        task: QueuedTask,
+        bundle: BundleConfig,
+        endpoint_manifest,
+    ) -> bool:
+        session_id = task.request.constraints.get("session_id")
+        if session_id is None:
+            raise RuntimeError("Approved Runtime execution requires an active Session")
+        session_service = getattr(self, "session_service", None)
+        if session_service is None:
+            raise RuntimeError("Session service is not configured")
+        self.queue.transition_status(task_id, "admitted")
+        try:
+            self.queue.transition_status(task_id, "running")
+            self._touch_task_session(task.request)
+            session = session_service.store.get_session(str(session_id))
+            result = ApprovedRuntimeDispatcher(
+                provider_inventory=self.provider_inventory,
+                runtime_protocol_store=self.runtime_protocol_store,
+                hypervisor_id=self.node_id,
+            ).execute(
+                endpoint=endpoint_manifest,
+                session=session,
+                request_id=str(task.request.constraints.get("request_id") or task_id),
+                request_payload=task.request.payload,
+                request_deadline=task.request.constraints.get("request_deadline"),
+                streaming=bool(task.request.constraints.get("streaming", False)),
+            )
+            if result.terminal_state != "COMPLETED":
+                raise RuntimeError(f"Approved Runtime execution failed: {result.terminal_state}")
+            result_payload = result.result_payload or {}
+            self._task_results[task_id] = {
+                "ok": True,
+                "task_type": task.request.task_type,
+                "output_text": result_payload.get("text", ""),
+                "model_id": result_payload.get("model"),
+                "runtime_protocol": {
+                    "runtime_id": result.runtime_id,
+                    "request_id": result.request_id,
+                    "final_usage_report_id": result.final_usage_report_id,
+                },
+            }
+            self.queue.transition_status(task_id, "completed")
+            self.record_event(
+                event_type="task.completed",
+                message="task completed through approved Runtime Adapter",
+                task_id=task_id,
+                bundle_id=bundle.bundle_id,
+                runtime_id=result.runtime_id,
+                details={
+                    "runtime_request_id": result.request_id,
+                    "adapter": "llamacpp-openai",
+                },
+            )
+            self._auto_record_wallet_usage_for_task(
+                task_id=task_id,
+                bundle=bundle,
+                task=task.request,
+            )
+            return True
+        except Exception as error:
+            self.queue.transition_status(task_id, "failed")
+            self.record_event(
+                event_type="task.failed",
+                message=str(error),
+                task_id=task_id,
+                bundle_id=bundle.bundle_id,
+            )
+            raise
 
     def close_endpoint_session(self, session_id: str):
         session_service = getattr(self, "session_service", None)
