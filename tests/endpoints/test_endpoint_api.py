@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.endpoints.service import EndpointService
@@ -18,6 +19,8 @@ from aidn_hypervisor.runtime_protocol.models import (
     canonical_hash,
 )
 from aidn_hypervisor.scheduler import Scheduler
+from aidn_hypervisor.settlement.models import SessionSettlementAcceptance
+from aidn_hypervisor.settlement.signing import settlement_acceptance_signing_payload
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
@@ -47,7 +50,7 @@ def _runtime_binding_bundle(bundle_id: str) -> BundleConfig:
     )
 
 
-def _mvp_api_context():
+def _mvp_api_context(consumer_authorization_public_key: str | None = None):
     hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
     endpoint_service = EndpointService(EndpointStore())
     session_service = SessionService(SessionStore())
@@ -69,14 +72,17 @@ def _mvp_api_context():
         },
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+    session_payload = {
+        "client_wallet": "wallet-consumer",
+        "deposit_q_atoms": 1_000,
+        "fixed_price_q_atoms": 900,
+        "network_fee_reserve_q_atoms": 100,
+    }
+    if consumer_authorization_public_key is not None:
+        session_payload["consumer_authorization_public_key"] = consumer_authorization_public_key
     session = client.post(
         f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions",
-        json={
-            "client_wallet": "wallet-consumer",
-            "deposit_q_atoms": 1_000,
-            "fixed_price_q_atoms": 900,
-            "network_fee_reserve_q_atoms": 100,
-        },
+        json=session_payload,
     ).json()["data"]["session"]
     return hypervisor, client, endpoint, session
 
@@ -168,14 +174,15 @@ def _mvp_executable_api_context(*, open_session: bool = True):
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
     session = None
     if open_session:
+        session_payload = {
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+        }
         session = client.post(
             f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions",
-            json={
-                "client_wallet": "wallet-consumer",
-                "deposit_q_atoms": 1_000,
-                "fixed_price_q_atoms": 900,
-                "network_fee_reserve_q_atoms": 100,
-            },
+            json=session_payload,
         ).json()["data"]["session"]
     return hypervisor, client, endpoint, session
 
@@ -404,6 +411,41 @@ def test_finalize_mvp_fixed_price_session_uses_runtime_evidence_over_api() -> No
     )
     assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
+def test_mvp_settlement_preview_accepts_consumer_ed25519_signature() -> None:
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    hypervisor, client, endpoint, session = _mvp_api_context(public_key)
+    request, _ = _seed_terminal_runtime_evidence(
+        hypervisor, endpoint=endpoint, session=session
+    )
+    accepted_at = "2026-07-21T12:00:00+00:00"
+    preview = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions/"
+        f"{session['session_id']}/settlement-preview",
+        json={"request_id": request.request_id, "accepted_at": accepted_at},
+    )
+
+    assert preview.status_code == 200
+    payload = preview.json()["data"]["acceptance_payload"]
+    unsigned = SessionSettlementAcceptance(
+        **payload,
+        consumer_signature="ed25519:" + "00" * 64,
+    )
+    signature = private_key.sign(settlement_acceptance_signing_payload(unsigned)).hex()
+    finalized = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions/"
+        f"{session['session_id']}/finalize",
+        json={
+            "request_id": request.request_id,
+            "consumer_signature": f"ed25519:{signature}",
+            "accepted_at": accepted_at,
+        },
+    )
+
+    assert finalized.status_code == 200
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
 
 
 def test_mvp_fixed_price_session_executes_task_and_finalizes_from_runtime_evidence() -> None:
