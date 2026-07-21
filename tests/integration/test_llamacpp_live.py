@@ -29,6 +29,7 @@ from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol import (
+    ApprovedRuntimeDispatcher,
     LlamaCppOpenAIAdapter,
     RuntimeExecuteRequest,
     RuntimeHello,
@@ -37,6 +38,7 @@ from aidn_hypervisor.runtime_protocol import (
     RuntimeProtocolService,
     canonical_hash,
 )
+from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.service import HypervisorService
@@ -189,6 +191,91 @@ def test_llamacpp_live_operator_attach_discover_and_bind() -> None:
     assert publication.status == "published"
     assert created.endpoint.runtime_binding_id == binding.runtime_binding_id
     assert publication.execution["runtime_binding_id"] == binding.runtime_binding_id
+
+
+def test_llamacpp_live_approved_binding_dispatches_session_request() -> None:
+    endpoint, model = _live_configuration()
+    plugins = PluginRegistry()
+    plugins.register(LlamaCppPlugin())
+    inventory = ProviderInventoryService(
+        plugins=plugins,
+        store=InMemoryProviderInventoryStore(),
+    )
+    provider = inventory.attach_provider_instance(
+        plugin_id="llama.cpp",
+        display_name="Live llama.cpp",
+        configuration={"endpoint": endpoint},
+    )
+    deployment = next(
+        item
+        for item in inventory.discover_models(provider.provider_instance_id)
+        if item.provider_model_reference == model
+    )
+    binding = inventory.create_runtime_binding(
+        model_deployment_id=deployment.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0",
+        capability_definition_hash="live-approved-capability",
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="live-operator-wallet",
+            runtime_binding_id=binding.runtime_binding_id,
+            bundle_id=binding.compatibility_bundle_id,
+            bundle_hash=inventory.bundle_hash_for_runtime_binding(
+                binding.runtime_binding_id
+            ),
+            display_name=f"Live approved {model}",
+            model_class="llm.chat",
+            capabilities=["llm.chat"],
+            pricing={"billing_unit": "request", "fixed_price": 1.0},
+        )
+    )
+    contract = AccountingContract(
+        accounting_mode="fixed_price",
+        contract_version="live-approved-contract",
+        capability_id="llm.chat",
+        endpoint_id=created.endpoint.endpoint_id,
+        pricing_version="live-approved-pricing",
+        billable_units=[
+            AccountingUnitContract(
+                unit="request_fee",
+                mode="fixed_price",
+                price=1.0,
+                measurement_source="endpoint_policy",
+                verification_method="fixed_contract",
+            )
+        ],
+        checkpoint_policy="per_request",
+    )
+    sessions = SessionService(SessionStore())
+    session = sessions.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="live-consumer-wallet",
+        provider_wallet="live-operator-wallet",
+        node_id="live-node",
+        deposit_q=2.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+        accounting_contract=contract.model_dump(mode="json"),
+        endpoint_configuration_hash=created.endpoint.configuration_hash,
+    ).session
+    session = session.model_copy(update={"request_charge_ceiling_q_atoms": 1_000_000})
+    sessions.store.save_session(session)
+    result = ApprovedRuntimeDispatcher(
+        provider_inventory=inventory,
+        runtime_protocol_store=RuntimeProtocolStore(),
+        hypervisor_id="live-node",
+    ).execute(
+        endpoint=created.endpoint,
+        session=session,
+        request_id="live-approved-request",
+        request_payload={"prompt": "Reply with one short word."},
+    )
+
+    assert result.terminal_state == "COMPLETED"
+    assert result.result_payload is not None
+    assert result.result_payload["text"]
 
 
 def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
