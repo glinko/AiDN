@@ -895,6 +895,7 @@ def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
     assert response.status_code == 201
     assert body["data"]["endpoint"]["bundle_id"] == "bundle-rtb-1"
     assert body["data"]["endpoint"]["bundle_hash"] == "bundle-hash-rtb-1"
+    assert body["data"]["endpoint"]["runtime_binding_id"] == "rtb-1"
 
 
 def test_create_endpoint_route_rejects_runtime_binding_admission_blocker() -> None:

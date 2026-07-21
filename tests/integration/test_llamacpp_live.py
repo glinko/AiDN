@@ -187,6 +187,8 @@ def test_llamacpp_live_operator_attach_discover_and_bind() -> None:
     )
     assert publication.endpoint_id == created.endpoint.endpoint_id
     assert publication.status == "published"
+    assert created.endpoint.runtime_binding_id == binding.runtime_binding_id
+    assert publication.execution["runtime_binding_id"] == binding.runtime_binding_id
 
 
 def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:

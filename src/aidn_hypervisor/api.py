@@ -234,8 +234,9 @@ def _public_session_payload(session) -> dict:
 
 
 def _execution_payload_for_manifest(manifest) -> dict:
+    runtime_binding = {"runtime_binding_id": manifest.runtime_binding_id}
     if manifest.execution_strategy != "proxy" or manifest.proxy_target is None:
-        return {"strategy": manifest.execution_strategy}
+        return {"strategy": manifest.execution_strategy, **runtime_binding}
     return {
         "strategy": manifest.execution_strategy,
         "target_fingerprint": configuration_hash_for_publication(
@@ -245,6 +246,7 @@ def _execution_payload_for_manifest(manifest) -> dict:
                 "source_configuration_hash": manifest.proxy_target.source_configuration_hash,
             }
         ),
+        **runtime_binding,
     }
 
 

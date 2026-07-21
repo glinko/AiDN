@@ -142,6 +142,7 @@ class EndpointManifest(BaseModel):
     created_at: str
     bundle_id: str
     bundle_hash: str
+    runtime_binding_id: str | None = None
     configuration_hash: str
     display_name: str
     model_class: str
@@ -161,6 +162,7 @@ class EndpointConfigurationSnapshot(BaseModel):
     configuration_hash: str
     endpoint_id: str
     bundle_hash: str
+    runtime_binding_id: str | None = None
     created_at: str
     runtime: EndpointRuntimeConfig
     publication: EndpointPublicationPolicy

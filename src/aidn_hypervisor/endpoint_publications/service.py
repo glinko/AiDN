@@ -297,8 +297,9 @@ class EndpointPublicationService:
         return None
 
     def _execution_payload(self, manifest) -> dict:
+        runtime_binding = {"runtime_binding_id": manifest.runtime_binding_id}
         if manifest.execution_strategy != "proxy" or manifest.proxy_target is None:
-            return {"strategy": manifest.execution_strategy}
+            return {"strategy": manifest.execution_strategy, **runtime_binding}
         fingerprint = configuration_hash_for_publication(
             {
                 "remote_endpoint_id": manifest.proxy_target.remote_endpoint_id,
@@ -309,6 +310,7 @@ class EndpointPublicationService:
         return {
             "strategy": manifest.execution_strategy,
             "target_fingerprint": fingerprint,
+            **runtime_binding,
         }
 
     def _record_advertisement_publish(

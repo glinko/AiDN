@@ -59,7 +59,10 @@ def _published_record_for_endpoint(
             publication=endpoint.publication.model_dump(mode="json"),
             pricing=endpoint.pricing.model_dump(mode="json"),
             session=endpoint.session.model_dump(mode="json"),
-            execution={"strategy": endpoint.execution_strategy},
+            execution={
+                "strategy": endpoint.execution_strategy,
+                "runtime_binding_id": endpoint.runtime_binding_id,
+            },
         )
     )
     return PublishedEndpointConfiguration(
@@ -78,7 +81,10 @@ def _published_record_for_endpoint(
         publication=endpoint.publication.model_dump(mode="json"),
         pricing=endpoint.pricing.model_dump(mode="json"),
         session=endpoint.session.model_dump(mode="json"),
-        execution={"strategy": endpoint.execution_strategy},
+        execution={
+            "strategy": endpoint.execution_strategy,
+            "runtime_binding_id": endpoint.runtime_binding_id,
+        },
         validation_requirement=endpoint.validation.model_dump(mode="json"),
         published_at="2026-06-30T00:00:00+00:00",
         sequence=sequence,
@@ -110,7 +116,10 @@ def test_publish_configuration_creates_signed_current_record() -> None:
             publication=created.endpoint.publication.model_dump(mode="json"),
             pricing=created.endpoint.pricing.model_dump(mode="json"),
             session=created.endpoint.session.model_dump(mode="json"),
-            execution={"strategy": created.endpoint.execution_strategy},
+            execution={
+                "strategy": created.endpoint.execution_strategy,
+                "runtime_binding_id": created.endpoint.runtime_binding_id,
+            },
         )
     )
 

@@ -38,11 +38,13 @@ class EndpointService:
             cmd.runtime,
             cmd.publication,
             cmd.session,
+            runtime_binding_id=cmd.runtime_binding_id,
             execution_strategy="local",
             proxy_target=None,
         )
         configuration_hash = self._configuration_hash(
             bundle_hash=cmd.bundle_hash,
+            runtime_binding_id=cmd.runtime_binding_id,
             runtime=cmd.runtime,
             publication=cmd.publication,
             session=cmd.session,
@@ -55,6 +57,7 @@ class EndpointService:
             created_at=created_at,
             bundle_id=cmd.bundle_id,
             bundle_hash=cmd.bundle_hash,
+            runtime_binding_id=cmd.runtime_binding_id,
             configuration_hash=configuration_hash,
             display_name=cmd.display_name,
             model_class=cmd.model_class,
@@ -73,6 +76,7 @@ class EndpointService:
             configuration_hash=configuration_hash,
             endpoint_id=endpoint_id,
             bundle_hash=cmd.bundle_hash,
+            runtime_binding_id=cmd.runtime_binding_id,
             created_at=created_at,
             runtime=cmd.runtime,
             publication=cmd.publication,
@@ -107,11 +111,13 @@ class EndpointService:
                 next_runtime,
                 next_publication,
                 next_session,
+                runtime_binding_id=current.runtime_binding_id,
                 execution_strategy=next_execution_strategy,
                 proxy_target=next_proxy_target,
             )
             configuration_hash = self._configuration_hash(
                 bundle_hash=current.bundle_hash,
+                runtime_binding_id=current.runtime_binding_id,
                 runtime=next_runtime,
                 publication=next_publication,
                 session=next_session,
@@ -122,6 +128,7 @@ class EndpointService:
                 configuration_hash=configuration_hash,
                 endpoint_id=current.endpoint_id,
                 bundle_hash=current.bundle_hash,
+                runtime_binding_id=current.runtime_binding_id,
                 created_at=datetime.now(timezone.utc).isoformat(),
                 runtime=next_runtime,
                 publication=next_publication,
@@ -171,11 +178,13 @@ class EndpointService:
             current.runtime,
             current.publication,
             current.session,
+            runtime_binding_id=current.runtime_binding_id,
             execution_strategy="proxy",
             proxy_target=proxy_target,
         )
         configuration_hash = self._configuration_hash(
             bundle_hash=current.bundle_hash,
+            runtime_binding_id=current.runtime_binding_id,
             runtime=current.runtime,
             publication=current.publication,
             session=current.session,
@@ -186,6 +195,7 @@ class EndpointService:
             configuration_hash=configuration_hash,
             endpoint_id=current.endpoint_id,
             bundle_hash=current.bundle_hash,
+            runtime_binding_id=current.runtime_binding_id,
             created_at=attached_at,
             runtime=current.runtime,
             publication=current.publication,
@@ -216,11 +226,13 @@ class EndpointService:
             current.runtime,
             current.publication,
             current.session,
+            runtime_binding_id=current.runtime_binding_id,
             execution_strategy="local",
             proxy_target=None,
         )
         configuration_hash = self._configuration_hash(
             bundle_hash=current.bundle_hash,
+            runtime_binding_id=current.runtime_binding_id,
             runtime=current.runtime,
             publication=current.publication,
             session=current.session,
@@ -231,6 +243,7 @@ class EndpointService:
             configuration_hash=configuration_hash,
             endpoint_id=current.endpoint_id,
             bundle_hash=current.bundle_hash,
+            runtime_binding_id=current.runtime_binding_id,
             created_at=detached_at,
             runtime=current.runtime,
             publication=current.publication,
@@ -360,6 +373,7 @@ class EndpointService:
         self,
         *,
         bundle_hash: str,
+        runtime_binding_id: str | None,
         runtime,
         publication,
         session,
@@ -368,6 +382,7 @@ class EndpointService:
     ) -> str:
         payload = {
             "bundle_hash": bundle_hash,
+            "runtime_binding_id": runtime_binding_id,
             "runtime": runtime.model_dump(mode="json"),
             "publication": publication.model_dump(mode="json"),
             "session": session.model_dump(mode="json"),
@@ -387,6 +402,7 @@ class EndpointService:
         publication,
         session,
         *,
+        runtime_binding_id: str | None,
         execution_strategy: str,
         proxy_target,
     ) -> dict:
@@ -401,6 +417,7 @@ class EndpointService:
             ),
             "session_queue_policy": session.queue_policy,
             "session_max_concurrency": session.max_concurrent_sessions,
+            "runtime_binding_id": runtime_binding_id,
             "proxy_source_hash": (
                 proxy_target.source_configuration_hash
                 if proxy_target is not None
