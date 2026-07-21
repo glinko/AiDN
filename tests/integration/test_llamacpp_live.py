@@ -14,6 +14,11 @@ from aidn_hypervisor.accounting.models import (
     RuntimeUsageProfileDimension,
 )
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
+from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
+from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
+from aidn_hypervisor.endpoints.models import CreateEndpointCommand
+from aidn_hypervisor.endpoints.service import EndpointService
+from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.providers.service import ProviderInventoryService
@@ -126,6 +131,52 @@ def test_llamacpp_live_operator_attach_discover_and_bind() -> None:
     assert binding.supported_features == ["streaming", "cancellation"]
     assert bundle.endpoint == endpoint
     assert bundle.model_id == model
+
+    endpoint_payload = {
+        "owner_wallet": "live-operator-wallet",
+        "model_class": binding.capability_id,
+        "capabilities": [binding.capability_id],
+        "runtime": {"streaming": True, "max_tokens": 64, "timeout": 90},
+        "publication": {
+            "visibility": "shared",
+            "shared_with_wallet_ids": ["live-consumer-wallet"],
+            "discoverable": True,
+            "accepts_external_requests": True,
+        },
+        "pricing": {"billing_unit": "request", "fixed_price": 1.0},
+        "validation": {
+            "enabled": False,
+            "model_class_supported": True,
+            "verification_status": "active",
+        },
+    }
+    admission = service.runtime_binding_endpoint_admission(
+        binding.runtime_binding_id,
+        endpoint_payload=endpoint_payload,
+    )
+    assert admission["ready"] is True
+
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            runtime_binding_id=binding.runtime_binding_id,
+            bundle_id=bundle.bundle_id,
+            bundle_hash=service.bundle_hash_for_runtime_binding(binding.runtime_binding_id),
+            display_name=f"Live {model}",
+            **endpoint_payload,
+        )
+    )
+    publication = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    ).publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet="live-operator-wallet",
+        node_id="live-node",
+        wallet_private_key="live-test-key",
+    )
+    assert publication.endpoint_id == created.endpoint.endpoint_id
+    assert publication.status == "published"
 
 
 def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:

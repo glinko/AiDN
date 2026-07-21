@@ -29,7 +29,9 @@ start, stop or reconfigure the provider.
 
 The same opt-in profile also verifies the operator attach path: it attaches the
 server without lifecycle authority, discovers the configured model through
-`/v1/models`, and creates a `llamacpp-openai.v1` Runtime Binding.
+`/v1/models`, creates a `llamacpp-openai.v1` Runtime Binding, evaluates
+Endpoint admission, creates an Endpoint draft and records its signed
+publication commitment.
 
 Streaming endpoints normally do not disclose final Provider token usage. The
 adapter therefore reports only locally observed delivered output bytes for a
