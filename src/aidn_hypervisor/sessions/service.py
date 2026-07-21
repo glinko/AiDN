@@ -16,6 +16,7 @@ from aidn_hypervisor.sessions.models import (
     EndpointSession,
     LockedDeposit,
     ProxySessionBinding,
+    SessionRuntimeTerminalEvidence,
     SessionResult,
     SessionSettlementSummary,
 )
@@ -728,6 +729,62 @@ class SessionService:
             },
         )
         return SessionResult(session=updated_session, deposit=updated_deposit)
+
+    def record_runtime_terminal_evidence(
+        self,
+        session_id: str,
+        *,
+        evidence: dict,
+    ) -> EndpointSession:
+        """Persist the Result and Final Usage chain head bound to one Session."""
+        current = self.store.get_session(session_id)
+        terminal = SessionRuntimeTerminalEvidence.model_validate(evidence)
+        if terminal.session_id != session_id:
+            raise ValueError("runtime evidence session_id does not match target session")
+        if terminal.endpoint_id != current.endpoint_id:
+            raise ValueError("runtime evidence endpoint_id does not match target session")
+        if terminal.endpoint_configuration_hash != current.endpoint_configuration_hash:
+            raise ValueError(
+                "runtime evidence Endpoint Configuration does not match target session"
+            )
+        if terminal.session_contract_hash != current.session_contract_hash:
+            raise ValueError("runtime evidence Session Contract does not match target session")
+        if terminal.accounting_contract_hash != current.accounting_contract_hash:
+            raise ValueError("runtime evidence Accounting Contract does not match target session")
+        for existing in current.runtime_terminal_evidence:
+            if existing.request_id != terminal.request_id:
+                continue
+            if existing == terminal:
+                return current
+            raise ValueError("runtime terminal evidence conflicts for Request ID")
+        updated = current.model_copy(
+            update={
+                "runtime_terminal_evidence": [
+                    *current.runtime_terminal_evidence,
+                    terminal,
+                ]
+            }
+        )
+        self.store.save_session(updated)
+        self._emit(
+            event_type="session.runtime_terminal_recorded",
+            message="terminal Runtime evidence bound to Session",
+            details={
+                "session_id": session_id,
+                "request_id": terminal.request_id,
+                "runtime_id": terminal.runtime_id,
+                "result_hash": terminal.result_hash,
+                "final_usage_report_hash": terminal.final_usage_report_hash,
+            },
+        )
+        self._record_accounting_operation(
+            operation_type="SESSION_RUNTIME_EVIDENCE_COMMIT",
+            session=updated,
+            payload=terminal.model_dump(mode="json"),
+            created_at=terminal.recorded_at,
+            emitted_events=["SessionRuntimeEvidenceRecorded"],
+        )
+        return updated
 
     def record_usage_checkpoint(
         self,

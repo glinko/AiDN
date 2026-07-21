@@ -57,6 +57,10 @@ Implemented now:
 - Plugin-managed Provider, Model Deployment, Runtime Binding and RFC-0054
   Runtime/Dispatcher generation checks.
 - Final Usage enforcement at Runtime terminal transition.
+- Runtime-bound Sessions persist one replay-safe terminal evidence record that
+  commits the Result hash, Final Usage chain head, Runtime Binding and Runtime/
+  Route generation lineage. Settlement cross-checks that record before paying a
+  runtime-bound Endpoint.
 - Canonical `q_atoms` funding accounts, escrow lock, proposal, acceptance,
   cooperative finalization and the two conservative forced-settlement rules.
 - Public `POST /api/v1/endpoints/{endpoint_id}/mvp-sessions` creates an
@@ -67,9 +71,7 @@ Implemented now:
 
 Still required before public paid-MVP launch:
 
-1. Bind a Runtime Result and Final Usage Report into that one-Request Session
-   record.
-2. Expose consumer proposal acceptance and timeout actions through the public
+1. Expose consumer proposal acceptance and timeout actions through the public
    API/dashboard with authenticated signatures.
-3. Add an end-to-end smoke test: endpoint publish, session, escrow, request,
+2. Add an end-to-end smoke test: endpoint publish, session, escrow, request,
    result, final Usage, proposal, acceptance and Ledger finalization.

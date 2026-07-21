@@ -585,6 +585,43 @@ class HypervisorService:
         )
         if final_usage is None:
             raise ValueError("Final Usage Report is missing from Runtime store")
+        endpoint_service = getattr(self, "endpoint_service", None)
+        if endpoint_service is not None:
+            endpoint = endpoint_service.get_endpoint(session.endpoint_id).endpoint
+            if endpoint.runtime_binding_id is not None:
+                matching_terminal_evidence = [
+                    item
+                    for item in session.runtime_terminal_evidence
+                    if item.request_id == request_id
+                ]
+                if len(matching_terminal_evidence) != 1:
+                    raise ValueError(
+                        "Runtime-bound MVP Session requires exactly one terminal Runtime evidence record"
+                    )
+                terminal_evidence = matching_terminal_evidence[0]
+                if terminal_evidence.runtime_binding_id != endpoint.runtime_binding_id:
+                    raise ValueError("Session Runtime Binding does not match Endpoint")
+                if terminal_evidence.runtime_id != record.request.runtime_id:
+                    raise ValueError("Session Runtime ID does not match Runtime Request")
+                if terminal_evidence.runtime_generation != record.request.runtime_generation:
+                    raise ValueError("Session Runtime Generation does not match Runtime Request")
+                if (
+                    terminal_evidence.runtime_configuration_hash
+                    != record.request.runtime_configuration_hash
+                ):
+                    raise ValueError(
+                        "Session Runtime Configuration does not match Runtime Request"
+                    )
+                if terminal_evidence.route_generation != record.request.route_generation:
+                    raise ValueError("Session Route Generation does not match Runtime Request")
+                if terminal_evidence.terminal_state != record.request_state:
+                    raise ValueError("Session terminal state does not match Runtime Request")
+                if terminal_evidence.result_hash != record.terminal_result_hash:
+                    raise ValueError("Session Result hash does not match Runtime Request")
+                if terminal_evidence.final_usage_report_id != final_usage.usage_report_id:
+                    raise ValueError("Session Final Usage ID does not match Runtime store")
+                if terminal_evidence.final_usage_report_hash != final_usage.report_hash:
+                    raise ValueError("Session Final Usage hash does not match Runtime store")
         request_reports = sorted(
             (
                 item
@@ -6041,6 +6078,12 @@ class HypervisorService:
             )
             if result.terminal_state != "COMPLETED":
                 raise RuntimeError(f"Approved Runtime execution failed: {result.terminal_state}")
+            self._record_session_runtime_terminal_evidence(
+                session_service=session_service,
+                session=session,
+                endpoint_manifest=endpoint_manifest,
+                result=result,
+            )
             result_payload = result.result_payload or {}
             self._task_results[task_id] = {
                 "ok": True,
@@ -6080,6 +6123,47 @@ class HypervisorService:
                 bundle_id=bundle.bundle_id,
             )
             raise
+
+    def _record_session_runtime_terminal_evidence(
+        self,
+        *,
+        session_service,
+        session,
+        endpoint_manifest,
+        result,
+    ) -> None:
+        record = self.runtime_protocol_store.requests.get(result.request_id)
+        final_usage = self.runtime_protocol_store.usage_reports.get(
+            result.final_usage_report_id
+        )
+        if record is None or final_usage is None:
+            raise RuntimeError("terminal Runtime evidence is not durable")
+        if not final_usage.terminal or final_usage.report_type != "FINAL":
+            raise RuntimeError("terminal Runtime evidence requires Final Usage")
+        binding_id = endpoint_manifest.runtime_binding_id
+        if binding_id is None:
+            raise RuntimeError("approved Runtime Endpoint has no Runtime Binding")
+        session_service.record_runtime_terminal_evidence(
+            session.session_id,
+            evidence={
+                "request_id": result.request_id,
+                "runtime_binding_id": binding_id,
+                "runtime_id": result.runtime_id,
+                "runtime_generation": result.runtime_generation,
+                "runtime_configuration_hash": result.runtime_configuration_hash,
+                "route_generation": result.route_generation,
+                "endpoint_id": result.endpoint_id,
+                "endpoint_configuration_hash": result.endpoint_configuration_hash,
+                "session_id": result.session_id,
+                "session_contract_hash": record.request.session_contract_hash,
+                "accounting_contract_hash": record.request.accounting_contract_hash,
+                "terminal_state": result.terminal_state,
+                "result_hash": result.result_hash,
+                "final_usage_report_id": final_usage.usage_report_id,
+                "final_usage_report_hash": final_usage.report_hash,
+                "recorded_at": result.completed_at,
+            },
+        )
 
     def close_endpoint_session(self, session_id: str):
         session_service = getattr(self, "session_service", None)

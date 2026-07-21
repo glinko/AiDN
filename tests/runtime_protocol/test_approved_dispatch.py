@@ -176,3 +176,13 @@ def test_approved_llamacpp_binding_executes_through_runtime_protocol(monkeypatch
     runtime_record = hypervisor.runtime_protocol_store.requests[task.task_id]
     assert runtime_record.request.runtime_id == binding.runtime_id
     assert runtime_record.request.session_id == queued_session.session_id
+    persisted_session = hypervisor.session_service.store.get_session(
+        queued_session.session_id
+    )
+    assert len(persisted_session.runtime_terminal_evidence) == 1
+    terminal = persisted_session.runtime_terminal_evidence[0]
+    assert terminal.request_id == task.task_id
+    assert terminal.runtime_binding_id == binding.runtime_binding_id
+    assert terminal.result_hash == hypervisor.runtime_protocol_store.results[
+        task.task_id
+    ].result_hash

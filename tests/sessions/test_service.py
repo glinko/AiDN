@@ -71,6 +71,58 @@ def test_open_session_rejects_deposit_below_minimum() -> None:
         )
 
 
+def test_runtime_terminal_evidence_is_session_bound_and_replay_safe() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-client",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(),
+        accounting_contract_hash="acct-hash",
+        endpoint_configuration_hash="endpoint-config-hash",
+    )
+    session = opened.session
+    evidence = {
+        "request_id": "request-1",
+        "runtime_binding_id": "rtb-1",
+        "runtime_id": "runtime-1",
+        "runtime_generation": 1,
+        "runtime_configuration_hash": "runtime-config-hash",
+        "route_generation": 1,
+        "endpoint_id": session.endpoint_id,
+        "endpoint_configuration_hash": session.endpoint_configuration_hash,
+        "session_id": session.session_id,
+        "session_contract_hash": session.session_contract_hash,
+        "accounting_contract_hash": session.accounting_contract_hash,
+        "terminal_state": "COMPLETED",
+        "result_hash": "result-hash",
+        "final_usage_report_id": "usage-1",
+        "final_usage_report_hash": "usage-hash",
+        "recorded_at": "2026-07-21T00:00:00+00:00",
+    }
+
+    recorded = service.record_runtime_terminal_evidence(
+        session.session_id,
+        evidence=evidence,
+    )
+
+    assert recorded.runtime_terminal_evidence[0].request_id == "request-1"
+    assert (
+        service.record_runtime_terminal_evidence(
+            session.session_id,
+            evidence=evidence,
+        )
+        == recorded
+    )
+    with pytest.raises(ValueError, match="conflicts"):
+        service.record_runtime_terminal_evidence(
+            session.session_id,
+            evidence={**evidence, "result_hash": "different-result-hash"},
+        )
+
+
 def test_open_session_rejects_when_endpoint_slots_are_full_and_policy_is_busy() -> None:
     service = _session_service()
     policy = _session_policy(max_concurrent_sessions=1, queue_policy="busy")
