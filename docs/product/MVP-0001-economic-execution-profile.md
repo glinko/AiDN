@@ -66,6 +66,10 @@ Implemented now:
 - A local Wallet Identity registry binds `wallet_id -> Ed25519 public key`,
   persists registrations through snapshot/restore, rejects key rotation and
   records canonical `WALLET_IDENTITY_REGISTER` Ledger operations.
+- Wallet Identity bindings now also project into the canonical operator
+  overlay and local Registry Object view as stable `wallet_identity`
+  objects, so public paid-MVP admission and later replication use the same
+  object contract instead of a node-private side table.
 - Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
   registered Consumer wallet identity, a signed Session-open/funding
   authorization bound to the Endpoint configuration, a currently published
@@ -91,6 +95,6 @@ Implemented now:
 
 Still required before public paid-MVP launch:
 
-1. Promote Wallet Identity from node-local durable state to replicated
-   canonical network state before multi-node paid launch, so a public
-   `wallet_id` cannot mean different keys on different Hypervisors.
+1. Replicate canonical `wallet_identity` objects into authoritative network
+   state before multi-node paid launch, so a public `wallet_id` cannot mean
+   different keys on different Hypervisors.

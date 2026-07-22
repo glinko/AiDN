@@ -2484,6 +2484,7 @@ class HypervisorService:
             project_endpoint_limit_profiles,
             project_protocol_services,
             project_registry_objects,
+            project_wallet_identities,
         )
 
         publication_service = getattr(self, "endpoint_publication_service", None)
@@ -2521,6 +2522,10 @@ class HypervisorService:
                 for record in project_endpoint_implementation_profiles(
                     current_publication_records
                 )
+            ],
+            "wallet_identities": [
+                record.model_dump(mode="json")
+                for record in project_wallet_identities(self)
             ],
             "registry_objects": [
                 record.model_dump(mode="json")
@@ -3081,6 +3086,12 @@ class HypervisorService:
     def wallet_identity(self, wallet_id: str) -> dict | None:
         identity = self._wallet_identities.get(wallet_id)
         return dict(identity) if identity is not None else None
+
+    def list_wallet_identities(self) -> list[dict]:
+        return [
+            dict(self._wallet_identities[wallet_id])
+            for wallet_id in sorted(self._wallet_identities)
+        ]
 
     def list_provider_installation_artifacts(self) -> dict:
         return self.provider_inventory.installation_artifact_inventory().model_dump(

@@ -5,6 +5,7 @@ import io
 import zipfile
 
 from fastapi.testclient import TestClient
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import aidn_hypervisor.api as api_module
 import dashboard_seed_preview
@@ -38,6 +39,7 @@ from aidn_hypervisor.providers.executor import (
 )
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
+from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
@@ -1380,6 +1382,42 @@ def test_operator_registry_objects_endpoint_returns_local_registry_objects() -> 
     assert response.status_code == 200
     object_types = {item["object_type"] for item in response.json()["objects"]}
     assert "capability_definition" in object_types
+
+
+def test_operator_registry_objects_endpoint_lists_wallet_identity_objects() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    registration_nonce = "wallet-registry-object"
+    signature = private_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id="wallet-consumer",
+            public_key=public_key,
+            registration_nonce=registration_nonce,
+        )
+    ).hex()
+    service.register_wallet_identity(
+        wallet_id="wallet-consumer",
+        public_key=public_key,
+        registration_nonce=registration_nonce,
+        signature=f"ed25519:{signature}",
+    )
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/registry/objects?include_payload=true")
+
+    assert response.status_code == 200
+    wallet_identity = next(
+        item
+        for item in response.json()["objects"]
+        if item["object_type"] == "wallet_identity"
+    )
+    assert wallet_identity["namespace"] == "identity"
+    assert wallet_identity["payload"] == {
+        "wallet_id": "wallet-consumer",
+        "public_key": public_key,
+        "registration_nonce": registration_nonce,
+    }
 
 
 def test_operator_registry_object_endpoint_returns_object_by_id() -> None:
