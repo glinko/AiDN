@@ -54,6 +54,10 @@ from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.validation.service import ValidationService
 from aidn_hypervisor.validation.store import ValidationStore
+from aidn_hypervisor.wallet_identity import (
+    wallet_identity_quorum_approval_payload,
+    wallet_identity_quorum_proposal_payload,
+)
 
 
 def _zip_bytes(entries: dict[str, bytes]) -> bytes:
@@ -151,6 +155,128 @@ def _service(
         bundle_registry=bundle_registry,
         model_store=model_store,
     )
+
+
+def _operator_registry_identity(node_id: str) -> dict:
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    wallet_id = f"{node_id}-operator"
+    return {
+        "node_id": node_id,
+        "wallet_id": wallet_id,
+        "private_key": private_key,
+        "public_key": public_key,
+        "object": {
+            "object_id": f"sha256:wallet:{wallet_id}:{public_key[-8:]}",
+            "object_type": "wallet_identity",
+            "object_version": "wallet-identity.v1",
+            "namespace": "identity",
+            "payload_hash": f"sha256:payload:{wallet_id}:{public_key[-8:]}",
+            "payload_encoding": "canonical_json",
+            "source_reference": wallet_id,
+            "payload": {
+                "wallet_id": wallet_id,
+                "public_key": public_key,
+                "registration_nonce": f"{wallet_id}-nonce",
+            },
+        },
+    }
+
+
+def _registry_node_payload(
+    node_id: str,
+    *,
+    heartbeat_at: str = "2026-06-19T18:30:00+00:00",
+    heartbeat_ttl_seconds: int = 30,
+) -> dict:
+    return {
+        "node_id": node_id,
+        "operator_id": f"{node_id}-operator",
+        "registry_version": "m2.v1",
+        "base_url": f"https://{node_id}.example",
+        "heartbeat_at": heartbeat_at,
+        "heartbeat_ttl_seconds": heartbeat_ttl_seconds,
+        "status": "ready",
+        "resources": {
+            "total": {"cpu": 8.0, "ram_mb": 16384, "vram_mb": 8192},
+            "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+            "free": {"cpu": 6.0, "ram_mb": 12000, "vram_mb": 6144},
+        },
+        "providers": ["llama.cpp"],
+        "can_host_custom_model": True,
+        "pricing": {
+            "unit": "q_per_1kk_tokens",
+            "input": 12,
+            "output": 18,
+            "fixed_request": None,
+        },
+        "rating": {
+            "score": 0.91,
+            "tier": "A",
+            "updated_at": "2026-06-19T18:25:00+00:00",
+        },
+        "bundles": [
+            {
+                "bundle_id": "phi4-local",
+                "plugin_id": "llama.cpp",
+                "workload_type": "llm_text",
+                "provider_type": "llama.cpp",
+                "model_id": "phi-4-mini.gguf",
+                "endpoint": f"https://{node_id}.example/runtimes/phi4-local",
+                "enabled": True,
+                "status": "ready",
+                "launch_mode": "managed_process",
+                "device_affinity": "cpu",
+                "max_parallel_requests": 1,
+                "supports_allocation": True,
+                "supports_queue": True,
+            }
+        ],
+        "canonical_services": [],
+        "canonical_capability_runtimes": [],
+        "canonical_compute_compatibility": [],
+        "canonical_advertisements": [],
+    }
+
+
+def _sign_registry_quorum_proposal(
+    identity: dict,
+    *,
+    wallet_id: str,
+    chosen_object_id: str,
+    chosen_payload_hash: str,
+    eligible_voter_node_ids: list[str],
+    quorum_threshold: int,
+    operator_note: str | None,
+) -> str:
+    signature = identity["private_key"].sign(
+        wallet_identity_quorum_proposal_payload(
+            wallet_id=wallet_id,
+            chosen_object_id=chosen_object_id,
+            chosen_payload_hash=chosen_payload_hash,
+            proposer_node_id=identity["node_id"],
+            eligible_voter_node_ids=eligible_voter_node_ids,
+            quorum_threshold=quorum_threshold,
+            operator_note=operator_note,
+        )
+    ).hex()
+    return f"ed25519:{signature}"
+
+
+def _sign_registry_quorum_approval(
+    identity: dict,
+    *,
+    resolution_id: str,
+    approval_note: str | None,
+) -> str:
+    signature = identity["private_key"].sign(
+        wallet_identity_quorum_approval_payload(
+            resolution_id=resolution_id,
+            approver_node_id=identity["node_id"],
+            approval_note=approval_note,
+        )
+    ).hex()
+    return f"ed25519:{signature}"
 
 
 class _StubRemoteSessionCloseTransport:
@@ -1661,6 +1787,12 @@ def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quo
 ) -> None:
     service = _service(with_runtime=False, use_process_manager=True)
     registry = RegistryService()
+    operator_a = _operator_registry_identity("node-a")
+    operator_b = _operator_registry_identity("node-b")
+    registry.upsert_node(RegistryNodeAdvertisement(**_registry_node_payload("node-a")))
+    registry.upsert_node(RegistryNodeAdvertisement(**_registry_node_payload("node-b")))
+    registry.upsert_registry_object(operator_a["object"])
+    registry.upsert_registry_object(operator_b["object"])
     registry.upsert_registry_object(
         {
             "object_id": "sha256:wallet:consumer:a",
@@ -1685,6 +1817,15 @@ def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quo
             "wallet_id": "wallet-consumer",
             "chosen_object_id": "sha256:wallet:consumer:a",
             "proposer_node_id": "node-a",
+            "proposer_signature": _sign_registry_quorum_proposal(
+                operator_a,
+                wallet_id="wallet-consumer",
+                chosen_object_id="sha256:wallet:consumer:a",
+                chosen_payload_hash="sha256:wallet-payload:a",
+                eligible_voter_node_ids=["node-a", "node-b", "node-c"],
+                quorum_threshold=2,
+                operator_note="network quorum proposal",
+            ),
             "eligible_voter_node_ids": ["node-a", "node-b", "node-c"],
             "quorum_threshold": 2,
             "operator_note": "network quorum proposal",
@@ -1700,6 +1841,11 @@ def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quo
         json={
             "resolution_id": resolution_id,
             "approver_node_id": "node-b",
+            "approval_signature": _sign_registry_quorum_approval(
+                operator_b,
+                resolution_id=resolution_id,
+                approval_note="second vote",
+            ),
             "approval_note": "second vote",
         },
     )

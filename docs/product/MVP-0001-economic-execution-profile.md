@@ -148,5 +148,7 @@ Still required before public paid-MVP launch:
    uniqueness, conflict rejection, known-peer repair, registry-node inventory
    bootstrap, bounded peer sync, operator reconciliation visibility, local
    conflict resolution, quorum-backed resolution proposals and replicated
-   quorum state objects now exist, but stronger signature requirements and a
-   stricter authoritative network policy still remain.
+   quorum state objects now exist. Proposal and approval votes now require
+   Ed25519 signatures verified against the registered wallet identity bound to
+   each voting node's `operator_id`, but a stricter authoritative network
+   policy still remains.

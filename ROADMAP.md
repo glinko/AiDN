@@ -249,8 +249,11 @@ Immediate priorities:
    binding. A minimal quorum proposal/approval flow now also exists for that
    same wallet binding, and those quorum proposal/approval/final-resolution
    records now replicate through the same wallet-identity sync path as
-   hash-bound identity objects. Stronger signature requirements and a stricter
-   authoritative network policy still do not exist.
+   hash-bound identity objects. Quorum proposals and approvals are now
+   fail-closed on Ed25519 signatures verified against the registered wallet
+   identity bound to each voting node's `operator_id`. A stricter authoritative
+   network policy for cross-node ownership and network-level quorum admission
+   still does not exist.
 1. Apply the completed `llama.cpp` Health/model discovery/Runtime Binding/RFC-0054 adapter profile to Ollama, vLLM-compatible and Proxy providers; add Provider-specific cancellation confirmation and in-flight recovery fault scenarios where their native APIs support them.
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
 3. Add production package acquisition from signed sources to the verified local Package Store and Registry `plugin` Directory replication.

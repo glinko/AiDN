@@ -4,10 +4,15 @@ from datetime import datetime
 from pathlib import Path
 from urllib import error as urllib_error
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import pytest
 
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
+from aidn_hypervisor.wallet_identity import (
+    wallet_identity_quorum_approval_payload,
+    wallet_identity_quorum_proposal_payload,
+)
 
 
 def _bundle(
@@ -118,6 +123,63 @@ def _wallet_identity_object(
         "source_reference": wallet_id,
         "payload": payload,
     }
+
+
+def _operator_signing_identity(node_id: str) -> dict:
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    wallet_id = f"{node_id}-operator"
+    return {
+        "node_id": node_id,
+        "wallet_id": wallet_id,
+        "public_key": public_key,
+        "private_key": private_key,
+        "object": _wallet_identity_object(
+            wallet_id,
+            public_key=public_key,
+            registration_nonce=f"{wallet_id}-nonce",
+        ),
+    }
+
+
+def _sign_quorum_proposal(
+    identity: dict,
+    *,
+    wallet_id: str,
+    chosen_object_id: str,
+    chosen_payload_hash: str,
+    eligible_voter_node_ids: list[str],
+    quorum_threshold: int,
+    operator_note: str | None,
+) -> str:
+    signature = identity["private_key"].sign(
+        wallet_identity_quorum_proposal_payload(
+            wallet_id=wallet_id,
+            chosen_object_id=chosen_object_id,
+            chosen_payload_hash=chosen_payload_hash,
+            proposer_node_id=identity["node_id"],
+            eligible_voter_node_ids=eligible_voter_node_ids,
+            quorum_threshold=quorum_threshold,
+            operator_note=operator_note,
+        )
+    ).hex()
+    return f"ed25519:{signature}"
+
+
+def _sign_quorum_approval(
+    identity: dict,
+    *,
+    resolution_id: str,
+    approval_note: str | None,
+) -> str:
+    signature = identity["private_key"].sign(
+        wallet_identity_quorum_approval_payload(
+            resolution_id=resolution_id,
+            approver_node_id=identity["node_id"],
+            approval_note=approval_note,
+        )
+    ).hex()
+    return f"ed25519:{signature}"
 
 
 def test_registry_service_upserts_and_returns_node_advertisements() -> None:
@@ -2368,6 +2430,8 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
     ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
     monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
     service = RegistryService()
+    operator_a = _operator_signing_identity("node-a")
+    operator_b = _operator_signing_identity("node-b")
     service.upsert_node(
         _node(
             "node-a",
@@ -2381,11 +2445,24 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
             ],
         )
     )
+    service.upsert_node(_node("node-b", heartbeat_at="2026-07-05T14:00:00+00:00"))
+    service.upsert_registry_object(operator_a["object"])
+    service.upsert_registry_object(operator_b["object"])
+    proposal_signature = _sign_quorum_proposal(
+        operator_a,
+        wallet_id="wallet-consumer",
+        chosen_object_id="sha256:wallet:wallet-consumer:11111111",
+        chosen_payload_hash="sha256:payload:wallet-consumer:11111111",
+        eligible_voter_node_ids=["node-a", "node-b", "node-c"],
+        quorum_threshold=2,
+        operator_note="network quorum proposal",
+    )
 
     proposal = service.propose_wallet_identity_quorum_resolution(
         wallet_id="wallet-consumer",
         chosen_object_id="sha256:wallet:wallet-consumer:11111111",
         proposer_node_id="node-a",
+        proposer_signature=proposal_signature,
         eligible_voter_node_ids=["node-a", "node-b", "node-c"],
         quorum_threshold=2,
         operator_note="network quorum proposal",
@@ -2397,6 +2474,11 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
     approved = service.approve_wallet_identity_quorum_resolution(
         resolution_id=proposal["resolution_id"],
         approver_node_id="node-b",
+        approval_signature=_sign_quorum_approval(
+            operator_b,
+            resolution_id=proposal["resolution_id"],
+            approval_note="second vote",
+        ),
         approval_note="second vote",
     )
 
@@ -2413,6 +2495,8 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
 def test_registry_service_exports_and_imports_wallet_identity_quorum_objects(
 ) -> None:
     source = RegistryService()
+    operator_a = _operator_signing_identity("node-a")
+    source.upsert_node(_node("node-a"))
     source.upsert_registry_object(
         {
             "object_id": "sha256:wallet:consumer:a",
@@ -2429,10 +2513,20 @@ def test_registry_service_exports_and_imports_wallet_identity_quorum_objects(
             },
         }
     )
+    source.upsert_registry_object(operator_a["object"])
     source.propose_wallet_identity_quorum_resolution(
         wallet_id="wallet-consumer",
         chosen_object_id="sha256:wallet:consumer:a",
         proposer_node_id="node-a",
+        proposer_signature=_sign_quorum_proposal(
+            operator_a,
+            wallet_id="wallet-consumer",
+            chosen_object_id="sha256:wallet:consumer:a",
+            chosen_payload_hash="sha256:wallet-payload:a",
+            eligible_voter_node_ids=["node-a", "node-b", "node-c"],
+            quorum_threshold=2,
+            operator_note="network quorum proposal",
+        ),
         eligible_voter_node_ids=["node-a", "node-b", "node-c"],
         quorum_threshold=2,
         operator_note="network quorum proposal",
@@ -2462,6 +2556,40 @@ def test_registry_service_exports_and_imports_wallet_identity_quorum_objects(
     assert len(proposals) == 1
     assert proposals[0]["wallet_id"] == "wallet-consumer"
     assert proposals[0]["approvals"][0]["approver_node_id"] == "node-a"
+
+
+def test_registry_service_rejects_wallet_identity_quorum_signature_mismatch() -> None:
+    service = RegistryService()
+    operator_a = _operator_signing_identity("node-a")
+    wrong_key = _operator_signing_identity("node-x")
+    service.upsert_node(_node("node-a"))
+    service.upsert_registry_object(operator_a["object"])
+    service.upsert_registry_object(
+        _wallet_identity_object(
+            "wallet-consumer",
+            public_key="ed25519:" + "11" * 32,
+            registration_nonce="nonce-a",
+        )
+    )
+
+    with pytest.raises(ValueError, match="proposal signature is invalid"):
+        service.propose_wallet_identity_quorum_resolution(
+            wallet_id="wallet-consumer",
+            chosen_object_id="sha256:wallet:wallet-consumer:11111111",
+            proposer_node_id="node-a",
+            proposer_signature=_sign_quorum_proposal(
+                wrong_key,
+                wallet_id="wallet-consumer",
+                chosen_object_id="sha256:wallet:wallet-consumer:11111111",
+                chosen_payload_hash="sha256:payload:wallet-consumer:11111111",
+                eligible_voter_node_ids=["node-a"],
+                quorum_threshold=1,
+                operator_note="invalid signer",
+            ),
+            eligible_voter_node_ids=["node-a"],
+            quorum_threshold=1,
+            operator_note="invalid signer",
+        )
 
 
 def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:

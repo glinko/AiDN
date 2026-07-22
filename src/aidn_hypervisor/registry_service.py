@@ -181,6 +181,16 @@ class RegistryService:
             eligible_voter_node_ids=voters,
             quorum_threshold=quorum_threshold,
         )
+        self._verify_wallet_identity_quorum_proposal_signature(
+            wallet_id=wallet_id,
+            chosen_object_id=str(selected["object_id"]),
+            chosen_payload_hash=str(selected["payload_hash"]),
+            proposer_node_id=proposer_node_id,
+            proposer_signature=proposer_signature,
+            eligible_voter_node_ids=voters,
+            quorum_threshold=threshold,
+            operator_note=operator_note,
+        )
         payload = {
             "wallet_id": wallet_id,
             "chosen_object_id": str(selected["object_id"]),
@@ -261,6 +271,12 @@ class RegistryService:
             raise ValueError(
                 f"Approver {approver_node_id} is not eligible for resolution {resolution_id}"
             )
+        self._verify_wallet_identity_quorum_approval_signature(
+            resolution_id=resolution_id,
+            approver_node_id=approver_node_id,
+            approval_signature=approval_signature,
+            approval_note=approval_note,
+        )
         proposal = self._record_wallet_identity_resolution_approval(
             proposal=proposal,
             approver_node_id=approver_node_id,
@@ -1319,6 +1335,84 @@ class RegistryService:
                 "quorum_threshold must be between 1 and the number of eligible voters"
             )
         return quorum_threshold
+
+    def _wallet_identity_operator_identity_for_node(self, *, node_id: str) -> dict:
+        node = deepcopy(self._nodes.get(node_id))
+        if node is None:
+            raise ValueError(f"Node {node_id} is not registered for wallet identity quorum")
+        operator_wallet_id = str(node.get("operator_id") or "").strip()
+        if not operator_wallet_id:
+            raise ValueError(
+                f"Node {node_id} does not advertise an operator wallet identity binding"
+            )
+        identity = self.resolve_wallet_identity(operator_wallet_id)
+        if identity is None:
+            raise ValueError(
+                f"Node {node_id} operator wallet identity {operator_wallet_id} is not registered"
+            )
+        return identity
+
+    def _verify_wallet_identity_quorum_proposal_signature(
+        self,
+        *,
+        wallet_id: str,
+        chosen_object_id: str,
+        chosen_payload_hash: str,
+        proposer_node_id: str,
+        proposer_signature: str | None,
+        eligible_voter_node_ids: list[str],
+        quorum_threshold: int,
+        operator_note: str | None,
+    ) -> None:
+        from aidn_hypervisor.wallet_identity import (
+            verify_wallet_identity_quorum_proposal,
+        )
+
+        if not proposer_signature:
+            raise ValueError(
+                f"Wallet identity quorum proposal for {wallet_id} requires proposer_signature"
+            )
+        operator_identity = self._wallet_identity_operator_identity_for_node(
+            node_id=proposer_node_id
+        )
+        verify_wallet_identity_quorum_proposal(
+            public_key=str(operator_identity["public_key"]),
+            signature=proposer_signature,
+            wallet_id=wallet_id,
+            chosen_object_id=chosen_object_id,
+            chosen_payload_hash=chosen_payload_hash,
+            proposer_node_id=proposer_node_id,
+            eligible_voter_node_ids=eligible_voter_node_ids,
+            quorum_threshold=quorum_threshold,
+            operator_note=operator_note,
+        )
+
+    def _verify_wallet_identity_quorum_approval_signature(
+        self,
+        *,
+        resolution_id: str,
+        approver_node_id: str,
+        approval_signature: str | None,
+        approval_note: str | None,
+    ) -> None:
+        from aidn_hypervisor.wallet_identity import (
+            verify_wallet_identity_quorum_approval,
+        )
+
+        if not approval_signature:
+            raise ValueError(
+                f"Wallet identity quorum approval for {resolution_id} requires approval_signature"
+            )
+        operator_identity = self._wallet_identity_operator_identity_for_node(
+            node_id=approver_node_id
+        )
+        verify_wallet_identity_quorum_approval(
+            public_key=str(operator_identity["public_key"]),
+            signature=approval_signature,
+            resolution_id=resolution_id,
+            approver_node_id=approver_node_id,
+            approval_note=approval_note,
+        )
 
     def _record_wallet_identity_resolution_approval(
         self,
