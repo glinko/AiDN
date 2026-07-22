@@ -2,6 +2,7 @@ import json
 import warnings
 from datetime import datetime
 from pathlib import Path
+from urllib import error as urllib_error
 
 import pytest
 
@@ -2045,6 +2046,60 @@ def test_registry_service_import_wallet_identity_sync_state_reports_conflicts(
     assert len(result["rejected_objects"]) == 1
     assert "wallet-consumer" in result["rejected_objects"][0]["reason"]
     assert result["conflict_count"] == 1
+
+
+def test_registry_service_syncs_wallet_identity_from_peer(monkeypatch) -> None:
+    service = RegistryService()
+    payload = {
+        "objects": [
+            _wallet_identity_object(
+                "wallet-consumer",
+                public_key="ed25519:" + "11" * 32,
+                registration_nonce="nonce-a",
+            )
+        ],
+        "conflicts": [],
+    }
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _Response(),
+    )
+
+    result = service.sync_wallet_identity_from_peer(
+        peer_base_url="https://peer-a.example/"
+    )
+
+    assert result["peer_base_url"] == "https://peer-a.example"
+    assert result["imported_object_count"] == 1
+    assert service.resolve_wallet_identity("wallet-consumer")["public_key"] == (
+        "ed25519:" + "11" * 32
+    )
+
+
+def test_registry_service_sync_wallet_identity_from_peer_rejects_invalid_peer(
+    monkeypatch,
+) -> None:
+    service = RegistryService()
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: (_ for _ in ()).throw(
+            urllib_error.URLError("peer unavailable")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="Failed to sync wallet identities from peer"):
+        service.sync_wallet_identity_from_peer(peer_base_url="https://peer-a.example")
 
 
 def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:

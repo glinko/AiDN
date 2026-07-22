@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from aidn_hypervisor.registry_models import (
     RegistryDiscoveryQuery,
     RegistryNodeAdvertisement,
+    RegistryWalletIdentityPeerSyncRequest,
     RegistryWalletIdentitySyncImportRequest,
 )
 from aidn_hypervisor.registry_service import RegistryService
@@ -102,5 +103,17 @@ def build_registry_router(service: RegistryService) -> APIRouter:
             objects=request.objects,
             conflicts=request.conflicts,
         )
+
+    @router.post("/registry/wallet-identities/sync-from-peer")
+    async def sync_wallet_identity_from_peer(
+        request: RegistryWalletIdentityPeerSyncRequest,
+    ) -> dict:
+        try:
+            return service.sync_wallet_identity_from_peer(
+                peer_base_url=request.peer_base_url,
+                limit=request.limit,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     return router

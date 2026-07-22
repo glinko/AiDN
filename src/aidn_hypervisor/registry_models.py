@@ -156,6 +156,11 @@ class RegistryWalletIdentitySyncImportRequest(BaseModel):
     conflicts: list[dict] = Field(default_factory=list)
 
 
+class RegistryWalletIdentityPeerSyncRequest(BaseModel):
+    peer_base_url: str
+    limit: int = Field(default=500, ge=1, le=5000)
+
+
 class RegistryCompletenessIssue(BaseModel):
     code: str
     object_id: str | None = None

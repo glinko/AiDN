@@ -87,6 +87,10 @@ Implemented now:
   export/import endpoints can transfer canonical identity objects plus known
   conflict evidence, while the receiving peer imports compatible bindings and
   rejects conflicting ones without losing the conflict trail.
+- Registry peers can now also initiate a pull sync from another peer through
+  one bounded `sync-from-peer` call, so identity replication no longer
+  requires an external client to manually export and then import the same
+  payload.
 - Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
   registered Consumer wallet identity, a signed Session-open/funding
   authorization bound to the Endpoint configuration, a currently published
@@ -117,4 +121,4 @@ Still required before public paid-MVP launch:
    different keys on different Hypervisors after cross-node sync; local
    uniqueness, conflict rejection and minimal peer sync now exist, but
    network-wide peer discovery, inventory planning, final reconciliation
-   policy and automated repair remain.
+   policy and periodic automated repair remain.

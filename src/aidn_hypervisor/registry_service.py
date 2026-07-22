@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import time
+from urllib import error as urllib_error, request as urllib_request
 
 from aidn_hypervisor.registry_models import (
     RegistryConflictEvidence,
@@ -143,6 +144,36 @@ class RegistryService:
                 )
             ),
         }
+
+    def sync_wallet_identity_from_peer(
+        self,
+        *,
+        peer_base_url: str,
+        limit: int = 500,
+        timeout_seconds: int = 10,
+    ) -> dict:
+        normalized_base_url = peer_base_url.rstrip("/")
+        request = urllib_request.Request(
+            f"{normalized_base_url}/registry/wallet-identities/sync-state?limit={int(limit)}",
+            method="GET",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=timeout_seconds) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (urllib_error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise ValueError(
+                f"Failed to sync wallet identities from peer {peer_base_url}"
+            ) from error
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"Peer wallet identity sync response from {peer_base_url} is invalid"
+            )
+        result = self.import_wallet_identity_sync_state(
+            objects=list(payload.get("objects") or []),
+            conflicts=list(payload.get("conflicts") or []),
+        )
+        result["peer_base_url"] = normalized_base_url
+        return result
 
     def get_node(self, node_id: str) -> dict:
         record = deepcopy(self._nodes[node_id])

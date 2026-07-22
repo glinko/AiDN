@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 
 from fastapi.testclient import TestClient
 
@@ -205,6 +206,59 @@ def test_registry_wallet_identity_sync_endpoints_export_and_import_state() -> No
     assert imported.status_code == 200
     assert imported.json()["imported_object_count"] == 1
     assert target.resolve_wallet_identity("wallet-consumer")["public_key"] == (
+        "ed25519:" + "11" * 32
+    )
+
+
+def test_registry_wallet_identity_sync_from_peer_endpoint_pulls_remote_state(
+    monkeypatch,
+) -> None:
+    service = RegistryService()
+    client = TestClient(build_registry_app(service=service))
+    payload = {
+        "objects": [
+            {
+                "object_id": "sha256:wallet:consumer:a",
+                "object_type": "wallet_identity",
+                "object_version": "wallet-identity.v1",
+                "namespace": "identity",
+                "payload_hash": "sha256:wallet-payload:a",
+                "payload_encoding": "canonical_json",
+                "source_reference": "wallet-consumer",
+                "payload": {
+                    "wallet_id": "wallet-consumer",
+                    "public_key": "ed25519:" + "11" * 32,
+                    "registration_nonce": "nonce-a",
+                },
+            }
+        ],
+        "conflicts": [],
+    }
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _Response(),
+    )
+
+    response = client.post(
+        "/registry/wallet-identities/sync-from-peer",
+        json={"peer_base_url": "https://peer-a.example/", "limit": 500},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["peer_base_url"] == "https://peer-a.example"
+    assert response.json()["imported_object_count"] == 1
+    assert service.resolve_wallet_identity("wallet-consumer")["public_key"] == (
         "ed25519:" + "11" * 32
     )
 
