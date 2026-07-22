@@ -5907,15 +5907,18 @@ class HypervisorService:
         )
         pricing_version = f"pricing-{endpoint.endpoint_id}-{endpoint.configuration_hash[:8]}"
         contract_version = f"acct-{endpoint.endpoint_id}-{endpoint.configuration_hash[:8]}"
-        pricing_policy_reference = f"sha256:{hashlib.sha256(json.dumps(
+        pricing_policy_payload = json.dumps(
             {
-                'endpoint_id': endpoint.endpoint_id,
-                'configuration_hash': endpoint.configuration_hash,
-                'pricing': endpoint.pricing.model_dump(mode='json'),
+                "endpoint_id": endpoint.endpoint_id,
+                "configuration_hash": endpoint.configuration_hash,
+                "pricing": endpoint.pricing.model_dump(mode="json"),
             },
             sort_keys=True,
-            separators=(',', ':'),
-        ).encode('utf-8')).hexdigest()}"
+            separators=(",", ":"),
+        ).encode("utf-8")
+        pricing_policy_reference = (
+            f"sha256:{hashlib.sha256(pricing_policy_payload).hexdigest()}"
+        )
 
         billable_units: list[AccountingUnitContract] = []
         if endpoint.pricing.input_price is not None:

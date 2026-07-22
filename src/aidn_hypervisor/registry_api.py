@@ -3,6 +3,8 @@ from fastapi import APIRouter, HTTPException
 from aidn_hypervisor.registry_models import (
     RegistryDiscoveryQuery,
     RegistryNodeAdvertisement,
+    RegistryWalletIdentityPeerConfig,
+    RegistryWalletIdentityPeerRepairRequest,
     RegistryWalletIdentityPeerSyncRequest,
     RegistryWalletIdentitySyncImportRequest,
 )
@@ -95,6 +97,22 @@ def build_registry_router(service: RegistryService) -> APIRouter:
     async def wallet_identity_sync_state(limit: int = 500) -> dict:
         return service.export_wallet_identity_sync_state(limit=limit)
 
+    @router.get("/registry/wallet-identities/peers")
+    async def list_wallet_identity_peers() -> dict:
+        return {"peers": service.list_wallet_identity_peers()}
+
+    @router.put("/registry/wallet-identities/peers")
+    async def upsert_wallet_identity_peer(
+        request: RegistryWalletIdentityPeerConfig,
+    ) -> dict:
+        try:
+            return service.upsert_wallet_identity_peer(
+                peer_base_url=request.peer_base_url,
+                enabled=request.enabled,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @router.post("/registry/wallet-identities/import")
     async def import_wallet_identity_sync_state(
         request: RegistryWalletIdentitySyncImportRequest,
@@ -115,5 +133,11 @@ def build_registry_router(service: RegistryService) -> APIRouter:
             )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/registry/wallet-identities/repair")
+    async def repair_wallet_identity_peers(
+        request: RegistryWalletIdentityPeerRepairRequest,
+    ) -> dict:
+        return service.repair_wallet_identity_peers(limit=request.limit)
 
     return router

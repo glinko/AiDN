@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from aidn_hypervisor.plugins.base import ProviderPlugin
 
 

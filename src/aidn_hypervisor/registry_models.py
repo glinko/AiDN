@@ -161,6 +161,20 @@ class RegistryWalletIdentityPeerSyncRequest(BaseModel):
     limit: int = Field(default=500, ge=1, le=5000)
 
 
+class RegistryWalletIdentityPeerConfig(BaseModel):
+    peer_base_url: str
+    enabled: bool = True
+    added_at: str | None = None
+    last_sync_at: str | None = None
+    last_sync_status: str | None = None
+    last_sync_error: str | None = None
+    last_import_result: dict | None = None
+
+
+class RegistryWalletIdentityPeerRepairRequest(BaseModel):
+    limit: int = Field(default=500, ge=1, le=5000)
+
+
 class RegistryCompletenessIssue(BaseModel):
     code: str
     object_id: str | None = None

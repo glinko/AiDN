@@ -91,6 +91,10 @@ Implemented now:
   one bounded `sync-from-peer` call, so identity replication no longer
   requires an external client to manually export and then import the same
   payload.
+- Registry peers can now maintain a durable list of known wallet-identity
+  peers with last-sync state and run a bounded automated repair pass across
+  those enabled peers, so replication no longer depends on one-off manual
+  sync calls after every restart.
 - Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
   registered Consumer wallet identity, a signed Session-open/funding
   authorization bound to the Endpoint configuration, a currently published
@@ -119,6 +123,6 @@ Still required before public paid-MVP launch:
 1. Replicate canonical `wallet_identity` objects into authoritative network
    state before multi-node paid launch, so a public `wallet_id` cannot mean
    different keys on different Hypervisors after cross-node sync; local
-   uniqueness, conflict rejection and minimal peer sync now exist, but
-   network-wide peer discovery, inventory planning, final reconciliation
-   policy and periodic automated repair remain.
+   uniqueness, conflict rejection, known-peer repair and bounded peer sync now
+   exist, but network-wide peer discovery, inventory planning and final
+   reconciliation policy remain.

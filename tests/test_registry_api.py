@@ -263,6 +263,79 @@ def test_registry_wallet_identity_sync_from_peer_endpoint_pulls_remote_state(
     )
 
 
+def test_registry_wallet_identity_peer_endpoints_store_and_list_peers() -> None:
+    service = RegistryService()
+    client = TestClient(build_registry_app(service=service))
+
+    created = client.put(
+        "/registry/wallet-identities/peers",
+        json={"peer_base_url": "https://peer-a.example/", "enabled": True},
+    )
+
+    assert created.status_code == 200
+    assert created.json()["peer_base_url"] == "https://peer-a.example"
+
+    listed = client.get("/registry/wallet-identities/peers")
+
+    assert listed.status_code == 200
+    assert listed.json()["peers"][0]["peer_base_url"] == "https://peer-a.example"
+    assert listed.json()["peers"][0]["enabled"] is True
+
+
+def test_registry_wallet_identity_repair_endpoint_runs_known_peers(
+    monkeypatch,
+) -> None:
+    service = RegistryService()
+    service.upsert_wallet_identity_peer(peer_base_url="https://peer-a.example/")
+    client = TestClient(build_registry_app(service=service))
+    payload = {
+        "objects": [
+            {
+                "object_id": "sha256:wallet:consumer:a",
+                "object_type": "wallet_identity",
+                "object_version": "wallet-identity.v1",
+                "namespace": "identity",
+                "payload_hash": "sha256:wallet-payload:a",
+                "payload_encoding": "canonical_json",
+                "source_reference": "wallet-consumer",
+                "payload": {
+                    "wallet_id": "wallet-consumer",
+                    "public_key": "ed25519:" + "11" * 32,
+                    "registration_nonce": "nonce-a",
+                },
+            }
+        ],
+        "conflicts": [],
+    }
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _Response(),
+    )
+
+    response = client.post(
+        "/registry/wallet-identities/repair",
+        json={"limit": 500},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success_count"] == 1
+    assert response.json()["results"][0]["peer_base_url"] == "https://peer-a.example"
+    assert service.resolve_wallet_identity("wallet-consumer")["public_key"] == (
+        "ed25519:" + "11" * 32
+    )
+
+
 def test_registry_discovery_endpoint_filters_by_workload_and_model(monkeypatch) -> None:
     ready_time = datetime.fromisoformat("2026-06-19T18:30:05+00:00").timestamp()
     monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)

@@ -240,8 +240,10 @@ Immediate priorities:
    publication, durable conflict evidence and fail-closed cross-node conflict
    rejection now exist, and a minimal peer export/import sync path can already
    transfer wallet identity objects plus known conflict evidence, including a
-   peer-initiated pull sync call; peer discovery, inventory planning, automated repair and network-wide
-   reconciliation do not.
+   peer-initiated pull sync call. Known peers can now be durably configured and
+   repaired through one bounded automated pass with per-peer sync status.
+   Peer discovery, inventory planning and network-wide reconciliation still do
+   not exist.
 1. Apply the completed `llama.cpp` Health/model discovery/Runtime Binding/RFC-0054 adapter profile to Ollama, vLLM-compatible and Proxy providers; add Provider-specific cancellation confirmation and in-flight recovery fault scenarios where their native APIs support them.
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
 3. Add production package acquisition from signed sources to the verified local Package Store and Registry `plugin` Directory replication.

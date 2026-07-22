@@ -2102,6 +2102,93 @@ def test_registry_service_sync_wallet_identity_from_peer_rejects_invalid_peer(
         service.sync_wallet_identity_from_peer(peer_base_url="https://peer-a.example")
 
 
+def test_registry_service_persists_wallet_identity_peer_config_and_sync_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(snapshot_path=snapshot_path)
+    service.upsert_wallet_identity_peer(peer_base_url="https://peer-a.example/")
+    payload = {
+        "objects": [
+            _wallet_identity_object(
+                "wallet-consumer",
+                public_key="ed25519:" + "11" * 32,
+                registration_nonce="nonce-a",
+            )
+        ],
+        "conflicts": [],
+    }
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _Response(),
+    )
+
+    result = service.repair_wallet_identity_peers()
+
+    assert result["success_count"] == 1
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    peers = restarted.list_wallet_identity_peers()
+    assert peers == [
+        {
+            "peer_base_url": "https://peer-a.example",
+            "enabled": True,
+            "added_at": peers[0]["added_at"],
+            "last_sync_at": peers[0]["last_sync_at"],
+            "last_sync_status": "ok",
+            "last_sync_error": None,
+            "last_import_result": {
+                "peer_base_url": "https://peer-a.example",
+                "imported_object_count": 1,
+                "rejected_objects": [],
+                "accepted_conflict_count": 0,
+                "conflict_count": 0,
+            },
+        }
+    ]
+
+
+def test_registry_service_repair_wallet_identity_peers_tracks_errors_and_skips_disabled(
+    monkeypatch,
+) -> None:
+    service = RegistryService()
+    service.upsert_wallet_identity_peer(peer_base_url="https://peer-a.example/")
+    service.upsert_wallet_identity_peer(
+        peer_base_url="https://peer-b.example/",
+        enabled=False,
+    )
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: (_ for _ in ()).throw(
+            urllib_error.URLError("peer unavailable")
+        ),
+    )
+
+    result = service.repair_wallet_identity_peers()
+
+    assert result["enabled_peer_count"] == 1
+    assert result["attempted_peer_count"] == 1
+    assert result["error_count"] == 1
+    peers = service.list_wallet_identity_peers()
+    assert peers[0]["peer_base_url"] == "https://peer-a.example"
+    assert peers[0]["last_sync_status"] == "error"
+    assert "Failed to sync wallet identities from peer" in peers[0]["last_sync_error"]
+    assert peers[1]["peer_base_url"] == "https://peer-b.example"
+    assert peers[1]["enabled"] is False
+    assert peers[1]["last_sync_status"] is None
+
+
 def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:
     service = RegistryService()
     service.upsert_node(

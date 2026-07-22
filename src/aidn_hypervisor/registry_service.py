@@ -15,6 +15,7 @@ from aidn_hypervisor.registry_models import (
     RegistryLocalCompletenessSummary,
     RegistryNodeAdvertisement,
     RegistryObjectQuery,
+    RegistryWalletIdentityPeerConfig,
 )
 
 
@@ -44,6 +45,7 @@ class RegistryService:
         self._nodes: dict[str, dict] = {}
         self._registry_objects: dict[str, dict] = {}
         self._conflicts: dict[str, dict] = {}
+        self._wallet_identity_peers: dict[str, dict] = {}
         self._snapshot_path = Path(snapshot_path) if snapshot_path is not None else None
         self._load_registry_object_snapshot()
 
@@ -87,6 +89,36 @@ class RegistryService:
                 "limit": limit,
             }
         )
+
+    def upsert_wallet_identity_peer(
+        self,
+        *,
+        peer_base_url: str,
+        enabled: bool = True,
+    ) -> dict:
+        normalized_base_url = peer_base_url.rstrip("/")
+        if not normalized_base_url:
+            raise ValueError("peer_base_url must not be empty")
+        existing = deepcopy(self._wallet_identity_peers.get(normalized_base_url) or {})
+        now = datetime.now(UTC).isoformat()
+        record = {
+            "peer_base_url": normalized_base_url,
+            "enabled": bool(enabled),
+            "added_at": existing.get("added_at") or now,
+            "last_sync_at": existing.get("last_sync_at"),
+            "last_sync_status": existing.get("last_sync_status"),
+            "last_sync_error": existing.get("last_sync_error"),
+            "last_import_result": deepcopy(existing.get("last_import_result")),
+        }
+        self._wallet_identity_peers[normalized_base_url] = record
+        self._persist_registry_object_snapshot()
+        return deepcopy(record)
+
+    def list_wallet_identity_peers(self) -> list[dict]:
+        return [
+            deepcopy(self._wallet_identity_peers[peer_base_url])
+            for peer_base_url in sorted(self._wallet_identity_peers)
+        ]
 
     def export_wallet_identity_sync_state(self, *, limit: int = 500) -> dict:
         return {
@@ -174,6 +206,67 @@ class RegistryService:
         )
         result["peer_base_url"] = normalized_base_url
         return result
+
+    def repair_wallet_identity_peers(
+        self,
+        *,
+        limit: int = 500,
+        timeout_seconds: int = 10,
+    ) -> dict:
+        results: list[dict] = []
+        for peer_base_url in sorted(self._wallet_identity_peers):
+            peer = self._wallet_identity_peers[peer_base_url]
+            if not peer.get("enabled", True):
+                continue
+            try:
+                import_result = self.sync_wallet_identity_from_peer(
+                    peer_base_url=peer_base_url,
+                    limit=limit,
+                    timeout_seconds=timeout_seconds,
+                )
+            except ValueError as error:
+                peer["last_sync_at"] = datetime.now(UTC).isoformat()
+                peer["last_sync_status"] = "error"
+                peer["last_sync_error"] = str(error)
+                peer["last_import_result"] = None
+                results.append(
+                    {
+                        "peer_base_url": peer_base_url,
+                        "status": "error",
+                        "error": str(error),
+                    }
+                )
+                continue
+
+            peer["last_sync_at"] = datetime.now(UTC).isoformat()
+            peer["last_sync_status"] = "ok"
+            peer["last_sync_error"] = None
+            peer["last_import_result"] = deepcopy(import_result)
+            results.append(
+                {
+                    "peer_base_url": peer_base_url,
+                    "status": "ok",
+                    "import_result": deepcopy(import_result),
+                }
+            )
+
+        if results or self._wallet_identity_peers:
+            self._persist_registry_object_snapshot()
+
+        success_count = sum(1 for item in results if item["status"] == "ok")
+        error_count = sum(1 for item in results if item["status"] == "error")
+        enabled_peer_count = sum(
+            1
+            for item in self._wallet_identity_peers.values()
+            if item.get("enabled", True)
+        )
+        return {
+            "enabled_peer_count": enabled_peer_count,
+            "attempted_peer_count": len(results),
+            "success_count": success_count,
+            "error_count": error_count,
+            "results": results,
+        }
 
     def get_node(self, node_id: str) -> dict:
         record = deepcopy(self._nodes[node_id])
@@ -840,6 +933,9 @@ class RegistryService:
         conflicts = snapshot.get("conflicts", [])
         if not isinstance(conflicts, list):
             raise ValueError("Registry object snapshot conflicts must be a list")
+        wallet_identity_peers = snapshot.get("wallet_identity_peers", [])
+        if not isinstance(wallet_identity_peers, list):
+            raise ValueError("Registry object snapshot wallet_identity_peers must be a list")
 
         for index, record in enumerate(objects):
             if not isinstance(record, dict):
@@ -859,6 +955,16 @@ class RegistryService:
                 )
             model = RegistryConflictEvidence.model_validate(conflict)
             self._conflicts[model.conflict_id] = model.model_dump(mode="json")
+        for index, peer in enumerate(wallet_identity_peers):
+            if not isinstance(peer, dict):
+                raise ValueError(
+                    "Registry object snapshot contains invalid wallet identity peer entry "
+                    f"at index {index}"
+                )
+            model = RegistryWalletIdentityPeerConfig.model_validate(peer)
+            self._wallet_identity_peers[model.peer_base_url.rstrip("/")] = model.model_dump(
+                mode="json"
+            )
 
     def _persist_registry_object_snapshot(self) -> None:
         if self._snapshot_path is None:
@@ -873,6 +979,10 @@ class RegistryService:
             "conflicts": [
                 deepcopy(self._conflicts[conflict_id])
                 for conflict_id in sorted(self._conflicts)
+            ],
+            "wallet_identity_peers": [
+                deepcopy(self._wallet_identity_peers[peer_base_url])
+                for peer_base_url in sorted(self._wallet_identity_peers)
             ],
         }
         temp_path = self._snapshot_path.with_suffix(self._snapshot_path.suffix + ".tmp")
