@@ -234,9 +234,9 @@ What is still missing in the current stage:
 
 Immediate priorities:
 0. Finish the public paid-MVP hardening pass on top of the new Wallet Identity
-   Binding slice: add one automated signed-publication-to-settlement smoke path
-   and define how wallet identities move from node-local durable state to
-   replicated canonical network state before multi-node paid launch.
+   Binding slice: move wallet identities from node-local durable state to
+   replicated canonical network state, and bind public Session admission to
+   published Endpoint state before multi-node paid launch.
 1. Apply the completed `llama.cpp` Health/model discovery/Runtime Binding/RFC-0054 adapter profile to Ollama, vLLM-compatible and Proxy providers; add Provider-specific cancellation confirmation and in-flight recovery fault scenarios where their native APIs support them.
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
 3. Add production package acquisition from signed sources to the verified local Package Store and Registry `plugin` Directory replication.

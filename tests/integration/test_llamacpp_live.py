@@ -318,18 +318,25 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
         runtimes=ProviderProcessManager(),
         provider_inventory=inventory,
     )
+    hypervisor.configure_owner_wallet(mode="create", label="Live Primary Wallet")
+    owner_wallet_id = hypervisor.owner_wallet_state()["wallet_id"]
     endpoint_service = EndpointService(EndpointStore())
+    endpoint_publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
     client = TestClient(
         build_app(
             service=hypervisor,
             endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
             session_service=SessionService(SessionStore()),
         )
     )
     created = client.post(
         "/api/v1/endpoints",
         json={
-            "owner_wallet": "live-endpoint-wallet",
+            "owner_wallet": owner_wallet_id,
             "runtime_binding_id": binding.runtime_binding_id,
             "bundle_id": binding.compatibility_bundle_id,
             "bundle_hash": inventory.bundle_hash_for_runtime_binding(
@@ -338,16 +345,23 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
             "display_name": "Live llama.cpp Session",
             "model_class": "llm.chat",
             "capabilities": ["llm.chat"],
+            "publication": {
+                "visibility": "public",
+                "discoverable": True,
+                "accepts_external_requests": True,
+            },
+            "pricing": {"billing_unit": "request", "fixed_price": 0.0009},
         },
     )
     assert created.status_code == 201
-    endpoint_id = created.json()["data"]["endpoint"]["endpoint_id"]
+    created_endpoint = created.json()["data"]["endpoint"]
+    endpoint_id = created_endpoint["endpoint_id"]
     hypervisor.credit_wallet_q_atoms(wallet_id="live-consumer-wallet", amount_q_atoms=1000)
     consumer_key = Ed25519PrivateKey.generate()
     operator_key = Ed25519PrivateKey.generate()
     for wallet_id, key, nonce in [
         ("live-consumer-wallet", consumer_key, "live-consumer-registration"),
-        ("live-endpoint-wallet", operator_key, "live-operator-registration"),
+        (owner_wallet_id, operator_key, "live-operator-registration"),
     ]:
         public_key = f"ed25519:{key.public_key().public_bytes_raw().hex()}"
         signature = key.sign(wallet_identity_registration_payload(
@@ -358,11 +372,21 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
             "registration_nonce": nonce, "signature": f"ed25519:{signature}",
         })
         assert registered.status_code == 201, registered.text
+    published = client.post(f"/api/v1/endpoints/{endpoint_id}/publish-configuration")
+    assert published.status_code == 200, published.text
+    publication = published.json()["data"]["publication"]
+    assert publication is not None
+    assert publication["endpoint_id"] == endpoint_id
+    assert publication["owner_wallet"] == owner_wallet_id
+    assert publication["status"] == "published"
+    proof = client.get(f"/api/v1/endpoints/{endpoint_id}/proof")
+    assert proof.status_code == 200, proof.text
+    assert proof.json()["data"]["proof"]["publication_sync_status"] == "in_sync"
     expires_at = "2030-01-01T00:00:00+00:00"
     authorization_nonce = "live-public-session"
     authorization_signature = consumer_key.sign(session_open_authorization_payload(
         wallet_id="live-consumer-wallet", endpoint_id=endpoint_id,
-        endpoint_configuration_hash=created.json()["data"]["endpoint"]["configuration_hash"],
+        endpoint_configuration_hash=created_endpoint["configuration_hash"],
         deposit_q_atoms=1000, fixed_price_q_atoms=900, network_fee_reserve_q_atoms=100,
         nonce=authorization_nonce, expires_at=expires_at,
     )).hex()
@@ -404,7 +428,7 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
     assert response.status_code == 200, response.text
     assert hypervisor.task_result(request_id)["output_text"]
     assert body["funding"]["funding_state"] == "RELEASED"
-    assert hypervisor.wallet_q_atom_balance("live-endpoint-wallet") == 900
+    assert hypervisor.wallet_q_atom_balance(owner_wallet_id) == 900
     assert hypervisor.wallet_q_atom_balance("live-consumer-wallet") == 100
 
 

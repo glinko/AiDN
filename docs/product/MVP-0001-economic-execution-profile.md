@@ -70,6 +70,10 @@ Implemented now:
   registered Consumer wallet identity, a signed Session-open/funding
   authorization bound to the Endpoint configuration, and a registered Endpoint
   Payment Beneficiary identity before escrow can be locked.
+- The integration suite now covers one real public paid path against a live
+  `llama.cpp` runtime: signed Endpoint publication, public Session open,
+  Runtime execution, Final Usage, signed cooperative Settlement acceptance and
+  canonical finalization.
 - A Session may bind a Consumer Ed25519 authorization key. For such Sessions,
   cooperative Settlement accepts only a signature over the exact Settlement
   identity, input root, amounts and acceptance time.
@@ -86,9 +90,9 @@ Implemented now:
 
 Still required before public paid-MVP launch:
 
-1. Add one automated end-to-end public smoke path that starts from signed
-   Endpoint publication and runs through session, escrow, request, result,
-   final Usage, proposal, acceptance and Ledger finalization.
-2. Promote Wallet Identity from node-local durable state to replicated
+1. Promote Wallet Identity from node-local durable state to replicated
    canonical network state before multi-node paid launch, so a public
    `wallet_id` cannot mean different keys on different Hypervisors.
+2. Define the public-session admission policy against published Endpoint state
+   explicitly, so future multi-node Consumers can be rejected from stale,
+   revoked or unpublished configurations before Request execution begins.
