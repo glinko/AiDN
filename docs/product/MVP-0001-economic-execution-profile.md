@@ -119,7 +119,10 @@ Implemented now:
   nodes currently advertising the chosen binding. Requested voter lists must
   match that authoritative set, peer approvals are collected under the same
   policy, and the same local canonical resolution is finalized automatically
-  once the configured threshold is met.
+  once the configured threshold is met. Each authoritative voter node must
+  also advertise `owner_wallet_id`, and that owner wallet identity must
+  resolve to the same public key as the node's `operator_id` identity before
+  quorum authority is accepted.
 - Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
   registered Consumer wallet identity, a signed Session-open/funding
   authorization bound to the Endpoint configuration, a currently published
@@ -155,6 +158,8 @@ Still required before public paid-MVP launch:
    Ed25519 signatures verified against the registered wallet identity bound to
    each voting node's `operator_id`, and quorum admission now derives the
    authoritative voter set from the source nodes currently advertising the
-   chosen binding. What still remains is a stricter ownership policy for how
-   `operator_id`, owner-wallet control and future network authority are linked
-   across nodes.
+   chosen binding. Each authoritative voter node must also advertise
+   `owner_wallet_id`, and that owner wallet identity must resolve to the same
+   public key as the node's `operator_id` identity. What still remains is a
+   stronger network-level governance and ledger-backed authority model above
+   that local ownership linkage.

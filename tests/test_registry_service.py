@@ -49,6 +49,7 @@ def _bundle(
 def _node(
     node_id: str,
     *,
+    owner_wallet_id: str | None = None,
     bundles: list[dict] | None = None,
     canonical_services: list[dict] | None = None,
     canonical_capability_runtimes: list[dict] | None = None,
@@ -64,6 +65,7 @@ def _node(
     return RegistryNodeAdvertisement(
         node_id=node_id,
         operator_id=f"{node_id}-operator",
+        owner_wallet_id=owner_wallet_id,
         base_url=f"https://{node_id}.example",
         heartbeat_at=heartbeat_at,
         heartbeat_ttl_seconds=heartbeat_ttl_seconds,
@@ -129,15 +131,22 @@ def _operator_signing_identity(node_id: str) -> dict:
     private_key = Ed25519PrivateKey.generate()
     public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
     wallet_id = f"{node_id}-operator"
+    owner_wallet_id = f"wallet-owner-{node_id}"
     return {
         "node_id": node_id,
         "wallet_id": wallet_id,
+        "owner_wallet_id": owner_wallet_id,
         "public_key": public_key,
         "private_key": private_key,
         "object": _wallet_identity_object(
             wallet_id,
             public_key=public_key,
             registration_nonce=f"{wallet_id}-nonce",
+        ),
+        "owner_wallet_object": _wallet_identity_object(
+            owner_wallet_id,
+            public_key=public_key,
+            registration_nonce=f"{owner_wallet_id}-nonce",
         ),
     }
 
@@ -2440,6 +2449,7 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
     service.upsert_node(
         _node(
             "node-a",
+            owner_wallet_id=operator_a["owner_wallet_id"],
             heartbeat_at="2026-07-05T14:00:00+00:00",
             canonical_registry_objects=[consumer_object],
         )
@@ -2447,12 +2457,15 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
     service.upsert_node(
         _node(
             "node-b",
+            owner_wallet_id=operator_b["owner_wallet_id"],
             heartbeat_at="2026-07-05T14:00:00+00:00",
             canonical_registry_objects=[consumer_object],
         )
     )
     service.upsert_registry_object(operator_a["object"])
     service.upsert_registry_object(operator_b["object"])
+    service.upsert_registry_object(operator_a["owner_wallet_object"])
+    service.upsert_registry_object(operator_b["owner_wallet_object"])
     proposal_signature = _sign_quorum_proposal(
         operator_a,
         wallet_id="wallet-consumer",
@@ -2475,7 +2488,10 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
 
     assert proposal["status"] == "pending"
     assert len(proposal["approvals"]) == 1
-    assert proposal["voter_policy"] == "wallet_identity_source_nodes.v1"
+    assert (
+        proposal["voter_policy"]
+        == "wallet_identity_source_nodes_with_owner_wallet_link.v1"
+    )
     assert proposal["eligible_voter_node_ids"] == ["node-a", "node-b"]
 
     approved = service.approve_wallet_identity_quorum_resolution(
@@ -2519,6 +2535,7 @@ def test_registry_service_exports_and_imports_wallet_identity_quorum_objects(
     source.upsert_node(
         _node(
             "node-a",
+            owner_wallet_id=operator_a["owner_wallet_id"],
             heartbeat_at="2030-01-01T00:00:00+00:00",
             canonical_registry_objects=[consumer_object],
         )
@@ -2526,6 +2543,7 @@ def test_registry_service_exports_and_imports_wallet_identity_quorum_objects(
     source.upsert_node(
         _node(
             "node-b",
+            owner_wallet_id=operator_b["owner_wallet_id"],
             heartbeat_at="2030-01-01T00:00:00+00:00",
             canonical_registry_objects=[consumer_object],
         )
@@ -2535,6 +2553,8 @@ def test_registry_service_exports_and_imports_wallet_identity_quorum_objects(
     )
     source.upsert_registry_object(operator_a["object"])
     source.upsert_registry_object(operator_b["object"])
+    source.upsert_registry_object(operator_a["owner_wallet_object"])
+    source.upsert_registry_object(operator_b["owner_wallet_object"])
     source.propose_wallet_identity_quorum_resolution(
         wallet_id="wallet-consumer",
         chosen_object_id="sha256:wallet:consumer:a",
@@ -2592,6 +2612,7 @@ def test_registry_service_rejects_non_authoritative_wallet_identity_voter_set() 
     service.upsert_node(
         _node(
             "node-b",
+            owner_wallet_id=operator_b["owner_wallet_id"],
             heartbeat_at="2030-01-01T00:00:00+00:00",
             canonical_registry_objects=[consumer_object],
         )
@@ -2599,12 +2620,15 @@ def test_registry_service_rejects_non_authoritative_wallet_identity_voter_set() 
     service.upsert_node(
         _node(
             "node-a",
+            owner_wallet_id=operator_a["owner_wallet_id"],
             heartbeat_at="2030-01-01T00:00:00+00:00",
             canonical_registry_objects=[consumer_object],
         )
     )
     service.upsert_registry_object(operator_a["object"])
     service.upsert_registry_object(operator_b["object"])
+    service.upsert_registry_object(operator_a["owner_wallet_object"])
+    service.upsert_registry_object(operator_b["owner_wallet_object"])
 
     with pytest.raises(
         ValueError,
@@ -2641,11 +2665,13 @@ def test_registry_service_rejects_wallet_identity_quorum_signature_mismatch() ->
     service.upsert_node(
         _node(
             "node-a",
+            owner_wallet_id=operator_a["owner_wallet_id"],
             heartbeat_at="2030-01-01T00:00:00+00:00",
             canonical_registry_objects=[consumer_object],
         )
     )
     service.upsert_registry_object(operator_a["object"])
+    service.upsert_registry_object(operator_a["owner_wallet_object"])
     service.upsert_registry_object(consumer_object)
 
     with pytest.raises(ValueError, match="proposal signature is invalid"):

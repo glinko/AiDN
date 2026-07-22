@@ -2288,6 +2288,9 @@ class HypervisorService:
         advertisement = RegistryNodeAdvertisement(
             node_id=self.node_id,
             operator_id=self.operator_id,
+            owner_wallet_id=(
+                self._owner_wallet["wallet_id"] if self._owner_wallet is not None else None
+            ),
             base_url=self.base_url,
             heartbeat_at=timestamp,
             heartbeat_ttl_seconds=self.heartbeat_ttl_seconds,

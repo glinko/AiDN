@@ -68,6 +68,7 @@ class RegistryPublishedEndpointSummary(BaseModel):
 class RegistryNodeAdvertisement(BaseModel):
     node_id: str
     operator_id: str
+    owner_wallet_id: str | None = None
     registry_version: str = "m2.v2"
     base_url: str
     heartbeat_at: str

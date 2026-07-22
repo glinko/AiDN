@@ -253,9 +253,12 @@ Immediate priorities:
    fail-closed on Ed25519 signatures verified against the registered wallet
    identity bound to each voting node's `operator_id`, and quorum admission
    now derives the authoritative voter set from the current source nodes
-   advertising the chosen wallet binding. What still does not exist is a
-   stricter cross-node ownership policy linking `operator_id`, owner-wallet
-   control and future network authority.
+   advertising the chosen wallet binding. Each authoritative voter node must
+   now also advertise `owner_wallet_id`, and that owner wallet identity must
+   resolve to the same public key as the node's `operator_id` identity before
+   quorum authority is accepted. What still does not exist is a stronger
+   network-level governance and ledger-backed authority model above that local
+   ownership linkage.
 1. Apply the completed `llama.cpp` Health/model discovery/Runtime Binding/RFC-0054 adapter profile to Ollama, vLLM-compatible and Proxy providers; add Provider-specific cancellation confirmation and in-flight recovery fault scenarios where their native APIs support them.
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
 3. Add production package acquisition from signed sources to the verified local Package Store and Registry `plugin` Directory replication.

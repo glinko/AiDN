@@ -161,9 +161,11 @@ def _operator_registry_identity(node_id: str) -> dict:
     private_key = Ed25519PrivateKey.generate()
     public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
     wallet_id = f"{node_id}-operator"
+    owner_wallet_id = f"wallet-owner-{node_id}"
     return {
         "node_id": node_id,
         "wallet_id": wallet_id,
+        "owner_wallet_id": owner_wallet_id,
         "private_key": private_key,
         "public_key": public_key,
         "object": {
@@ -180,18 +182,34 @@ def _operator_registry_identity(node_id: str) -> dict:
                 "registration_nonce": f"{wallet_id}-nonce",
             },
         },
+        "owner_wallet_object": {
+            "object_id": f"sha256:wallet:{owner_wallet_id}:{public_key[-8:]}",
+            "object_type": "wallet_identity",
+            "object_version": "wallet-identity.v1",
+            "namespace": "identity",
+            "payload_hash": f"sha256:payload:{owner_wallet_id}:{public_key[-8:]}",
+            "payload_encoding": "canonical_json",
+            "source_reference": owner_wallet_id,
+            "payload": {
+                "wallet_id": owner_wallet_id,
+                "public_key": public_key,
+                "registration_nonce": f"{owner_wallet_id}-nonce",
+            },
+        },
     }
 
 
 def _registry_node_payload(
     node_id: str,
     *,
+    owner_wallet_id: str | None = None,
     heartbeat_at: str = "2026-06-19T18:30:00+00:00",
     heartbeat_ttl_seconds: int = 30,
 ) -> dict:
     return {
         "node_id": node_id,
         "operator_id": f"{node_id}-operator",
+        "owner_wallet_id": owner_wallet_id,
         "registry_version": "m2.v1",
         "base_url": f"https://{node_id}.example",
         "heartbeat_at": heartbeat_at,
@@ -1804,15 +1822,19 @@ def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quo
         },
     }
     node_a = _registry_node_payload("node-a")
+    node_a["owner_wallet_id"] = operator_a["owner_wallet_id"]
     node_a["heartbeat_at"] = "2030-01-01T00:00:00+00:00"
     node_a["canonical_registry_objects"] = [consumer_object]
     node_b = _registry_node_payload("node-b")
+    node_b["owner_wallet_id"] = operator_b["owner_wallet_id"]
     node_b["heartbeat_at"] = "2030-01-01T00:00:00+00:00"
     node_b["canonical_registry_objects"] = [consumer_object]
     registry.upsert_node(RegistryNodeAdvertisement(**node_a))
     registry.upsert_node(RegistryNodeAdvertisement(**node_b))
     registry.upsert_registry_object(operator_a["object"])
     registry.upsert_registry_object(operator_b["object"])
+    registry.upsert_registry_object(operator_a["owner_wallet_object"])
+    registry.upsert_registry_object(operator_b["owner_wallet_object"])
     registry.upsert_registry_object(consumer_object)
     client = TestClient(build_app(service=service, registry_service=registry))
 

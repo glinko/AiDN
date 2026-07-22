@@ -227,7 +227,7 @@ class RegistryService:
                 ),
                 "requested_voter_node_ids": requested_voters,
                 "eligible_voter_node_ids": authoritative_voters,
-                "voter_policy": "wallet_identity_source_nodes.v1",
+                "voter_policy": "wallet_identity_source_nodes_with_owner_wallet_link.v1",
                 "quorum_threshold": threshold,
                 "status": "pending",
                 "operator_note": operator_note,
@@ -1380,12 +1380,31 @@ class RegistryService:
             raise ValueError(
                 f"Node {node_id} does not advertise an operator wallet identity binding"
             )
-        identity = self.resolve_wallet_identity(operator_wallet_id)
-        if identity is None:
+        owner_wallet_id = str(node.get("owner_wallet_id") or "").strip()
+        if not owner_wallet_id:
+            raise ValueError(
+                f"Node {node_id} does not advertise owner wallet control for wallet identity quorum"
+            )
+        operator_identity = self.resolve_wallet_identity(operator_wallet_id)
+        if operator_identity is None:
             raise ValueError(
                 f"Node {node_id} operator wallet identity {operator_wallet_id} is not registered"
             )
-        return identity
+        owner_wallet_identity = self.resolve_wallet_identity(owner_wallet_id)
+        if owner_wallet_identity is None:
+            raise ValueError(
+                f"Node {node_id} owner wallet identity {owner_wallet_id} is not registered"
+            )
+        if operator_identity.get("public_key") != owner_wallet_identity.get("public_key"):
+            raise ValueError(
+                f"Node {node_id} operator identity {operator_wallet_id} is not linked to owner wallet {owner_wallet_id}"
+            )
+        return {
+            "operator_wallet_id": operator_wallet_id,
+            "operator_identity": operator_identity,
+            "owner_wallet_id": owner_wallet_id,
+            "owner_wallet_identity": owner_wallet_identity,
+        }
 
     def _verify_wallet_identity_quorum_proposal_signature(
         self,
@@ -1407,11 +1426,11 @@ class RegistryService:
             raise ValueError(
                 f"Wallet identity quorum proposal for {wallet_id} requires proposer_signature"
             )
-        operator_identity = self._wallet_identity_operator_identity_for_node(
+        authority = self._wallet_identity_operator_identity_for_node(
             node_id=proposer_node_id
         )
         verify_wallet_identity_quorum_proposal(
-            public_key=str(operator_identity["public_key"]),
+            public_key=str(authority["operator_identity"]["public_key"]),
             signature=proposer_signature,
             wallet_id=wallet_id,
             chosen_object_id=chosen_object_id,
@@ -1438,11 +1457,11 @@ class RegistryService:
             raise ValueError(
                 f"Wallet identity quorum approval for {resolution_id} requires approval_signature"
             )
-        operator_identity = self._wallet_identity_operator_identity_for_node(
+        authority = self._wallet_identity_operator_identity_for_node(
             node_id=approver_node_id
         )
         verify_wallet_identity_quorum_approval(
-            public_key=str(operator_identity["public_key"]),
+            public_key=str(authority["operator_identity"]["public_key"]),
             signature=approval_signature,
             resolution_id=resolution_id,
             approver_node_id=approver_node_id,
