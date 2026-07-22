@@ -1,6 +1,9 @@
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from aidn_hypervisor.queue import InMemoryTaskQueue
+from aidn_hypervisor.scheduler import Scheduler
+from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.wallet_identity import (
     verify_wallet_identity_registration,
     wallet_identity_registration_payload,
@@ -30,4 +33,33 @@ def test_wallet_identity_registration_requires_key_possession() -> None:
             public_key=public_key,
             registration_nonce="nonce-1",
             signature=f"ed25519:{signature}",
+        )
+
+
+def test_wallet_identity_is_immutable_and_survives_snapshot_restore() -> None:
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    nonce = "nonce-restore"
+    signature = private_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id="wallet-consumer", public_key=public_key, registration_nonce=nonce
+        )
+    ).hex()
+    service = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    service.register_wallet_identity(
+        wallet_id="wallet-consumer",
+        public_key=public_key,
+        registration_nonce=nonce,
+        signature=f"ed25519:{signature}",
+    )
+    restored = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    restored.restore_state(service.snapshot_state())
+
+    assert restored.wallet_identity("wallet-consumer")["public_key"] == public_key
+    with pytest.raises(ValueError, match="key rotation"):
+        restored.register_wallet_identity(
+            wallet_id="wallet-consumer",
+            public_key="ed25519:" + "00" * 32,
+            registration_nonce=nonce,
+            signature="ed25519:" + "00" * 64,
         )

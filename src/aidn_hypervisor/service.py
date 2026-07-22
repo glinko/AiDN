@@ -255,6 +255,7 @@ class HypervisorService:
         self._model_installs: dict[str, dict] = {}
         self._operator_requests_policy = dict(_DEFAULT_OPERATOR_REQUESTS_POLICY)
         self._owner_wallet: dict | None = None
+        self._wallet_identities: dict[str, dict] = {}
         self._operator_onboarding: dict | None = None
         self._runtime_reservations: set[str] = set()
         self._bundle_states: dict[str, dict] = {}
@@ -3010,6 +3011,30 @@ class HypervisorService:
             "listener_transports": [type(item).__name__ for item in self._plugin_host_listeners],
         }
 
+    def register_wallet_identity(self, *, wallet_id: str, public_key: str, registration_nonce: str, signature: str) -> dict:
+        from aidn_hypervisor.wallet_identity import verify_wallet_identity_registration
+
+        identity = verify_wallet_identity_registration(
+            wallet_id=wallet_id,
+            public_key=public_key,
+            registration_nonce=registration_nonce,
+            signature=signature,
+        )
+        existing = self._wallet_identities.get(wallet_id)
+        if existing is not None:
+            if existing["public_key"] != public_key:
+                raise ValueError("Wallet identity key rotation is not supported")
+            if existing["registration_nonce"] != registration_nonce:
+                raise ValueError("Wallet identity registration nonce was already consumed")
+            return dict(existing)
+        self._wallet_identities[wallet_id] = identity.model_dump(mode="json")
+        self._persist_state()
+        return dict(self._wallet_identities[wallet_id])
+
+    def wallet_identity(self, wallet_id: str) -> dict | None:
+        identity = self._wallet_identities.get(wallet_id)
+        return dict(identity) if identity is not None else None
+
     def list_provider_installation_artifacts(self) -> dict:
         return self.provider_inventory.installation_artifact_inventory().model_dump(
             mode="json"
@@ -3669,6 +3694,7 @@ class HypervisorService:
                     else []
                 )
             ),
+            wallet_identities=list(self._wallet_identities.values()),
             endpoint_configuration_snapshots=(
                 [
                     EndpointConfigurationSnapshotRecord.model_validate(
@@ -3788,6 +3814,7 @@ class HypervisorService:
             ],
             settlement_transition_hashes=dict(snapshot.settlement_transition_hashes),
         )
+        self._wallet_identities = {item["wallet_id"]: dict(item) for item in snapshot.wallet_identities}
         self._bundle_states = {
             state.bundle_id: state.model_dump(mode="json")
             for state in snapshot.bundle_states

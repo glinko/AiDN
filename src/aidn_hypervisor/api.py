@@ -59,6 +59,13 @@ class AttachProviderInstanceRequest(BaseModel):
     configuration: dict
 
 
+class WalletIdentityRegistrationRequest(BaseModel):
+    wallet_id: str = Field(min_length=1)
+    public_key: str = Field(min_length=1)
+    registration_nonce: str = Field(min_length=1)
+    signature: str = Field(min_length=1)
+
+
 class CreateRuntimeBindingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2167,6 +2174,20 @@ def build_api_router(
     @router.get("/operators/wallet/bootstrap")
     async def owner_wallet_bootstrap_state() -> dict:
         return service.owner_wallet_state()
+
+    @router.get("/wallets/{wallet_id}/identity")
+    async def wallet_identity(wallet_id: str) -> dict:
+        identity = service.wallet_identity(wallet_id)
+        if identity is None:
+            raise HTTPException(status_code=404, detail="Wallet identity is not registered")
+        return identity
+
+    @router.post("/wallets/identity", status_code=201)
+    async def register_wallet_identity(request: WalletIdentityRegistrationRequest) -> dict:
+        try:
+            return service.register_wallet_identity(**request.model_dump(mode="json"))
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.post("/operators/wallet/bootstrap/create")
     async def create_owner_wallet(

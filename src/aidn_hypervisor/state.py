@@ -450,6 +450,7 @@ class HypervisorStateSnapshot(BaseModel):
     faucet_claims: list[FaucetClaim] = Field(default_factory=list)
     epoch_reward_budgets: list[EpochRewardBudget] = Field(default_factory=list)
     owner_wallet: OwnerWalletSnapshot | None = None
+    wallet_identities: list[dict] = Field(default_factory=list)
     operator_onboarding: OperatorOnboardingSnapshot | None = None
     endpoints: list[EndpointManifestSnapshot] = Field(default_factory=list)
     endpoint_configuration_snapshots: list[EndpointConfigurationSnapshotRecord] = Field(
