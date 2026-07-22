@@ -122,7 +122,9 @@ Implemented now:
   once the configured threshold is met. Each authoritative voter node must
   also advertise `owner_wallet_id`, and that owner wallet identity must
   resolve to the same public key as the node's `operator_id` identity before
-  quorum authority is accepted.
+  quorum authority is accepted. A local wallet identity governance policy now
+  snapshots the active voter-status and quorum-floor rules used by each
+  proposal for operator auditability.
 - Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
   registered Consumer wallet identity, a signed Session-open/funding
   authorization bound to the Endpoint configuration, a currently published
@@ -160,6 +162,7 @@ Still required before public paid-MVP launch:
    authoritative voter set from the source nodes currently advertising the
    chosen binding. Each authoritative voter node must also advertise
    `owner_wallet_id`, and that owner wallet identity must resolve to the same
-   public key as the node's `operator_id` identity. What still remains is a
-   stronger network-level governance and ledger-backed authority model above
-   that local ownership linkage.
+   public key as the node's `operator_id` identity. A local wallet identity
+   governance policy now exists for voter-status and quorum-floor control, but
+   what still remains is a stronger network-level governance and ledger-backed
+   authority model above that local ownership linkage and local policy layer.

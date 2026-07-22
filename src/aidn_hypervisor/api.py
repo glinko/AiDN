@@ -37,6 +37,7 @@ from aidn_hypervisor.operator_views import (
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.registry_models import RegistryNodeAdvertisement, RegistryObjectQuery
 from aidn_hypervisor.registry_models import (
+    RegistryWalletIdentityGovernancePolicyUpdateRequest,
     RegistryWalletIdentityQuorumApprovalRequest,
     RegistryWalletIdentityQuorumProposalRequest,
 )
@@ -1166,6 +1167,26 @@ def build_api_router(
     async def operator_wallet_identity_reconciliation(limit: int = 500) -> dict:
         registry = _effective_registry_service()
         return registry.wallet_identity_reconciliation_report(limit=limit)
+
+    @router.get("/operators/registry/wallet-identities/governance-policy")
+    async def operator_wallet_identity_governance_policy() -> dict:
+        registry = _effective_registry_service()
+        return registry.wallet_identity_governance_policy()
+
+    @router.post("/operators/registry/wallet-identities/governance-policy")
+    async def update_operator_wallet_identity_governance_policy(
+        payload: RegistryWalletIdentityGovernancePolicyUpdateRequest,
+    ) -> dict:
+        registry = _effective_registry_service()
+        try:
+            return registry.update_wallet_identity_governance_policy(
+                authorized_voter_statuses=payload.authorized_voter_statuses,
+                threshold_mode=payload.threshold_mode,
+                minimum_eligible_voter_count=payload.minimum_eligible_voter_count,
+                minimum_quorum_threshold=payload.minimum_quorum_threshold,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.post("/operators/registry/wallet-identities/resolve-conflict")
     async def operator_resolve_wallet_identity_conflict(

@@ -212,6 +212,26 @@ class RegistryWalletIdentityQuorumApprovalRequest(BaseModel):
     approval_note: str | None = None
 
 
+class RegistryWalletIdentityGovernancePolicy(BaseModel):
+    policy_version: str = "wallet-identity-governance-policy.v1"
+    authorized_voter_statuses: list[str] = Field(
+        default_factory=lambda: ["ready", "stale"]
+    )
+    threshold_mode: str = "majority"
+    minimum_eligible_voter_count: int = Field(default=1, ge=1)
+    minimum_quorum_threshold: int = Field(default=1, ge=1)
+    owner_wallet_link_required: bool = True
+    signature_scheme: str = "ed25519"
+    updated_at: str | None = None
+
+
+class RegistryWalletIdentityGovernancePolicyUpdateRequest(BaseModel):
+    authorized_voter_statuses: list[str] | None = None
+    threshold_mode: str | None = None
+    minimum_eligible_voter_count: int | None = Field(default=None, ge=1)
+    minimum_quorum_threshold: int | None = Field(default=None, ge=1)
+
+
 class RegistryCompletenessIssue(BaseModel):
     code: str
     object_id: str | None = None

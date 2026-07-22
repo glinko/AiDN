@@ -1747,6 +1747,35 @@ def test_operator_wallet_identity_reconciliation_endpoint_reports_registry_state
     assert response.json()["items"][0]["status"] == "consistent"
 
 
+def test_operator_wallet_identity_governance_policy_endpoint_updates_registry_policy(
+) -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    registry = RegistryService()
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    initial = client.get("/operators/registry/wallet-identities/governance-policy")
+    assert initial.status_code == 200
+    assert initial.json()["threshold_mode"] == "majority"
+    assert initial.json()["authorized_voter_statuses"] == ["ready", "stale"]
+
+    updated = client.post(
+        "/operators/registry/wallet-identities/governance-policy",
+        json={
+            "authorized_voter_statuses": ["ready"],
+            "minimum_eligible_voter_count": 2,
+            "minimum_quorum_threshold": 2,
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["authorized_voter_statuses"] == ["ready"]
+    assert updated.json()["minimum_eligible_voter_count"] == 2
+    assert updated.json()["minimum_quorum_threshold"] == 2
+    assert registry.wallet_identity_governance_policy()["authorized_voter_statuses"] == [
+        "ready"
+    ]
+
+
 def test_operator_wallet_identity_resolve_conflict_endpoint_applies_resolution() -> None:
     service = _service(with_runtime=False, use_process_manager=True)
     registry = RegistryService()
@@ -1862,6 +1891,7 @@ def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quo
     assert proposed.status_code == 200
     assert proposed.json()["status"] == "pending"
     assert proposed.json()["eligible_voter_node_ids"] == ["node-a", "node-b"]
+    assert proposed.json()["governance_policy_snapshot"]["owner_wallet_link_required"] is True
     resolution_id = proposed.json()["resolution_id"]
 
     approved = client.post(

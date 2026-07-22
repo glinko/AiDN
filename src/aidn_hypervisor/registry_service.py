@@ -15,6 +15,7 @@ from aidn_hypervisor.registry_models import (
     RegistryLocalCompletenessSummary,
     RegistryNodeAdvertisement,
     RegistryObjectQuery,
+    RegistryWalletIdentityGovernancePolicy,
     RegistryWalletIdentityPeerConfig,
 )
 
@@ -38,6 +39,7 @@ _WALLET_IDENTITY_NETWORK_OBJECT_TYPES = {
     "wallet_identity_resolution_approval",
     "wallet_identity_resolution",
 }
+_ALLOWED_WALLET_IDENTITY_VOTER_STATUSES = {"ready", "stale"}
 
 
 class RegistryService:
@@ -54,6 +56,9 @@ class RegistryService:
         self._wallet_identity_peers: dict[str, dict] = {}
         self._wallet_identity_resolutions: dict[str, dict] = {}
         self._wallet_identity_resolution_proposals: dict[str, dict] = {}
+        self._wallet_identity_governance_policy = (
+            RegistryWalletIdentityGovernancePolicy().model_dump(mode="json")
+        )
         self._snapshot_path = Path(snapshot_path) if snapshot_path is not None else None
         self._load_registry_object_snapshot()
 
@@ -155,6 +160,60 @@ class RegistryService:
             for resolution_id in sorted(self._wallet_identity_resolution_proposals)
         ]
 
+    def wallet_identity_governance_policy(self) -> dict:
+        return deepcopy(self._wallet_identity_governance_policy)
+
+    def update_wallet_identity_governance_policy(
+        self,
+        *,
+        authorized_voter_statuses: list[str] | None = None,
+        threshold_mode: str | None = None,
+        minimum_eligible_voter_count: int | None = None,
+        minimum_quorum_threshold: int | None = None,
+    ) -> dict:
+        policy = deepcopy(self._wallet_identity_governance_policy)
+        if authorized_voter_statuses is not None:
+            normalized_statuses = sorted(
+                {
+                    str(item).strip()
+                    for item in authorized_voter_statuses
+                    if str(item).strip()
+                }
+            )
+            if not normalized_statuses:
+                raise ValueError(
+                    "authorized_voter_statuses must contain at least one status"
+                )
+            invalid_statuses = sorted(
+                set(normalized_statuses) - _ALLOWED_WALLET_IDENTITY_VOTER_STATUSES
+            )
+            if invalid_statuses:
+                raise ValueError(
+                    "authorized_voter_statuses contains unsupported values: "
+                    + ", ".join(invalid_statuses)
+                )
+            policy["authorized_voter_statuses"] = normalized_statuses
+        if threshold_mode is not None:
+            normalized_threshold_mode = str(threshold_mode).strip()
+            if normalized_threshold_mode != "majority":
+                raise ValueError(
+                    "threshold_mode must currently be 'majority' for wallet identity governance"
+                )
+            policy["threshold_mode"] = normalized_threshold_mode
+        if minimum_eligible_voter_count is not None:
+            if minimum_eligible_voter_count < 1:
+                raise ValueError("minimum_eligible_voter_count must be at least 1")
+            policy["minimum_eligible_voter_count"] = int(minimum_eligible_voter_count)
+        if minimum_quorum_threshold is not None:
+            if minimum_quorum_threshold < 1:
+                raise ValueError("minimum_quorum_threshold must be at least 1")
+            policy["minimum_quorum_threshold"] = int(minimum_quorum_threshold)
+        policy["updated_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        model = RegistryWalletIdentityGovernancePolicy.model_validate(policy)
+        self._wallet_identity_governance_policy = model.model_dump(mode="json")
+        self._persist_registry_object_snapshot()
+        return self.wallet_identity_governance_policy()
+
     def propose_wallet_identity_quorum_resolution(
         self,
         *,
@@ -229,6 +288,7 @@ class RegistryService:
                 "eligible_voter_node_ids": authoritative_voters,
                 "voter_policy": "wallet_identity_source_nodes_with_owner_wallet_link.v1",
                 "quorum_threshold": threshold,
+                "governance_policy_snapshot": self.wallet_identity_governance_policy(),
                 "status": "pending",
                 "operator_note": operator_note,
                 "proposed_at": now,
@@ -1332,6 +1392,11 @@ class RegistryService:
         chosen_payload_hash: str,
     ) -> list[str]:
         voters: set[str] = set()
+        allowed_statuses = set(
+            self._wallet_identity_governance_policy.get(
+                "authorized_voter_statuses", ["ready", "stale"]
+            )
+        )
         for item in self._wallet_identity_matches(wallet_id):
             if item.get("object_id") != chosen_object_id:
                 continue
@@ -1341,7 +1406,7 @@ class RegistryService:
             node_id = str(source.get("node_id") or "").strip()
             if not node_id:
                 continue
-            if source.get("status") not in {"ready", "stale"}:
+            if source.get("status") not in allowed_statuses:
                 continue
             try:
                 self._wallet_identity_operator_identity_for_node(node_id=node_id)
@@ -1351,6 +1416,17 @@ class RegistryService:
         if not voters:
             raise ValueError(
                 f"Wallet identity resolution for {wallet_id} has no authoritative voter nodes"
+            )
+        minimum_voter_count = int(
+            self._wallet_identity_governance_policy.get(
+                "minimum_eligible_voter_count", 1
+            )
+            or 1
+        )
+        if len(voters) < minimum_voter_count:
+            raise ValueError(
+                f"Wallet identity resolution for {wallet_id} has only {len(voters)} "
+                f"authoritative voter node(s); policy requires at least {minimum_voter_count}"
             )
         return sorted(voters)
 
@@ -1364,12 +1440,30 @@ class RegistryService:
         if voter_count == 0:
             raise ValueError("Wallet identity resolution requires at least one eligible voter")
         if quorum_threshold is None:
-            return (voter_count // 2) + 1
-        if quorum_threshold < 1 or quorum_threshold > voter_count:
+            threshold_mode = str(
+                self._wallet_identity_governance_policy.get("threshold_mode")
+                or "majority"
+            )
+            if threshold_mode != "majority":
+                raise ValueError(
+                    f"Unsupported wallet identity quorum threshold policy: {threshold_mode}"
+                )
+            resolved_threshold = (voter_count // 2) + 1
+        else:
+            resolved_threshold = int(quorum_threshold)
+        if resolved_threshold < 1 or resolved_threshold > voter_count:
             raise ValueError(
                 "quorum_threshold must be between 1 and the number of eligible voters"
             )
-        return quorum_threshold
+        minimum_quorum_threshold = int(
+            self._wallet_identity_governance_policy.get("minimum_quorum_threshold", 1)
+            or 1
+        )
+        if resolved_threshold < minimum_quorum_threshold:
+            raise ValueError(
+                "quorum_threshold does not satisfy the active wallet identity governance policy"
+            )
+        return resolved_threshold
 
     def _wallet_identity_operator_identity_for_node(self, *, node_id: str) -> dict:
         node = deepcopy(self._nodes.get(node_id))
@@ -1560,6 +1654,9 @@ class RegistryService:
             "eligible_voter_node_ids": list(proposal.get("eligible_voter_node_ids") or []),
             "voter_policy": proposal.get("voter_policy"),
             "quorum_threshold": proposal.get("quorum_threshold"),
+            "governance_policy_snapshot": deepcopy(
+                proposal.get("governance_policy_snapshot") or {}
+            ),
             "status": proposal.get("status"),
             "operator_note": proposal.get("operator_note"),
             "proposed_at": proposal.get("proposed_at"),
@@ -1635,6 +1732,9 @@ class RegistryService:
             "eligible_voter_node_ids": list(payload.get("eligible_voter_node_ids") or []),
             "voter_policy": payload.get("voter_policy"),
             "quorum_threshold": payload.get("quorum_threshold"),
+            "governance_policy_snapshot": deepcopy(
+                payload.get("governance_policy_snapshot") or {}
+            ),
             "status": payload.get("status") or existing.get("status") or "pending",
             "operator_note": payload.get("operator_note"),
             "proposed_at": payload.get("proposed_at"),
@@ -1824,6 +1924,16 @@ class RegistryService:
             raise ValueError(
                 "Registry object snapshot wallet_identity_resolution_proposals must be a list"
             )
+        wallet_identity_governance_policy = snapshot.get(
+            "wallet_identity_governance_policy"
+        )
+        if (
+            wallet_identity_governance_policy is not None
+            and not isinstance(wallet_identity_governance_policy, dict)
+        ):
+            raise ValueError(
+                "Registry object snapshot wallet_identity_governance_policy must be an object"
+            )
 
         for index, record in enumerate(objects):
             if not isinstance(record, dict):
@@ -1881,6 +1991,11 @@ class RegistryService:
             self._wallet_identity_resolution_proposals[resolution_id] = deepcopy(
                 proposal
             )
+        if wallet_identity_governance_policy is not None:
+            model = RegistryWalletIdentityGovernancePolicy.model_validate(
+                wallet_identity_governance_policy
+            )
+            self._wallet_identity_governance_policy = model.model_dump(mode="json")
 
     def _persist_registry_object_snapshot(self) -> None:
         if self._snapshot_path is None:
@@ -1908,6 +2023,9 @@ class RegistryService:
                 deepcopy(self._wallet_identity_resolution_proposals[resolution_id])
                 for resolution_id in sorted(self._wallet_identity_resolution_proposals)
             ],
+            "wallet_identity_governance_policy": deepcopy(
+                self._wallet_identity_governance_policy
+            ),
         }
         temp_path = self._snapshot_path.with_suffix(self._snapshot_path.suffix + ".tmp")
         temp_path.write_text(
