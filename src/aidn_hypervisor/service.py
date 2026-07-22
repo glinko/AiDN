@@ -3061,6 +3061,20 @@ class HypervisorService:
                 raise ValueError("Wallet identity registration nonce was already consumed")
             return dict(existing)
         self._wallet_identities[wallet_id] = identity.model_dump(mode="json")
+        self.record_ledger_operation(
+            operation_type="WALLET_IDENTITY_REGISTER",
+            origin_type="wallet",
+            fee_class="onboarding_exempt",
+            initiator_id=wallet_id,
+            sender_wallet=wallet_id,
+            payload={
+                "wallet_id": wallet_id,
+                "public_key": public_key,
+                "registration_nonce": registration_nonce,
+            },
+            signatures=[signature],
+            emitted_events=["WalletIdentityRegistered"],
+        )
         self._persist_state()
         return dict(self._wallet_identities[wallet_id])
 
