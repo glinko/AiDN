@@ -83,6 +83,10 @@ Implemented now:
   conflict evidence and exposes them through registry/operator conflict views,
   so peer reconciliation has a stable audit trail instead of only a transient
   `409` response.
+- Registry peers now also have a minimal `wallet_identity` sync slice:
+  export/import endpoints can transfer canonical identity objects plus known
+  conflict evidence, while the receiving peer imports compatible bindings and
+  rejects conflicting ones without losing the conflict trail.
 - Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
   registered Consumer wallet identity, a signed Session-open/funding
   authorization bound to the Endpoint configuration, a currently published
@@ -111,5 +115,6 @@ Still required before public paid-MVP launch:
 1. Replicate canonical `wallet_identity` objects into authoritative network
    state before multi-node paid launch, so a public `wallet_id` cannot mean
    different keys on different Hypervisors after cross-node sync; local
-   uniqueness and conflict rejection now exist, but peer replication,
-   network-wide conflict exchange and final reconciliation policy remain.
+   uniqueness, conflict rejection and minimal peer sync now exist, but
+   network-wide peer discovery, inventory planning, final reconciliation
+   policy and automated repair remain.

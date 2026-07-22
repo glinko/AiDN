@@ -172,6 +172,43 @@ def test_registry_conflicts_endpoint_lists_wallet_identity_conflicts() -> None:
     assert response.json()["conflicts"][0]["logical_key"] == "wallet-consumer"
 
 
+def test_registry_wallet_identity_sync_endpoints_export_and_import_state() -> None:
+    source = RegistryService()
+    source.upsert_registry_object(
+        {
+            "object_id": "sha256:wallet:consumer:a",
+            "object_type": "wallet_identity",
+            "object_version": "wallet-identity.v1",
+            "namespace": "identity",
+            "payload_hash": "sha256:wallet-payload:a",
+            "payload_encoding": "canonical_json",
+            "source_reference": "wallet-consumer",
+            "payload": {
+                "wallet_id": "wallet-consumer",
+                "public_key": "ed25519:" + "11" * 32,
+                "registration_nonce": "nonce-a",
+            },
+        }
+    )
+    source_client = TestClient(build_registry_app(service=source))
+    target = RegistryService()
+    target_client = TestClient(build_registry_app(service=target))
+
+    exported = source_client.get("/registry/wallet-identities/sync-state")
+    assert exported.status_code == 200
+
+    imported = target_client.post(
+        "/registry/wallet-identities/import",
+        json=exported.json(),
+    )
+
+    assert imported.status_code == 200
+    assert imported.json()["imported_object_count"] == 1
+    assert target.resolve_wallet_identity("wallet-consumer")["public_key"] == (
+        "ed25519:" + "11" * 32
+    )
+
+
 def test_registry_discovery_endpoint_filters_by_workload_and_model(monkeypatch) -> None:
     ready_time = datetime.fromisoformat("2026-06-19T18:30:05+00:00").timestamp()
     monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)

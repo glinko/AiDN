@@ -1,6 +1,10 @@
 from fastapi import APIRouter, HTTPException
 
-from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
+from aidn_hypervisor.registry_models import (
+    RegistryDiscoveryQuery,
+    RegistryNodeAdvertisement,
+    RegistryWalletIdentitySyncImportRequest,
+)
 from aidn_hypervisor.registry_service import RegistryService
 
 
@@ -85,5 +89,18 @@ def build_registry_router(service: RegistryService) -> APIRouter:
                 limit=limit,
             )
         }
+
+    @router.get("/registry/wallet-identities/sync-state")
+    async def wallet_identity_sync_state(limit: int = 500) -> dict:
+        return service.export_wallet_identity_sync_state(limit=limit)
+
+    @router.post("/registry/wallet-identities/import")
+    async def import_wallet_identity_sync_state(
+        request: RegistryWalletIdentitySyncImportRequest,
+    ) -> dict:
+        return service.import_wallet_identity_sync_state(
+            objects=request.objects,
+            conflicts=request.conflicts,
+        )
 
     return router

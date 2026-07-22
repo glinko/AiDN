@@ -1973,6 +1973,80 @@ def test_registry_service_persists_conflict_evidence_in_snapshot(
     assert conflicts[0]["conflict_class"] == "wallet_identity_binding"
 
 
+def test_registry_service_exports_and_imports_wallet_identity_sync_state(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    source = RegistryService()
+    source.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-consumer",
+                    public_key="ed25519:" + "11" * 32,
+                    registration_nonce="nonce-a",
+                )
+            ],
+        )
+    )
+    exported = source.export_wallet_identity_sync_state()
+    target = RegistryService()
+
+    result = target.import_wallet_identity_sync_state(
+        objects=[
+            {
+                "object_id": item["object_id"],
+                "object_type": item["object_type"],
+                "object_version": item["object_version"],
+                "namespace": item["namespace"],
+                "payload_hash": item["payload_hash"],
+                "payload_encoding": item["payload_encoding"],
+                "source_reference": item["source_reference"],
+                "payload": item["payload"],
+            }
+            for item in exported["objects"]
+        ],
+        conflicts=exported["conflicts"],
+    )
+
+    assert result["imported_object_count"] == 1
+    assert result["rejected_objects"] == []
+    resolved = target.resolve_wallet_identity("wallet-consumer")
+    assert resolved is not None
+    assert resolved["public_key"] == "ed25519:" + "11" * 32
+
+
+def test_registry_service_import_wallet_identity_sync_state_reports_conflicts(
+) -> None:
+    target = RegistryService()
+    target.upsert_registry_object(
+        _wallet_identity_object(
+            "wallet-consumer",
+            public_key="ed25519:" + "11" * 32,
+            registration_nonce="nonce-a",
+        )
+    )
+
+    result = target.import_wallet_identity_sync_state(
+        objects=[
+            _wallet_identity_object(
+                "wallet-consumer",
+                public_key="ed25519:" + "22" * 32,
+                registration_nonce="nonce-b",
+            )
+        ],
+        conflicts=[],
+    )
+
+    assert result["imported_object_count"] == 0
+    assert len(result["rejected_objects"]) == 1
+    assert "wallet-consumer" in result["rejected_objects"][0]["reason"]
+    assert result["conflict_count"] == 1
+
+
 def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:
     service = RegistryService()
     service.upsert_node(

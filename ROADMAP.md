@@ -238,7 +238,9 @@ Immediate priorities:
    local durable registry view into authoritative network state before
    multi-node paid launch. Local registry-backed resolution, write-through
    publication, durable conflict evidence and fail-closed cross-node conflict
-   rejection now exist; peer replication, conflict exchange and network-wide
+   rejection now exist, and a minimal peer export/import sync path can already
+   transfer wallet identity objects plus known conflict evidence; peer
+   discovery, inventory planning, automated repair and network-wide
    reconciliation do not.
 1. Apply the completed `llama.cpp` Health/model discovery/Runtime Binding/RFC-0054 adapter profile to Ollama, vLLM-compatible and Proxy providers; add Provider-specific cancellation confirmation and in-flight recovery fault scenarios where their native APIs support them.
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.

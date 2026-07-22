@@ -151,6 +151,11 @@ class RegistryConflictEvidence(BaseModel):
     status: str = "open"
 
 
+class RegistryWalletIdentitySyncImportRequest(BaseModel):
+    objects: list[dict] = Field(default_factory=list)
+    conflicts: list[dict] = Field(default_factory=list)
+
+
 class RegistryCompletenessIssue(BaseModel):
     code: str
     object_id: str | None = None

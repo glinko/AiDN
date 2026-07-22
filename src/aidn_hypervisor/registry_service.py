@@ -77,6 +77,73 @@ class RegistryService:
             items.append(item)
         return items[:limit]
 
+    def list_wallet_identity_objects(self, *, limit: int = 500) -> list[dict]:
+        return self.list_registry_objects(
+            {
+                "object_type": "wallet_identity",
+                "namespace": "identity",
+                "include_payload": True,
+                "limit": limit,
+            }
+        )
+
+    def export_wallet_identity_sync_state(self, *, limit: int = 500) -> dict:
+        return {
+            "objects": self.list_wallet_identity_objects(limit=limit),
+            "conflicts": self.list_conflicts(
+                conflict_class="wallet_identity_binding",
+                object_type="wallet_identity",
+                limit=limit,
+            ),
+        }
+
+    def ingest_conflict_evidence(self, conflicts: list[dict]) -> list[dict]:
+        accepted: list[dict] = []
+        changed = False
+        for item in conflicts:
+            model = RegistryConflictEvidence.model_validate(item)
+            if model.conflict_id in self._conflicts:
+                continue
+            self._conflicts[model.conflict_id] = model.model_dump(mode="json")
+            accepted.append(deepcopy(self._conflicts[model.conflict_id]))
+            changed = True
+        if changed:
+            self._persist_registry_object_snapshot()
+        return accepted
+
+    def import_wallet_identity_sync_state(
+        self,
+        *,
+        objects: list[dict],
+        conflicts: list[dict],
+    ) -> dict:
+        imported_objects = 0
+        rejected_objects: list[dict] = []
+        for item in objects:
+            try:
+                self.upsert_registry_object(item)
+                imported_objects += 1
+            except ValueError as error:
+                rejected_objects.append(
+                    {
+                        "source_reference": item.get("source_reference"),
+                        "object_id": item.get("object_id"),
+                        "reason": str(error),
+                    }
+                )
+        accepted_conflicts = self.ingest_conflict_evidence(conflicts)
+        return {
+            "imported_object_count": imported_objects,
+            "rejected_objects": rejected_objects,
+            "accepted_conflict_count": len(accepted_conflicts),
+            "conflict_count": len(
+                self.list_conflicts(
+                    conflict_class="wallet_identity_binding",
+                    object_type="wallet_identity",
+                )
+            ),
+        }
+
     def get_node(self, node_id: str) -> dict:
         record = deepcopy(self._nodes[node_id])
         if record.get("reputation") is None:
