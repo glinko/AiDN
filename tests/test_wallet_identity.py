@@ -56,10 +56,21 @@ def test_wallet_identity_is_immutable_and_survives_snapshot_restore() -> None:
     restored.restore_state(service.snapshot_state())
 
     assert restored.wallet_identity("wallet-consumer")["public_key"] == public_key
+    replacement_key = Ed25519PrivateKey.generate()
+    replacement_public_key = (
+        f"ed25519:{replacement_key.public_key().public_bytes_raw().hex()}"
+    )
+    replacement_signature = replacement_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id="wallet-consumer",
+            public_key=replacement_public_key,
+            registration_nonce=nonce,
+        )
+    ).hex()
     with pytest.raises(ValueError, match="key rotation"):
         restored.register_wallet_identity(
             wallet_id="wallet-consumer",
-            public_key="ed25519:" + "00" * 32,
+            public_key=replacement_public_key,
             registration_nonce=nonce,
-            signature="ed25519:" + "00" * 64,
+            signature=f"ed25519:{replacement_signature}",
         )
