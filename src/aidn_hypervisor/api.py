@@ -36,6 +36,10 @@ from aidn_hypervisor.operator_views import (
 )
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.registry_models import RegistryNodeAdvertisement, RegistryObjectQuery
+from aidn_hypervisor.registry_models import (
+    RegistryWalletIdentityQuorumApprovalRequest,
+    RegistryWalletIdentityQuorumProposalRequest,
+)
 from aidn_hypervisor.registry_models import RegistryWalletIdentityResolutionRequest
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointDependencyError
@@ -1179,6 +1183,63 @@ def build_api_router(
             raise HTTPException(
                 status_code=404,
                 detail=f"Unknown wallet identity: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/operators/registry/wallet-identities/quorum-proposals")
+    async def operator_wallet_identity_quorum_proposals() -> dict:
+        registry = _effective_registry_service()
+        return {"items": registry.list_wallet_identity_resolution_proposals()}
+
+    @router.post("/operators/registry/wallet-identities/quorum-proposals")
+    async def operator_propose_wallet_identity_quorum_resolution(
+        payload: RegistryWalletIdentityQuorumProposalRequest,
+    ) -> dict:
+        registry = _effective_registry_service()
+        try:
+            return registry.propose_wallet_identity_quorum_resolution(
+                wallet_id=payload.wallet_id,
+                chosen_object_id=payload.chosen_object_id,
+                chosen_payload_hash=payload.chosen_payload_hash,
+                proposer_node_id=payload.proposer_node_id,
+                proposer_signature=payload.proposer_signature,
+                eligible_voter_node_ids=payload.eligible_voter_node_ids,
+                quorum_threshold=payload.quorum_threshold,
+                operator_note=payload.operator_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown wallet identity: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post(
+        "/operators/registry/wallet-identities/quorum-proposals/{resolution_id}/approvals"
+    )
+    async def operator_approve_wallet_identity_quorum_resolution(
+        resolution_id: str,
+        payload: RegistryWalletIdentityQuorumApprovalRequest,
+    ) -> dict:
+        if payload.resolution_id != resolution_id:
+            raise HTTPException(
+                status_code=409,
+                detail="resolution_id in path and body must match",
+            )
+        registry = _effective_registry_service()
+        try:
+            return registry.approve_wallet_identity_quorum_resolution(
+                resolution_id=payload.resolution_id,
+                approver_node_id=payload.approver_node_id,
+                approval_signature=payload.approval_signature,
+                approval_note=payload.approval_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown resolution proposal: {error.args[0]}",
             ) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

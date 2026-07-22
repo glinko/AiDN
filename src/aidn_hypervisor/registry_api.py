@@ -3,9 +3,11 @@ from fastapi import APIRouter, HTTPException
 from aidn_hypervisor.registry_models import (
     RegistryDiscoveryQuery,
     RegistryNodeAdvertisement,
+    RegistryWalletIdentityQuorumApprovalRequest,
     RegistryWalletIdentityPeerConfig,
     RegistryWalletIdentityPeerDiscoveryRequest,
     RegistryWalletIdentityPeerRepairRequest,
+    RegistryWalletIdentityQuorumProposalRequest,
     RegistryWalletIdentityResolutionRequest,
     RegistryWalletIdentityPeerSyncRequest,
     RegistryWalletIdentitySyncImportRequest,
@@ -150,6 +152,58 @@ def build_registry_router(service: RegistryService) -> APIRouter:
             raise HTTPException(
                 status_code=404,
                 detail=f"Unknown wallet identity: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/registry/wallet-identities/quorum-proposals")
+    async def list_wallet_identity_quorum_proposals() -> dict:
+        return {"items": service.list_wallet_identity_resolution_proposals()}
+
+    @router.post("/registry/wallet-identities/quorum-proposals")
+    async def propose_wallet_identity_quorum_resolution(
+        request: RegistryWalletIdentityQuorumProposalRequest,
+    ) -> dict:
+        try:
+            return service.propose_wallet_identity_quorum_resolution(
+                wallet_id=request.wallet_id,
+                chosen_object_id=request.chosen_object_id,
+                chosen_payload_hash=request.chosen_payload_hash,
+                proposer_node_id=request.proposer_node_id,
+                proposer_signature=request.proposer_signature,
+                eligible_voter_node_ids=request.eligible_voter_node_ids,
+                quorum_threshold=request.quorum_threshold,
+                operator_note=request.operator_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown wallet identity: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/registry/wallet-identities/quorum-proposals/{resolution_id}/approvals")
+    async def approve_wallet_identity_quorum_resolution(
+        resolution_id: str,
+        request: RegistryWalletIdentityQuorumApprovalRequest,
+    ) -> dict:
+        if request.resolution_id != resolution_id:
+            raise HTTPException(
+                status_code=409,
+                detail="resolution_id in path and body must match",
+            )
+        try:
+            return service.approve_wallet_identity_quorum_resolution(
+                resolution_id=request.resolution_id,
+                approver_node_id=request.approver_node_id,
+                approval_signature=request.approval_signature,
+                approval_note=request.approval_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown resolution proposal: {error.args[0]}",
             ) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

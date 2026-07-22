@@ -193,6 +193,24 @@ class RegistryWalletIdentityResolutionRequest(BaseModel):
     operator_note: str | None = None
 
 
+class RegistryWalletIdentityQuorumProposalRequest(BaseModel):
+    wallet_id: str = Field(min_length=1)
+    chosen_object_id: str | None = None
+    chosen_payload_hash: str | None = None
+    proposer_node_id: str = Field(min_length=1)
+    proposer_signature: str | None = None
+    eligible_voter_node_ids: list[str] = Field(default_factory=list)
+    quorum_threshold: int | None = Field(default=None, ge=1)
+    operator_note: str | None = None
+
+
+class RegistryWalletIdentityQuorumApprovalRequest(BaseModel):
+    resolution_id: str = Field(min_length=1)
+    approver_node_id: str = Field(min_length=1)
+    approval_signature: str | None = None
+    approval_note: str | None = None
+
+
 class RegistryCompletenessIssue(BaseModel):
     code: str
     object_id: str | None = None

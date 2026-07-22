@@ -246,7 +246,9 @@ Immediate priorities:
    excluding the local node. Operators can also inspect a bounded wallet
    identity reconciliation report instead of raw object/conflict state and can
    now apply a durable local conflict resolution for one selected wallet
-   binding. Network-wide conflict-resolution policy still does not exist.
+   binding. A minimal quorum proposal/approval flow now also exists for that
+   same wallet binding, but signed cross-node evidence exchange and a stronger
+   authoritative network policy still do not.
 1. Apply the completed `llama.cpp` Health/model discovery/Runtime Binding/RFC-0054 adapter profile to Ollama, vLLM-compatible and Proxy providers; add Provider-specific cancellation confirmation and in-flight recovery fault scenarios where their native APIs support them.
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
 3. Add production package acquisition from signed sources to the verified local Package Store and Registry `plugin` Directory replication.

@@ -1657,6 +1657,60 @@ def test_operator_wallet_identity_resolve_conflict_endpoint_applies_resolution()
     assert resolved["identity_source"] == "registry_resolution"
 
 
+def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quorum(
+) -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    registry = RegistryService()
+    registry.upsert_registry_object(
+        {
+            "object_id": "sha256:wallet:consumer:a",
+            "object_type": "wallet_identity",
+            "object_version": "wallet-identity.v1",
+            "namespace": "identity",
+            "payload_hash": "sha256:wallet-payload:a",
+            "payload_encoding": "canonical_json",
+            "source_reference": "wallet-consumer",
+            "payload": {
+                "wallet_id": "wallet-consumer",
+                "public_key": "ed25519:" + "11" * 32,
+                "registration_nonce": "nonce-a",
+            },
+        }
+    )
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    proposed = client.post(
+        "/operators/registry/wallet-identities/quorum-proposals",
+        json={
+            "wallet_id": "wallet-consumer",
+            "chosen_object_id": "sha256:wallet:consumer:a",
+            "proposer_node_id": "node-a",
+            "eligible_voter_node_ids": ["node-a", "node-b", "node-c"],
+            "quorum_threshold": 2,
+            "operator_note": "network quorum proposal",
+        },
+    )
+
+    assert proposed.status_code == 200
+    assert proposed.json()["status"] == "pending"
+    resolution_id = proposed.json()["resolution_id"]
+
+    approved = client.post(
+        f"/operators/registry/wallet-identities/quorum-proposals/{resolution_id}/approvals",
+        json={
+            "resolution_id": resolution_id,
+            "approver_node_id": "node-b",
+            "approval_note": "second vote",
+        },
+    )
+
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "finalized"
+    resolved = registry.resolve_wallet_identity("wallet-consumer")
+    assert resolved is not None
+    assert resolved["identity_source"] == "registry_resolution"
+
+
 def test_operator_registry_object_endpoint_returns_object_by_id() -> None:
     service = _service(with_runtime=False, use_process_manager=True)
     advertisement = service.node_advertisement()

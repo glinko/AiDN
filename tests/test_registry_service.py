@@ -2362,6 +2362,54 @@ def test_registry_service_resolves_wallet_identity_conflict_with_operator_choice
     assert restarted_identity["public_key"] == "ed25519:" + "11" * 32
 
 
+def test_registry_service_finalizes_wallet_identity_quorum_resolution(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-consumer",
+                    public_key="ed25519:" + "11" * 32,
+                    registration_nonce="nonce-a",
+                )
+            ],
+        )
+    )
+
+    proposal = service.propose_wallet_identity_quorum_resolution(
+        wallet_id="wallet-consumer",
+        chosen_object_id="sha256:wallet:wallet-consumer:11111111",
+        proposer_node_id="node-a",
+        eligible_voter_node_ids=["node-a", "node-b", "node-c"],
+        quorum_threshold=2,
+        operator_note="network quorum proposal",
+    )
+
+    assert proposal["status"] == "pending"
+    assert len(proposal["approvals"]) == 1
+
+    approved = service.approve_wallet_identity_quorum_resolution(
+        resolution_id=proposal["resolution_id"],
+        approver_node_id="node-b",
+        approval_note="second vote",
+    )
+
+    assert approved["status"] == "finalized"
+    assert approved["final_resolution"]["wallet_id"] == "wallet-consumer"
+    resolved = service.resolve_wallet_identity("wallet-consumer")
+    assert resolved is not None
+    assert resolved["identity_source"] == "registry_resolution"
+    assert resolved["resolution"]["chosen_object_id"] == (
+        "sha256:wallet:wallet-consumer:11111111"
+    )
+
+
 def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:
     service = RegistryService()
     service.upsert_node(
