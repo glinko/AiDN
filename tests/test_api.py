@@ -1420,6 +1420,37 @@ def test_operator_registry_objects_endpoint_lists_wallet_identity_objects() -> N
     }
 
 
+def test_wallet_identity_endpoint_resolves_registry_backed_identity() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    registry = RegistryService()
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    registration_nonce = "wallet-registry-view"
+    signature = private_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id="wallet-consumer",
+            public_key=public_key,
+            registration_nonce=registration_nonce,
+        )
+    ).hex()
+    service.register_wallet_identity(
+        wallet_id="wallet-consumer",
+        public_key=public_key,
+        registration_nonce=registration_nonce,
+        signature=f"ed25519:{signature}",
+    )
+    registry.upsert_node(RegistryNodeAdvertisement(**service.node_advertisement()))
+    service._wallet_identities.clear()
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    response = client.get("/wallets/wallet-consumer/identity")
+
+    assert response.status_code == 200
+    assert response.json()["wallet_id"] == "wallet-consumer"
+    assert response.json()["public_key"] == public_key
+    assert response.json()["identity_source"] == "registry_object"
+
+
 def test_operator_registry_object_endpoint_returns_object_by_id() -> None:
     service = _service(with_runtime=False, use_process_manager=True)
     advertisement = service.node_advertisement()

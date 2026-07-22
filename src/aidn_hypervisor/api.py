@@ -2177,7 +2177,10 @@ def build_api_router(
 
     @router.get("/wallets/{wallet_id}/identity")
     async def wallet_identity(wallet_id: str) -> dict:
-        identity = service.wallet_identity(wallet_id)
+        try:
+            identity = service.resolve_wallet_identity(wallet_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         if identity is None:
             raise HTTPException(status_code=404, detail="Wallet identity is not registered")
         return identity

@@ -198,6 +198,7 @@ class HypervisorService:
         provider_inventory=None,
         plugin_package_store: PluginPackageStore | None = None,
         runtime_protocol_store=None,
+        registry_service: RegistryService | None = None,
     ) -> None:
         self.queue = queue
         self.scheduler = scheduler
@@ -214,6 +215,7 @@ class HypervisorService:
             store=InMemoryProviderInventoryStore(),
             package_store=plugin_package_store,
         )
+        self.registry_service = registry_service
         self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
             state_store
         )
@@ -503,12 +505,15 @@ class HypervisorService:
             raise ValueError("insufficient q_atoms for MVP Session escrow")
         if require_wallet_authorization and consumer_authorization is None:
             raise ValueError("Public MVP Session requires Consumer wallet authorization")
-        if require_wallet_authorization and self.wallet_identity(endpoint.owner_wallet) is None:
+        if (
+            require_wallet_authorization
+            and self.resolve_wallet_identity(endpoint.owner_wallet) is None
+        ):
             raise ValueError("Public MVP Endpoint Payment Beneficiary identity is not registered")
         if consumer_authorization is not None:
             from aidn_hypervisor.wallet_identity import verify_session_open_authorization
 
-            identity = self.wallet_identity(client_wallet)
+            identity = self.resolve_wallet_identity(client_wallet)
             if identity is None:
                 raise ValueError("Consumer wallet identity is not registered")
             nonce = str(consumer_authorization.get("nonce") or "")
@@ -3050,6 +3055,7 @@ class HypervisorService:
         }
 
     def register_wallet_identity(self, *, wallet_id: str, public_key: str, registration_nonce: str, signature: str) -> dict:
+        from aidn_hypervisor.canonical_projection import project_registry_objects
         from aidn_hypervisor.wallet_identity import verify_wallet_identity_registration
 
         identity = verify_wallet_identity_registration(
@@ -3080,12 +3086,58 @@ class HypervisorService:
             signatures=[signature],
             emitted_events=["WalletIdentityRegistered"],
         )
+        registry_service = self.registry_service
+        if registry_service is not None:
+            registry_service.ingest_registry_objects(
+                [
+                    record.model_dump(mode="json")
+                    for record in project_registry_objects(self, [])
+                    if record.object_type == "wallet_identity"
+                    and record.source_reference == wallet_id
+                ]
+            )
         self._persist_state()
         return dict(self._wallet_identities[wallet_id])
 
     def wallet_identity(self, wallet_id: str) -> dict | None:
         identity = self._wallet_identities.get(wallet_id)
         return dict(identity) if identity is not None else None
+
+    def resolve_wallet_identity(self, wallet_id: str) -> dict | None:
+        local_identity = self.wallet_identity(wallet_id)
+        if local_identity is not None:
+            return local_identity
+        registry_service = self.registry_service
+        if registry_service is None:
+            return None
+        records = registry_service.list_registry_objects(
+            {
+                "object_type": "wallet_identity",
+                "namespace": "identity",
+                "source_reference": wallet_id,
+                "include_payload": True,
+                "limit": 10,
+            }
+        )
+        if not records:
+            return None
+        if len(records) > 1:
+            raise ValueError(
+                f"Conflicting canonical wallet identity objects found for {wallet_id}"
+            )
+        payload = dict(records[0].get("payload") or {})
+        if not payload:
+            raise ValueError(
+                f"Canonical wallet identity object for {wallet_id} has no payload"
+            )
+        return {
+            "wallet_id": str(payload["wallet_id"]),
+            "public_key": str(payload["public_key"]),
+            "registration_nonce": str(payload["registration_nonce"]),
+            "registered_at": None,
+            "identity_source": "registry_object",
+            "registry_object_id": str(records[0]["object_id"]),
+        }
 
     def list_wallet_identities(self) -> list[dict]:
         return [

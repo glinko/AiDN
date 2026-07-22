@@ -70,6 +70,11 @@ Implemented now:
   overlay and local Registry Object view as stable `wallet_identity`
   objects, so public paid-MVP admission and later replication use the same
   object contract instead of a node-private side table.
+- Wallet Identity registration now immediately ingests the matching
+  `wallet_identity` Registry Object into the connected local Registry store,
+  and public paid-session admission plus `GET /wallets/{wallet_id}/identity`
+  can resolve identities from that registry-backed canonical object even if
+  the local in-memory binding is no longer present.
 - Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
   registered Consumer wallet identity, a signed Session-open/funding
   authorization bound to the Endpoint configuration, a currently published
@@ -97,4 +102,4 @@ Still required before public paid-MVP launch:
 
 1. Replicate canonical `wallet_identity` objects into authoritative network
    state before multi-node paid launch, so a public `wallet_id` cannot mean
-   different keys on different Hypervisors.
+   different keys on different Hypervisors after cross-node sync.
