@@ -3110,34 +3110,7 @@ class HypervisorService:
         registry_service = self.registry_service
         if registry_service is None:
             return None
-        records = registry_service.list_registry_objects(
-            {
-                "object_type": "wallet_identity",
-                "namespace": "identity",
-                "source_reference": wallet_id,
-                "include_payload": True,
-                "limit": 10,
-            }
-        )
-        if not records:
-            return None
-        if len(records) > 1:
-            raise ValueError(
-                f"Conflicting canonical wallet identity objects found for {wallet_id}"
-            )
-        payload = dict(records[0].get("payload") or {})
-        if not payload:
-            raise ValueError(
-                f"Canonical wallet identity object for {wallet_id} has no payload"
-            )
-        return {
-            "wallet_id": str(payload["wallet_id"]),
-            "public_key": str(payload["public_key"]),
-            "registration_nonce": str(payload["registration_nonce"]),
-            "registered_at": None,
-            "identity_source": "registry_object",
-            "registry_object_id": str(records[0]["object_id"]),
-        }
+        return registry_service.resolve_wallet_identity(wallet_id)
 
     def list_wallet_identities(self) -> list[dict]:
         return [

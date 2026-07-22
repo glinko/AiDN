@@ -11,7 +11,10 @@ def build_registry_router(service: RegistryService) -> APIRouter:
     async def upsert_node(node_id: str, payload: RegistryNodeAdvertisement) -> dict:
         if payload.node_id != node_id:
             raise HTTPException(status_code=409, detail="node_id in path and body must match")
-        return service.upsert_node(payload)
+        try:
+            return service.upsert_node(payload)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/registry/nodes")
     async def list_nodes() -> list[dict]:

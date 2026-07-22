@@ -73,6 +73,51 @@ def test_registry_node_upsert_endpoint_stores_advertisement() -> None:
     assert response.json()["node_id"] == "node-a"
 
 
+def test_registry_node_upsert_rejects_conflicting_wallet_identity_binding() -> None:
+    service = RegistryService()
+    client = TestClient(build_registry_app(service=service))
+    first = _node_payload("node-a")
+    first["canonical_registry_objects"] = [
+        {
+            "object_id": "sha256:wallet:consumer:a",
+            "object_type": "wallet_identity",
+            "object_version": "wallet-identity.v1",
+            "namespace": "identity",
+            "payload_hash": "sha256:wallet-payload:a",
+            "payload_encoding": "canonical_json",
+            "source_reference": "wallet-consumer",
+            "payload": {
+                "wallet_id": "wallet-consumer",
+                "public_key": "ed25519:" + "11" * 32,
+                "registration_nonce": "nonce-a",
+            },
+        }
+    ]
+    second = _node_payload("node-b")
+    second["canonical_registry_objects"] = [
+        {
+            "object_id": "sha256:wallet:consumer:b",
+            "object_type": "wallet_identity",
+            "object_version": "wallet-identity.v1",
+            "namespace": "identity",
+            "payload_hash": "sha256:wallet-payload:b",
+            "payload_encoding": "canonical_json",
+            "source_reference": "wallet-consumer",
+            "payload": {
+                "wallet_id": "wallet-consumer",
+                "public_key": "ed25519:" + "22" * 32,
+                "registration_nonce": "nonce-b",
+            },
+        }
+    ]
+
+    assert client.put("/registry/nodes/node-a", json=first).status_code == 200
+    response = client.put("/registry/nodes/node-b", json=second)
+
+    assert response.status_code == 409
+    assert "wallet-consumer" in response.json()["detail"]
+
+
 def test_registry_discovery_endpoint_filters_by_workload_and_model(monkeypatch) -> None:
     ready_time = datetime.fromisoformat("2026-06-19T18:30:05+00:00").timestamp()
     monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)

@@ -44,6 +44,10 @@ class RegistryService:
         self._load_registry_object_snapshot()
 
     def upsert_node(self, payload: RegistryNodeAdvertisement) -> dict:
+        self._validate_wallet_identity_objects(
+            payload.model_dump(mode="json").get("canonical_registry_objects", []),
+            exclude_node_id=payload.node_id,
+        )
         self._nodes[payload.node_id] = payload.model_dump(mode="json")
         return self.get_node(payload.node_id)
 
@@ -60,6 +64,7 @@ class RegistryService:
     def upsert_registry_object(self, record: dict, *, persist: bool = True) -> dict:
         object_id = str(record["object_id"])
         normalized = deepcopy(record)
+        self._validate_wallet_identity_objects([normalized])
         existing = self._registry_objects.get(object_id)
         if existing is not None and existing != normalized:
             raise ValueError(f"Conflicting registry object for {object_id}")
@@ -265,6 +270,52 @@ class RegistryService:
         if item is not None:
             return item
         raise KeyError(object_id)
+
+    def resolve_wallet_identity(self, wallet_id: str) -> dict | None:
+        matches = self._wallet_identity_matches(wallet_id)
+        if not matches:
+            return None
+        unique_records = {
+            (
+                str(item["object_id"]),
+                str(item["payload_hash"]),
+            ): item
+            for item in matches
+        }
+        if len(unique_records) > 1:
+            raise ValueError(
+                f"Conflicting wallet identity objects found for {wallet_id}"
+            )
+        record = next(iter(unique_records.values()))
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"Canonical wallet identity object for {wallet_id} has no payload"
+            )
+        registry_sources: list[dict] = []
+        for item in sorted(
+            matches,
+            key=lambda candidate: (
+                str(candidate.get("_source", {}).get("node_id") or ""),
+                str(candidate.get("_source", {}).get("operator_id") or ""),
+            ),
+        ):
+            source = {
+                "node_id": item.get("_source", {}).get("node_id"),
+                "operator_id": item.get("_source", {}).get("operator_id"),
+                "status": item.get("_source", {}).get("status") or "stored",
+            }
+            if source not in registry_sources:
+                registry_sources.append(source)
+        return {
+            "wallet_id": str(payload["wallet_id"]),
+            "public_key": str(payload["public_key"]),
+            "registration_nonce": str(payload["registration_nonce"]),
+            "registered_at": None,
+            "identity_source": "registry_object",
+            "registry_object_id": str(record["object_id"]),
+            "registry_sources": registry_sources,
+        }
 
     def discover(self, query: RegistryDiscoveryQuery) -> dict:
         matched_nodes: list[dict] = []
@@ -512,6 +563,61 @@ class RegistryService:
         if "payload" in left and "payload" in right and left.get("payload") != right.get("payload"):
             return True
         return False
+
+    def _wallet_identity_matches(self, wallet_id: str) -> list[dict]:
+        matches: list[dict] = []
+        for object_id in sorted(self._registry_objects):
+            record = self._registry_objects[object_id]
+            if self._wallet_identity_record_key(record) != wallet_id:
+                continue
+            matches.append(deepcopy(record))
+        for node_id in sorted(self._nodes):
+            node = self._nodes[node_id]
+            for record in node.get("canonical_registry_objects", []):
+                if self._wallet_identity_record_key(record) != wallet_id:
+                    continue
+                candidate = deepcopy(record)
+                candidate["_source"] = {
+                    "node_id": node.get("node_id"),
+                    "operator_id": node.get("operator_id"),
+                    "status": self._status_for(node),
+                }
+                matches.append(candidate)
+        return matches
+
+    def _wallet_identity_record_key(self, record: dict) -> str | None:
+        if record.get("object_type") != "wallet_identity":
+            return None
+        if record.get("namespace") != "identity":
+            return None
+        source_reference = record.get("source_reference")
+        if not isinstance(source_reference, str) or not source_reference:
+            return None
+        return source_reference
+
+    def _validate_wallet_identity_objects(
+        self,
+        records: list[dict],
+        *,
+        exclude_node_id: str | None = None,
+    ) -> None:
+        for record in records:
+            wallet_id = self._wallet_identity_record_key(record)
+            if wallet_id is None:
+                continue
+            payload_hash = record.get("payload_hash")
+            object_id = record.get("object_id")
+            for existing in self._wallet_identity_matches(wallet_id):
+                source_node_id = existing.get("_source", {}).get("node_id")
+                if exclude_node_id is not None and source_node_id == exclude_node_id:
+                    continue
+                if (
+                    existing.get("payload_hash") != payload_hash
+                    or existing.get("object_id") != object_id
+                ):
+                    raise ValueError(
+                        f"Conflicting wallet identity objects found for {wallet_id}"
+                    )
 
     def _load_registry_object_snapshot(self) -> None:
         if self._snapshot_path is None or not self._snapshot_path.exists():

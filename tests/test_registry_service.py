@@ -96,6 +96,29 @@ def _node(
     )
 
 
+def _wallet_identity_object(
+    wallet_id: str,
+    *,
+    public_key: str,
+    registration_nonce: str,
+) -> dict:
+    payload = {
+        "wallet_id": wallet_id,
+        "public_key": public_key,
+        "registration_nonce": registration_nonce,
+    }
+    return {
+        "object_id": f"sha256:wallet:{wallet_id}:{public_key[-8:]}",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": f"sha256:payload:{wallet_id}:{public_key[-8:]}",
+        "payload_encoding": "canonical_json",
+        "source_reference": wallet_id,
+        "payload": payload,
+    }
+
+
 def test_registry_service_upserts_and_returns_node_advertisements() -> None:
     service = RegistryService()
     payload = RegistryNodeAdvertisement(
@@ -1812,6 +1835,90 @@ def test_registry_service_rejects_conflicting_node_backed_duplicate_objects(
 
     with pytest.raises(ValueError, match=shared_id):
         service.list_registry_objects(query={"include_payload": True})
+
+
+def test_registry_service_rejects_conflicting_wallet_identity_objects_across_nodes(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-consumer",
+                    public_key="ed25519:" + "11" * 32,
+                    registration_nonce="nonce-a",
+                )
+            ],
+        )
+    )
+
+    with pytest.raises(ValueError, match="wallet-consumer"):
+        service.upsert_node(
+            _node(
+                "node-b",
+                heartbeat_at="2026-07-05T14:00:00+00:00",
+                canonical_registry_objects=[
+                    _wallet_identity_object(
+                        "wallet-consumer",
+                        public_key="ed25519:" + "22" * 32,
+                        registration_nonce="nonce-b",
+                    )
+                ],
+            )
+        )
+
+
+def test_registry_service_rejects_conflicting_wallet_identity_store_ingest() -> None:
+    service = RegistryService()
+    service.upsert_registry_object(
+        _wallet_identity_object(
+            "wallet-consumer",
+            public_key="ed25519:" + "11" * 32,
+            registration_nonce="nonce-a",
+        )
+    )
+
+    with pytest.raises(ValueError, match="wallet-consumer"):
+        service.upsert_registry_object(
+            _wallet_identity_object(
+                "wallet-consumer",
+                public_key="ed25519:" + "22" * 32,
+                registration_nonce="nonce-b",
+            )
+        )
+
+
+def test_registry_service_resolves_wallet_identity_from_registry_objects(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-consumer",
+                    public_key="ed25519:" + "11" * 32,
+                    registration_nonce="nonce-a",
+                )
+            ],
+        )
+    )
+
+    resolved = service.resolve_wallet_identity("wallet-consumer")
+
+    assert resolved is not None
+    assert resolved["wallet_id"] == "wallet-consumer"
+    assert resolved["public_key"] == "ed25519:" + "11" * 32
+    assert resolved["identity_source"] == "registry_object"
 
 
 def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:
