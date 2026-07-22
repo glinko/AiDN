@@ -87,6 +87,10 @@ Implemented now:
   export/import endpoints can transfer canonical identity objects plus known
   conflict evidence, while the receiving peer imports compatible bindings and
   rejects conflicting ones without losing the conflict trail.
+- That same sync slice now also carries quorum-resolution network objects:
+  proposal, approval and finalized resolution records are exported as
+  hash-bound identity objects and hydrate local quorum state on import, so
+  multi-node repair can propagate more than just raw wallet bindings.
 - Registry peers can now also initiate a pull sync from another peer through
   one bounded `sync-from-peer` call, so identity replication no longer
   requires an external client to manually export and then import the same
@@ -143,6 +147,6 @@ Still required before public paid-MVP launch:
    different keys on different Hypervisors after cross-node sync; local
    uniqueness, conflict rejection, known-peer repair, registry-node inventory
    bootstrap, bounded peer sync, operator reconciliation visibility, local
-   conflict resolution and quorum-backed resolution proposals now exist, but
-   signed cross-node evidence exchange and a stronger authoritative network
-   policy still remain.
+   conflict resolution, quorum-backed resolution proposals and replicated
+   quorum state objects now exist, but stronger signature requirements and a
+   stricter authoritative network policy still remain.

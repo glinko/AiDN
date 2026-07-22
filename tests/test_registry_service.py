@@ -2410,6 +2410,60 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
     )
 
 
+def test_registry_service_exports_and_imports_wallet_identity_quorum_objects(
+) -> None:
+    source = RegistryService()
+    source.upsert_registry_object(
+        {
+            "object_id": "sha256:wallet:consumer:a",
+            "object_type": "wallet_identity",
+            "object_version": "wallet-identity.v1",
+            "namespace": "identity",
+            "payload_hash": "sha256:wallet-payload:a",
+            "payload_encoding": "canonical_json",
+            "source_reference": "wallet-consumer",
+            "payload": {
+                "wallet_id": "wallet-consumer",
+                "public_key": "ed25519:" + "11" * 32,
+                "registration_nonce": "nonce-a",
+            },
+        }
+    )
+    source.propose_wallet_identity_quorum_resolution(
+        wallet_id="wallet-consumer",
+        chosen_object_id="sha256:wallet:consumer:a",
+        proposer_node_id="node-a",
+        eligible_voter_node_ids=["node-a", "node-b", "node-c"],
+        quorum_threshold=2,
+        operator_note="network quorum proposal",
+    )
+    exported = source.export_wallet_identity_sync_state()
+    target = RegistryService()
+
+    result = target.import_wallet_identity_sync_state(
+        objects=[
+            {
+                "object_id": item["object_id"],
+                "object_type": item["object_type"],
+                "object_version": item["object_version"],
+                "namespace": item["namespace"],
+                "payload_hash": item["payload_hash"],
+                "payload_encoding": item["payload_encoding"],
+                "source_reference": item["source_reference"],
+                "payload": item["payload"],
+            }
+            for item in exported["objects"]
+        ],
+        conflicts=exported["conflicts"],
+    )
+
+    assert result["imported_object_count"] >= 3
+    proposals = target.list_wallet_identity_resolution_proposals()
+    assert len(proposals) == 1
+    assert proposals[0]["wallet_id"] == "wallet-consumer"
+    assert proposals[0]["approvals"][0]["approver_node_id"] == "node-a"
+
+
 def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:
     service = RegistryService()
     service.upsert_node(
