@@ -68,8 +68,9 @@ Implemented now:
   records canonical `WALLET_IDENTITY_REGISTER` Ledger operations.
 - Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
   registered Consumer wallet identity, a signed Session-open/funding
-  authorization bound to the Endpoint configuration, and a registered Endpoint
-  Payment Beneficiary identity before escrow can be locked.
+  authorization bound to the Endpoint configuration, a currently published
+  external-facing Endpoint configuration in `in_sync` state, and a registered
+  Endpoint Payment Beneficiary identity before escrow can be locked.
 - The integration suite now covers one real public paid path against a live
   `llama.cpp` runtime: signed Endpoint publication, public Session open,
   Runtime execution, Final Usage, signed cooperative Settlement acceptance and
@@ -93,6 +94,3 @@ Still required before public paid-MVP launch:
 1. Promote Wallet Identity from node-local durable state to replicated
    canonical network state before multi-node paid launch, so a public
    `wallet_id` cannot mean different keys on different Hypervisors.
-2. Define the public-session admission policy against published Endpoint state
-   explicitly, so future multi-node Consumers can be rejected from stale,
-   revoked or unpublished configurations before Request execution begins.

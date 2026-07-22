@@ -3,6 +3,10 @@ from uuid import uuid4
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from aidn_hypervisor.domain.models import TaskRequest
+from aidn_hypervisor.endpoint_publications.models import (
+    canonical_configuration_payload,
+    configuration_hash_for_publication,
+)
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand, UpdateEndpointCommand
 from aidn_hypervisor.settlement.models import SessionSettlementAcceptance
 from pydantic import BaseModel, Field
@@ -63,6 +67,7 @@ class MvpPaidSmokeRequest(BaseModel):
 def build_endpoint_router(
     service,
     hypervisor_service=None,
+    endpoint_publication_service=None,
     remote_endpoint_service=None,
     session_service=None,
     validation_service=None,
@@ -98,6 +103,48 @@ def build_endpoint_router(
                 "correlation_id": str(uuid4()),
             },
         )
+
+    def _local_publication_configuration_hash(endpoint) -> str:
+        payload = canonical_configuration_payload(
+            bundle_hash=endpoint.bundle_hash,
+            model_class=endpoint.model_class,
+            capabilities=endpoint.capabilities,
+            runtime=endpoint.runtime.model_dump(mode="json"),
+            publication=endpoint.publication.model_dump(mode="json"),
+            pricing=endpoint.pricing.model_dump(mode="json"),
+            session=endpoint.session.model_dump(mode="json"),
+            execution={
+                "strategy": endpoint.execution_strategy,
+                "runtime_binding_id": endpoint.runtime_binding_id,
+            },
+        )
+        return configuration_hash_for_publication(payload)
+
+    def _public_session_publication_guard(endpoint) -> str | None:
+        if endpoint_publication_service is None:
+            return "Endpoint publication service is not configured"
+        current_publication = endpoint_publication_service.current_publication(
+            endpoint.endpoint_id
+        )
+        if current_publication is None:
+            return "Public MVP Session requires a currently published Endpoint configuration"
+        local_publication_configuration_hash = _local_publication_configuration_hash(
+            endpoint
+        )
+        if local_publication_configuration_hash != current_publication.configuration_hash:
+            return (
+                "Public MVP Session requires the live Endpoint configuration to match "
+                "the current published configuration"
+            )
+        if not (
+            current_publication.publication.get("accepts_external_requests", False)
+            or current_publication.publication.get("visibility") == "public"
+        ):
+            return (
+                "Public MVP Session requires a published Endpoint configuration that "
+                "accepts external requests"
+            )
+        return None
 
     @router.get("")
     async def list_endpoints() -> JSONResponse:
@@ -388,6 +435,13 @@ def build_endpoint_router(
             endpoint = service.get_endpoint(endpoint_id).endpoint
         except KeyError:
             return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        publication_guard_error = _public_session_publication_guard(endpoint)
+        if publication_guard_error is not None:
+            return _error(
+                409,
+                "public_mvp_session_open_rejected",
+                publication_guard_error,
+            )
         try:
             accounting_contract = hypervisor_service.accounting_contract_for_endpoint(
                 endpoint
