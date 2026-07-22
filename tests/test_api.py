@@ -1540,6 +1540,69 @@ def test_operator_registry_conflicts_endpoint_lists_wallet_identity_conflicts() 
     assert response.json()["conflicts"][0]["logical_key"] == "wallet-consumer"
 
 
+def test_operator_wallet_identity_reconciliation_endpoint_reports_registry_state(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = _service(with_runtime=False, use_process_manager=True)
+    registry = RegistryService()
+    registry.upsert_wallet_identity_peer(peer_base_url="https://peer-a.example/")
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-a",
+            operator_id="operator-a",
+            base_url="https://node-a.example",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            heartbeat_ttl_seconds=30,
+            resources={
+                "total": {"cpu": 8.0, "ram_mb": 16384, "vram_mb": 8192},
+                "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+                "free": {"cpu": 6.0, "ram_mb": 12000, "vram_mb": 6144},
+            },
+            providers=["llama.cpp"],
+            can_host_custom_model=True,
+            pricing={
+                "unit": "q_per_1kk_tokens",
+                "input": 12,
+                "output": 18,
+                "fixed_request": None,
+            },
+            rating={
+                "score": 0.91,
+                "tier": "A",
+                "updated_at": "2026-07-05T13:55:00+00:00",
+            },
+            bundles=[],
+            canonical_registry_objects=[
+                {
+                    "object_id": "sha256:wallet:consumer:a",
+                    "object_type": "wallet_identity",
+                    "object_version": "wallet-identity.v1",
+                    "namespace": "identity",
+                    "payload_hash": "sha256:wallet-payload:a",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "wallet-consumer",
+                    "payload": {
+                        "wallet_id": "wallet-consumer",
+                        "public_key": "ed25519:" + "11" * 32,
+                        "registration_nonce": "nonce-a",
+                    },
+                }
+            ],
+        )
+    )
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    response = client.get("/operators/registry/wallet-identities/reconciliation")
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["wallet_count"] == 1
+    assert response.json()["summary"]["enabled_peer_count"] == 1
+    assert response.json()["items"][0]["wallet_id"] == "wallet-consumer"
+    assert response.json()["items"][0]["status"] == "consistent"
+
+
 def test_operator_registry_object_endpoint_returns_object_by_id() -> None:
     service = _service(with_runtime=False, use_process_manager=True)
     advertisement = service.node_advertisement()

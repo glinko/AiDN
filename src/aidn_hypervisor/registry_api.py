@@ -130,6 +130,10 @@ def build_registry_router(service: RegistryService) -> APIRouter:
             auto_register=request.auto_register,
         )
 
+    @router.get("/registry/wallet-identities/reconciliation")
+    async def wallet_identity_reconciliation(limit: int = 500) -> dict:
+        return service.wallet_identity_reconciliation_report(limit=limit)
+
     @router.post("/registry/wallet-identities/import")
     async def import_wallet_identity_sync_state(
         request: RegistryWalletIdentitySyncImportRequest,

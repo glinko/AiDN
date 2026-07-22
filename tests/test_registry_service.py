@@ -2260,6 +2260,58 @@ def test_registry_service_discover_and_repair_wallet_identity_peers(
     )
 
 
+def test_registry_service_wallet_identity_reconciliation_report_summarizes_state(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_wallet_identity_peer(peer_base_url="https://peer-a.example/")
+    service.upsert_wallet_identity_peer(peer_base_url="https://peer-b.example/")
+    service._wallet_identity_peers["https://peer-b.example"]["last_sync_status"] = "error"
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-consumer",
+                    public_key="ed25519:" + "11" * 32,
+                    registration_nonce="nonce-a",
+                )
+            ],
+        )
+    )
+    service.upsert_node(
+        _node(
+            "node-b",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-auditor",
+                    public_key="ed25519:" + "33" * 32,
+                    registration_nonce="nonce-c",
+                )
+            ],
+        )
+    )
+
+    report = service.wallet_identity_reconciliation_report()
+
+    assert report["summary"]["wallet_count"] == 2
+    assert report["summary"]["consistent_count"] == 2
+    assert report["summary"]["conflict_count"] == 0
+    assert report["summary"]["enabled_peer_count"] == 2
+    assert report["summary"]["peer_error_count"] == 1
+    assert report["summary"]["peer_pending_count"] == 1
+    consumer = next(
+        item for item in report["items"] if item["wallet_id"] == "wallet-consumer"
+    )
+    assert consumer["status"] == "consistent"
+    assert consumer["payload_variant_count"] == 1
+    assert consumer["source_nodes"] == ["node-a"]
+
+
 def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:
     service = RegistryService()
     service.upsert_node(

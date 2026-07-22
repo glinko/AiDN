@@ -335,6 +335,89 @@ class RegistryService:
             "repair": repair,
         }
 
+    def wallet_identity_reconciliation_report(self, *, limit: int = 500) -> dict:
+        objects = self.list_wallet_identity_objects(limit=limit)
+        conflicts = self.list_conflicts(
+            conflict_class="wallet_identity_binding",
+            object_type="wallet_identity",
+            limit=limit,
+        )
+        conflicts_by_wallet: dict[str, list[dict]] = {}
+        for item in conflicts:
+            wallet_id = str(item.get("logical_key") or "")
+            conflicts_by_wallet.setdefault(wallet_id, []).append(deepcopy(item))
+
+        grouped: dict[str, list[dict]] = {}
+        for item in objects:
+            wallet_id = str(item.get("source_reference") or "")
+            grouped.setdefault(wallet_id, []).append(deepcopy(item))
+
+        items: list[dict] = []
+        all_wallet_ids = sorted(set(grouped) | set(conflicts_by_wallet))
+        peer_items = self.list_wallet_identity_peers()
+        enabled_peer_count = sum(1 for item in peer_items if item.get("enabled", True))
+        peer_error_count = sum(
+            1 for item in peer_items if item.get("enabled", True) and item.get("last_sync_status") == "error"
+        )
+        peer_pending_count = sum(
+            1
+            for item in peer_items
+            if item.get("enabled", True) and item.get("last_sync_status") in {None, "pending"}
+        )
+
+        for wallet_id in all_wallet_ids[:limit]:
+            wallet_objects = grouped.get(wallet_id, [])
+            wallet_conflicts = conflicts_by_wallet.get(wallet_id, [])
+            payload_hashes = sorted(
+                {str(item.get("payload_hash")) for item in wallet_objects if item.get("payload_hash")}
+            )
+            object_ids = sorted(
+                {str(item.get("object_id")) for item in wallet_objects if item.get("object_id")}
+            )
+            source_nodes = sorted(
+                {
+                    str(source.get("node_id"))
+                    for item in wallet_objects
+                    for source in item.get("sources", [])
+                    if source.get("node_id") is not None
+                }
+            )
+            has_conflict = bool(wallet_conflicts)
+            if has_conflict:
+                status = "conflict"
+            elif len(payload_hashes) <= 1:
+                status = "consistent"
+            else:
+                status = "divergent"
+            items.append(
+                {
+                    "wallet_id": wallet_id,
+                    "status": status,
+                    "object_count": len(wallet_objects),
+                    "payload_variant_count": len(payload_hashes),
+                    "object_ids": object_ids,
+                    "payload_hashes": payload_hashes,
+                    "source_nodes": source_nodes,
+                    "conflict_count": len(wallet_conflicts),
+                    "conflicts": wallet_conflicts,
+                }
+            )
+
+        summary = {
+            "wallet_count": len(all_wallet_ids[:limit]),
+            "consistent_count": sum(1 for item in items if item["status"] == "consistent"),
+            "conflict_count": sum(1 for item in items if item["status"] == "conflict"),
+            "divergent_count": sum(1 for item in items if item["status"] == "divergent"),
+            "enabled_peer_count": enabled_peer_count,
+            "peer_error_count": peer_error_count,
+            "peer_pending_count": peer_pending_count,
+        }
+        return {
+            "summary": summary,
+            "known_peers": peer_items,
+            "items": items,
+        }
+
     def get_node(self, node_id: str) -> dict:
         record = deepcopy(self._nodes[node_id])
         if record.get("reputation") is None:

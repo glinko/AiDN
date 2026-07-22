@@ -1157,6 +1157,11 @@ def build_api_router(
             )
         }
 
+    @router.get("/operators/registry/wallet-identities/reconciliation")
+    async def operator_wallet_identity_reconciliation(limit: int = 500) -> dict:
+        registry = _effective_registry_service()
+        return registry.wallet_identity_reconciliation_report(limit=limit)
+
     @router.get("/operators/dashboard/home")
     async def operator_dashboard_home() -> dict:
         market = build_market_payload(

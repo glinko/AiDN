@@ -437,6 +437,40 @@ def test_registry_wallet_identity_discover_peers_endpoint_can_repair_after_disco
     )
 
 
+def test_registry_wallet_identity_reconciliation_endpoint_reports_status(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_wallet_identity_peer(peer_base_url="https://peer-a.example/")
+    service.upsert_registry_object(
+        {
+            "object_id": "sha256:wallet:consumer:a",
+            "object_type": "wallet_identity",
+            "object_version": "wallet-identity.v1",
+            "namespace": "identity",
+            "payload_hash": "sha256:wallet-payload:a",
+            "payload_encoding": "canonical_json",
+            "source_reference": "wallet-consumer",
+            "payload": {
+                "wallet_id": "wallet-consumer",
+                "public_key": "ed25519:" + "11" * 32,
+                "registration_nonce": "nonce-a",
+            },
+        }
+    )
+    client = TestClient(build_registry_app(service=service))
+
+    response = client.get("/registry/wallet-identities/reconciliation")
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["wallet_count"] == 1
+    assert response.json()["summary"]["enabled_peer_count"] == 1
+    assert response.json()["items"][0]["wallet_id"] == "wallet-consumer"
+    assert response.json()["items"][0]["status"] == "consistent"
+
+
 def test_registry_discovery_endpoint_filters_by_workload_and_model(monkeypatch) -> None:
     ready_time = datetime.fromisoformat("2026-06-19T18:30:05+00:00").timestamp()
     monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
