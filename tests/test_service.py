@@ -2,6 +2,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import ValidationError
 
 from aidn_hypervisor.domain.models import (
@@ -38,6 +39,7 @@ from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.state import JournalEvent
+from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
 
 
 def _bundle(
@@ -770,6 +772,22 @@ def test_service_exposes_canonical_overlay_inventory() -> None:
             )
         ],
     )
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    registration_nonce = "nonce-1"
+    signature = private_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id="wallet-consumer",
+            public_key=public_key,
+            registration_nonce=registration_nonce,
+        )
+    ).hex()
+    service.register_wallet_identity(
+        wallet_id="wallet-consumer",
+        public_key=public_key,
+        registration_nonce=registration_nonce,
+        signature=f"ed25519:{signature}",
+    )
 
     payload = service.canonical_overlay_inventory()
 
@@ -780,10 +798,13 @@ def test_service_exposes_canonical_overlay_inventory() -> None:
     assert "feature_profiles" in payload
     assert "limit_profiles" in payload
     assert "implementation_profiles" in payload
+    assert "wallet_identities" in payload
     assert "registry_objects" in payload
     assert payload["services"][0]["kind"] == "compute"
     assert payload["capabilities"][0]["capability_definition_hash"].startswith("sha256:")
+    assert payload["wallet_identities"][0]["wallet_id"] == "wallet-consumer"
     assert {item["object_type"] for item in payload["registry_objects"]} == {
+        "wallet_identity",
         "capability_definition"
     }
 

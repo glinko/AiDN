@@ -233,6 +233,37 @@ What is still missing in the current stage:
   - optional in-memory and durable local filesystem content-addressed Package Stores now verify staged package bytes against the declared SHA-256 digest, atomically persist verified bytes, re-verify them at read time and fail-close package activation when configured. Public immutable Plugin Release metadata is deterministically projected into the Registry `plugin` namespace and can be batch-published without exposing local installation or credential state. The Hypervisor now also provides a scoped Plugin Host identity/handshake contract, ephemeral install-scoped activation secrets with HMAC proof verification and nonce replay rejection, bounded JSON wire adapter, Windows Named Pipe and Unix-socket Local IPC listeners, persistent connection recovery, stale-generation revocation, constrained Provider/model/Runtime Binding control commands, and read-only operator status without credential-key disclosure. These handlers still execute inside the current Hypervisor process; activation secrets are deliberately not persisted and require a Secret Manager-backed launcher before external hosts can survive Hypervisor restart. Production package acquisition from signed sources, isolated external Plugin Host process lifecycle, OCI/container lifecycle, Registry `plugin` Directory replication, full plugin update/removal/security response and RFC-0056 execution-plane conformance remain unimplemented.
 
 Immediate priorities:
+0. Finish the public paid-MVP hardening pass on top of the new Wallet Identity
+   Binding slice: replicate canonical `wallet_identity` objects from the
+   local durable registry view into authoritative network state before
+   multi-node paid launch. Local registry-backed resolution, write-through
+   publication, durable conflict evidence and fail-closed cross-node conflict
+   rejection now exist, and a minimal peer export/import sync path can already
+   transfer wallet identity objects plus known conflict evidence, including a
+   peer-initiated pull sync call. Known peers can now be durably configured and
+   repaired through one bounded automated pass with per-peer sync status, and
+   registry node advertisements can now bootstrap that inventory while
+   excluding the local node. Operators can also inspect a bounded wallet
+   identity reconciliation report instead of raw object/conflict state and can
+   now apply a durable local conflict resolution for one selected wallet
+   binding. A minimal quorum proposal/approval flow now also exists for that
+   same wallet binding, and those quorum proposal/approval/final-resolution
+   records now replicate through the same wallet-identity sync path as
+   hash-bound identity objects. Quorum proposals and approvals are now
+   fail-closed on Ed25519 signatures verified against the registered wallet
+   identity bound to each voting node's `operator_id`, and quorum admission
+   now derives the authoritative voter set from the current source nodes
+   advertising the chosen wallet binding. Each authoritative voter node must
+   now also advertise `owner_wallet_id`, and that owner wallet identity must
+   resolve to the same public key as the node's `operator_id` identity before
+   quorum authority is accepted. The Registry now also exposes a local wallet
+   identity governance policy that snapshots the active voter-status and quorum
+   floor rules used by each proposal. What still does not exist is a stronger
+   network-level governance and ledger-backed authority model above that local
+   ownership linkage and local policy surface. The next implementation step on
+   this path is to issue minimal governance/authorization certificates for
+   quorum-finalized wallet-identity network changes, so those decisions carry
+   portable network evidence instead of remaining only local-policy-valid.
 1. Apply the completed `llama.cpp` Health/model discovery/Runtime Binding/RFC-0054 adapter profile to Ollama, vLLM-compatible and Proxy providers; add Provider-specific cancellation confirmation and in-flight recovery fault scenarios where their native APIs support them.
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
 3. Add production package acquisition from signed sources to the verified local Package Store and Registry `plugin` Directory replication.
@@ -440,7 +471,8 @@ Order of work right now:
 5. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
 6. Finish the remaining `M3/M4` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
 7. Define `M5` rating, validation economics, and `M6` custom model onboarding contracts around the endpoint-centric operator experience
-8. Introduce the `M7` consensus boundary cleanly, so future ledger, epoch, validator, and registry work land on finalized protocol state instead of local-only mutation
+8. Add minimal governance/authorization certificates for quorum-finalized wallet-identity network changes, so registry authority can travel as signed network evidence instead of only local policy state
+9. Introduce the `M7` consensus boundary cleanly, so future ledger, epoch, validator, and registry work land on finalized protocol state instead of local-only mutation
 
 ## Source Documents
 

@@ -42,6 +42,24 @@ def test_create_endpoint_accepts_runtime_binding_identity_with_bundle_fallback()
     assert cmd.bundle_id == "bundle-rtb-1"
 
 
+def test_create_endpoint_persists_runtime_binding_in_configuration_commitment() -> None:
+    created = EndpointService(EndpointStore()).create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-a",
+            runtime_binding_id="rtb-1",
+            bundle_id="bundle-rtb-1",
+            bundle_hash="bundle-hash-a",
+            display_name="Local Qwen",
+            model_class="llm.chat",
+            capabilities=["llm.chat"],
+        )
+    )
+
+    assert created.endpoint.runtime_binding_id == "rtb-1"
+    assert created.snapshot.runtime_binding_id == "rtb-1"
+    assert created.snapshot.execution_config["runtime_binding_id"] == "rtb-1"
+
+
 def test_update_endpoint_runtime_creates_new_configuration_hash() -> None:
     service = EndpointService(EndpointStore())
     created = service.create_endpoint(

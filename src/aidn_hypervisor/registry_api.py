@@ -1,6 +1,17 @@
 from fastapi import APIRouter, HTTPException
 
-from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
+from aidn_hypervisor.registry_models import (
+    RegistryDiscoveryQuery,
+    RegistryNodeAdvertisement,
+    RegistryWalletIdentityQuorumApprovalRequest,
+    RegistryWalletIdentityPeerConfig,
+    RegistryWalletIdentityPeerDiscoveryRequest,
+    RegistryWalletIdentityPeerRepairRequest,
+    RegistryWalletIdentityQuorumProposalRequest,
+    RegistryWalletIdentityResolutionRequest,
+    RegistryWalletIdentityPeerSyncRequest,
+    RegistryWalletIdentitySyncImportRequest,
+)
 from aidn_hypervisor.registry_service import RegistryService
 
 
@@ -11,7 +22,10 @@ def build_registry_router(service: RegistryService) -> APIRouter:
     async def upsert_node(node_id: str, payload: RegistryNodeAdvertisement) -> dict:
         if payload.node_id != node_id:
             raise HTTPException(status_code=409, detail="node_id in path and body must match")
-        return service.upsert_node(payload)
+        try:
+            return service.upsert_node(payload)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/registry/nodes")
     async def list_nodes() -> list[dict]:
@@ -66,5 +80,159 @@ def build_registry_router(service: RegistryService) -> APIRouter:
             limit=limit,
         )
         return service.discover(query)
+
+    @router.get("/registry/conflicts")
+    async def list_conflicts(
+        conflict_class: str | None = None,
+        object_type: str | None = None,
+        logical_key: str | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return {
+            "conflicts": service.list_conflicts(
+                conflict_class=conflict_class,
+                object_type=object_type,
+                logical_key=logical_key,
+                limit=limit,
+            )
+        }
+
+    @router.get("/registry/wallet-identities/sync-state")
+    async def wallet_identity_sync_state(limit: int = 500) -> dict:
+        return service.export_wallet_identity_sync_state(limit=limit)
+
+    @router.get("/registry/wallet-identities/peers")
+    async def list_wallet_identity_peers() -> dict:
+        return {"peers": service.list_wallet_identity_peers()}
+
+    @router.put("/registry/wallet-identities/peers")
+    async def upsert_wallet_identity_peer(
+        request: RegistryWalletIdentityPeerConfig,
+    ) -> dict:
+        try:
+            return service.upsert_wallet_identity_peer(
+                peer_base_url=request.peer_base_url,
+                enabled=request.enabled,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/registry/wallet-identities/discover-peers")
+    async def discover_wallet_identity_peers(
+        request: RegistryWalletIdentityPeerDiscoveryRequest,
+    ) -> dict:
+        if request.repair_after_discovery:
+            return service.discover_and_repair_wallet_identity_peers(
+                self_node_id=request.self_node_id,
+                include_stale=request.include_stale,
+                limit=request.limit,
+            )
+        return service.discover_wallet_identity_peers_from_nodes(
+            self_node_id=request.self_node_id,
+            include_stale=request.include_stale,
+            auto_register=request.auto_register,
+        )
+
+    @router.get("/registry/wallet-identities/reconciliation")
+    async def wallet_identity_reconciliation(limit: int = 500) -> dict:
+        return service.wallet_identity_reconciliation_report(limit=limit)
+
+    @router.post("/registry/wallet-identities/resolve-conflict")
+    async def resolve_wallet_identity_conflict(
+        request: RegistryWalletIdentityResolutionRequest,
+    ) -> dict:
+        try:
+            return service.resolve_wallet_identity_conflict(
+                wallet_id=request.wallet_id,
+                chosen_object_id=request.chosen_object_id,
+                chosen_payload_hash=request.chosen_payload_hash,
+                operator_note=request.operator_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown wallet identity: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/registry/wallet-identities/quorum-proposals")
+    async def list_wallet_identity_quorum_proposals() -> dict:
+        return {"items": service.list_wallet_identity_resolution_proposals()}
+
+    @router.post("/registry/wallet-identities/quorum-proposals")
+    async def propose_wallet_identity_quorum_resolution(
+        request: RegistryWalletIdentityQuorumProposalRequest,
+    ) -> dict:
+        try:
+            return service.propose_wallet_identity_quorum_resolution(
+                wallet_id=request.wallet_id,
+                chosen_object_id=request.chosen_object_id,
+                chosen_payload_hash=request.chosen_payload_hash,
+                proposer_node_id=request.proposer_node_id,
+                proposer_signature=request.proposer_signature,
+                eligible_voter_node_ids=request.eligible_voter_node_ids,
+                quorum_threshold=request.quorum_threshold,
+                operator_note=request.operator_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown wallet identity: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/registry/wallet-identities/quorum-proposals/{resolution_id}/approvals")
+    async def approve_wallet_identity_quorum_resolution(
+        resolution_id: str,
+        request: RegistryWalletIdentityQuorumApprovalRequest,
+    ) -> dict:
+        if request.resolution_id != resolution_id:
+            raise HTTPException(
+                status_code=409,
+                detail="resolution_id in path and body must match",
+            )
+        try:
+            return service.approve_wallet_identity_quorum_resolution(
+                resolution_id=request.resolution_id,
+                approver_node_id=request.approver_node_id,
+                approval_signature=request.approval_signature,
+                approval_note=request.approval_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown resolution proposal: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/registry/wallet-identities/import")
+    async def import_wallet_identity_sync_state(
+        request: RegistryWalletIdentitySyncImportRequest,
+    ) -> dict:
+        return service.import_wallet_identity_sync_state(
+            objects=request.objects,
+            conflicts=request.conflicts,
+        )
+
+    @router.post("/registry/wallet-identities/sync-from-peer")
+    async def sync_wallet_identity_from_peer(
+        request: RegistryWalletIdentityPeerSyncRequest,
+    ) -> dict:
+        try:
+            return service.sync_wallet_identity_from_peer(
+                peer_base_url=request.peer_base_url,
+                limit=request.limit,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/registry/wallet-identities/repair")
+    async def repair_wallet_identity_peers(
+        request: RegistryWalletIdentityPeerRepairRequest,
+    ) -> dict:
+        return service.repair_wallet_identity_peers(limit=request.limit)
 
     return router

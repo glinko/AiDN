@@ -12,6 +12,7 @@ from aidn_hypervisor.canonical_models import (
     CanonicalEndpointLimitProfileRecord,
     CanonicalProtocolServiceRecord,
     CanonicalRegistryObjectRecord,
+    CanonicalWalletIdentityRecord,
 )
 
 _CAPABILITY_BY_WORKLOAD = {
@@ -148,6 +149,14 @@ def _implementation_profile_payload(
         "publication_visibility": implementation_profile.publication_visibility,
         "validation_enabled": implementation_profile.validation_enabled,
         "session_queue_policy": implementation_profile.session_queue_policy,
+    }
+
+
+def _wallet_identity_binding_payload(identity: dict) -> dict:
+    return {
+        "wallet_id": identity["wallet_id"],
+        "public_key": identity["public_key"],
+        "registration_nonce": identity["registration_nonce"],
     }
 
 
@@ -511,11 +520,43 @@ def project_endpoint_implementation_profiles(
     return records
 
 
+def project_wallet_identities(service) -> list[CanonicalWalletIdentityRecord]:
+    records: list[CanonicalWalletIdentityRecord] = []
+    for identity in service.list_wallet_identities():
+        binding_payload = _wallet_identity_binding_payload(identity)
+        records.append(
+            CanonicalWalletIdentityRecord(
+                identity_hash=_stable_hash(binding_payload),
+                wallet_id=str(identity["wallet_id"]),
+                public_key=str(identity["public_key"]),
+                registration_nonce=str(identity["registration_nonce"]),
+                registered_at=str(identity["registered_at"]),
+            )
+        )
+    return records
+
+
 def project_registry_objects(
     service,
     publication_records,
 ) -> list[CanonicalRegistryObjectRecord]:
     records: list[CanonicalRegistryObjectRecord] = []
+    for identity in project_wallet_identities(service):
+        payload = {
+            "wallet_id": identity.wallet_id,
+            "public_key": identity.public_key,
+            "registration_nonce": identity.registration_nonce,
+        }
+        records.append(
+            _registry_object_record(
+                object_type="wallet_identity",
+                object_version="wallet-identity.v1",
+                namespace="identity",
+                payload_hash=identity.identity_hash,
+                source_reference=identity.wallet_id,
+                payload=payload,
+            )
+        )
     for capability in project_capability_definitions(service):
         records.append(
             _registry_object_record(

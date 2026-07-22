@@ -45,6 +45,9 @@ from aidn_hypervisor.registry_models import (
 )
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
+from aidn_hypervisor.runtime_protocol.approved_dispatch import (
+    ApprovedRuntimeDispatcher,
+)
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeExecuteRequest,
     RuntimeRequestRecord,
@@ -195,6 +198,7 @@ class HypervisorService:
         provider_inventory=None,
         plugin_package_store: PluginPackageStore | None = None,
         runtime_protocol_store=None,
+        registry_service: RegistryService | None = None,
     ) -> None:
         self.queue = queue
         self.scheduler = scheduler
@@ -211,6 +215,7 @@ class HypervisorService:
             store=InMemoryProviderInventoryStore(),
             package_store=plugin_package_store,
         )
+        self.registry_service = registry_service
         self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
             state_store
         )
@@ -252,6 +257,8 @@ class HypervisorService:
         self._model_installs: dict[str, dict] = {}
         self._operator_requests_policy = dict(_DEFAULT_OPERATOR_REQUESTS_POLICY)
         self._owner_wallet: dict | None = None
+        self._wallet_identities: dict[str, dict] = {}
+        self._consumed_wallet_authorization_nonces: set[str] = set()
         self._operator_onboarding: dict | None = None
         self._runtime_reservations: set[str] = set()
         self._bundle_states: dict[str, dict] = {}
@@ -483,6 +490,9 @@ class HypervisorService:
         fixed_price_q_atoms: int,
         network_fee_reserve_q_atoms: int = 0,
         accounting_contract: dict | None = None,
+        consumer_authorization_public_key: str | None = None,
+        consumer_authorization: dict | None = None,
+        require_wallet_authorization: bool = False,
     ):
         if deposit_q_atoms <= 0:
             raise ValueError("MVP Session deposit must be positive")
@@ -493,6 +503,35 @@ class HypervisorService:
             raise ValueError("MVP Session deposit cannot cover fixed price")
         if self.wallet_q_atom_balance(client_wallet) < deposit_q_atoms:
             raise ValueError("insufficient q_atoms for MVP Session escrow")
+        if require_wallet_authorization and consumer_authorization is None:
+            raise ValueError("Public MVP Session requires Consumer wallet authorization")
+        if (
+            require_wallet_authorization
+            and self.resolve_wallet_identity(endpoint.owner_wallet) is None
+        ):
+            raise ValueError("Public MVP Endpoint Payment Beneficiary identity is not registered")
+        if consumer_authorization is not None:
+            from aidn_hypervisor.wallet_identity import verify_session_open_authorization
+
+            identity = self.resolve_wallet_identity(client_wallet)
+            if identity is None:
+                raise ValueError("Consumer wallet identity is not registered")
+            nonce = str(consumer_authorization.get("nonce") or "")
+            if not nonce or nonce in self._consumed_wallet_authorization_nonces:
+                raise ValueError("Session-open authorization nonce was already consumed")
+            verify_session_open_authorization(
+                public_key=identity["public_key"],
+                signature=str(consumer_authorization.get("signature") or ""),
+                wallet_id=client_wallet,
+                endpoint_id=endpoint.endpoint_id,
+                endpoint_configuration_hash=endpoint.configuration_hash,
+                deposit_q_atoms=deposit_q_atoms,
+                fixed_price_q_atoms=fixed_price_q_atoms,
+                network_fee_reserve_q_atoms=network_fee_reserve_q_atoms,
+                nonce=nonce,
+                expires_at=str(consumer_authorization.get("expires_at") or ""),
+            )
+            consumer_authorization_public_key = identity["public_key"]
 
         result = session_service.open_session(
             endpoint_id=endpoint.endpoint_id,
@@ -509,6 +548,7 @@ class HypervisorService:
             session_policy=endpoint.session.model_dump(mode="json"),
             accounting_contract=accounting_contract,
             endpoint_configuration_hash=endpoint.configuration_hash,
+            consumer_authorization_public_key=consumer_authorization_public_key,
         )
         funding = SessionFundingAccount(
             session_id=result.session.session_id,
@@ -528,6 +568,10 @@ class HypervisorService:
         except Exception:
             session_service.store.discard_open_session(result.session.session_id)
             raise
+        if consumer_authorization is not None:
+            self._consumed_wallet_authorization_nonces.add(
+                str(consumer_authorization["nonce"])
+            )
         session = session_service.bind_canonical_funding(
             result.session.session_id,
             funding_state_hash=str(locked.funding_state_hash),
@@ -582,6 +626,43 @@ class HypervisorService:
         )
         if final_usage is None:
             raise ValueError("Final Usage Report is missing from Runtime store")
+        endpoint_service = getattr(self, "endpoint_service", None)
+        if endpoint_service is not None:
+            endpoint = endpoint_service.get_endpoint(session.endpoint_id).endpoint
+            if endpoint.runtime_binding_id is not None:
+                matching_terminal_evidence = [
+                    item
+                    for item in session.runtime_terminal_evidence
+                    if item.request_id == request_id
+                ]
+                if len(matching_terminal_evidence) != 1:
+                    raise ValueError(
+                        "Runtime-bound MVP Session requires exactly one terminal Runtime evidence record"
+                    )
+                terminal_evidence = matching_terminal_evidence[0]
+                if terminal_evidence.runtime_binding_id != endpoint.runtime_binding_id:
+                    raise ValueError("Session Runtime Binding does not match Endpoint")
+                if terminal_evidence.runtime_id != record.request.runtime_id:
+                    raise ValueError("Session Runtime ID does not match Runtime Request")
+                if terminal_evidence.runtime_generation != record.request.runtime_generation:
+                    raise ValueError("Session Runtime Generation does not match Runtime Request")
+                if (
+                    terminal_evidence.runtime_configuration_hash
+                    != record.request.runtime_configuration_hash
+                ):
+                    raise ValueError(
+                        "Session Runtime Configuration does not match Runtime Request"
+                    )
+                if terminal_evidence.route_generation != record.request.route_generation:
+                    raise ValueError("Session Route Generation does not match Runtime Request")
+                if terminal_evidence.terminal_state != record.request_state:
+                    raise ValueError("Session terminal state does not match Runtime Request")
+                if terminal_evidence.result_hash != record.terminal_result_hash:
+                    raise ValueError("Session Result hash does not match Runtime Request")
+                if terminal_evidence.final_usage_report_id != final_usage.usage_report_id:
+                    raise ValueError("Session Final Usage ID does not match Runtime store")
+                if terminal_evidence.final_usage_report_hash != final_usage.report_hash:
+                    raise ValueError("Session Final Usage hash does not match Runtime store")
         request_reports = sorted(
             (
                 item
@@ -731,6 +812,7 @@ class HypervisorService:
         proposal_expiration: str | None = None,
         accepted_at: str | None = None,
     ):
+        session = session_service.store.get_session(session_id)
         evaluation = self.build_mvp_fixed_price_settlement_evaluation(
             session_service=session_service,
             session_id=session_id,
@@ -760,6 +842,13 @@ class HypervisorService:
             consumer_signature=consumer_signature,
             accepted_at=accepted_at or datetime.now(timezone.utc).isoformat(),
         )
+        if session.consumer_authorization_public_key is not None:
+            from aidn_hypervisor.settlement.signing import verify_settlement_acceptance
+
+            verify_settlement_acceptance(
+                acceptance,
+                consumer_public_key=session.consumer_authorization_public_key,
+            )
         self.accept_settlement(acceptance)
         funding = self.finalize_accepted_settlement(evaluation)
         session_result = session_service.mark_canonical_settlement_finalized(
@@ -2199,6 +2288,9 @@ class HypervisorService:
         advertisement = RegistryNodeAdvertisement(
             node_id=self.node_id,
             operator_id=self.operator_id,
+            owner_wallet_id=(
+                self._owner_wallet["wallet_id"] if self._owner_wallet is not None else None
+            ),
             base_url=self.base_url,
             heartbeat_at=timestamp,
             heartbeat_ttl_seconds=self.heartbeat_ttl_seconds,
@@ -2400,6 +2492,7 @@ class HypervisorService:
             project_endpoint_limit_profiles,
             project_protocol_services,
             project_registry_objects,
+            project_wallet_identities,
         )
 
         publication_service = getattr(self, "endpoint_publication_service", None)
@@ -2437,6 +2530,10 @@ class HypervisorService:
                 for record in project_endpoint_implementation_profiles(
                     current_publication_records
                 )
+            ],
+            "wallet_identities": [
+                record.model_dump(mode="json")
+                for record in project_wallet_identities(self)
             ],
             "registry_objects": [
                 record.model_dump(mode="json")
@@ -2959,6 +3056,70 @@ class HypervisorService:
             "listener_count": len(self._plugin_host_listeners),
             "listener_transports": [type(item).__name__ for item in self._plugin_host_listeners],
         }
+
+    def register_wallet_identity(self, *, wallet_id: str, public_key: str, registration_nonce: str, signature: str) -> dict:
+        from aidn_hypervisor.canonical_projection import project_registry_objects
+        from aidn_hypervisor.wallet_identity import verify_wallet_identity_registration
+
+        identity = verify_wallet_identity_registration(
+            wallet_id=wallet_id,
+            public_key=public_key,
+            registration_nonce=registration_nonce,
+            signature=signature,
+        )
+        existing = self._wallet_identities.get(wallet_id)
+        if existing is not None:
+            if existing["public_key"] != public_key:
+                raise ValueError("Wallet identity key rotation is not supported")
+            if existing["registration_nonce"] != registration_nonce:
+                raise ValueError("Wallet identity registration nonce was already consumed")
+            return dict(existing)
+        self._wallet_identities[wallet_id] = identity.model_dump(mode="json")
+        self.record_ledger_operation(
+            operation_type="WALLET_IDENTITY_REGISTER",
+            origin_type="wallet",
+            fee_class="onboarding_exempt",
+            initiator_id=wallet_id,
+            sender_wallet=wallet_id,
+            payload={
+                "wallet_id": wallet_id,
+                "public_key": public_key,
+                "registration_nonce": registration_nonce,
+            },
+            signatures=[signature],
+            emitted_events=["WalletIdentityRegistered"],
+        )
+        registry_service = self.registry_service
+        if registry_service is not None:
+            registry_service.ingest_registry_objects(
+                [
+                    record.model_dump(mode="json")
+                    for record in project_registry_objects(self, [])
+                    if record.object_type == "wallet_identity"
+                    and record.source_reference == wallet_id
+                ]
+            )
+        self._persist_state()
+        return dict(self._wallet_identities[wallet_id])
+
+    def wallet_identity(self, wallet_id: str) -> dict | None:
+        identity = self._wallet_identities.get(wallet_id)
+        return dict(identity) if identity is not None else None
+
+    def resolve_wallet_identity(self, wallet_id: str) -> dict | None:
+        local_identity = self.wallet_identity(wallet_id)
+        if local_identity is not None:
+            return local_identity
+        registry_service = self.registry_service
+        if registry_service is None:
+            return None
+        return registry_service.resolve_wallet_identity(wallet_id)
+
+    def list_wallet_identities(self) -> list[dict]:
+        return [
+            dict(self._wallet_identities[wallet_id])
+            for wallet_id in sorted(self._wallet_identities)
+        ]
 
     def list_provider_installation_artifacts(self) -> dict:
         return self.provider_inventory.installation_artifact_inventory().model_dump(
@@ -3619,6 +3780,8 @@ class HypervisorService:
                     else []
                 )
             ),
+            wallet_identities=list(self._wallet_identities.values()),
+            consumed_wallet_authorization_nonces=sorted(self._consumed_wallet_authorization_nonces),
             endpoint_configuration_snapshots=(
                 [
                     EndpointConfigurationSnapshotRecord.model_validate(
@@ -3738,6 +3901,8 @@ class HypervisorService:
             ],
             settlement_transition_hashes=dict(snapshot.settlement_transition_hashes),
         )
+        self._wallet_identities = {item["wallet_id"]: dict(item) for item in snapshot.wallet_identities}
+        self._consumed_wallet_authorization_nonces = set(snapshot.consumed_wallet_authorization_nonces)
         self._bundle_states = {
             state.bundle_id: state.model_dump(mode="json")
             for state in snapshot.bundle_states
@@ -4891,6 +5056,13 @@ class HypervisorService:
             and endpoint_manifest.proxy_target is not None
         ):
             return self._attempt_proxy_task(task_id, task, bundle, endpoint_manifest)
+        if self._uses_approved_llamacpp_runtime(endpoint_manifest):
+            return self._attempt_approved_runtime_task(
+                task_id,
+                task,
+                bundle,
+                endpoint_manifest,
+            )
         plugin = self._get_plugin(bundle.plugin_id)
         runtime = self._runtime_for_bundle(bundle.bundle_id)
 
@@ -5738,15 +5910,18 @@ class HypervisorService:
         )
         pricing_version = f"pricing-{endpoint.endpoint_id}-{endpoint.configuration_hash[:8]}"
         contract_version = f"acct-{endpoint.endpoint_id}-{endpoint.configuration_hash[:8]}"
-        pricing_policy_reference = f"sha256:{hashlib.sha256(json.dumps(
+        pricing_policy_payload = json.dumps(
             {
-                'endpoint_id': endpoint.endpoint_id,
-                'configuration_hash': endpoint.configuration_hash,
-                'pricing': endpoint.pricing.model_dump(mode='json'),
+                "endpoint_id": endpoint.endpoint_id,
+                "configuration_hash": endpoint.configuration_hash,
+                "pricing": endpoint.pricing.model_dump(mode="json"),
             },
             sort_keys=True,
-            separators=(',', ':'),
-        ).encode('utf-8')).hexdigest()}"
+            separators=(",", ":"),
+        ).encode("utf-8")
+        pricing_policy_reference = (
+            f"sha256:{hashlib.sha256(pricing_policy_payload).hexdigest()}"
+        )
 
         billable_units: list[AccountingUnitContract] = []
         if endpoint.pricing.input_price is not None:
@@ -5987,6 +6162,136 @@ class HypervisorService:
         if endpoint_service is None:
             return None
         return endpoint_service.get_endpoint(str(endpoint_id)).endpoint
+
+    def _uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:
+        if endpoint_manifest is None or endpoint_manifest.runtime_binding_id is None:
+            return False
+        try:
+            binding = self.provider_inventory.store.get_runtime_binding(
+                endpoint_manifest.runtime_binding_id
+            )
+        except KeyError:
+            return False
+        return binding.adapter_id == "llamacpp-openai"
+
+    def _attempt_approved_runtime_task(
+        self,
+        task_id: str,
+        task: QueuedTask,
+        bundle: BundleConfig,
+        endpoint_manifest,
+    ) -> bool:
+        session_id = task.request.constraints.get("session_id")
+        if session_id is None:
+            raise RuntimeError("Approved Runtime execution requires an active Session")
+        session_service = getattr(self, "session_service", None)
+        if session_service is None:
+            raise RuntimeError("Session service is not configured")
+        self.queue.transition_status(task_id, "admitted")
+        try:
+            self.queue.transition_status(task_id, "running")
+            self._touch_task_session(task.request)
+            session = session_service.store.get_session(str(session_id))
+            result = ApprovedRuntimeDispatcher(
+                provider_inventory=self.provider_inventory,
+                runtime_protocol_store=self.runtime_protocol_store,
+                hypervisor_id=self.node_id,
+            ).execute(
+                endpoint=endpoint_manifest,
+                session=session,
+                request_id=str(task.request.constraints.get("request_id") or task_id),
+                request_payload=task.request.payload,
+                request_deadline=task.request.constraints.get("request_deadline"),
+                streaming=bool(task.request.constraints.get("streaming", False)),
+            )
+            if result.terminal_state != "COMPLETED":
+                raise RuntimeError(f"Approved Runtime execution failed: {result.terminal_state}")
+            self._record_session_runtime_terminal_evidence(
+                session_service=session_service,
+                session=session,
+                endpoint_manifest=endpoint_manifest,
+                result=result,
+            )
+            result_payload = result.result_payload or {}
+            self._task_results[task_id] = {
+                "ok": True,
+                "task_type": task.request.task_type,
+                "output_text": result_payload.get("text", ""),
+                "model_id": result_payload.get("model"),
+                "runtime_protocol": {
+                    "runtime_id": result.runtime_id,
+                    "request_id": result.request_id,
+                    "final_usage_report_id": result.final_usage_report_id,
+                },
+            }
+            self.queue.transition_status(task_id, "completed")
+            self.record_event(
+                event_type="task.completed",
+                message="task completed through approved Runtime Adapter",
+                task_id=task_id,
+                bundle_id=bundle.bundle_id,
+                runtime_id=result.runtime_id,
+                details={
+                    "runtime_request_id": result.request_id,
+                    "adapter": "llamacpp-openai",
+                },
+            )
+            self._auto_record_wallet_usage_for_task(
+                task_id=task_id,
+                bundle=bundle,
+                task=task.request,
+            )
+            return True
+        except Exception as error:
+            self.queue.transition_status(task_id, "failed")
+            self.record_event(
+                event_type="task.failed",
+                message=str(error),
+                task_id=task_id,
+                bundle_id=bundle.bundle_id,
+            )
+            raise
+
+    def _record_session_runtime_terminal_evidence(
+        self,
+        *,
+        session_service,
+        session,
+        endpoint_manifest,
+        result,
+    ) -> None:
+        record = self.runtime_protocol_store.requests.get(result.request_id)
+        final_usage = self.runtime_protocol_store.usage_reports.get(
+            result.final_usage_report_id
+        )
+        if record is None or final_usage is None:
+            raise RuntimeError("terminal Runtime evidence is not durable")
+        if not final_usage.terminal or final_usage.report_type != "FINAL":
+            raise RuntimeError("terminal Runtime evidence requires Final Usage")
+        binding_id = endpoint_manifest.runtime_binding_id
+        if binding_id is None:
+            raise RuntimeError("approved Runtime Endpoint has no Runtime Binding")
+        session_service.record_runtime_terminal_evidence(
+            session.session_id,
+            evidence={
+                "request_id": result.request_id,
+                "runtime_binding_id": binding_id,
+                "runtime_id": result.runtime_id,
+                "runtime_generation": result.runtime_generation,
+                "runtime_configuration_hash": result.runtime_configuration_hash,
+                "route_generation": result.route_generation,
+                "endpoint_id": result.endpoint_id,
+                "endpoint_configuration_hash": result.endpoint_configuration_hash,
+                "session_id": result.session_id,
+                "session_contract_hash": record.request.session_contract_hash,
+                "accounting_contract_hash": record.request.accounting_contract_hash,
+                "terminal_state": result.terminal_state,
+                "result_hash": result.result_hash,
+                "final_usage_report_id": final_usage.usage_report_id,
+                "final_usage_report_hash": final_usage.report_hash,
+                "recorded_at": result.completed_at,
+            },
+        )
 
     def close_endpoint_session(self, session_id: str):
         session_service = getattr(self, "session_service", None)

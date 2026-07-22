@@ -29,7 +29,21 @@ start, stop or reconfigure the provider.
 
 The same opt-in profile also verifies the operator attach path: it attaches the
 server without lifecycle authority, discovers the configured model through
-`/v1/models`, and creates a `llamacpp-openai.v1` Runtime Binding.
+`/v1/models`, creates a `llamacpp-openai.v1` Runtime Binding, evaluates
+Endpoint admission, creates an Endpoint draft and records its signed
+publication commitment.
+
+It also verifies direct approved-Binding execution: a Session is bound to the
+signed Endpoint Runtime Binding, the Hypervisor performs the RFC-0054
+handshake, and `LlamaCppOpenAIAdapter` produces the terminal Result and Usage
+evidence. The queue selects this direct path for an Endpoint bound to
+`llamacpp-openai`; it does not invoke the legacy task-plugin RPC or synthesize
+compatibility evidence afterwards.
+
+The same opt-in profile runs a one-request fixed-price Session through that
+approved-Binding path: escrow lock, queue dispatch, provider execution, terminal
+Runtime evidence and Settlement finalization. The Session therefore has no
+post-execution compatibility-evidence bridge.
 
 Streaming endpoints normally do not disclose final Provider token usage. The
 adapter therefore reports only locally observed delivered output bytes for a

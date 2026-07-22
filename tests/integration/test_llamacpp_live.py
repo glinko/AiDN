@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from urllib import request
 
 import pytest
+from fastapi.testclient import TestClient
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aidn_hypervisor.accounting.models import (
     AccountingContract,
@@ -14,12 +16,21 @@ from aidn_hypervisor.accounting.models import (
     RuntimeUsageProfileDimension,
 )
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
+from aidn_hypervisor.domain.models import NodeCapacity
+from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
+from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
+from aidn_hypervisor.endpoints.models import CreateEndpointCommand
+from aidn_hypervisor.endpoints.service import EndpointService
+from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
+from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
+from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol import (
+    ApprovedRuntimeDispatcher,
     LlamaCppOpenAIAdapter,
     RuntimeExecuteRequest,
     RuntimeHello,
@@ -28,6 +39,19 @@ from aidn_hypervisor.runtime_protocol import (
     RuntimeProtocolService,
     canonical_hash,
 )
+from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
+from aidn_hypervisor.scheduler import Scheduler
+from aidn_hypervisor.resources import ResourceOrchestrator
+from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.settlement.models import SessionSettlementAcceptance
+from aidn_hypervisor.settlement.signing import settlement_acceptance_signing_payload
+from aidn_hypervisor.sessions.service import SessionService
+from aidn_hypervisor.sessions.store import SessionStore
+from aidn_hypervisor.wallet_identity import (
+    session_open_authorization_payload,
+    wallet_identity_registration_payload,
+)
+from aidn_hypervisor.main import build_app
 
 
 pytestmark = pytest.mark.integration
@@ -126,6 +150,286 @@ def test_llamacpp_live_operator_attach_discover_and_bind() -> None:
     assert binding.supported_features == ["streaming", "cancellation"]
     assert bundle.endpoint == endpoint
     assert bundle.model_id == model
+
+    endpoint_payload = {
+        "owner_wallet": "live-operator-wallet",
+        "model_class": binding.capability_id,
+        "capabilities": [binding.capability_id],
+        "runtime": {"streaming": True, "max_tokens": 64, "timeout": 90},
+        "publication": {
+            "visibility": "shared",
+            "shared_with_wallet_ids": ["live-consumer-wallet"],
+            "discoverable": True,
+            "accepts_external_requests": True,
+        },
+        "pricing": {"billing_unit": "request", "fixed_price": 1.0},
+        "validation": {
+            "enabled": False,
+            "model_class_supported": True,
+            "verification_status": "active",
+        },
+    }
+    admission = service.runtime_binding_endpoint_admission(
+        binding.runtime_binding_id,
+        endpoint_payload=endpoint_payload,
+    )
+    assert admission["ready"] is True
+
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            runtime_binding_id=binding.runtime_binding_id,
+            bundle_id=bundle.bundle_id,
+            bundle_hash=service.bundle_hash_for_runtime_binding(binding.runtime_binding_id),
+            display_name=f"Live {model}",
+            **endpoint_payload,
+        )
+    )
+    publication = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    ).publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet="live-operator-wallet",
+        node_id="live-node",
+        wallet_private_key="live-test-key",
+    )
+    assert publication.endpoint_id == created.endpoint.endpoint_id
+    assert publication.status == "published"
+    assert created.endpoint.runtime_binding_id == binding.runtime_binding_id
+    assert publication.execution["runtime_binding_id"] == binding.runtime_binding_id
+
+
+def test_llamacpp_live_approved_binding_dispatches_session_request() -> None:
+    endpoint, model = _live_configuration()
+    plugins = PluginRegistry()
+    plugins.register(LlamaCppPlugin())
+    inventory = ProviderInventoryService(
+        plugins=plugins,
+        store=InMemoryProviderInventoryStore(),
+    )
+    provider = inventory.attach_provider_instance(
+        plugin_id="llama.cpp",
+        display_name="Live llama.cpp",
+        configuration={"endpoint": endpoint},
+    )
+    deployment = next(
+        item
+        for item in inventory.discover_models(provider.provider_instance_id)
+        if item.provider_model_reference == model
+    )
+    binding = inventory.create_runtime_binding(
+        model_deployment_id=deployment.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0",
+        capability_definition_hash="live-approved-capability",
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="live-operator-wallet",
+            runtime_binding_id=binding.runtime_binding_id,
+            bundle_id=binding.compatibility_bundle_id,
+            bundle_hash=inventory.bundle_hash_for_runtime_binding(
+                binding.runtime_binding_id
+            ),
+            display_name=f"Live approved {model}",
+            model_class="llm.chat",
+            capabilities=["llm.chat"],
+            pricing={"billing_unit": "request", "fixed_price": 1.0},
+        )
+    )
+    contract = AccountingContract(
+        accounting_mode="fixed_price",
+        contract_version="live-approved-contract",
+        capability_id="llm.chat",
+        endpoint_id=created.endpoint.endpoint_id,
+        pricing_version="live-approved-pricing",
+        billable_units=[
+            AccountingUnitContract(
+                unit="request_fee",
+                mode="fixed_price",
+                price=1.0,
+                measurement_source="endpoint_policy",
+                verification_method="fixed_contract",
+            )
+        ],
+        checkpoint_policy="per_request",
+    )
+    sessions = SessionService(SessionStore())
+    session = sessions.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="live-consumer-wallet",
+        provider_wallet="live-operator-wallet",
+        node_id="live-node",
+        deposit_q=2.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+        accounting_contract=contract.model_dump(mode="json"),
+        endpoint_configuration_hash=created.endpoint.configuration_hash,
+    ).session
+    session = session.model_copy(update={"request_charge_ceiling_q_atoms": 1_000_000})
+    sessions.store.save_session(session)
+    result = ApprovedRuntimeDispatcher(
+        provider_inventory=inventory,
+        runtime_protocol_store=RuntimeProtocolStore(),
+        hypervisor_id="live-node",
+    ).execute(
+        endpoint=created.endpoint,
+        session=session,
+        request_id="live-approved-request",
+        request_payload={"prompt": "Reply with one short word."},
+    )
+
+    assert result.terminal_state == "COMPLETED"
+    assert result.result_payload is not None
+    assert result.result_payload["text"]
+
+
+def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
+    endpoint, model = _live_configuration()
+    plugins = PluginRegistry()
+    plugins.register(LlamaCppPlugin())
+    inventory = ProviderInventoryService(
+        plugins=plugins,
+        store=InMemoryProviderInventoryStore(),
+    )
+    provider = inventory.attach_provider_instance(
+        plugin_id="llama.cpp",
+        display_name="Live llama.cpp paid Session",
+        configuration={"endpoint": endpoint},
+    )
+    deployment = next(
+        item
+        for item in inventory.discover_models(provider.provider_instance_id)
+        if item.provider_model_reference == model
+    )
+    binding = inventory.create_runtime_binding(
+        model_deployment_id=deployment.model_deployment_id,
+        capability_id="llm.chat",
+        capability_version="1.0",
+        capability_definition_hash="live-paid-session-capability",
+    )
+    hypervisor = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048)),
+        bundles=[inventory.bundle_config_for_runtime_binding(binding.runtime_binding_id)],
+        plugins=plugins,
+        runtimes=ProviderProcessManager(),
+        provider_inventory=inventory,
+    )
+    hypervisor.configure_owner_wallet(mode="create", label="Live Primary Wallet")
+    owner_wallet_id = hypervisor.owner_wallet_state()["wallet_id"]
+    endpoint_service = EndpointService(EndpointStore())
+    endpoint_publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            session_service=SessionService(SessionStore()),
+        )
+    )
+    created = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": owner_wallet_id,
+            "runtime_binding_id": binding.runtime_binding_id,
+            "bundle_id": binding.compatibility_bundle_id,
+            "bundle_hash": inventory.bundle_hash_for_runtime_binding(
+                binding.runtime_binding_id
+            ),
+            "display_name": "Live llama.cpp Session",
+            "model_class": "llm.chat",
+            "capabilities": ["llm.chat"],
+            "publication": {
+                "visibility": "public",
+                "discoverable": True,
+                "accepts_external_requests": True,
+            },
+            "pricing": {"billing_unit": "request", "fixed_price": 0.0009},
+        },
+    )
+    assert created.status_code == 201
+    created_endpoint = created.json()["data"]["endpoint"]
+    endpoint_id = created_endpoint["endpoint_id"]
+    hypervisor.credit_wallet_q_atoms(wallet_id="live-consumer-wallet", amount_q_atoms=1000)
+    consumer_key = Ed25519PrivateKey.generate()
+    operator_key = Ed25519PrivateKey.generate()
+    for wallet_id, key, nonce in [
+        ("live-consumer-wallet", consumer_key, "live-consumer-registration"),
+        (owner_wallet_id, operator_key, "live-operator-registration"),
+    ]:
+        public_key = f"ed25519:{key.public_key().public_bytes_raw().hex()}"
+        signature = key.sign(wallet_identity_registration_payload(
+            wallet_id=wallet_id, public_key=public_key, registration_nonce=nonce
+        )).hex()
+        registered = client.post("/wallets/identity", json={
+            "wallet_id": wallet_id, "public_key": public_key,
+            "registration_nonce": nonce, "signature": f"ed25519:{signature}",
+        })
+        assert registered.status_code == 201, registered.text
+    published = client.post(f"/api/v1/endpoints/{endpoint_id}/publish-configuration")
+    assert published.status_code == 200, published.text
+    publication = published.json()["data"]["publication"]
+    assert publication is not None
+    assert publication["endpoint_id"] == endpoint_id
+    assert publication["owner_wallet"] == owner_wallet_id
+    assert publication["status"] == "published"
+    proof = client.get(f"/api/v1/endpoints/{endpoint_id}/proof")
+    assert proof.status_code == 200, proof.text
+    assert proof.json()["data"]["proof"]["publication_sync_status"] == "in_sync"
+    expires_at = "2030-01-01T00:00:00+00:00"
+    authorization_nonce = "live-public-session"
+    authorization_signature = consumer_key.sign(session_open_authorization_payload(
+        wallet_id="live-consumer-wallet", endpoint_id=endpoint_id,
+        endpoint_configuration_hash=created_endpoint["configuration_hash"],
+        deposit_q_atoms=1000, fixed_price_q_atoms=900, network_fee_reserve_q_atoms=100,
+        nonce=authorization_nonce, expires_at=expires_at,
+    )).hex()
+
+    opened = client.post(
+        f"/api/v1/endpoints/{endpoint_id}/public-mvp-sessions",
+        json={
+            "client_wallet": "live-consumer-wallet",
+            "deposit_q_atoms": 1000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+            "consumer_authorization": {"nonce": authorization_nonce, "expires_at": expires_at,
+                                       "signature": f"ed25519:{authorization_signature}"},
+        },
+    )
+    assert opened.status_code == 201, opened.text
+    session = opened.json()["data"]["session"]
+    task = client.post("/tasks", json={"task_type": "llm_text.generate",
+        "payload": {"prompt": "Reply with one short word."},
+        "constraints": {"endpoint_id": endpoint_id, "session_id": session["session_id"]}})
+    assert task.status_code == 202, task.text
+    request_id = task.json()["task_id"]
+    accepted_at = "2026-07-21T12:00:00+00:00"
+    preview = client.post(
+        f"/api/v1/endpoints/{endpoint_id}/mvp-sessions/{session['session_id']}/settlement-preview",
+        json={"request_id": request_id, "accepted_at": accepted_at},
+    )
+    assert preview.status_code == 200, preview.text
+    unsigned = SessionSettlementAcceptance(**preview.json()["data"]["acceptance_payload"],
+        consumer_signature="ed25519:" + "00" * 64)
+    settlement_signature = consumer_key.sign(settlement_acceptance_signing_payload(unsigned)).hex()
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint_id}/mvp-sessions/{session['session_id']}/finalize",
+        json={"request_id": request_id, "accepted_at": accepted_at,
+              "consumer_signature": f"ed25519:{settlement_signature}"},
+    )
+    body = response.json()["data"]
+
+    assert response.status_code == 200, response.text
+    assert hypervisor.task_result(request_id)["output_text"]
+    assert body["funding"]["funding_state"] == "RELEASED"
+    assert hypervisor.wallet_q_atom_balance(owner_wallet_id) == 900
+    assert hypervisor.wallet_q_atom_balance("live-consumer-wallet") == 100
 
 
 def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:

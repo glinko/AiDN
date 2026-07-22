@@ -58,7 +58,10 @@ def build_app(
     resolved_registry_service = registry_service or _build_default_registry_service(
         state_store=state_store
     )
-    resolved_service = service or _build_default_service(state_store=state_store)
+    resolved_service = service or _build_default_service(
+        state_store=state_store,
+        registry_service=resolved_registry_service,
+    )
     resolved_endpoint_service = endpoint_service or _build_default_endpoint_service(
         state_store=state_store
     )
@@ -87,6 +90,7 @@ def build_app(
     resolved_service.endpoint_publication_service = (
         resolved_endpoint_publication_service
     )
+    resolved_service.registry_service = resolved_registry_service
     resolved_service.endpoint_service = resolved_endpoint_service
     resolved_service.remote_endpoint_service = resolved_remote_endpoint_service
     resolved_service.session_service = resolved_session_service
@@ -116,6 +120,7 @@ def build_app(
         build_endpoint_router(
             resolved_endpoint_service,
             hypervisor_service=resolved_service,
+            endpoint_publication_service=resolved_endpoint_publication_service,
             remote_endpoint_service=resolved_remote_endpoint_service,
             session_service=resolved_session_service,
             validation_service=resolved_validation_service,
@@ -144,6 +149,7 @@ def build_registry_app(service: RegistryService | None = None) -> FastAPI:
 
 def _build_default_service(
     state_store: FileStateStore | None = None,
+    registry_service: RegistryService | None = None,
 ) -> HypervisorService:
     if state_store is None:
         state_store = _default_state_store()
@@ -161,6 +167,7 @@ def _build_default_service(
         runtimes=ProviderProcessManager(enable_subprocesses=True),
         state_store=state_store,
         bundle_registry=_default_bundle_registry(plugins),
+        registry_service=registry_service,
     )
     if state_store is not None:
         service.restore_state(state_store.load())

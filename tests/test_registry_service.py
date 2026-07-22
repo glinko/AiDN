@@ -2,11 +2,17 @@ import json
 import warnings
 from datetime import datetime
 from pathlib import Path
+from urllib import error as urllib_error
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import pytest
 
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
+from aidn_hypervisor.wallet_identity import (
+    wallet_identity_quorum_approval_payload,
+    wallet_identity_quorum_proposal_payload,
+)
 
 
 def _bundle(
@@ -43,6 +49,8 @@ def _bundle(
 def _node(
     node_id: str,
     *,
+    owner_wallet_id: str | None = None,
+    status: str = "ready",
     bundles: list[dict] | None = None,
     canonical_services: list[dict] | None = None,
     canonical_capability_runtimes: list[dict] | None = None,
@@ -58,9 +66,11 @@ def _node(
     return RegistryNodeAdvertisement(
         node_id=node_id,
         operator_id=f"{node_id}-operator",
+        owner_wallet_id=owner_wallet_id,
         base_url=f"https://{node_id}.example",
         heartbeat_at=heartbeat_at,
         heartbeat_ttl_seconds=heartbeat_ttl_seconds,
+        status=status,
         resources={
             "total": {"cpu": 8.0, "ram_mb": 16384, "vram_mb": 8192},
             "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
@@ -94,6 +104,93 @@ def _node(
             [] if canonical_advertisements is None else canonical_advertisements
         ),
     )
+
+
+def _wallet_identity_object(
+    wallet_id: str,
+    *,
+    public_key: str,
+    registration_nonce: str,
+) -> dict:
+    payload = {
+        "wallet_id": wallet_id,
+        "public_key": public_key,
+        "registration_nonce": registration_nonce,
+    }
+    return {
+        "object_id": f"sha256:wallet:{wallet_id}:{public_key[-8:]}",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": f"sha256:payload:{wallet_id}:{public_key[-8:]}",
+        "payload_encoding": "canonical_json",
+        "source_reference": wallet_id,
+        "payload": payload,
+    }
+
+
+def _operator_signing_identity(node_id: str) -> dict:
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    wallet_id = f"{node_id}-operator"
+    owner_wallet_id = f"wallet-owner-{node_id}"
+    return {
+        "node_id": node_id,
+        "wallet_id": wallet_id,
+        "owner_wallet_id": owner_wallet_id,
+        "public_key": public_key,
+        "private_key": private_key,
+        "object": _wallet_identity_object(
+            wallet_id,
+            public_key=public_key,
+            registration_nonce=f"{wallet_id}-nonce",
+        ),
+        "owner_wallet_object": _wallet_identity_object(
+            owner_wallet_id,
+            public_key=public_key,
+            registration_nonce=f"{owner_wallet_id}-nonce",
+        ),
+    }
+
+
+def _sign_quorum_proposal(
+    identity: dict,
+    *,
+    wallet_id: str,
+    chosen_object_id: str,
+    chosen_payload_hash: str,
+    eligible_voter_node_ids: list[str],
+    quorum_threshold: int,
+    operator_note: str | None,
+) -> str:
+    signature = identity["private_key"].sign(
+        wallet_identity_quorum_proposal_payload(
+            wallet_id=wallet_id,
+            chosen_object_id=chosen_object_id,
+            chosen_payload_hash=chosen_payload_hash,
+            proposer_node_id=identity["node_id"],
+            eligible_voter_node_ids=eligible_voter_node_ids,
+            quorum_threshold=quorum_threshold,
+            operator_note=operator_note,
+        )
+    ).hex()
+    return f"ed25519:{signature}"
+
+
+def _sign_quorum_approval(
+    identity: dict,
+    *,
+    resolution_id: str,
+    approval_note: str | None,
+) -> str:
+    signature = identity["private_key"].sign(
+        wallet_identity_quorum_approval_payload(
+            resolution_id=resolution_id,
+            approver_node_id=identity["node_id"],
+            approval_note=approval_note,
+        )
+    ).hex()
+    return f"ed25519:{signature}"
 
 
 def test_registry_service_upserts_and_returns_node_advertisements() -> None:
@@ -1812,6 +1909,922 @@ def test_registry_service_rejects_conflicting_node_backed_duplicate_objects(
 
     with pytest.raises(ValueError, match=shared_id):
         service.list_registry_objects(query={"include_payload": True})
+
+
+def test_registry_service_rejects_conflicting_wallet_identity_objects_across_nodes(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-consumer",
+                    public_key="ed25519:" + "11" * 32,
+                    registration_nonce="nonce-a",
+                )
+            ],
+        )
+    )
+
+    with pytest.raises(ValueError, match="wallet-consumer"):
+        service.upsert_node(
+            _node(
+                "node-b",
+                heartbeat_at="2026-07-05T14:00:00+00:00",
+                canonical_registry_objects=[
+                    _wallet_identity_object(
+                        "wallet-consumer",
+                        public_key="ed25519:" + "22" * 32,
+                        registration_nonce="nonce-b",
+                    )
+                ],
+            )
+        )
+    conflicts = service.list_conflicts(
+        conflict_class="wallet_identity_binding",
+        logical_key="wallet-consumer",
+    )
+    assert len(conflicts) == 1
+    assert conflicts[0]["existing_record"]["source_reference"] == "wallet-consumer"
+    assert conflicts[0]["conflicting_record"]["payload"]["public_key"] == (
+        "ed25519:" + "22" * 32
+    )
+
+
+def test_registry_service_rejects_conflicting_wallet_identity_store_ingest() -> None:
+    service = RegistryService()
+    service.upsert_registry_object(
+        _wallet_identity_object(
+            "wallet-consumer",
+            public_key="ed25519:" + "11" * 32,
+            registration_nonce="nonce-a",
+        )
+    )
+
+    with pytest.raises(ValueError, match="wallet-consumer"):
+        service.upsert_registry_object(
+            _wallet_identity_object(
+                "wallet-consumer",
+                public_key="ed25519:" + "22" * 32,
+                registration_nonce="nonce-b",
+            )
+        )
+
+
+def test_registry_service_resolves_wallet_identity_from_registry_objects(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-consumer",
+                    public_key="ed25519:" + "11" * 32,
+                    registration_nonce="nonce-a",
+                )
+            ],
+        )
+    )
+
+    resolved = service.resolve_wallet_identity("wallet-consumer")
+
+    assert resolved is not None
+    assert resolved["wallet_id"] == "wallet-consumer"
+    assert resolved["public_key"] == "ed25519:" + "11" * 32
+    assert resolved["identity_source"] == "registry_object"
+
+
+def test_registry_service_persists_conflict_evidence_in_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(snapshot_path=snapshot_path)
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-consumer",
+                    public_key="ed25519:" + "11" * 32,
+                    registration_nonce="nonce-a",
+                )
+            ],
+        )
+    )
+    with pytest.raises(ValueError, match="wallet-consumer"):
+        service.upsert_node(
+            _node(
+                "node-b",
+                heartbeat_at="2026-07-05T14:00:00+00:00",
+                canonical_registry_objects=[
+                    _wallet_identity_object(
+                        "wallet-consumer",
+                        public_key="ed25519:" + "22" * 32,
+                        registration_nonce="nonce-b",
+                    )
+                ],
+            )
+        )
+
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    conflicts = restarted.list_conflicts(logical_key="wallet-consumer")
+
+    assert len(conflicts) == 1
+    assert conflicts[0]["conflict_class"] == "wallet_identity_binding"
+
+
+def test_registry_service_exports_and_imports_wallet_identity_sync_state(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    source = RegistryService()
+    source.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-consumer",
+                    public_key="ed25519:" + "11" * 32,
+                    registration_nonce="nonce-a",
+                )
+            ],
+        )
+    )
+    exported = source.export_wallet_identity_sync_state()
+    target = RegistryService()
+
+    result = target.import_wallet_identity_sync_state(
+        objects=[
+            {
+                "object_id": item["object_id"],
+                "object_type": item["object_type"],
+                "object_version": item["object_version"],
+                "namespace": item["namespace"],
+                "payload_hash": item["payload_hash"],
+                "payload_encoding": item["payload_encoding"],
+                "source_reference": item["source_reference"],
+                "payload": item["payload"],
+            }
+            for item in exported["objects"]
+        ],
+        conflicts=exported["conflicts"],
+    )
+
+    assert result["imported_object_count"] == 1
+    assert result["rejected_objects"] == []
+    resolved = target.resolve_wallet_identity("wallet-consumer")
+    assert resolved is not None
+    assert resolved["public_key"] == "ed25519:" + "11" * 32
+
+
+def test_registry_service_import_wallet_identity_sync_state_reports_conflicts(
+) -> None:
+    target = RegistryService()
+    target.upsert_registry_object(
+        _wallet_identity_object(
+            "wallet-consumer",
+            public_key="ed25519:" + "11" * 32,
+            registration_nonce="nonce-a",
+        )
+    )
+
+    result = target.import_wallet_identity_sync_state(
+        objects=[
+            _wallet_identity_object(
+                "wallet-consumer",
+                public_key="ed25519:" + "22" * 32,
+                registration_nonce="nonce-b",
+            )
+        ],
+        conflicts=[],
+    )
+
+    assert result["imported_object_count"] == 0
+    assert len(result["rejected_objects"]) == 1
+    assert "wallet-consumer" in result["rejected_objects"][0]["reason"]
+    assert result["conflict_count"] == 1
+
+
+def test_registry_service_syncs_wallet_identity_from_peer(monkeypatch) -> None:
+    service = RegistryService()
+    payload = {
+        "objects": [
+            _wallet_identity_object(
+                "wallet-consumer",
+                public_key="ed25519:" + "11" * 32,
+                registration_nonce="nonce-a",
+            )
+        ],
+        "conflicts": [],
+    }
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _Response(),
+    )
+
+    result = service.sync_wallet_identity_from_peer(
+        peer_base_url="https://peer-a.example/"
+    )
+
+    assert result["peer_base_url"] == "https://peer-a.example"
+    assert result["imported_object_count"] == 1
+    assert service.resolve_wallet_identity("wallet-consumer")["public_key"] == (
+        "ed25519:" + "11" * 32
+    )
+
+
+def test_registry_service_sync_wallet_identity_from_peer_rejects_invalid_peer(
+    monkeypatch,
+) -> None:
+    service = RegistryService()
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: (_ for _ in ()).throw(
+            urllib_error.URLError("peer unavailable")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="Failed to sync wallet identities from peer"):
+        service.sync_wallet_identity_from_peer(peer_base_url="https://peer-a.example")
+
+
+def test_registry_service_persists_wallet_identity_peer_config_and_sync_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(snapshot_path=snapshot_path)
+    service.upsert_wallet_identity_peer(peer_base_url="https://peer-a.example/")
+    payload = {
+        "objects": [
+            _wallet_identity_object(
+                "wallet-consumer",
+                public_key="ed25519:" + "11" * 32,
+                registration_nonce="nonce-a",
+            )
+        ],
+        "conflicts": [],
+    }
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _Response(),
+    )
+
+    result = service.repair_wallet_identity_peers()
+
+    assert result["success_count"] == 1
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    peers = restarted.list_wallet_identity_peers()
+    assert peers == [
+        {
+            "peer_base_url": "https://peer-a.example",
+            "enabled": True,
+            "added_at": peers[0]["added_at"],
+            "last_sync_at": peers[0]["last_sync_at"],
+            "last_sync_status": "ok",
+            "last_sync_error": None,
+            "last_import_result": {
+                "peer_base_url": "https://peer-a.example",
+                "imported_object_count": 1,
+                "rejected_objects": [],
+                "accepted_conflict_count": 0,
+                "conflict_count": 0,
+            },
+        }
+    ]
+
+
+def test_registry_service_repair_wallet_identity_peers_tracks_errors_and_skips_disabled(
+    monkeypatch,
+) -> None:
+    service = RegistryService()
+    service.upsert_wallet_identity_peer(peer_base_url="https://peer-a.example/")
+    service.upsert_wallet_identity_peer(
+        peer_base_url="https://peer-b.example/",
+        enabled=False,
+    )
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: (_ for _ in ()).throw(
+            urllib_error.URLError("peer unavailable")
+        ),
+    )
+
+    result = service.repair_wallet_identity_peers()
+
+    assert result["enabled_peer_count"] == 1
+    assert result["attempted_peer_count"] == 1
+    assert result["error_count"] == 1
+    peers = service.list_wallet_identity_peers()
+    assert peers[0]["peer_base_url"] == "https://peer-a.example"
+    assert peers[0]["last_sync_status"] == "error"
+    assert "Failed to sync wallet identities from peer" in peers[0]["last_sync_error"]
+    assert peers[1]["peer_base_url"] == "https://peer-b.example"
+    assert peers[1]["enabled"] is False
+    assert peers[1]["last_sync_status"] is None
+
+
+def test_registry_service_discovers_wallet_identity_peers_from_nodes(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(_node("node-local", heartbeat_at="2026-07-05T14:00:00+00:00"))
+    service.upsert_node(_node("node-remote-a", heartbeat_at="2026-07-05T14:00:00+00:00"))
+    service.upsert_node(_node("node-remote-b", heartbeat_at="2026-07-05T14:00:00+00:00"))
+
+    result = service.discover_wallet_identity_peers_from_nodes(
+        self_node_id="node-local",
+    )
+
+    assert result["candidate_count"] == 2
+    assert result["registered_count"] == 2
+    assert [item["peer_base_url"] for item in result["candidates"]] == [
+        "https://node-remote-a.example",
+        "https://node-remote-b.example",
+    ]
+    assert [item["peer_base_url"] for item in service.list_wallet_identity_peers()] == [
+        "https://node-remote-a.example",
+        "https://node-remote-b.example",
+    ]
+
+
+def test_registry_service_discover_and_repair_wallet_identity_peers(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(_node("node-local", heartbeat_at="2026-07-05T14:00:00+00:00"))
+    service.upsert_node(_node("node-remote-a", heartbeat_at="2026-07-05T14:00:00+00:00"))
+    payload = {
+        "objects": [
+            _wallet_identity_object(
+                "wallet-consumer",
+                public_key="ed25519:" + "11" * 32,
+                registration_nonce="nonce-a",
+            )
+        ],
+        "conflicts": [],
+    }
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _Response(),
+    )
+
+    result = service.discover_and_repair_wallet_identity_peers(
+        self_node_id="node-local",
+    )
+
+    assert result["discovery"]["candidate_count"] == 1
+    assert result["repair"]["success_count"] == 1
+    assert service.resolve_wallet_identity("wallet-consumer")["public_key"] == (
+        "ed25519:" + "11" * 32
+    )
+
+
+def test_registry_service_wallet_identity_reconciliation_report_summarizes_state(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_wallet_identity_peer(peer_base_url="https://peer-a.example/")
+    service.upsert_wallet_identity_peer(peer_base_url="https://peer-b.example/")
+    service._wallet_identity_peers["https://peer-b.example"]["last_sync_status"] = "error"
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-consumer",
+                    public_key="ed25519:" + "11" * 32,
+                    registration_nonce="nonce-a",
+                )
+            ],
+        )
+    )
+    service.upsert_node(
+        _node(
+            "node-b",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-auditor",
+                    public_key="ed25519:" + "33" * 32,
+                    registration_nonce="nonce-c",
+                )
+            ],
+        )
+    )
+
+    report = service.wallet_identity_reconciliation_report()
+
+    assert report["summary"]["wallet_count"] == 2
+    assert report["summary"]["consistent_count"] == 2
+    assert report["summary"]["conflict_count"] == 0
+    assert report["summary"]["enabled_peer_count"] == 2
+    assert report["summary"]["peer_error_count"] == 1
+    assert report["summary"]["peer_pending_count"] == 1
+    consumer = next(
+        item for item in report["items"] if item["wallet_id"] == "wallet-consumer"
+    )
+    assert consumer["status"] == "consistent"
+    assert consumer["payload_variant_count"] == 1
+    assert consumer["source_nodes"] == ["node-a"]
+
+
+def test_registry_service_resolves_wallet_identity_conflict_with_operator_choice(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(snapshot_path=snapshot_path)
+    first = _wallet_identity_object(
+        "wallet-consumer",
+        public_key="ed25519:" + "11" * 32,
+        registration_nonce="nonce-a",
+    )
+    second = _wallet_identity_object(
+        "wallet-consumer",
+        public_key="ed25519:" + "22" * 32,
+        registration_nonce="nonce-b",
+    )
+    service.upsert_registry_object(first)
+    with pytest.raises(ValueError, match="wallet-consumer"):
+        service.upsert_registry_object(second)
+
+    resolution = service.resolve_wallet_identity_conflict(
+        wallet_id="wallet-consumer",
+        chosen_object_id=first["object_id"],
+        operator_note="prefer original binding",
+    )
+
+    assert resolution["wallet_id"] == "wallet-consumer"
+    assert resolution["chosen_object_id"] == first["object_id"]
+    assert resolution["public_key"] == "ed25519:" + "11" * 32
+    resolved = service.resolve_wallet_identity("wallet-consumer")
+    assert resolved is not None
+    assert resolved["identity_source"] == "registry_resolution"
+    assert resolved["public_key"] == "ed25519:" + "11" * 32
+    conflicts = service.list_conflicts(logical_key="wallet-consumer")
+    assert conflicts[0]["status"] == "resolved"
+    assert conflicts[0]["resolution_payload"]["chosen_object_id"] == first["object_id"]
+    report = service.wallet_identity_reconciliation_report()
+    consumer = next(item for item in report["items"] if item["wallet_id"] == "wallet-consumer")
+    assert consumer["status"] == "resolved"
+    assert consumer["resolution"]["chosen_object_id"] == first["object_id"]
+
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    restarted_identity = restarted.resolve_wallet_identity("wallet-consumer")
+    assert restarted_identity is not None
+    assert restarted_identity["identity_source"] == "registry_resolution"
+    assert restarted_identity["public_key"] == "ed25519:" + "11" * 32
+
+
+def test_registry_service_finalizes_wallet_identity_quorum_resolution(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    operator_a = _operator_signing_identity("node-a")
+    operator_b = _operator_signing_identity("node-b")
+    consumer_object = _wallet_identity_object(
+        "wallet-consumer",
+        public_key="ed25519:" + "11" * 32,
+        registration_nonce="nonce-a",
+    )
+    service.upsert_node(
+        _node(
+            "node-a",
+            owner_wallet_id=operator_a["owner_wallet_id"],
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[consumer_object],
+        )
+    )
+    service.upsert_node(
+        _node(
+            "node-b",
+            owner_wallet_id=operator_b["owner_wallet_id"],
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[consumer_object],
+        )
+    )
+    service.upsert_registry_object(operator_a["object"])
+    service.upsert_registry_object(operator_b["object"])
+    service.upsert_registry_object(operator_a["owner_wallet_object"])
+    service.upsert_registry_object(operator_b["owner_wallet_object"])
+    proposal_signature = _sign_quorum_proposal(
+        operator_a,
+        wallet_id="wallet-consumer",
+        chosen_object_id=str(consumer_object["object_id"]),
+        chosen_payload_hash=str(consumer_object["payload_hash"]),
+        eligible_voter_node_ids=["node-a", "node-b"],
+        quorum_threshold=2,
+        operator_note="network quorum proposal",
+    )
+
+    proposal = service.propose_wallet_identity_quorum_resolution(
+        wallet_id="wallet-consumer",
+        chosen_object_id=str(consumer_object["object_id"]),
+        proposer_node_id="node-a",
+        proposer_signature=proposal_signature,
+        eligible_voter_node_ids=["node-a", "node-b"],
+        quorum_threshold=2,
+        operator_note="network quorum proposal",
+    )
+
+    assert proposal["status"] == "pending"
+    assert len(proposal["approvals"]) == 1
+    assert (
+        proposal["voter_policy"]
+        == "wallet_identity_source_nodes_with_owner_wallet_link.v1"
+    )
+    assert proposal["eligible_voter_node_ids"] == ["node-a", "node-b"]
+
+    approved = service.approve_wallet_identity_quorum_resolution(
+        resolution_id=proposal["resolution_id"],
+        approver_node_id="node-b",
+        approval_signature=_sign_quorum_approval(
+            operator_b,
+            resolution_id=proposal["resolution_id"],
+            approval_note="second vote",
+        ),
+        approval_note="second vote",
+    )
+
+    assert approved["status"] == "finalized"
+    assert approved["final_resolution"]["wallet_id"] == "wallet-consumer"
+    resolved = service.resolve_wallet_identity("wallet-consumer")
+    assert resolved is not None
+    assert resolved["identity_source"] == "registry_resolution"
+    assert resolved["resolution"]["chosen_object_id"] == str(consumer_object["object_id"])
+
+
+def test_registry_service_wallet_identity_governance_policy_persists_and_shapes_quorum(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    current_time = datetime.fromisoformat("2030-01-01T00:00:35+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: current_time)
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(snapshot_path=snapshot_path)
+    operator_a = _operator_signing_identity("node-a")
+    operator_b = _operator_signing_identity("node-b")
+    consumer_object = _wallet_identity_object(
+        "wallet-consumer",
+        public_key="ed25519:" + "11" * 32,
+        registration_nonce="nonce-a",
+    )
+    service.upsert_node(
+        _node(
+            "node-a",
+            owner_wallet_id=operator_a["owner_wallet_id"],
+            heartbeat_at="2030-01-01T00:00:05+00:00",
+            canonical_registry_objects=[consumer_object],
+        )
+    )
+    service.upsert_node(
+        _node(
+            "node-b",
+            owner_wallet_id=operator_b["owner_wallet_id"],
+            heartbeat_at="2030-01-01T00:00:00+00:00",
+            canonical_registry_objects=[consumer_object],
+        )
+    )
+    service.upsert_registry_object(operator_a["object"])
+    service.upsert_registry_object(operator_b["object"])
+    service.upsert_registry_object(operator_a["owner_wallet_object"])
+    service.upsert_registry_object(operator_b["owner_wallet_object"])
+    service.upsert_registry_object(consumer_object)
+
+    policy = service.update_wallet_identity_governance_policy(
+        authorized_voter_statuses=["ready"]
+    )
+    assert policy["authorized_voter_statuses"] == ["ready"]
+
+    proposal = service.propose_wallet_identity_quorum_resolution(
+        wallet_id="wallet-consumer",
+        chosen_object_id=str(consumer_object["object_id"]),
+        proposer_node_id="node-a",
+        proposer_signature=_sign_quorum_proposal(
+            operator_a,
+            wallet_id="wallet-consumer",
+            chosen_object_id=str(consumer_object["object_id"]),
+            chosen_payload_hash=str(consumer_object["payload_hash"]),
+            eligible_voter_node_ids=["node-a"],
+            quorum_threshold=1,
+            operator_note="ready-only governance policy",
+        ),
+        eligible_voter_node_ids=["node-a"],
+        quorum_threshold=1,
+        operator_note="ready-only governance policy",
+    )
+
+    assert proposal["eligible_voter_node_ids"] == ["node-a"]
+    assert proposal["status"] == "finalized"
+    assert (
+        proposal["governance_policy_snapshot"]["authorized_voter_statuses"] == ["ready"]
+    )
+
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    assert restarted.wallet_identity_governance_policy()["authorized_voter_statuses"] == [
+        "ready"
+    ]
+
+
+def test_registry_service_wallet_identity_governance_policy_requires_minimum_voters(
+    monkeypatch,
+) -> None:
+    current_time = datetime.fromisoformat("2030-01-01T00:00:35+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: current_time)
+    service = RegistryService()
+    operator_a = _operator_signing_identity("node-a")
+    operator_b = _operator_signing_identity("node-b")
+    consumer_object = _wallet_identity_object(
+        "wallet-consumer",
+        public_key="ed25519:" + "11" * 32,
+        registration_nonce="nonce-a",
+    )
+    service.upsert_node(
+        _node(
+            "node-a",
+            owner_wallet_id=operator_a["owner_wallet_id"],
+            heartbeat_at="2030-01-01T00:00:05+00:00",
+            canonical_registry_objects=[consumer_object],
+        )
+    )
+    service.upsert_node(
+        _node(
+            "node-b",
+            owner_wallet_id=operator_b["owner_wallet_id"],
+            heartbeat_at="2030-01-01T00:00:00+00:00",
+            canonical_registry_objects=[consumer_object],
+        )
+    )
+    service.upsert_registry_object(operator_a["object"])
+    service.upsert_registry_object(operator_b["object"])
+    service.upsert_registry_object(operator_a["owner_wallet_object"])
+    service.upsert_registry_object(operator_b["owner_wallet_object"])
+    service.upsert_registry_object(consumer_object)
+    service.update_wallet_identity_governance_policy(
+        authorized_voter_statuses=["ready"],
+        minimum_eligible_voter_count=2,
+    )
+
+    with pytest.raises(ValueError, match="policy requires at least 2"):
+        service.propose_wallet_identity_quorum_resolution(
+            wallet_id="wallet-consumer",
+            chosen_object_id=str(consumer_object["object_id"]),
+            proposer_node_id="node-a",
+            proposer_signature=_sign_quorum_proposal(
+                operator_a,
+                wallet_id="wallet-consumer",
+                chosen_object_id=str(consumer_object["object_id"]),
+                chosen_payload_hash=str(consumer_object["payload_hash"]),
+                eligible_voter_node_ids=["node-a"],
+                quorum_threshold=1,
+                operator_note="insufficient ready voters",
+            ),
+            eligible_voter_node_ids=["node-a"],
+            quorum_threshold=1,
+            operator_note="insufficient ready voters",
+        )
+
+
+def test_registry_service_exports_and_imports_wallet_identity_quorum_objects(
+) -> None:
+    source = RegistryService()
+    operator_a = _operator_signing_identity("node-a")
+    operator_b = _operator_signing_identity("node-b")
+    consumer_object = {
+        "object_id": "sha256:wallet:consumer:a",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": "sha256:wallet-payload:a",
+        "payload_encoding": "canonical_json",
+        "source_reference": "wallet-consumer",
+        "payload": {
+            "wallet_id": "wallet-consumer",
+            "public_key": "ed25519:" + "11" * 32,
+            "registration_nonce": "nonce-a",
+        },
+    }
+    source.upsert_node(
+        _node(
+            "node-a",
+            owner_wallet_id=operator_a["owner_wallet_id"],
+            heartbeat_at="2030-01-01T00:00:00+00:00",
+            canonical_registry_objects=[consumer_object],
+        )
+    )
+    source.upsert_node(
+        _node(
+            "node-b",
+            owner_wallet_id=operator_b["owner_wallet_id"],
+            heartbeat_at="2030-01-01T00:00:00+00:00",
+            canonical_registry_objects=[consumer_object],
+        )
+    )
+    source.upsert_registry_object(
+        consumer_object
+    )
+    source.upsert_registry_object(operator_a["object"])
+    source.upsert_registry_object(operator_b["object"])
+    source.upsert_registry_object(operator_a["owner_wallet_object"])
+    source.upsert_registry_object(operator_b["owner_wallet_object"])
+    source.propose_wallet_identity_quorum_resolution(
+        wallet_id="wallet-consumer",
+        chosen_object_id="sha256:wallet:consumer:a",
+        proposer_node_id="node-a",
+        proposer_signature=_sign_quorum_proposal(
+            operator_a,
+            wallet_id="wallet-consumer",
+            chosen_object_id="sha256:wallet:consumer:a",
+            chosen_payload_hash="sha256:wallet-payload:a",
+            eligible_voter_node_ids=["node-a", "node-b"],
+            quorum_threshold=2,
+            operator_note="network quorum proposal",
+        ),
+        eligible_voter_node_ids=["node-a", "node-b"],
+        quorum_threshold=2,
+        operator_note="network quorum proposal",
+    )
+    exported = source.export_wallet_identity_sync_state()
+    target = RegistryService()
+
+    result = target.import_wallet_identity_sync_state(
+        objects=[
+            {
+                "object_id": item["object_id"],
+                "object_type": item["object_type"],
+                "object_version": item["object_version"],
+                "namespace": item["namespace"],
+                "payload_hash": item["payload_hash"],
+                "payload_encoding": item["payload_encoding"],
+                "source_reference": item["source_reference"],
+                "payload": item["payload"],
+            }
+            for item in exported["objects"]
+        ],
+        conflicts=exported["conflicts"],
+    )
+
+    assert result["imported_object_count"] >= 3
+    proposals = target.list_wallet_identity_resolution_proposals()
+    assert len(proposals) == 1
+    assert proposals[0]["wallet_id"] == "wallet-consumer"
+    assert proposals[0]["approvals"][0]["approver_node_id"] == "node-a"
+    assert proposals[0]["eligible_voter_node_ids"] == ["node-a", "node-b"]
+
+
+def test_registry_service_rejects_non_authoritative_wallet_identity_voter_set() -> None:
+    service = RegistryService()
+    operator_a = _operator_signing_identity("node-a")
+    operator_b = _operator_signing_identity("node-b")
+    consumer_object = _wallet_identity_object(
+        "wallet-consumer",
+        public_key="ed25519:" + "11" * 32,
+        registration_nonce="nonce-a",
+    )
+    service.upsert_node(
+        _node(
+            "node-b",
+            owner_wallet_id=operator_b["owner_wallet_id"],
+            heartbeat_at="2030-01-01T00:00:00+00:00",
+            canonical_registry_objects=[consumer_object],
+        )
+    )
+    service.upsert_node(
+        _node(
+            "node-a",
+            owner_wallet_id=operator_a["owner_wallet_id"],
+            heartbeat_at="2030-01-01T00:00:00+00:00",
+            canonical_registry_objects=[consumer_object],
+        )
+    )
+    service.upsert_registry_object(operator_a["object"])
+    service.upsert_registry_object(operator_b["object"])
+    service.upsert_registry_object(operator_a["owner_wallet_object"])
+    service.upsert_registry_object(operator_b["owner_wallet_object"])
+
+    with pytest.raises(
+        ValueError,
+        match="Requested eligible voters do not match the authoritative wallet identity voter set",
+    ):
+        service.propose_wallet_identity_quorum_resolution(
+            wallet_id="wallet-consumer",
+            chosen_object_id=str(consumer_object["object_id"]),
+            proposer_node_id="node-a",
+            proposer_signature=_sign_quorum_proposal(
+                operator_a,
+                wallet_id="wallet-consumer",
+                chosen_object_id=str(consumer_object["object_id"]),
+                chosen_payload_hash=str(consumer_object["payload_hash"]),
+                eligible_voter_node_ids=["node-a", "node-b", "node-c"],
+                quorum_threshold=2,
+                operator_note="oversized voter set",
+            ),
+            eligible_voter_node_ids=["node-a", "node-b", "node-c"],
+            quorum_threshold=2,
+            operator_note="oversized voter set",
+        )
+
+
+def test_registry_service_rejects_wallet_identity_quorum_signature_mismatch() -> None:
+    service = RegistryService()
+    operator_a = _operator_signing_identity("node-a")
+    wrong_key = _operator_signing_identity("node-x")
+    consumer_object = _wallet_identity_object(
+        "wallet-consumer",
+        public_key="ed25519:" + "11" * 32,
+        registration_nonce="nonce-a",
+    )
+    service.upsert_node(
+        _node(
+            "node-a",
+            owner_wallet_id=operator_a["owner_wallet_id"],
+            heartbeat_at="2030-01-01T00:00:00+00:00",
+            canonical_registry_objects=[consumer_object],
+        )
+    )
+    service.upsert_registry_object(operator_a["object"])
+    service.upsert_registry_object(operator_a["owner_wallet_object"])
+    service.upsert_registry_object(consumer_object)
+
+    with pytest.raises(ValueError, match="proposal signature is invalid"):
+        service.propose_wallet_identity_quorum_resolution(
+            wallet_id="wallet-consumer",
+            chosen_object_id="sha256:wallet:wallet-consumer:11111111",
+            proposer_node_id="node-a",
+            proposer_signature=_sign_quorum_proposal(
+                wrong_key,
+                wallet_id="wallet-consumer",
+                chosen_object_id="sha256:wallet:wallet-consumer:11111111",
+                chosen_payload_hash="sha256:payload:wallet-consumer:11111111",
+                eligible_voter_node_ids=["node-a"],
+                quorum_threshold=1,
+                operator_note="invalid signer",
+            ),
+            eligible_voter_node_ids=["node-a"],
+            quorum_threshold=1,
+            operator_note="invalid signer",
+        )
 
 
 def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:

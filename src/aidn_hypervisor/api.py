@@ -36,6 +36,12 @@ from aidn_hypervisor.operator_views import (
 )
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.registry_models import RegistryNodeAdvertisement, RegistryObjectQuery
+from aidn_hypervisor.registry_models import (
+    RegistryWalletIdentityGovernancePolicyUpdateRequest,
+    RegistryWalletIdentityQuorumApprovalRequest,
+    RegistryWalletIdentityQuorumProposalRequest,
+)
+from aidn_hypervisor.registry_models import RegistryWalletIdentityResolutionRequest
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointDependencyError
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
@@ -57,6 +63,13 @@ class AttachProviderInstanceRequest(BaseModel):
     plugin_id: str
     display_name: str
     configuration: dict
+
+
+class WalletIdentityRegistrationRequest(BaseModel):
+    wallet_id: str = Field(min_length=1)
+    public_key: str = Field(min_length=1)
+    registration_nonce: str = Field(min_length=1)
+    signature: str = Field(min_length=1)
 
 
 class CreateRuntimeBindingRequest(BaseModel):
@@ -234,8 +247,9 @@ def _public_session_payload(session) -> dict:
 
 
 def _execution_payload_for_manifest(manifest) -> dict:
+    runtime_binding = {"runtime_binding_id": manifest.runtime_binding_id}
     if manifest.execution_strategy != "proxy" or manifest.proxy_target is None:
-        return {"strategy": manifest.execution_strategy}
+        return {"strategy": manifest.execution_strategy, **runtime_binding}
     return {
         "strategy": manifest.execution_strategy,
         "target_fingerprint": configuration_hash_for_publication(
@@ -245,6 +259,7 @@ def _execution_payload_for_manifest(manifest) -> dict:
                 "source_configuration_hash": manifest.proxy_target.source_configuration_hash,
             }
         ),
+        **runtime_binding,
     }
 
 
@@ -1130,6 +1145,125 @@ def build_api_router(
             raise HTTPException(
                 status_code=404, detail=f"Unknown registry object: {object_id}"
             ) from error
+
+    @router.get("/operators/registry/conflicts")
+    async def registry_conflicts(
+        conflict_class: str | None = None,
+        object_type: str | None = None,
+        logical_key: str | None = None,
+        limit: int = 100,
+    ) -> dict:
+        registry = _effective_registry_service()
+        return {
+            "conflicts": registry.list_conflicts(
+                conflict_class=conflict_class,
+                object_type=object_type,
+                logical_key=logical_key,
+                limit=limit,
+            )
+        }
+
+    @router.get("/operators/registry/wallet-identities/reconciliation")
+    async def operator_wallet_identity_reconciliation(limit: int = 500) -> dict:
+        registry = _effective_registry_service()
+        return registry.wallet_identity_reconciliation_report(limit=limit)
+
+    @router.get("/operators/registry/wallet-identities/governance-policy")
+    async def operator_wallet_identity_governance_policy() -> dict:
+        registry = _effective_registry_service()
+        return registry.wallet_identity_governance_policy()
+
+    @router.post("/operators/registry/wallet-identities/governance-policy")
+    async def update_operator_wallet_identity_governance_policy(
+        payload: RegistryWalletIdentityGovernancePolicyUpdateRequest,
+    ) -> dict:
+        registry = _effective_registry_service()
+        try:
+            return registry.update_wallet_identity_governance_policy(
+                authorized_voter_statuses=payload.authorized_voter_statuses,
+                threshold_mode=payload.threshold_mode,
+                minimum_eligible_voter_count=payload.minimum_eligible_voter_count,
+                minimum_quorum_threshold=payload.minimum_quorum_threshold,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/registry/wallet-identities/resolve-conflict")
+    async def operator_resolve_wallet_identity_conflict(
+        payload: RegistryWalletIdentityResolutionRequest,
+    ) -> dict:
+        registry = _effective_registry_service()
+        try:
+            return registry.resolve_wallet_identity_conflict(
+                wallet_id=payload.wallet_id,
+                chosen_object_id=payload.chosen_object_id,
+                chosen_payload_hash=payload.chosen_payload_hash,
+                operator_note=payload.operator_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown wallet identity: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/operators/registry/wallet-identities/quorum-proposals")
+    async def operator_wallet_identity_quorum_proposals() -> dict:
+        registry = _effective_registry_service()
+        return {"items": registry.list_wallet_identity_resolution_proposals()}
+
+    @router.post("/operators/registry/wallet-identities/quorum-proposals")
+    async def operator_propose_wallet_identity_quorum_resolution(
+        payload: RegistryWalletIdentityQuorumProposalRequest,
+    ) -> dict:
+        registry = _effective_registry_service()
+        try:
+            return registry.propose_wallet_identity_quorum_resolution(
+                wallet_id=payload.wallet_id,
+                chosen_object_id=payload.chosen_object_id,
+                chosen_payload_hash=payload.chosen_payload_hash,
+                proposer_node_id=payload.proposer_node_id,
+                proposer_signature=payload.proposer_signature,
+                eligible_voter_node_ids=payload.eligible_voter_node_ids,
+                quorum_threshold=payload.quorum_threshold,
+                operator_note=payload.operator_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown wallet identity: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post(
+        "/operators/registry/wallet-identities/quorum-proposals/{resolution_id}/approvals"
+    )
+    async def operator_approve_wallet_identity_quorum_resolution(
+        resolution_id: str,
+        payload: RegistryWalletIdentityQuorumApprovalRequest,
+    ) -> dict:
+        if payload.resolution_id != resolution_id:
+            raise HTTPException(
+                status_code=409,
+                detail="resolution_id in path and body must match",
+            )
+        registry = _effective_registry_service()
+        try:
+            return registry.approve_wallet_identity_quorum_resolution(
+                resolution_id=payload.resolution_id,
+                approver_node_id=payload.approver_node_id,
+                approval_signature=payload.approval_signature,
+                approval_note=payload.approval_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown resolution proposal: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/operators/dashboard/home")
     async def operator_dashboard_home() -> dict:
@@ -2165,6 +2299,23 @@ def build_api_router(
     @router.get("/operators/wallet/bootstrap")
     async def owner_wallet_bootstrap_state() -> dict:
         return service.owner_wallet_state()
+
+    @router.get("/wallets/{wallet_id}/identity")
+    async def wallet_identity(wallet_id: str) -> dict:
+        try:
+            identity = service.resolve_wallet_identity(wallet_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if identity is None:
+            raise HTTPException(status_code=404, detail="Wallet identity is not registered")
+        return identity
+
+    @router.post("/wallets/identity", status_code=201)
+    async def register_wallet_identity(request: WalletIdentityRegistrationRequest) -> dict:
+        try:
+            return service.register_wallet_identity(**request.model_dump(mode="json"))
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.post("/operators/wallet/bootstrap/create")
     async def create_owner_wallet(

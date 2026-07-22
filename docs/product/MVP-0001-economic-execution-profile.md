@@ -57,19 +57,112 @@ Implemented now:
 - Plugin-managed Provider, Model Deployment, Runtime Binding and RFC-0054
   Runtime/Dispatcher generation checks.
 - Final Usage enforcement at Runtime terminal transition.
+- Runtime-bound Sessions persist one replay-safe terminal evidence record that
+  commits the Result hash, Final Usage chain head, Runtime Binding and Runtime/
+  Route generation lineage. Settlement cross-checks that record before paying a
+  runtime-bound Endpoint.
 - Canonical `q_atoms` funding accounts, escrow lock, proposal, acceptance,
   cooperative finalization and the two conservative forced-settlement rules.
-- Public `POST /api/v1/endpoints/{endpoint_id}/mvp-sessions` creates an
+- A local Wallet Identity registry binds `wallet_id -> Ed25519 public key`,
+  persists registrations through snapshot/restore, rejects key rotation and
+  records canonical `WALLET_IDENTITY_REGISTER` Ledger operations.
+- Wallet Identity bindings now also project into the canonical operator
+  overlay and local Registry Object view as stable `wallet_identity`
+  objects, so public paid-MVP admission and later replication use the same
+  object contract instead of a node-private side table.
+- Wallet Identity registration now immediately ingests the matching
+  `wallet_identity` Registry Object into the connected local Registry store,
+  and public paid-session admission plus `GET /wallets/{wallet_id}/identity`
+  can resolve identities from that registry-backed canonical object even if
+  the local in-memory binding is no longer present.
+- The Registry layer now also rejects conflicting `wallet_identity` objects
+  for the same `wallet_id`, both for local store ingestion and for peer node
+  advertisements, so split-brain wallet bindings fail closed instead of
+  remaining latent until paid admission time.
+- The Registry now durably records those `wallet_identity` conflicts as local
+  conflict evidence and exposes them through registry/operator conflict views,
+  so peer reconciliation has a stable audit trail instead of only a transient
+  `409` response.
+- Registry peers now also have a minimal `wallet_identity` sync slice:
+  export/import endpoints can transfer canonical identity objects plus known
+  conflict evidence, while the receiving peer imports compatible bindings and
+  rejects conflicting ones without losing the conflict trail.
+- That same sync slice now also carries quorum-resolution network objects:
+  proposal, approval and finalized resolution records are exported as
+  hash-bound identity objects and hydrate local quorum state on import, so
+  multi-node repair can propagate more than just raw wallet bindings.
+- Registry peers can now also initiate a pull sync from another peer through
+  one bounded `sync-from-peer` call, so identity replication no longer
+  requires an external client to manually export and then import the same
+  payload.
+- Registry peers can now maintain a durable list of known wallet-identity
+  peers with last-sync state and run a bounded automated repair pass across
+  those enabled peers, so replication no longer depends on one-off manual
+  sync calls after every restart.
+- The Registry can now also bootstrap that peer inventory directly from live
+  `RegistryNodeAdvertisement` entries, exclude the local node and optionally
+  run discovery plus repair in one bounded pass instead of relying on
+  hand-maintained peer lists.
+- The operator view can now generate a bounded wallet-identity reconciliation
+  report that groups the current canonical bindings by `wallet_id`, surfaces
+  payload/source variants, includes durable conflict evidence and summarizes
+  known-peer sync health, so manual resolution work no longer starts from raw
+  object dumps and scattered `409` traces.
+- Operators can now also apply an explicit wallet-identity conflict
+  resolution by choosing the canonical `object_id` or `payload_hash` to keep.
+  That choice is durably recorded, marks prior conflict evidence as resolved
+  and makes subsequent wallet resolution use the selected binding through a
+  stable local override instead of whichever peer last happened to answer.
+- The Registry now also supports a bounded network-resolution workflow:
+  operators can create a quorum proposal for one `wallet_id`, and the service
+  now derives the authoritative voter node set from the live Registry source
+  nodes currently advertising the chosen binding. Requested voter lists must
+  match that authoritative set, peer approvals are collected under the same
+  policy, and the same local canonical resolution is finalized automatically
+  once the configured threshold is met. Each authoritative voter node must
+  also advertise `owner_wallet_id`, and that owner wallet identity must
+  resolve to the same public key as the node's `operator_id` identity before
+  quorum authority is accepted. A local wallet identity governance policy now
+  snapshots the active voter-status and quorum-floor rules used by each
+  proposal for operator auditability.
+- Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
+  registered Consumer wallet identity, a signed Session-open/funding
+  authorization bound to the Endpoint configuration, a currently published
+  external-facing Endpoint configuration in `in_sync` state, and a registered
+  Endpoint Payment Beneficiary identity before escrow can be locked.
+- The integration suite now covers one real public paid path against a live
+  `llama.cpp` runtime: signed Endpoint publication, public Session open,
+  Runtime execution, Final Usage, signed cooperative Settlement acceptance and
+  canonical finalization.
+- A Session may bind a Consumer Ed25519 authorization key. For such Sessions,
+  cooperative Settlement accepts only a signature over the exact Settlement
+  identity, input root, amounts and acceptance time.
+- `POST /api/v1/endpoints/{endpoint_id}/mvp-sessions` creates an
   `MVP-0001` Session Contract, locks canonical escrow and records the Funding
-  Account hash; the legacy float-Q deposit is display-only on that path.
+  Account hash for local compatibility flows; the legacy float-Q deposit is
+  display-only on that path.
+- `POST /api/v1/endpoints/{endpoint_id}/mvp-sessions/{session_id}/settlement-preview`
+  returns the exact signable Consumer acceptance payload for wallet-bound
+  cooperative Settlement, and finalization verifies the signature against the
+  same registered Consumer key.
 - Snapshot persistence and replay-safe Ledger operation records for that
   canonical economic path.
 
 Still required before public paid-MVP launch:
 
-1. Bind a Runtime Result and Final Usage Report into that one-Request Session
-   record.
-2. Expose consumer proposal acceptance and timeout actions through the public
-   API/dashboard with authenticated signatures.
-3. Add an end-to-end smoke test: endpoint publish, session, escrow, request,
-   result, final Usage, proposal, acceptance and Ledger finalization.
+1. Replicate canonical `wallet_identity` objects into authoritative network
+   state before multi-node paid launch, so a public `wallet_id` cannot mean
+   different keys on different Hypervisors after cross-node sync; local
+   uniqueness, conflict rejection, known-peer repair, registry-node inventory
+   bootstrap, bounded peer sync, operator reconciliation visibility, local
+   conflict resolution, quorum-backed resolution proposals and replicated
+   quorum state objects now exist. Proposal and approval votes now require
+   Ed25519 signatures verified against the registered wallet identity bound to
+   each voting node's `operator_id`, and quorum admission now derives the
+   authoritative voter set from the source nodes currently advertising the
+   chosen binding. Each authoritative voter node must also advertise
+   `owner_wallet_id`, and that owner wallet identity must resolve to the same
+   public key as the node's `operator_id` identity. A local wallet identity
+   governance policy now exists for voter-status and quorum-floor control, but
+   what still remains is a stronger network-level governance and ledger-backed
+   authority model above that local ownership linkage and local policy layer.

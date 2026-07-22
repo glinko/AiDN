@@ -15,6 +15,25 @@ ProxySessionBindingStatus = Literal[
 ProxySessionCloseStatus = Literal["not_requested", "closed", "pending_reconcile"]
 
 
+class SessionRuntimeTerminalEvidence(BaseModel):
+    request_id: str = Field(min_length=1)
+    runtime_binding_id: str = Field(min_length=1)
+    runtime_id: str = Field(min_length=1)
+    runtime_generation: int = Field(ge=1)
+    runtime_configuration_hash: str = Field(min_length=1)
+    route_generation: int = Field(ge=1)
+    endpoint_id: str = Field(min_length=1)
+    endpoint_configuration_hash: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    session_contract_hash: str = Field(min_length=1)
+    accounting_contract_hash: str = Field(min_length=1)
+    terminal_state: str = Field(min_length=1)
+    result_hash: str = Field(min_length=1)
+    final_usage_report_id: str = Field(min_length=1)
+    final_usage_report_hash: str = Field(min_length=1)
+    recorded_at: str = Field(min_length=1)
+
+
 class EndpointSession(BaseModel):
     session_id: str
     endpoint_id: str
@@ -22,6 +41,7 @@ class EndpointSession(BaseModel):
     provider_wallet: str
     endpoint_payment_beneficiary: str = Field(min_length=1)
     consumer_refund_beneficiary: str = Field(min_length=1)
+    consumer_authorization_public_key: str | None = None
     node_id: str
     status: SessionStatus
     created_at: str
@@ -52,6 +72,9 @@ class EndpointSession(BaseModel):
     session_contract_object_version: str | None = None
     session_contract_namespace: str | None = None
     session_contract_hash: str | None = None
+    runtime_terminal_evidence: list[SessionRuntimeTerminalEvidence] = Field(
+        default_factory=list
+    )
     last_usage_report_snapshot: dict = Field(default_factory=dict)
     last_usage_acknowledgement_snapshot: dict = Field(default_factory=dict)
     accounting_status: SessionAccountingStatus = "open"

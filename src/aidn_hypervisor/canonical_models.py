@@ -74,6 +74,14 @@ class CanonicalEndpointImplementationProfileRecord(BaseModel):
     session_queue_policy: str | None = None
 
 
+class CanonicalWalletIdentityRecord(BaseModel):
+    identity_hash: str
+    wallet_id: str
+    public_key: str
+    registration_nonce: str
+    registered_at: str
+
+
 class CanonicalRegistryObjectRecord(BaseModel):
     object_id: str
     object_type: str

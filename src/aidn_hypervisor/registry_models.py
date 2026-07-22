@@ -68,6 +68,7 @@ class RegistryPublishedEndpointSummary(BaseModel):
 class RegistryNodeAdvertisement(BaseModel):
     node_id: str
     operator_id: str
+    owner_wallet_id: str | None = None
     registry_version: str = "m2.v2"
     base_url: str
     heartbeat_at: str
@@ -137,6 +138,98 @@ class RegistryObjectQuery(BaseModel):
     include_stale: bool = False
     include_payload: bool = False
     limit: int = Field(default=50, ge=1, le=500)
+
+
+class RegistryConflictEvidence(BaseModel):
+    conflict_id: str
+    conflict_class: str
+    object_type: str
+    namespace: str
+    logical_key: str
+    existing_record: dict
+    conflicting_record: dict
+    observed_at: str
+    status: str = "open"
+    resolved_at: str | None = None
+    resolution_note: str | None = None
+    resolution_payload: dict | None = None
+
+
+class RegistryWalletIdentitySyncImportRequest(BaseModel):
+    objects: list[dict] = Field(default_factory=list)
+    conflicts: list[dict] = Field(default_factory=list)
+
+
+class RegistryWalletIdentityPeerSyncRequest(BaseModel):
+    peer_base_url: str
+    limit: int = Field(default=500, ge=1, le=5000)
+
+
+class RegistryWalletIdentityPeerConfig(BaseModel):
+    peer_base_url: str
+    enabled: bool = True
+    added_at: str | None = None
+    last_sync_at: str | None = None
+    last_sync_status: str | None = None
+    last_sync_error: str | None = None
+    last_import_result: dict | None = None
+
+
+class RegistryWalletIdentityPeerRepairRequest(BaseModel):
+    limit: int = Field(default=500, ge=1, le=5000)
+
+
+class RegistryWalletIdentityPeerDiscoveryRequest(BaseModel):
+    self_node_id: str | None = None
+    include_stale: bool = False
+    auto_register: bool = True
+    repair_after_discovery: bool = False
+    limit: int = Field(default=500, ge=1, le=5000)
+
+
+class RegistryWalletIdentityResolutionRequest(BaseModel):
+    wallet_id: str = Field(min_length=1)
+    chosen_object_id: str | None = None
+    chosen_payload_hash: str | None = None
+    operator_note: str | None = None
+
+
+class RegistryWalletIdentityQuorumProposalRequest(BaseModel):
+    wallet_id: str = Field(min_length=1)
+    chosen_object_id: str | None = None
+    chosen_payload_hash: str | None = None
+    proposer_node_id: str = Field(min_length=1)
+    proposer_signature: str | None = None
+    eligible_voter_node_ids: list[str] = Field(default_factory=list)
+    quorum_threshold: int | None = Field(default=None, ge=1)
+    operator_note: str | None = None
+
+
+class RegistryWalletIdentityQuorumApprovalRequest(BaseModel):
+    resolution_id: str = Field(min_length=1)
+    approver_node_id: str = Field(min_length=1)
+    approval_signature: str | None = None
+    approval_note: str | None = None
+
+
+class RegistryWalletIdentityGovernancePolicy(BaseModel):
+    policy_version: str = "wallet-identity-governance-policy.v1"
+    authorized_voter_statuses: list[str] = Field(
+        default_factory=lambda: ["ready", "stale"]
+    )
+    threshold_mode: str = "majority"
+    minimum_eligible_voter_count: int = Field(default=1, ge=1)
+    minimum_quorum_threshold: int = Field(default=1, ge=1)
+    owner_wallet_link_required: bool = True
+    signature_scheme: str = "ed25519"
+    updated_at: str | None = None
+
+
+class RegistryWalletIdentityGovernancePolicyUpdateRequest(BaseModel):
+    authorized_voter_statuses: list[str] | None = None
+    threshold_mode: str | None = None
+    minimum_eligible_voter_count: int | None = Field(default=None, ge=1)
+    minimum_quorum_threshold: int | None = Field(default=None, ge=1)
 
 
 class RegistryCompletenessIssue(BaseModel):

@@ -5,6 +5,8 @@ import io
 import zipfile
 
 from fastapi.testclient import TestClient
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+import pytest
 
 import aidn_hypervisor.api as api_module
 import dashboard_seed_preview
@@ -38,6 +40,7 @@ from aidn_hypervisor.providers.executor import (
 )
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
+from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
@@ -51,6 +54,10 @@ from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.validation.service import ValidationService
 from aidn_hypervisor.validation.store import ValidationStore
+from aidn_hypervisor.wallet_identity import (
+    wallet_identity_quorum_approval_payload,
+    wallet_identity_quorum_proposal_payload,
+)
 
 
 def _zip_bytes(entries: dict[str, bytes]) -> bytes:
@@ -148,6 +155,146 @@ def _service(
         bundle_registry=bundle_registry,
         model_store=model_store,
     )
+
+
+def _operator_registry_identity(node_id: str) -> dict:
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    wallet_id = f"{node_id}-operator"
+    owner_wallet_id = f"wallet-owner-{node_id}"
+    return {
+        "node_id": node_id,
+        "wallet_id": wallet_id,
+        "owner_wallet_id": owner_wallet_id,
+        "private_key": private_key,
+        "public_key": public_key,
+        "object": {
+            "object_id": f"sha256:wallet:{wallet_id}:{public_key[-8:]}",
+            "object_type": "wallet_identity",
+            "object_version": "wallet-identity.v1",
+            "namespace": "identity",
+            "payload_hash": f"sha256:payload:{wallet_id}:{public_key[-8:]}",
+            "payload_encoding": "canonical_json",
+            "source_reference": wallet_id,
+            "payload": {
+                "wallet_id": wallet_id,
+                "public_key": public_key,
+                "registration_nonce": f"{wallet_id}-nonce",
+            },
+        },
+        "owner_wallet_object": {
+            "object_id": f"sha256:wallet:{owner_wallet_id}:{public_key[-8:]}",
+            "object_type": "wallet_identity",
+            "object_version": "wallet-identity.v1",
+            "namespace": "identity",
+            "payload_hash": f"sha256:payload:{owner_wallet_id}:{public_key[-8:]}",
+            "payload_encoding": "canonical_json",
+            "source_reference": owner_wallet_id,
+            "payload": {
+                "wallet_id": owner_wallet_id,
+                "public_key": public_key,
+                "registration_nonce": f"{owner_wallet_id}-nonce",
+            },
+        },
+    }
+
+
+def _registry_node_payload(
+    node_id: str,
+    *,
+    owner_wallet_id: str | None = None,
+    heartbeat_at: str = "2026-06-19T18:30:00+00:00",
+    heartbeat_ttl_seconds: int = 30,
+) -> dict:
+    return {
+        "node_id": node_id,
+        "operator_id": f"{node_id}-operator",
+        "owner_wallet_id": owner_wallet_id,
+        "registry_version": "m2.v1",
+        "base_url": f"https://{node_id}.example",
+        "heartbeat_at": heartbeat_at,
+        "heartbeat_ttl_seconds": heartbeat_ttl_seconds,
+        "status": "ready",
+        "resources": {
+            "total": {"cpu": 8.0, "ram_mb": 16384, "vram_mb": 8192},
+            "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+            "free": {"cpu": 6.0, "ram_mb": 12000, "vram_mb": 6144},
+        },
+        "providers": ["llama.cpp"],
+        "can_host_custom_model": True,
+        "pricing": {
+            "unit": "q_per_1kk_tokens",
+            "input": 12,
+            "output": 18,
+            "fixed_request": None,
+        },
+        "rating": {
+            "score": 0.91,
+            "tier": "A",
+            "updated_at": "2026-06-19T18:25:00+00:00",
+        },
+        "bundles": [
+            {
+                "bundle_id": "phi4-local",
+                "plugin_id": "llama.cpp",
+                "workload_type": "llm_text",
+                "provider_type": "llama.cpp",
+                "model_id": "phi-4-mini.gguf",
+                "endpoint": f"https://{node_id}.example/runtimes/phi4-local",
+                "enabled": True,
+                "status": "ready",
+                "launch_mode": "managed_process",
+                "device_affinity": "cpu",
+                "max_parallel_requests": 1,
+                "supports_allocation": True,
+                "supports_queue": True,
+            }
+        ],
+        "canonical_services": [],
+        "canonical_capability_runtimes": [],
+        "canonical_compute_compatibility": [],
+        "canonical_advertisements": [],
+    }
+
+
+def _sign_registry_quorum_proposal(
+    identity: dict,
+    *,
+    wallet_id: str,
+    chosen_object_id: str,
+    chosen_payload_hash: str,
+    eligible_voter_node_ids: list[str],
+    quorum_threshold: int,
+    operator_note: str | None,
+) -> str:
+    signature = identity["private_key"].sign(
+        wallet_identity_quorum_proposal_payload(
+            wallet_id=wallet_id,
+            chosen_object_id=chosen_object_id,
+            chosen_payload_hash=chosen_payload_hash,
+            proposer_node_id=identity["node_id"],
+            eligible_voter_node_ids=eligible_voter_node_ids,
+            quorum_threshold=quorum_threshold,
+            operator_note=operator_note,
+        )
+    ).hex()
+    return f"ed25519:{signature}"
+
+
+def _sign_registry_quorum_approval(
+    identity: dict,
+    *,
+    resolution_id: str,
+    approval_note: str | None,
+) -> str:
+    signature = identity["private_key"].sign(
+        wallet_identity_quorum_approval_payload(
+            resolution_id=resolution_id,
+            approver_node_id=identity["node_id"],
+            approval_note=approval_note,
+        )
+    ).hex()
+    return f"ed25519:{signature}"
 
 
 class _StubRemoteSessionCloseTransport:
@@ -1380,6 +1527,392 @@ def test_operator_registry_objects_endpoint_returns_local_registry_objects() -> 
     assert response.status_code == 200
     object_types = {item["object_type"] for item in response.json()["objects"]}
     assert "capability_definition" in object_types
+
+
+def test_operator_registry_objects_endpoint_lists_wallet_identity_objects() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    registration_nonce = "wallet-registry-object"
+    signature = private_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id="wallet-consumer",
+            public_key=public_key,
+            registration_nonce=registration_nonce,
+        )
+    ).hex()
+    service.register_wallet_identity(
+        wallet_id="wallet-consumer",
+        public_key=public_key,
+        registration_nonce=registration_nonce,
+        signature=f"ed25519:{signature}",
+    )
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/registry/objects?include_payload=true")
+
+    assert response.status_code == 200
+    wallet_identity = next(
+        item
+        for item in response.json()["objects"]
+        if item["object_type"] == "wallet_identity"
+    )
+    assert wallet_identity["namespace"] == "identity"
+    assert wallet_identity["payload"] == {
+        "wallet_id": "wallet-consumer",
+        "public_key": public_key,
+        "registration_nonce": registration_nonce,
+    }
+
+
+def test_wallet_identity_endpoint_resolves_registry_backed_identity() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    registry = RegistryService()
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    registration_nonce = "wallet-registry-view"
+    signature = private_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id="wallet-consumer",
+            public_key=public_key,
+            registration_nonce=registration_nonce,
+        )
+    ).hex()
+    service.register_wallet_identity(
+        wallet_id="wallet-consumer",
+        public_key=public_key,
+        registration_nonce=registration_nonce,
+        signature=f"ed25519:{signature}",
+    )
+    registry.upsert_node(RegistryNodeAdvertisement(**service.node_advertisement()))
+    service._wallet_identities.clear()
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    response = client.get("/wallets/wallet-consumer/identity")
+
+    assert response.status_code == 200
+    assert response.json()["wallet_id"] == "wallet-consumer"
+    assert response.json()["public_key"] == public_key
+    assert response.json()["identity_source"] == "registry_object"
+
+
+def test_operator_registry_conflicts_endpoint_lists_wallet_identity_conflicts() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    registry = RegistryService()
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    node_a = RegistryNodeAdvertisement(
+        node_id="node-a",
+        operator_id="operator-a",
+        base_url="https://node-a.example",
+        heartbeat_at="2026-07-05T14:00:00+00:00",
+        heartbeat_ttl_seconds=30,
+        resources={
+            "total": {"cpu": 8.0, "ram_mb": 16384, "vram_mb": 8192},
+            "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+            "free": {"cpu": 6.0, "ram_mb": 12000, "vram_mb": 6144},
+        },
+        providers=["llama.cpp"],
+        can_host_custom_model=True,
+        pricing={
+            "unit": "q_per_1kk_tokens",
+            "input": 12,
+            "output": 18,
+            "fixed_request": None,
+        },
+        rating={
+            "score": 0.91,
+            "tier": "A",
+            "updated_at": "2026-07-05T13:55:00+00:00",
+        },
+        bundles=[],
+        canonical_registry_objects=[
+            {
+                "object_id": "sha256:wallet:consumer:a",
+                "object_type": "wallet_identity",
+                "object_version": "wallet-identity.v1",
+                "namespace": "identity",
+                "payload_hash": "sha256:wallet-payload:a",
+                "payload_encoding": "canonical_json",
+                "source_reference": "wallet-consumer",
+                "payload": {
+                    "wallet_id": "wallet-consumer",
+                    "public_key": "ed25519:" + "11" * 32,
+                    "registration_nonce": "nonce-a",
+                },
+            }
+        ],
+    )
+    node_b = node_a.model_copy(
+        update={
+            "node_id": "node-b",
+            "operator_id": "operator-b",
+            "base_url": "https://node-b.example",
+            "canonical_registry_objects": [
+                {
+                    "object_id": "sha256:wallet:consumer:b",
+                    "object_type": "wallet_identity",
+                    "object_version": "wallet-identity.v1",
+                    "namespace": "identity",
+                    "payload_hash": "sha256:wallet-payload:b",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "wallet-consumer",
+                    "payload": {
+                        "wallet_id": "wallet-consumer",
+                        "public_key": "ed25519:" + "22" * 32,
+                        "registration_nonce": "nonce-b",
+                    },
+                }
+            ],
+        }
+    )
+
+    registry.upsert_node(node_a)
+    with pytest.raises(ValueError, match="wallet-consumer"):
+        registry.upsert_node(node_b)
+
+    response = client.get(
+        "/operators/registry/conflicts",
+        params={
+            "conflict_class": "wallet_identity_binding",
+            "logical_key": "wallet-consumer",
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["conflicts"]) == 1
+    assert response.json()["conflicts"][0]["logical_key"] == "wallet-consumer"
+
+
+def test_operator_wallet_identity_reconciliation_endpoint_reports_registry_state(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = _service(with_runtime=False, use_process_manager=True)
+    registry = RegistryService()
+    registry.upsert_wallet_identity_peer(peer_base_url="https://peer-a.example/")
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-a",
+            operator_id="operator-a",
+            base_url="https://node-a.example",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            heartbeat_ttl_seconds=30,
+            resources={
+                "total": {"cpu": 8.0, "ram_mb": 16384, "vram_mb": 8192},
+                "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+                "free": {"cpu": 6.0, "ram_mb": 12000, "vram_mb": 6144},
+            },
+            providers=["llama.cpp"],
+            can_host_custom_model=True,
+            pricing={
+                "unit": "q_per_1kk_tokens",
+                "input": 12,
+                "output": 18,
+                "fixed_request": None,
+            },
+            rating={
+                "score": 0.91,
+                "tier": "A",
+                "updated_at": "2026-07-05T13:55:00+00:00",
+            },
+            bundles=[],
+            canonical_registry_objects=[
+                {
+                    "object_id": "sha256:wallet:consumer:a",
+                    "object_type": "wallet_identity",
+                    "object_version": "wallet-identity.v1",
+                    "namespace": "identity",
+                    "payload_hash": "sha256:wallet-payload:a",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "wallet-consumer",
+                    "payload": {
+                        "wallet_id": "wallet-consumer",
+                        "public_key": "ed25519:" + "11" * 32,
+                        "registration_nonce": "nonce-a",
+                    },
+                }
+            ],
+        )
+    )
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    response = client.get("/operators/registry/wallet-identities/reconciliation")
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["wallet_count"] == 1
+    assert response.json()["summary"]["enabled_peer_count"] == 1
+    assert response.json()["items"][0]["wallet_id"] == "wallet-consumer"
+    assert response.json()["items"][0]["status"] == "consistent"
+
+
+def test_operator_wallet_identity_governance_policy_endpoint_updates_registry_policy(
+) -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    registry = RegistryService()
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    initial = client.get("/operators/registry/wallet-identities/governance-policy")
+    assert initial.status_code == 200
+    assert initial.json()["threshold_mode"] == "majority"
+    assert initial.json()["authorized_voter_statuses"] == ["ready", "stale"]
+
+    updated = client.post(
+        "/operators/registry/wallet-identities/governance-policy",
+        json={
+            "authorized_voter_statuses": ["ready"],
+            "minimum_eligible_voter_count": 2,
+            "minimum_quorum_threshold": 2,
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["authorized_voter_statuses"] == ["ready"]
+    assert updated.json()["minimum_eligible_voter_count"] == 2
+    assert updated.json()["minimum_quorum_threshold"] == 2
+    assert registry.wallet_identity_governance_policy()["authorized_voter_statuses"] == [
+        "ready"
+    ]
+
+
+def test_operator_wallet_identity_resolve_conflict_endpoint_applies_resolution() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    registry = RegistryService()
+    first = {
+        "object_id": "sha256:wallet:consumer:a",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": "sha256:wallet-payload:a",
+        "payload_encoding": "canonical_json",
+        "source_reference": "wallet-consumer",
+        "payload": {
+            "wallet_id": "wallet-consumer",
+            "public_key": "ed25519:" + "11" * 32,
+            "registration_nonce": "nonce-a",
+        },
+    }
+    second = {
+        "object_id": "sha256:wallet:consumer:b",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": "sha256:wallet-payload:b",
+        "payload_encoding": "canonical_json",
+        "source_reference": "wallet-consumer",
+        "payload": {
+            "wallet_id": "wallet-consumer",
+            "public_key": "ed25519:" + "22" * 32,
+            "registration_nonce": "nonce-b",
+        },
+    }
+    registry.upsert_registry_object(first)
+    try:
+        registry.upsert_registry_object(second)
+    except ValueError:
+        pass
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    response = client.post(
+        "/operators/registry/wallet-identities/resolve-conflict",
+        json={
+            "wallet_id": "wallet-consumer",
+            "chosen_object_id": first["object_id"],
+            "operator_note": "prefer original binding",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["chosen_object_id"] == first["object_id"]
+    resolved = registry.resolve_wallet_identity("wallet-consumer")
+    assert resolved is not None
+    assert resolved["identity_source"] == "registry_resolution"
+
+
+def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quorum(
+) -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    registry = RegistryService()
+    operator_a = _operator_registry_identity("node-a")
+    operator_b = _operator_registry_identity("node-b")
+    consumer_object = {
+        "object_id": "sha256:wallet:consumer:a",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": "sha256:wallet-payload:a",
+        "payload_encoding": "canonical_json",
+        "source_reference": "wallet-consumer",
+        "payload": {
+            "wallet_id": "wallet-consumer",
+            "public_key": "ed25519:" + "11" * 32,
+            "registration_nonce": "nonce-a",
+        },
+    }
+    node_a = _registry_node_payload("node-a")
+    node_a["owner_wallet_id"] = operator_a["owner_wallet_id"]
+    node_a["heartbeat_at"] = "2030-01-01T00:00:00+00:00"
+    node_a["canonical_registry_objects"] = [consumer_object]
+    node_b = _registry_node_payload("node-b")
+    node_b["owner_wallet_id"] = operator_b["owner_wallet_id"]
+    node_b["heartbeat_at"] = "2030-01-01T00:00:00+00:00"
+    node_b["canonical_registry_objects"] = [consumer_object]
+    registry.upsert_node(RegistryNodeAdvertisement(**node_a))
+    registry.upsert_node(RegistryNodeAdvertisement(**node_b))
+    registry.upsert_registry_object(operator_a["object"])
+    registry.upsert_registry_object(operator_b["object"])
+    registry.upsert_registry_object(operator_a["owner_wallet_object"])
+    registry.upsert_registry_object(operator_b["owner_wallet_object"])
+    registry.upsert_registry_object(consumer_object)
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    proposed = client.post(
+        "/operators/registry/wallet-identities/quorum-proposals",
+        json={
+            "wallet_id": "wallet-consumer",
+            "chosen_object_id": "sha256:wallet:consumer:a",
+            "proposer_node_id": "node-a",
+            "proposer_signature": _sign_registry_quorum_proposal(
+                operator_a,
+                wallet_id="wallet-consumer",
+                chosen_object_id="sha256:wallet:consumer:a",
+                chosen_payload_hash="sha256:wallet-payload:a",
+                eligible_voter_node_ids=["node-a", "node-b"],
+                quorum_threshold=2,
+                operator_note="network quorum proposal",
+            ),
+            "eligible_voter_node_ids": ["node-a", "node-b"],
+            "quorum_threshold": 2,
+            "operator_note": "network quorum proposal",
+        },
+    )
+
+    assert proposed.status_code == 200
+    assert proposed.json()["status"] == "pending"
+    assert proposed.json()["eligible_voter_node_ids"] == ["node-a", "node-b"]
+    assert proposed.json()["governance_policy_snapshot"]["owner_wallet_link_required"] is True
+    resolution_id = proposed.json()["resolution_id"]
+
+    approved = client.post(
+        f"/operators/registry/wallet-identities/quorum-proposals/{resolution_id}/approvals",
+        json={
+            "resolution_id": resolution_id,
+            "approver_node_id": "node-b",
+            "approval_signature": _sign_registry_quorum_approval(
+                operator_b,
+                resolution_id=resolution_id,
+                approval_note="second vote",
+            ),
+            "approval_note": "second vote",
+        },
+    )
+
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "finalized"
+    resolved = registry.resolve_wallet_identity("wallet-consumer")
+    assert resolved is not None
+    assert resolved["identity_source"] == "registry_resolution"
 
 
 def test_operator_registry_object_endpoint_returns_object_by_id() -> None:

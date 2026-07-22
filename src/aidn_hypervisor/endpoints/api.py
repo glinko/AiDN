@@ -3,7 +3,12 @@ from uuid import uuid4
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from aidn_hypervisor.domain.models import TaskRequest
+from aidn_hypervisor.endpoint_publications.models import (
+    canonical_configuration_payload,
+    configuration_hash_for_publication,
+)
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand, UpdateEndpointCommand
+from aidn_hypervisor.settlement.models import SessionSettlementAcceptance
 from pydantic import BaseModel, Field
 
 
@@ -21,11 +26,20 @@ class OpenMvpFixedPriceSessionRequest(BaseModel):
     deposit_q_atoms: int = Field(gt=0)
     fixed_price_q_atoms: int = Field(ge=0)
     network_fee_reserve_q_atoms: int = Field(default=0, ge=0)
+    consumer_authorization_public_key: str | None = None
+    consumer_authorization: dict | None = None
 
 
 class FinalizeMvpFixedPriceSessionRequest(BaseModel):
     request_id: str = Field(min_length=1)
     consumer_signature: str = Field(min_length=1)
+    accepted_at: str | None = Field(default=None, min_length=1)
+    actual_network_fees_q_atoms: int = Field(default=0, ge=0)
+
+
+class PreviewMvpSettlementAcceptanceRequest(BaseModel):
+    request_id: str = Field(min_length=1)
+    accepted_at: str = Field(min_length=1)
     actual_network_fees_q_atoms: int = Field(default=0, ge=0)
 
 
@@ -53,6 +67,7 @@ class MvpPaidSmokeRequest(BaseModel):
 def build_endpoint_router(
     service,
     hypervisor_service=None,
+    endpoint_publication_service=None,
     remote_endpoint_service=None,
     session_service=None,
     validation_service=None,
@@ -88,6 +103,48 @@ def build_endpoint_router(
                 "correlation_id": str(uuid4()),
             },
         )
+
+    def _local_publication_configuration_hash(endpoint) -> str:
+        payload = canonical_configuration_payload(
+            bundle_hash=endpoint.bundle_hash,
+            model_class=endpoint.model_class,
+            capabilities=endpoint.capabilities,
+            runtime=endpoint.runtime.model_dump(mode="json"),
+            publication=endpoint.publication.model_dump(mode="json"),
+            pricing=endpoint.pricing.model_dump(mode="json"),
+            session=endpoint.session.model_dump(mode="json"),
+            execution={
+                "strategy": endpoint.execution_strategy,
+                "runtime_binding_id": endpoint.runtime_binding_id,
+            },
+        )
+        return configuration_hash_for_publication(payload)
+
+    def _public_session_publication_guard(endpoint) -> str | None:
+        if endpoint_publication_service is None:
+            return "Endpoint publication service is not configured"
+        current_publication = endpoint_publication_service.current_publication(
+            endpoint.endpoint_id
+        )
+        if current_publication is None:
+            return "Public MVP Session requires a currently published Endpoint configuration"
+        local_publication_configuration_hash = _local_publication_configuration_hash(
+            endpoint
+        )
+        if local_publication_configuration_hash != current_publication.configuration_hash:
+            return (
+                "Public MVP Session requires the live Endpoint configuration to match "
+                "the current published configuration"
+            )
+        if not (
+            current_publication.publication.get("accepts_external_requests", False)
+            or current_publication.publication.get("visibility") == "public"
+        ):
+            return (
+                "Public MVP Session requires a published Endpoint configuration that "
+                "accepts external requests"
+            )
+        return None
 
     @router.get("")
     async def list_endpoints() -> JSONResponse:
@@ -349,9 +406,62 @@ def build_endpoint_router(
                 fixed_price_q_atoms=request.fixed_price_q_atoms,
                 network_fee_reserve_q_atoms=request.network_fee_reserve_q_atoms,
                 accounting_contract=accounting_contract,
+                consumer_authorization_public_key=request.consumer_authorization_public_key,
+                consumer_authorization=request.consumer_authorization,
             )
         except ValueError as error:
             return _error(409, "mvp_session_open_rejected", str(error))
+        return _ok(
+            {
+                "session": session.model_dump(mode="json"),
+                "deposit": deposit.model_dump(mode="json"),
+                "funding": funding.model_dump(mode="json"),
+            },
+            status_code=201,
+        )
+
+    @router.post("/{endpoint_id}/public-mvp-sessions", status_code=201)
+    async def open_public_mvp_fixed_price_session(
+        endpoint_id: str,
+        request: OpenMvpFixedPriceSessionRequest,
+    ) -> JSONResponse:
+        if session_service is None or hypervisor_service is None:
+            return _error(
+                503,
+                "mvp_session_unavailable",
+                "MVP economic Session service is not configured",
+            )
+        try:
+            endpoint = service.get_endpoint(endpoint_id).endpoint
+        except KeyError:
+            return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        publication_guard_error = _public_session_publication_guard(endpoint)
+        if publication_guard_error is not None:
+            return _error(
+                409,
+                "public_mvp_session_open_rejected",
+                publication_guard_error,
+            )
+        try:
+            accounting_contract = hypervisor_service.accounting_contract_for_endpoint(
+                endpoint
+            )
+        except KeyError:
+            accounting_contract = None
+        try:
+            session, deposit, funding = hypervisor_service.open_mvp_fixed_price_session(
+                session_service=session_service,
+                endpoint=endpoint,
+                client_wallet=request.client_wallet,
+                deposit_q_atoms=request.deposit_q_atoms,
+                fixed_price_q_atoms=request.fixed_price_q_atoms,
+                network_fee_reserve_q_atoms=request.network_fee_reserve_q_atoms,
+                accounting_contract=accounting_contract,
+                consumer_authorization=request.consumer_authorization,
+                require_wallet_authorization=True,
+            )
+        except ValueError as error:
+            return _error(409, "public_mvp_session_open_rejected", str(error))
         return _ok(
             {
                 "session": session.model_dump(mode="json"),
@@ -481,6 +591,46 @@ def build_endpoint_router(
             }
         return _ok(data, status_code=201)
 
+    @router.post("/{endpoint_id}/mvp-sessions/{session_id}/settlement-preview")
+    async def preview_mvp_settlement_acceptance(
+        endpoint_id: str,
+        session_id: str,
+        request: PreviewMvpSettlementAcceptanceRequest,
+    ) -> JSONResponse:
+        if session_service is None or hypervisor_service is None:
+            return _error(503, "mvp_session_unavailable", "MVP economic Session service is not configured")
+        try:
+            session = session_service.store.get_session(session_id)
+            if session.endpoint_id != endpoint_id:
+                raise ValueError("MVP Session does not belong to this Endpoint")
+            if session.consumer_authorization_public_key is None:
+                raise ValueError("MVP Session has no Consumer authorization key")
+            evaluation = hypervisor_service.build_mvp_fixed_price_settlement_evaluation(
+                session_service=session_service,
+                session_id=session_id,
+                request_id=request.request_id,
+                actual_network_fees_q_atoms=request.actual_network_fees_q_atoms,
+            )
+            proposal = evaluation.proposal
+            acceptance = SessionSettlementAcceptance(
+                settlement_id=proposal.settlement_id,
+                session_id=session_id,
+                settlement_input_root=proposal.settlement_input_root,
+                accepted_endpoint_payment_q_atoms=proposal.final_endpoint_payment_q_atoms,
+                accepted_consumer_refund_q_atoms=(proposal.consumer_payment_refund_q_atoms + proposal.consumer_fee_refund_q_atoms),
+                accepted_network_fees_q_atoms=proposal.actual_network_fees_q_atoms,
+                consumer_signature="ed25519:" + "00" * 64,
+                accepted_at=request.accepted_at,
+            )
+        except (KeyError, ValueError) as error:
+            return _error(409, "mvp_settlement_preview_rejected", str(error))
+        return _ok({
+            "proposal": proposal.model_dump(mode="json"),
+            "acceptance_payload": acceptance.model_dump(
+                mode="json", exclude={"consumer_signature", "acceptance_hash"}
+            ),
+        })
+
     @router.post("/{endpoint_id}/mvp-sessions/{session_id}/finalize")
     async def finalize_mvp_fixed_price_session(
         endpoint_id: str,
@@ -510,6 +660,7 @@ def build_endpoint_router(
                 request_id=request.request_id,
                 consumer_signature=request.consumer_signature,
                 actual_network_fees_q_atoms=request.actual_network_fees_q_atoms,
+                accepted_at=request.accepted_at,
             )
         except ValueError as error:
             return _error(409, "mvp_session_finalize_rejected", str(error))

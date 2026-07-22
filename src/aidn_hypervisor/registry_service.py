@@ -1,10 +1,13 @@
 from copy import deepcopy
 from datetime import UTC, datetime
+import hashlib
 import json
 from pathlib import Path
 import time
+from urllib import error as urllib_error, request as urllib_request
 
 from aidn_hypervisor.registry_models import (
+    RegistryConflictEvidence,
     RegistryCompletenessIssue,
     RegistryCompletenessIntegrity,
     RegistryCompletenessTotals,
@@ -12,6 +15,8 @@ from aidn_hypervisor.registry_models import (
     RegistryLocalCompletenessSummary,
     RegistryNodeAdvertisement,
     RegistryObjectQuery,
+    RegistryWalletIdentityGovernancePolicy,
+    RegistryWalletIdentityPeerConfig,
 )
 
 
@@ -28,6 +33,13 @@ _REQUIRED_REGISTRY_OBJECT_FIELDS = (
     "payload_encoding",
     "source_reference",
 )
+_WALLET_IDENTITY_NETWORK_OBJECT_TYPES = {
+    "wallet_identity",
+    "wallet_identity_resolution_proposal",
+    "wallet_identity_resolution_approval",
+    "wallet_identity_resolution",
+}
+_ALLOWED_WALLET_IDENTITY_VOTER_STATUSES = {"ready", "stale"}
 
 
 class RegistryService:
@@ -40,15 +52,690 @@ class RegistryService:
         self.stale_grace_seconds = stale_grace_seconds
         self._nodes: dict[str, dict] = {}
         self._registry_objects: dict[str, dict] = {}
+        self._conflicts: dict[str, dict] = {}
+        self._wallet_identity_peers: dict[str, dict] = {}
+        self._wallet_identity_resolutions: dict[str, dict] = {}
+        self._wallet_identity_resolution_proposals: dict[str, dict] = {}
+        self._wallet_identity_governance_policy = (
+            RegistryWalletIdentityGovernancePolicy().model_dump(mode="json")
+        )
         self._snapshot_path = Path(snapshot_path) if snapshot_path is not None else None
         self._load_registry_object_snapshot()
 
     def upsert_node(self, payload: RegistryNodeAdvertisement) -> dict:
+        self._validate_wallet_identity_objects(
+            payload.model_dump(mode="json").get("canonical_registry_objects", []),
+            exclude_node_id=payload.node_id,
+        )
         self._nodes[payload.node_id] = payload.model_dump(mode="json")
         return self.get_node(payload.node_id)
 
     def list_nodes(self) -> list[dict]:
         return [self.get_node(node_id) for node_id in sorted(self._nodes)]
+
+    def list_conflicts(
+        self,
+        *,
+        conflict_class: str | None = None,
+        object_type: str | None = None,
+        logical_key: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        items = []
+        for conflict_id in sorted(self._conflicts):
+            item = deepcopy(self._conflicts[conflict_id])
+            if conflict_class is not None and item.get("conflict_class") != conflict_class:
+                continue
+            if object_type is not None and item.get("object_type") != object_type:
+                continue
+            if logical_key is not None and item.get("logical_key") != logical_key:
+                continue
+            items.append(item)
+        return items[:limit]
+
+    def list_wallet_identity_objects(self, *, limit: int = 500) -> list[dict]:
+        return self.list_registry_objects(
+            {
+                "object_type": "wallet_identity",
+                "namespace": "identity",
+                "include_payload": True,
+                "limit": limit,
+            }
+        )
+
+    def list_wallet_identity_network_objects(self, *, limit: int = 500) -> list[dict]:
+        objects = self.list_registry_objects(
+            {
+                "namespace": "identity",
+                "include_payload": True,
+                "limit": min(max(limit * 4, limit), 500),
+            }
+        )
+        filtered = [
+            item
+            for item in objects
+            if item.get("object_type") in _WALLET_IDENTITY_NETWORK_OBJECT_TYPES
+        ]
+        return filtered[:limit]
+
+    def upsert_wallet_identity_peer(
+        self,
+        *,
+        peer_base_url: str,
+        enabled: bool = True,
+    ) -> dict:
+        normalized_base_url = peer_base_url.rstrip("/")
+        if not normalized_base_url:
+            raise ValueError("peer_base_url must not be empty")
+        existing = deepcopy(self._wallet_identity_peers.get(normalized_base_url) or {})
+        now = datetime.now(UTC).isoformat()
+        record = {
+            "peer_base_url": normalized_base_url,
+            "enabled": bool(enabled),
+            "added_at": existing.get("added_at") or now,
+            "last_sync_at": existing.get("last_sync_at"),
+            "last_sync_status": existing.get("last_sync_status"),
+            "last_sync_error": existing.get("last_sync_error"),
+            "last_import_result": deepcopy(existing.get("last_import_result")),
+        }
+        self._wallet_identity_peers[normalized_base_url] = record
+        self._persist_registry_object_snapshot()
+        return deepcopy(record)
+
+    def list_wallet_identity_peers(self) -> list[dict]:
+        return [
+            deepcopy(self._wallet_identity_peers[peer_base_url])
+            for peer_base_url in sorted(self._wallet_identity_peers)
+        ]
+
+    def list_wallet_identity_resolutions(self) -> list[dict]:
+        return [
+            deepcopy(self._wallet_identity_resolutions[wallet_id])
+            for wallet_id in sorted(self._wallet_identity_resolutions)
+        ]
+
+    def list_wallet_identity_resolution_proposals(self) -> list[dict]:
+        return [
+            deepcopy(self._wallet_identity_resolution_proposals[resolution_id])
+            for resolution_id in sorted(self._wallet_identity_resolution_proposals)
+        ]
+
+    def wallet_identity_governance_policy(self) -> dict:
+        return deepcopy(self._wallet_identity_governance_policy)
+
+    def update_wallet_identity_governance_policy(
+        self,
+        *,
+        authorized_voter_statuses: list[str] | None = None,
+        threshold_mode: str | None = None,
+        minimum_eligible_voter_count: int | None = None,
+        minimum_quorum_threshold: int | None = None,
+    ) -> dict:
+        policy = deepcopy(self._wallet_identity_governance_policy)
+        if authorized_voter_statuses is not None:
+            normalized_statuses = sorted(
+                {
+                    str(item).strip()
+                    for item in authorized_voter_statuses
+                    if str(item).strip()
+                }
+            )
+            if not normalized_statuses:
+                raise ValueError(
+                    "authorized_voter_statuses must contain at least one status"
+                )
+            invalid_statuses = sorted(
+                set(normalized_statuses) - _ALLOWED_WALLET_IDENTITY_VOTER_STATUSES
+            )
+            if invalid_statuses:
+                raise ValueError(
+                    "authorized_voter_statuses contains unsupported values: "
+                    + ", ".join(invalid_statuses)
+                )
+            policy["authorized_voter_statuses"] = normalized_statuses
+        if threshold_mode is not None:
+            normalized_threshold_mode = str(threshold_mode).strip()
+            if normalized_threshold_mode != "majority":
+                raise ValueError(
+                    "threshold_mode must currently be 'majority' for wallet identity governance"
+                )
+            policy["threshold_mode"] = normalized_threshold_mode
+        if minimum_eligible_voter_count is not None:
+            if minimum_eligible_voter_count < 1:
+                raise ValueError("minimum_eligible_voter_count must be at least 1")
+            policy["minimum_eligible_voter_count"] = int(minimum_eligible_voter_count)
+        if minimum_quorum_threshold is not None:
+            if minimum_quorum_threshold < 1:
+                raise ValueError("minimum_quorum_threshold must be at least 1")
+            policy["minimum_quorum_threshold"] = int(minimum_quorum_threshold)
+        policy["updated_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        model = RegistryWalletIdentityGovernancePolicy.model_validate(policy)
+        self._wallet_identity_governance_policy = model.model_dump(mode="json")
+        self._persist_registry_object_snapshot()
+        return self.wallet_identity_governance_policy()
+
+    def propose_wallet_identity_quorum_resolution(
+        self,
+        *,
+        wallet_id: str,
+        chosen_object_id: str | None = None,
+        chosen_payload_hash: str | None = None,
+        proposer_node_id: str,
+        proposer_signature: str | None = None,
+        eligible_voter_node_ids: list[str] | None = None,
+        quorum_threshold: int | None = None,
+        operator_note: str | None = None,
+    ) -> dict:
+        selected = self._select_wallet_identity_resolution_candidate(
+            wallet_id=wallet_id,
+            chosen_object_id=chosen_object_id,
+            chosen_payload_hash=chosen_payload_hash,
+        )
+        requested_voters = self._normalize_requested_wallet_identity_voters(
+            eligible_voter_node_ids=eligible_voter_node_ids,
+        )
+        authoritative_voters = self._authoritative_wallet_identity_voters(
+            wallet_id=wallet_id,
+            chosen_object_id=str(selected["object_id"]),
+            chosen_payload_hash=str(selected["payload_hash"]),
+        )
+        if proposer_node_id not in authoritative_voters:
+            raise ValueError(
+                f"Proposer {proposer_node_id} is not authoritative for wallet identity resolution {wallet_id}"
+            )
+        if requested_voters and requested_voters != authoritative_voters:
+            raise ValueError(
+                "Requested eligible voters do not match the authoritative wallet identity voter set"
+            )
+        threshold = self._wallet_identity_quorum_threshold(
+            eligible_voter_node_ids=authoritative_voters,
+            quorum_threshold=quorum_threshold,
+        )
+        self._verify_wallet_identity_quorum_proposal_signature(
+            wallet_id=wallet_id,
+            chosen_object_id=str(selected["object_id"]),
+            chosen_payload_hash=str(selected["payload_hash"]),
+            proposer_node_id=proposer_node_id,
+            proposer_signature=proposer_signature,
+            eligible_voter_node_ids=authoritative_voters,
+            quorum_threshold=threshold,
+            operator_note=operator_note,
+        )
+        payload = {
+            "wallet_id": wallet_id,
+            "chosen_object_id": str(selected["object_id"]),
+            "chosen_payload_hash": str(selected["payload_hash"]),
+            "eligible_voter_node_ids": authoritative_voters,
+            "quorum_threshold": threshold,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+        resolution_id = f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        existing = self._wallet_identity_resolution_proposals.get(resolution_id)
+        if existing is None:
+            proposal = {
+                "resolution_id": resolution_id,
+                "wallet_id": wallet_id,
+                "chosen_object_id": str(selected["object_id"]),
+                "chosen_payload_hash": str(selected["payload_hash"]),
+                "public_key": selected.get("payload", {}).get("public_key"),
+                "registration_nonce": selected.get("payload", {}).get(
+                    "registration_nonce"
+                ),
+                "requested_voter_node_ids": requested_voters,
+                "eligible_voter_node_ids": authoritative_voters,
+                "voter_policy": "wallet_identity_source_nodes_with_owner_wallet_link.v1",
+                "quorum_threshold": threshold,
+                "governance_policy_snapshot": self.wallet_identity_governance_policy(),
+                "status": "pending",
+                "operator_note": operator_note,
+                "proposed_at": now,
+                "approvals": [],
+                "final_resolution": None,
+            }
+        else:
+            proposal = deepcopy(existing)
+            if (
+                proposal.get("chosen_object_id") != str(selected["object_id"])
+                or proposal.get("chosen_payload_hash") != str(selected["payload_hash"])
+            ):
+                raise ValueError(
+                    f"Resolution proposal {resolution_id} conflicts with existing candidate"
+                )
+        proposal = self._record_wallet_identity_resolution_approval(
+            proposal=proposal,
+            approver_node_id=proposer_node_id,
+            approval_signature=proposer_signature,
+            approval_note=operator_note,
+            approved_at=now,
+        )
+        self._wallet_identity_resolution_proposals[resolution_id] = proposal
+        self.upsert_registry_object(
+            self._wallet_identity_quorum_proposal_registry_object(proposal)
+        )
+        self.upsert_registry_object(
+            self._wallet_identity_quorum_approval_registry_object(
+                resolution_id=resolution_id,
+                wallet_id=wallet_id,
+                approval=proposal["approvals"][-1],
+            )
+        )
+        self._finalize_wallet_identity_resolution_proposal(resolution_id)
+        self._persist_registry_object_snapshot()
+        return deepcopy(self._wallet_identity_resolution_proposals[resolution_id])
+
+    def approve_wallet_identity_quorum_resolution(
+        self,
+        *,
+        resolution_id: str,
+        approver_node_id: str,
+        approval_signature: str | None = None,
+        approval_note: str | None = None,
+    ) -> dict:
+        proposal = deepcopy(self._wallet_identity_resolution_proposals.get(resolution_id))
+        if proposal is None:
+            raise KeyError(resolution_id)
+        if proposal.get("status") == "finalized":
+            return proposal
+        eligible_voters = list(proposal.get("eligible_voter_node_ids") or [])
+        if eligible_voters and approver_node_id not in eligible_voters:
+            raise ValueError(
+                f"Approver {approver_node_id} is not eligible for resolution {resolution_id}"
+            )
+        self._verify_wallet_identity_quorum_approval_signature(
+            resolution_id=resolution_id,
+            approver_node_id=approver_node_id,
+            approval_signature=approval_signature,
+            approval_note=approval_note,
+        )
+        proposal = self._record_wallet_identity_resolution_approval(
+            proposal=proposal,
+            approver_node_id=approver_node_id,
+            approval_signature=approval_signature,
+            approval_note=approval_note,
+            approved_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
+        self._wallet_identity_resolution_proposals[resolution_id] = proposal
+        self.upsert_registry_object(
+            self._wallet_identity_quorum_approval_registry_object(
+                resolution_id=resolution_id,
+                wallet_id=str(proposal["wallet_id"]),
+                approval=proposal["approvals"][-1],
+            )
+        )
+        self._finalize_wallet_identity_resolution_proposal(resolution_id)
+        self._persist_registry_object_snapshot()
+        return deepcopy(self._wallet_identity_resolution_proposals[resolution_id])
+
+    def resolve_wallet_identity_conflict(
+        self,
+        *,
+        wallet_id: str,
+        chosen_object_id: str | None = None,
+        chosen_payload_hash: str | None = None,
+        operator_note: str | None = None,
+    ) -> dict:
+        matches = self._wallet_identity_matches(wallet_id)
+        selected = self._select_wallet_identity_resolution_candidate(
+            wallet_id=wallet_id,
+            chosen_object_id=chosen_object_id,
+            chosen_payload_hash=chosen_payload_hash,
+        )
+        selected_record = deepcopy(selected)
+        selected_record.pop("_source", None)
+        self.upsert_registry_object(selected_record)
+        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        payload = deepcopy(selected_record.get("payload") or {})
+        resolution = {
+            "wallet_id": wallet_id,
+            "chosen_object_id": str(selected_record["object_id"]),
+            "chosen_payload_hash": str(selected_record["payload_hash"]),
+            "public_key": payload.get("public_key"),
+            "registration_nonce": payload.get("registration_nonce"),
+            "resolved_at": now,
+            "operator_note": operator_note,
+            "source_nodes": sorted(
+                {
+                    str(item.get("_source", {}).get("node_id"))
+                    for item in matches
+                    if item.get("_source", {}).get("node_id") is not None
+                    and item.get("object_id") == selected_record["object_id"]
+                    and item.get("payload_hash") == selected_record["payload_hash"]
+                }
+            ),
+        }
+        self._wallet_identity_resolutions[wallet_id] = resolution
+        self.upsert_registry_object(
+            self._wallet_identity_resolution_registry_object(resolution=resolution)
+        )
+        for conflict_id in sorted(self._conflicts):
+            conflict = self._conflicts[conflict_id]
+            if (
+                conflict.get("conflict_class") == "wallet_identity_binding"
+                and conflict.get("object_type") == "wallet_identity"
+                and conflict.get("logical_key") == wallet_id
+            ):
+                conflict["status"] = "resolved"
+                conflict["resolved_at"] = now
+                conflict["resolution_note"] = operator_note
+                conflict["resolution_payload"] = {
+                    "wallet_id": wallet_id,
+                    "chosen_object_id": resolution["chosen_object_id"],
+                    "chosen_payload_hash": resolution["chosen_payload_hash"],
+                }
+        self._persist_registry_object_snapshot()
+        return deepcopy(resolution)
+
+    def discover_wallet_identity_peers_from_nodes(
+        self,
+        *,
+        self_node_id: str | None = None,
+        include_stale: bool = False,
+        auto_register: bool = True,
+    ) -> dict:
+        candidates: list[dict] = []
+        discovered_urls: set[str] = set()
+        registered_count = 0
+
+        for node_id in sorted(self._nodes):
+            node = self.get_node(node_id)
+            if self_node_id is not None and node.get("node_id") == self_node_id:
+                continue
+            if node.get("status") == "offline":
+                continue
+            if node.get("status") == "stale" and not include_stale:
+                continue
+            base_url = str(node.get("base_url") or "").rstrip("/")
+            if not base_url or base_url in discovered_urls:
+                continue
+            discovered_urls.add(base_url)
+            existing_peer = deepcopy(self._wallet_identity_peers.get(base_url) or {})
+            candidate = {
+                "peer_base_url": base_url,
+                "node_id": node.get("node_id"),
+                "operator_id": node.get("operator_id"),
+                "status": node.get("status"),
+                "already_registered": bool(existing_peer),
+                "enabled": existing_peer.get("enabled", True),
+                "last_sync_at": existing_peer.get("last_sync_at"),
+                "last_sync_status": existing_peer.get("last_sync_status"),
+            }
+            candidates.append(candidate)
+            if auto_register and not existing_peer:
+                self.upsert_wallet_identity_peer(peer_base_url=base_url, enabled=True)
+                registered_count += 1
+
+        return {
+            "candidate_count": len(candidates),
+            "registered_count": registered_count,
+            "candidates": candidates,
+        }
+
+    def export_wallet_identity_sync_state(self, *, limit: int = 500) -> dict:
+        return {
+            "objects": self.list_wallet_identity_network_objects(limit=limit),
+            "conflicts": self.list_conflicts(
+                conflict_class="wallet_identity_binding",
+                object_type="wallet_identity",
+                limit=limit,
+            ),
+        }
+
+    def ingest_conflict_evidence(self, conflicts: list[dict]) -> list[dict]:
+        accepted: list[dict] = []
+        changed = False
+        for item in conflicts:
+            model = RegistryConflictEvidence.model_validate(item)
+            if model.conflict_id in self._conflicts:
+                continue
+            self._conflicts[model.conflict_id] = model.model_dump(mode="json")
+            accepted.append(deepcopy(self._conflicts[model.conflict_id]))
+            changed = True
+        if changed:
+            self._persist_registry_object_snapshot()
+        return accepted
+
+    def import_wallet_identity_sync_state(
+        self,
+        *,
+        objects: list[dict],
+        conflicts: list[dict],
+    ) -> dict:
+        imported_objects = 0
+        rejected_objects: list[dict] = []
+        for item in objects:
+            try:
+                self.upsert_registry_object(item)
+                imported_objects += 1
+            except ValueError as error:
+                rejected_objects.append(
+                    {
+                        "source_reference": item.get("source_reference"),
+                        "object_id": item.get("object_id"),
+                        "reason": str(error),
+                    }
+                )
+        accepted_conflicts = self.ingest_conflict_evidence(conflicts)
+        return {
+            "imported_object_count": imported_objects,
+            "rejected_objects": rejected_objects,
+            "accepted_conflict_count": len(accepted_conflicts),
+            "conflict_count": len(
+                self.list_conflicts(
+                    conflict_class="wallet_identity_binding",
+                    object_type="wallet_identity",
+                )
+            ),
+        }
+
+    def sync_wallet_identity_from_peer(
+        self,
+        *,
+        peer_base_url: str,
+        limit: int = 500,
+        timeout_seconds: int = 10,
+    ) -> dict:
+        normalized_base_url = peer_base_url.rstrip("/")
+        request = urllib_request.Request(
+            f"{normalized_base_url}/registry/wallet-identities/sync-state?limit={int(limit)}",
+            method="GET",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=timeout_seconds) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (urllib_error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise ValueError(
+                f"Failed to sync wallet identities from peer {peer_base_url}"
+            ) from error
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"Peer wallet identity sync response from {peer_base_url} is invalid"
+            )
+        result = self.import_wallet_identity_sync_state(
+            objects=list(payload.get("objects") or []),
+            conflicts=list(payload.get("conflicts") or []),
+        )
+        result["peer_base_url"] = normalized_base_url
+        return result
+
+    def repair_wallet_identity_peers(
+        self,
+        *,
+        limit: int = 500,
+        timeout_seconds: int = 10,
+    ) -> dict:
+        results: list[dict] = []
+        for peer_base_url in sorted(self._wallet_identity_peers):
+            peer = self._wallet_identity_peers[peer_base_url]
+            if not peer.get("enabled", True):
+                continue
+            try:
+                import_result = self.sync_wallet_identity_from_peer(
+                    peer_base_url=peer_base_url,
+                    limit=limit,
+                    timeout_seconds=timeout_seconds,
+                )
+            except ValueError as error:
+                peer["last_sync_at"] = datetime.now(UTC).isoformat()
+                peer["last_sync_status"] = "error"
+                peer["last_sync_error"] = str(error)
+                peer["last_import_result"] = None
+                results.append(
+                    {
+                        "peer_base_url": peer_base_url,
+                        "status": "error",
+                        "error": str(error),
+                    }
+                )
+                continue
+
+            peer["last_sync_at"] = datetime.now(UTC).isoformat()
+            peer["last_sync_status"] = "ok"
+            peer["last_sync_error"] = None
+            peer["last_import_result"] = deepcopy(import_result)
+            results.append(
+                {
+                    "peer_base_url": peer_base_url,
+                    "status": "ok",
+                    "import_result": deepcopy(import_result),
+                }
+            )
+
+        if results or self._wallet_identity_peers:
+            self._persist_registry_object_snapshot()
+
+        success_count = sum(1 for item in results if item["status"] == "ok")
+        error_count = sum(1 for item in results if item["status"] == "error")
+        enabled_peer_count = sum(
+            1
+            for item in self._wallet_identity_peers.values()
+            if item.get("enabled", True)
+        )
+        return {
+            "enabled_peer_count": enabled_peer_count,
+            "attempted_peer_count": len(results),
+            "success_count": success_count,
+            "error_count": error_count,
+            "results": results,
+        }
+
+    def discover_and_repair_wallet_identity_peers(
+        self,
+        *,
+        self_node_id: str | None = None,
+        include_stale: bool = False,
+        limit: int = 500,
+        timeout_seconds: int = 10,
+    ) -> dict:
+        discovery = self.discover_wallet_identity_peers_from_nodes(
+            self_node_id=self_node_id,
+            include_stale=include_stale,
+            auto_register=True,
+        )
+        repair = self.repair_wallet_identity_peers(
+            limit=limit,
+            timeout_seconds=timeout_seconds,
+        )
+        return {
+            "discovery": discovery,
+            "repair": repair,
+        }
+
+    def wallet_identity_reconciliation_report(self, *, limit: int = 500) -> dict:
+        objects = self.list_wallet_identity_objects(limit=limit)
+        conflicts = self.list_conflicts(
+            conflict_class="wallet_identity_binding",
+            object_type="wallet_identity",
+            limit=limit,
+        )
+        conflicts_by_wallet: dict[str, list[dict]] = {}
+        for item in conflicts:
+            wallet_id = str(item.get("logical_key") or "")
+            conflicts_by_wallet.setdefault(wallet_id, []).append(deepcopy(item))
+
+        grouped: dict[str, list[dict]] = {}
+        for item in objects:
+            wallet_id = str(item.get("source_reference") or "")
+            grouped.setdefault(wallet_id, []).append(deepcopy(item))
+
+        items: list[dict] = []
+        all_wallet_ids = sorted(set(grouped) | set(conflicts_by_wallet))
+        peer_items = self.list_wallet_identity_peers()
+        resolution_items = self.list_wallet_identity_resolutions()
+        resolutions_by_wallet = {
+            str(item["wallet_id"]): item for item in resolution_items
+        }
+        enabled_peer_count = sum(1 for item in peer_items if item.get("enabled", True))
+        peer_error_count = sum(
+            1 for item in peer_items if item.get("enabled", True) and item.get("last_sync_status") == "error"
+        )
+        peer_pending_count = sum(
+            1
+            for item in peer_items
+            if item.get("enabled", True) and item.get("last_sync_status") in {None, "pending"}
+        )
+
+        for wallet_id in all_wallet_ids[:limit]:
+            wallet_objects = grouped.get(wallet_id, [])
+            wallet_conflicts = conflicts_by_wallet.get(wallet_id, [])
+            payload_hashes = sorted(
+                {str(item.get("payload_hash")) for item in wallet_objects if item.get("payload_hash")}
+            )
+            object_ids = sorted(
+                {str(item.get("object_id")) for item in wallet_objects if item.get("object_id")}
+            )
+            source_nodes = sorted(
+                {
+                    str(source.get("node_id"))
+                    for item in wallet_objects
+                    for source in item.get("sources", [])
+                    if source.get("node_id") is not None
+                }
+            )
+            resolution = resolutions_by_wallet.get(wallet_id)
+            has_conflict = bool(wallet_conflicts)
+            if has_conflict and resolution is not None:
+                status = "resolved"
+            elif has_conflict:
+                status = "conflict"
+            elif len(payload_hashes) <= 1:
+                status = "consistent"
+            else:
+                status = "divergent"
+            items.append(
+                {
+                    "wallet_id": wallet_id,
+                    "status": status,
+                    "object_count": len(wallet_objects),
+                    "payload_variant_count": len(payload_hashes),
+                    "object_ids": object_ids,
+                    "payload_hashes": payload_hashes,
+                    "source_nodes": source_nodes,
+                    "conflict_count": len(wallet_conflicts),
+                    "conflicts": wallet_conflicts,
+                    "resolution": deepcopy(resolution),
+                }
+            )
+
+        summary = {
+            "wallet_count": len(all_wallet_ids[:limit]),
+            "consistent_count": sum(1 for item in items if item["status"] == "consistent"),
+            "conflict_count": sum(1 for item in items if item["status"] == "conflict"),
+            "resolved_count": sum(1 for item in items if item["status"] == "resolved"),
+            "divergent_count": sum(1 for item in items if item["status"] == "divergent"),
+            "enabled_peer_count": enabled_peer_count,
+            "peer_error_count": peer_error_count,
+            "peer_pending_count": peer_pending_count,
+        }
+        return {
+            "summary": summary,
+            "known_peers": peer_items,
+            "resolutions": resolution_items,
+            "resolution_proposals": self.list_wallet_identity_resolution_proposals(),
+            "items": items,
+        }
 
     def get_node(self, node_id: str) -> dict:
         record = deepcopy(self._nodes[node_id])
@@ -60,10 +747,12 @@ class RegistryService:
     def upsert_registry_object(self, record: dict, *, persist: bool = True) -> dict:
         object_id = str(record["object_id"])
         normalized = deepcopy(record)
+        self._validate_wallet_identity_objects([normalized])
         existing = self._registry_objects.get(object_id)
         if existing is not None and existing != normalized:
             raise ValueError(f"Conflicting registry object for {object_id}")
         self._registry_objects[object_id] = normalized
+        self._apply_registry_object_state(record=normalized)
         if persist:
             try:
                 self._persist_registry_object_snapshot()
@@ -72,6 +761,7 @@ class RegistryService:
                     self._registry_objects.pop(object_id, None)
                 else:
                     self._registry_objects[object_id] = existing
+                self._rebuild_wallet_identity_resolution_state()
                 raise
         return deepcopy(self._registry_objects[object_id])
 
@@ -265,6 +955,94 @@ class RegistryService:
         if item is not None:
             return item
         raise KeyError(object_id)
+
+    def resolve_wallet_identity(self, wallet_id: str) -> dict | None:
+        matches = self._wallet_identity_matches(wallet_id)
+        if not matches:
+            return None
+        resolution = self._wallet_identity_resolutions.get(wallet_id)
+        if resolution is not None:
+            for item in matches:
+                if (
+                    item.get("object_id") == resolution.get("chosen_object_id")
+                    and item.get("payload_hash") == resolution.get("chosen_payload_hash")
+                ):
+                    payload = item.get("payload")
+                    if not isinstance(payload, dict):
+                        raise ValueError(
+                            f"Canonical wallet identity object for {wallet_id} has no payload"
+                        )
+                    registry_sources: list[dict] = []
+                    for candidate in sorted(
+                        matches,
+                        key=lambda candidate: (
+                            str(candidate.get("_source", {}).get("node_id") or ""),
+                            str(candidate.get("_source", {}).get("operator_id") or ""),
+                        ),
+                    ):
+                        if (
+                            candidate.get("object_id") != item.get("object_id")
+                            or candidate.get("payload_hash") != item.get("payload_hash")
+                        ):
+                            continue
+                        source = {
+                            "node_id": candidate.get("_source", {}).get("node_id"),
+                            "operator_id": candidate.get("_source", {}).get("operator_id"),
+                            "status": candidate.get("_source", {}).get("status") or "stored",
+                        }
+                        if source not in registry_sources:
+                            registry_sources.append(source)
+                    return {
+                        "wallet_id": str(payload["wallet_id"]),
+                        "public_key": str(payload["public_key"]),
+                        "registration_nonce": str(payload["registration_nonce"]),
+                        "registered_at": None,
+                        "identity_source": "registry_resolution",
+                        "registry_object_id": str(item["object_id"]),
+                        "registry_sources": registry_sources,
+                        "resolution": deepcopy(resolution),
+                    }
+        unique_records = {
+            (
+                str(item["object_id"]),
+                str(item["payload_hash"]),
+            ): item
+            for item in matches
+        }
+        if len(unique_records) > 1:
+            raise ValueError(
+                f"Conflicting wallet identity objects found for {wallet_id}"
+            )
+        record = next(iter(unique_records.values()))
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"Canonical wallet identity object for {wallet_id} has no payload"
+            )
+        registry_sources: list[dict] = []
+        for item in sorted(
+            matches,
+            key=lambda candidate: (
+                str(candidate.get("_source", {}).get("node_id") or ""),
+                str(candidate.get("_source", {}).get("operator_id") or ""),
+            ),
+        ):
+            source = {
+                "node_id": item.get("_source", {}).get("node_id"),
+                "operator_id": item.get("_source", {}).get("operator_id"),
+                "status": item.get("_source", {}).get("status") or "stored",
+            }
+            if source not in registry_sources:
+                registry_sources.append(source)
+        return {
+            "wallet_id": str(payload["wallet_id"]),
+            "public_key": str(payload["public_key"]),
+            "registration_nonce": str(payload["registration_nonce"]),
+            "registered_at": None,
+            "identity_source": "registry_object",
+            "registry_object_id": str(record["object_id"]),
+            "registry_sources": registry_sources,
+        }
 
     def discover(self, query: RegistryDiscoveryQuery) -> dict:
         matched_nodes: list[dict] = []
@@ -513,6 +1291,599 @@ class RegistryService:
             return True
         return False
 
+    def _record_conflict_evidence(
+        self,
+        *,
+        conflict_class: str,
+        object_type: str,
+        namespace: str,
+        logical_key: str,
+        existing_record: dict,
+        conflicting_record: dict,
+    ) -> None:
+        conflict_payload = {
+            "conflict_class": conflict_class,
+            "object_type": object_type,
+            "namespace": namespace,
+            "logical_key": logical_key,
+            "existing_object_id": existing_record.get("object_id"),
+            "existing_payload_hash": existing_record.get("payload_hash"),
+            "conflicting_object_id": conflicting_record.get("object_id"),
+            "conflicting_payload_hash": conflicting_record.get("payload_hash"),
+        }
+        encoded = json.dumps(
+            conflict_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        conflict_id = f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+        if conflict_id in self._conflicts:
+            return
+        self._conflicts[conflict_id] = RegistryConflictEvidence(
+            conflict_id=conflict_id,
+            conflict_class=conflict_class,
+            object_type=object_type,
+            namespace=namespace,
+            logical_key=logical_key,
+            existing_record=deepcopy(existing_record),
+            conflicting_record=deepcopy(conflicting_record),
+            observed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        ).model_dump(mode="json")
+        self._persist_registry_object_snapshot()
+
+    def _select_wallet_identity_resolution_candidate(
+        self,
+        *,
+        wallet_id: str,
+        chosen_object_id: str | None,
+        chosen_payload_hash: str | None,
+    ) -> dict:
+        if chosen_object_id is None and chosen_payload_hash is None:
+            raise ValueError(
+                "chosen_object_id or chosen_payload_hash must be provided"
+            )
+        matches = self._wallet_identity_matches(wallet_id)
+        if not matches:
+            raise KeyError(wallet_id)
+        candidates = []
+        for item in matches:
+            if chosen_object_id is not None and item.get("object_id") != chosen_object_id:
+                continue
+            if (
+                chosen_payload_hash is not None
+                and item.get("payload_hash") != chosen_payload_hash
+            ):
+                continue
+            candidates.append(deepcopy(item))
+        unique_candidates = {
+            (str(item.get("object_id")), str(item.get("payload_hash"))): item
+            for item in candidates
+        }
+        if not unique_candidates:
+            raise ValueError(
+                f"No wallet identity candidate matched resolution for {wallet_id}"
+            )
+        if len(unique_candidates) > 1:
+            raise ValueError(
+                f"Resolution for {wallet_id} matched multiple wallet identity candidates"
+            )
+        return next(iter(unique_candidates.values()))
+
+    def _normalize_requested_wallet_identity_voters(
+        self,
+        *,
+        eligible_voter_node_ids: list[str] | None,
+    ) -> list[str]:
+        if eligible_voter_node_ids:
+            voters = {
+                str(item).strip()
+                for item in eligible_voter_node_ids
+                if str(item).strip()
+            }
+        else:
+            voters = set()
+        return sorted(voters)
+
+    def _authoritative_wallet_identity_voters(
+        self,
+        *,
+        wallet_id: str,
+        chosen_object_id: str,
+        chosen_payload_hash: str,
+    ) -> list[str]:
+        voters: set[str] = set()
+        allowed_statuses = set(
+            self._wallet_identity_governance_policy.get(
+                "authorized_voter_statuses", ["ready", "stale"]
+            )
+        )
+        for item in self._wallet_identity_matches(wallet_id):
+            if item.get("object_id") != chosen_object_id:
+                continue
+            if item.get("payload_hash") != chosen_payload_hash:
+                continue
+            source = item.get("_source", {})
+            node_id = str(source.get("node_id") or "").strip()
+            if not node_id:
+                continue
+            if source.get("status") not in allowed_statuses:
+                continue
+            try:
+                self._wallet_identity_operator_identity_for_node(node_id=node_id)
+            except ValueError:
+                continue
+            voters.add(node_id)
+        if not voters:
+            raise ValueError(
+                f"Wallet identity resolution for {wallet_id} has no authoritative voter nodes"
+            )
+        minimum_voter_count = int(
+            self._wallet_identity_governance_policy.get(
+                "minimum_eligible_voter_count", 1
+            )
+            or 1
+        )
+        if len(voters) < minimum_voter_count:
+            raise ValueError(
+                f"Wallet identity resolution for {wallet_id} has only {len(voters)} "
+                f"authoritative voter node(s); policy requires at least {minimum_voter_count}"
+            )
+        return sorted(voters)
+
+    def _wallet_identity_quorum_threshold(
+        self,
+        *,
+        eligible_voter_node_ids: list[str],
+        quorum_threshold: int | None,
+    ) -> int:
+        voter_count = len(eligible_voter_node_ids)
+        if voter_count == 0:
+            raise ValueError("Wallet identity resolution requires at least one eligible voter")
+        if quorum_threshold is None:
+            threshold_mode = str(
+                self._wallet_identity_governance_policy.get("threshold_mode")
+                or "majority"
+            )
+            if threshold_mode != "majority":
+                raise ValueError(
+                    f"Unsupported wallet identity quorum threshold policy: {threshold_mode}"
+                )
+            resolved_threshold = (voter_count // 2) + 1
+        else:
+            resolved_threshold = int(quorum_threshold)
+        if resolved_threshold < 1 or resolved_threshold > voter_count:
+            raise ValueError(
+                "quorum_threshold must be between 1 and the number of eligible voters"
+            )
+        minimum_quorum_threshold = int(
+            self._wallet_identity_governance_policy.get("minimum_quorum_threshold", 1)
+            or 1
+        )
+        if resolved_threshold < minimum_quorum_threshold:
+            raise ValueError(
+                "quorum_threshold does not satisfy the active wallet identity governance policy"
+            )
+        return resolved_threshold
+
+    def _wallet_identity_operator_identity_for_node(self, *, node_id: str) -> dict:
+        node = deepcopy(self._nodes.get(node_id))
+        if node is None:
+            raise ValueError(f"Node {node_id} is not registered for wallet identity quorum")
+        operator_wallet_id = str(node.get("operator_id") or "").strip()
+        if not operator_wallet_id:
+            raise ValueError(
+                f"Node {node_id} does not advertise an operator wallet identity binding"
+            )
+        owner_wallet_id = str(node.get("owner_wallet_id") or "").strip()
+        if not owner_wallet_id:
+            raise ValueError(
+                f"Node {node_id} does not advertise owner wallet control for wallet identity quorum"
+            )
+        operator_identity = self.resolve_wallet_identity(operator_wallet_id)
+        if operator_identity is None:
+            raise ValueError(
+                f"Node {node_id} operator wallet identity {operator_wallet_id} is not registered"
+            )
+        owner_wallet_identity = self.resolve_wallet_identity(owner_wallet_id)
+        if owner_wallet_identity is None:
+            raise ValueError(
+                f"Node {node_id} owner wallet identity {owner_wallet_id} is not registered"
+            )
+        if operator_identity.get("public_key") != owner_wallet_identity.get("public_key"):
+            raise ValueError(
+                f"Node {node_id} operator identity {operator_wallet_id} is not linked to owner wallet {owner_wallet_id}"
+            )
+        return {
+            "operator_wallet_id": operator_wallet_id,
+            "operator_identity": operator_identity,
+            "owner_wallet_id": owner_wallet_id,
+            "owner_wallet_identity": owner_wallet_identity,
+        }
+
+    def _verify_wallet_identity_quorum_proposal_signature(
+        self,
+        *,
+        wallet_id: str,
+        chosen_object_id: str,
+        chosen_payload_hash: str,
+        proposer_node_id: str,
+        proposer_signature: str | None,
+        eligible_voter_node_ids: list[str],
+        quorum_threshold: int,
+        operator_note: str | None,
+    ) -> None:
+        from aidn_hypervisor.wallet_identity import (
+            verify_wallet_identity_quorum_proposal,
+        )
+
+        if not proposer_signature:
+            raise ValueError(
+                f"Wallet identity quorum proposal for {wallet_id} requires proposer_signature"
+            )
+        authority = self._wallet_identity_operator_identity_for_node(
+            node_id=proposer_node_id
+        )
+        verify_wallet_identity_quorum_proposal(
+            public_key=str(authority["operator_identity"]["public_key"]),
+            signature=proposer_signature,
+            wallet_id=wallet_id,
+            chosen_object_id=chosen_object_id,
+            chosen_payload_hash=chosen_payload_hash,
+            proposer_node_id=proposer_node_id,
+            eligible_voter_node_ids=eligible_voter_node_ids,
+            quorum_threshold=quorum_threshold,
+            operator_note=operator_note,
+        )
+
+    def _verify_wallet_identity_quorum_approval_signature(
+        self,
+        *,
+        resolution_id: str,
+        approver_node_id: str,
+        approval_signature: str | None,
+        approval_note: str | None,
+    ) -> None:
+        from aidn_hypervisor.wallet_identity import (
+            verify_wallet_identity_quorum_approval,
+        )
+
+        if not approval_signature:
+            raise ValueError(
+                f"Wallet identity quorum approval for {resolution_id} requires approval_signature"
+            )
+        authority = self._wallet_identity_operator_identity_for_node(
+            node_id=approver_node_id
+        )
+        verify_wallet_identity_quorum_approval(
+            public_key=str(authority["operator_identity"]["public_key"]),
+            signature=approval_signature,
+            resolution_id=resolution_id,
+            approver_node_id=approver_node_id,
+            approval_note=approval_note,
+        )
+
+    def _record_wallet_identity_resolution_approval(
+        self,
+        *,
+        proposal: dict,
+        approver_node_id: str,
+        approval_signature: str | None,
+        approval_note: str | None,
+        approved_at: str,
+    ) -> dict:
+        approvals = list(proposal.get("approvals") or [])
+        for existing in approvals:
+            if existing.get("approver_node_id") != approver_node_id:
+                continue
+            if existing.get("approval_signature") != approval_signature:
+                raise ValueError(
+                    f"Approver {approver_node_id} submitted conflicting approval for "
+                    f"{proposal.get('resolution_id')}"
+                )
+            return proposal
+        approvals.append(
+            {
+                "approver_node_id": approver_node_id,
+                "approval_signature": approval_signature,
+                "approval_note": approval_note,
+                "approved_at": approved_at,
+            }
+        )
+        proposal["approvals"] = approvals
+        return proposal
+
+    def _finalize_wallet_identity_resolution_proposal(self, resolution_id: str) -> None:
+        proposal = self._wallet_identity_resolution_proposals[resolution_id]
+        if proposal.get("status") == "finalized":
+            return
+        threshold = int(proposal.get("quorum_threshold") or 0)
+        approvals = list(proposal.get("approvals") or [])
+        if len(approvals) < threshold:
+            return
+        final_resolution = self.resolve_wallet_identity_conflict(
+            wallet_id=str(proposal["wallet_id"]),
+            chosen_object_id=str(proposal["chosen_object_id"]),
+            chosen_payload_hash=str(proposal["chosen_payload_hash"]),
+            operator_note=str(proposal.get("operator_note") or "quorum-approved"),
+        )
+        proposal["status"] = "finalized"
+        proposal["finalized_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        proposal["final_resolution"] = final_resolution
+        self._wallet_identity_resolution_proposals[resolution_id] = proposal
+
+    def _wallet_identity_registry_object(
+        self,
+        *,
+        object_type: str,
+        object_version: str,
+        source_reference: str,
+        payload: dict,
+    ) -> dict:
+        encoded_payload = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        payload_hash = f"sha256:{hashlib.sha256(encoded_payload).hexdigest()}"
+        identity_payload = {
+            "object_type": object_type,
+            "object_version": object_version,
+            "payload_hash": payload_hash,
+        }
+        object_id = f"sha256:{hashlib.sha256(json.dumps(identity_payload, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()}"
+        return {
+            "object_id": object_id,
+            "object_type": object_type,
+            "object_version": object_version,
+            "namespace": "identity",
+            "payload_hash": payload_hash,
+            "payload_encoding": "canonical_json",
+            "source_reference": source_reference,
+            "payload": deepcopy(payload),
+        }
+
+    def _wallet_identity_quorum_proposal_registry_object(self, proposal: dict) -> dict:
+        payload = {
+            "resolution_id": proposal["resolution_id"],
+            "wallet_id": proposal["wallet_id"],
+            "chosen_object_id": proposal["chosen_object_id"],
+            "chosen_payload_hash": proposal["chosen_payload_hash"],
+            "public_key": proposal.get("public_key"),
+            "registration_nonce": proposal.get("registration_nonce"),
+            "requested_voter_node_ids": list(proposal.get("requested_voter_node_ids") or []),
+            "eligible_voter_node_ids": list(proposal.get("eligible_voter_node_ids") or []),
+            "voter_policy": proposal.get("voter_policy"),
+            "quorum_threshold": proposal.get("quorum_threshold"),
+            "governance_policy_snapshot": deepcopy(
+                proposal.get("governance_policy_snapshot") or {}
+            ),
+            "status": proposal.get("status"),
+            "operator_note": proposal.get("operator_note"),
+            "proposed_at": proposal.get("proposed_at"),
+        }
+        return self._wallet_identity_registry_object(
+            object_type="wallet_identity_resolution_proposal",
+            object_version="wallet-identity-resolution-proposal.v1",
+            source_reference=str(proposal["resolution_id"]),
+            payload=payload,
+        )
+
+    def _wallet_identity_quorum_approval_registry_object(
+        self,
+        *,
+        resolution_id: str,
+        wallet_id: str,
+        approval: dict,
+    ) -> dict:
+        payload = {
+            "resolution_id": resolution_id,
+            "wallet_id": wallet_id,
+            "approver_node_id": approval.get("approver_node_id"),
+            "approval_signature": approval.get("approval_signature"),
+            "approval_note": approval.get("approval_note"),
+            "approved_at": approval.get("approved_at"),
+        }
+        return self._wallet_identity_registry_object(
+            object_type="wallet_identity_resolution_approval",
+            object_version="wallet-identity-resolution-approval.v1",
+            source_reference=f"{resolution_id}:{approval.get('approver_node_id')}",
+            payload=payload,
+        )
+
+    def _wallet_identity_resolution_registry_object(self, *, resolution: dict) -> dict:
+        payload = deepcopy(resolution)
+        return self._wallet_identity_registry_object(
+            object_type="wallet_identity_resolution",
+            object_version="wallet-identity-resolution.v1",
+            source_reference=str(resolution["wallet_id"]),
+            payload=payload,
+        )
+
+    def _apply_registry_object_state(self, *, record: dict) -> None:
+        if record.get("namespace") != "identity":
+            return
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            return
+        object_type = record.get("object_type")
+        if object_type == "wallet_identity_resolution_proposal":
+            self._apply_wallet_identity_resolution_proposal_record(payload)
+        elif object_type == "wallet_identity_resolution_approval":
+            self._apply_wallet_identity_resolution_approval_record(payload)
+        elif object_type == "wallet_identity_resolution":
+            self._apply_wallet_identity_resolution_record(payload)
+
+    def _apply_wallet_identity_resolution_proposal_record(self, payload: dict) -> None:
+        resolution_id = str(payload.get("resolution_id") or "").strip()
+        if not resolution_id:
+            return
+        existing = deepcopy(self._wallet_identity_resolution_proposals.get(resolution_id) or {})
+        approvals = list(existing.get("approvals") or [])
+        final_resolution = deepcopy(existing.get("final_resolution"))
+        finalized_at = existing.get("finalized_at")
+        self._wallet_identity_resolution_proposals[resolution_id] = {
+            "resolution_id": resolution_id,
+            "wallet_id": str(payload.get("wallet_id") or ""),
+            "chosen_object_id": payload.get("chosen_object_id"),
+            "chosen_payload_hash": payload.get("chosen_payload_hash"),
+            "public_key": payload.get("public_key"),
+            "registration_nonce": payload.get("registration_nonce"),
+            "requested_voter_node_ids": list(payload.get("requested_voter_node_ids") or []),
+            "eligible_voter_node_ids": list(payload.get("eligible_voter_node_ids") or []),
+            "voter_policy": payload.get("voter_policy"),
+            "quorum_threshold": payload.get("quorum_threshold"),
+            "governance_policy_snapshot": deepcopy(
+                payload.get("governance_policy_snapshot") or {}
+            ),
+            "status": payload.get("status") or existing.get("status") or "pending",
+            "operator_note": payload.get("operator_note"),
+            "proposed_at": payload.get("proposed_at"),
+            "approvals": approvals,
+            "final_resolution": final_resolution,
+            **({"finalized_at": finalized_at} if finalized_at is not None else {}),
+        }
+
+    def _apply_wallet_identity_resolution_approval_record(self, payload: dict) -> None:
+        resolution_id = str(payload.get("resolution_id") or "").strip()
+        if not resolution_id:
+            return
+        proposal = deepcopy(self._wallet_identity_resolution_proposals.get(resolution_id) or {})
+        proposal.setdefault("resolution_id", resolution_id)
+        proposal.setdefault("wallet_id", str(payload.get("wallet_id") or ""))
+        proposal.setdefault("eligible_voter_node_ids", [])
+        proposal.setdefault("quorum_threshold", None)
+        proposal.setdefault("status", "pending")
+        proposal.setdefault("operator_note", None)
+        proposal.setdefault("proposed_at", None)
+        proposal.setdefault("approvals", [])
+        proposal.setdefault("final_resolution", None)
+        proposal = self._record_wallet_identity_resolution_approval(
+            proposal=proposal,
+            approver_node_id=str(payload.get("approver_node_id") or ""),
+            approval_signature=payload.get("approval_signature"),
+            approval_note=payload.get("approval_note"),
+            approved_at=str(payload.get("approved_at") or ""),
+        )
+        self._wallet_identity_resolution_proposals[resolution_id] = proposal
+
+    def _apply_wallet_identity_resolution_record(self, payload: dict) -> None:
+        wallet_id = str(payload.get("wallet_id") or "").strip()
+        if not wallet_id:
+            return
+        resolution = deepcopy(payload)
+        self._wallet_identity_resolutions[wallet_id] = resolution
+        for conflict_id in sorted(self._conflicts):
+            conflict = self._conflicts[conflict_id]
+            if (
+                conflict.get("conflict_class") == "wallet_identity_binding"
+                and conflict.get("object_type") == "wallet_identity"
+                and conflict.get("logical_key") == wallet_id
+            ):
+                conflict["status"] = "resolved"
+                conflict["resolved_at"] = resolution.get("resolved_at")
+                conflict["resolution_note"] = resolution.get("operator_note")
+                conflict["resolution_payload"] = {
+                    "wallet_id": wallet_id,
+                    "chosen_object_id": resolution.get("chosen_object_id"),
+                    "chosen_payload_hash": resolution.get("chosen_payload_hash"),
+                }
+
+    def _rebuild_wallet_identity_resolution_state(self) -> None:
+        self._wallet_identity_resolutions = {}
+        self._wallet_identity_resolution_proposals = {}
+        for object_id in sorted(self._registry_objects):
+            self._apply_registry_object_state(record=self._registry_objects[object_id])
+
+    def _wallet_identity_matches(self, wallet_id: str) -> list[dict]:
+        matches: list[dict] = []
+        for object_id in sorted(self._registry_objects):
+            record = self._registry_objects[object_id]
+            if self._wallet_identity_record_key(record) != wallet_id:
+                continue
+            matches.append(deepcopy(record))
+        for node_id in sorted(self._nodes):
+            node = self._nodes[node_id]
+            for record in node.get("canonical_registry_objects", []):
+                if self._wallet_identity_record_key(record) != wallet_id:
+                    continue
+                candidate = deepcopy(record)
+                candidate["_source"] = {
+                    "node_id": node.get("node_id"),
+                    "operator_id": node.get("operator_id"),
+                    "status": self._status_for(node),
+                }
+                matches.append(candidate)
+        return matches
+
+    def _wallet_identity_record_key(self, record: dict) -> str | None:
+        if record.get("object_type") != "wallet_identity":
+            return None
+        if record.get("namespace") != "identity":
+            return None
+        source_reference = record.get("source_reference")
+        if not isinstance(source_reference, str) or not source_reference:
+            return None
+        return source_reference
+
+    def _validate_wallet_identity_objects(
+        self,
+        records: list[dict],
+        *,
+        exclude_node_id: str | None = None,
+    ) -> None:
+        seen_by_wallet: dict[str, dict] = {}
+        for record in records:
+            wallet_id = self._wallet_identity_record_key(record)
+            if wallet_id is None:
+                continue
+            candidate = deepcopy(record)
+            if exclude_node_id is not None:
+                candidate["_source"] = {
+                    "node_id": exclude_node_id,
+                    "operator_id": None,
+                    "status": "pending",
+                }
+            existing_seen = seen_by_wallet.get(wallet_id)
+            if existing_seen is not None:
+                if (
+                    existing_seen.get("payload_hash") != candidate.get("payload_hash")
+                    or existing_seen.get("object_id") != candidate.get("object_id")
+                ):
+                    self._record_conflict_evidence(
+                        conflict_class="wallet_identity_binding",
+                        object_type="wallet_identity",
+                        namespace="identity",
+                        logical_key=wallet_id,
+                        existing_record=existing_seen,
+                        conflicting_record=candidate,
+                    )
+                    raise ValueError(
+                        f"Conflicting wallet identity objects found for {wallet_id}"
+                    )
+            else:
+                seen_by_wallet[wallet_id] = candidate
+            payload_hash = record.get("payload_hash")
+            object_id = record.get("object_id")
+            for existing in self._wallet_identity_matches(wallet_id):
+                source_node_id = existing.get("_source", {}).get("node_id")
+                if exclude_node_id is not None and source_node_id == exclude_node_id:
+                    continue
+                if (
+                    existing.get("payload_hash") != payload_hash
+                    or existing.get("object_id") != object_id
+                ):
+                    self._record_conflict_evidence(
+                        conflict_class="wallet_identity_binding",
+                        object_type="wallet_identity",
+                        namespace="identity",
+                        logical_key=wallet_id,
+                        existing_record=existing,
+                        conflicting_record=candidate,
+                    )
+                    raise ValueError(
+                        f"Conflicting wallet identity objects found for {wallet_id}"
+                    )
+
     def _load_registry_object_snapshot(self) -> None:
         if self._snapshot_path is None or not self._snapshot_path.exists():
             return
@@ -535,6 +1906,35 @@ class RegistryService:
         if not isinstance(objects, list):
             raise ValueError("Registry object snapshot must contain an objects list")
 
+        conflicts = snapshot.get("conflicts", [])
+        if not isinstance(conflicts, list):
+            raise ValueError("Registry object snapshot conflicts must be a list")
+        wallet_identity_peers = snapshot.get("wallet_identity_peers", [])
+        if not isinstance(wallet_identity_peers, list):
+            raise ValueError("Registry object snapshot wallet_identity_peers must be a list")
+        wallet_identity_resolutions = snapshot.get("wallet_identity_resolutions", [])
+        if not isinstance(wallet_identity_resolutions, list):
+            raise ValueError(
+                "Registry object snapshot wallet_identity_resolutions must be a list"
+            )
+        wallet_identity_resolution_proposals = snapshot.get(
+            "wallet_identity_resolution_proposals", []
+        )
+        if not isinstance(wallet_identity_resolution_proposals, list):
+            raise ValueError(
+                "Registry object snapshot wallet_identity_resolution_proposals must be a list"
+            )
+        wallet_identity_governance_policy = snapshot.get(
+            "wallet_identity_governance_policy"
+        )
+        if (
+            wallet_identity_governance_policy is not None
+            and not isinstance(wallet_identity_governance_policy, dict)
+        ):
+            raise ValueError(
+                "Registry object snapshot wallet_identity_governance_policy must be an object"
+            )
+
         for index, record in enumerate(objects):
             if not isinstance(record, dict):
                 raise ValueError(
@@ -546,6 +1946,56 @@ class RegistryService:
                 raise ValueError(
                     f"Registry object snapshot contains invalid object entry at index {index}"
                 ) from exc
+        for index, conflict in enumerate(conflicts):
+            if not isinstance(conflict, dict):
+                raise ValueError(
+                    f"Registry object snapshot contains invalid conflict entry at index {index}"
+                )
+            model = RegistryConflictEvidence.model_validate(conflict)
+            self._conflicts[model.conflict_id] = model.model_dump(mode="json")
+        for index, peer in enumerate(wallet_identity_peers):
+            if not isinstance(peer, dict):
+                raise ValueError(
+                    "Registry object snapshot contains invalid wallet identity peer entry "
+                    f"at index {index}"
+                )
+            model = RegistryWalletIdentityPeerConfig.model_validate(peer)
+            self._wallet_identity_peers[model.peer_base_url.rstrip("/")] = model.model_dump(
+                mode="json"
+            )
+        for index, resolution in enumerate(wallet_identity_resolutions):
+            if not isinstance(resolution, dict):
+                raise ValueError(
+                    "Registry object snapshot contains invalid wallet identity resolution entry "
+                    f"at index {index}"
+                )
+            wallet_id = str(resolution.get("wallet_id") or "").strip()
+            if not wallet_id:
+                raise ValueError(
+                    "Registry object snapshot contains wallet identity resolution without wallet_id "
+                    f"at index {index}"
+                )
+            self._wallet_identity_resolutions[wallet_id] = deepcopy(resolution)
+        for index, proposal in enumerate(wallet_identity_resolution_proposals):
+            if not isinstance(proposal, dict):
+                raise ValueError(
+                    "Registry object snapshot contains invalid wallet identity resolution proposal entry "
+                    f"at index {index}"
+                )
+            resolution_id = str(proposal.get("resolution_id") or "").strip()
+            if not resolution_id:
+                raise ValueError(
+                    "Registry object snapshot contains wallet identity resolution proposal without resolution_id "
+                    f"at index {index}"
+                )
+            self._wallet_identity_resolution_proposals[resolution_id] = deepcopy(
+                proposal
+            )
+        if wallet_identity_governance_policy is not None:
+            model = RegistryWalletIdentityGovernancePolicy.model_validate(
+                wallet_identity_governance_policy
+            )
+            self._wallet_identity_governance_policy = model.model_dump(mode="json")
 
     def _persist_registry_object_snapshot(self) -> None:
         if self._snapshot_path is None:
@@ -557,6 +2007,25 @@ class RegistryService:
                 deepcopy(self._registry_objects[object_id])
                 for object_id in sorted(self._registry_objects)
             ],
+            "conflicts": [
+                deepcopy(self._conflicts[conflict_id])
+                for conflict_id in sorted(self._conflicts)
+            ],
+            "wallet_identity_peers": [
+                deepcopy(self._wallet_identity_peers[peer_base_url])
+                for peer_base_url in sorted(self._wallet_identity_peers)
+            ],
+            "wallet_identity_resolutions": [
+                deepcopy(self._wallet_identity_resolutions[wallet_id])
+                for wallet_id in sorted(self._wallet_identity_resolutions)
+            ],
+            "wallet_identity_resolution_proposals": [
+                deepcopy(self._wallet_identity_resolution_proposals[resolution_id])
+                for resolution_id in sorted(self._wallet_identity_resolution_proposals)
+            ],
+            "wallet_identity_governance_policy": deepcopy(
+                self._wallet_identity_governance_policy
+            ),
         }
         temp_path = self._snapshot_path.with_suffix(self._snapshot_path.suffix + ".tmp")
         temp_path.write_text(

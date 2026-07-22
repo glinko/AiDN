@@ -223,6 +223,7 @@ class LlamaCppPlugin(ProviderPlugin):
             "compatibility_bundle": {
                 "plugin_id": self.plugin_id,
                 "provider_type": "llama.cpp",
+                "workload_type": "llm_text",
                 "model_id": model_deployment["provider_model_reference"],
                 "launch_mode": "managed_process",
                 "device_affinity": "cpu",

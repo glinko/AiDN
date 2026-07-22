@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
+from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
 from aidn_hypervisor.providers.executor import (
     ProviderInstallationExecutor,
     RecordedProviderInstallationExecutor,
@@ -1907,6 +1908,19 @@ class ProviderInventoryService:
             compatibility_bundle_id=compatibility_bundle_id,
             status=projection.get("status", "ready"),
         )
+        if binding.adapter_id == "llamacpp-openai":
+            profile = build_llamacpp_usage_profile(
+                runtime_id=binding.runtime_id,
+                runtime_generation=binding.runtime_generation,
+                runtime_configuration_hash=binding.runtime_configuration_hash,
+                adapter_version=binding.adapter_version or "llamacpp-openai.v1",
+            )
+            binding_payload = binding.model_dump(mode="json")
+            binding_payload.pop("runtime_configuration_hash", None)
+            binding_payload["usage_reporting_profile_hash"] = profile.profile_hash
+            binding = RuntimeBinding.model_validate(
+                binding_payload
+            )
         self.store.save_runtime_binding(binding)
         self._runtime_binding_projections[binding.runtime_binding_id] = dict(
             projection.get("compatibility_bundle") or {}
@@ -1930,7 +1944,7 @@ class ProviderInventoryService:
             bundle_id=binding.compatibility_bundle_id,
             plugin_id=projection.get("plugin_id", instance.plugin_id),
             provider_type=projection.get("provider_type", instance.provider_family),
-            workload_type=binding.capability_id,
+            workload_type=projection.get("workload_type", binding.capability_id),
             model_id=projection.get("model_id", deployment.provider_model_reference),
             launch_mode=projection.get("launch_mode", "managed_process"),
             endpoint=endpoint,
