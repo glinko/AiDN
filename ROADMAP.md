@@ -260,7 +260,10 @@ Immediate priorities:
    identity governance policy that snapshots the active voter-status and quorum
    floor rules used by each proposal. What still does not exist is a stronger
    network-level governance and ledger-backed authority model above that local
-   ownership linkage and local policy surface.
+   ownership linkage and local policy surface. The next implementation step on
+   this path is to issue minimal governance/authorization certificates for
+   quorum-finalized wallet-identity network changes, so those decisions carry
+   portable network evidence instead of remaining only local-policy-valid.
 1. Apply the completed `llama.cpp` Health/model discovery/Runtime Binding/RFC-0054 adapter profile to Ollama, vLLM-compatible and Proxy providers; add Provider-specific cancellation confirmation and in-flight recovery fault scenarios where their native APIs support them.
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
 3. Add production package acquisition from signed sources to the verified local Package Store and Registry `plugin` Directory replication.
@@ -468,7 +471,8 @@ Order of work right now:
 5. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
 6. Finish the remaining `M3/M4` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
 7. Define `M5` rating, validation economics, and `M6` custom model onboarding contracts around the endpoint-centric operator experience
-8. Introduce the `M7` consensus boundary cleanly, so future ledger, epoch, validator, and registry work land on finalized protocol state instead of local-only mutation
+8. Add minimal governance/authorization certificates for quorum-finalized wallet-identity network changes, so registry authority can travel as signed network evidence instead of only local policy state
+9. Introduce the `M7` consensus boundary cleanly, so future ledger, epoch, validator, and registry work land on finalized protocol state instead of local-only mutation
 
 ## Source Documents
 
