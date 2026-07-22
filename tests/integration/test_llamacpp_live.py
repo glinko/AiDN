@@ -7,6 +7,7 @@ from urllib import request
 
 import pytest
 from fastapi.testclient import TestClient
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aidn_hypervisor.accounting.models import (
     AccountingContract,
@@ -42,8 +43,14 @@ from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.settlement.models import SessionSettlementAcceptance
+from aidn_hypervisor.settlement.signing import settlement_acceptance_signing_payload
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
+from aidn_hypervisor.wallet_identity import (
+    session_open_authorization_payload,
+    wallet_identity_registration_payload,
+)
 from aidn_hypervisor.main import build_app
 
 
@@ -336,26 +343,67 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
     assert created.status_code == 201
     endpoint_id = created.json()["data"]["endpoint"]["endpoint_id"]
     hypervisor.credit_wallet_q_atoms(wallet_id="live-consumer-wallet", amount_q_atoms=1000)
+    consumer_key = Ed25519PrivateKey.generate()
+    operator_key = Ed25519PrivateKey.generate()
+    for wallet_id, key, nonce in [
+        ("live-consumer-wallet", consumer_key, "live-consumer-registration"),
+        ("live-endpoint-wallet", operator_key, "live-operator-registration"),
+    ]:
+        public_key = f"ed25519:{key.public_key().public_bytes_raw().hex()}"
+        signature = key.sign(wallet_identity_registration_payload(
+            wallet_id=wallet_id, public_key=public_key, registration_nonce=nonce
+        )).hex()
+        registered = client.post("/wallets/identity", json={
+            "wallet_id": wallet_id, "public_key": public_key,
+            "registration_nonce": nonce, "signature": f"ed25519:{signature}",
+        })
+        assert registered.status_code == 201, registered.text
+    expires_at = "2030-01-01T00:00:00+00:00"
+    authorization_nonce = "live-public-session"
+    authorization_signature = consumer_key.sign(session_open_authorization_payload(
+        wallet_id="live-consumer-wallet", endpoint_id=endpoint_id,
+        endpoint_configuration_hash=created.json()["data"]["endpoint"]["configuration_hash"],
+        deposit_q_atoms=1000, fixed_price_q_atoms=900, network_fee_reserve_q_atoms=100,
+        nonce=authorization_nonce, expires_at=expires_at,
+    )).hex()
 
-    response = client.post(
-        f"/api/v1/endpoints/{endpoint_id}/mvp-paid-smoke",
+    opened = client.post(
+        f"/api/v1/endpoints/{endpoint_id}/public-mvp-sessions",
         json={
             "client_wallet": "live-consumer-wallet",
             "deposit_q_atoms": 1000,
             "fixed_price_q_atoms": 900,
             "network_fee_reserve_q_atoms": 100,
-            "task_type": "llm_text.generate",
-            "payload": {"prompt": "Reply with one short word."},
+            "consumer_authorization": {"nonce": authorization_nonce, "expires_at": expires_at,
+                                       "signature": f"ed25519:{authorization_signature}"},
         },
+    )
+    assert opened.status_code == 201, opened.text
+    session = opened.json()["data"]["session"]
+    task = client.post("/tasks", json={"task_type": "llm_text.generate",
+        "payload": {"prompt": "Reply with one short word."},
+        "constraints": {"endpoint_id": endpoint_id, "session_id": session["session_id"]}})
+    assert task.status_code == 202, task.text
+    request_id = task.json()["task_id"]
+    accepted_at = "2026-07-21T12:00:00+00:00"
+    preview = client.post(
+        f"/api/v1/endpoints/{endpoint_id}/mvp-sessions/{session['session_id']}/settlement-preview",
+        json={"request_id": request_id, "accepted_at": accepted_at},
+    )
+    assert preview.status_code == 200, preview.text
+    unsigned = SessionSettlementAcceptance(**preview.json()["data"]["acceptance_payload"],
+        consumer_signature="ed25519:" + "00" * 64)
+    settlement_signature = consumer_key.sign(settlement_acceptance_signing_payload(unsigned)).hex()
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint_id}/mvp-sessions/{session['session_id']}/finalize",
+        json={"request_id": request_id, "accepted_at": accepted_at,
+              "consumer_signature": f"ed25519:{settlement_signature}"},
     )
     body = response.json()["data"]
 
-    assert response.status_code == 201, response.text
-    assert body["task"]["status"] == "completed"
-    assert body["task"]["result"]["output_text"]
-    assert body["runtime_evidence"]["request"]["request_state"] == "COMPLETED"
-    assert body["runtime_evidence"]["final_usage"]["terminal"] is True
-    assert body["finalized"]["funding"]["funding_state"] == "RELEASED"
+    assert response.status_code == 200, response.text
+    assert hypervisor.task_result(request_id)["output_text"]
+    assert body["funding"]["funding_state"] == "RELEASED"
     assert hypervisor.wallet_q_atom_balance("live-endpoint-wallet") == 900
     assert hypervisor.wallet_q_atom_balance("live-consumer-wallet") == 100
 
