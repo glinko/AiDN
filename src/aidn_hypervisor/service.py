@@ -490,6 +490,7 @@ class HypervisorService:
         accounting_contract: dict | None = None,
         consumer_authorization_public_key: str | None = None,
         consumer_authorization: dict | None = None,
+        require_wallet_authorization: bool = False,
     ):
         if deposit_q_atoms <= 0:
             raise ValueError("MVP Session deposit must be positive")
@@ -500,6 +501,10 @@ class HypervisorService:
             raise ValueError("MVP Session deposit cannot cover fixed price")
         if self.wallet_q_atom_balance(client_wallet) < deposit_q_atoms:
             raise ValueError("insufficient q_atoms for MVP Session escrow")
+        if require_wallet_authorization and consumer_authorization is None:
+            raise ValueError("Public MVP Session requires Consumer wallet authorization")
+        if require_wallet_authorization and self.wallet_identity(endpoint.owner_wallet) is None:
+            raise ValueError("Public MVP Endpoint Payment Beneficiary identity is not registered")
         if consumer_authorization is not None:
             from aidn_hypervisor.wallet_identity import verify_session_open_authorization
 

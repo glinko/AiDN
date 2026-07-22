@@ -373,6 +373,33 @@ def build_endpoint_router(
             status_code=201,
         )
 
+    @router.post("/{endpoint_id}/public-mvp-sessions", status_code=201)
+    async def open_public_mvp_fixed_price_session(
+        endpoint_id: str,
+        request: OpenMvpFixedPriceSessionRequest,
+    ) -> JSONResponse:
+        if session_service is None or hypervisor_service is None:
+            return _error(503, "mvp_session_unavailable", "MVP economic Session service is not configured")
+        try:
+            endpoint = service.get_endpoint(endpoint_id).endpoint
+            accounting_contract = hypervisor_service.accounting_contract_for_endpoint(endpoint)
+        except KeyError:
+            endpoint = service.get_endpoint(endpoint_id).endpoint
+            accounting_contract = None
+        try:
+            session, deposit, funding = hypervisor_service.open_mvp_fixed_price_session(
+                session_service=session_service, endpoint=endpoint,
+                client_wallet=request.client_wallet, deposit_q_atoms=request.deposit_q_atoms,
+                fixed_price_q_atoms=request.fixed_price_q_atoms,
+                network_fee_reserve_q_atoms=request.network_fee_reserve_q_atoms,
+                accounting_contract=accounting_contract,
+                consumer_authorization=request.consumer_authorization,
+                require_wallet_authorization=True,
+            )
+        except ValueError as error:
+            return _error(409, "public_mvp_session_open_rejected", str(error))
+        return _ok({"session": session.model_dump(mode="json"), "deposit": deposit.model_dump(mode="json"), "funding": funding.model_dump(mode="json")}, status_code=201)
+
     @router.post("/{endpoint_id}/mvp-paid-smoke")
     async def run_mvp_paid_smoke(
         endpoint_id: str,
