@@ -95,6 +95,10 @@ Implemented now:
   peers with last-sync state and run a bounded automated repair pass across
   those enabled peers, so replication no longer depends on one-off manual
   sync calls after every restart.
+- The Registry can now also bootstrap that peer inventory directly from live
+  `RegistryNodeAdvertisement` entries, exclude the local node and optionally
+  run discovery plus repair in one bounded pass instead of relying on
+  hand-maintained peer lists.
 - Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
   registered Consumer wallet identity, a signed Session-open/funding
   authorization bound to the Endpoint configuration, a currently published
@@ -123,6 +127,6 @@ Still required before public paid-MVP launch:
 1. Replicate canonical `wallet_identity` objects into authoritative network
    state before multi-node paid launch, so a public `wallet_id` cannot mean
    different keys on different Hypervisors after cross-node sync; local
-   uniqueness, conflict rejection, known-peer repair and bounded peer sync now
-   exist, but network-wide peer discovery, inventory planning and final
-   reconciliation policy remain.
+   uniqueness, conflict rejection, known-peer repair, registry-node inventory
+   bootstrap and bounded peer sync now exist, but final network-wide
+   reconciliation policy still remains.

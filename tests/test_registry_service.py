@@ -2189,6 +2189,77 @@ def test_registry_service_repair_wallet_identity_peers_tracks_errors_and_skips_d
     assert peers[1]["last_sync_status"] is None
 
 
+def test_registry_service_discovers_wallet_identity_peers_from_nodes(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(_node("node-local", heartbeat_at="2026-07-05T14:00:00+00:00"))
+    service.upsert_node(_node("node-remote-a", heartbeat_at="2026-07-05T14:00:00+00:00"))
+    service.upsert_node(_node("node-remote-b", heartbeat_at="2026-07-05T14:00:00+00:00"))
+
+    result = service.discover_wallet_identity_peers_from_nodes(
+        self_node_id="node-local",
+    )
+
+    assert result["candidate_count"] == 2
+    assert result["registered_count"] == 2
+    assert [item["peer_base_url"] for item in result["candidates"]] == [
+        "https://node-remote-a.example",
+        "https://node-remote-b.example",
+    ]
+    assert [item["peer_base_url"] for item in service.list_wallet_identity_peers()] == [
+        "https://node-remote-a.example",
+        "https://node-remote-b.example",
+    ]
+
+
+def test_registry_service_discover_and_repair_wallet_identity_peers(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(_node("node-local", heartbeat_at="2026-07-05T14:00:00+00:00"))
+    service.upsert_node(_node("node-remote-a", heartbeat_at="2026-07-05T14:00:00+00:00"))
+    payload = {
+        "objects": [
+            _wallet_identity_object(
+                "wallet-consumer",
+                public_key="ed25519:" + "11" * 32,
+                registration_nonce="nonce-a",
+            )
+        ],
+        "conflicts": [],
+    }
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _Response(),
+    )
+
+    result = service.discover_and_repair_wallet_identity_peers(
+        self_node_id="node-local",
+    )
+
+    assert result["discovery"]["candidate_count"] == 1
+    assert result["repair"]["success_count"] == 1
+    assert service.resolve_wallet_identity("wallet-consumer")["public_key"] == (
+        "ed25519:" + "11" * 32
+    )
+
+
 def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:
     service = RegistryService()
     service.upsert_node(

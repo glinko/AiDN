@@ -120,6 +120,51 @@ class RegistryService:
             for peer_base_url in sorted(self._wallet_identity_peers)
         ]
 
+    def discover_wallet_identity_peers_from_nodes(
+        self,
+        *,
+        self_node_id: str | None = None,
+        include_stale: bool = False,
+        auto_register: bool = True,
+    ) -> dict:
+        candidates: list[dict] = []
+        discovered_urls: set[str] = set()
+        registered_count = 0
+
+        for node_id in sorted(self._nodes):
+            node = self.get_node(node_id)
+            if self_node_id is not None and node.get("node_id") == self_node_id:
+                continue
+            if node.get("status") == "offline":
+                continue
+            if node.get("status") == "stale" and not include_stale:
+                continue
+            base_url = str(node.get("base_url") or "").rstrip("/")
+            if not base_url or base_url in discovered_urls:
+                continue
+            discovered_urls.add(base_url)
+            existing_peer = deepcopy(self._wallet_identity_peers.get(base_url) or {})
+            candidate = {
+                "peer_base_url": base_url,
+                "node_id": node.get("node_id"),
+                "operator_id": node.get("operator_id"),
+                "status": node.get("status"),
+                "already_registered": bool(existing_peer),
+                "enabled": existing_peer.get("enabled", True),
+                "last_sync_at": existing_peer.get("last_sync_at"),
+                "last_sync_status": existing_peer.get("last_sync_status"),
+            }
+            candidates.append(candidate)
+            if auto_register and not existing_peer:
+                self.upsert_wallet_identity_peer(peer_base_url=base_url, enabled=True)
+                registered_count += 1
+
+        return {
+            "candidate_count": len(candidates),
+            "registered_count": registered_count,
+            "candidates": candidates,
+        }
+
     def export_wallet_identity_sync_state(self, *, limit: int = 500) -> dict:
         return {
             "objects": self.list_wallet_identity_objects(limit=limit),
@@ -266,6 +311,28 @@ class RegistryService:
             "success_count": success_count,
             "error_count": error_count,
             "results": results,
+        }
+
+    def discover_and_repair_wallet_identity_peers(
+        self,
+        *,
+        self_node_id: str | None = None,
+        include_stale: bool = False,
+        limit: int = 500,
+        timeout_seconds: int = 10,
+    ) -> dict:
+        discovery = self.discover_wallet_identity_peers_from_nodes(
+            self_node_id=self_node_id,
+            include_stale=include_stale,
+            auto_register=True,
+        )
+        repair = self.repair_wallet_identity_peers(
+            limit=limit,
+            timeout_seconds=timeout_seconds,
+        )
+        return {
+            "discovery": discovery,
+            "repair": repair,
         }
 
     def get_node(self, node_id: str) -> dict:

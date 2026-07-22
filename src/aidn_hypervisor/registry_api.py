@@ -4,6 +4,7 @@ from aidn_hypervisor.registry_models import (
     RegistryDiscoveryQuery,
     RegistryNodeAdvertisement,
     RegistryWalletIdentityPeerConfig,
+    RegistryWalletIdentityPeerDiscoveryRequest,
     RegistryWalletIdentityPeerRepairRequest,
     RegistryWalletIdentityPeerSyncRequest,
     RegistryWalletIdentitySyncImportRequest,
@@ -112,6 +113,22 @@ def build_registry_router(service: RegistryService) -> APIRouter:
             )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/registry/wallet-identities/discover-peers")
+    async def discover_wallet_identity_peers(
+        request: RegistryWalletIdentityPeerDiscoveryRequest,
+    ) -> dict:
+        if request.repair_after_discovery:
+            return service.discover_and_repair_wallet_identity_peers(
+                self_node_id=request.self_node_id,
+                include_stale=request.include_stale,
+                limit=request.limit,
+            )
+        return service.discover_wallet_identity_peers_from_nodes(
+            self_node_id=request.self_node_id,
+            include_stale=request.include_stale,
+            auto_register=request.auto_register,
+        )
 
     @router.post("/registry/wallet-identities/import")
     async def import_wallet_identity_sync_state(

@@ -175,6 +175,14 @@ class RegistryWalletIdentityPeerRepairRequest(BaseModel):
     limit: int = Field(default=500, ge=1, le=5000)
 
 
+class RegistryWalletIdentityPeerDiscoveryRequest(BaseModel):
+    self_node_id: str | None = None
+    include_stale: bool = False
+    auto_register: bool = True
+    repair_after_discovery: bool = False
+    limit: int = Field(default=500, ge=1, le=5000)
+
+
 class RegistryCompletenessIssue(BaseModel):
     code: str
     object_id: str | None = None

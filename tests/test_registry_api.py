@@ -336,6 +336,107 @@ def test_registry_wallet_identity_repair_endpoint_runs_known_peers(
     )
 
 
+def test_registry_wallet_identity_discover_peers_endpoint_registers_remote_nodes(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        RegistryNodeAdvertisement(
+            **_node_payload("node-local", heartbeat_at="2026-07-05T14:00:00+00:00")
+        )
+    )
+    service.upsert_node(
+        RegistryNodeAdvertisement(
+            **_node_payload("node-remote", heartbeat_at="2026-07-05T14:00:00+00:00")
+        )
+    )
+    client = TestClient(build_registry_app(service=service))
+
+    response = client.post(
+        "/registry/wallet-identities/discover-peers",
+        json={"self_node_id": "node-local"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["candidate_count"] == 1
+    assert response.json()["registered_count"] == 1
+    assert response.json()["candidates"][0]["peer_base_url"] == "https://node-remote.example"
+    assert service.list_wallet_identity_peers()[0]["peer_base_url"] == (
+        "https://node-remote.example"
+    )
+
+
+def test_registry_wallet_identity_discover_peers_endpoint_can_repair_after_discovery(
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    service = RegistryService()
+    service.upsert_node(
+        RegistryNodeAdvertisement(
+            **_node_payload("node-local", heartbeat_at="2026-07-05T14:00:00+00:00")
+        )
+    )
+    service.upsert_node(
+        RegistryNodeAdvertisement(
+            **_node_payload("node-remote", heartbeat_at="2026-07-05T14:00:00+00:00")
+        )
+    )
+    client = TestClient(build_registry_app(service=service))
+    payload = {
+        "objects": [
+            {
+                "object_id": "sha256:wallet:consumer:a",
+                "object_type": "wallet_identity",
+                "object_version": "wallet-identity.v1",
+                "namespace": "identity",
+                "payload_hash": "sha256:wallet-payload:a",
+                "payload_encoding": "canonical_json",
+                "source_reference": "wallet-consumer",
+                "payload": {
+                    "wallet_id": "wallet-consumer",
+                    "public_key": "ed25519:" + "11" * 32,
+                    "registration_nonce": "nonce-a",
+                },
+            }
+        ],
+        "conflicts": [],
+    }
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _Response(),
+    )
+
+    response = client.post(
+        "/registry/wallet-identities/discover-peers",
+        json={
+            "self_node_id": "node-local",
+            "repair_after_discovery": True,
+            "limit": 500,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["discovery"]["candidate_count"] == 1
+    assert response.json()["repair"]["success_count"] == 1
+    assert service.resolve_wallet_identity("wallet-consumer")["public_key"] == (
+        "ed25519:" + "11" * 32
+    )
+
+
 def test_registry_discovery_endpoint_filters_by_workload_and_model(monkeypatch) -> None:
     ready_time = datetime.fromisoformat("2026-06-19T18:30:05+00:00").timestamp()
     monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
