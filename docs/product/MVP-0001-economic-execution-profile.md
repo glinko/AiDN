@@ -63,24 +63,32 @@ Implemented now:
   runtime-bound Endpoint.
 - Canonical `q_atoms` funding accounts, escrow lock, proposal, acceptance,
   cooperative finalization and the two conservative forced-settlement rules.
+- A local Wallet Identity registry binds `wallet_id -> Ed25519 public key`,
+  persists registrations through snapshot/restore, rejects key rotation and
+  records canonical `WALLET_IDENTITY_REGISTER` Ledger operations.
+- Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
+  registered Consumer wallet identity, a signed Session-open/funding
+  authorization bound to the Endpoint configuration, and a registered Endpoint
+  Payment Beneficiary identity before escrow can be locked.
 - A Session may bind a Consumer Ed25519 authorization key. For such Sessions,
   cooperative Settlement accepts only a signature over the exact Settlement
   identity, input root, amounts and acceptance time.
-- Public `POST /api/v1/endpoints/{endpoint_id}/mvp-sessions` creates an
+- `POST /api/v1/endpoints/{endpoint_id}/mvp-sessions` creates an
   `MVP-0001` Session Contract, locks canonical escrow and records the Funding
-  Account hash; the legacy float-Q deposit is display-only on that path.
+  Account hash for local compatibility flows; the legacy float-Q deposit is
+  display-only on that path.
+- `POST /api/v1/endpoints/{endpoint_id}/mvp-sessions/{session_id}/settlement-preview`
+  returns the exact signable Consumer acceptance payload for wallet-bound
+  cooperative Settlement, and finalization verifies the signature against the
+  same registered Consumer key.
 - Snapshot persistence and replay-safe Ledger operation records for that
   canonical economic path.
 
 Still required before public paid-MVP launch:
 
-1. Deliver Wallet Identity Binding for public Session admission:
-   - bind every `client_wallet` to a registered Ed25519 public key;
-   - require a signature over the Session Contract and funding authorization;
-   - require Settlement acceptance to verify against that same wallet key;
-   - bind the Endpoint Payment Beneficiary to an operator wallet identity;
-   - reject API-supplied wallet identifiers and unrelated public keys.
-   Legacy unsigned and key-only Sessions remain local-only compatibility
-   behavior.
-2. Add an end-to-end smoke test: endpoint publish, session, escrow, request,
-   result, final Usage, proposal, acceptance and Ledger finalization.
+1. Add one automated end-to-end public smoke path that starts from signed
+   Endpoint publication and runs through session, escrow, request, result,
+   final Usage, proposal, acceptance and Ledger finalization.
+2. Promote Wallet Identity from node-local durable state to replicated
+   canonical network state before multi-node paid launch, so a public
+   `wallet_id` cannot mean different keys on different Hypervisors.

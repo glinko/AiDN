@@ -233,13 +233,10 @@ What is still missing in the current stage:
   - optional in-memory and durable local filesystem content-addressed Package Stores now verify staged package bytes against the declared SHA-256 digest, atomically persist verified bytes, re-verify them at read time and fail-close package activation when configured. Public immutable Plugin Release metadata is deterministically projected into the Registry `plugin` namespace and can be batch-published without exposing local installation or credential state. The Hypervisor now also provides a scoped Plugin Host identity/handshake contract, ephemeral install-scoped activation secrets with HMAC proof verification and nonce replay rejection, bounded JSON wire adapter, Windows Named Pipe and Unix-socket Local IPC listeners, persistent connection recovery, stale-generation revocation, constrained Provider/model/Runtime Binding control commands, and read-only operator status without credential-key disclosure. These handlers still execute inside the current Hypervisor process; activation secrets are deliberately not persisted and require a Secret Manager-backed launcher before external hosts can survive Hypervisor restart. Production package acquisition from signed sources, isolated external Plugin Host process lifecycle, OCI/container lifecycle, Registry `plugin` Directory replication, full plugin update/removal/security response and RFC-0056 execution-plane conformance remain unimplemented.
 
 Immediate priorities:
-0. Deliver Wallet Identity Binding before any public paid-MVP launch: create one
-   Ed25519 wallet identity model, bind each `client_wallet` and endpoint-payment
-   beneficiary to registered public keys, require a Consumer-signed Session-open
-   and funding authorization, and verify the signed Consumer Settlement
-   acceptance against that same wallet identity. The current optional Session
-   authorization key proves control of a key only; it does not prove ownership
-   of the declared wallet and remains local-only compatibility behavior.
+0. Finish the public paid-MVP hardening pass on top of the new Wallet Identity
+   Binding slice: add one automated signed-publication-to-settlement smoke path
+   and define how wallet identities move from node-local durable state to
+   replicated canonical network state before multi-node paid launch.
 1. Apply the completed `llama.cpp` Health/model discovery/Runtime Binding/RFC-0054 adapter profile to Ollama, vLLM-compatible and Proxy providers; add Provider-specific cancellation confirmation and in-flight recovery fault scenarios where their native APIs support them.
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
 3. Add production package acquisition from signed sources to the verified local Package Store and Registry `plugin` Directory replication.

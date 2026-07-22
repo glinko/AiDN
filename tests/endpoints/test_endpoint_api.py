@@ -24,6 +24,10 @@ from aidn_hypervisor.settlement.signing import settlement_acceptance_signing_pay
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
+from aidn_hypervisor.wallet_identity import (
+    session_open_authorization_payload,
+    wallet_identity_registration_payload,
+)
 
 
 def _client() -> TestClient:
@@ -382,6 +386,145 @@ def test_open_mvp_fixed_price_session_locks_canonical_escrow() -> None:
     assert body["data"]["session"]["canonical_funding_state_hash"]
     assert body["data"]["funding"]["total_locked_amount_q_atoms"] == 1_000
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
+
+
+def test_open_public_mvp_fixed_price_session_requires_wallet_bound_authorization() -> None:
+    hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    endpoint_service = EndpointService(EndpointStore())
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            session_service=SessionService(SessionStore()),
+        )
+    )
+    endpoint = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-operator",
+            "bundle_id": "bundle-a",
+            "bundle_hash": "bundle-hash-a",
+            "display_name": "Public fixed price endpoint",
+            "model_class": "llm.chat",
+        },
+    ).json()["data"]["endpoint"]
+    hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
+
+    consumer_key = Ed25519PrivateKey.generate()
+    consumer_public_key = (
+        f"ed25519:{consumer_key.public_key().public_bytes_raw().hex()}"
+    )
+    consumer_nonce = "consumer-registration"
+    consumer_signature = consumer_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id="wallet-consumer",
+            public_key=consumer_public_key,
+            registration_nonce=consumer_nonce,
+        )
+    ).hex()
+    registered_consumer = client.post(
+        "/wallets/identity",
+        json={
+            "wallet_id": "wallet-consumer",
+            "public_key": consumer_public_key,
+            "registration_nonce": consumer_nonce,
+            "signature": f"ed25519:{consumer_signature}",
+        },
+    )
+
+    operator_key = Ed25519PrivateKey.generate()
+    operator_public_key = (
+        f"ed25519:{operator_key.public_key().public_bytes_raw().hex()}"
+    )
+    operator_nonce = "operator-registration"
+    operator_signature = operator_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id="wallet-operator",
+            public_key=operator_public_key,
+            registration_nonce=operator_nonce,
+        )
+    ).hex()
+    registered_operator = client.post(
+        "/wallets/identity",
+        json={
+            "wallet_id": "wallet-operator",
+            "public_key": operator_public_key,
+            "registration_nonce": operator_nonce,
+            "signature": f"ed25519:{operator_signature}",
+        },
+    )
+
+    authorization_nonce = "public-session-nonce"
+    expires_at = "2030-01-01T00:00:00+00:00"
+    authorization_signature = consumer_key.sign(
+        session_open_authorization_payload(
+            wallet_id="wallet-consumer",
+            endpoint_id=endpoint["endpoint_id"],
+            endpoint_configuration_hash=endpoint["configuration_hash"],
+            deposit_q_atoms=1_000,
+            fixed_price_q_atoms=900,
+            network_fee_reserve_q_atoms=100,
+            nonce=authorization_nonce,
+            expires_at=expires_at,
+        )
+    ).hex()
+
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/public-mvp-sessions",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+            "consumer_authorization": {
+                "nonce": authorization_nonce,
+                "expires_at": expires_at,
+                "signature": f"ed25519:{authorization_signature}",
+            },
+        },
+    )
+    body = response.json()
+
+    assert registered_consumer.status_code == 201
+    assert registered_operator.status_code == 201
+    assert response.status_code == 201
+    assert (
+        body["data"]["session"]["consumer_authorization_public_key"]
+        == consumer_public_key
+    )
+    assert body["data"]["session"]["endpoint_payment_beneficiary"] == "wallet-operator"
+    assert body["data"]["funding"]["funding_state"] == "LOCKED"
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
+
+
+def test_open_public_mvp_fixed_price_session_returns_endpoint_not_found() -> None:
+    hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=EndpointService(EndpointStore()),
+            session_service=SessionService(SessionStore()),
+        )
+    )
+
+    response = client.post(
+        "/api/v1/endpoints/missing-endpoint/public-mvp-sessions",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+            "consumer_authorization": {
+                "nonce": "nonce",
+                "expires_at": "2030-01-01T00:00:00+00:00",
+                "signature": "ed25519:" + "00" * 64,
+            },
+        },
+    )
+    body = response.json()
+
+    assert response.status_code == 404
+    assert body["error"]["code"] == "endpoint_not_found"
 
 
 def test_finalize_mvp_fixed_price_session_uses_runtime_evidence_over_api() -> None:
