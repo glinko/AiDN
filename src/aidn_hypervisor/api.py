@@ -1140,6 +1140,23 @@ def build_api_router(
                 status_code=404, detail=f"Unknown registry object: {object_id}"
             ) from error
 
+    @router.get("/operators/registry/conflicts")
+    async def registry_conflicts(
+        conflict_class: str | None = None,
+        object_type: str | None = None,
+        logical_key: str | None = None,
+        limit: int = 100,
+    ) -> dict:
+        registry = _effective_registry_service()
+        return {
+            "conflicts": registry.list_conflicts(
+                conflict_class=conflict_class,
+                object_type=object_type,
+                logical_key=logical_key,
+                limit=limit,
+            )
+        }
+
     @router.get("/operators/dashboard/home")
     async def operator_dashboard_home() -> dict:
         market = build_market_payload(

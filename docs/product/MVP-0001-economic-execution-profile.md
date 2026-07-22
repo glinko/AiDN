@@ -79,6 +79,10 @@ Implemented now:
   for the same `wallet_id`, both for local store ingestion and for peer node
   advertisements, so split-brain wallet bindings fail closed instead of
   remaining latent until paid admission time.
+- The Registry now durably records those `wallet_identity` conflicts as local
+  conflict evidence and exposes them through registry/operator conflict views,
+  so peer reconciliation has a stable audit trail instead of only a transient
+  `409` response.
 - Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
   registered Consumer wallet identity, a signed Session-open/funding
   authorization bound to the Endpoint configuration, a currently published
@@ -108,4 +112,4 @@ Still required before public paid-MVP launch:
    state before multi-node paid launch, so a public `wallet_id` cannot mean
    different keys on different Hypervisors after cross-node sync; local
    uniqueness and conflict rejection now exist, but peer replication,
-   conflict evidence retention and network-wide reconciliation remain.
+   network-wide conflict exchange and final reconciliation policy remain.

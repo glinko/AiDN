@@ -1871,6 +1871,15 @@ def test_registry_service_rejects_conflicting_wallet_identity_objects_across_nod
                 ],
             )
         )
+    conflicts = service.list_conflicts(
+        conflict_class="wallet_identity_binding",
+        logical_key="wallet-consumer",
+    )
+    assert len(conflicts) == 1
+    assert conflicts[0]["existing_record"]["source_reference"] == "wallet-consumer"
+    assert conflicts[0]["conflicting_record"]["payload"]["public_key"] == (
+        "ed25519:" + "22" * 32
+    )
 
 
 def test_registry_service_rejects_conflicting_wallet_identity_store_ingest() -> None:
@@ -1919,6 +1928,49 @@ def test_registry_service_resolves_wallet_identity_from_registry_objects(
     assert resolved["wallet_id"] == "wallet-consumer"
     assert resolved["public_key"] == "ed25519:" + "11" * 32
     assert resolved["identity_source"] == "registry_object"
+
+
+def test_registry_service_persists_conflict_evidence_in_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(snapshot_path=snapshot_path)
+    service.upsert_node(
+        _node(
+            "node-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+            canonical_registry_objects=[
+                _wallet_identity_object(
+                    "wallet-consumer",
+                    public_key="ed25519:" + "11" * 32,
+                    registration_nonce="nonce-a",
+                )
+            ],
+        )
+    )
+    with pytest.raises(ValueError, match="wallet-consumer"):
+        service.upsert_node(
+            _node(
+                "node-b",
+                heartbeat_at="2026-07-05T14:00:00+00:00",
+                canonical_registry_objects=[
+                    _wallet_identity_object(
+                        "wallet-consumer",
+                        public_key="ed25519:" + "22" * 32,
+                        registration_nonce="nonce-b",
+                    )
+                ],
+            )
+        )
+
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    conflicts = restarted.list_conflicts(logical_key="wallet-consumer")
+
+    assert len(conflicts) == 1
+    assert conflicts[0]["conflict_class"] == "wallet_identity_binding"
 
 
 def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:

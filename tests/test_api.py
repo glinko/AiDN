@@ -6,6 +6,7 @@ import zipfile
 
 from fastapi.testclient import TestClient
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+import pytest
 
 import aidn_hypervisor.api as api_module
 import dashboard_seed_preview
@@ -1449,6 +1450,94 @@ def test_wallet_identity_endpoint_resolves_registry_backed_identity() -> None:
     assert response.json()["wallet_id"] == "wallet-consumer"
     assert response.json()["public_key"] == public_key
     assert response.json()["identity_source"] == "registry_object"
+
+
+def test_operator_registry_conflicts_endpoint_lists_wallet_identity_conflicts() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    registry = RegistryService()
+    client = TestClient(build_app(service=service, registry_service=registry))
+
+    node_a = RegistryNodeAdvertisement(
+        node_id="node-a",
+        operator_id="operator-a",
+        base_url="https://node-a.example",
+        heartbeat_at="2026-07-05T14:00:00+00:00",
+        heartbeat_ttl_seconds=30,
+        resources={
+            "total": {"cpu": 8.0, "ram_mb": 16384, "vram_mb": 8192},
+            "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+            "free": {"cpu": 6.0, "ram_mb": 12000, "vram_mb": 6144},
+        },
+        providers=["llama.cpp"],
+        can_host_custom_model=True,
+        pricing={
+            "unit": "q_per_1kk_tokens",
+            "input": 12,
+            "output": 18,
+            "fixed_request": None,
+        },
+        rating={
+            "score": 0.91,
+            "tier": "A",
+            "updated_at": "2026-07-05T13:55:00+00:00",
+        },
+        bundles=[],
+        canonical_registry_objects=[
+            {
+                "object_id": "sha256:wallet:consumer:a",
+                "object_type": "wallet_identity",
+                "object_version": "wallet-identity.v1",
+                "namespace": "identity",
+                "payload_hash": "sha256:wallet-payload:a",
+                "payload_encoding": "canonical_json",
+                "source_reference": "wallet-consumer",
+                "payload": {
+                    "wallet_id": "wallet-consumer",
+                    "public_key": "ed25519:" + "11" * 32,
+                    "registration_nonce": "nonce-a",
+                },
+            }
+        ],
+    )
+    node_b = node_a.model_copy(
+        update={
+            "node_id": "node-b",
+            "operator_id": "operator-b",
+            "base_url": "https://node-b.example",
+            "canonical_registry_objects": [
+                {
+                    "object_id": "sha256:wallet:consumer:b",
+                    "object_type": "wallet_identity",
+                    "object_version": "wallet-identity.v1",
+                    "namespace": "identity",
+                    "payload_hash": "sha256:wallet-payload:b",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": "wallet-consumer",
+                    "payload": {
+                        "wallet_id": "wallet-consumer",
+                        "public_key": "ed25519:" + "22" * 32,
+                        "registration_nonce": "nonce-b",
+                    },
+                }
+            ],
+        }
+    )
+
+    registry.upsert_node(node_a)
+    with pytest.raises(ValueError, match="wallet-consumer"):
+        registry.upsert_node(node_b)
+
+    response = client.get(
+        "/operators/registry/conflicts",
+        params={
+            "conflict_class": "wallet_identity_binding",
+            "logical_key": "wallet-consumer",
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["conflicts"]) == 1
+    assert response.json()["conflicts"][0]["logical_key"] == "wallet-consumer"
 
 
 def test_operator_registry_object_endpoint_returns_object_by_id() -> None:

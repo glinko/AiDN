@@ -70,4 +70,20 @@ def build_registry_router(service: RegistryService) -> APIRouter:
         )
         return service.discover(query)
 
+    @router.get("/registry/conflicts")
+    async def list_conflicts(
+        conflict_class: str | None = None,
+        object_type: str | None = None,
+        logical_key: str | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return {
+            "conflicts": service.list_conflicts(
+                conflict_class=conflict_class,
+                object_type=object_type,
+                logical_key=logical_key,
+                limit=limit,
+            )
+        }
+
     return router

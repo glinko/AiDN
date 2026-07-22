@@ -1,10 +1,12 @@
 from copy import deepcopy
 from datetime import UTC, datetime
+import hashlib
 import json
 from pathlib import Path
 import time
 
 from aidn_hypervisor.registry_models import (
+    RegistryConflictEvidence,
     RegistryCompletenessIssue,
     RegistryCompletenessIntegrity,
     RegistryCompletenessTotals,
@@ -40,6 +42,7 @@ class RegistryService:
         self.stale_grace_seconds = stale_grace_seconds
         self._nodes: dict[str, dict] = {}
         self._registry_objects: dict[str, dict] = {}
+        self._conflicts: dict[str, dict] = {}
         self._snapshot_path = Path(snapshot_path) if snapshot_path is not None else None
         self._load_registry_object_snapshot()
 
@@ -53,6 +56,26 @@ class RegistryService:
 
     def list_nodes(self) -> list[dict]:
         return [self.get_node(node_id) for node_id in sorted(self._nodes)]
+
+    def list_conflicts(
+        self,
+        *,
+        conflict_class: str | None = None,
+        object_type: str | None = None,
+        logical_key: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        items = []
+        for conflict_id in sorted(self._conflicts):
+            item = deepcopy(self._conflicts[conflict_id])
+            if conflict_class is not None and item.get("conflict_class") != conflict_class:
+                continue
+            if object_type is not None and item.get("object_type") != object_type:
+                continue
+            if logical_key is not None and item.get("logical_key") != logical_key:
+                continue
+            items.append(item)
+        return items[:limit]
 
     def get_node(self, node_id: str) -> dict:
         record = deepcopy(self._nodes[node_id])
@@ -564,6 +587,46 @@ class RegistryService:
             return True
         return False
 
+    def _record_conflict_evidence(
+        self,
+        *,
+        conflict_class: str,
+        object_type: str,
+        namespace: str,
+        logical_key: str,
+        existing_record: dict,
+        conflicting_record: dict,
+    ) -> None:
+        conflict_payload = {
+            "conflict_class": conflict_class,
+            "object_type": object_type,
+            "namespace": namespace,
+            "logical_key": logical_key,
+            "existing_object_id": existing_record.get("object_id"),
+            "existing_payload_hash": existing_record.get("payload_hash"),
+            "conflicting_object_id": conflicting_record.get("object_id"),
+            "conflicting_payload_hash": conflicting_record.get("payload_hash"),
+        }
+        encoded = json.dumps(
+            conflict_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        conflict_id = f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+        if conflict_id in self._conflicts:
+            return
+        self._conflicts[conflict_id] = RegistryConflictEvidence(
+            conflict_id=conflict_id,
+            conflict_class=conflict_class,
+            object_type=object_type,
+            namespace=namespace,
+            logical_key=logical_key,
+            existing_record=deepcopy(existing_record),
+            conflicting_record=deepcopy(conflicting_record),
+            observed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        ).model_dump(mode="json")
+        self._persist_registry_object_snapshot()
+
     def _wallet_identity_matches(self, wallet_id: str) -> list[dict]:
         matches: list[dict] = []
         for object_id in sorted(self._registry_objects):
@@ -601,10 +664,37 @@ class RegistryService:
         *,
         exclude_node_id: str | None = None,
     ) -> None:
+        seen_by_wallet: dict[str, dict] = {}
         for record in records:
             wallet_id = self._wallet_identity_record_key(record)
             if wallet_id is None:
                 continue
+            candidate = deepcopy(record)
+            if exclude_node_id is not None:
+                candidate["_source"] = {
+                    "node_id": exclude_node_id,
+                    "operator_id": None,
+                    "status": "pending",
+                }
+            existing_seen = seen_by_wallet.get(wallet_id)
+            if existing_seen is not None:
+                if (
+                    existing_seen.get("payload_hash") != candidate.get("payload_hash")
+                    or existing_seen.get("object_id") != candidate.get("object_id")
+                ):
+                    self._record_conflict_evidence(
+                        conflict_class="wallet_identity_binding",
+                        object_type="wallet_identity",
+                        namespace="identity",
+                        logical_key=wallet_id,
+                        existing_record=existing_seen,
+                        conflicting_record=candidate,
+                    )
+                    raise ValueError(
+                        f"Conflicting wallet identity objects found for {wallet_id}"
+                    )
+            else:
+                seen_by_wallet[wallet_id] = candidate
             payload_hash = record.get("payload_hash")
             object_id = record.get("object_id")
             for existing in self._wallet_identity_matches(wallet_id):
@@ -615,6 +705,14 @@ class RegistryService:
                     existing.get("payload_hash") != payload_hash
                     or existing.get("object_id") != object_id
                 ):
+                    self._record_conflict_evidence(
+                        conflict_class="wallet_identity_binding",
+                        object_type="wallet_identity",
+                        namespace="identity",
+                        logical_key=wallet_id,
+                        existing_record=existing,
+                        conflicting_record=candidate,
+                    )
                     raise ValueError(
                         f"Conflicting wallet identity objects found for {wallet_id}"
                     )
@@ -641,6 +739,10 @@ class RegistryService:
         if not isinstance(objects, list):
             raise ValueError("Registry object snapshot must contain an objects list")
 
+        conflicts = snapshot.get("conflicts", [])
+        if not isinstance(conflicts, list):
+            raise ValueError("Registry object snapshot conflicts must be a list")
+
         for index, record in enumerate(objects):
             if not isinstance(record, dict):
                 raise ValueError(
@@ -652,6 +754,13 @@ class RegistryService:
                 raise ValueError(
                     f"Registry object snapshot contains invalid object entry at index {index}"
                 ) from exc
+        for index, conflict in enumerate(conflicts):
+            if not isinstance(conflict, dict):
+                raise ValueError(
+                    f"Registry object snapshot contains invalid conflict entry at index {index}"
+                )
+            model = RegistryConflictEvidence.model_validate(conflict)
+            self._conflicts[model.conflict_id] = model.model_dump(mode="json")
 
     def _persist_registry_object_snapshot(self) -> None:
         if self._snapshot_path is None:
@@ -662,6 +771,10 @@ class RegistryService:
             "objects": [
                 deepcopy(self._registry_objects[object_id])
                 for object_id in sorted(self._registry_objects)
+            ],
+            "conflicts": [
+                deepcopy(self._conflicts[conflict_id])
+                for conflict_id in sorted(self._conflicts)
             ],
         }
         temp_path = self._snapshot_path.with_suffix(self._snapshot_path.suffix + ".tmp")

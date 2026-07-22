@@ -139,6 +139,18 @@ class RegistryObjectQuery(BaseModel):
     limit: int = Field(default=50, ge=1, le=500)
 
 
+class RegistryConflictEvidence(BaseModel):
+    conflict_id: str
+    conflict_class: str
+    object_type: str
+    namespace: str
+    logical_key: str
+    existing_record: dict
+    conflicting_record: dict
+    observed_at: str
+    status: str = "open"
+
+
 class RegistryCompletenessIssue(BaseModel):
     code: str
     object_id: str | None = None
