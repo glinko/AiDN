@@ -23,6 +23,7 @@ class OpenMvpFixedPriceSessionRequest(BaseModel):
     fixed_price_q_atoms: int = Field(ge=0)
     network_fee_reserve_q_atoms: int = Field(default=0, ge=0)
     consumer_authorization_public_key: str | None = None
+    consumer_authorization: dict | None = None
 
 
 class FinalizeMvpFixedPriceSessionRequest(BaseModel):
@@ -359,6 +360,7 @@ def build_endpoint_router(
                 network_fee_reserve_q_atoms=request.network_fee_reserve_q_atoms,
                 accounting_contract=accounting_contract,
                 consumer_authorization_public_key=request.consumer_authorization_public_key,
+                consumer_authorization=request.consumer_authorization,
             )
         except ValueError as error:
             return _error(409, "mvp_session_open_rejected", str(error))

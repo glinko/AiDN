@@ -451,6 +451,7 @@ class HypervisorStateSnapshot(BaseModel):
     epoch_reward_budgets: list[EpochRewardBudget] = Field(default_factory=list)
     owner_wallet: OwnerWalletSnapshot | None = None
     wallet_identities: list[dict] = Field(default_factory=list)
+    consumed_wallet_authorization_nonces: list[str] = Field(default_factory=list)
     operator_onboarding: OperatorOnboardingSnapshot | None = None
     endpoints: list[EndpointManifestSnapshot] = Field(default_factory=list)
     endpoint_configuration_snapshots: list[EndpointConfigurationSnapshotRecord] = Field(

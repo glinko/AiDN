@@ -256,6 +256,7 @@ class HypervisorService:
         self._operator_requests_policy = dict(_DEFAULT_OPERATOR_REQUESTS_POLICY)
         self._owner_wallet: dict | None = None
         self._wallet_identities: dict[str, dict] = {}
+        self._consumed_wallet_authorization_nonces: set[str] = set()
         self._operator_onboarding: dict | None = None
         self._runtime_reservations: set[str] = set()
         self._bundle_states: dict[str, dict] = {}
@@ -488,6 +489,7 @@ class HypervisorService:
         network_fee_reserve_q_atoms: int = 0,
         accounting_contract: dict | None = None,
         consumer_authorization_public_key: str | None = None,
+        consumer_authorization: dict | None = None,
     ):
         if deposit_q_atoms <= 0:
             raise ValueError("MVP Session deposit must be positive")
@@ -498,6 +500,28 @@ class HypervisorService:
             raise ValueError("MVP Session deposit cannot cover fixed price")
         if self.wallet_q_atom_balance(client_wallet) < deposit_q_atoms:
             raise ValueError("insufficient q_atoms for MVP Session escrow")
+        if consumer_authorization is not None:
+            from aidn_hypervisor.wallet_identity import verify_session_open_authorization
+
+            identity = self.wallet_identity(client_wallet)
+            if identity is None:
+                raise ValueError("Consumer wallet identity is not registered")
+            nonce = str(consumer_authorization.get("nonce") or "")
+            if not nonce or nonce in self._consumed_wallet_authorization_nonces:
+                raise ValueError("Session-open authorization nonce was already consumed")
+            verify_session_open_authorization(
+                public_key=identity["public_key"],
+                signature=str(consumer_authorization.get("signature") or ""),
+                wallet_id=client_wallet,
+                endpoint_id=endpoint.endpoint_id,
+                endpoint_configuration_hash=endpoint.configuration_hash,
+                deposit_q_atoms=deposit_q_atoms,
+                fixed_price_q_atoms=fixed_price_q_atoms,
+                network_fee_reserve_q_atoms=network_fee_reserve_q_atoms,
+                nonce=nonce,
+                expires_at=str(consumer_authorization.get("expires_at") or ""),
+            )
+            consumer_authorization_public_key = identity["public_key"]
 
         result = session_service.open_session(
             endpoint_id=endpoint.endpoint_id,
@@ -534,6 +558,10 @@ class HypervisorService:
         except Exception:
             session_service.store.discard_open_session(result.session.session_id)
             raise
+        if consumer_authorization is not None:
+            self._consumed_wallet_authorization_nonces.add(
+                str(consumer_authorization["nonce"])
+            )
         session = session_service.bind_canonical_funding(
             result.session.session_id,
             funding_state_hash=str(locked.funding_state_hash),
@@ -3695,6 +3723,7 @@ class HypervisorService:
                 )
             ),
             wallet_identities=list(self._wallet_identities.values()),
+            consumed_wallet_authorization_nonces=sorted(self._consumed_wallet_authorization_nonces),
             endpoint_configuration_snapshots=(
                 [
                     EndpointConfigurationSnapshotRecord.model_validate(
@@ -3815,6 +3844,7 @@ class HypervisorService:
             settlement_transition_hashes=dict(snapshot.settlement_transition_hashes),
         )
         self._wallet_identities = {item["wallet_id"]: dict(item) for item in snapshot.wallet_identities}
+        self._consumed_wallet_authorization_nonces = set(snapshot.consumed_wallet_authorization_nonces)
         self._bundle_states = {
             state.bundle_id: state.model_dump(mode="json")
             for state in snapshot.bundle_states
