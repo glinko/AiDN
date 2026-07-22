@@ -114,9 +114,12 @@ Implemented now:
   and makes subsequent wallet resolution use the selected binding through a
   stable local override instead of whichever peer last happened to answer.
 - The Registry now also supports a bounded network-resolution workflow:
-  operators can create a quorum proposal for one `wallet_id`, constrain the
-  eligible voter node set, collect peer approvals and automatically finalize
-  the same local canonical resolution once the configured threshold is met.
+  operators can create a quorum proposal for one `wallet_id`, and the service
+  now derives the authoritative voter node set from the live Registry source
+  nodes currently advertising the chosen binding. Requested voter lists must
+  match that authoritative set, peer approvals are collected under the same
+  policy, and the same local canonical resolution is finalized automatically
+  once the configured threshold is met.
 - Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
   registered Consumer wallet identity, a signed Session-open/funding
   authorization bound to the Endpoint configuration, a currently published
@@ -150,5 +153,8 @@ Still required before public paid-MVP launch:
    conflict resolution, quorum-backed resolution proposals and replicated
    quorum state objects now exist. Proposal and approval votes now require
    Ed25519 signatures verified against the registered wallet identity bound to
-   each voting node's `operator_id`, but a stricter authoritative network
-   policy still remains.
+   each voting node's `operator_id`, and quorum admission now derives the
+   authoritative voter set from the source nodes currently advertising the
+   chosen binding. What still remains is a stricter ownership policy for how
+   `operator_id`, owner-wallet control and future network authority are linked
+   across nodes.

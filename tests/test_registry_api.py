@@ -608,26 +608,31 @@ def test_registry_wallet_identity_quorum_proposal_endpoints_finalize_after_quoru
     service = RegistryService()
     operator_a = _operator_signing_identity("node-a")
     operator_b = _operator_signing_identity("node-b")
-    service.upsert_node(RegistryNodeAdvertisement(**_node_payload("node-a")))
-    service.upsert_node(RegistryNodeAdvertisement(**_node_payload("node-b")))
+    consumer_object = {
+        "object_id": "sha256:wallet:consumer:a",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": "sha256:wallet-payload:a",
+        "payload_encoding": "canonical_json",
+        "source_reference": "wallet-consumer",
+        "payload": {
+            "wallet_id": "wallet-consumer",
+            "public_key": "ed25519:" + "11" * 32,
+            "registration_nonce": "nonce-a",
+        },
+    }
+    node_a = _node_payload("node-a")
+    node_a["heartbeat_at"] = "2030-01-01T00:00:00+00:00"
+    node_a["canonical_registry_objects"] = [consumer_object]
+    node_b = _node_payload("node-b")
+    node_b["heartbeat_at"] = "2030-01-01T00:00:00+00:00"
+    node_b["canonical_registry_objects"] = [consumer_object]
+    service.upsert_node(RegistryNodeAdvertisement(**node_a))
+    service.upsert_node(RegistryNodeAdvertisement(**node_b))
     service.upsert_registry_object(operator_a["object"])
     service.upsert_registry_object(operator_b["object"])
-    service.upsert_registry_object(
-        {
-            "object_id": "sha256:wallet:consumer:a",
-            "object_type": "wallet_identity",
-            "object_version": "wallet-identity.v1",
-            "namespace": "identity",
-            "payload_hash": "sha256:wallet-payload:a",
-            "payload_encoding": "canonical_json",
-            "source_reference": "wallet-consumer",
-            "payload": {
-                "wallet_id": "wallet-consumer",
-                "public_key": "ed25519:" + "11" * 32,
-                "registration_nonce": "nonce-a",
-            },
-        }
-    )
+    service.upsert_registry_object(consumer_object)
     client = TestClient(build_registry_app(service=service))
 
     proposed = client.post(
@@ -641,11 +646,11 @@ def test_registry_wallet_identity_quorum_proposal_endpoints_finalize_after_quoru
                 wallet_id="wallet-consumer",
                 chosen_object_id="sha256:wallet:consumer:a",
                 chosen_payload_hash="sha256:wallet-payload:a",
-                eligible_voter_node_ids=["node-a", "node-b", "node-c"],
+                eligible_voter_node_ids=["node-a", "node-b"],
                 quorum_threshold=2,
                 operator_note="network quorum proposal",
             ),
-            "eligible_voter_node_ids": ["node-a", "node-b", "node-c"],
+            "eligible_voter_node_ids": ["node-a", "node-b"],
             "quorum_threshold": 2,
             "operator_note": "network quorum proposal",
         },
@@ -653,6 +658,7 @@ def test_registry_wallet_identity_quorum_proposal_endpoints_finalize_after_quoru
 
     assert proposed.status_code == 200
     assert proposed.json()["status"] == "pending"
+    assert proposed.json()["eligible_voter_node_ids"] == ["node-a", "node-b"]
     resolution_id = proposed.json()["resolution_id"]
 
     approved = client.post(
@@ -680,24 +686,26 @@ def test_registry_wallet_identity_quorum_proposal_endpoint_rejects_missing_signa
 ) -> None:
     service = RegistryService()
     operator_a = _operator_signing_identity("node-a")
-    service.upsert_node(RegistryNodeAdvertisement(**_node_payload("node-a")))
+    consumer_object = {
+        "object_id": "sha256:wallet:consumer:a",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": "sha256:wallet-payload:a",
+        "payload_encoding": "canonical_json",
+        "source_reference": "wallet-consumer",
+        "payload": {
+            "wallet_id": "wallet-consumer",
+            "public_key": "ed25519:" + "11" * 32,
+            "registration_nonce": "nonce-a",
+        },
+    }
+    node_a = _node_payload("node-a")
+    node_a["heartbeat_at"] = "2030-01-01T00:00:00+00:00"
+    node_a["canonical_registry_objects"] = [consumer_object]
+    service.upsert_node(RegistryNodeAdvertisement(**node_a))
     service.upsert_registry_object(operator_a["object"])
-    service.upsert_registry_object(
-        {
-            "object_id": "sha256:wallet:consumer:a",
-            "object_type": "wallet_identity",
-            "object_version": "wallet-identity.v1",
-            "namespace": "identity",
-            "payload_hash": "sha256:wallet-payload:a",
-            "payload_encoding": "canonical_json",
-            "source_reference": "wallet-consumer",
-            "payload": {
-                "wallet_id": "wallet-consumer",
-                "public_key": "ed25519:" + "11" * 32,
-                "registration_nonce": "nonce-a",
-            },
-        }
-    )
+    service.upsert_registry_object(consumer_object)
     client = TestClient(build_registry_app(service=service))
 
     proposed = client.post(
@@ -714,6 +722,63 @@ def test_registry_wallet_identity_quorum_proposal_endpoint_rejects_missing_signa
 
     assert proposed.status_code == 409
     assert "requires proposer_signature" in proposed.json()["detail"]
+
+
+def test_registry_wallet_identity_quorum_proposal_endpoint_rejects_non_authoritative_voter_set(
+) -> None:
+    service = RegistryService()
+    operator_a = _operator_signing_identity("node-a")
+    operator_b = _operator_signing_identity("node-b")
+    consumer_object = {
+        "object_id": "sha256:wallet:consumer:a",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": "sha256:wallet-payload:a",
+        "payload_encoding": "canonical_json",
+        "source_reference": "wallet-consumer",
+        "payload": {
+            "wallet_id": "wallet-consumer",
+            "public_key": "ed25519:" + "11" * 32,
+            "registration_nonce": "nonce-a",
+        },
+    }
+    node_a = _node_payload("node-a")
+    node_a["heartbeat_at"] = "2030-01-01T00:00:00+00:00"
+    node_a["canonical_registry_objects"] = [consumer_object]
+    node_b = _node_payload("node-b")
+    node_b["heartbeat_at"] = "2030-01-01T00:00:00+00:00"
+    node_b["canonical_registry_objects"] = [consumer_object]
+    service.upsert_node(RegistryNodeAdvertisement(**node_a))
+    service.upsert_node(RegistryNodeAdvertisement(**node_b))
+    service.upsert_registry_object(operator_a["object"])
+    service.upsert_registry_object(operator_b["object"])
+    service.upsert_registry_object(consumer_object)
+    client = TestClient(build_registry_app(service=service))
+
+    proposed = client.post(
+        "/registry/wallet-identities/quorum-proposals",
+        json={
+            "wallet_id": "wallet-consumer",
+            "chosen_object_id": "sha256:wallet:consumer:a",
+            "proposer_node_id": "node-a",
+            "proposer_signature": _sign_quorum_proposal(
+                operator_a,
+                wallet_id="wallet-consumer",
+                chosen_object_id="sha256:wallet:consumer:a",
+                chosen_payload_hash="sha256:wallet-payload:a",
+                eligible_voter_node_ids=["node-a", "node-b", "node-c"],
+                quorum_threshold=2,
+                operator_note="oversized voter set",
+            ),
+            "eligible_voter_node_ids": ["node-a", "node-b", "node-c"],
+            "quorum_threshold": 2,
+            "operator_note": "oversized voter set",
+        },
+    )
+
+    assert proposed.status_code == 409
+    assert "authoritative wallet identity voter set" in proposed.json()["detail"]
 
 
 def test_registry_discovery_endpoint_filters_by_workload_and_model(monkeypatch) -> None:

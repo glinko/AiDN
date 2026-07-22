@@ -172,13 +172,24 @@ class RegistryService:
             chosen_object_id=chosen_object_id,
             chosen_payload_hash=chosen_payload_hash,
         )
-        voters = self._normalize_wallet_identity_voters(
-            wallet_id=wallet_id,
-            proposer_node_id=proposer_node_id,
+        requested_voters = self._normalize_requested_wallet_identity_voters(
             eligible_voter_node_ids=eligible_voter_node_ids,
         )
+        authoritative_voters = self._authoritative_wallet_identity_voters(
+            wallet_id=wallet_id,
+            chosen_object_id=str(selected["object_id"]),
+            chosen_payload_hash=str(selected["payload_hash"]),
+        )
+        if proposer_node_id not in authoritative_voters:
+            raise ValueError(
+                f"Proposer {proposer_node_id} is not authoritative for wallet identity resolution {wallet_id}"
+            )
+        if requested_voters and requested_voters != authoritative_voters:
+            raise ValueError(
+                "Requested eligible voters do not match the authoritative wallet identity voter set"
+            )
         threshold = self._wallet_identity_quorum_threshold(
-            eligible_voter_node_ids=voters,
+            eligible_voter_node_ids=authoritative_voters,
             quorum_threshold=quorum_threshold,
         )
         self._verify_wallet_identity_quorum_proposal_signature(
@@ -187,7 +198,7 @@ class RegistryService:
             chosen_payload_hash=str(selected["payload_hash"]),
             proposer_node_id=proposer_node_id,
             proposer_signature=proposer_signature,
-            eligible_voter_node_ids=voters,
+            eligible_voter_node_ids=authoritative_voters,
             quorum_threshold=threshold,
             operator_note=operator_note,
         )
@@ -195,7 +206,7 @@ class RegistryService:
             "wallet_id": wallet_id,
             "chosen_object_id": str(selected["object_id"]),
             "chosen_payload_hash": str(selected["payload_hash"]),
-            "eligible_voter_node_ids": voters,
+            "eligible_voter_node_ids": authoritative_voters,
             "quorum_threshold": threshold,
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
@@ -214,7 +225,9 @@ class RegistryService:
                 "registration_nonce": selected.get("payload", {}).get(
                     "registration_nonce"
                 ),
-                "eligible_voter_node_ids": voters,
+                "requested_voter_node_ids": requested_voters,
+                "eligible_voter_node_ids": authoritative_voters,
+                "voter_policy": "wallet_identity_source_nodes.v1",
                 "quorum_threshold": threshold,
                 "status": "pending",
                 "operator_note": operator_note,
@@ -1296,11 +1309,9 @@ class RegistryService:
             )
         return next(iter(unique_candidates.values()))
 
-    def _normalize_wallet_identity_voters(
+    def _normalize_requested_wallet_identity_voters(
         self,
         *,
-        wallet_id: str,
-        proposer_node_id: str,
         eligible_voter_node_ids: list[str] | None,
     ) -> list[str]:
         if eligible_voter_node_ids:
@@ -1310,13 +1321,37 @@ class RegistryService:
                 if str(item).strip()
             }
         else:
-            voters = {
-                str(item.get("_source", {}).get("node_id")).strip()
-                for item in self._wallet_identity_matches(wallet_id)
-                if item.get("_source", {}).get("node_id") is not None
-                and str(item.get("_source", {}).get("node_id")).strip()
-            }
-        voters.add(proposer_node_id.strip())
+            voters = set()
+        return sorted(voters)
+
+    def _authoritative_wallet_identity_voters(
+        self,
+        *,
+        wallet_id: str,
+        chosen_object_id: str,
+        chosen_payload_hash: str,
+    ) -> list[str]:
+        voters: set[str] = set()
+        for item in self._wallet_identity_matches(wallet_id):
+            if item.get("object_id") != chosen_object_id:
+                continue
+            if item.get("payload_hash") != chosen_payload_hash:
+                continue
+            source = item.get("_source", {})
+            node_id = str(source.get("node_id") or "").strip()
+            if not node_id:
+                continue
+            if source.get("status") not in {"ready", "stale"}:
+                continue
+            try:
+                self._wallet_identity_operator_identity_for_node(node_id=node_id)
+            except ValueError:
+                continue
+            voters.add(node_id)
+        if not voters:
+            raise ValueError(
+                f"Wallet identity resolution for {wallet_id} has no authoritative voter nodes"
+            )
         return sorted(voters)
 
     def _wallet_identity_quorum_threshold(
@@ -1502,7 +1537,9 @@ class RegistryService:
             "chosen_payload_hash": proposal["chosen_payload_hash"],
             "public_key": proposal.get("public_key"),
             "registration_nonce": proposal.get("registration_nonce"),
+            "requested_voter_node_ids": list(proposal.get("requested_voter_node_ids") or []),
             "eligible_voter_node_ids": list(proposal.get("eligible_voter_node_ids") or []),
+            "voter_policy": proposal.get("voter_policy"),
             "quorum_threshold": proposal.get("quorum_threshold"),
             "status": proposal.get("status"),
             "operator_note": proposal.get("operator_note"),
@@ -1575,7 +1612,9 @@ class RegistryService:
             "chosen_payload_hash": payload.get("chosen_payload_hash"),
             "public_key": payload.get("public_key"),
             "registration_nonce": payload.get("registration_nonce"),
+            "requested_voter_node_ids": list(payload.get("requested_voter_node_ids") or []),
             "eligible_voter_node_ids": list(payload.get("eligible_voter_node_ids") or []),
+            "voter_policy": payload.get("voter_policy"),
             "quorum_threshold": payload.get("quorum_threshold"),
             "status": payload.get("status") or existing.get("status") or "pending",
             "operator_note": payload.get("operator_note"),

@@ -1789,26 +1789,31 @@ def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quo
     registry = RegistryService()
     operator_a = _operator_registry_identity("node-a")
     operator_b = _operator_registry_identity("node-b")
-    registry.upsert_node(RegistryNodeAdvertisement(**_registry_node_payload("node-a")))
-    registry.upsert_node(RegistryNodeAdvertisement(**_registry_node_payload("node-b")))
+    consumer_object = {
+        "object_id": "sha256:wallet:consumer:a",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": "sha256:wallet-payload:a",
+        "payload_encoding": "canonical_json",
+        "source_reference": "wallet-consumer",
+        "payload": {
+            "wallet_id": "wallet-consumer",
+            "public_key": "ed25519:" + "11" * 32,
+            "registration_nonce": "nonce-a",
+        },
+    }
+    node_a = _registry_node_payload("node-a")
+    node_a["heartbeat_at"] = "2030-01-01T00:00:00+00:00"
+    node_a["canonical_registry_objects"] = [consumer_object]
+    node_b = _registry_node_payload("node-b")
+    node_b["heartbeat_at"] = "2030-01-01T00:00:00+00:00"
+    node_b["canonical_registry_objects"] = [consumer_object]
+    registry.upsert_node(RegistryNodeAdvertisement(**node_a))
+    registry.upsert_node(RegistryNodeAdvertisement(**node_b))
     registry.upsert_registry_object(operator_a["object"])
     registry.upsert_registry_object(operator_b["object"])
-    registry.upsert_registry_object(
-        {
-            "object_id": "sha256:wallet:consumer:a",
-            "object_type": "wallet_identity",
-            "object_version": "wallet-identity.v1",
-            "namespace": "identity",
-            "payload_hash": "sha256:wallet-payload:a",
-            "payload_encoding": "canonical_json",
-            "source_reference": "wallet-consumer",
-            "payload": {
-                "wallet_id": "wallet-consumer",
-                "public_key": "ed25519:" + "11" * 32,
-                "registration_nonce": "nonce-a",
-            },
-        }
-    )
+    registry.upsert_registry_object(consumer_object)
     client = TestClient(build_app(service=service, registry_service=registry))
 
     proposed = client.post(
@@ -1822,11 +1827,11 @@ def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quo
                 wallet_id="wallet-consumer",
                 chosen_object_id="sha256:wallet:consumer:a",
                 chosen_payload_hash="sha256:wallet-payload:a",
-                eligible_voter_node_ids=["node-a", "node-b", "node-c"],
+                eligible_voter_node_ids=["node-a", "node-b"],
                 quorum_threshold=2,
                 operator_note="network quorum proposal",
             ),
-            "eligible_voter_node_ids": ["node-a", "node-b", "node-c"],
+            "eligible_voter_node_ids": ["node-a", "node-b"],
             "quorum_threshold": 2,
             "operator_note": "network quorum proposal",
         },
@@ -1834,6 +1839,7 @@ def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quo
 
     assert proposed.status_code == 200
     assert proposed.json()["status"] == "pending"
+    assert proposed.json()["eligible_voter_node_ids"] == ["node-a", "node-b"]
     resolution_id = proposed.json()["resolution_id"]
 
     approved = client.post(
