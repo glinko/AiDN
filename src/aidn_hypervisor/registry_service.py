@@ -46,6 +46,7 @@ class RegistryService:
         self._registry_objects: dict[str, dict] = {}
         self._conflicts: dict[str, dict] = {}
         self._wallet_identity_peers: dict[str, dict] = {}
+        self._wallet_identity_resolutions: dict[str, dict] = {}
         self._snapshot_path = Path(snapshot_path) if snapshot_path is not None else None
         self._load_registry_object_snapshot()
 
@@ -119,6 +120,95 @@ class RegistryService:
             deepcopy(self._wallet_identity_peers[peer_base_url])
             for peer_base_url in sorted(self._wallet_identity_peers)
         ]
+
+    def list_wallet_identity_resolutions(self) -> list[dict]:
+        return [
+            deepcopy(self._wallet_identity_resolutions[wallet_id])
+            for wallet_id in sorted(self._wallet_identity_resolutions)
+        ]
+
+    def resolve_wallet_identity_conflict(
+        self,
+        *,
+        wallet_id: str,
+        chosen_object_id: str | None = None,
+        chosen_payload_hash: str | None = None,
+        operator_note: str | None = None,
+    ) -> dict:
+        if chosen_object_id is None and chosen_payload_hash is None:
+            raise ValueError(
+                "chosen_object_id or chosen_payload_hash must be provided"
+            )
+        matches = self._wallet_identity_matches(wallet_id)
+        if not matches:
+            raise KeyError(wallet_id)
+        candidates = []
+        for item in matches:
+            if chosen_object_id is not None and item.get("object_id") != chosen_object_id:
+                continue
+            if (
+                chosen_payload_hash is not None
+                and item.get("payload_hash") != chosen_payload_hash
+            ):
+                continue
+            candidates.append(deepcopy(item))
+        unique_candidates = {
+            (
+                str(item.get("object_id")),
+                str(item.get("payload_hash")),
+            ): item
+            for item in candidates
+        }
+        if not unique_candidates:
+            raise ValueError(
+                f"No wallet identity candidate matched resolution for {wallet_id}"
+            )
+        if len(unique_candidates) > 1:
+            raise ValueError(
+                f"Resolution for {wallet_id} matched multiple wallet identity candidates"
+            )
+        selected = next(iter(unique_candidates.values()))
+        selected_record = deepcopy(selected)
+        selected_record.pop("_source", None)
+        self.upsert_registry_object(selected_record)
+        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        payload = deepcopy(selected_record.get("payload") or {})
+        resolution = {
+            "wallet_id": wallet_id,
+            "chosen_object_id": str(selected_record["object_id"]),
+            "chosen_payload_hash": str(selected_record["payload_hash"]),
+            "public_key": payload.get("public_key"),
+            "registration_nonce": payload.get("registration_nonce"),
+            "resolved_at": now,
+            "operator_note": operator_note,
+            "source_nodes": sorted(
+                {
+                    str(item.get("_source", {}).get("node_id"))
+                    for item in matches
+                    if item.get("_source", {}).get("node_id") is not None
+                    and item.get("object_id") == selected_record["object_id"]
+                    and item.get("payload_hash") == selected_record["payload_hash"]
+                }
+            ),
+        }
+        self._wallet_identity_resolutions[wallet_id] = resolution
+        for conflict_id in sorted(self._conflicts):
+            conflict = self._conflicts[conflict_id]
+            if (
+                conflict.get("conflict_class") == "wallet_identity_binding"
+                and conflict.get("object_type") == "wallet_identity"
+                and conflict.get("logical_key") == wallet_id
+            ):
+                conflict["status"] = "resolved"
+                conflict["resolved_at"] = now
+                conflict["resolution_note"] = operator_note
+                conflict["resolution_payload"] = {
+                    "wallet_id": wallet_id,
+                    "chosen_object_id": resolution["chosen_object_id"],
+                    "chosen_payload_hash": resolution["chosen_payload_hash"],
+                }
+        self._persist_registry_object_snapshot()
+        return deepcopy(resolution)
 
     def discover_wallet_identity_peers_from_nodes(
         self,
@@ -355,6 +445,10 @@ class RegistryService:
         items: list[dict] = []
         all_wallet_ids = sorted(set(grouped) | set(conflicts_by_wallet))
         peer_items = self.list_wallet_identity_peers()
+        resolution_items = self.list_wallet_identity_resolutions()
+        resolutions_by_wallet = {
+            str(item["wallet_id"]): item for item in resolution_items
+        }
         enabled_peer_count = sum(1 for item in peer_items if item.get("enabled", True))
         peer_error_count = sum(
             1 for item in peer_items if item.get("enabled", True) and item.get("last_sync_status") == "error"
@@ -382,8 +476,11 @@ class RegistryService:
                     if source.get("node_id") is not None
                 }
             )
+            resolution = resolutions_by_wallet.get(wallet_id)
             has_conflict = bool(wallet_conflicts)
-            if has_conflict:
+            if has_conflict and resolution is not None:
+                status = "resolved"
+            elif has_conflict:
                 status = "conflict"
             elif len(payload_hashes) <= 1:
                 status = "consistent"
@@ -400,6 +497,7 @@ class RegistryService:
                     "source_nodes": source_nodes,
                     "conflict_count": len(wallet_conflicts),
                     "conflicts": wallet_conflicts,
+                    "resolution": deepcopy(resolution),
                 }
             )
 
@@ -407,6 +505,7 @@ class RegistryService:
             "wallet_count": len(all_wallet_ids[:limit]),
             "consistent_count": sum(1 for item in items if item["status"] == "consistent"),
             "conflict_count": sum(1 for item in items if item["status"] == "conflict"),
+            "resolved_count": sum(1 for item in items if item["status"] == "resolved"),
             "divergent_count": sum(1 for item in items if item["status"] == "divergent"),
             "enabled_peer_count": enabled_peer_count,
             "peer_error_count": peer_error_count,
@@ -415,6 +514,7 @@ class RegistryService:
         return {
             "summary": summary,
             "known_peers": peer_items,
+            "resolutions": resolution_items,
             "items": items,
         }
 
@@ -639,6 +739,48 @@ class RegistryService:
         matches = self._wallet_identity_matches(wallet_id)
         if not matches:
             return None
+        resolution = self._wallet_identity_resolutions.get(wallet_id)
+        if resolution is not None:
+            for item in matches:
+                if (
+                    item.get("object_id") == resolution.get("chosen_object_id")
+                    and item.get("payload_hash") == resolution.get("chosen_payload_hash")
+                ):
+                    payload = item.get("payload")
+                    if not isinstance(payload, dict):
+                        raise ValueError(
+                            f"Canonical wallet identity object for {wallet_id} has no payload"
+                        )
+                    registry_sources: list[dict] = []
+                    for candidate in sorted(
+                        matches,
+                        key=lambda candidate: (
+                            str(candidate.get("_source", {}).get("node_id") or ""),
+                            str(candidate.get("_source", {}).get("operator_id") or ""),
+                        ),
+                    ):
+                        if (
+                            candidate.get("object_id") != item.get("object_id")
+                            or candidate.get("payload_hash") != item.get("payload_hash")
+                        ):
+                            continue
+                        source = {
+                            "node_id": candidate.get("_source", {}).get("node_id"),
+                            "operator_id": candidate.get("_source", {}).get("operator_id"),
+                            "status": candidate.get("_source", {}).get("status") or "stored",
+                        }
+                        if source not in registry_sources:
+                            registry_sources.append(source)
+                    return {
+                        "wallet_id": str(payload["wallet_id"]),
+                        "public_key": str(payload["public_key"]),
+                        "registration_nonce": str(payload["registration_nonce"]),
+                        "registered_at": None,
+                        "identity_source": "registry_resolution",
+                        "registry_object_id": str(item["object_id"]),
+                        "registry_sources": registry_sources,
+                        "resolution": deepcopy(resolution),
+                    }
         unique_records = {
             (
                 str(item["object_id"]),
@@ -1086,6 +1228,11 @@ class RegistryService:
         wallet_identity_peers = snapshot.get("wallet_identity_peers", [])
         if not isinstance(wallet_identity_peers, list):
             raise ValueError("Registry object snapshot wallet_identity_peers must be a list")
+        wallet_identity_resolutions = snapshot.get("wallet_identity_resolutions", [])
+        if not isinstance(wallet_identity_resolutions, list):
+            raise ValueError(
+                "Registry object snapshot wallet_identity_resolutions must be a list"
+            )
 
         for index, record in enumerate(objects):
             if not isinstance(record, dict):
@@ -1115,6 +1262,19 @@ class RegistryService:
             self._wallet_identity_peers[model.peer_base_url.rstrip("/")] = model.model_dump(
                 mode="json"
             )
+        for index, resolution in enumerate(wallet_identity_resolutions):
+            if not isinstance(resolution, dict):
+                raise ValueError(
+                    "Registry object snapshot contains invalid wallet identity resolution entry "
+                    f"at index {index}"
+                )
+            wallet_id = str(resolution.get("wallet_id") or "").strip()
+            if not wallet_id:
+                raise ValueError(
+                    "Registry object snapshot contains wallet identity resolution without wallet_id "
+                    f"at index {index}"
+                )
+            self._wallet_identity_resolutions[wallet_id] = deepcopy(resolution)
 
     def _persist_registry_object_snapshot(self) -> None:
         if self._snapshot_path is None:
@@ -1133,6 +1293,10 @@ class RegistryService:
             "wallet_identity_peers": [
                 deepcopy(self._wallet_identity_peers[peer_base_url])
                 for peer_base_url in sorted(self._wallet_identity_peers)
+            ],
+            "wallet_identity_resolutions": [
+                deepcopy(self._wallet_identity_resolutions[wallet_id])
+                for wallet_id in sorted(self._wallet_identity_resolutions)
             ],
         }
         temp_path = self._snapshot_path.with_suffix(self._snapshot_path.suffix + ".tmp")

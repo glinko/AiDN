@@ -471,6 +471,59 @@ def test_registry_wallet_identity_reconciliation_endpoint_reports_status(
     assert response.json()["items"][0]["status"] == "consistent"
 
 
+def test_registry_wallet_identity_resolve_conflict_endpoint_applies_resolution() -> None:
+    service = RegistryService()
+    first = {
+        "object_id": "sha256:wallet:consumer:a",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": "sha256:wallet-payload:a",
+        "payload_encoding": "canonical_json",
+        "source_reference": "wallet-consumer",
+        "payload": {
+            "wallet_id": "wallet-consumer",
+            "public_key": "ed25519:" + "11" * 32,
+            "registration_nonce": "nonce-a",
+        },
+    }
+    second = {
+        "object_id": "sha256:wallet:consumer:b",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": "sha256:wallet-payload:b",
+        "payload_encoding": "canonical_json",
+        "source_reference": "wallet-consumer",
+        "payload": {
+            "wallet_id": "wallet-consumer",
+            "public_key": "ed25519:" + "22" * 32,
+            "registration_nonce": "nonce-b",
+        },
+    }
+    service.upsert_registry_object(first)
+    try:
+        service.upsert_registry_object(second)
+    except ValueError:
+        pass
+    client = TestClient(build_registry_app(service=service))
+
+    response = client.post(
+        "/registry/wallet-identities/resolve-conflict",
+        json={
+            "wallet_id": "wallet-consumer",
+            "chosen_object_id": first["object_id"],
+            "operator_note": "prefer original binding",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["chosen_object_id"] == first["object_id"]
+    assert service.resolve_wallet_identity("wallet-consumer")["identity_source"] == (
+        "registry_resolution"
+    )
+
+
 def test_registry_discovery_endpoint_filters_by_workload_and_model(monkeypatch) -> None:
     ready_time = datetime.fromisoformat("2026-06-19T18:30:05+00:00").timestamp()
     monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)

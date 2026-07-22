@@ -149,6 +149,9 @@ class RegistryConflictEvidence(BaseModel):
     conflicting_record: dict
     observed_at: str
     status: str = "open"
+    resolved_at: str | None = None
+    resolution_note: str | None = None
+    resolution_payload: dict | None = None
 
 
 class RegistryWalletIdentitySyncImportRequest(BaseModel):
@@ -181,6 +184,13 @@ class RegistryWalletIdentityPeerDiscoveryRequest(BaseModel):
     auto_register: bool = True
     repair_after_discovery: bool = False
     limit: int = Field(default=500, ge=1, le=5000)
+
+
+class RegistryWalletIdentityResolutionRequest(BaseModel):
+    wallet_id: str = Field(min_length=1)
+    chosen_object_id: str | None = None
+    chosen_payload_hash: str | None = None
+    operator_note: str | None = None
 
 
 class RegistryCompletenessIssue(BaseModel):

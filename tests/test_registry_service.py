@@ -2312,6 +2312,56 @@ def test_registry_service_wallet_identity_reconciliation_report_summarizes_state
     assert consumer["source_nodes"] == ["node-a"]
 
 
+def test_registry_service_resolves_wallet_identity_conflict_with_operator_choice(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
+    monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(snapshot_path=snapshot_path)
+    first = _wallet_identity_object(
+        "wallet-consumer",
+        public_key="ed25519:" + "11" * 32,
+        registration_nonce="nonce-a",
+    )
+    second = _wallet_identity_object(
+        "wallet-consumer",
+        public_key="ed25519:" + "22" * 32,
+        registration_nonce="nonce-b",
+    )
+    service.upsert_registry_object(first)
+    with pytest.raises(ValueError, match="wallet-consumer"):
+        service.upsert_registry_object(second)
+
+    resolution = service.resolve_wallet_identity_conflict(
+        wallet_id="wallet-consumer",
+        chosen_object_id=first["object_id"],
+        operator_note="prefer original binding",
+    )
+
+    assert resolution["wallet_id"] == "wallet-consumer"
+    assert resolution["chosen_object_id"] == first["object_id"]
+    assert resolution["public_key"] == "ed25519:" + "11" * 32
+    resolved = service.resolve_wallet_identity("wallet-consumer")
+    assert resolved is not None
+    assert resolved["identity_source"] == "registry_resolution"
+    assert resolved["public_key"] == "ed25519:" + "11" * 32
+    conflicts = service.list_conflicts(logical_key="wallet-consumer")
+    assert conflicts[0]["status"] == "resolved"
+    assert conflicts[0]["resolution_payload"]["chosen_object_id"] == first["object_id"]
+    report = service.wallet_identity_reconciliation_report()
+    consumer = next(item for item in report["items"] if item["wallet_id"] == "wallet-consumer")
+    assert consumer["status"] == "resolved"
+    assert consumer["resolution"]["chosen_object_id"] == first["object_id"]
+
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    restarted_identity = restarted.resolve_wallet_identity("wallet-consumer")
+    assert restarted_identity is not None
+    assert restarted_identity["identity_source"] == "registry_resolution"
+    assert restarted_identity["public_key"] == "ed25519:" + "11" * 32
+
+
 def test_registry_service_get_node_returns_deep_copied_nested_state() -> None:
     service = RegistryService()
     service.upsert_node(

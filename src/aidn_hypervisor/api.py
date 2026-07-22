@@ -36,6 +36,7 @@ from aidn_hypervisor.operator_views import (
 )
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.registry_models import RegistryNodeAdvertisement, RegistryObjectQuery
+from aidn_hypervisor.registry_models import RegistryWalletIdentityResolutionRequest
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointDependencyError
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
@@ -1161,6 +1162,26 @@ def build_api_router(
     async def operator_wallet_identity_reconciliation(limit: int = 500) -> dict:
         registry = _effective_registry_service()
         return registry.wallet_identity_reconciliation_report(limit=limit)
+
+    @router.post("/operators/registry/wallet-identities/resolve-conflict")
+    async def operator_resolve_wallet_identity_conflict(
+        payload: RegistryWalletIdentityResolutionRequest,
+    ) -> dict:
+        registry = _effective_registry_service()
+        try:
+            return registry.resolve_wallet_identity_conflict(
+                wallet_id=payload.wallet_id,
+                chosen_object_id=payload.chosen_object_id,
+                chosen_payload_hash=payload.chosen_payload_hash,
+                operator_note=payload.operator_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown wallet identity: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/operators/dashboard/home")
     async def operator_dashboard_home() -> dict:

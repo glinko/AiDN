@@ -104,6 +104,11 @@ Implemented now:
   payload/source variants, includes durable conflict evidence and summarizes
   known-peer sync health, so manual resolution work no longer starts from raw
   object dumps and scattered `409` traces.
+- Operators can now also apply an explicit wallet-identity conflict
+  resolution by choosing the canonical `object_id` or `payload_hash` to keep.
+  That choice is durably recorded, marks prior conflict evidence as resolved
+  and makes subsequent wallet resolution use the selected binding through a
+  stable local override instead of whichever peer last happened to answer.
 - Public `POST /api/v1/endpoints/{endpoint_id}/public-mvp-sessions` requires a
   registered Consumer wallet identity, a signed Session-open/funding
   authorization bound to the Endpoint configuration, a currently published
@@ -133,5 +138,6 @@ Still required before public paid-MVP launch:
    state before multi-node paid launch, so a public `wallet_id` cannot mean
    different keys on different Hypervisors after cross-node sync; local
    uniqueness, conflict rejection, known-peer repair, registry-node inventory
-   bootstrap, bounded peer sync and operator reconciliation visibility now
-   exist, but final network-wide conflict-resolution policy still remains.
+   bootstrap, bounded peer sync, operator reconciliation visibility and local
+   conflict resolution now exist, but final network-wide conflict-resolution
+   policy still remains.

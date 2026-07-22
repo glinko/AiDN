@@ -6,6 +6,7 @@ from aidn_hypervisor.registry_models import (
     RegistryWalletIdentityPeerConfig,
     RegistryWalletIdentityPeerDiscoveryRequest,
     RegistryWalletIdentityPeerRepairRequest,
+    RegistryWalletIdentityResolutionRequest,
     RegistryWalletIdentityPeerSyncRequest,
     RegistryWalletIdentitySyncImportRequest,
 )
@@ -133,6 +134,25 @@ def build_registry_router(service: RegistryService) -> APIRouter:
     @router.get("/registry/wallet-identities/reconciliation")
     async def wallet_identity_reconciliation(limit: int = 500) -> dict:
         return service.wallet_identity_reconciliation_report(limit=limit)
+
+    @router.post("/registry/wallet-identities/resolve-conflict")
+    async def resolve_wallet_identity_conflict(
+        request: RegistryWalletIdentityResolutionRequest,
+    ) -> dict:
+        try:
+            return service.resolve_wallet_identity_conflict(
+                wallet_id=request.wallet_id,
+                chosen_object_id=request.chosen_object_id,
+                chosen_payload_hash=request.chosen_payload_hash,
+                operator_note=request.operator_note,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown wallet identity: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.post("/registry/wallet-identities/import")
     async def import_wallet_identity_sync_state(
