@@ -1896,7 +1896,7 @@ class HypervisorService:
         task: TaskRequest,
         runtime: RuntimeHandle | None,
     ) -> RuntimeRequestRecord | None:
-        return self._runtime_execution_facade().record_mvp_runtime_evidence_for_completed_task(
+        return self._runtime_boundary._record_mvp_runtime_evidence_for_completed_task(
             task_id=task_id,
             bundle=bundle,
             task=task,
@@ -2433,7 +2433,7 @@ class HypervisorService:
         endpoint_manifest,
         result,
     ) -> None:
-        self._runtime_execution_facade().record_session_runtime_terminal_evidence(
+        self._runtime_boundary._record_session_runtime_terminal_evidence(
             session_service=session_service,
             session=session,
             endpoint_manifest=endpoint_manifest,

@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aidn_hypervisor.service import HypervisorService
-    from aidn_hypervisor.domain.models import BundleConfig
+    from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
     from aidn_hypervisor.process_manager import RuntimeHandle
+    from aidn_hypervisor.runtime_protocol.models import RuntimeRequestRecord
     from aidn_hypervisor.state import JournalEvent
     from aidn_hypervisor.state import RuntimeSnapshot
 
@@ -120,3 +121,37 @@ class RuntimeProtocolBoundaryService:
 
     def _restore_runtimes(self, runtimes: list["RuntimeSnapshot"]) -> None:
         self._hv._snapshot_state_facade().restore_runtimes(runtimes)
+
+    # ------------------------------------------------------------------
+    # Runtime evidence recording
+    # ------------------------------------------------------------------
+
+    def _record_mvp_runtime_evidence_for_completed_task(
+        self,
+        *,
+        task_id: str,
+        bundle: "BundleConfig",
+        task: "TaskRequest",
+        runtime: "RuntimeHandle | None",
+    ) -> "RuntimeRequestRecord | None":
+        return self._hv._runtime_execution_facade().record_mvp_runtime_evidence_for_completed_task(
+            task_id=task_id,
+            bundle=bundle,
+            task=task,
+            runtime=runtime,
+        )
+
+    def _record_session_runtime_terminal_evidence(
+        self,
+        *,
+        session_service: object,
+        session: object,
+        endpoint_manifest: object,
+        result: object,
+    ) -> None:
+        self._hv._runtime_execution_facade().record_session_runtime_terminal_evidence(
+            session_service=session_service,
+            session=session,
+            endpoint_manifest=endpoint_manifest,
+            result=result,
+        )
