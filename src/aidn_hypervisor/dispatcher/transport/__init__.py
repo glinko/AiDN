@@ -12,6 +12,10 @@ from aidn_hypervisor.dispatcher.transport.tcp import (
     TcpListener,
     TcpTransport,
 )
+from aidn_hypervisor.dispatcher.transport.tls import (
+    TlsListener,
+    TlsTransport,
+)
 from aidn_hypervisor.dispatcher.transport.unix_socket import (
     UnixSocketListener,
     UnixSocketTransport,
@@ -23,6 +27,8 @@ __all__ = [
     "TransportStatus",
     "TcpTransport",
     "TcpListener",
+    "TlsTransport",
+    "TlsListener",
     "UnixSocketTransport",
     "UnixSocketListener",
 ]
