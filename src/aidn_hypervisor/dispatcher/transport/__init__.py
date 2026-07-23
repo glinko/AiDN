@@ -8,9 +8,15 @@ from aidn_hypervisor.dispatcher.transport.abc import (
     TransportGateway,
     TransportStatus,
 )
+from aidn_hypervisor.dispatcher.transport.unix_socket import (
+    UnixSocketListener,
+    UnixSocketTransport,
+)
 
 __all__ = [
     "MessageFramer",
     "TransportGateway",
     "TransportStatus",
+    "UnixSocketTransport",
+    "UnixSocketListener",
 ]
