@@ -1477,6 +1477,7 @@
     };
 
     const walletEndpoints = {
+      dashboard: "/operators/dashboard/wallet",
       usage: "/operators/wallet/usage",
       allocations: "/operators/wallet/allocations",
       disputes: "/operators/wallet/allocations/disputes",
@@ -8648,23 +8649,20 @@
       state.walletError = null;
       renderWalletDrawer();
       try {
-        const [usageResponse, allocationResponse, disputeResponse, economicsResponse, economicsExportResponse, faucetPreviewResponse] = await Promise.all([
-          fetch(`${walletEndpoints.usage}?limit=100`, { cache: "no-store" }),
-          fetch(`${walletEndpoints.allocations}?limit=100`, { cache: "no-store" }),
-          fetch(`${walletEndpoints.disputes}?limit=100`, { cache: "no-store" }),
-          fetch(`${walletEndpoints.economics}?recent_limit=8`, { cache: "no-store" }),
-          fetch(`${walletEndpoints.economicsExport}?limit=12`, { cache: "no-store" }),
-          fetch(`${walletEndpoints.faucetPreview}`, { cache: "no-store" }),
-        ]);
-        if (!usageResponse.ok || !allocationResponse.ok || !disputeResponse.ok || !economicsResponse.ok || !economicsExportResponse.ok || !faucetPreviewResponse.ok) {
+        const response = await fetch(
+          `${walletEndpoints.dashboard}?usage_limit=100&allocation_limit=100&dispute_limit=100&economics_recent_limit=8&economics_history_limit=12`,
+          { cache: "no-store" }
+        );
+        if (!response.ok) {
           throw new Error("wallet endpoints returned a non-200 status");
         }
-        state.walletUsageEvents = await usageResponse.json();
-        state.walletAllocationEvents = await allocationResponse.json();
-        state.walletDisputeEvents = await disputeResponse.json();
-        state.walletEconomicsSummary = await economicsResponse.json();
-        state.walletEconomicsHistory = (await economicsExportResponse.json()).items || [];
-        state.walletFaucetPreview = await faucetPreviewResponse.json();
+        const payload = await response.json();
+        state.walletUsageEvents = payload.usage_events || [];
+        state.walletAllocationEvents = payload.allocation_events || [];
+        state.walletDisputeEvents = payload.dispute_events || [];
+        state.walletEconomicsSummary = payload.economics_summary || null;
+        state.walletEconomicsHistory = payload.economics_history || [];
+        state.walletFaucetPreview = payload.faucet_preview || null;
         state.walletLoaded = true;
         syncWalletSelections();
       } catch (error) {

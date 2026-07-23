@@ -3,7 +3,6 @@ import json
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import time
-from urllib import error as urllib_error, request as urllib_request
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -14,7 +13,10 @@ from aidn_hypervisor.accounting.models import (
     SessionAccountingCheckpoint,
     UsageReport,
 )
-from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, ResourceProfile, TaskRequest
+from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, TaskRequest
+from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
+from aidn_hypervisor.allocation_catalog_service import AllocationCatalogService
+from aidn_hypervisor.bundle_runtime_policy_service import BundleRuntimePolicyService
 from aidn_hypervisor.economics.models import (
     EpochRewardBudget,
     EpochRewardPoolShares,
@@ -26,44 +28,42 @@ from aidn_hypervisor.endpoints.state import (
     EndpointManifestSnapshot,
 )
 from aidn_hypervisor.ledger.service import LedgerOperationService
+from aidn_hypervisor.mvp_session_economics_service import MvpSessionEconomicsService
+from aidn_hypervisor.network_projection_service import NetworkProjectionService
+from aidn_hypervisor.allocation_lifecycle_service import AllocationLifecycleService
+from aidn_hypervisor.model_install_service import ModelInstallService
+from aidn_hypervisor.event_projection_service import EventProjectionService
+from aidn_hypervisor.hypervisor_integration_service import (
+    HypervisorIntegrationService,
+)
+from aidn_hypervisor.operator_application_service import OperatorApplicationService
+from aidn_hypervisor.operator_read_models import OperatorReadModelService
 from aidn_hypervisor.process_manager import RuntimeHandle
+from aidn_hypervisor.provider_inventory_application_service import (
+    ProviderInventoryApplicationService,
+)
+from aidn_hypervisor.provider_installation_service import ProviderInstallationService
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.package_store import PluginPackageStore
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
-from aidn_hypervisor.plugins.host import PluginHostJsonWireAdapter
-from aidn_hypervisor.plugins.host_named_pipe import WindowsNamedPipePluginHostListener
-from aidn_hypervisor.plugins.host_unix_socket import UnixSocketPluginHostListener
 from aidn_hypervisor.queue import InMemoryTaskQueue, QueuedTask
-from aidn_hypervisor.reputation import build_reputation_profile
 from aidn_hypervisor.registry_models import (
-    RegistryBundleAdvertisement,
     RegistryNodeAdvertisement,
     RegistryPricing,
-    RegistryPublishedEndpointSummary,
-    RegistryReputation,
     RegistryRating,
 )
+from aidn_hypervisor.remote_transport_service import RemoteTransportService
 from aidn_hypervisor.registry_service import RegistryService
+from aidn_hypervisor.runtime_execution_service import RuntimeExecutionService
+from aidn_hypervisor.snapshot_state_service import SnapshotStateService
+from aidn_hypervisor.runtime_protocol.models import RuntimeRequestRecord
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
-from aidn_hypervisor.runtime_protocol.approved_dispatch import (
-    ApprovedRuntimeDispatcher,
-)
-from aidn_hypervisor.runtime_protocol.models import (
-    RuntimeExecuteRequest,
-    RuntimeRequestRecord,
-    RuntimeUsageReport,
-)
 from aidn_hypervisor.scheduler import Scheduler
+from aidn_hypervisor.settlement_application_service import SettlementApplicationService
 from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.settlement.models import (
-    RequestSettlementInput,
     SessionFundingAccount,
-    SessionSettlementAcceptance,
-    SettlementAccountingTerms,
-    SettlementChargeComponent,
-    TerminalChargePolicy,
 )
-from aidn_hypervisor.settlement.service import SettlementEngine
 from aidn_hypervisor.state import (
     AllocationSnapshot,
     BundleStateSnapshot,
@@ -84,16 +84,13 @@ from aidn_hypervisor.state import (
     WalletSessionSnapshot,
     WalletUsageSnapshot,
 )
+from aidn_hypervisor.wallet_economics_service import WalletEconomicsService
+from aidn_hypervisor.wallet_allocation_service import WalletAllocationService
+from aidn_hypervisor.wallet_application_service import WalletApplicationService
+from aidn_hypervisor.task_execution_service import TaskExecutionService
 
 Q_ATOMS_PER_Q = 1_000_000
-from aidn_hypervisor.wallet import quote_usage_q
 from aidn_hypervisor.wallet_models import (
-    WalletAllocationActivationEvent,
-    WalletAllocationDisputeEvent,
-    WalletAllocationEvent,
-    WalletLedgerEvent,
-    WalletSessionEvent,
-    WalletUsageEvent,
     WalletUsageMeasurement,
 )
 
@@ -101,10 +98,6 @@ _CANCELLABLE_TASK_STATUSES = {"queued", "admitted", "starting"}
 _ACTIVE_EXECUTION_STATUSES = {"admitted", "starting", "running"}
 _TERMINAL_FAILED_STATUSES = {"failed"}
 _TERMINAL_COMPLETED_STATUSES = {"completed"}
-_AGING_PRIORITY_STEP = 10
-_AGING_PRIORITY_INTERVAL_SECONDS = 60
-_AGING_PRIORITY_MAX_BONUS = 100
-_ALLOCATION_RETRY_INTERVAL_SECONDS = 5
 _DEFAULT_OPERATOR_REQUESTS_POLICY = {
     "allow_spillover": False,
     "dispatch_strategy": "local_first",
@@ -126,15 +119,6 @@ def _canonical_hash(payload: dict) -> str:
         ensure_ascii=True,
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
-
-
-def _empty_resource_summary() -> dict[str, dict[str, float | int]]:
-    zeroes = {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0}
-    return {
-        "total": dict(zeroes),
-        "reserved": dict(zeroes),
-        "free": dict(zeroes),
-    }
 
 
 class AllocationUnavailableError(ValueError):
@@ -282,6 +266,29 @@ class HypervisorService:
         self._wallet_allocation_events: list[dict] = []
         self._next_wallet_allocation_sequence = 1
         self._ledger_operation_service = LedgerOperationService()
+        self._mvp_session_economics_service = MvpSessionEconomicsService(self)
+        self._wallet_economics_service = WalletEconomicsService(self)
+        self._wallet_allocation_service = WalletAllocationService(self)
+        self._wallet_application_service = WalletApplicationService(self)
+        self._network_projection_service = NetworkProjectionService(self)
+        self._provider_installation_service = ProviderInstallationService(self)
+        self._runtime_execution_service = RuntimeExecutionService(self)
+        self._remote_transport_service = RemoteTransportService(self)
+        self._task_execution_service = TaskExecutionService(self)
+        self._allocation_lifecycle_service = AllocationLifecycleService(self)
+        self._allocation_catalog_service = AllocationCatalogService(self)
+        self._admission_planning_service = AdmissionPlanningService(self)
+        self._model_install_service = ModelInstallService(self)
+        self._bundle_runtime_policy_service = BundleRuntimePolicyService(self)
+        self._snapshot_state_service = SnapshotStateService(self)
+        self._event_projection_service = EventProjectionService(self)
+        self._integration_service = HypervisorIntegrationService(self)
+        self._operator_application_service = OperatorApplicationService(self)
+        self._provider_inventory_application_service = (
+            ProviderInventoryApplicationService(self)
+        )
+        self._settlement_application_service = SettlementApplicationService(self)
+        self.operator_read_models = OperatorReadModelService(self)
         self._events: list[JournalEvent] = []
 
     @property
@@ -382,25 +389,16 @@ class HypervisorService:
         return events[-limit:]
 
     def list_wallet_usage_events(self, *, limit: int | None = None) -> list[dict]:
-        events = list(self._wallet_usage_events)
-        if limit is None or limit >= len(events):
-            return events
-        return events[-limit:]
+        return self._wallet_application_facade().list_wallet_usage_events(limit=limit)
 
     def list_wallet_session_events(self, *, limit: int | None = None) -> list[dict]:
-        events = list(self._wallet_session_events)
-        if limit is None or limit >= len(events):
-            return events
-        return events[-limit:]
+        return self._wallet_application_facade().list_wallet_session_events(limit=limit)
 
     def list_wallet_ledger_events(self, *, limit: int | None = None) -> list[dict]:
-        events = list(self._wallet_ledger_events)
-        if limit is None or limit >= len(events):
-            return events
-        return events[-limit:]
+        return self._wallet_application_facade().list_wallet_ledger_events(limit=limit)
 
     def list_ledger_operations(self, *, limit: int | None = None) -> list[dict]:
-        return self._ledger_operation_service.list_operations(limit=limit)
+        return self._settlement_application_facade().list_ledger_operations(limit=limit)
 
     def export_ledger_operations(
         self,
@@ -409,76 +407,66 @@ class HypervisorService:
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return self._ledger_operation_service.export_operations(
+        return self._settlement_application_facade().export_ledger_operations(
             after_operation_id=after_operation_id,
             after_sequence=after_sequence,
             limit=limit,
         )
 
     def wallet_next_operation_sequence(self, wallet_id: str) -> int:
-        return self._ledger_operation_service.wallet_next_sequence(wallet_id)
+        return self._settlement_application_facade().wallet_next_operation_sequence(
+            wallet_id
+        )
 
     def wallet_q_atom_balance(self, wallet_id: str) -> int:
-        return self._ledger_operation_service.wallet_q_atom_balance(wallet_id)
+        return self._settlement_application_facade().wallet_q_atom_balance(wallet_id)
 
     def get_session_funding_account(self, session_id: str) -> SessionFundingAccount:
-        return self._ledger_operation_service.get_session_funding_account(session_id)
+        return self._settlement_application_facade().get_session_funding_account(
+            session_id
+        )
 
     def credit_wallet_q_atoms(self, *, wallet_id: str, amount_q_atoms: int) -> int:
-        balance = self._ledger_operation_service.credit_wallet_q_atoms(
+        return self._settlement_application_facade().credit_wallet_q_atoms(
             wallet_id=wallet_id,
             amount_q_atoms=amount_q_atoms,
         )
-        self._persist_state()
-        return balance
 
     def lock_session_funding(self, funding, *, created_at: str | None = None):
-        locked = self._ledger_operation_service.lock_session_funding(
+        return self._settlement_application_facade().lock_session_funding(
             funding,
             created_at=created_at,
         )
-        self._persist_state()
-        return locked
 
     def apply_settlement_evaluation(self, evaluation, *, created_at: str | None = None):
-        funding = self._ledger_operation_service.apply_settlement_evaluation(
+        return self._settlement_application_facade().apply_settlement_evaluation(
             evaluation,
             created_at=created_at,
         )
-        self._persist_state()
-        return funding
 
     def propose_settlement(self, evaluation, *, created_at: str | None = None):
-        proposal = self._ledger_operation_service.propose_settlement(
+        return self._settlement_application_facade().propose_settlement(
             evaluation,
             created_at=created_at,
         )
-        self._persist_state()
-        return proposal
 
     def accept_settlement(self, acceptance, *, created_at: str | None = None):
-        accepted = self._ledger_operation_service.accept_settlement(
+        return self._settlement_application_facade().accept_settlement(
             acceptance,
             created_at=created_at,
         )
-        self._persist_state()
-        return accepted
 
     def finalize_accepted_settlement(self, evaluation, *, created_at: str | None = None):
-        funding = self._ledger_operation_service.finalize_accepted_settlement(
+        return self._settlement_application_facade().finalize_accepted_settlement(
             evaluation,
             created_at=created_at,
         )
-        self._persist_state()
-        return funding
 
     def force_finalize_fixed_price_settlement(self, evaluation, **kwargs):
-        funding = self._ledger_operation_service.force_finalize_fixed_price_settlement(
+        return self._settlement_application_facade().force_finalize_fixed_price_settlement(
             evaluation,
             **kwargs,
         )
-        self._persist_state()
-        return funding
 
     def open_mvp_fixed_price_session(
         self,
@@ -494,89 +482,18 @@ class HypervisorService:
         consumer_authorization: dict | None = None,
         require_wallet_authorization: bool = False,
     ):
-        if deposit_q_atoms <= 0:
-            raise ValueError("MVP Session deposit must be positive")
-        if network_fee_reserve_q_atoms < 0:
-            raise ValueError("Network Fee Reserve cannot be negative")
-        payment_reserve = deposit_q_atoms - network_fee_reserve_q_atoms
-        if payment_reserve < fixed_price_q_atoms:
-            raise ValueError("MVP Session deposit cannot cover fixed price")
-        if self.wallet_q_atom_balance(client_wallet) < deposit_q_atoms:
-            raise ValueError("insufficient q_atoms for MVP Session escrow")
-        if require_wallet_authorization and consumer_authorization is None:
-            raise ValueError("Public MVP Session requires Consumer wallet authorization")
-        if (
-            require_wallet_authorization
-            and self.resolve_wallet_identity(endpoint.owner_wallet) is None
-        ):
-            raise ValueError("Public MVP Endpoint Payment Beneficiary identity is not registered")
-        if consumer_authorization is not None:
-            from aidn_hypervisor.wallet_identity import verify_session_open_authorization
-
-            identity = self.resolve_wallet_identity(client_wallet)
-            if identity is None:
-                raise ValueError("Consumer wallet identity is not registered")
-            nonce = str(consumer_authorization.get("nonce") or "")
-            if not nonce or nonce in self._consumed_wallet_authorization_nonces:
-                raise ValueError("Session-open authorization nonce was already consumed")
-            verify_session_open_authorization(
-                public_key=identity["public_key"],
-                signature=str(consumer_authorization.get("signature") or ""),
-                wallet_id=client_wallet,
-                endpoint_id=endpoint.endpoint_id,
-                endpoint_configuration_hash=endpoint.configuration_hash,
-                deposit_q_atoms=deposit_q_atoms,
-                fixed_price_q_atoms=fixed_price_q_atoms,
-                network_fee_reserve_q_atoms=network_fee_reserve_q_atoms,
-                nonce=nonce,
-                expires_at=str(consumer_authorization.get("expires_at") or ""),
-            )
-            consumer_authorization_public_key = identity["public_key"]
-
-        result = session_service.open_session(
-            endpoint_id=endpoint.endpoint_id,
+        return self._settlement_application_facade().open_mvp_fixed_price_session(
+            session_service=session_service,
+            endpoint=endpoint,
             client_wallet=client_wallet,
-            provider_wallet=endpoint.owner_wallet,
-            endpoint_payment_beneficiary=endpoint.owner_wallet,
-            consumer_refund_beneficiary=client_wallet,
-            node_id=self.node_id,
-            deposit_q=deposit_q_atoms / Q_ATOMS_PER_Q,
             deposit_q_atoms=deposit_q_atoms,
             fixed_price_q_atoms=fixed_price_q_atoms,
-            request_charge_ceiling_q_atoms=fixed_price_q_atoms,
-            economic_profile="MVP-0001",
-            session_policy=endpoint.session.model_dump(mode="json"),
-            accounting_contract=accounting_contract,
-            endpoint_configuration_hash=endpoint.configuration_hash,
-            consumer_authorization_public_key=consumer_authorization_public_key,
-        )
-        funding = SessionFundingAccount(
-            session_id=result.session.session_id,
-            session_contract_hash=result.session.session_contract_hash,
-            funding_class="ESCROW_PREPAID",
-            consumer_funding_account=client_wallet,
-            endpoint_payment_beneficiary=result.session.endpoint_payment_beneficiary,
-            consumer_refund_beneficiary=result.session.consumer_refund_beneficiary,
-            total_locked_amount_q_atoms=deposit_q_atoms,
-            endpoint_payment_reserve_q_atoms=payment_reserve,
             network_fee_reserve_q_atoms=network_fee_reserve_q_atoms,
-            unsettled_payment_reserve_q_atoms=payment_reserve,
-            unsettled_fee_reserve_q_atoms=network_fee_reserve_q_atoms,
+            accounting_contract=accounting_contract,
+            consumer_authorization_public_key=consumer_authorization_public_key,
+            consumer_authorization=consumer_authorization,
+            require_wallet_authorization=require_wallet_authorization,
         )
-        try:
-            locked = self.lock_session_funding(funding)
-        except Exception:
-            session_service.store.discard_open_session(result.session.session_id)
-            raise
-        if consumer_authorization is not None:
-            self._consumed_wallet_authorization_nonces.add(
-                str(consumer_authorization["nonce"])
-            )
-        session = session_service.bind_canonical_funding(
-            result.session.session_id,
-            funding_state_hash=str(locked.funding_state_hash),
-        )
-        return session, result.deposit, locked
 
     def build_mvp_fixed_price_settlement_evaluation(
         self,
@@ -588,156 +505,11 @@ class HypervisorService:
         settlement_sequence: int = 1,
         proposal_expiration: str | None = None,
     ):
-        session = session_service.store.get_session(session_id)
-        if session.economic_profile != "MVP-0001":
-            raise ValueError("Session is not an MVP-0001 economic Session")
-        if session.fixed_price_q_atoms is None:
-            raise ValueError("MVP Session is missing fixed_price_q_atoms")
-        if session.request_charge_ceiling_q_atoms is None:
-            raise ValueError("MVP Session is missing request_charge_ceiling_q_atoms")
-        if session.accounting_contract_hash is None:
-            raise ValueError("MVP Session is missing accounting_contract_hash")
-        if session.session_contract_hash is None:
-            raise ValueError("MVP Session is missing session_contract_hash")
-        if session.canonical_funding_state_hash is None:
-            raise ValueError("MVP Session is not bound to canonical funding")
-
-        matching_requests = [
-            item
-            for item in self.runtime_protocol_store.requests.values()
-            if item.request.session_id == session_id
-        ]
-        if len(matching_requests) != 1 or matching_requests[0].request_id != request_id:
-            raise ValueError("MVP-0001 supports exactly one Runtime Request per Session")
-        record = matching_requests[0]
-        if record.request.endpoint_id != session.endpoint_id:
-            raise ValueError("Runtime Request Endpoint does not match Session")
-        if record.request.endpoint_configuration_hash != session.endpoint_configuration_hash:
-            raise ValueError("Runtime Request Endpoint Configuration does not match Session")
-        if record.request.session_contract_hash != session.session_contract_hash:
-            raise ValueError("Runtime Request Session Contract does not match Session")
-        if record.request.accounting_contract_hash != session.accounting_contract_hash:
-            raise ValueError("Runtime Request Accounting Contract does not match Session")
-        if record.terminal_result_hash is None or record.terminal_final_usage_report_id is None:
-            raise ValueError("Runtime Request is not terminal with Final Usage")
-
-        final_usage = self.runtime_protocol_store.usage_reports.get(
-            record.terminal_final_usage_report_id
-        )
-        if final_usage is None:
-            raise ValueError("Final Usage Report is missing from Runtime store")
-        endpoint_service = getattr(self, "endpoint_service", None)
-        if endpoint_service is not None:
-            endpoint = endpoint_service.get_endpoint(session.endpoint_id).endpoint
-            if endpoint.runtime_binding_id is not None:
-                matching_terminal_evidence = [
-                    item
-                    for item in session.runtime_terminal_evidence
-                    if item.request_id == request_id
-                ]
-                if len(matching_terminal_evidence) != 1:
-                    raise ValueError(
-                        "Runtime-bound MVP Session requires exactly one terminal Runtime evidence record"
-                    )
-                terminal_evidence = matching_terminal_evidence[0]
-                if terminal_evidence.runtime_binding_id != endpoint.runtime_binding_id:
-                    raise ValueError("Session Runtime Binding does not match Endpoint")
-                if terminal_evidence.runtime_id != record.request.runtime_id:
-                    raise ValueError("Session Runtime ID does not match Runtime Request")
-                if terminal_evidence.runtime_generation != record.request.runtime_generation:
-                    raise ValueError("Session Runtime Generation does not match Runtime Request")
-                if (
-                    terminal_evidence.runtime_configuration_hash
-                    != record.request.runtime_configuration_hash
-                ):
-                    raise ValueError(
-                        "Session Runtime Configuration does not match Runtime Request"
-                    )
-                if terminal_evidence.route_generation != record.request.route_generation:
-                    raise ValueError("Session Route Generation does not match Runtime Request")
-                if terminal_evidence.terminal_state != record.request_state:
-                    raise ValueError("Session terminal state does not match Runtime Request")
-                if terminal_evidence.result_hash != record.terminal_result_hash:
-                    raise ValueError("Session Result hash does not match Runtime Request")
-                if terminal_evidence.final_usage_report_id != final_usage.usage_report_id:
-                    raise ValueError("Session Final Usage ID does not match Runtime store")
-                if terminal_evidence.final_usage_report_hash != final_usage.report_hash:
-                    raise ValueError("Session Final Usage hash does not match Runtime store")
-        request_reports = sorted(
-            (
-                item
-                for item in self.runtime_protocol_store.usage_reports.values()
-                if item.request_id == request_id
-            ),
-            key=lambda item: item.usage_sequence,
-        )
-        if not request_reports or request_reports[-1].usage_report_id != final_usage.usage_report_id:
-            raise ValueError("Final Usage Report is not the current Usage chain head")
-
-        usage_conflicted = any(
-            item.request_id == request_id
-            for item in self.runtime_protocol_store.usage_conflicts.values()
-        )
-        request_input = RequestSettlementInput(
+        return self._settlement_application_facade().build_mvp_fixed_price_settlement_evaluation(
+            session_service=session_service,
             session_id=session_id,
             request_id=request_id,
-            request_charge_ceiling_q_atoms=session.request_charge_ceiling_q_atoms,
-            accounting_contract_hash=session.accounting_contract_hash,
-            terminal_state=record.request_state,
-            result_reference=record.terminal_result_hash,
-            final_usage_report_id=final_usage.usage_report_id,
-            final_usage_report_hash=final_usage.report_hash,
-            usage_sequence=final_usage.usage_sequence,
-            usage_chain_valid=not usage_conflicted,
-            usage_chain_conflicted=usage_conflicted,
-            dimensions=[
-                dimension.model_copy(deep=True)
-                for dimension in final_usage.dimensions
-            ],
-        )
-        terms = SettlementAccountingTerms(
-            accounting_contract_hash=session.accounting_contract_hash,
-            accounting_mode="fixed_price",
-            components=[
-                SettlementChargeComponent(
-                    component_id="mvp_fixed_request_price",
-                    fixed_amount_q_atoms=session.fixed_price_q_atoms,
-                )
-            ],
-            terminal_policies={
-                "COMPLETED": TerminalChargePolicy(mode="FULL_CHARGE"),
-                "PARTIAL": TerminalChargePolicy(mode="NO_CHARGE"),
-                "CANCELLED": TerminalChargePolicy(mode="NO_CHARGE"),
-                "FAILED": TerminalChargePolicy(mode="NO_CHARGE"),
-                "EXPIRED": TerminalChargePolicy(mode="NO_CHARGE"),
-                "UNRECOVERABLE": TerminalChargePolicy(mode="NO_CHARGE"),
-                "REJECTED": TerminalChargePolicy(mode="NO_CHARGE"),
-            },
-        )
-        funding = self.get_session_funding_account(session_id)
-        if funding.funding_state in {"RELEASED", "REFUNDED"}:
-            raise ValueError("MVP Session funding is already finalized")
-        if funding.funding_state_hash != session.canonical_funding_state_hash:
-            raise ValueError("Session funding hash no longer matches Session")
-        close_reference = _canonical_hash(
-            {
-                "economic_profile": "MVP-0001",
-                "session_id": session_id,
-                "request_id": request_id,
-                "terminal_result_hash": record.terminal_result_hash,
-                "final_usage_report_hash": final_usage.report_hash,
-                "settlement_sequence": settlement_sequence,
-            }
-        )
-        return SettlementEngine().evaluate_session(
-            funding=funding,
-            session_contract_hash=session.session_contract_hash,
-            effective_terms_hash=terms.terms_hash,
-            request_inputs=[request_input],
-            terms_by_hash={session.accounting_contract_hash: terms},
-            maximum_session_charge_q_atoms=session.request_charge_ceiling_q_atoms,
             actual_network_fees_q_atoms=actual_network_fees_q_atoms,
-            session_close_reference=close_reference,
             settlement_sequence=settlement_sequence,
             proposal_expiration=proposal_expiration,
         )
@@ -751,52 +523,11 @@ class HypervisorService:
         settlement_sequence: int = 1,
         proposal_expiration: str | None = None,
     ):
-        session = session_service.store.get_session(session_id)
-        if session.economic_profile != "MVP-0001":
-            raise ValueError("Session is not an MVP-0001 economic Session")
-        if session.request_charge_ceiling_q_atoms is None:
-            raise ValueError("MVP Session is missing request_charge_ceiling_q_atoms")
-        if session.session_contract_hash is None:
-            raise ValueError("MVP Session is missing session_contract_hash")
-        if session.canonical_funding_state_hash is None:
-            raise ValueError("MVP Session is not bound to canonical funding")
-        matching_requests = [
-            item
-            for item in self.runtime_protocol_store.requests.values()
-            if item.request.session_id == session_id
-        ]
-        if matching_requests:
-            raise ValueError("Endpoint-unavailable refund requires no accepted Runtime work")
-        funding = self.get_session_funding_account(session_id)
-        if funding.funding_state in {"RELEASED", "REFUNDED"}:
-            raise ValueError("MVP Session funding is already finalized")
-        if funding.funding_state_hash != session.canonical_funding_state_hash:
-            raise ValueError("Session funding hash no longer matches Session")
-        close_reference = _canonical_hash(
-            {
-                "economic_profile": "MVP-0001",
-                "session_id": session_id,
-                "reason": "ENDPOINT_UNAVAILABLE",
-                "settlement_sequence": settlement_sequence,
-            }
-        )
-        return SettlementEngine().evaluate_session(
-            funding=funding,
-            session_contract_hash=session.session_contract_hash,
-            effective_terms_hash=_canonical_hash(
-                {
-                    "economic_profile": "MVP-0001",
-                    "reason": "ENDPOINT_UNAVAILABLE",
-                    "terms": "zero_endpoint_payment",
-                }
-            ),
-            request_inputs=[],
-            terms_by_hash={},
-            maximum_session_charge_q_atoms=session.request_charge_ceiling_q_atoms,
+        return self._settlement_application_facade().build_mvp_endpoint_unavailable_refund_evaluation(
+            session_service=session_service,
+            session_id=session_id,
             actual_network_fees_q_atoms=actual_network_fees_q_atoms,
-            session_close_reference=close_reference,
             settlement_sequence=settlement_sequence,
-            settlement_mode="FORCED",
             proposal_expiration=proposal_expiration,
         )
 
@@ -812,63 +543,16 @@ class HypervisorService:
         proposal_expiration: str | None = None,
         accepted_at: str | None = None,
     ):
-        session = session_service.store.get_session(session_id)
-        evaluation = self.build_mvp_fixed_price_settlement_evaluation(
+        return self._settlement_application_facade().finalize_mvp_fixed_price_session(
             session_service=session_service,
             session_id=session_id,
             request_id=request_id,
+            consumer_signature=consumer_signature,
             actual_network_fees_q_atoms=actual_network_fees_q_atoms,
             settlement_sequence=settlement_sequence,
             proposal_expiration=proposal_expiration,
+            accepted_at=accepted_at,
         )
-        if evaluation.proposal.dispute_reserve_q_atoms or any(
-            record.dispute_state != "NONE"
-            for record in evaluation.input_set.request_settlement_records
-        ):
-            raise ValueError(
-                "MVP cooperative Settlement requires undisputed Runtime evidence"
-            )
-        proposal = self.propose_settlement(evaluation)
-        acceptance = SessionSettlementAcceptance(
-            settlement_id=proposal.settlement_id,
-            session_id=session_id,
-            settlement_input_root=proposal.settlement_input_root,
-            accepted_endpoint_payment_q_atoms=proposal.final_endpoint_payment_q_atoms,
-            accepted_consumer_refund_q_atoms=(
-                proposal.consumer_payment_refund_q_atoms
-                + proposal.consumer_fee_refund_q_atoms
-            ),
-            accepted_network_fees_q_atoms=proposal.actual_network_fees_q_atoms,
-            consumer_signature=consumer_signature,
-            accepted_at=accepted_at or datetime.now(timezone.utc).isoformat(),
-        )
-        if session.consumer_authorization_public_key is not None:
-            from aidn_hypervisor.settlement.signing import verify_settlement_acceptance
-
-            verify_settlement_acceptance(
-                acceptance,
-                consumer_public_key=session.consumer_authorization_public_key,
-            )
-        self.accept_settlement(acceptance)
-        funding = self.finalize_accepted_settlement(evaluation)
-        session_result = session_service.mark_canonical_settlement_finalized(
-            session_id,
-            settlement_evidence_root=evaluation.input_set.settlement_input_root,
-            endpoint_payment_q_atoms=proposal.final_endpoint_payment_q_atoms,
-            consumer_refund_q_atoms=(
-                proposal.consumer_payment_refund_q_atoms
-                + proposal.consumer_fee_refund_q_atoms
-            ),
-            network_fee_q_atoms=proposal.actual_network_fees_q_atoms,
-        )
-        self._persist_state()
-        return {
-            "evaluation": evaluation,
-            "proposal": proposal,
-            "acceptance": acceptance,
-            "funding": funding,
-            "session_result": session_result,
-        }
 
     def force_finalize_mvp_fixed_price_session(
         self,
@@ -882,53 +566,16 @@ class HypervisorService:
         actual_network_fees_q_atoms: int = 0,
         settlement_sequence: int = 1,
     ):
-        if reason == "ENDPOINT_UNAVAILABLE":
-            evaluation = self.build_mvp_endpoint_unavailable_refund_evaluation(
-                session_service=session_service,
-                session_id=session_id,
-                actual_network_fees_q_atoms=actual_network_fees_q_atoms,
-                settlement_sequence=settlement_sequence,
-            )
-            no_request = True
-        elif reason == "CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE":
-            if request_id is None:
-                raise ValueError("forced completed fixed-price payment requires request_id")
-            evaluation = self.build_mvp_fixed_price_settlement_evaluation(
-                session_service=session_service,
-                session_id=session_id,
-                request_id=request_id,
-                actual_network_fees_q_atoms=actual_network_fees_q_atoms,
-                settlement_sequence=settlement_sequence,
-            )
-            no_request = False
-        else:
-            raise ValueError("unsupported forced Settlement reason")
-        funding = self.force_finalize_fixed_price_settlement(
-            evaluation,
+        return self._settlement_application_facade().force_finalize_mvp_fixed_price_session(
+            session_service=session_service,
+            session_id=session_id,
             reason=reason,
             force_after=force_after,
+            request_id=request_id,
             now=now,
+            actual_network_fees_q_atoms=actual_network_fees_q_atoms,
+            settlement_sequence=settlement_sequence,
         )
-        proposal = evaluation.proposal
-        session_result = session_service.mark_canonical_settlement_finalized(
-            session_id,
-            settlement_evidence_root=evaluation.input_set.settlement_input_root,
-            endpoint_payment_q_atoms=proposal.final_endpoint_payment_q_atoms,
-            consumer_refund_q_atoms=(
-                proposal.consumer_payment_refund_q_atoms
-                + proposal.consumer_fee_refund_q_atoms
-            ),
-            network_fee_q_atoms=proposal.actual_network_fees_q_atoms,
-            close_reason=f"forced_{reason.lower()}",
-            no_request=no_request,
-        )
-        self._persist_state()
-        return {
-            "evaluation": evaluation,
-            "proposal": proposal,
-            "funding": funding,
-            "session_result": session_result,
-        }
 
     def record_ledger_operation(
         self,
@@ -949,7 +596,7 @@ class HypervisorService:
         expected_sequence: int | None = None,
         operation_version: str = "0.1",
     ) -> dict:
-        operation = self._ledger_operation_service.record_operation(
+        return self._settlement_application_facade().record_ledger_operation(
             operation_type=operation_type,
             origin_type=origin_type,
             fee_class=fee_class,
@@ -966,311 +613,45 @@ class HypervisorService:
             expected_sequence=expected_sequence,
             operation_version=operation_version,
         )
-        self._persist_state()
-        return operation
 
     def list_recyclable_removals(self) -> list[dict]:
-        return list(self._recyclable_removals)
+        return self._wallet_application_facade().list_recyclable_removals()
 
     def list_faucet_claims(self) -> list[dict]:
-        return list(self._faucet_claims)
+        return self._wallet_application_facade().list_faucet_claims()
 
     def list_epoch_reward_budgets(self) -> list[dict]:
-        return list(self._epoch_reward_budgets)
-
-    def _latest_epoch_reward_budget(self) -> dict | None:
-        if not self._epoch_reward_budgets:
-            return None
-        return dict(self._epoch_reward_budgets[-1])
-
-    def _active_local_endpoint_count(self) -> int:
-        endpoint_service = getattr(self, "endpoint_service", None)
-        if endpoint_service is None:
-            return 0
-        return sum(
-            1
-            for manifest in endpoint_service.list_endpoints()
-            if getattr(manifest, "status", None) == "active"
-        )
-
-    def _latest_faucet_claim(self, epoch_id: str | None) -> dict | None:
-        if epoch_id is None:
-            return None
-        for claim in reversed(self._faucet_claims):
-            if claim["epoch_id"] == epoch_id:
-                return dict(claim)
-        return None
+        return self._wallet_application_facade().list_epoch_reward_budgets()
 
     def get_faucet_claim_preview(self) -> dict:
-        owner_wallet = self.owner_wallet_state()
-        latest_budget = self._latest_epoch_reward_budget()
-        epoch_id = (
-            str(latest_budget["epoch_id"])
-            if latest_budget is not None and latest_budget.get("epoch_id") is not None
-            else None
-        )
-        share_q = (
-            float(latest_budget["faucet_share_q"])
-            if latest_budget is not None
-            else 0.0
-        )
-        active_local_endpoint_count = self._active_local_endpoint_count()
-        claim = self._latest_faucet_claim(epoch_id)
-        claimed_q = round(float(claim["amount_q"]), 6) if claim is not None else 0.0
-        remaining_q = round(max(0.0, share_q - claimed_q), 6)
-
-        eligible = False
-        reason = "wallet_not_configured"
-        message = "Owner wallet is not configured"
-        if not owner_wallet["configured"]:
-            pass
-        elif latest_budget is None:
-            reason = "no_epoch_budget"
-            message = "No epoch reward budget has been derived yet"
-        elif active_local_endpoint_count <= 0:
-            reason = "no_active_endpoints"
-            message = "At least one active local endpoint is required for faucet eligibility"
-        elif share_q <= 0.0:
-            reason = "zero_share"
-            message = f"Faucet share is zero for epoch {epoch_id}"
-        elif claim is not None:
-            reason = "already_claimed"
-            message = f"Faucet share already claimed for epoch {epoch_id}"
-        else:
-            eligible = True
-            reason = "eligible"
-            message = f"Faucet share is available for epoch {epoch_id}"
-
-        return {
-            "eligible": eligible,
-            "reason": reason,
-            "message": message,
-            "epoch_id": epoch_id,
-            "wallet_id": owner_wallet["wallet_id"],
-            "share_q": share_q,
-            "claimed": claim is not None,
-            "claimed_q": claimed_q,
-            "remaining_q": remaining_q,
-            "active_local_endpoint_count": active_local_endpoint_count,
-            "active_hypervisor_count": (
-                int(latest_budget["active_hypervisor_count"])
-                if latest_budget is not None
-                else 0
-            ),
-            "faucet_budget_q": (
-                float(latest_budget["faucet_budget_q"])
-                if latest_budget is not None
-                else 0.0
-            ),
-            "claim": claim,
-        }
+        return self._wallet_application_facade().get_faucet_claim_preview()
 
     def get_wallet_economics_summary(self, *, recent_limit: int = 10) -> dict:
-        by_category: dict[str, float] = {}
-        by_epoch: dict[str, float] = {}
-        total_q = 0.0
-        latest_removed_at: str | None = None
-        for removal in self._recyclable_removals:
-            amount_q = round(float(removal["amount_q"]), 6)
-            total_q = round(total_q + amount_q, 6)
-            category = str(removal["category"])
-            by_category[category] = round(by_category.get(category, 0.0) + amount_q, 6)
-            source_epoch_id = removal.get("source_epoch_id")
-            if source_epoch_id:
-                by_epoch[source_epoch_id] = round(
-                    by_epoch.get(source_epoch_id, 0.0) + amount_q,
-                    6,
-                )
-            latest_removed_at = str(removal["removed_at"])
-        recent_count = max(0, int(recent_limit))
-        recent_removals = (
-            []
-            if recent_count == 0
-            else list(reversed(self._recyclable_removals[-recent_count:]))
+        return self._wallet_application_facade().get_wallet_economics_summary(
+            recent_limit=recent_limit
         )
-        latest_budget = self._latest_epoch_reward_budget()
-        recycling = {
-            "eligible_removed_q": float(latest_budget["eligible_removed_q"])
-            if latest_budget is not None
-            else 0.0,
-            "recycle_backlog_q": float(latest_budget["recycle_backlog_q"])
-            if latest_budget is not None
-            else 0.0,
-            "recyclable_amount_q": float(latest_budget["recyclable_amount_q"])
-            if latest_budget is not None
-            else 0.0,
-        }
-        faucet_preview = self.get_faucet_claim_preview()
-        faucet = {
-            "carryover_q": float(latest_budget["faucet_carryover_q"])
-            if latest_budget is not None
-            else 0.0,
-            "budget_q": float(latest_budget["faucet_budget_q"])
-            if latest_budget is not None
-            else 0.0,
-            "active_hypervisor_count": int(latest_budget["active_hypervisor_count"])
-            if latest_budget is not None
-            else 0,
-            "share_q": float(latest_budget["faucet_share_q"])
-            if latest_budget is not None
-            else 0.0,
-            "claimed": bool(faucet_preview["claimed"]),
-            "claimed_q": float(faucet_preview["claimed_q"]),
-            "remaining_q": float(faucet_preview["remaining_q"]),
-            "claim": faucet_preview["claim"],
-        }
-        pools = {
-            "consensus_budget_q": float(latest_budget["consensus_budget_q"])
-            if latest_budget is not None
-            else 0.0,
-            "registry_budget_q": float(latest_budget["registry_budget_q"])
-            if latest_budget is not None
-            else 0.0,
-            "validation_budget_q": float(latest_budget["validation_budget_q"])
-            if latest_budget is not None
-            else 0.0,
-            "faucet_budget_q": float(latest_budget["faucet_budget_q"])
-            if latest_budget is not None
-            else 0.0,
-        }
-        latest_budget_breakdown = {
-            "epoch_id": str(latest_budget["epoch_id"]) if latest_budget is not None else None,
-            "total_authorized_q": float(latest_budget["total_authorized_q"])
-            if latest_budget is not None
-            else 0.0,
-            "faucet_share_q": float(latest_budget["faucet_share_q"])
-            if latest_budget is not None
-            else 0.0,
-        }
-        return {
-            "base_emission_q": self.base_emission_q,
-            "pool_shares": self.epoch_reward_pool_shares.model_dump(mode="json"),
-            "removals": {
-                "count": len(self._recyclable_removals),
-                "total_q": total_q,
-                "by_category": by_category,
-                "by_epoch": by_epoch,
-                "latest_removed_at": latest_removed_at,
-            },
-            "latest_budget": latest_budget,
-            "recycling": recycling,
-            "faucet": faucet,
-            "pools": pools,
-            "latest_budget_breakdown": latest_budget_breakdown,
-            "recent_removals": recent_removals,
-        }
 
     def claim_faucet_share(self) -> dict:
-        preview = self.get_faucet_claim_preview()
-        if not preview["eligible"]:
-            raise ValueError(str(preview["message"]))
-
-        claim = FaucetClaim(
-            sequence_id=self._next_faucet_claim_sequence,
-            claim_id=str(uuid4()),
-            epoch_id=str(preview["epoch_id"]),
-            wallet_id=str(preview["wallet_id"]),
-            node_id=self.node_id,
-            operator_id=self.operator_id,
-            amount_q=float(preview["share_q"]),
-            active_local_endpoint_count=int(preview["active_local_endpoint_count"]),
-            claimed_at=datetime.now(timezone.utc).isoformat(),
-        ).model_dump(mode="json")
-        self._faucet_claims.append(claim)
-        self._next_faucet_claim_sequence += 1
-        self._append_wallet_ledger_event(
-            stream="economics",
-            source_event={
-                "event_id": claim["claim_id"],
-                "sequence_id": claim["sequence_id"],
-                "occurred_at": claim["claimed_at"],
-                **claim,
-            },
-            event_type="faucet_claimed",
-            owner_id=str(claim["wallet_id"]),
-            status=str(claim["epoch_id"]),
-            amount_q=float(claim["amount_q"]),
-        )
-        self._append_wallet_economics_event(
-            event_type="faucet_claimed",
-            occurred_at=str(claim["claimed_at"]),
-            owner_id=str(claim["wallet_id"]),
-            status=str(claim["epoch_id"]),
-            amount_q=float(claim["amount_q"]),
-            payload=claim,
-        )
-        eligibility_snapshot_hash = hashlib.sha256(
-            json.dumps(
-                {
-                    "epoch_id": preview["epoch_id"],
-                    "wallet_id": preview["wallet_id"],
-                    "share_q": preview["share_q"],
-                    "active_local_endpoint_count": preview["active_local_endpoint_count"],
-                    "active_hypervisor_count": preview["active_hypervisor_count"],
-                },
-                sort_keys=True,
-            ).encode("utf-8")
-        ).hexdigest()
-        self.record_ledger_operation(
-            operation_type="FAUCET_CLAIM",
-            origin_type="wallet",
-            fee_class="faucet_exempt",
-            initiator_id=str(claim["wallet_id"]),
-            sender_wallet=str(claim["wallet_id"]),
-            fee_payer=str(claim["wallet_id"]),
-            payload={
-                "hypervisor_id": self.node_id,
-                "claim_epoch": str(preview["epoch_id"]),
-                "destination_wallet": str(claim["wallet_id"]),
-                "eligibility_snapshot_hash": f"sha256:{eligibility_snapshot_hash}",
-                "claim_id": str(claim["claim_id"]),
-                "amount_q": float(claim["amount_q"]),
-            },
-            created_at=str(claim["claimed_at"]),
-            emitted_events=["FaucetClaimed"],
-        )
-        self.record_ledger_operation(
-            operation_type="REWARD_MINT",
-            origin_type="protocol",
-            fee_class="protocol_sponsored",
-            initiator_id=str(claim["claim_id"]),
-            payload={
-                "reward_id": str(claim["claim_id"]),
-                "reward_type": "faucet",
-                "reward_epoch": str(preview["epoch_id"]),
-                "recipient_wallet": str(claim["wallet_id"]),
-                "amount": float(claim["amount_q"]),
-                "pool_id": "faucet",
-                "pool_budget_reference": str(preview["epoch_id"]),
-            },
-            created_at=str(claim["claimed_at"]),
-            emitted_events=["RewardMinted"],
-        )
-        self._persist_state()
-        return self.get_faucet_claim_preview()
+        return self._wallet_application_facade().claim_faucet_share()
 
     def list_wallet_allocation_events(self, *, limit: int | None = None) -> list[dict]:
-        self._reconcile_wallet_allocation_events()
-        events = list(self._wallet_allocation_events)
-        if limit is None or limit >= len(events):
-            return events
-        return events[-limit:]
+        return self._wallet_application_facade().list_wallet_allocation_events(
+            limit=limit
+        )
 
     def list_wallet_allocation_activation_events(
         self, *, limit: int | None = None
     ) -> list[dict]:
-        events = list(self._wallet_allocation_activation_events)
-        if limit is None or limit >= len(events):
-            return events
-        return events[-limit:]
+        return self._wallet_application_facade().list_wallet_allocation_activation_events(
+            limit=limit
+        )
 
     def list_wallet_allocation_dispute_events(
         self, *, limit: int | None = None
     ) -> list[dict]:
-        events = list(self._wallet_allocation_dispute_events)
-        if limit is None or limit >= len(events):
-            return events
-        return events[-limit:]
+        return self._wallet_application_facade().list_wallet_allocation_dispute_events(
+            limit=limit
+        )
 
     def export_wallet_usage_events(
         self,
@@ -1279,8 +660,7 @@ class HypervisorService:
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return self._export_wallet_event_stream(
-            self._wallet_usage_events,
+        return self._wallet_application_facade().export_wallet_usage_events(
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -1293,8 +673,7 @@ class HypervisorService:
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return self._export_wallet_event_stream(
-            self._wallet_session_events,
+        return self._wallet_application_facade().export_wallet_session_events(
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -1307,8 +686,7 @@ class HypervisorService:
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return self._export_wallet_event_stream(
-            self._wallet_ledger_events,
+        return self._wallet_application_facade().export_wallet_ledger_events(
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -1321,8 +699,7 @@ class HypervisorService:
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return self._export_wallet_event_stream(
-            self._wallet_economics_events,
+        return self._wallet_application_facade().export_wallet_economics_events(
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -1335,9 +712,7 @@ class HypervisorService:
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        self._reconcile_wallet_allocation_events()
-        return self._export_wallet_event_stream(
-            self._wallet_allocation_events,
+        return self._wallet_application_facade().export_wallet_allocation_events(
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -1350,8 +725,7 @@ class HypervisorService:
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return self._export_wallet_event_stream(
-            self._wallet_allocation_activation_events,
+        return self._wallet_application_facade().export_wallet_allocation_activation_events(
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -1364,8 +738,7 @@ class HypervisorService:
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return self._export_wallet_event_stream(
-            self._wallet_allocation_dispute_events,
+        return self._wallet_application_facade().export_wallet_allocation_dispute_events(
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -1388,17 +761,11 @@ class HypervisorService:
         settlement_status: str | None = None,
         amount_q: float = 0.0,
     ) -> dict:
-        ledger_event = WalletLedgerEvent(
-            sequence_id=self._next_wallet_ledger_sequence,
-            event_id=str(uuid4()),
+        return self._wallet_economics_service.append_wallet_ledger_event(
             stream=stream,
-            stream_event_id=str(source_event["event_id"]),
-            stream_sequence_id=int(source_event["sequence_id"]),
+            source_event=source_event,
             event_type=event_type,
-            occurred_at=str(source_event["occurred_at"]),
             owner_id=owner_id,
-            node_id=self.node_id,
-            operator_id=self.operator_id,
             task_id=task_id,
             allocation_id=allocation_id,
             session_id=session_id,
@@ -1407,12 +774,8 @@ class HypervisorService:
             workload_type=workload_type,
             status=status,
             settlement_status=settlement_status,
-            amount_q=float(amount_q),
-            payload=dict(source_event),
-        ).model_dump(mode="json")
-        self._wallet_ledger_events.append(ledger_event)
-        self._next_wallet_ledger_sequence += 1
-        return ledger_event
+            amount_q=amount_q,
+        )
 
     def _append_wallet_economics_event(
         self,
@@ -1424,29 +787,14 @@ class HypervisorService:
         amount_q: float = 0.0,
         payload: dict,
     ) -> dict:
-        economics_event = WalletLedgerEvent(
-            sequence_id=self._next_wallet_economics_sequence,
-            event_id=str(uuid4()),
-            stream="economics",
-            stream_event_id=str(
-                payload.get("removal_id")
-                or payload.get("claim_id")
-                or payload.get("epoch_id")
-                or uuid4()
-            ),
-            stream_sequence_id=int(payload.get("sequence_id") or 1),
+        return self._wallet_economics_service.append_wallet_economics_event(
             event_type=event_type,
             occurred_at=occurred_at,
             owner_id=owner_id,
-            node_id=self.node_id,
-            operator_id=self.operator_id,
             status=status,
-            amount_q=float(amount_q),
-            payload=dict(payload),
-        ).model_dump(mode="json")
-        self._wallet_economics_events.append(economics_event)
-        self._next_wallet_economics_sequence += 1
-        return economics_event
+            amount_q=amount_q,
+            payload=payload,
+        )
 
     def record_recyclable_removal(
         self,
@@ -1459,42 +807,15 @@ class HypervisorService:
         source_epoch_id: str | None = None,
         removed_at: str | None = None,
     ) -> dict:
-        removal = RecyclableRemoval(
-            sequence_id=self._next_recyclable_removal_sequence,
-            removal_id=str(uuid4()),
+        return self._wallet_economics_service.record_recyclable_removal(
             category=category,
-            amount_q=float(amount_q),
+            amount_q=amount_q,
             owner_id=owner_id,
-            removed_at=removed_at or datetime.now(timezone.utc).isoformat(),
             source_event_type=source_event_type,
             source_reference=source_reference,
             source_epoch_id=source_epoch_id,
-        ).model_dump(mode="json")
-        self._recyclable_removals.append(removal)
-        self._next_recyclable_removal_sequence += 1
-        self._append_wallet_ledger_event(
-            stream="economics",
-            source_event={
-                "event_id": removal["removal_id"],
-                "sequence_id": removal["sequence_id"],
-                "occurred_at": removal["removed_at"],
-                **removal,
-            },
-            event_type="recyclable_removed",
-            owner_id=str(removal["owner_id"]),
-            status=str(removal["category"]),
-            amount_q=float(removal["amount_q"]),
+            removed_at=removed_at,
         )
-        self._append_wallet_economics_event(
-            event_type="recyclable_removed",
-            occurred_at=str(removal["removed_at"]),
-            owner_id=str(removal["owner_id"]),
-            status=str(removal["category"]),
-            amount_q=float(removal["amount_q"]),
-            payload=removal,
-        )
-        self._persist_state()
-        return removal
 
     def derive_epoch_reward_budget(
         self,
@@ -1505,179 +826,27 @@ class HypervisorService:
         faucet_carryover_q: float = 0.0,
         active_hypervisor_count: int = 0,
     ) -> dict:
-        eligible_removed_q = round(
-            sum(
-                float(item["amount_q"])
-                for item in self._recyclable_removals
-                if item.get("source_epoch_id") == source_epoch_id
-            ),
-            6,
-        )
-        budget = EpochRewardBudget(
+        return self._wallet_economics_service.derive_epoch_reward_budget(
             epoch_id=epoch_id,
-            derived_at=datetime.now(timezone.utc).isoformat(),
-            base_emission_q=self.base_emission_q,
-            eligible_removed_q=eligible_removed_q,
-            recycle_backlog_q=float(recycle_backlog_q),
-            faucet_carryover_q=float(faucet_carryover_q),
-            active_hypervisor_count=int(active_hypervisor_count),
-            pool_shares=self.epoch_reward_pool_shares,
-        ).model_dump(mode="json")
-        self._epoch_reward_budgets = [
-            item for item in self._epoch_reward_budgets if item["epoch_id"] != epoch_id
-        ]
-        self._epoch_reward_budgets.append(budget)
-        self._append_wallet_economics_event(
-            event_type="epoch_reward_budget_derived",
-            occurred_at=str(budget["derived_at"]),
-            owner_id=self.operator_id,
-            status=str(budget["epoch_id"]),
-            amount_q=float(budget["total_authorized_q"]),
-            payload=budget,
+            source_epoch_id=source_epoch_id,
+            recycle_backlog_q=recycle_backlog_q,
+            faucet_carryover_q=faucet_carryover_q,
+            active_hypervisor_count=active_hypervisor_count,
         )
-        self.record_ledger_operation(
-            operation_type="EPOCH_TRANSITION",
-            origin_type="protocol",
-            fee_class="protocol_sponsored",
-            initiator_id=epoch_id,
-            payload={
-                "closing_epoch": source_epoch_id,
-                "opening_epoch": epoch_id,
-                "reward_budget_reference": epoch_id,
-                "eligible_removed_q": float(budget["eligible_removed_q"]),
-                "recycle_backlog_q": float(budget["recycle_backlog_q"]),
-                "total_authorized_q": float(budget["total_authorized_q"]),
-                "active_hypervisor_count": int(budget["active_hypervisor_count"]),
-            },
-            created_at=str(budget["derived_at"]),
-            emitted_events=["EpochTransitionRecorded"],
-        )
-        self._persist_state()
-        return budget
 
     def reopen_wallet_allocation_event(
         self, event_id: str, *, reason: str | None = None
     ) -> dict:
-        self._reconcile_wallet_allocation_events()
-        event = next(
-            (
-                item
-                for item in self._wallet_allocation_events
-                if item["event_id"] == event_id
-            ),
-            None,
+        return self._wallet_application_facade().reopen_wallet_allocation_event(
+            event_id,
+            reason=reason,
         )
-        if event is None:
-            raise KeyError(event_id)
-        if event.get("settlement_status") != "closed":
-            raise ValueError(f"Wallet allocation event is not closed: {event_id}")
-        if event.get("dispute_status") == "open":
-            raise ValueError(f"Wallet allocation event is disputed: {event_id}")
-
-        current_time = time.time()
-        timestamp = datetime.fromtimestamp(current_time, timezone.utc).isoformat()
-        normalized_reason = reason.strip() if isinstance(reason, str) else None
-        closed_immediately = self.wallet_allocation_grace_period_seconds == 0
-        event["settlement_status"] = "closed" if closed_immediately else "grace"
-        event["grace_expires_at"] = (
-            None
-            if closed_immediately
-            else datetime.fromtimestamp(
-                current_time + self.wallet_allocation_grace_period_seconds,
-                timezone.utc,
-            ).isoformat()
-        )
-        event["closed_at"] = timestamp if closed_immediately else None
-        event["reopened_at"] = timestamp
-        event["reopen_reason"] = normalized_reason or None
-        event["reopen_count"] = int(event.get("reopen_count", 0)) + 1
-        self.record_event(
-            event_type="wallet.allocation_reopened",
-            message="wallet allocation settlement reopened",
-            bundle_id=event["bundle_id"],
-            details={
-                "event_id": event["event_id"],
-                "sequence_id": event["sequence_id"],
-                "allocation_id": event["allocation_id"],
-                "owner_id": event["owner_id"],
-                "reopen_count": event["reopen_count"],
-                "reopen_reason": event["reopen_reason"],
-                "settlement_status": event["settlement_status"],
-            },
-        )
-        self._persist_state()
-        return dict(event)
 
     def dispute_wallet_allocation_event(self, event_id: str, *, reason: str) -> dict:
-        self._reconcile_wallet_allocation_events()
-        event = next(
-            (
-                item
-                for item in self._wallet_allocation_events
-                if item["event_id"] == event_id
-            ),
-            None,
-        )
-        if event is None:
-            raise KeyError(event_id)
-        if event.get("dispute_status") == "open":
-            raise ValueError(f"Wallet allocation event is already disputed: {event_id}")
-
-        timestamp = datetime.fromtimestamp(time.time(), timezone.utc).isoformat()
-        dispute_id = str(uuid4())
-        event["dispute_id"] = dispute_id
-        event["dispute_opened_at"] = timestamp
-        event["dispute_reason"] = reason
-        event["dispute_status"] = "open"
-        event["dispute_opened_by"] = self.operator_id
-        event["dispute_resolved_at"] = None
-        event["dispute_resolution"] = None
-        event["dispute_resolution_reason"] = None
-        dispute_payload = WalletAllocationDisputeEvent(
-            sequence_id=self._next_wallet_allocation_dispute_sequence,
-            event_id=str(uuid4()),
-            dispute_id=dispute_id,
-            allocation_event_id=event["event_id"],
-            allocation_id=event["allocation_id"],
-            owner_id=event["owner_id"],
-            node_id=self.node_id,
-            operator_id=self.operator_id,
-            bundle_id=event["bundle_id"],
-            workload_type=event["workload_type"],
-            event_type="opened",
-            occurred_at=timestamp,
+        return self._wallet_application_facade().dispute_wallet_allocation_event(
+            event_id,
             reason=reason,
-            opened_by=self.operator_id,
-        ).model_dump(mode="json")
-        self._wallet_allocation_dispute_events.append(dispute_payload)
-        self._next_wallet_allocation_dispute_sequence += 1
-        self._append_wallet_ledger_event(
-            stream="allocation_dispute",
-            source_event=dispute_payload,
-            event_type="opened",
-            owner_id=str(dispute_payload["owner_id"]),
-            allocation_id=str(dispute_payload["allocation_id"]),
-            bundle_id=str(dispute_payload["bundle_id"]),
-            workload_type=str(dispute_payload["workload_type"]),
-            amount_q=0.0,
         )
-        self.record_event(
-            event_type="wallet.allocation_disputed",
-            message="wallet allocation settlement disputed",
-            bundle_id=event["bundle_id"],
-            details={
-                "event_id": event["event_id"],
-                "sequence_id": event["sequence_id"],
-                "dispute_id": dispute_id,
-                "allocation_id": event["allocation_id"],
-                "owner_id": event["owner_id"],
-                "dispute_reason": event["dispute_reason"],
-                "settlement_status": event["settlement_status"],
-                "dispute_status": event["dispute_status"],
-            },
-        )
-        self._persist_state()
-        return dict(event)
 
     def resolve_wallet_allocation_dispute(
         self,
@@ -1686,93 +855,11 @@ class HypervisorService:
         resolution: str,
         reason: str | None = None,
     ) -> dict:
-        self._reconcile_wallet_allocation_events()
-        event = next(
-            (
-                item
-                for item in self._wallet_allocation_events
-                if item["event_id"] == event_id
-            ),
-            None,
-        )
-        if event is None:
-            raise KeyError(event_id)
-        if event.get("dispute_status") != "open":
-            raise ValueError(f"Wallet allocation event is not disputed: {event_id}")
-
-        current_time = time.time()
-        timestamp = datetime.fromtimestamp(current_time, timezone.utc).isoformat()
-        normalized_reason = reason.strip() if isinstance(reason, str) else None
-        event["dispute_status"] = "resolved"
-        event["dispute_resolved_at"] = timestamp
-        event["dispute_resolution"] = resolution
-        event["dispute_resolution_reason"] = normalized_reason or None
-        if resolution == "accepted":
-            closed_immediately = self.wallet_allocation_grace_period_seconds == 0
-            event["settlement_status"] = "closed" if closed_immediately else "grace"
-            event["grace_expires_at"] = (
-                None
-                if closed_immediately
-                else datetime.fromtimestamp(
-                    current_time + self.wallet_allocation_grace_period_seconds,
-                    timezone.utc,
-                ).isoformat()
-            )
-            event["closed_at"] = timestamp if closed_immediately else None
-            event["reopened_at"] = timestamp
-            event["reopen_reason"] = normalized_reason or event.get("dispute_reason")
-            event["reopen_count"] = int(event.get("reopen_count", 0)) + 1
-        elif resolution in {"rejected", "withdrawn"}:
-            event["settlement_status"] = "closed"
-            event["grace_expires_at"] = None
-            event["closed_at"] = timestamp
-        else:
-            raise ValueError(f"Unsupported dispute resolution: {resolution}")
-        dispute_payload = WalletAllocationDisputeEvent(
-            sequence_id=self._next_wallet_allocation_dispute_sequence,
-            event_id=str(uuid4()),
-            dispute_id=str(event["dispute_id"]),
-            allocation_event_id=event["event_id"],
-            allocation_id=event["allocation_id"],
-            owner_id=event["owner_id"],
-            node_id=self.node_id,
-            operator_id=self.operator_id,
-            bundle_id=event["bundle_id"],
-            workload_type=event["workload_type"],
-            event_type="resolved",
-            occurred_at=timestamp,
+        return self._wallet_application_facade().resolve_wallet_allocation_dispute(
+            event_id,
             resolution=resolution,
-            resolution_reason=normalized_reason or None,
-        ).model_dump(mode="json")
-        self._wallet_allocation_dispute_events.append(dispute_payload)
-        self._next_wallet_allocation_dispute_sequence += 1
-        self._append_wallet_ledger_event(
-            stream="allocation_dispute",
-            source_event=dispute_payload,
-            event_type="resolved",
-            owner_id=str(dispute_payload["owner_id"]),
-            allocation_id=str(dispute_payload["allocation_id"]),
-            bundle_id=str(dispute_payload["bundle_id"]),
-            workload_type=str(dispute_payload["workload_type"]),
-            amount_q=0.0,
+            reason=reason,
         )
-        self.record_event(
-            event_type="wallet.allocation_dispute_resolved",
-            message="wallet allocation dispute resolved",
-            bundle_id=event["bundle_id"],
-            details={
-                "event_id": event["event_id"],
-                "sequence_id": event["sequence_id"],
-                "dispute_id": event["dispute_id"],
-                "allocation_id": event["allocation_id"],
-                "owner_id": event["owner_id"],
-                "dispute_resolution": event["dispute_resolution"],
-                "dispute_resolution_reason": event["dispute_resolution_reason"],
-                "settlement_status": event["settlement_status"],
-            },
-        )
-        self._persist_state()
-        return dict(event)
 
     def _export_wallet_event_stream(
         self,
@@ -1782,48 +869,12 @@ class HypervisorService:
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        events = list(events)
-        retained_from_sequence = events[0]["sequence_id"] if events else None
-        retained_through_sequence = events[-1]["sequence_id"] if events else None
-        cursor_status = "ok"
-        start_index = 0
-
-        if after_sequence is not None:
-            if (
-                retained_from_sequence is not None
-                and after_sequence < retained_from_sequence - 1
-            ):
-                cursor_status = "stale"
-            else:
-                start_index = len(events)
-                for index, event in enumerate(events):
-                    if event["sequence_id"] > after_sequence:
-                        start_index = index
-                        break
-        elif after_event_id is not None:
-            start_index = len(events)
-            found = False
-            for index, event in enumerate(events):
-                if event["event_id"] == after_event_id:
-                    start_index = index + 1
-                    found = True
-                    break
-            if not found and events:
-                cursor_status = "stale"
-                start_index = 0
-
-        items = events[start_index : start_index + limit]
-        has_more = start_index + limit < len(events)
-        return {
-            "items": items,
-            "next_after_event_id": items[-1]["event_id"] if items else after_event_id,
-            "next_after_sequence": items[-1]["sequence_id"] if items else after_sequence,
-            "retained_from_sequence": retained_from_sequence,
-            "retained_through_sequence": retained_through_sequence,
-            "watermark_sequence": retained_through_sequence,
-            "has_more": has_more,
-            "cursor_status": cursor_status,
-        }
+        return self._wallet_economics_service.export_wallet_event_stream(
+            events,
+            after_event_id=after_event_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
 
     def task_history(self, task_id: str) -> list[JournalEvent]:
         return [event for event in self._events if event.task_id == task_id]
@@ -1835,8 +886,7 @@ class HypervisorService:
         output_tokens: int,
         fixed_request_count: int = 1,
     ) -> dict:
-        return quote_usage_q(
-            pricing=self._pricing,
+        return self._wallet_application_facade().quote_wallet_usage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             fixed_request_count=fixed_request_count,
@@ -1857,353 +907,51 @@ class HypervisorService:
         measurement_source: str = "manual",
         source: str = "manual",
     ) -> dict:
-        event = WalletUsageEvent(
-            sequence_id=self._next_wallet_usage_sequence,
-            event_id=str(uuid4()),
+        return self._wallet_application_facade().record_wallet_usage(
             owner_id=owner_id,
-            node_id=self.node_id,
-            operator_id=self.operator_id,
-            task_id=task_id,
-            allocation_id=allocation_id,
             bundle_id=bundle_id,
             workload_type=workload_type,
+            task_id=task_id,
+            allocation_id=allocation_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            fixed_request_count=fixed_request_count,
             measurement_kind=measurement_kind,
             measurement_source=measurement_source,
             source=source,
-            occurred_at=datetime.now(timezone.utc).isoformat(),
-            quote=self.quote_wallet_usage(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                fixed_request_count=fixed_request_count,
-            ),
         )
-        payload = event.model_dump(mode="json")
-        self._wallet_usage_events.append(payload)
-        self._next_wallet_usage_sequence += 1
-        self._append_wallet_ledger_event(
-            stream="usage",
-            source_event=payload,
-            event_type="usage_recorded",
-            owner_id=owner_id,
-            task_id=task_id,
-            allocation_id=allocation_id,
-            bundle_id=bundle_id,
-            workload_type=workload_type,
-            amount_q=float(payload["quote"]["charges"]["total_q"]),
-        )
-        self._prune_wallet_usage_events()
-        self.record_event(
-            event_type="wallet.usage_recorded",
-            message="wallet usage event recorded",
-            bundle_id=bundle_id,
-            details={
-                "sequence_id": payload["sequence_id"],
-                "event_id": payload["event_id"],
-                "owner_id": owner_id,
-                "source": source,
-                "measurement_kind": measurement_kind,
-                "measurement_source": measurement_source,
-                "task_id": task_id,
-                "total_q": payload["quote"]["charges"]["total_q"],
-            },
-        )
-        self._persist_state()
-        return payload
 
     def _record_wallet_allocation_event(self, allocation: dict, *, status: str) -> dict:
-        request = allocation["request"]
-        matching_usage_events = [
-            event
-            for event in self._wallet_usage_events
-            if event.get("allocation_id") == allocation["allocation_id"]
-        ]
-        closed_immediately = self.wallet_allocation_grace_period_seconds == 0
-        current_time = time.time()
-        event = WalletAllocationEvent(
-            sequence_id=self._next_wallet_allocation_sequence,
-            event_id=str(uuid4()),
-            allocation_id=str(allocation["allocation_id"]),
-            owner_id=str(request["owner_id"]),
-            node_id=self.node_id,
-            operator_id=self.operator_id,
-            bundle_id=str(allocation["bundle_id"]),
-            workload_type=str(allocation["workload_type"]),
+        return self._wallet_allocation_service.record_wallet_allocation_event(
+            allocation,
             status=status,
-            occurred_at=datetime.now(timezone.utc).isoformat(),
-            settlement_status="closed" if closed_immediately else "grace",
-            grace_expires_at=(
-                None
-                if closed_immediately
-                else datetime.fromtimestamp(
-                    current_time + self.wallet_allocation_grace_period_seconds,
-                    timezone.utc,
-                ).isoformat()
-            ),
-            closed_at=(
-                datetime.fromtimestamp(current_time, timezone.utc).isoformat()
-                if closed_immediately
-                else None
-            ),
-            reopened_at=None,
-            reopen_reason=None,
-            reopen_count=0,
-            dispute_id=None,
-            dispute_opened_at=None,
-            dispute_reason=None,
-            dispute_status="none",
-            dispute_opened_by=None,
-            dispute_resolved_at=None,
-            dispute_resolution=None,
-            dispute_resolution_reason=None,
-            usage_event_count=len(matching_usage_events),
-            usage_total_q=sum(
-                float(item["quote"]["charges"]["total_q"])
-                for item in matching_usage_events
-            ),
         )
-        payload = event.model_dump(mode="json")
-        self._wallet_allocation_events.append(payload)
-        self._next_wallet_allocation_sequence += 1
-        self._append_wallet_ledger_event(
-            stream="allocation",
-            source_event=payload,
-            event_type=str(payload["status"]),
-            owner_id=str(payload["owner_id"]),
-            allocation_id=str(payload["allocation_id"]),
-            bundle_id=str(payload["bundle_id"]),
-            workload_type=str(payload["workload_type"]),
-            status=str(payload["status"]),
-            settlement_status=str(payload["settlement_status"]),
-            amount_q=float(payload["usage_total_q"]),
-        )
-        self.record_event(
-            event_type="wallet.allocation_finalized",
-            message="wallet allocation finalization recorded",
-            bundle_id=str(allocation["bundle_id"]),
-            runtime_id=allocation.get("runtime_id"),
-            details={
-                "event_id": payload["event_id"],
-                "sequence_id": payload["sequence_id"],
-                "allocation_id": payload["allocation_id"],
-                "owner_id": payload["owner_id"],
-                "status": payload["status"],
-                "settlement_status": payload["settlement_status"],
-                "usage_event_count": payload["usage_event_count"],
-                "usage_total_q": payload["usage_total_q"],
-            },
-        )
-        return payload
 
     def _record_wallet_allocation_activation_hook(
         self, allocation: dict, *, activation_source: str
     ) -> None:
-        request = allocation["request"]
-        event = WalletAllocationActivationEvent(
-            sequence_id=self._next_wallet_allocation_activation_sequence,
-            event_id=str(uuid4()),
-            allocation_id=allocation["allocation_id"],
-            owner_id=request["owner_id"],
-            node_id=self.node_id,
-            operator_id=self.operator_id,
-            bundle_id=allocation["bundle_id"],
-            workload_type=allocation["workload_type"],
-            runtime_id=allocation.get("runtime_id"),
-            endpoint=allocation.get("endpoint"),
+        self._wallet_allocation_service.record_wallet_allocation_activation_hook(
+            allocation,
             activation_source=activation_source,
-            lease_seconds=request["lease_seconds"],
-            occurred_at=datetime.now(timezone.utc).isoformat(),
-        )
-        payload = event.model_dump(mode="json")
-        self._wallet_allocation_activation_events.append(payload)
-        self._next_wallet_allocation_activation_sequence += 1
-        self._append_wallet_ledger_event(
-            stream="allocation_activation",
-            source_event=payload,
-            event_type="activated",
-            owner_id=str(payload["owner_id"]),
-            allocation_id=str(payload["allocation_id"]),
-            bundle_id=str(payload["bundle_id"]),
-            workload_type=str(payload["workload_type"]),
-            amount_q=0.0,
-        )
-        self.record_event(
-            event_type="wallet.allocation_activated",
-            message="wallet allocation activation recorded",
-            bundle_id=allocation["bundle_id"],
-            runtime_id=allocation.get("runtime_id"),
-            details={
-                "sequence_id": payload["sequence_id"],
-                "event_id": payload["event_id"],
-                "activation_source": payload["activation_source"],
-                "allocation_id": payload["allocation_id"],
-                "owner_id": payload["owner_id"],
-                "bundle_id": payload["bundle_id"],
-                "workload_type": payload["workload_type"],
-                "runtime_id": payload["runtime_id"],
-                "endpoint": payload["endpoint"],
-                "lease_seconds": payload["lease_seconds"],
-            },
         )
 
     def _reconcile_wallet_allocation_events(self) -> None:
-        changed = False
-        current_time = time.time()
-        for event in self._wallet_allocation_events:
-            dispute_open = event.get("dispute_status") == "open"
-            if event.get("settlement_status") == "closed" and not dispute_open:
-                continue
-
-            matching_usage_events = [
-                usage_event
-                for usage_event in self._wallet_usage_events
-                if usage_event.get("allocation_id") == event["allocation_id"]
-            ]
-            next_usage_event_count = len(matching_usage_events)
-            next_usage_total_q = sum(
-                float(item["quote"]["charges"]["total_q"])
-                for item in matching_usage_events
-            )
-            if event["usage_event_count"] != next_usage_event_count:
-                event["usage_event_count"] = next_usage_event_count
-                changed = True
-            if event["usage_total_q"] != next_usage_total_q:
-                event["usage_total_q"] = next_usage_total_q
-                changed = True
-
-            if dispute_open:
-                continue
-
-            grace_expires_at = event.get("grace_expires_at")
-            if grace_expires_at is None:
-                continue
-            try:
-                expires_at_ts = datetime.fromisoformat(grace_expires_at).timestamp()
-            except ValueError:
-                expires_at_ts = current_time
-            if expires_at_ts > current_time:
-                continue
-            event["settlement_status"] = "closed"
-            event["closed_at"] = datetime.fromtimestamp(
-                current_time, timezone.utc
-            ).isoformat()
-            changed = True
-
-        if changed:
-            self._persist_state()
+        self._wallet_allocation_service.reconcile_wallet_allocation_events()
 
     def list_allocations(self) -> list[dict]:
-        self._cleanup_expired_allocations()
-        self._reconcile_pending_allocations()
-        return [self._public_allocation(allocation) for allocation in self._allocations.values()]
+        return self._allocation_lifecycle_facade().list_allocations()
 
     def get_allocation(self, allocation_id: str) -> dict:
-        self._cleanup_expired_allocations()
-        self._reconcile_pending_allocations()
-        return self._public_allocation(self._allocations[allocation_id])
+        return self._allocation_lifecycle_facade().get_allocation(allocation_id)
 
     def reconcile_allocation(self, allocation_id: str) -> dict:
-        self._cleanup_expired_allocations()
-        self._reconcile_pending_allocations()
-        return self.get_allocation(allocation_id)
+        return self._allocation_lifecycle_facade().reconcile_allocation(allocation_id)
 
     def create_allocation(self, request: AllocationRequest) -> dict:
-        self._cleanup_expired_allocations()
-        self._reconcile_pending_allocations()
-        bundle = self._select_allocation_bundle(request)
-        runtime = self._runtime_for_bundle(bundle.bundle_id)
-        unavailability = self._allocation_unavailability(bundle=bundle, runtime=runtime)
-        if unavailability is not None:
-            if request.policy == "wait" and unavailability["retryable"]:
-                owner_quota = self._owner_quota_unavailability(
-                    owner_id=request.owner_id,
-                    status="pending",
-                    bundle_id=bundle.bundle_id,
-                )
-                if owner_quota is not None:
-                    raise AllocationUnavailableError(**owner_quota)
-                return self._create_pending_allocation(
-                    request=request,
-                    bundle=bundle,
-                    reason=unavailability["reason"],
-                )
-            retry_hint = self._allocation_retry_hint(
-                bundle_id=bundle.bundle_id,
-                reason=str(unavailability["reason"]),
-            )
-            raise AllocationUnavailableError(
-                reason=str(unavailability["reason"]),
-                message=str(unavailability["message"]),
-                bundle_id=bundle.bundle_id,
-                retryable=bool(unavailability["retryable"]),
-                retry_after_seconds=retry_hint["retry_after_seconds"]
-                if unavailability["retryable"]
-                else None,
-                next_attempt_at=retry_hint["next_attempt_at"]
-                if unavailability["retryable"]
-                else None,
-            )
-        owner_quota = self._owner_quota_unavailability(
-            owner_id=request.owner_id,
-            status="active",
-            bundle_id=bundle.bundle_id,
-        )
-        if owner_quota is not None:
-            raise AllocationUnavailableError(**owner_quota)
-        allocation_id = str(uuid4())
-        created_at = datetime.fromtimestamp(time.time(), timezone.utc).isoformat()
-        expires_at = datetime.fromtimestamp(
-            time.time() + request.lease_seconds,
-            timezone.utc,
-        ).isoformat()
-        reservation_id = self._reserve_allocation_residency(
-            allocation_id=allocation_id,
-            bundle=bundle,
-            runtime=runtime,
-        )
-        if runtime is None:
-            runtime = self.start_bundle(bundle.bundle_id)
-        allocation = {
-            "allocation_id": allocation_id,
-            "request": request.model_dump(mode="json"),
-            "workload_type": request.workload_type,
-            "bundle_id": bundle.bundle_id,
-            "runtime_id": runtime.runtime_id,
-            "endpoint": self._resolve_runtime_endpoint(bundle, runtime),
-            "status": "active",
-            "created_at": created_at,
-            "expires_at": expires_at,
-            "reservation_id": reservation_id,
-            "reason": None,
-        }
-        self._allocations[allocation_id] = allocation
-        self._record_wallet_allocation_activation_hook(
-            allocation, activation_source="create"
-        )
-        self.record_event(
-            event_type="allocation.created",
-            message="allocation created for agent client",
-            bundle_id=bundle.bundle_id,
-            runtime_id=runtime.runtime_id,
-            details={"allocation_id": allocation_id, "workload_type": request.workload_type},
-        )
-        self._persist_state()
-        return self.get_allocation(allocation_id)
+        return self._allocation_lifecycle_facade().create_allocation(request)
 
     def release_allocation(self, allocation_id: str) -> dict:
-        self._cleanup_expired_allocations()
-        allocation = self._allocations[allocation_id]
-        self._release_allocation_resources(allocation)
-        allocation["status"] = "released"
-        self._record_wallet_allocation_event(allocation, status="released")
-        self.record_event(
-            event_type="allocation.released",
-            message="allocation released by client",
-            bundle_id=allocation["bundle_id"],
-            runtime_id=allocation["runtime_id"],
-            details={"allocation_id": allocation_id},
-        )
-        self._persist_state()
-        return self.get_allocation(allocation_id)
+        return self._allocation_lifecycle_facade().release_allocation(allocation_id)
 
     def capability_inventory(self) -> list[dict]:
         return [
@@ -2218,127 +966,9 @@ class HypervisorService:
         ]
 
     def node_advertisement(self, *, heartbeat_at: str | None = None) -> dict:
-        from aidn_hypervisor.canonical_projection import (
-            project_canonical_advertisements,
-            project_registry_objects,
+        return self._network_projection_service.node_advertisement(
+            heartbeat_at=heartbeat_at
         )
-
-        timestamp = heartbeat_at or datetime.now(timezone.utc).isoformat()
-        resources = (
-            self.resources.summary()
-            if self.resources is not None
-            else _empty_resource_summary()
-        )
-        canonical_overlay = self.canonical_overlay_inventory()
-        publication_service = getattr(self, "endpoint_publication_service", None)
-        current_publication_records = []
-        if publication_service is not None:
-            current_publication_records = [
-                record
-                for record in publication_service.list_publications()
-                if record.status == "published"
-            ]
-        published_endpoints = [
-            RegistryPublishedEndpointSummary(
-                endpoint_id=record.endpoint_id,
-                owner_wallet=record.owner_wallet,
-                node_id=record.node_id,
-                current_publication_id=record.publication_id,
-                current_configuration_hash=record.configuration_hash,
-                published_at=record.published_at,
-                status=record.status,
-                visibility=record.publication.get("visibility", "private"),
-                model_class=record.model_class,
-                publication_sync_status=self._publication_sync_status(
-                    local_configuration_hash=record.configuration_hash,
-                    published_configuration_hash=record.configuration_hash,
-                ),
-                published_validation_summary=self._validation_summary_for(
-                    endpoint_id=record.endpoint_id,
-                    configuration_hash=record.configuration_hash,
-                ),
-                live_validation_summary=self._validation_summary_for(
-                    endpoint_id=record.endpoint_id,
-                    configuration_hash=record.configuration_hash,
-                ),
-            )
-            for record in current_publication_records
-        ]
-        trust_summary = RegistryService()._canonical_trust_summary(
-            {
-                "published_endpoints": [
-                    item.model_dump(mode="json") for item in published_endpoints
-                ]
-            }
-        )
-        node_status = self._node_advertisement_status(
-            heartbeat_at=timestamp,
-            heartbeat_ttl_seconds=self.heartbeat_ttl_seconds,
-        )
-        reputation = RegistryReputation(
-            **build_reputation_profile(
-                node_status=node_status,
-                heartbeat_fresh=node_status == "ready",
-                trust_summary=trust_summary,
-                operational_stats=self._operational_reputation_stats(),
-                baseline_rating=self.rating,
-                updated_at=timestamp,
-            )
-        )
-        advertisement = RegistryNodeAdvertisement(
-            node_id=self.node_id,
-            operator_id=self.operator_id,
-            owner_wallet_id=(
-                self._owner_wallet["wallet_id"] if self._owner_wallet is not None else None
-            ),
-            base_url=self.base_url,
-            heartbeat_at=timestamp,
-            heartbeat_ttl_seconds=self.heartbeat_ttl_seconds,
-            status=node_status,
-            resources=resources,
-            providers=sorted({bundle.provider_type for bundle in self.bundles}),
-            can_host_custom_model=self.can_host_custom_model,
-            pricing=self._pricing,
-            rating=self._rating,
-            reputation=reputation,
-            bundles=[
-                RegistryBundleAdvertisement(
-                    bundle_id=bundle.bundle_id,
-                    plugin_id=bundle.plugin_id,
-                    workload_type=bundle.workload_type,
-                    provider_type=bundle.provider_type,
-                    model_id=bundle.model_id,
-                    endpoint=bundle.endpoint,
-                    enabled=bundle.enabled,
-                    status=self._bundle_registry_status(bundle),
-                    launch_mode=bundle.launch_mode,
-                    device_affinity=bundle.device_affinity,
-                    max_parallel_requests=bundle.max_parallel_requests,
-                    supports_allocation=True,
-                    supports_queue=True,
-                )
-                for bundle in self.bundles
-            ],
-            published_endpoints=published_endpoints,
-            canonical_services=canonical_overlay.get("services", []),
-            canonical_capabilities=canonical_overlay.get("capabilities", []),
-            canonical_capability_runtimes=canonical_overlay.get("runtimes", []),
-            canonical_compute_compatibility=canonical_overlay.get(
-                "compatibility", []
-            ),
-            canonical_feature_profiles=canonical_overlay.get("feature_profiles", []),
-            canonical_limit_profiles=canonical_overlay.get("limit_profiles", []),
-            canonical_implementation_profiles=canonical_overlay.get(
-                "implementation_profiles", []
-            ),
-            canonical_registry_objects=project_registry_objects(
-                self, current_publication_records
-            ),
-            canonical_advertisements=project_canonical_advertisements(
-                current_publication_records
-            ),
-        )
-        return advertisement.model_dump(mode="json")
 
     def _node_advertisement_status(
         self,
@@ -2346,13 +976,10 @@ class HypervisorService:
         heartbeat_at: str,
         heartbeat_ttl_seconds: int,
     ) -> str:
-        heartbeat = datetime.fromisoformat(heartbeat_at).timestamp()
-        age = time.time() - heartbeat
-        if age <= heartbeat_ttl_seconds:
-            return "ready"
-        if age <= heartbeat_ttl_seconds + RegistryService().stale_grace_seconds:
-            return "stale"
-        return "offline"
+        return self._network_projection_service.node_advertisement_status(
+            heartbeat_at=heartbeat_at,
+            heartbeat_ttl_seconds=heartbeat_ttl_seconds,
+        )
 
     def _publication_sync_status(
         self,
@@ -2360,11 +987,10 @@ class HypervisorService:
         local_configuration_hash: str | None,
         published_configuration_hash: str | None,
     ) -> str:
-        if published_configuration_hash is None:
-            return "never_published"
-        if local_configuration_hash == published_configuration_hash:
-            return "in_sync"
-        return "local_changes_not_published"
+        return self._network_projection_service.publication_sync_status(
+            local_configuration_hash=local_configuration_hash,
+            published_configuration_hash=published_configuration_hash,
+        )
 
     def _validation_summary_for(
         self,
@@ -2372,41 +998,13 @@ class HypervisorService:
         endpoint_id: str,
         configuration_hash: str | None,
     ) -> dict | None:
-        validation_service = getattr(self, "validation_service", None)
-        if validation_service is None:
-            return None
-        if configuration_hash is None:
-            return validation_service.validation_summary(endpoint_id)
-        summary = validation_service.validation_summary(
-            endpoint_id,
+        return self._network_projection_service.validation_summary_for(
+            endpoint_id=endpoint_id,
             configuration_hash=configuration_hash,
         )
-        if (
-            summary.get("validation_status") == "unvalidated"
-            and summary.get("certification_status") == "uncertified"
-        ):
-            fallback = validation_service.validation_summary(endpoint_id)
-            if fallback.get("validation_status") != "unvalidated" or fallback.get(
-                "certification_status"
-            ) != "uncertified":
-                return fallback
-        return summary
 
     def _operational_reputation_stats(self) -> dict[str, int]:
-        successful_tasks = 0
-        failed_tasks = 0
-        for task in self.queue.snapshot():
-            if task.status == "completed":
-                successful_tasks += 1
-                continue
-            if task.status == "failed":
-                failed_tasks += 1
-        total_tasks = successful_tasks + failed_tasks
-        return {
-            "total_tasks": total_tasks,
-            "successful_tasks": successful_tasks,
-            "failed_tasks": failed_tasks,
-        }
+        return self._network_projection_service.operational_reputation_stats()
 
     def capability_catalog(
         self,
@@ -2416,130 +1014,30 @@ class HypervisorService:
         bundle_id: str | None = None,
         include_disabled: bool = False,
     ) -> dict:
-        self._cleanup_expired_allocations()
-        self._reconcile_pending_allocations()
-        bundles = self._filtered_catalog_bundles(
+        return self._network_projection_service.capability_catalog(
+            owner_id=owner_id,
             workload_type=workload_type,
             bundle_id=bundle_id,
             include_disabled=include_disabled,
         )
-        return {
-            "node": {
-                "node_id": self.node_id,
-                "operator_id": self.operator_id,
-                "can_host_custom_model": self.can_host_custom_model,
-                "pricing": self.pricing,
-            },
-            "resources": (
-                self.resources.summary()
-                if self.resources is not None
-                else _empty_resource_summary()
-            ),
-            "bundles": [
-                self._catalog_entry(bundle, owner_id=owner_id)
-                for bundle in bundles
-            ],
-        }
 
     def owner_wallet_state(self) -> dict:
-        if self._owner_wallet is None:
-            return {
-                "configured": False,
-                "wallet_id": None,
-                "public_key": None,
-                "label": None,
-                "created_at": None,
-                "imported": False,
-            }
-        return {
-            "configured": True,
-            "wallet_id": self._owner_wallet["wallet_id"],
-            "public_key": self._owner_wallet["public_key"],
-            "label": self._owner_wallet.get("label"),
-            "created_at": self._owner_wallet["created_at"],
-            "imported": bool(self._owner_wallet.get("imported", False)),
-        }
+        return self._operator_application_facade().owner_wallet_state()
 
     def owner_wallet_private_key(self) -> str:
-        if self._owner_wallet is None:
-            raise ValueError("Owner wallet is not configured")
-        return self._owner_wallet["private_key"]
+        return self._operator_application_facade().owner_wallet_private_key()
 
     def node_identity(self) -> dict:
-        owner = self.owner_wallet_state()
-        return {
-            "node_id": self.node_id,
-            "operator_id": self.operator_id,
-            "base_url": self.base_url,
-            "owner_wallet_id": owner["wallet_id"],
-            "ownership_configured": owner["configured"],
-            "can_host_custom_model": self.can_host_custom_model,
-        }
+        return self._operator_application_facade().node_identity()
 
     def registry_enabled(self) -> bool:
-        return False
+        return self._operator_application_facade().registry_enabled()
 
     def validation_enabled(self) -> bool:
-        return False
+        return self._operator_application_facade().validation_enabled()
 
     def canonical_overlay_inventory(self) -> dict:
-        from aidn_hypervisor.canonical_projection import (
-            project_capability_definitions,
-            project_capability_runtimes,
-            project_compute_compatibility,
-            project_endpoint_feature_profiles,
-            project_endpoint_implementation_profiles,
-            project_endpoint_limit_profiles,
-            project_protocol_services,
-            project_registry_objects,
-            project_wallet_identities,
-        )
-
-        publication_service = getattr(self, "endpoint_publication_service", None)
-        current_publication_records = []
-        if publication_service is not None:
-            current_publication_records = [
-                record
-                for record in publication_service.list_publications()
-                if record.status == "published"
-            ]
-
-        capabilities = project_capability_definitions(self)
-        runtimes = project_capability_runtimes(self)
-        compatibility = project_compute_compatibility(self)
-        return {
-            "services": [
-                record.model_dump(mode="json")
-                for record in project_protocol_services(self)
-            ],
-            "capabilities": [record.model_dump(mode="json") for record in capabilities],
-            "runtimes": [record.model_dump(mode="json") for record in runtimes],
-            "compatibility": [
-                record.model_dump(mode="json") for record in compatibility
-            ],
-            "feature_profiles": [
-                record.model_dump(mode="json")
-                for record in project_endpoint_feature_profiles(current_publication_records)
-            ],
-            "limit_profiles": [
-                record.model_dump(mode="json")
-                for record in project_endpoint_limit_profiles(current_publication_records)
-            ],
-            "implementation_profiles": [
-                record.model_dump(mode="json")
-                for record in project_endpoint_implementation_profiles(
-                    current_publication_records
-                )
-            ],
-            "wallet_identities": [
-                record.model_dump(mode="json")
-                for record in project_wallet_identities(self)
-            ],
-            "registry_objects": [
-                record.model_dump(mode="json")
-                for record in project_registry_objects(self, current_publication_records)
-            ],
-        }
+        return self._operator_application_facade().canonical_overlay_inventory()
 
     def configure_owner_wallet(
         self,
@@ -2548,41 +1046,14 @@ class HypervisorService:
         label: str | None = None,
         private_key: str | None = None,
     ) -> dict:
-        if mode not in {"create", "import"}:
-            raise ValueError(f"Unsupported wallet bootstrap mode: {mode}")
-        if mode == "import" and not private_key:
-            raise ValueError("Private key is required for wallet import")
-
-        resolved_private_key = private_key or f"sk-{uuid4().hex}{uuid4().hex}"
-        digest = hashlib.sha256(resolved_private_key.encode("utf-8")).hexdigest()
-        created_at = datetime.now(timezone.utc).isoformat()
-        self._owner_wallet = {
-            "wallet_id": f"wallet-{digest[:12]}",
-            "public_key": f"pk-{digest[:24]}",
-            "private_key": resolved_private_key,
-            "label": label,
-            "created_at": created_at,
-            "imported": mode == "import",
-        }
-        self._operator_onboarding = None
-        self.sync_operator_onboarding_state(endpoint_items=[])
-        return {
-            "wallet": self.owner_wallet_state(),
-            "private_key": resolved_private_key if mode == "create" else None,
-        }
+        return self._operator_application_facade().configure_owner_wallet(
+            mode=mode,
+            label=label,
+            private_key=private_key,
+        )
 
     def operator_onboarding_state(self) -> dict:
-        if self._operator_onboarding is None:
-            return {
-                "completed": False,
-                "completed_at": None,
-                "completed_via": None,
-                "current_step": "configure_wallet",
-                "last_workspace": "home",
-                "transition_history": [],
-                "steps": [],
-            }
-        return deepcopy(self._operator_onboarding)
+        return self._operator_application_facade().operator_onboarding_state()
 
     def sync_operator_onboarding_state(
         self,
@@ -2590,128 +1061,22 @@ class HypervisorService:
         endpoint_items: list[dict],
         last_workspace: str | None = None,
     ) -> dict:
-        onboarding = self.operator_onboarding_state()
-        already_completed = bool(onboarding.get("completed"))
-        if last_workspace is not None:
-            onboarding["last_workspace"] = last_workspace
-        if already_completed or any(
-            item.get("publication_status") == "published" for item in endpoint_items
-        ):
-            onboarding["completed"] = True
-            onboarding["completed_via"] = (
-                onboarding.get("completed_via") or "first_local_endpoint_published"
-            )
-            if onboarding["completed_at"] is None:
-                onboarding["completed_at"] = datetime.now(timezone.utc).isoformat()
-            onboarding["current_step"] = "operate"
-        elif endpoint_items:
-            onboarding["completed"] = False
-            onboarding["completed_via"] = None
-            onboarding["completed_at"] = None
-            onboarding["current_step"] = "publish_endpoint"
-        elif self.owner_wallet_state()["configured"]:
-            onboarding["completed"] = False
-            onboarding["completed_via"] = None
-            onboarding["completed_at"] = None
-            onboarding["current_step"] = "attach_provider"
-        else:
-            onboarding["completed"] = False
-            onboarding["completed_via"] = None
-            onboarding["completed_at"] = None
-            onboarding["current_step"] = "configure_wallet"
-        self._operator_onboarding = onboarding
-        self._persist_state()
-        return deepcopy(onboarding)
+        return self._operator_application_facade().sync_operator_onboarding_state(
+            endpoint_items=endpoint_items,
+            last_workspace=last_workspace,
+        )
 
     def operator_dashboard_home(self) -> dict:
-        fleet = self.operator_dashboard_fleet()
-        enabled_bundles = [bundle for bundle in fleet["bundles"] if bundle["enabled"]]
-        pending_installs = [
-            install
-            for install in fleet["installs"]
-            if install["install_status"] in {"pending", "running"}
-        ]
-        bootstrap = self._operator_dashboard_bootstrap(fleet)
-        return {
-            "bootstrap": bootstrap,
-            "summary": {
-                "bundle_total": len(fleet["bundles"]),
-                "enabled_bundle_total": len(enabled_bundles),
-                "pending_install_total": len(pending_installs),
-                "queue": fleet["queue"],
-                "free_resources": fleet["resources"]["free"],
-            },
-        }
+        return self._operator_application_facade().operator_dashboard_home()
 
     def operator_dashboard_fleet(self) -> dict:
-        resources = (
-            self.resources.summary()
-            if self.resources is not None
-            else _empty_resource_summary()
-        )
-        return {
-            "node": {
-                "node_id": self.node_id,
-                "operator_id": self.operator_id,
-                "base_url": self.base_url,
-                "can_host_custom_model": self.can_host_custom_model,
-                "pricing": self.pricing,
-                "rating": self.rating,
-            },
-            "resources": resources,
-            "queue": self.queue_summary(),
-            "installs": [
-                {
-                    "install_id": install["install_id"],
-                    "provider_type": install["provider_type"],
-                    "model_id": install["model_id"],
-                    "requested_by": install["requested_by"],
-                    "install_status": self._operator_dashboard_install_status(
-                        str(install["status"])
-                    ),
-                    "bundle_id": install["bundle_id"],
-                    "last_error": install["last_error"],
-                }
-                for install in self.list_model_installs()
-            ],
-            "bundles": [
-                self._operator_dashboard_bundle_entry(bundle)
-                for bundle in self.bundles
-            ],
-            "owner_wallet": self.owner_wallet_state(),
-            "node_identity": self.node_identity(),
-        }
+        return self._operator_application_facade().operator_dashboard_fleet()
 
     def operator_dashboard_endpoints(self) -> dict:
-        items: list[dict] = []
-        return {
-            "owner_wallet": self.owner_wallet_state(),
-            "node_identity": self.node_identity(),
-            "summary": {
-                "total": len(items),
-                "configured": sum(
-                    1 for item in items if item["publication_status"] == "configured"
-                ),
-                "published": sum(
-                    1 for item in items if item["publication_status"] == "published"
-                ),
-                "validation_requested": sum(
-                    1 for item in items if item["validation_mode"] == "requested"
-                ),
-                "private": sum(1 for item in items if item["visibility"] == "private"),
-                "shared": sum(1 for item in items if item["visibility"] == "shared"),
-                "public": sum(1 for item in items if item["visibility"] == "public"),
-            },
-            "policy": {
-                "publish_requires_validation": False,
-                "validation_optional": True,
-                "execution_privacy": "endpoint implementation remains private",
-            },
-            "items": items,
-        }
+        return self._operator_application_facade().operator_dashboard_endpoints()
 
     def operator_requests_policy(self) -> dict[str, bool | str]:
-        return dict(self._operator_requests_policy)
+        return self._operator_application_facade().operator_requests_policy()
 
     def update_operator_requests_policy(
         self,
@@ -2720,64 +1085,20 @@ class HypervisorService:
         dispatch_strategy: str,
         ready_endpoint_only: bool,
     ) -> dict[str, bool | str]:
-        if dispatch_strategy not in {"local_first", "balanced", "market_first"}:
-            raise ValueError(f"Unsupported dispatch strategy: {dispatch_strategy}")
-        self._operator_requests_policy = {
-            "allow_spillover": bool(allow_spillover),
-            "dispatch_strategy": dispatch_strategy,
-            "ready_endpoint_only": bool(ready_endpoint_only),
-        }
-        self._persist_state()
-        return self.operator_requests_policy()
+        return self._operator_application_facade().update_operator_requests_policy(
+            allow_spillover=allow_spillover,
+            dispatch_strategy=dispatch_strategy,
+            ready_endpoint_only=ready_endpoint_only,
+        )
 
     def operator_dashboard_requests(
         self,
         *,
         market_candidates: list[dict] | None = None,
     ) -> dict:
-        tasks = self.queue.snapshot()
-        queue = [
-            self._operator_dashboard_task_entry(task)
-            for task in tasks
-            if task.status in {"queued", "admitted", "starting"}
-        ]
-        active = [
-            self._operator_dashboard_task_entry(task)
-            for task in tasks
-            if task.status == "running"
-        ]
-        recent = sorted(
-            [
-                self._operator_dashboard_task_entry(task)
-                for task in tasks
-                if task.status in {"completed", "failed", "cancelled"}
-            ],
-            key=lambda item: datetime.fromisoformat(
-                item["terminal_at"] or item["created_at"]
-            ),
-            reverse=True,
-        )[:12]
-        preview = self._operator_spillover_preview(market_candidates or [])
-        return {
-            "summary": {
-                "queued": len(queue),
-                "active": len(active),
-                "completed_recent": len(
-                    [item for item in recent if item["status"] == "completed"]
-                ),
-                "failed_recent": len(
-                    [item for item in recent if item["status"] == "failed"]
-                ),
-                "admission_blocked": len(queue),
-                "spillover_ready": len(preview),
-            },
-            "queue": queue,
-            "active": active,
-            "recent": recent,
-            "admission": self.admission_telemetry(),
-            "policy": self.operator_requests_policy(),
-            "market_spillover_preview": preview,
-        }
+        return self._operator_application_facade().operator_dashboard_requests(
+            market_candidates=market_candidates,
+        )
 
     def request_model_install(
         self,
@@ -2787,77 +1108,18 @@ class HypervisorService:
         source_url: str,
         requested_by: str,
     ) -> dict:
-        if self.model_store is None:
-            raise ValueError("Model store is not configured")
-        install_id = str(uuid4())
-        target_path = str(self.model_store.reserve_target_path(provider_type, model_id))
-        job = {
-            "install_id": install_id,
-            "provider_type": provider_type,
-            "model_id": model_id,
-            "source_url": source_url,
-            "target_path": target_path,
-            "requested_by": requested_by,
-            "status": "queued",
-            "bundle_id": None,
-            "last_error": None,
-        }
-        self._model_installs[install_id] = job
-        self.record_event(
-            event_type="model.install.requested",
-            message="model install requested by operator",
-            details={"install_id": install_id, "provider_type": provider_type},
+        return self._model_install_facade().request_model_install(
+            provider_type=provider_type,
+            model_id=model_id,
+            source_url=source_url,
+            requested_by=requested_by,
         )
-        self._persist_state()
-        return dict(job)
 
     def list_model_installs(self) -> list[dict]:
-        return [dict(job) for job in self._model_installs.values()]
+        return self._model_install_facade().list_model_installs()
 
     def process_model_installs(self, *, limit: int | None = None) -> list[dict]:
-        if self.model_store is None:
-            raise ValueError("Model store is not configured")
-        processed: list[dict] = []
-        queued_jobs = [
-            job for job in self._model_installs.values() if job["status"] == "queued"
-        ]
-        if limit is not None:
-            queued_jobs = queued_jobs[:limit]
-
-        for job in queued_jobs:
-            job["status"] = "running"
-            job["last_error"] = None
-            self.record_event(
-                event_type="model.install.started",
-                message="model install started",
-                details={"install_id": job["install_id"], "provider_type": job["provider_type"]},
-            )
-            self._persist_state()
-            try:
-                self.model_store.materialize_artifact(
-                    str(job["source_url"]),
-                    str(job["target_path"]),
-                )
-            except Exception as error:
-                job["status"] = "failed"
-                job["last_error"] = str(error)
-                self.record_event(
-                    event_type="model.install.failed",
-                    message="model install failed",
-                    details={"install_id": job["install_id"], "provider_type": job["provider_type"]},
-                )
-            else:
-                job["status"] = "completed"
-                job["last_error"] = None
-                self.record_event(
-                    event_type="model.install.completed",
-                    message="model install completed",
-                    details={"install_id": job["install_id"], "provider_type": job["provider_type"]},
-                )
-            self._persist_state()
-            processed.append(dict(job))
-
-        return processed
+        return self._model_install_facade().process_model_installs(limit=limit)
 
     def attach_provider_instance(
         self,
@@ -2866,31 +1128,20 @@ class HypervisorService:
         display_name: str,
         configuration: dict,
     ) -> dict:
-        instance = self.provider_inventory.attach_provider_instance(
+        return self._provider_installation_facade().attach_provider_instance(
             plugin_id=plugin_id,
             display_name=display_name,
             configuration=configuration,
         )
-        self._persist_state()
-        return instance.model_dump(mode="json")
 
     def list_provider_instances(self) -> list[dict]:
-        return [
-            instance.model_dump(mode="json")
-            for instance in self.provider_inventory.list_provider_instances()
-        ]
+        return self._provider_installation_facade().list_provider_instances()
 
     def list_model_deployments(self) -> list[dict]:
-        return [
-            deployment.model_dump(mode="json")
-            for deployment in self.provider_inventory.list_model_deployments()
-        ]
+        return self._provider_installation_facade().list_model_deployments()
 
     def list_runtime_bindings(self) -> list[dict]:
-        return [
-            binding.model_dump(mode="json")
-            for binding in self.provider_inventory.list_runtime_bindings()
-        ]
+        return self._provider_installation_facade().list_runtime_bindings()
 
     def build_provider_installation_plan(
         self,
@@ -2898,7 +1149,7 @@ class HypervisorService:
         plugin_id: str,
         configuration: dict,
     ) -> dict:
-        return self.provider_inventory.build_installation_plan(
+        return self._provider_installation_facade().build_provider_installation_plan(
             plugin_id=plugin_id,
             configuration=configuration,
         )
@@ -2912,7 +1163,7 @@ class HypervisorService:
         selected_secret_handles: list[dict] | None = None,
         operator_note: str | None = None,
     ) -> dict:
-        approval = self.provider_inventory.approve_installation_plan(
+        return self._provider_installation_facade().approve_provider_installation_plan(
             plugin_id=plugin_id,
             configuration=configuration,
             approved_permissions=approved_permissions,
@@ -2920,8 +1171,6 @@ class HypervisorService:
             selected_secret_handles=selected_secret_handles,
             operator_note=operator_note,
         )
-        self._persist_state()
-        return approval.model_dump(mode="json")
 
     def run_provider_installation_diagnostics(
         self,
@@ -2931,51 +1180,41 @@ class HypervisorService:
         upgrade_acknowledged: bool = False,
         selected_secret_handles: list[dict] | None = None,
     ) -> dict:
-        diagnostics = self.provider_inventory.run_installation_diagnostics(
+        return self._provider_installation_facade().run_provider_installation_diagnostics(
             plugin_id=plugin_id,
             configuration=configuration,
             approved_permissions=approved_permissions,
             upgrade_acknowledged=upgrade_acknowledged,
             selected_secret_handles=selected_secret_handles,
         )
-        return diagnostics.model_dump(mode="json")
 
     def apply_provider_installation_approval(self, approval_id: str) -> dict:
-        job = self.provider_inventory.apply_installation_approval(approval_id)
-        self._persist_state()
-        return job.model_dump(mode="json")
+        return self._provider_installation_facade().apply_provider_installation_approval(
+            approval_id
+        )
 
     def rollback_provider_installation_job(self, job_id: str) -> dict:
-        job = self.provider_inventory.rollback_installation_job(job_id)
-        self._persist_state()
-        return job.model_dump(mode="json")
+        return self._provider_installation_facade().rollback_provider_installation_job(
+            job_id
+        )
 
     def list_provider_installation_approvals(self) -> list[dict]:
-        return [
-            approval.model_dump(mode="json")
-            for approval in self.provider_inventory.list_installation_approvals()
-        ]
+        return self._provider_installation_facade().list_provider_installation_approvals()
 
     def list_provider_plugin_releases(self) -> list[dict]:
-        return [
-            release.model_dump(mode="json")
-            for release in self.provider_inventory.list_plugin_releases()
-        ]
+        return self._provider_installation_facade().list_provider_plugin_releases()
 
     def provider_plugin_registry_objects(self) -> list[dict]:
-        return self.provider_inventory.plugin_release_registry_objects()
+        return self._provider_installation_facade().provider_plugin_registry_objects()
 
     def publish_provider_plugin_releases_to_registry(self, registry_service) -> list[dict]:
         """Persist public immutable Release metadata without exposing local installs."""
-        return registry_service.ingest_registry_objects(
-            self.provider_plugin_registry_objects()
+        return self._provider_installation_facade().publish_provider_plugin_releases_to_registry(
+            registry_service
         )
 
     def list_installed_provider_plugins(self) -> list[dict]:
-        return [
-            installed_plugin.model_dump(mode="json")
-            for installed_plugin in self.provider_inventory.list_installed_plugins()
-        ]
+        return self._provider_installation_facade().list_installed_provider_plugins()
 
     def register_provider_plugin_release(
         self,
@@ -2984,13 +1223,11 @@ class HypervisorService:
         source_reference: str | None = None,
         release_status: str = "AVAILABLE",
     ) -> dict:
-        release = self.provider_inventory.register_plugin_release(
-            manifest_payload=manifest,
+        return self._provider_installation_facade().register_provider_plugin_release(
+            manifest=manifest,
             source_reference=source_reference,
             release_status=release_status,
         )
-        self._persist_state()
-        return release.model_dump(mode="json")
 
     def install_provider_plugin_release(
         self,
@@ -2999,132 +1236,64 @@ class HypervisorService:
         granted_permissions: list[str] | None = None,
         installation_source: str = "PACKAGE",
     ) -> dict:
-        installed_plugin = self.provider_inventory.install_plugin_release(
+        return self._provider_installation_facade().install_provider_plugin_release(
             release_id=release_id,
             granted_permissions=granted_permissions,
             installation_source=installation_source,
         )
-        self._persist_state()
-        return installed_plugin.model_dump(mode="json")
 
     def list_provider_installation_jobs(self) -> list[dict]:
-        return [
-            job.model_dump(mode="json")
-            for job in self.provider_inventory.list_installation_jobs()
-        ]
+        return self._provider_installation_facade().list_provider_installation_jobs()
 
     def plugin_host_local_ingress(self):
         """Return the install-scoped Plugin Host control ingress for local transports."""
-        return self.provider_inventory.plugin_host_local_ingress()
+        return self._provider_installation_facade().plugin_host_local_ingress()
 
     def start_windows_plugin_host_listener(self, *, address: str, authkey: bytes):
-        listener = WindowsNamedPipePluginHostListener(
+        return self._provider_installation_facade().start_windows_plugin_host_listener(
             address=address,
             authkey=authkey,
-            wire_adapter=PluginHostJsonWireAdapter(self.plugin_host_local_ingress()),
         )
-        listener.start()
-        self._plugin_host_listeners.append(listener)
-        return listener
 
     def start_unix_plugin_host_listener(self, *, address: str):
-        listener = UnixSocketPluginHostListener(
+        return self._provider_installation_facade().start_unix_plugin_host_listener(
             address=address,
-            wire_adapter=PluginHostJsonWireAdapter(self.plugin_host_local_ingress()),
         )
-        listener.start()
-        self._plugin_host_listeners.append(listener)
-        return listener
 
     def stop_plugin_host_listeners(self) -> None:
-        for listener in self._plugin_host_listeners:
-            listener.stop()  # type: ignore[attr-defined]
-        self._plugin_host_listeners.clear()
+        self._provider_installation_facade().stop_plugin_host_listeners()
 
     def plugin_host_status(self) -> dict:
-        connections = self.provider_inventory.plugin_host_connection_store.snapshot()
-        return {
-            "active_connection_count": len(connections),
-            "connections": [
-                {
-                    key: value
-                    for key, value in item.items()
-                    if key != "activation_credential_key_id"
-                }
-                for item in connections
-            ],
-            "listener_count": len(self._plugin_host_listeners),
-            "listener_transports": [type(item).__name__ for item in self._plugin_host_listeners],
-        }
+        return self._provider_installation_facade().plugin_host_status()
 
-    def register_wallet_identity(self, *, wallet_id: str, public_key: str, registration_nonce: str, signature: str) -> dict:
-        from aidn_hypervisor.canonical_projection import project_registry_objects
-        from aidn_hypervisor.wallet_identity import verify_wallet_identity_registration
-
-        identity = verify_wallet_identity_registration(
+    def register_wallet_identity(
+        self,
+        *,
+        wallet_id: str,
+        public_key: str,
+        registration_nonce: str,
+        signature: str,
+    ) -> dict:
+        return self._provider_inventory_application_facade().register_wallet_identity(
             wallet_id=wallet_id,
             public_key=public_key,
             registration_nonce=registration_nonce,
             signature=signature,
         )
-        existing = self._wallet_identities.get(wallet_id)
-        if existing is not None:
-            if existing["public_key"] != public_key:
-                raise ValueError("Wallet identity key rotation is not supported")
-            if existing["registration_nonce"] != registration_nonce:
-                raise ValueError("Wallet identity registration nonce was already consumed")
-            return dict(existing)
-        self._wallet_identities[wallet_id] = identity.model_dump(mode="json")
-        self.record_ledger_operation(
-            operation_type="WALLET_IDENTITY_REGISTER",
-            origin_type="wallet",
-            fee_class="onboarding_exempt",
-            initiator_id=wallet_id,
-            sender_wallet=wallet_id,
-            payload={
-                "wallet_id": wallet_id,
-                "public_key": public_key,
-                "registration_nonce": registration_nonce,
-            },
-            signatures=[signature],
-            emitted_events=["WalletIdentityRegistered"],
-        )
-        registry_service = self.registry_service
-        if registry_service is not None:
-            registry_service.ingest_registry_objects(
-                [
-                    record.model_dump(mode="json")
-                    for record in project_registry_objects(self, [])
-                    if record.object_type == "wallet_identity"
-                    and record.source_reference == wallet_id
-                ]
-            )
-        self._persist_state()
-        return dict(self._wallet_identities[wallet_id])
 
     def wallet_identity(self, wallet_id: str) -> dict | None:
-        identity = self._wallet_identities.get(wallet_id)
-        return dict(identity) if identity is not None else None
+        return self._provider_inventory_application_facade().wallet_identity(wallet_id)
 
     def resolve_wallet_identity(self, wallet_id: str) -> dict | None:
-        local_identity = self.wallet_identity(wallet_id)
-        if local_identity is not None:
-            return local_identity
-        registry_service = self.registry_service
-        if registry_service is None:
-            return None
-        return registry_service.resolve_wallet_identity(wallet_id)
+        return self._provider_inventory_application_facade().resolve_wallet_identity(
+            wallet_id
+        )
 
     def list_wallet_identities(self) -> list[dict]:
-        return [
-            dict(self._wallet_identities[wallet_id])
-            for wallet_id in sorted(self._wallet_identities)
-        ]
+        return self._provider_inventory_application_facade().list_wallet_identities()
 
     def list_provider_installation_artifacts(self) -> dict:
-        return self.provider_inventory.installation_artifact_inventory().model_dump(
-            mode="json"
-        )
+        return self._provider_inventory_application_facade().list_provider_installation_artifacts()
 
     def stage_provider_installation_artifact(
         self,
@@ -3132,15 +1301,15 @@ class HypervisorService:
         relative_path: str,
         content_bytes: bytes,
     ) -> dict:
-        artifact = self.provider_inventory.stage_local_artifact(
+        return self._provider_inventory_application_facade().stage_provider_installation_artifact(
             relative_path=relative_path,
             content_bytes=content_bytes,
         )
-        return artifact.model_dump(mode="json")
 
     def delete_provider_installation_artifact(self, *, relative_path: str) -> dict:
-        self.provider_inventory.delete_local_artifact(relative_path=relative_path)
-        return {"relative_path": relative_path, "deleted": True}
+        return self._provider_inventory_application_facade().delete_provider_installation_artifact(
+            relative_path=relative_path
+        )
 
     def extract_provider_installation_artifact_archive(
         self,
@@ -3148,45 +1317,41 @@ class HypervisorService:
         archive_relative_path: str,
         destination_directory: str,
     ) -> dict:
-        result = self.provider_inventory.extract_local_artifact_archive(
+        return self._provider_inventory_application_facade().extract_provider_installation_artifact_archive(
             archive_relative_path=archive_relative_path,
             destination_directory=destination_directory,
         )
-        return result.model_dump(mode="json")
 
     def list_model_artifacts(self) -> dict:
-        return self.provider_inventory.model_artifact_inventory().model_dump(mode="json")
+        return self._provider_inventory_application_facade().list_model_artifacts()
 
     def promote_provider_installation_artifact_to_model_store(
         self,
         *,
         relative_path: str,
     ) -> dict:
-        artifact = self.provider_inventory.promote_local_artifact_to_model_store(
+        return self._provider_inventory_application_facade().promote_provider_installation_artifact_to_model_store(
             relative_path=relative_path,
         )
-        return artifact.model_dump(mode="json")
 
     def delete_model_artifact(self, *, artifact_id: str) -> dict:
-        self.provider_inventory.delete_model_artifact(artifact_id=artifact_id)
-        return {"artifact_id": artifact_id, "deleted": True}
+        return self._provider_inventory_application_facade().delete_model_artifact(
+            artifact_id=artifact_id
+        )
 
     def list_model_artifact_sets(self) -> list[dict]:
-        return [
-            item.model_dump(mode="json")
-            for item in self.provider_inventory.list_model_artifact_sets()
-        ]
+        return self._provider_inventory_application_facade().list_model_artifact_sets()
 
     def create_model_artifact_set(self, *, display_name: str, files: list[dict]) -> dict:
-        artifact_set = self.provider_inventory.create_model_artifact_set(
+        return self._provider_inventory_application_facade().create_model_artifact_set(
             display_name=display_name,
             files=files,
         )
-        return artifact_set.model_dump(mode="json")
 
     def delete_model_artifact_set(self, *, artifact_set_id: str) -> dict:
-        self.provider_inventory.delete_model_artifact_set(artifact_set_id=artifact_set_id)
-        return {"artifact_set_id": artifact_set_id, "deleted": True}
+        return self._provider_inventory_application_facade().delete_model_artifact_set(
+            artifact_set_id=artifact_set_id
+        )
 
     def bind_model_artifact_set(
         self,
@@ -3194,36 +1359,30 @@ class HypervisorService:
         model_deployment_id: str,
         artifact_set_id: str,
     ) -> dict:
-        deployment = self.provider_inventory.bind_model_artifact_set(
+        return self._provider_inventory_application_facade().bind_model_artifact_set(
             model_deployment_id=model_deployment_id,
             artifact_set_id=artifact_set_id,
         )
-        self._persist_state()
-        return deployment.model_dump(mode="json")
 
     def collect_model_artifact_garbage(self) -> dict:
-        return self.provider_inventory.collect_model_artifact_garbage().model_dump(
-            mode="json"
-        )
+        return self._provider_inventory_application_facade().collect_model_artifact_garbage()
 
     def materialize_model_artifact_set(
         self, *, provider_instance_id: str, artifact_set_id: str, destination: str
     ) -> dict:
-        result = self.provider_inventory.materialize_model_artifact_set(
+        return self._provider_inventory_application_facade().materialize_model_artifact_set(
             provider_instance_id=provider_instance_id,
             artifact_set_id=artifact_set_id,
             destination=destination,
         )
-        self._persist_state()
-        return result.model_dump(mode="json")
 
     def list_model_artifact_materializations(self) -> list[dict]:
-        return [item.model_dump(mode="json") for item in self.provider_inventory.list_artifact_materializations()]
+        return self._provider_inventory_application_facade().list_model_artifact_materializations()
 
     def discover_provider_models(self, provider_instance_id: str) -> list[dict]:
-        deployments = self.provider_inventory.discover_models(provider_instance_id)
-        self._persist_state()
-        return [deployment.model_dump(mode="json") for deployment in deployments]
+        return self._provider_inventory_application_facade().discover_provider_models(
+            provider_instance_id
+        )
 
     def create_runtime_binding(
         self,
@@ -3233,28 +1392,20 @@ class HypervisorService:
         capability_version: str,
         capability_definition_hash: str,
     ) -> dict:
-        binding = self.provider_inventory.create_runtime_binding(
+        return self._provider_inventory_application_facade().create_runtime_binding(
             model_deployment_id=model_deployment_id,
             capability_id=capability_id,
             capability_version=capability_version,
             capability_definition_hash=capability_definition_hash,
         )
-        self._replace_bundle(
-            self.provider_inventory.bundle_config_for_runtime_binding(
-                binding.runtime_binding_id
-            )
-        )
-        self._persist_bundle_config_if_available()
-        self._persist_state()
-        return binding.model_dump(mode="json")
 
     def bundle_for_runtime_binding(self, runtime_binding_id: str) -> BundleConfig:
-        return self.provider_inventory.bundle_config_for_runtime_binding(
+        return self._provider_inventory_application_facade().bundle_for_runtime_binding(
             runtime_binding_id
         )
 
     def bundle_hash_for_runtime_binding(self, runtime_binding_id: str) -> str:
-        return self.provider_inventory.bundle_hash_for_runtime_binding(
+        return self._provider_inventory_application_facade().bundle_hash_for_runtime_binding(
             runtime_binding_id
         )
 
@@ -3263,22 +1414,15 @@ class HypervisorService:
         runtime_binding_id: str,
         endpoint_payload: dict | None = None,
     ) -> dict:
-        return self.provider_inventory.runtime_binding_endpoint_admission(
-            runtime_binding_id=runtime_binding_id,
+        return self._provider_inventory_application_facade().runtime_binding_endpoint_admission(
+            runtime_binding_id,
             endpoint_payload=endpoint_payload,
         )
 
     def mark_model_install_completed(self, install_id: str) -> dict:
-        job = self._model_installs[install_id]
-        job["status"] = "completed"
-        job["last_error"] = None
-        self.record_event(
-            event_type="model.install.completed",
-            message="model install marked completed",
-            details={"install_id": install_id},
+        return self._provider_inventory_application_facade().mark_model_install_completed(
+            install_id
         )
-        self._persist_state()
-        return dict(job)
 
     def register_bundle_from_install(
         self,
@@ -3288,57 +1432,21 @@ class HypervisorService:
         workload_type: str,
         endpoint: str,
     ) -> dict:
-        if any(bundle.bundle_id == bundle_id for bundle in self.bundles):
-            raise ValueError(f"Bundle already exists: {bundle_id}")
-        job = self._model_installs[install_id]
-        if job["status"] != "completed":
-            raise ValueError(f"Model install is not completed: {install_id}")
-
-        plugin = self._get_plugin(job["provider_type"])
-        defaults = plugin.bundle_defaults_from_install(
-            model_id=str(job["model_id"]),
-            target_path=str(job["target_path"]),
-        )
-        bundle = BundleConfig(
+        return self._provider_inventory_application_facade().register_bundle_from_install(
+            install_id=install_id,
             bundle_id=bundle_id,
-            plugin_id=plugin.plugin_id,
-            provider_type=str(job["provider_type"]),
             workload_type=workload_type,
-            model_id=str(defaults["model_id"]),
-            launch_mode=str(defaults["launch_mode"]),
             endpoint=endpoint,
-            device_affinity=str(defaults["device_affinity"]),
-            resource_profile=ResourceProfile(),
-            warm_policy="auto",
-            priority_class=50,
-            max_parallel_requests=1,
-            enabled=True,
         )
-        plugin.validate_bundle(bundle)
-        self.bundles.append(bundle)
-        job["status"] = "registered"
-        job["bundle_id"] = bundle_id
-        self.record_event(
-            event_type="bundle.registered_from_install",
-            message="bundle registered from installed model artifact",
-            bundle_id=bundle.bundle_id,
-            details={"install_id": install_id, "provider_type": job["provider_type"]},
-        )
-        self._persist_bundle_config_if_available()
-        self._persist_state()
-        return bundle.model_dump(mode="json")
 
     def get_runtime(self, runtime_id: str) -> RuntimeHandle:
-        for runtime in self.list_runtimes():
-            if runtime.runtime_id == runtime_id:
-                return runtime
-        raise KeyError(runtime_id)
+        return self._bundle_runtime_policy_facade().get_runtime(runtime_id)
 
     def runtime_history(self, runtime_id: str) -> list[JournalEvent]:
-        return [event for event in self._events if event.runtime_id == runtime_id]
+        return self._bundle_runtime_policy_facade().runtime_history(runtime_id)
 
     def bundle_state(self, bundle_id: str) -> dict:
-        return dict(self._current_bundle_state(bundle_id))
+        return self._bundle_runtime_policy_facade().bundle_state(bundle_id)
 
     def record_event(
         self,
@@ -3350,918 +1458,85 @@ class HypervisorService:
         runtime_id: str | None = None,
         details: dict | None = None,
     ) -> JournalEvent:
-        event = JournalEvent(
-            timestamp=datetime.now(timezone.utc).isoformat(),
+        return self._event_projection_facade().record_event(
             event_type=event_type,
             message=message,
             task_id=task_id,
             bundle_id=bundle_id,
             runtime_id=runtime_id,
-            details=dict(details or {}),
+            details=details,
         )
-        self._events.append(event)
-        if (
-            self._record_wallet_session_event_from_journal(event)
-            or self._record_wallet_validation_event_from_journal(event)
-        ):
-            self._persist_state()
-        return event
 
     def bind_validation_service(self, validation_service) -> None:
-        self.validation_service = validation_service
-        validation_service.event_recorder = self.record_event
-        validation_service.operation_recorder = self.record_ledger_operation
+        self._integration_facade().bind_validation_service(validation_service)
+
+    def bind_external_services(
+        self,
+        *,
+        registry_service=None,
+        endpoint_service=None,
+        endpoint_publication_service=None,
+        remote_endpoint_service=None,
+        session_service=None,
+        validation_service=None,
+    ) -> None:
+        self._integration_facade().bind_external_services(
+            registry_service=registry_service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            remote_endpoint_service=remote_endpoint_service,
+            session_service=session_service,
+            validation_service=validation_service,
+        )
 
     def _record_wallet_session_event_from_journal(self, event: JournalEvent) -> bool:
-        event_type_map = {
-            "session.deposit_locked": "deposit_locked",
-            "session.usage_charged": "usage_charged",
-            "session.settled": "settled",
-        }
-        normalized_type = event_type_map.get(event.event_type)
-        if normalized_type is None:
-            return False
-        session_id = event.details.get("session_id")
-        endpoint_id = event.details.get("endpoint_id")
-        if session_id is None or endpoint_id is None:
-            return False
-        session_result = None
-        session_service = getattr(self, "session_service", None)
-        if session_service is not None:
-            try:
-                session_result = session_service.get_session(str(session_id))
-            except KeyError:
-                session_result = None
-        session = session_result.session if session_result is not None else None
-        deposit = session_result.deposit if session_result is not None else None
-        locked_q = float(
-            event.details.get(
-                "locked_q",
-                deposit.locked_q if deposit is not None else 0.0,
-            )
+        return self._event_projection_facade().record_wallet_session_event_from_journal(
+            event
         )
-        usage_charged_q = float(
-            event.details.get(
-                "usage_charged_q",
-                deposit.consumed_q if deposit is not None else 0.0,
-            )
-        )
-        charged_q = float(
-            event.details.get(
-                "charged_q",
-                event.details.get(
-                    "amount_q",
-                    deposit.consumed_q if deposit is not None else 0.0,
-                ),
-            )
-        )
-        refunded_q = float(
-            event.details.get(
-                "refunded_q",
-                deposit.refunded_q if deposit is not None else 0.0,
-            )
-        )
-        network_fee_q = float(event.details.get("network_fee_q", 0.0) or 0.0)
-        remaining_q = float(
-            event.details.get(
-                "remaining_q",
-                max(0.0, locked_q - (deposit.consumed_q if deposit is not None else charged_q)),
-            )
-        )
-        session_event = WalletSessionEvent(
-            sequence_id=self._next_wallet_session_sequence,
-            event_id=str(uuid4()),
-            session_id=str(session_id),
-            endpoint_id=str(endpoint_id),
-            owner_id=str(
-                event.details.get(
-                    "client_wallet",
-                    session.client_wallet if session is not None else "",
-                )
-            ),
-            provider_wallet=str(
-                event.details.get(
-                    "provider_wallet",
-                    session.provider_wallet if session is not None else "",
-                )
-            ),
-            node_id=self.node_id,
-            operator_id=self.operator_id,
-            event_type=normalized_type,
-            occurred_at=event.timestamp,
-            task_id=event.task_id,
-            status=str(
-                event.details.get(
-                    "status",
-                    session.status if session is not None else "unknown",
-                )
-            ),
-            settlement_status="closed" if normalized_type == "settled" else "open",
-            locked_q=locked_q,
-            charged_q=charged_q,
-            refunded_q=refunded_q,
-            remaining_q=remaining_q,
-            usage_charged_q=usage_charged_q,
-            idle_fee_charged_q=float(event.details.get("idle_fee_charged_q", 0.0)),
-            minimum_session_fee_q=float(
-                event.details.get("minimum_session_fee_q", 0.0)
-            ),
-            network_fee_q=network_fee_q,
-            close_reason=(
-                str(event.details["close_reason"])
-                if event.details.get("close_reason") is not None
-                else None
-            ),
-        ).model_dump(mode="json")
-        self._wallet_session_events.append(session_event)
-        self._next_wallet_session_sequence += 1
-        session_amount_q = (
-            float(session_event["locked_q"])
-            if normalized_type == "deposit_locked"
-            else float(session_event["charged_q"])
-        )
-        self._append_wallet_ledger_event(
-            stream="session",
-            source_event=session_event,
-            event_type=normalized_type,
-            owner_id=str(session_event["owner_id"]),
-            task_id=(
-                str(session_event["task_id"])
-                if session_event.get("task_id") is not None
-                else None
-            ),
-            session_id=str(session_event["session_id"]),
-            endpoint_id=str(session_event["endpoint_id"]),
-            status=str(session_event["status"]),
-            settlement_status=str(session_event["settlement_status"]),
-            amount_q=session_amount_q,
-        )
-        if normalized_type == "settled" and network_fee_q > 0.0:
-            self.record_recyclable_removal(
-                category="network_fee",
-                amount_q=network_fee_q,
-                owner_id=str(session_event["owner_id"]),
-                source_event_type="session_network_fee_charged",
-                source_reference=str(session_event["session_id"]),
-                removed_at=str(session_event["occurred_at"]),
-            )
-        return True
 
     def _record_wallet_validation_event_from_journal(self, event: JournalEvent) -> bool:
-        validation_event_types = {
-            "validation_bond_locked",
-            "validation_bond_refunded",
-            "validation_bond_forfeited",
-            "validation_request_passed",
-            "validation_request_failed",
-            "maintenance_validation_passed",
-            "maintenance_validation_failed",
-        }
-        if event.event_type not in validation_event_types:
-            return False
-        owner_id = event.details.get("owner_wallet") or event.details.get("owner_id")
-        endpoint_id = event.details.get("endpoint_id")
-        if owner_id is None or endpoint_id is None:
-            return False
-        source_event = {
-            "event_id": str(uuid4()),
-            "sequence_id": len(self._wallet_ledger_events) + 1,
-            "occurred_at": event.timestamp,
-            "journal_event_type": event.event_type,
-            "details": dict(event.details),
-        }
-        self._append_wallet_ledger_event(
-            stream="validation",
-            source_event=source_event,
-            event_type=event.event_type,
-            owner_id=str(owner_id),
-            endpoint_id=str(endpoint_id),
-            status=str(event.details.get("outcome") or event.details.get("status") or "recorded"),
-            amount_q=float(event.details.get("amount_q", 0.0) or 0.0),
+        return self._event_projection_facade().record_wallet_validation_event_from_journal(
+            event
         )
-        if event.event_type == "validation_bond_forfeited":
-            amount_q = float(event.details.get("amount_q", 0.0) or 0.0)
-            if amount_q > 0.0:
-                self.record_recyclable_removal(
-                    category="validation_bond_forfeiture",
-                    amount_q=amount_q,
-                    owner_id=str(owner_id),
-                    source_event_type=event.event_type,
-                    source_reference=str(event.details.get("bond_id") or endpoint_id),
-                    source_epoch_id=(
-                        str(event.details["source_epoch_id"])
-                        if event.details.get("source_epoch_id") is not None
-                        else None
-                    ),
-                    removed_at=event.timestamp,
-                )
-        return True
 
     def snapshot_state(self) -> HypervisorStateSnapshot:
-        endpoint_service = getattr(self, "endpoint_service", None)
-        endpoint_store = getattr(endpoint_service, "store", None)
-        session_service = getattr(self, "session_service", None)
-        session_store = getattr(session_service, "store", None)
-        persisted_snapshot = (
-            self.state_store.load()
-            if self.state_store is not None and hasattr(self.state_store, "load")
-            else None
-        )
-        return HypervisorStateSnapshot(
-            tasks=[
-                TaskSnapshot(
-                    task_id=task.task_id,
-                    priority=task.priority,
-                    enqueue_index=task.enqueue_index,
-                    created_at=task.created_at,
-                    status=task.status,
-                    request=task.request.model_copy(deep=True),
-                    bundle_id=self.selected_bundle_id(task.task_id),
-                    result=self._task_results.get(task.task_id),
-                    recovery_reason=self.task_recovery_reason(task.task_id),
-                )
-                for task in self.queue.snapshot()
-            ],
-            runtimes=[
-                RuntimeSnapshot(
-                    runtime_id=runtime.runtime_id,
-                    command=list(runtime.command),
-                    status=runtime.status,
-                    bundle_id=runtime.bundle_id,
-                    health_status=runtime.health_status,
-                    last_error=runtime.last_error,
-                    metadata=dict(runtime.metadata),
-                )
-                for runtime in self.list_runtimes()
-            ],
-            bundle_states=[
-                BundleStateSnapshot(**self._current_bundle_state(bundle.bundle_id))
-                for bundle in self.bundles
-                if self._bundle_state_is_non_default(bundle.bundle_id)
-            ],
-            allocations=[
-                AllocationSnapshot(
-                    allocation_id=allocation["allocation_id"],
-                    request=AllocationRequest(**allocation["request"]),
-                    bundle_id=allocation["bundle_id"],
-                    runtime_id=allocation["runtime_id"],
-                    endpoint=allocation["endpoint"],
-                    status=allocation["status"],
-                    created_at=allocation["created_at"],
-                    expires_at=allocation["expires_at"],
-                    reservation_id=allocation.get("reservation_id"),
-                    reason=allocation.get("reason"),
-                )
-                for allocation in self._allocations.values()
-            ],
-            model_installs=[
-                ModelInstallSnapshot(**job)
-                for job in self._model_installs.values()
-            ],
-            plugin_releases=[
-                release.model_copy(deep=True)
-                for release in self.provider_inventory.list_plugin_releases()
-            ],
-            installed_plugins=[
-                installed_plugin.model_copy(deep=True)
-                for installed_plugin in self.provider_inventory.list_installed_plugins()
-            ],
-            provider_instances=[
-                instance.model_copy(deep=True)
-                for instance in self.provider_inventory.list_provider_instances()
-            ],
-            model_deployments=[
-                deployment.model_copy(deep=True)
-                for deployment in self.provider_inventory.list_model_deployments()
-            ],
-            runtime_bindings=[
-                binding.model_copy(deep=True)
-                for binding in self.provider_inventory.list_runtime_bindings()
-            ],
-            provider_artifact_materializations=[
-                materialization.model_copy(deep=True)
-                for materialization in self.provider_inventory.list_artifact_materializations()
-            ],
-            provider_installation_approvals=[
-                approval.model_copy(deep=True)
-                for approval in self.provider_inventory.list_installation_approvals()
-            ],
-            provider_installation_jobs=[
-                job.model_copy(deep=True)
-                for job in self.provider_inventory.list_installation_jobs()
-            ],
-            plugin_host_connections=self.provider_inventory.plugin_host_connection_store.snapshot(),
-            runtime_protocol_connections=list(
-                self.runtime_protocol_store.connections.values()
-            ),
-            runtime_protocol_ready_states=list(
-                self.runtime_protocol_store.ready_states.values()
-            ),
-            runtime_protocol_health_records=list(
-                self.runtime_protocol_store.health_records.values()
-            ),
-            runtime_protocol_capacity_records=list(
-                self.runtime_protocol_store.capacity_records.values()
-            ),
-            runtime_protocol_messages=list(self.runtime_protocol_store.messages.values()),
-            runtime_protocol_sequences=dict(
-                self.runtime_protocol_store.runtime_sequences
-            ),
-            runtime_protocol_requests=list(self.runtime_protocol_store.requests.values()),
-            runtime_protocol_cancellations=list(
-                self.runtime_protocol_store.cancellations.values()
-            ),
-            runtime_protocol_cancellation_results=list(
-                self.runtime_protocol_store.cancellation_results.values()
-            ),
-            runtime_protocol_results=list(self.runtime_protocol_store.results.values()),
-            runtime_protocol_streams=list(self.runtime_protocol_store.streams.values()),
-            runtime_protocol_stream_chunks=[
-                chunk
-                for chunks in self.runtime_protocol_store.stream_chunks.values()
-                for chunk in chunks.values()
-            ],
-            runtime_protocol_stream_closes=list(
-                self.runtime_protocol_store.stream_closes.values()
-            ),
-            runtime_protocol_artifacts=list(
-                self.runtime_protocol_store.artifacts.values()
-            ),
-            runtime_protocol_state_checkpoints=list(
-                self.runtime_protocol_store.state_checkpoints.values()
-            ),
-            runtime_protocol_recovery_states=list(
-                self.runtime_protocol_store.recovery_states.values()
-            ),
-            runtime_protocol_usage_reports=list(
-                self.runtime_protocol_store.usage_reports.values()
-            ),
-            runtime_protocol_usage_acks=list(
-                self.runtime_protocol_store.usage_acks.values()
-            ),
-            runtime_protocol_usage_conflicts=list(
-                self.runtime_protocol_store.usage_conflicts.values()
-            ),
-            runtime_protocol_recovery_plans=list(
-                self.runtime_protocol_store.recovery_plans.values()
-            ),
-            runtime_protocol_recovery_results=list(
-                self.runtime_protocol_store.recovery_results.values()
-            ),
-            runtime_protocol_drain_requests=list(
-                self.runtime_protocol_store.drain_requests.values()
-            ),
-            runtime_protocol_drain_statuses=list(
-                self.runtime_protocol_store.drain_statuses.values()
-            ),
-            runtime_protocol_drain_completes=list(
-                self.runtime_protocol_store.drain_completes.values()
-            ),
-            runtime_protocol_shutdowns=list(
-                self.runtime_protocol_store.shutdowns.values()
-            ),
-            operator_requests_policy=dict(self._operator_requests_policy),
-            owner_wallet=(
-                OwnerWalletSnapshot(**self._owner_wallet)
-                if self._owner_wallet is not None
-                else None
-            ),
-            operator_onboarding=(
-                OperatorOnboardingSnapshot(**self._operator_onboarding)
-                if self._operator_onboarding is not None
-                else None
-            ),
-            wallet_usage_events=[
-                WalletUsageSnapshot(**event)
-                for event in self._wallet_usage_events
-            ],
-            wallet_session_events=[
-                WalletSessionSnapshot(**event)
-                for event in self._wallet_session_events
-            ],
-            wallet_ledger_events=[
-                WalletLedgerSnapshot(**event)
-                for event in self._wallet_ledger_events
-            ],
-            wallet_economics_events=[
-                WalletLedgerSnapshot(**event)
-                for event in self._wallet_economics_events
-            ],
-            wallet_allocation_activation_events=[
-                WalletAllocationActivationSnapshot(**event)
-                for event in self._wallet_allocation_activation_events
-            ],
-            wallet_allocation_dispute_events=[
-                WalletAllocationDisputeSnapshot(**event)
-                for event in self._wallet_allocation_dispute_events
-            ],
-            wallet_allocation_events=[
-                WalletAllocationSnapshot(**event)
-                for event in self._wallet_allocation_events
-            ],
-            recyclable_removals=[
-                RecyclableRemoval(**event) for event in self._recyclable_removals
-            ],
-            faucet_claims=[FaucetClaim(**event) for event in self._faucet_claims],
-            epoch_reward_budgets=[
-                EpochRewardBudget(**event) for event in self._epoch_reward_budgets
-            ],
-            endpoints=(
-                [
-                    EndpointManifestSnapshot.model_validate(
-                        item.model_dump(mode="json")
-                    )
-                    for item in endpoint_store.list_manifests()
-                ]
-                if endpoint_store is not None
-                else (
-                    [item.model_copy(deep=True) for item in persisted_snapshot.endpoints]
-                    if persisted_snapshot is not None
-                    else []
-                )
-            ),
-            wallet_identities=list(self._wallet_identities.values()),
-            consumed_wallet_authorization_nonces=sorted(self._consumed_wallet_authorization_nonces),
-            endpoint_configuration_snapshots=(
-                [
-                    EndpointConfigurationSnapshotRecord.model_validate(
-                        item.model_dump(mode="json")
-                    )
-                    for item in endpoint_store.list_all_configuration_snapshots()
-                ]
-                if endpoint_store is not None
-                and hasattr(endpoint_store, "list_all_configuration_snapshots")
-                else (
-                    [
-                        item.model_copy(deep=True)
-                        for item in persisted_snapshot.endpoint_configuration_snapshots
-                    ]
-                    if persisted_snapshot is not None
-                    else []
-                )
-            ),
-            endpoint_sessions=(
-                [
-                    EndpointSessionSnapshot.model_validate(
-                        item.model_dump(mode="json")
-                    )
-                    for item in session_store.list_sessions()
-                ]
-                if session_store is not None
-                else (
-                    [
-                        item.model_copy(deep=True)
-                        for item in persisted_snapshot.endpoint_sessions
-                    ]
-                    if persisted_snapshot is not None
-                    else []
-                )
-            ),
-            locked_deposits=(
-                [
-                    LockedDepositSnapshot.model_validate(item.model_dump(mode="json"))
-                    for item in session_store.list_deposits()
-                ]
-                if session_store is not None
-                and hasattr(session_store, "list_deposits")
-                else (
-                    [
-                        item.model_copy(deep=True)
-                        for item in persisted_snapshot.locked_deposits
-                    ]
-                    if persisted_snapshot is not None
-                    else []
-                )
-            ),
-            proxy_session_bindings=(
-                [
-                    ProxySessionBindingSnapshot.model_validate(
-                        item.model_dump(mode="json")
-                    )
-                    for item in session_store.list_proxy_session_bindings()
-                ]
-                if session_store is not None
-                and hasattr(session_store, "list_proxy_session_bindings")
-                else (
-                    [
-                        item.model_copy(deep=True)
-                        for item in persisted_snapshot.proxy_session_bindings
-                    ]
-                    if persisted_snapshot is not None
-                    else []
-                )
-            ),
-            ledger_operations=self.list_ledger_operations(),
-            wallet_operation_sequences=self._ledger_operation_service.snapshot_wallet_sequences(),
-            **self._ledger_operation_service.snapshot_settlement_state(),
-            events=[event.model_copy(deep=True) for event in self._events],
-        )
+        return self._snapshot_state_facade().snapshot_state()
 
     def restore_state(self, snapshot: HypervisorStateSnapshot) -> dict[str, int]:
-        self._selected_bundles = {}
-        self._task_results = {}
-        self._task_recovery_reasons = {}
-        self._allocations = {}
-        self._model_installs = {}
-        self._operator_requests_policy = dict(snapshot.operator_requests_policy)
-        self._owner_wallet = (
-            snapshot.owner_wallet.model_dump(mode="json")
-            if snapshot.owner_wallet is not None
-            else None
-        )
-        self._operator_onboarding = (
-            snapshot.operator_onboarding.model_dump(mode="json")
-            if snapshot.operator_onboarding is not None
-            else None
-        )
-        self._wallet_usage_events = []
-        self._wallet_session_events = []
-        self._wallet_ledger_events = []
-        self._wallet_economics_events = []
-        self._recyclable_removals = []
-        self._faucet_claims = []
-        self._epoch_reward_budgets = []
-        self._wallet_allocation_activation_events = []
-        self._wallet_allocation_dispute_events = []
-        self._wallet_allocation_events = []
-        self._ledger_operation_service.restore(
-            operations=[
-                event.model_dump(mode="json") for event in snapshot.ledger_operations
-            ],
-            wallet_sequences=dict(snapshot.wallet_operation_sequences),
-            wallet_q_atom_balances=dict(snapshot.wallet_q_atom_balances),
-            session_funding_accounts=[
-                item.model_dump(mode="json") for item in snapshot.session_funding_accounts
-            ],
-            settlement_proposals=[
-                item.model_dump(mode="json") for item in snapshot.settlement_proposals
-            ],
-            settlement_acceptances=[
-                item.model_dump(mode="json") for item in snapshot.settlement_acceptances
-            ],
-            settlement_transition_hashes=dict(snapshot.settlement_transition_hashes),
-        )
-        self._wallet_identities = {item["wallet_id"]: dict(item) for item in snapshot.wallet_identities}
-        self._consumed_wallet_authorization_nonces = set(snapshot.consumed_wallet_authorization_nonces)
-        self._bundle_states = {
-            state.bundle_id: state.model_dump(mode="json")
-            for state in snapshot.bundle_states
-        }
-        self._events = [event.model_copy(deep=True) for event in snapshot.events]
-        for allocation in snapshot.allocations:
-            self._allocations[allocation.allocation_id] = {
-                "allocation_id": allocation.allocation_id,
-                "request": allocation.request.model_dump(mode="json"),
-                "workload_type": allocation.request.workload_type,
-                "bundle_id": allocation.bundle_id,
-                "runtime_id": allocation.runtime_id,
-                "endpoint": allocation.endpoint,
-                "status": allocation.status,
-                "created_at": allocation.created_at,
-                "expires_at": allocation.expires_at,
-                "reservation_id": allocation.reservation_id,
-                "reason": allocation.reason,
-            }
-        for job in snapshot.model_installs:
-            self._model_installs[job.install_id] = job.model_dump(mode="json")
-        installation_executor = getattr(
-            self.provider_inventory,
-            "installation_executor",
-            None,
-        )
-        self.provider_inventory = ProviderInventoryService(
-            plugins=self.plugins,
-            store=InMemoryProviderInventoryStore(),
-            installation_executor=installation_executor,
-            package_store=self._plugin_package_store,
-            plugin_host_connections=[item.model_dump(mode="json") for item in snapshot.plugin_host_connections],
-        )
-        for release in snapshot.plugin_releases:
-            self.provider_inventory.store.save_plugin_release(release)
-        for installed_plugin in snapshot.installed_plugins:
-            self.provider_inventory.store.save_installed_plugin(installed_plugin)
-        for instance in snapshot.provider_instances:
-            self.provider_inventory.store.save_provider_instance(instance)
-        for deployment in snapshot.model_deployments:
-            self.provider_inventory.store.save_model_deployment(deployment)
-        for binding in snapshot.runtime_bindings:
-            self.provider_inventory.store.save_runtime_binding(binding)
-        for materialization in snapshot.provider_artifact_materializations:
-            self.provider_inventory.store.save_artifact_materialization(materialization)
-        for approval in snapshot.provider_installation_approvals:
-            self.provider_inventory.store.save_installation_approval(approval)
-        for job in snapshot.provider_installation_jobs:
-            self.provider_inventory.store.save_installation_job(job)
-        self.runtime_protocol_store.restore(snapshot)
-        self._wallet_usage_events = [
-            event.model_dump(mode="json") for event in snapshot.wallet_usage_events
-        ]
-        self._next_wallet_usage_sequence = (
-            max((event["sequence_id"] for event in self._wallet_usage_events), default=0)
-            + 1
-        )
-        self._wallet_session_events = [
-            event.model_dump(mode="json") for event in snapshot.wallet_session_events
-        ]
-        self._next_wallet_session_sequence = (
-            max(
-                (event["sequence_id"] for event in self._wallet_session_events),
-                default=0,
-            )
-            + 1
-        )
-        self._wallet_ledger_events = [
-            event.model_dump(mode="json") for event in snapshot.wallet_ledger_events
-        ]
-        self._next_wallet_ledger_sequence = (
-            max(
-                (event["sequence_id"] for event in self._wallet_ledger_events),
-                default=0,
-            )
-            + 1
-        )
-        self._wallet_economics_events = [
-            event.model_dump(mode="json") for event in snapshot.wallet_economics_events
-        ]
-        self._next_wallet_economics_sequence = (
-            max(
-                (event["sequence_id"] for event in self._wallet_economics_events),
-                default=0,
-            )
-            + 1
-        )
-        self._recyclable_removals = [
-            event.model_dump(mode="json") for event in snapshot.recyclable_removals
-        ]
-        self._next_recyclable_removal_sequence = (
-            max(
-                (event["sequence_id"] for event in self._recyclable_removals),
-                default=0,
-            )
-            + 1
-        )
-        self._faucet_claims = [
-            event.model_dump(mode="json") for event in snapshot.faucet_claims
-        ]
-        self._next_faucet_claim_sequence = (
-            max((event["sequence_id"] for event in self._faucet_claims), default=0)
-            + 1
-        )
-        self._epoch_reward_budgets = [
-            event.model_dump(mode="json") for event in snapshot.epoch_reward_budgets
-        ]
-        self._wallet_allocation_activation_events = [
-            event.model_dump(mode="json")
-            for event in snapshot.wallet_allocation_activation_events
-        ]
-        self._next_wallet_allocation_activation_sequence = (
-            max(
-                (
-                    event["sequence_id"]
-                    for event in self._wallet_allocation_activation_events
-                ),
-                default=0,
-            )
-            + 1
-        )
-        self._wallet_allocation_dispute_events = [
-            event.model_dump(mode="json")
-            for event in snapshot.wallet_allocation_dispute_events
-        ]
-        self._next_wallet_allocation_dispute_sequence = (
-            max(
-                (
-                    event["sequence_id"]
-                    for event in self._wallet_allocation_dispute_events
-                ),
-                default=0,
-            )
-            + 1
-        )
-        self._wallet_allocation_events = [
-            event.model_dump(mode="json")
-            for event in snapshot.wallet_allocation_events
-        ]
-        self._next_wallet_allocation_sequence = (
-            max(
-                (event["sequence_id"] for event in self._wallet_allocation_events),
-                default=0,
-            )
-            + 1
-        )
-
-        restored_tasks: list[QueuedTask] = []
-        for task in snapshot.tasks:
-            restored_status = self._restored_task_status(task)
-            restored_tasks.append(
-                QueuedTask(
-                    priority=task.priority,
-                    enqueue_index=task.enqueue_index,
-                    created_at=task.created_at,
-                    task_id=task.task_id,
-                    request=task.request.model_copy(deep=True),
-                    status=restored_status,
-                )
-            )
-            if task.bundle_id is not None:
-                self._selected_bundles[task.task_id] = task.bundle_id
-            if task.recovery_reason is not None:
-                self._task_recovery_reasons[task.task_id] = task.recovery_reason
-            if task.status in _ACTIVE_EXECUTION_STATUSES:
-                recovery_reason = self._recovery_reason_for_task(task)
-                self._task_recovery_reasons[task.task_id] = recovery_reason
-                self.record_event(
-                    event_type="task.recovered",
-                    message=self._recovery_message(recovery_reason),
-                    task_id=task.task_id,
-                    bundle_id=task.bundle_id,
-                    details={
-                        "previous_status": task.status,
-                        "restored_status": restored_status,
-                        "recovery_reason": recovery_reason,
-                    },
-                )
-            if restored_status == "completed" and task.result is not None:
-                self._task_results[task.task_id] = dict(task.result)
-
-        self.queue.restore(restored_tasks)
-        self._restore_runtimes(snapshot.runtimes)
-        summary = self.queue_summary()
-        self._persist_state()
-        return summary
+        return self._snapshot_state_facade().restore_state(snapshot)
 
     def get_task(self, task_id: str):
         return self.queue.get(task_id)
 
     def bundle_config(self) -> list[BundleConfig]:
-        return [bundle.model_copy(deep=True) for bundle in self.bundles]
+        return self._bundle_runtime_policy_facade().bundle_config()
 
     def replace_bundle_config(self, bundles: list[BundleConfig]) -> int:
-        registry = self._require_bundle_registry()
-        self._validate_bundles(bundles)
-        registry.save(bundles)
-        self.bundles = [bundle.model_copy(deep=True) for bundle in bundles]
-        self.record_event(
-            event_type="bundles.replaced",
-            message="bundle configuration replaced by operator",
-            details={"bundle_count": len(self.bundles)},
-        )
-        self._persist_state()
-        return len(self.bundles)
+        return self._bundle_runtime_policy_facade().replace_bundle_config(bundles)
 
     def reload_bundle_config(self) -> int:
-        registry = self._require_bundle_registry()
-        self.bundles = registry.load(self.plugins)
-        self.record_event(
-            event_type="bundles.reloaded",
-            message="bundle configuration reloaded from registry",
-            details={"bundle_count": len(self.bundles)},
-        )
-        self._persist_state()
-        return len(self.bundles)
+        return self._bundle_runtime_policy_facade().reload_bundle_config()
 
     def reset_bundle_cooldown(self, bundle_id: str) -> dict:
-        bundle = self._get_bundle(bundle_id)
-        runtime = self._runtime_for_bundle(bundle.bundle_id)
-        self._set_bundle_state(
-            bundle.bundle_id,
-            failure_streak=0,
-            cooldown_until=None,
-            cooldown_reason=None,
-            drain_mode=self._current_bundle_state(bundle.bundle_id)["drain_mode"],
-            drain_reason=self._current_bundle_state(bundle.bundle_id)["drain_reason"],
-        )
-        if runtime is not None and runtime.health_status == "cooldown":
-            runtime.health_status = "healthy"
-            runtime.last_error = None
-        self.record_event(
-            event_type="bundle.cooldown_reset",
-            message="bundle cooldown reset by operator",
-            bundle_id=bundle.bundle_id,
-            runtime_id=runtime.runtime_id if runtime is not None else None,
-        )
-        self._persist_state()
-        return {
-            "bundle_id": bundle.bundle_id,
-            "status": "ready",
-            "cooldown_until": None,
-            "cooldown_reason": None,
-            "failure_streak": 0,
-        }
+        return self._bundle_runtime_policy_facade().reset_bundle_cooldown(bundle_id)
 
     def retry_bundle(self, bundle_id: str) -> dict[str, int]:
-        self.reset_bundle_cooldown(bundle_id)
-        self.record_event(
-            event_type="bundle.retry_requested",
-            message="bundle retry requested by operator",
-            bundle_id=bundle_id,
-        )
-        return self.process_pending()
+        return self._bundle_runtime_policy_facade().retry_bundle(bundle_id)
 
     def set_bundle_enabled(self, bundle_id: str, enabled: bool) -> dict[str, str | bool]:
-        bundle = self._get_bundle(bundle_id)
-        self._replace_bundle(
-            bundle.model_copy(update={"enabled": enabled})
+        return self._bundle_runtime_policy_facade().set_bundle_enabled(
+            bundle_id,
+            enabled,
         )
-        self._persist_bundle_config_if_available()
-        self.record_event(
-            event_type="bundle.enabled" if enabled else "bundle.disabled",
-            message=(
-                "bundle enabled by operator"
-                if enabled
-                else "bundle disabled by operator"
-            ),
-            bundle_id=bundle_id,
-        )
-        self._persist_state()
-        return {
-            "bundle_id": bundle_id,
-            "enabled": enabled,
-            "status": "enabled" if enabled else "disabled",
-        }
 
     def drain_runtime(self, runtime_id: str) -> dict[str, str | bool]:
-        runtime = self.get_runtime(runtime_id)
-        bundle_id = runtime.bundle_id
-        if bundle_id is None:
-            raise KeyError(runtime_id)
-        state = self._current_bundle_state(bundle_id)
-        self._set_bundle_state(
-            bundle_id,
-            failure_streak=state["failure_streak"],
-            cooldown_until=state["cooldown_until"],
-            cooldown_reason=state["cooldown_reason"],
-            drain_mode=True,
-            drain_reason="operator_requested",
-        )
-        self.record_event(
-            event_type="runtime.draining",
-            message="runtime drain requested by operator",
-            bundle_id=bundle_id,
-            runtime_id=runtime_id,
-        )
-        self._persist_state()
-        return {
-            "runtime_id": runtime_id,
-            "bundle_id": bundle_id,
-            "drain_mode": True,
-            "status": "draining",
-        }
+        return self._bundle_runtime_policy_facade().drain_runtime(runtime_id)
 
     def force_stop_runtime(self, runtime_id: str) -> dict[str, str]:
-        runtime = self.get_runtime(runtime_id)
-        bundle_id = runtime.bundle_id
-        if bundle_id is None:
-            raise KeyError(runtime_id)
-        bundle = self._get_bundle(bundle_id)
-        self._stop_runtime_for_bundle(bundle)
-        self.record_event(
-            event_type="runtime.force_stopped",
-            message="runtime force-stopped by operator",
-            bundle_id=bundle_id,
-            runtime_id=runtime_id,
-        )
-        self._persist_state()
-        return {
-            "runtime_id": runtime_id,
-            "bundle_id": bundle_id,
-            "status": "force_stopped",
-        }
+        return self._bundle_runtime_policy_facade().force_stop_runtime(runtime_id)
 
     def restart_runtime(self, runtime_id: str) -> dict[str, str]:
-        runtime = self.get_runtime(runtime_id)
-        bundle_id = runtime.bundle_id
-        if bundle_id is None:
-            raise KeyError(runtime_id)
-        bundle = self._get_bundle(bundle_id)
-        if not bundle.enabled:
-            raise ValueError(f"Bundle is disabled: {bundle_id}")
-        if self._bundle_in_cooldown(bundle_id):
-            raise ValueError(f"Bundle is in cooldown: {bundle_id}")
-
-        state = self._current_bundle_state(bundle_id)
-        self._set_bundle_state(
-            bundle_id,
-            failure_streak=state["failure_streak"],
-            cooldown_until=state["cooldown_until"],
-            cooldown_reason=state["cooldown_reason"],
-            drain_mode=False,
-            drain_reason=None,
-        )
-        self._stop_runtime_for_bundle(bundle)
-        restarted = self.start_bundle(bundle_id)
-        self.record_event(
-            event_type="runtime.restarted",
-            message="runtime restarted by operator",
-            bundle_id=bundle_id,
-            runtime_id=restarted.runtime_id,
-        )
-        self.process_pending()
-        return {
-            "runtime_id": restarted.runtime_id,
-            "bundle_id": bundle_id,
-            "status": "restarted",
-        }
+        return self._bundle_runtime_policy_facade().restart_runtime(runtime_id)
 
     def cancel_task(self, task_id: str):
         task = self.queue.get(task_id)
@@ -4278,75 +1553,13 @@ class HypervisorService:
         return cancelled_task
 
     def start_bundle(self, bundle_id: str) -> RuntimeHandle:
-        bundle = self._get_bundle(bundle_id)
-        if not bundle.enabled:
-            raise ValueError(f"Bundle is disabled: {bundle_id}")
-        if self._runtime_for_bundle(bundle_id) is not None:
-            raise ValueError(f"Bundle already has an active runtime: {bundle_id}")
-
-        plugin = self._get_plugin(bundle.plugin_id)
-        launch_spec = dict(plugin.build_launch_spec(bundle))
-        launch_spec["bundle_id"] = bundle.bundle_id
-        launch_spec["launch_mode"] = bundle.launch_mode
-
-        if hasattr(self.runtimes, "start_runtime"):
-            runtime = self.runtimes.start_runtime(launch_spec)
-            self.record_event(
-                event_type="runtime.started",
-                message="runtime started",
-                bundle_id=bundle.bundle_id,
-                runtime_id=runtime.runtime_id,
-            )
-            self._persist_state()
-            return runtime
-
-        handle = RuntimeHandle(
-            runtime_id=f"rt-{len(self.runtimes) + 1}",
-            command=launch_spec["command"],
-            status="starting",
-            bundle_id=bundle.bundle_id,
-            metadata=dict(launch_spec.get("metadata", {})),
-        )
-        self.runtimes.append(handle)
-        self.record_event(
-            event_type="runtime.started",
-            message="runtime started",
-            bundle_id=bundle.bundle_id,
-            runtime_id=handle.runtime_id,
-        )
-        self._persist_state()
-        return handle
+        return self._bundle_runtime_policy_facade().start_bundle(bundle_id)
 
     def stop_bundle(self, bundle_id: str) -> dict[str, str]:
-        bundle = self._get_bundle(bundle_id)
-        runtime = self._runtime_for_bundle(bundle_id)
-        if runtime is None:
-            raise KeyError(bundle_id)
-
-        plugin = self._get_plugin(bundle.plugin_id)
-        plugin.stop(runtime)
-
-        if hasattr(self.runtimes, "stop_runtime"):
-            self.runtimes.stop_runtime(runtime.runtime_id)
-        else:
-            self.runtimes = [
-                item for item in self.runtimes if item.runtime_id != runtime.runtime_id
-            ]
-
-        self._release_runtime_reservation(bundle.bundle_id)
-        self.record_event(
-            event_type="runtime.stopped",
-            message="runtime stopped by operator",
-            bundle_id=bundle.bundle_id,
-            runtime_id=runtime.runtime_id,
-        )
-        self.process_pending()
-        return {"bundle_id": bundle.bundle_id, "status": "stopped"}
+        return self._bundle_runtime_policy_facade().stop_bundle(bundle_id)
 
     def list_runtimes(self) -> list[RuntimeHandle]:
-        if hasattr(self.runtimes, "list_runtimes"):
-            return list(self.runtimes.list_runtimes())
-        return list(self.runtimes or [])
+        return self._bundle_runtime_policy_facade().list_runtimes()
 
     def process_pending(self) -> dict[str, int]:
         if self.resources is None or not self._has_plugins():
@@ -4393,21 +1606,13 @@ class HypervisorService:
         return summary
 
     def queue_diagnostics(self) -> list[dict[str, str]]:
-        diagnostics: list[dict[str, str]] = []
-        for task in self.queue.snapshot():
-            if task.status != "queued":
-                continue
-            diagnostics.append(self._diagnose_queued_task(task.task_id))
-        return diagnostics
+        return self._admission_planning_facade().queue_diagnostics()
 
     def admission_telemetry(self) -> list[dict[str, int | str]]:
-        return self._pending_task_plan()
+        return self._admission_planning_facade().admission_telemetry()
 
     def _get_bundle(self, bundle_id: str) -> BundleConfig:
-        for bundle in self.bundles:
-            if bundle.bundle_id == bundle_id:
-                return bundle
-        raise KeyError(bundle_id)
+        return self._bundle_runtime_policy_facade().get_bundle(bundle_id)
 
     def _get_plugin(self, plugin_id: str):
         if hasattr(self.plugins, "get"):
@@ -4419,10 +1624,7 @@ class HypervisorService:
         raise KeyError(plugin_id)
 
     def _runtime_for_bundle(self, bundle_id: str) -> RuntimeHandle | None:
-        for runtime in self.list_runtimes():
-            if runtime.bundle_id == bundle_id:
-                return runtime
-        return None
+        return self._bundle_runtime_policy_facade().runtime_for_bundle(bundle_id)
 
     def _filtered_catalog_bundles(
         self,
@@ -4431,297 +1633,77 @@ class HypervisorService:
         bundle_id: str | None,
         include_disabled: bool,
     ) -> list[BundleConfig]:
-        bundles: list[BundleConfig] = []
-        for bundle in self.bundles:
-            if bundle_id is not None and bundle.bundle_id != bundle_id:
-                continue
-            if workload_type is not None and bundle.workload_type != workload_type:
-                continue
-            if not include_disabled and not bundle.enabled:
-                continue
-            bundles.append(bundle)
-        return bundles
+        return self._allocation_catalog_facade().filtered_catalog_bundles(
+            workload_type=workload_type,
+            bundle_id=bundle_id,
+            include_disabled=include_disabled,
+        )
 
     def _catalog_entry(self, bundle: BundleConfig, *, owner_id: str) -> dict:
-        runtime = self._runtime_for_bundle(bundle.bundle_id)
-        endpoint = self._catalog_endpoint(bundle, runtime)
-        required = self._catalog_required_resources(bundle, runtime)
-        payload = {
-            "bundle_id": bundle.bundle_id,
-            "plugin_id": bundle.plugin_id,
-            "provider_type": bundle.provider_type,
-            "model_id": bundle.model_id,
-            "workload_type": bundle.workload_type,
-            "enabled": bundle.enabled,
-            "status": self._bundle_inventory_status(bundle),
-            "endpoint": endpoint,
-            "can_allocate_now": False,
-            "can_queue": False,
-            "allocation_mode": "unavailable",
-            "reason": None,
-            "required": required,
-            "requires_runtime_start": runtime is None,
-            "fit": self._catalog_fit(required),
-        }
-
-        if not bundle.enabled:
-            payload["reason"] = "bundle_disabled"
-            return payload
-
-        unavailability = self._allocation_unavailability(bundle=bundle, runtime=runtime)
-        if unavailability is None:
-            owner_quota = self._owner_quota_unavailability(
-                owner_id=owner_id,
-                status="active",
-                bundle_id=bundle.bundle_id,
-            )
-            if owner_quota is None:
-                payload["can_allocate_now"] = True
-                payload["allocation_mode"] = "active"
-                return payload
-            payload["reason"] = str(owner_quota["reason"])
-            return payload
-
-        payload["reason"] = str(unavailability["reason"])
-        if not bool(unavailability["retryable"]):
-            return payload
-
-        owner_quota = self._owner_quota_unavailability(
+        return self._allocation_catalog_facade().catalog_entry(
+            bundle,
             owner_id=owner_id,
-            status="pending",
-            bundle_id=bundle.bundle_id,
         )
-        if owner_quota is not None:
-            payload["reason"] = str(owner_quota["reason"])
-            return payload
-
-        payload["can_queue"] = True
-        payload["allocation_mode"] = "wait"
-        return payload
 
     def _operator_dashboard_bundle_entry(self, bundle: BundleConfig) -> dict:
-        runtime = self._runtime_for_bundle(bundle.bundle_id)
-        state = self._current_bundle_state(bundle.bundle_id)
-        return {
-            "bundle_id": bundle.bundle_id,
-            "plugin_id": bundle.plugin_id,
-            "provider_type": bundle.provider_type,
-            "workload_type": bundle.workload_type,
-            "model_id": bundle.model_id,
-            "enabled": bundle.enabled,
-            "endpoint": bundle.endpoint,
-            "runtime_status": runtime.status if runtime is not None else "stopped",
-            "publish_status": "ready_to_publish" if bundle.enabled else "disabled",
-            "inventory_status": self._bundle_inventory_status(bundle),
-            "registry_status": self._bundle_registry_status(bundle),
-            "cooldown_until": state["cooldown_until"],
-            "drain_mode": state["drain_mode"],
-        }
+        return self._allocation_catalog_facade().operator_dashboard_bundle_entry(bundle)
 
     def _operator_dashboard_task_entry(self, task: QueuedTask) -> dict:
-        created_at = datetime.fromisoformat(task.created_at)
-        age_seconds = max(
-            0,
-            int((datetime.now(timezone.utc) - created_at).total_seconds()),
-        )
-        terminal_at = self._task_terminal_timestamp(task.task_id)
-        return {
-            "task_id": task.task_id,
-            "status": task.status,
-            "priority": task.priority,
-            "task_type": task.request.task_type,
-            "bundle_id": self.selected_bundle_id(task.task_id),
-            "created_at": task.created_at,
-            "terminal_at": terminal_at,
-            "age_seconds": age_seconds,
-            "recovery_reason": self.task_recovery_reason(task.task_id),
-            "result": self.task_result(task.task_id),
-            "proxy_trace": self.task_proxy_trace(task.task_id),
-        }
+        return self.operator_read_models._task_entry(task)
 
     def _task_terminal_timestamp(self, task_id: str) -> str | None:
-        terminal_events = {"task.completed", "task.failed", "task.cancelled"}
-        for event in reversed(self.task_history(task_id)):
-            if event.event_type in terminal_events:
-                return event.timestamp
-        return None
+        return self.operator_read_models.task_terminal_timestamp(task_id)
 
     def _operator_spillover_preview(self, market_candidates: list[dict]) -> list[dict]:
-        policy = self.operator_requests_policy()
-        if not bool(policy["allow_spillover"]):
-            return []
-        candidates = [
-            candidate
-            for candidate in market_candidates
-            if candidate.get("origin") != "own"
-        ]
-        candidates = [
-            candidate for candidate in candidates if bool(candidate.get("supports_queue"))
-        ]
-        if bool(policy["ready_endpoint_only"]):
-            candidates = [
-                candidate
-                for candidate in candidates
-                if bool(candidate.get("endpoint_ready"))
-            ]
-        strategy = str(policy["dispatch_strategy"])
-        if strategy == "market_first":
-            candidates.sort(
-                key=lambda candidate: (
-                    self._operator_candidate_price(candidate),
-                    -self._operator_candidate_rating(candidate),
-                    str(candidate.get("bundle_id") or ""),
-                )
-            )
-        elif strategy == "balanced":
-            candidates.sort(
-                key=lambda candidate: (
-                    self._operator_balanced_candidate_score(candidate),
-                    str(candidate.get("bundle_id") or ""),
-                )
-            )
-        else:
-            candidates.sort(
-                key=lambda candidate: (
-                    -self._operator_candidate_rating(candidate),
-                    self._operator_candidate_price(candidate),
-                    str(candidate.get("bundle_id") or ""),
-                )
-            )
-        return candidates[:5]
+        return self.operator_read_models.spillover_preview(market_candidates)
 
     def _operator_candidate_price(self, candidate: dict) -> float:
-        pricing = candidate.get("pricing") or {}
-        return float(pricing.get("input") or 0)
+        return self.operator_read_models.candidate_price(candidate)
 
     def _operator_candidate_rating(self, candidate: dict) -> float:
-        reputation = candidate.get("reputation") or {}
-        if reputation.get("score") is not None:
-            return float(reputation.get("score") or 0)
-        rating = candidate.get("rating") or {}
-        return float(rating.get("score") or 0)
+        return self.operator_read_models.candidate_rating(candidate)
 
     def _operator_balanced_candidate_score(self, candidate: dict) -> float:
-        return self._operator_candidate_price(candidate) / 2000 - self._operator_candidate_rating(
-            candidate
-        )
+        return self.operator_read_models.balanced_candidate_score(candidate)
 
     def _operator_dashboard_bootstrap(self, fleet: dict) -> dict:
-        candidate = next(
-            (
-                bundle
-                for bundle in fleet["bundles"]
-                if bundle["enabled"]
-            ),
-            None,
-        )
-        wallet = self.owner_wallet_state()
-        if not wallet["configured"]:
-            next_step = "Create or import a wallet"
-        elif candidate is not None:
-            next_step = f"Create your first endpoint from {candidate['bundle_id']}"
-        else:
-            next_step = "Attach a provider or install a model"
-        return {
-            "wallet_ready": wallet["configured"],
-            "owner_wallet": wallet,
-            "node_identity": self.node_identity(),
-            "provider_count": len(self.plugins.list()) if hasattr(self.plugins, "list") else len(self.plugins or []),
-            "bundle_count": len(fleet["bundles"]),
-            "endpoint_count": 0,
-            "first_endpoint_candidate": candidate,
-            "next_step": next_step,
-        }
+        return self.operator_read_models.bootstrap(fleet)
 
     def _operator_dashboard_install_status(self, status: str) -> str:
-        if status == "queued":
-            return "pending"
-        return status
+        return self.operator_read_models.install_status(status)
 
     def _catalog_endpoint(
         self,
         bundle: BundleConfig,
         runtime: RuntimeHandle | None,
     ) -> str | None:
-        if runtime is None:
-            return bundle.endpoint
-        return runtime.metadata.get("endpoint") or bundle.endpoint
+        return self._allocation_catalog_facade().catalog_endpoint(bundle, runtime)
 
     def _catalog_required_resources(
         self,
         bundle: BundleConfig,
         runtime: RuntimeHandle | None,
     ) -> dict[str, float | int]:
-        profile = bundle.resource_profile
-        if runtime is None:
-            return {
-                "cpu": profile.cold_start_cpu + profile.steady_cpu,
-                "ram_mb": profile.cold_start_ram_mb + profile.steady_ram_mb,
-                "vram_mb": profile.cold_start_vram_mb + profile.steady_vram_mb,
-            }
-        return {
-            "cpu": profile.steady_cpu,
-            "ram_mb": profile.steady_ram_mb,
-            "vram_mb": profile.steady_vram_mb,
-        }
+        return self._allocation_catalog_facade().catalog_required_resources(
+            bundle,
+            runtime,
+        )
 
     def _catalog_fit(
         self,
         required: dict[str, float | int],
     ) -> dict[str, float | int | bool]:
-        if self.resources is None:
-            return {
-                "fits": True,
-                "cpu_shortfall": 0.0,
-                "ram_mb_shortfall": 0,
-                "vram_mb_shortfall": 0,
-            }
-        return self.resources.fit_report(
-            float(required["cpu"]),
-            int(required["ram_mb"]),
-            int(required["vram_mb"]),
-        )
+        return self._allocation_catalog_facade().catalog_fit(required)
 
     def _select_allocation_bundle(self, request: AllocationRequest) -> BundleConfig:
-        if request.bundle_id is not None:
-            bundle = self._get_bundle(request.bundle_id)
-            if not bundle.enabled:
-                raise AllocationUnavailableError(
-                    reason="bundle_disabled",
-                    message=f"Bundle is disabled: {bundle.bundle_id}",
-                    bundle_id=bundle.bundle_id,
-                    retryable=False,
-                )
-            if bundle.workload_type != request.workload_type:
-                raise AllocationUnavailableError(
-                    reason="workload_mismatch",
-                    message=(
-                        f"Bundle workload mismatch: {bundle.bundle_id} != {request.workload_type}"
-                    ),
-                    bundle_id=bundle.bundle_id,
-                    retryable=False,
-                )
-            return bundle
-
-        for bundle in self.bundles:
-            if bundle.enabled and bundle.workload_type == request.workload_type:
-                return bundle
-        raise AllocationUnavailableError(
-            reason="no_compatible_bundle",
-            message=f"No compatible bundle for workload_type: {request.workload_type}",
-            bundle_id=request.bundle_id,
-            retryable=False,
-        )
+        return self._allocation_catalog_facade().select_allocation_bundle(request)
 
     def _resolve_runtime_endpoint(
         self,
         bundle: BundleConfig,
         runtime: RuntimeHandle,
     ) -> str:
-        endpoint = runtime.metadata.get("endpoint") or bundle.endpoint
-        if endpoint is None:
-            raise ValueError(f"Bundle has no resolved endpoint: {bundle.bundle_id}")
-        return endpoint
+        return self._allocation_catalog_facade().resolve_runtime_endpoint(bundle, runtime)
 
     def _allocation_unavailability(
         self,
@@ -4729,51 +1711,10 @@ class HypervisorService:
         bundle: BundleConfig,
         runtime: RuntimeHandle | None,
     ) -> dict[str, str | bool] | None:
-        if self._current_bundle_state(bundle.bundle_id)["drain_mode"]:
-            return {
-                "reason": "bundle_draining",
-                "message": f"Bundle is draining: {bundle.bundle_id}",
-                "retryable": True,
-            }
-        if self._bundle_in_cooldown(bundle.bundle_id):
-            return {
-                "reason": "provider_cooldown",
-                "message": f"Bundle is in cooldown: {bundle.bundle_id}",
-                "retryable": True,
-            }
-        if bundle.endpoint is None and runtime is None:
-            return {
-                "reason": "endpoint_unresolved",
-                "message": f"Bundle has no resolved endpoint: {bundle.bundle_id}",
-                "retryable": False,
-            }
-        profile = bundle.resource_profile
-        if self.resources is not None:
-            if runtime is None and not self.resources.can_fit(
-                profile.cold_start_cpu + profile.steady_cpu,
-                profile.cold_start_ram_mb + profile.steady_ram_mb,
-                profile.cold_start_vram_mb + profile.steady_vram_mb,
-            ):
-                return {
-                    "reason": "insufficient_resources",
-                    "message": (
-                        f"insufficient resources for allocation runtime residency: {bundle.bundle_id}"
-                    ),
-                    "retryable": True,
-                }
-            if not self.resources.can_fit(
-                profile.steady_cpu,
-                profile.steady_ram_mb,
-                profile.steady_vram_mb,
-            ):
-                return {
-                    "reason": "insufficient_resources",
-                    "message": (
-                        f"insufficient resources for allocation runtime residency: {bundle.bundle_id}"
-                    ),
-                    "retryable": True,
-                }
-        return None
+        return self._allocation_catalog_facade().allocation_unavailability(
+            bundle=bundle,
+            runtime=runtime,
+        )
 
     def _reserve_allocation_residency(
         self,
@@ -4782,51 +1723,25 @@ class HypervisorService:
         bundle: BundleConfig,
         runtime: RuntimeHandle | None,
     ) -> str | None:
-        if self.resources is None:
-            return None
-        if runtime is not None:
-            if self._runtime_reservation_id(bundle.bundle_id) in self._runtime_reservations:
-                return None
-            if self._bundle_has_active_allocation_reservation(bundle.bundle_id):
-                return None
-
-        profile = bundle.resource_profile
-        reservation_id = f"allocation:{allocation_id}"
-        self.resources.reserve(
-            reservation_id,
-            cpu=profile.steady_cpu,
-            ram_mb=profile.steady_ram_mb,
-            vram_mb=profile.steady_vram_mb,
+        return self._allocation_catalog_facade().reserve_allocation_residency(
+            allocation_id=allocation_id,
+            bundle=bundle,
+            runtime=runtime,
         )
-        return reservation_id
 
     def _bundle_has_active_allocation_reservation(self, bundle_id: str) -> bool:
-        for allocation in self._allocations.values():
-            if allocation["bundle_id"] != bundle_id:
-                continue
-            if allocation["status"] != "active":
-                continue
-            if allocation.get("reservation_id") is None:
-                continue
-            return True
-        return False
+        return self._allocation_catalog_facade().bundle_has_active_allocation_reservation(
+            bundle_id
+        )
 
     def _release_allocation_resources(self, allocation: dict) -> None:
-        reservation_id = allocation.get("reservation_id")
-        if reservation_id is not None and self.resources is not None:
-            self.resources.release(reservation_id)
-            allocation["reservation_id"] = None
+        self._allocation_catalog_facade().release_allocation_resources(allocation)
 
     def _owner_allocation_count(self, owner_id: str, *, status: str) -> int:
-        count = 0
-        for allocation in self._allocations.values():
-            if allocation["status"] != status:
-                continue
-            request = allocation.get("request", {})
-            if request.get("owner_id") != owner_id:
-                continue
-            count += 1
-        return count
+        return self._allocation_catalog_facade().owner_allocation_count(
+            owner_id,
+            status=status,
+        )
 
     def _owner_quota_unavailability(
         self,
@@ -4835,78 +1750,17 @@ class HypervisorService:
         status: str,
         bundle_id: str,
     ) -> dict[str, str | bool | int | None] | None:
-        if status == "active":
-            limit = self.max_active_allocations_per_owner
-            count = self._owner_allocation_count(owner_id, status="active")
-        elif status == "pending":
-            limit = self.max_pending_allocations_per_owner
-            count = self._owner_allocation_count(owner_id, status="pending")
-        else:
-            raise ValueError(f"unsupported allocation quota status: {status}")
-
-        if count < limit:
-            return None
-
-        retry_hint = self._allocation_retry_hint(
+        return self._allocation_catalog_facade().owner_quota_unavailability(
+            owner_id=owner_id,
+            status=status,
             bundle_id=bundle_id,
-            reason="owner_quota_exceeded",
         )
-        return {
-            "reason": "owner_quota_exceeded",
-            "message": f"owner {status} allocation quota exceeded: {owner_id}",
-            "bundle_id": bundle_id,
-            "retryable": True,
-            "retry_after_seconds": retry_hint["retry_after_seconds"],
-            "next_attempt_at": retry_hint["next_attempt_at"],
-        }
 
     def _cleanup_expired_allocations(self) -> None:
-        expired_any = False
-        now = time.time()
-        for allocation in self._allocations.values():
-            if allocation["status"] not in {"active", "pending"}:
-                continue
-            try:
-                expires_at = datetime.fromisoformat(allocation["expires_at"]).timestamp()
-            except ValueError:
-                continue
-            if expires_at > now:
-                continue
-            self._release_allocation_resources(allocation)
-            allocation["status"] = "expired"
-            self._record_wallet_allocation_event(allocation, status="expired")
-            self.record_event(
-                event_type="allocation.expired",
-                message="allocation lease expired",
-                bundle_id=allocation["bundle_id"],
-                runtime_id=allocation["runtime_id"],
-                details={"allocation_id": allocation["allocation_id"]},
-            )
-            expired_any = True
-        if expired_any:
-            self._persist_state()
+        self._allocation_catalog_facade().cleanup_expired_allocations()
 
     def _public_allocation(self, allocation: dict) -> dict:
-        request = allocation["request"]
-        payload = {
-            "allocation_id": allocation["allocation_id"],
-            "owner_id": request["owner_id"],
-            "workload_type": allocation["workload_type"],
-            "bundle_id": allocation["bundle_id"],
-            "runtime_id": allocation["runtime_id"],
-            "endpoint": allocation["endpoint"],
-            "status": allocation["status"],
-        }
-        if allocation.get("reason") is not None:
-            payload["reason"] = allocation["reason"]
-        if allocation["status"] == "pending" and allocation.get("reason") is not None:
-            retry_hint = self._allocation_retry_hint(
-                bundle_id=str(allocation["bundle_id"]),
-                reason=str(allocation["reason"]),
-            )
-            payload["retry_after_seconds"] = retry_hint["retry_after_seconds"]
-            payload["next_attempt_at"] = retry_hint["next_attempt_at"]
-        return payload
+        return self._allocation_catalog_facade().public_allocation(allocation)
 
     def _create_pending_allocation(
         self,
@@ -4915,86 +1769,14 @@ class HypervisorService:
         bundle: BundleConfig,
         reason: str,
     ) -> dict:
-        allocation_id = str(uuid4())
-        created_at = datetime.fromtimestamp(time.time(), timezone.utc).isoformat()
-        expires_at = datetime.fromtimestamp(
-            time.time() + request.lease_seconds,
-            timezone.utc,
-        ).isoformat()
-        self._allocations[allocation_id] = {
-            "allocation_id": allocation_id,
-            "request": request.model_dump(mode="json"),
-            "workload_type": request.workload_type,
-            "bundle_id": bundle.bundle_id,
-            "runtime_id": None,
-            "endpoint": None,
-            "status": "pending",
-            "created_at": created_at,
-            "expires_at": expires_at,
-            "reservation_id": None,
-            "reason": reason,
-        }
-        self.record_event(
-            event_type="allocation.pending",
-            message="allocation queued in wait mode",
-            bundle_id=bundle.bundle_id,
-            details={"allocation_id": allocation_id, "reason": reason},
+        return self._allocation_catalog_facade().create_pending_allocation(
+            request=request,
+            bundle=bundle,
+            reason=reason,
         )
-        self._persist_state()
-        return self.get_allocation(allocation_id)
 
     def _reconcile_pending_allocations(self) -> None:
-        changed = False
-        for allocation in self._allocations.values():
-            if allocation["status"] != "pending":
-                continue
-            request = AllocationRequest(**allocation["request"])
-            try:
-                bundle = self._select_allocation_bundle(request)
-            except AllocationUnavailableError as error:
-                allocation["reason"] = error.reason
-                continue
-
-            runtime = self._runtime_for_bundle(bundle.bundle_id)
-            unavailability = self._allocation_unavailability(bundle=bundle, runtime=runtime)
-            if unavailability is not None:
-                allocation["reason"] = str(unavailability["reason"])
-                continue
-            owner_quota = self._owner_quota_unavailability(
-                owner_id=request.owner_id,
-                status="active",
-                bundle_id=bundle.bundle_id,
-            )
-            if owner_quota is not None:
-                allocation["reason"] = str(owner_quota["reason"])
-                continue
-
-            reservation_id = self._reserve_allocation_residency(
-                allocation_id=str(allocation["allocation_id"]),
-                bundle=bundle,
-                runtime=runtime,
-            )
-            if runtime is None:
-                runtime = self.start_bundle(bundle.bundle_id)
-            allocation["bundle_id"] = bundle.bundle_id
-            allocation["runtime_id"] = runtime.runtime_id
-            allocation["endpoint"] = self._resolve_runtime_endpoint(bundle, runtime)
-            allocation["status"] = "active"
-            allocation["reservation_id"] = reservation_id
-            allocation["reason"] = None
-            self._record_wallet_allocation_activation_hook(
-                allocation, activation_source="pending_reconcile"
-            )
-            self.record_event(
-                event_type="allocation.activated",
-                message="pending allocation activated",
-                bundle_id=bundle.bundle_id,
-                runtime_id=runtime.runtime_id,
-                details={"allocation_id": allocation["allocation_id"]},
-            )
-            changed = True
-        if changed:
-            self._persist_state()
+        self._allocation_catalog_facade().reconcile_pending_allocations()
 
     def _allocation_retry_hint(
         self,
@@ -5002,280 +1784,38 @@ class HypervisorService:
         bundle_id: str,
         reason: str,
     ) -> dict[str, int | str]:
-        if reason == "provider_cooldown":
-            cooldown_until = self._current_bundle_state(bundle_id)["cooldown_until"]
-            if cooldown_until is not None:
-                retry_after_seconds = max(0, int(cooldown_until - time.time()))
-                return {
-                    "retry_after_seconds": retry_after_seconds,
-                    "next_attempt_at": datetime.fromtimestamp(
-                        cooldown_until,
-                        timezone.utc,
-                    ).isoformat(),
-                }
-        next_attempt_ts = time.time() + _ALLOCATION_RETRY_INTERVAL_SECONDS
-        return {
-            "retry_after_seconds": _ALLOCATION_RETRY_INTERVAL_SECONDS,
-            "next_attempt_at": datetime.fromtimestamp(
-                next_attempt_ts,
-                timezone.utc,
-            ).isoformat(),
-        }
+        return self._allocation_catalog_facade().allocation_retry_hint(
+            bundle_id=bundle_id,
+            reason=reason,
+        )
 
     def _bundle_inventory_status(self, bundle: BundleConfig) -> str:
-        if not bundle.enabled:
-            return "disabled"
-        if self._current_bundle_state(bundle.bundle_id)["cooldown_until"] is not None:
-            return "cooldown"
-        if self._current_bundle_state(bundle.bundle_id)["drain_mode"]:
-            return "draining"
-        runtime = self._runtime_for_bundle(bundle.bundle_id)
-        if runtime is None:
-            return "stopped"
-        return runtime.status
+        return self._bundle_runtime_policy_facade().bundle_inventory_status(bundle)
 
     def _bundle_registry_status(self, bundle: BundleConfig) -> str:
-        status = self._bundle_inventory_status(bundle)
-        if status == "stopped" and bundle.enabled:
-            return "ready"
-        return status
+        return self._bundle_runtime_policy_facade().bundle_registry_status(bundle)
 
     def _attempt_task(self, task_id: str) -> bool:
-        task = self.queue.get(task_id)
-        bundle_id = self.selected_bundle_id(task_id)
-        if bundle_id is None:
-            return False
-
-        bundle = self._get_bundle(bundle_id)
-        if not bundle.enabled:
-            return False
-        endpoint_manifest = self._endpoint_manifest_for_request(task.request)
-        if (
-            endpoint_manifest is not None
-            and endpoint_manifest.execution_strategy == "proxy"
-            and endpoint_manifest.proxy_target is not None
-        ):
-            return self._attempt_proxy_task(task_id, task, bundle, endpoint_manifest)
-        if self._uses_approved_llamacpp_runtime(endpoint_manifest):
-            return self._attempt_approved_runtime_task(
-                task_id,
-                task,
-                bundle,
-                endpoint_manifest,
-            )
-        plugin = self._get_plugin(bundle.plugin_id)
-        runtime = self._runtime_for_bundle(bundle.bundle_id)
-
-        if self._current_bundle_state(bundle.bundle_id)["drain_mode"]:
-            return False
-        if self._bundle_in_cooldown(bundle.bundle_id):
-            if runtime is not None:
-                runtime.health_status = "cooldown"
-                runtime.last_error = self._current_bundle_state(bundle.bundle_id)[
-                    "cooldown_reason"
-                ]
-            return False
-
-        if runtime is not None and not self._health_check_with_retry(
-            plugin,
-            runtime,
-            bundle.bundle_id,
-        ):
-            self._register_bundle_failure(
-                bundle_id=bundle.bundle_id,
-                plugin=plugin,
-                runtime=runtime,
-                reason=runtime.last_error or f"Runtime health check failed: {bundle.bundle_id}",
-            )
-            self._stop_runtime_for_bundle(bundle)
-            runtime = None
-        if runtime is not None:
-            runtime.status = "running"
-        estimate = plugin.estimate_resources(task.request, bundle, runtime)
-        concurrency_limit = estimate.get("concurrency_limit")
-        effective_concurrency_limit = bundle.max_parallel_requests
-        if concurrency_limit is not None:
-            effective_concurrency_limit = min(
-                bundle.max_parallel_requests,
-                concurrency_limit,
-            )
-        active_tasks = self._active_bundle_task_count(
-            bundle.bundle_id,
-            exclude_task_id=task_id,
-        )
-        if active_tasks >= effective_concurrency_limit:
-            return False
-
-        startup = estimate.get("startup_transient", {})
-        resident = estimate.get("runtime_resident", {})
-        request = estimate.get("request_active", {})
-
-        startup_cpu = startup.get("cpu", 0.0)
-        startup_ram = startup.get("ram_mb", 0)
-        startup_vram = startup.get("vram_mb", 0)
-        resident_cpu = resident.get("cpu", 0.0)
-        resident_ram = resident.get("ram_mb", 0)
-        resident_vram = resident.get("vram_mb", 0)
-        request_cpu = request.get("cpu", 0.0)
-        request_ram = request.get("ram_mb", 0)
-        request_vram = request.get("vram_mb", 0)
-
-        needed_cpu = request_cpu + (0.0 if runtime else startup_cpu + resident_cpu)
-        needed_ram = request_ram + (0 if runtime else startup_ram + resident_ram)
-        needed_vram = request_vram + (0 if runtime else startup_vram + resident_vram)
-        if not self.resources.can_fit(needed_cpu, needed_ram, needed_vram):
-            self._evict_idle_runtimes_for_task(
-                task=task,
-                requested_bundle=bundle,
-                cpu=needed_cpu,
-                ram_mb=needed_ram,
-                vram_mb=needed_vram,
-            )
-        if not self.resources.can_fit(needed_cpu, needed_ram, needed_vram):
-            return False
-
-        startup_reservation_id = f"startup:{task_id}"
-        request_reservation_id = f"request:{task_id}"
-        started_runtime = False
-        entered_running = False
-        self.queue.transition_status(task_id, "admitted")
-
-        try:
-            if runtime is None:
-                if startup_cpu or startup_ram or startup_vram:
-                    self.resources.reserve(
-                        startup_reservation_id,
-                        cpu=startup_cpu,
-                        ram_mb=startup_ram,
-                        vram_mb=startup_vram,
-                    )
-
-                self.queue.transition_status(task_id, "starting")
-                runtime = self.start_bundle(bundle.bundle_id)
-                started_runtime = True
-                if startup_cpu or startup_ram or startup_vram:
-                    self.resources.release(startup_reservation_id)
-
-                self._reserve_runtime_residency(
-                    bundle.bundle_id,
-                    cpu=resident_cpu,
-                    ram_mb=resident_ram,
-                    vram_mb=resident_vram,
-                )
-                runtime.status = "running"
-                runtime.health_status = "healthy"
-                runtime.last_error = None
-                if not self._health_check_with_retry(
-                    plugin,
-                    runtime,
-                    bundle.bundle_id,
-                ):
-                    self._register_bundle_failure(
-                        bundle_id=bundle.bundle_id,
-                        plugin=plugin,
-                        runtime=runtime,
-                        reason=runtime.last_error
-                        or f"Runtime health check failed: {bundle.bundle_id}",
-                    )
-                    raise RuntimeError(runtime.last_error or bundle.bundle_id)
-
-            if request_cpu or request_ram or request_vram:
-                self.resources.reserve(
-                    request_reservation_id,
-                    cpu=request_cpu,
-                    ram_mb=request_ram,
-                    vram_mb=request_vram,
-                )
-
-            self.queue.transition_status(task_id, "running")
-            entered_running = True
-            self._touch_task_session(task.request)
-            self._task_results[task_id] = self._invoke_with_retry(
-                plugin,
-                bundle,
-                task.request,
-                runtime,
-            )
-            self._register_bundle_success(bundle.bundle_id, runtime)
-            runtime.health_status = "healthy"
-            runtime.last_error = None
-            self.queue.transition_status(task_id, "completed")
-            self.record_event(
-                event_type="task.completed",
-                message="task completed successfully",
-                task_id=task_id,
-                bundle_id=bundle.bundle_id,
-                runtime_id=runtime.runtime_id if runtime is not None else None,
-            )
-            self._record_mvp_runtime_evidence_for_completed_task(
-                task_id=task_id,
-                bundle=bundle,
-                task=task.request,
-                runtime=runtime,
-            )
-            self._auto_record_wallet_usage_for_task(
-                task_id=task_id,
-                bundle=bundle,
-                task=task.request,
-            )
-            return True
-        except Exception as error:
-            self.queue.transition_status(task_id, "failed")
-            if runtime is not None:
-                runtime.last_error = str(error)
-            self.record_event(
-                event_type="task.failed",
-                message=str(error),
-                task_id=task_id,
-                bundle_id=bundle.bundle_id,
-                runtime_id=runtime.runtime_id if runtime is not None else None,
-            )
-            if started_runtime and not entered_running and runtime is not None:
-                self._stop_runtime_for_bundle(bundle)
-            raise
-        finally:
-            self.resources.release(startup_reservation_id)
-            self.resources.release(request_reservation_id)
-            if runtime is not None and bundle.warm_policy == "never":
-                self._stop_runtime_for_bundle(bundle)
+        return self._task_execution_facade().attempt_task(task_id)
 
     def _reserve_runtime_residency(
         self, bundle_id: str, *, cpu: float, ram_mb: int, vram_mb: int
     ) -> None:
-        reservation_id = self._runtime_reservation_id(bundle_id)
-        if reservation_id in self._runtime_reservations:
-            return
-        if cpu or ram_mb or vram_mb:
-            self.resources.reserve(
-                reservation_id,
-                cpu=cpu,
-                ram_mb=ram_mb,
-                vram_mb=vram_mb,
-            )
-        self._runtime_reservations.add(reservation_id)
+        self._bundle_runtime_policy_facade().reserve_runtime_residency(
+            bundle_id,
+            cpu=cpu,
+            ram_mb=ram_mb,
+            vram_mb=vram_mb,
+        )
 
     def _release_runtime_reservation(self, bundle_id: str) -> None:
-        reservation_id = self._runtime_reservation_id(bundle_id)
-        self.resources.release(reservation_id)
-        self._runtime_reservations.discard(reservation_id)
+        self._bundle_runtime_policy_facade().release_runtime_reservation(bundle_id)
 
     def _stop_runtime_for_bundle(self, bundle: BundleConfig) -> None:
-        runtime = self._runtime_for_bundle(bundle.bundle_id)
-        if runtime is None:
-            return
-
-        plugin = self._get_plugin(bundle.plugin_id)
-        plugin.stop(runtime)
-        if hasattr(self.runtimes, "stop_runtime"):
-            self.runtimes.stop_runtime(runtime.runtime_id)
-        else:
-            self.runtimes = [
-                item for item in self.runtimes if item.runtime_id != runtime.runtime_id
-            ]
-        self._release_runtime_reservation(bundle.bundle_id)
+        self._bundle_runtime_policy_facade().stop_runtime_for_bundle(bundle)
 
     def _runtime_reservation_id(self, bundle_id: str) -> str:
-        return f"runtime:{bundle_id}"
+        return self._bundle_runtime_policy_facade().runtime_reservation_id(bundle_id)
 
     def _circuit_breaker_policy_for(self, plugin) -> dict:
         policy = plugin.circuit_breaker_policy()
@@ -5285,33 +1825,11 @@ class HypervisorService:
         }
 
     def _current_bundle_state(self, bundle_id: str) -> dict:
-        state = self._bundle_states.get(bundle_id)
-        if state is None:
-            return {
-                "bundle_id": bundle_id,
-                "failure_streak": 0,
-                "cooldown_until": None,
-                "cooldown_reason": None,
-                "drain_mode": False,
-                "drain_reason": None,
-            }
-        return {
-            "bundle_id": bundle_id,
-            "failure_streak": int(state.get("failure_streak", 0)),
-            "cooldown_until": state.get("cooldown_until"),
-            "cooldown_reason": state.get("cooldown_reason"),
-            "drain_mode": bool(state.get("drain_mode", False)),
-            "drain_reason": state.get("drain_reason"),
-        }
+        return self._bundle_runtime_policy_facade().current_bundle_state(bundle_id)
 
     def _bundle_state_is_non_default(self, bundle_id: str) -> bool:
-        state = self._current_bundle_state(bundle_id)
-        return bool(
-            state["failure_streak"]
-            or state["cooldown_until"] is not None
-            or state["cooldown_reason"] is not None
-            or state["drain_mode"]
-            or state["drain_reason"] is not None
+        return self._bundle_runtime_policy_facade().bundle_state_is_non_default(
+            bundle_id
         )
 
     def _bundle_state_is_empty(self, state: dict) -> bool:
@@ -5333,19 +1851,14 @@ class HypervisorService:
         drain_mode: bool,
         drain_reason: str | None,
     ) -> dict:
-        state = {
-            "bundle_id": bundle_id,
-            "failure_streak": failure_streak,
-            "cooldown_until": cooldown_until,
-            "cooldown_reason": cooldown_reason,
-            "drain_mode": drain_mode,
-            "drain_reason": drain_reason,
-        }
-        if self._bundle_state_is_empty(state):
-            self._bundle_states.pop(bundle_id, None)
-            return self._current_bundle_state(bundle_id)
-        self._bundle_states[bundle_id] = state
-        return dict(state)
+        return self._bundle_runtime_policy_facade().set_bundle_state(
+            bundle_id,
+            failure_streak=failure_streak,
+            cooldown_until=cooldown_until,
+            cooldown_reason=cooldown_reason,
+            drain_mode=drain_mode,
+            drain_reason=drain_reason,
+        )
 
     def _register_bundle_failure(
         self,
@@ -5355,40 +1868,11 @@ class HypervisorService:
         runtime: RuntimeHandle | None,
         reason: str,
     ) -> None:
-        policy = self._circuit_breaker_policy_for(plugin)
-        if policy["failure_threshold"] <= 0:
-            return
-
-        state = self._current_bundle_state(bundle_id)
-        failure_streak = state["failure_streak"] + 1
-        cooldown_until = state["cooldown_until"]
-        cooldown_reason = reason
-        if (
-            failure_streak >= policy["failure_threshold"]
-            and policy["cooldown_seconds"] > 0.0
-        ):
-            cooldown_until = time.time() + policy["cooldown_seconds"]
-            if runtime is not None:
-                runtime.health_status = "cooldown"
-                runtime.last_error = reason
-            self.record_event(
-                event_type="bundle.cooldown_started",
-                message="bundle entered provider cooldown",
-                bundle_id=bundle_id,
-                runtime_id=runtime.runtime_id if runtime is not None else None,
-                details={
-                    "failure_streak": failure_streak,
-                    "cooldown_until": cooldown_until,
-                    "cooldown_reason": cooldown_reason,
-                },
-            )
-        self._set_bundle_state(
-            bundle_id,
-            failure_streak=failure_streak,
-            cooldown_until=cooldown_until,
-            cooldown_reason=cooldown_reason,
-            drain_mode=state["drain_mode"],
-            drain_reason=state["drain_reason"],
+        self._bundle_runtime_policy_facade().register_bundle_failure(
+            bundle_id=bundle_id,
+            plugin=plugin,
+            runtime=runtime,
+            reason=reason,
         )
 
     def _register_bundle_success(
@@ -5396,46 +1880,13 @@ class HypervisorService:
         bundle_id: str,
         runtime: RuntimeHandle | None = None,
     ) -> None:
-        if not self._bundle_state_is_non_default(bundle_id):
-            return
-        had_cooldown = self._current_bundle_state(bundle_id)["cooldown_until"] is not None
-        self._set_bundle_state(
+        self._bundle_runtime_policy_facade().register_bundle_success(
             bundle_id,
-            failure_streak=0,
-            cooldown_until=None,
-            cooldown_reason=None,
-            drain_mode=self._current_bundle_state(bundle_id)["drain_mode"],
-            drain_reason=self._current_bundle_state(bundle_id)["drain_reason"],
+            runtime=runtime,
         )
-        if had_cooldown:
-            self.record_event(
-                event_type="bundle.cooldown_cleared",
-                message="bundle provider cooldown cleared",
-                bundle_id=bundle_id,
-                runtime_id=runtime.runtime_id if runtime is not None else None,
-            )
 
     def _bundle_in_cooldown(self, bundle_id: str) -> bool:
-        state = self._current_bundle_state(bundle_id)
-        cooldown_until = state["cooldown_until"]
-        if cooldown_until is None:
-            return False
-        if cooldown_until <= time.time():
-            self._set_bundle_state(
-                bundle_id,
-                failure_streak=0,
-                cooldown_until=None,
-                cooldown_reason=None,
-                drain_mode=state["drain_mode"],
-                drain_reason=state["drain_reason"],
-            )
-            self.record_event(
-                event_type="bundle.cooldown_expired",
-                message="bundle provider cooldown expired",
-                bundle_id=bundle_id,
-            )
-            return False
-        return True
+        return self._bundle_runtime_policy_facade().bundle_in_cooldown(bundle_id)
 
     def _health_check_with_retry(
         self,
@@ -5443,21 +1894,11 @@ class HypervisorService:
         runtime: RuntimeHandle,
         bundle_id: str,
     ) -> bool:
-        policy = self._retry_policy_for(plugin, "health_check")
-        for attempt in range(1, policy["max_attempts"] + 1):
-            if plugin.health_check(runtime):
-                runtime.health_status = "healthy"
-                runtime.last_error = None
-                return True
-            if attempt < policy["max_attempts"]:
-                time.sleep(policy["backoff_seconds"])
-
-        runtime.health_status = "unhealthy"
-        runtime.last_error = (
-            f"Runtime health check failed after {policy['max_attempts']} attempts: "
-            f"{bundle_id}"
+        return self._task_execution_facade().health_check_with_retry(
+            plugin,
+            runtime,
+            bundle_id,
         )
-        return False
 
     def _invoke_with_retry(
         self,
@@ -5466,32 +1907,12 @@ class HypervisorService:
         task: TaskRequest,
         runtime: RuntimeHandle,
     ) -> dict:
-        policy = self._retry_policy_for(plugin, "invoke")
-        retry_exceptions = policy["retry_exceptions"]
-        last_error: Exception | None = None
-
-        for attempt in range(1, policy["max_attempts"] + 1):
-            try:
-                return plugin.invoke(task, runtime)
-            except Exception as error:
-                last_error = error
-                retryable = isinstance(error, retry_exceptions)
-                if not retryable or attempt >= policy["max_attempts"]:
-                    if retryable:
-                        runtime.health_status = "unhealthy"
-                        runtime.last_error = str(error)
-                        self._register_bundle_failure(
-                            bundle_id=bundle.bundle_id,
-                            plugin=plugin,
-                            runtime=runtime,
-                            reason=str(error),
-                        )
-                    raise
-                time.sleep(policy["backoff_seconds"])
-
-        if last_error is None:
-            raise RuntimeError("invoke failed without an error")
-        raise last_error
+        return self._task_execution_facade().invoke_with_retry(
+            plugin,
+            bundle,
+            task,
+            runtime,
+        )
 
     def _record_mvp_runtime_evidence_for_completed_task(
         self,
@@ -5501,147 +1922,12 @@ class HypervisorService:
         task: TaskRequest,
         runtime: RuntimeHandle | None,
     ) -> RuntimeRequestRecord | None:
-        session_id = task.constraints.get("session_id")
-        endpoint_id = task.constraints.get("endpoint_id")
-        if session_id is None or endpoint_id is None:
-            return None
-        session_service = getattr(self, "session_service", None)
-        endpoint_service = getattr(self, "endpoint_service", None)
-        if session_service is None or endpoint_service is None:
-            return None
-        try:
-            session = session_service.store.get_session(str(session_id))
-            endpoint = endpoint_service.get_endpoint(str(endpoint_id)).endpoint
-        except KeyError:
-            return None
-        if session.economic_profile != "MVP-0001":
-            return None
-        if session.session_contract_hash is None:
-            raise RuntimeError("MVP Session is missing session_contract_hash")
-        if session.accounting_contract_hash is None:
-            raise RuntimeError("MVP Session is missing accounting_contract_hash")
-        if session.request_charge_ceiling_q_atoms is None:
-            raise RuntimeError("MVP Session is missing request_charge_ceiling_q_atoms")
-
-        request_id = str(task.constraints.get("request_id") or task_id)
-        runtime_id = runtime.runtime_id if runtime is not None else f"proxy:{bundle.bundle_id}"
-        runtime_configuration_hash = _canonical_hash(
-            {
-                "bridge": "MVP-0001_TASK_RUNTIME_COMPAT",
-                "bundle_id": bundle.bundle_id,
-                "bundle_model_id": bundle.model_id,
-                "endpoint_configuration_hash": endpoint.configuration_hash,
-            }
-        )
-        payload = {
-            "task_id": task_id,
-            "task_type": task.task_type,
-            "payload": task.payload,
-        }
-        request_deadline = str(
-            task.constraints.get("request_deadline")
-            or (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-        )
-        request = RuntimeExecuteRequest(
-            runtime_id=runtime_id,
-            runtime_generation=1,
-            runtime_configuration_hash=runtime_configuration_hash,
-            route_generation=1,
-            endpoint_id=endpoint.endpoint_id,
-            endpoint_configuration_hash=endpoint.configuration_hash,
-            session_id=session.session_id,
-            session_contract_hash=session.session_contract_hash,
-            request_id=request_id,
-            capability_id=(endpoint.capabilities[0] if endpoint.capabilities else endpoint.model_class),
-            capability_version="1.0",
-            capability_definition_hash=_canonical_hash(
-                {
-                    "endpoint_id": endpoint.endpoint_id,
-                    "model_class": endpoint.model_class,
-                    "capabilities": endpoint.capabilities,
-                }
-            ),
-            request_payload_hash=_canonical_hash(payload),
-            request_payload=payload,
-            request_charge_ceiling=(
-                session.request_charge_ceiling_q_atoms / Q_ATOMS_PER_Q
-            ),
-            accounting_contract_hash=session.accounting_contract_hash,
-            idempotency_key=f"task:{task_id}",
-            request_deadline=request_deadline,
-            trace_context={
-                "task_id": task_id,
-                "bundle_id": bundle.bundle_id,
-                "bridge": "MVP-0001_TASK_RUNTIME_COMPAT",
-            },
-        )
-        existing = self.runtime_protocol_store.requests.get(request_id)
-        request_hash = request.semantic_hash()
-        if existing is not None:
-            if existing.request_hash != request_hash:
-                raise RuntimeError("MVP Runtime Request ID conflicts with task evidence")
-            if existing.terminal_result_hash is not None:
-                return existing
-
-        now = datetime.now(timezone.utc).isoformat()
-        result = self._task_results.get(task_id)
-        result_payload = result if isinstance(result, dict) else {"result": result}
-        final_usage = RuntimeUsageReport(
-            usage_report_id=f"usage-final-{request_id}",
-            runtime_id=request.runtime_id,
-            runtime_generation=request.runtime_generation,
-            runtime_configuration_hash=request.runtime_configuration_hash,
-            endpoint_id=request.endpoint_id,
-            endpoint_configuration_hash=request.endpoint_configuration_hash,
-            session_id=request.session_id,
-            request_id=request.request_id,
-            accounting_contract_hash=request.accounting_contract_hash,
-            report_type="FINAL",
-            usage_sequence=1,
-            request_state="COMPLETED",
-            provider_attempt_count=1,
-            terminal=True,
-            observed_from=now,
-            observed_to=now,
-            limitations=[
-                "MVP-0001 fixed-price bridge records execution envelope only; "
-                "token dimensions are not inferred."
-            ],
-            created_at=now,
-            runtime_signature="hypervisor-mvp-bridge",
-        )
-        self.runtime_protocol_store.requests[request_id] = RuntimeRequestRecord(
-            request_id=request_id,
-            runtime_id=request.runtime_id,
-            runtime_generation=request.runtime_generation,
-            route_generation=request.route_generation,
-            request_hash=request_hash,
-            request=request,
-            request_state="COMPLETED",
-            admission_state="ACCEPTED",
-            runtime_request_handle=f"task:{task_id}",
-            accepted_at=now,
-            terminal_result_hash=_canonical_hash(result_payload),
-            terminal_final_usage_report_id=final_usage.usage_report_id,
-            updated_at=now,
-        )
-        self.runtime_protocol_store.usage_reports[final_usage.usage_report_id] = (
-            final_usage
-        )
-        self.runtime_protocol_store.flush()
-        self.record_event(
-            event_type="runtime.mvp_evidence_recorded",
-            message="MVP Runtime evidence recorded from completed task",
+        return self._runtime_execution_facade().record_mvp_runtime_evidence_for_completed_task(
             task_id=task_id,
-            bundle_id=bundle.bundle_id,
-            runtime_id=runtime_id,
-            details={
-                "session_id": session.session_id,
-                "request_id": request_id,
-                "usage_report_id": final_usage.usage_report_id,
-            },
+            bundle=bundle,
+            task=task,
+            runtime=runtime,
         )
-        return self.runtime_protocol_store.requests[request_id]
 
     def _auto_record_wallet_usage_for_task(
         self,
@@ -6143,36 +2429,15 @@ class HypervisorService:
             raise ValueError(f"Unknown session: {session_id}") from error
 
     def _touch_task_session(self, request: TaskRequest) -> None:
-        session_id = request.constraints.get("session_id")
-        if session_id is None:
-            return
-        session_service = getattr(self, "session_service", None)
-        if session_service is None:
-            raise RuntimeError("Session service is not configured")
-        try:
-            session_service.touch_session(str(session_id))
-        except KeyError as error:
-            raise RuntimeError(f"Unknown session: {session_id}") from error
+        self._runtime_execution_facade().touch_task_session(request)
 
     def _endpoint_manifest_for_request(self, request: TaskRequest):
-        endpoint_id = request.constraints.get("endpoint_id")
-        if endpoint_id is None:
-            return None
-        endpoint_service = getattr(self, "endpoint_service", None)
-        if endpoint_service is None:
-            return None
-        return endpoint_service.get_endpoint(str(endpoint_id)).endpoint
+        return self._runtime_execution_facade().endpoint_manifest_for_request(request)
 
     def _uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:
-        if endpoint_manifest is None or endpoint_manifest.runtime_binding_id is None:
-            return False
-        try:
-            binding = self.provider_inventory.store.get_runtime_binding(
-                endpoint_manifest.runtime_binding_id
-            )
-        except KeyError:
-            return False
-        return binding.adapter_id == "llamacpp-openai"
+        return self._runtime_execution_facade().uses_approved_llamacpp_runtime(
+            endpoint_manifest
+        )
 
     def _attempt_approved_runtime_task(
         self,
@@ -6181,76 +2446,12 @@ class HypervisorService:
         bundle: BundleConfig,
         endpoint_manifest,
     ) -> bool:
-        session_id = task.request.constraints.get("session_id")
-        if session_id is None:
-            raise RuntimeError("Approved Runtime execution requires an active Session")
-        session_service = getattr(self, "session_service", None)
-        if session_service is None:
-            raise RuntimeError("Session service is not configured")
-        self.queue.transition_status(task_id, "admitted")
-        try:
-            self.queue.transition_status(task_id, "running")
-            self._touch_task_session(task.request)
-            session = session_service.store.get_session(str(session_id))
-            result = ApprovedRuntimeDispatcher(
-                provider_inventory=self.provider_inventory,
-                runtime_protocol_store=self.runtime_protocol_store,
-                hypervisor_id=self.node_id,
-            ).execute(
-                endpoint=endpoint_manifest,
-                session=session,
-                request_id=str(task.request.constraints.get("request_id") or task_id),
-                request_payload=task.request.payload,
-                request_deadline=task.request.constraints.get("request_deadline"),
-                streaming=bool(task.request.constraints.get("streaming", False)),
-            )
-            if result.terminal_state != "COMPLETED":
-                raise RuntimeError(f"Approved Runtime execution failed: {result.terminal_state}")
-            self._record_session_runtime_terminal_evidence(
-                session_service=session_service,
-                session=session,
-                endpoint_manifest=endpoint_manifest,
-                result=result,
-            )
-            result_payload = result.result_payload or {}
-            self._task_results[task_id] = {
-                "ok": True,
-                "task_type": task.request.task_type,
-                "output_text": result_payload.get("text", ""),
-                "model_id": result_payload.get("model"),
-                "runtime_protocol": {
-                    "runtime_id": result.runtime_id,
-                    "request_id": result.request_id,
-                    "final_usage_report_id": result.final_usage_report_id,
-                },
-            }
-            self.queue.transition_status(task_id, "completed")
-            self.record_event(
-                event_type="task.completed",
-                message="task completed through approved Runtime Adapter",
-                task_id=task_id,
-                bundle_id=bundle.bundle_id,
-                runtime_id=result.runtime_id,
-                details={
-                    "runtime_request_id": result.request_id,
-                    "adapter": "llamacpp-openai",
-                },
-            )
-            self._auto_record_wallet_usage_for_task(
-                task_id=task_id,
-                bundle=bundle,
-                task=task.request,
-            )
-            return True
-        except Exception as error:
-            self.queue.transition_status(task_id, "failed")
-            self.record_event(
-                event_type="task.failed",
-                message=str(error),
-                task_id=task_id,
-                bundle_id=bundle.bundle_id,
-            )
-            raise
+        return self._runtime_execution_facade().attempt_approved_runtime_task(
+            task_id,
+            task,
+            bundle,
+            endpoint_manifest,
+        )
 
     def _record_session_runtime_terminal_evidence(
         self,
@@ -6260,282 +2461,52 @@ class HypervisorService:
         endpoint_manifest,
         result,
     ) -> None:
-        record = self.runtime_protocol_store.requests.get(result.request_id)
-        final_usage = self.runtime_protocol_store.usage_reports.get(
-            result.final_usage_report_id
-        )
-        if record is None or final_usage is None:
-            raise RuntimeError("terminal Runtime evidence is not durable")
-        if not final_usage.terminal or final_usage.report_type != "FINAL":
-            raise RuntimeError("terminal Runtime evidence requires Final Usage")
-        binding_id = endpoint_manifest.runtime_binding_id
-        if binding_id is None:
-            raise RuntimeError("approved Runtime Endpoint has no Runtime Binding")
-        session_service.record_runtime_terminal_evidence(
-            session.session_id,
-            evidence={
-                "request_id": result.request_id,
-                "runtime_binding_id": binding_id,
-                "runtime_id": result.runtime_id,
-                "runtime_generation": result.runtime_generation,
-                "runtime_configuration_hash": result.runtime_configuration_hash,
-                "route_generation": result.route_generation,
-                "endpoint_id": result.endpoint_id,
-                "endpoint_configuration_hash": result.endpoint_configuration_hash,
-                "session_id": result.session_id,
-                "session_contract_hash": record.request.session_contract_hash,
-                "accounting_contract_hash": record.request.accounting_contract_hash,
-                "terminal_state": result.terminal_state,
-                "result_hash": result.result_hash,
-                "final_usage_report_id": final_usage.usage_report_id,
-                "final_usage_report_hash": final_usage.report_hash,
-                "recorded_at": result.completed_at,
-            },
+        self._runtime_execution_facade().record_session_runtime_terminal_evidence(
+            session_service=session_service,
+            session=session,
+            endpoint_manifest=endpoint_manifest,
+            result=result,
         )
 
     def close_endpoint_session(self, session_id: str):
-        session_service = getattr(self, "session_service", None)
-        if session_service is None:
-            raise RuntimeError("Session service is not configured")
-        result = session_service.close_session(session_id)
-        self.propagate_proxy_session_close(session_id)
-        return result
+        return self._runtime_execution_facade().close_endpoint_session(session_id)
 
     def propagate_proxy_session_close(self, session_id: str) -> None:
-        session_service = getattr(self, "session_service", None)
-        if session_service is None:
-            raise RuntimeError("Session service is not configured")
-        binding = session_service.try_get_proxy_session_binding(session_id)
-        if binding is None or not binding.remote_session_id:
-            return
-        self._close_remote_proxy_session_binding(session_service, binding)
+        self._runtime_execution_facade().propagate_proxy_session_close(session_id)
 
     def _close_remote_proxy_session_binding(
         self,
         session_service,
         binding: ProxySessionBinding,
     ) -> None:
-        if binding.status == "closed" and binding.close_status == "closed":
-            return
-        try:
-            self._remote_request_json(
-                "POST",
-                f"{binding.source_base_url.rstrip('/')}/api/v1/sessions/{binding.remote_session_id}/close",
-            )
-            session_service.save_proxy_session_binding(
-                binding.model_copy(
-                    update={
-                        "status": "closed",
-                        "close_status": "closed",
-                        "last_error": None,
-                    }
-                )
-            )
-        except Exception as error:
-            session_service.save_proxy_session_binding(
-                binding.model_copy(
-                    update={
-                        "status": "close_pending",
-                        "close_status": "pending_reconcile",
-                        "last_error": str(error),
-                    }
-                )
-            )
+        self._runtime_execution_facade().close_remote_proxy_session_binding(
+            session_service,
+            binding,
+        )
 
     def _proxy_target_requires_remote_session(self, endpoint_manifest) -> bool:
-        proxy_target = endpoint_manifest.proxy_target
-        if proxy_target is None:
-            return False
-        remote_endpoint_service = getattr(self, "remote_endpoint_service", None)
-        if remote_endpoint_service is None:
-            return False
-        try:
-            remote_endpoint = remote_endpoint_service.get_remote_endpoint(
-                proxy_target.remote_endpoint_id
-            )
-        except KeyError:
-            return False
-        session_policy = remote_endpoint.session_policy or {}
-        return any(
-            (
-                float(session_policy.get("minimum_deposit", 0.0) or 0.0) > 0.0,
-                float(session_policy.get("minimum_session_fee", 0.0) or 0.0) > 0.0,
-                float(session_policy.get("idle_fee_per_minute", 0.0) or 0.0) > 0.0,
-            )
+        return self._runtime_execution_facade().proxy_target_requires_remote_session(
+            endpoint_manifest
         )
 
     def _ensure_proxy_session_binding(self, endpoint_manifest, task_request: TaskRequest):
-        session_id = task_request.constraints.get("session_id")
-        if session_id is None:
-            raise RuntimeError("Local session is required for proxy session brokering")
-        session_service = getattr(self, "session_service", None)
-        if session_service is None:
-            raise RuntimeError("Session service is not configured")
-        existing = session_service.try_get_proxy_session_binding(str(session_id))
-        if existing is not None and existing.status == "active" and existing.remote_session_id:
-            return existing
-        session_result = session_service.get_session(str(session_id))
-        proxy_target = endpoint_manifest.proxy_target
-        if proxy_target is None:
-            raise RuntimeError(f"Proxy endpoint has no target: {endpoint_manifest.endpoint_id}")
-        remote_endpoint = self.remote_endpoint_service.get_remote_endpoint(
-            proxy_target.remote_endpoint_id
+        return self._runtime_execution_facade().ensure_proxy_session_binding(
+            endpoint_manifest,
+            task_request,
         )
-        remote_policy = remote_endpoint.session_policy or {}
-        deposit_q = float(
-            remote_policy.get("recommended_deposit")
-            or remote_policy.get("minimum_deposit")
-            or session_result.deposit.locked_q
-        )
-        open_url = (
-            f"{proxy_target.source_base_url.rstrip('/')}/api/v1/endpoints/"
-            f"{proxy_target.source_endpoint_id}/sessions"
-        )
-        try:
-            opened = self._remote_request_json(
-                "POST",
-                open_url,
-                {
-                    "client_wallet": session_result.session.client_wallet,
-                    "deposit_q": deposit_q,
-                },
-            )
-        except Exception as error:
-            degraded = session_service.save_proxy_session_binding(
-                ProxySessionBinding(
-                    local_session_id=str(session_id),
-                    remote_endpoint_id=proxy_target.source_endpoint_id,
-                    remote_session_id="",
-                    remote_node_id=proxy_target.source_node_id,
-                    source_base_url=proxy_target.source_base_url,
-                    status="degraded",
-                    opened_at=datetime.now(timezone.utc).isoformat(),
-                    last_error=str(error),
-                    close_status="not_requested",
-                )
-            )
-            raise RuntimeError(str(error)) from error
-        remote_session = dict(opened.get("session") or {})
-        binding = session_service.save_proxy_session_binding(
-            ProxySessionBinding(
-                local_session_id=str(session_id),
-                remote_endpoint_id=proxy_target.source_endpoint_id,
-                remote_session_id=str(remote_session["session_id"]),
-                remote_node_id=proxy_target.source_node_id,
-                source_base_url=proxy_target.source_base_url,
-                status="active",
-                opened_at=str(
-                    remote_session.get("opened_at")
-                    or datetime.now(timezone.utc).isoformat()
-                ),
-                last_error=None,
-                close_status="not_requested",
-            )
-        )
-        return binding
 
     def _attempt_proxy_task(self, task_id: str, task: QueuedTask, bundle: BundleConfig, endpoint_manifest) -> bool:
-        self.queue.transition_status(task_id, "admitted")
-        self.record_event(
-            event_type="task.proxy_dispatched",
-            message="task dispatched through proxy endpoint",
-            task_id=task_id,
-            bundle_id=bundle.bundle_id,
-            details={
-                "endpoint_id": endpoint_manifest.endpoint_id,
-                "remote_endpoint_id": endpoint_manifest.proxy_target.source_endpoint_id,
-                "remote_node_id": endpoint_manifest.proxy_target.source_node_id,
-                "source_base_url": endpoint_manifest.proxy_target.source_base_url,
-            },
+        return self._runtime_execution_facade().attempt_proxy_task(
+            task_id,
+            task,
+            bundle,
+            endpoint_manifest,
         )
-        try:
-            self.queue.transition_status(task_id, "running")
-            self._touch_task_session(task.request)
-            self._task_results[task_id] = self._invoke_proxy_endpoint(
-                endpoint_manifest,
-                task.request,
-            )
-            self.queue.transition_status(task_id, "completed")
-            self.record_event(
-                event_type="task.completed",
-                message="task completed successfully",
-                task_id=task_id,
-                bundle_id=bundle.bundle_id,
-            )
-            self._record_mvp_runtime_evidence_for_completed_task(
-                task_id=task_id,
-                bundle=bundle,
-                task=task.request,
-                runtime=None,
-            )
-            self._auto_record_wallet_usage_for_task(
-                task_id=task_id,
-                bundle=bundle,
-                task=task.request,
-            )
-            return True
-        except Exception as error:
-            self.queue.transition_status(task_id, "failed")
-            self.record_event(
-                event_type="task.failed",
-                message=str(error),
-                task_id=task_id,
-                bundle_id=bundle.bundle_id,
-            )
-            raise
 
     def _invoke_proxy_endpoint(self, endpoint_manifest, task_request: TaskRequest) -> dict:
-        proxy_target = endpoint_manifest.proxy_target
-        if proxy_target is None:
-            raise RuntimeError(f"Proxy endpoint has no target: {endpoint_manifest.endpoint_id}")
-        remote_constraints = {
-            key: value
-            for key, value in task_request.constraints.items()
-            if key not in {"endpoint_id", "allocation_id", "session_id"}
-        }
-        if self._proxy_target_requires_remote_session(endpoint_manifest):
-            binding = self._ensure_proxy_session_binding(endpoint_manifest, task_request)
-            remote_constraints["session_id"] = binding.remote_session_id
-        remote_constraints["endpoint_id"] = proxy_target.source_endpoint_id
-        remote_request = task_request.model_copy(
-            update={
-                "mode": "auto",
-                "bundle_override": None,
-                "constraints": remote_constraints,
-            }
-        )
-        submit_payload = remote_request.model_dump(mode="json")
-        submit_response = self._remote_request_json(
-            "POST",
-            f"{proxy_target.source_base_url.rstrip('/')}/tasks",
-            submit_payload,
-        )
-        remote_task_id = str(submit_response["task_id"])
-        attempts = max(1, int(getattr(self, "proxy_poll_attempts", 5)))
-        interval_seconds = max(0.0, float(getattr(self, "proxy_poll_interval_seconds", 0.0)))
-        detail = None
-        for attempt in range(attempts):
-            detail = self._remote_request_json(
-                "GET",
-                f"{proxy_target.source_base_url.rstrip('/')}/tasks/{remote_task_id}",
-            )
-            if detail.get("status") == "completed":
-                result = dict(detail.get("result") or {})
-                result["proxy"] = {
-                    "remote_task_id": remote_task_id,
-                    "remote_endpoint_id": proxy_target.source_endpoint_id,
-                    "remote_node_id": proxy_target.source_node_id,
-                    "source_base_url": proxy_target.source_base_url,
-                }
-                return result
-            if detail.get("status") == "failed":
-                raise RuntimeError(
-                    str((detail.get("result") or {}).get("error") or f"Remote proxy task failed: {remote_task_id}")
-                )
-            if attempt < attempts - 1 and interval_seconds > 0.0:
-                time.sleep(interval_seconds)
-        raise RuntimeError(
-            f"Remote proxy task did not complete within {attempts} poll attempts: {remote_task_id}"
+        return self._runtime_execution_facade().invoke_proxy_endpoint(
+            endpoint_manifest,
+            task_request,
         )
 
     def _remote_request_json(
@@ -6544,10 +2515,11 @@ class HypervisorService:
         url: str,
         payload: dict | None = None,
     ) -> dict:
-        transport = getattr(self, "remote_transport", None)
-        if transport is not None:
-            return transport.request_json(method, url, payload)
-        return self._default_remote_request_json(method, url, payload)
+        return self._remote_transport_facade().remote_request_json(
+            method,
+            url,
+            payload,
+        )
 
     def _default_remote_request_json(
         self,
@@ -6555,23 +2527,11 @@ class HypervisorService:
         url: str,
         payload: dict | None = None,
     ) -> dict:
-        data = None
-        headers = {"Accept": "application/json"}
-        if payload is not None:
-            data = json.dumps(payload).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        request = urllib_request.Request(url, data=data, headers=headers, method=method)
-        try:
-            with urllib_request.urlopen(request, timeout=10) as response:
-                body = response.read().decode("utf-8")
-        except urllib_error.HTTPError as error:
-            body = error.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(
-                f"Remote proxy request failed: {method} {url} [{error.code}] {body}"
-            ) from error
-        except urllib_error.URLError as error:
-            raise RuntimeError(f"Remote proxy request failed: {method} {url} [{error.reason}]") from error
-        return json.loads(body) if body else {}
+        return self._remote_transport_facade().default_remote_request_json(
+            method,
+            url,
+            payload,
+        )
 
     def _task_request_with_allocation_context(self, request: TaskRequest) -> TaskRequest:
         allocation_id = request.constraints.get("allocation_id")
@@ -6625,167 +2585,171 @@ class HypervisorService:
         }
 
     def _restored_task_status(self, task: TaskSnapshot) -> str:
-        if task.status not in _ACTIVE_EXECUTION_STATUSES:
-            return task.status
-        if self._can_retry_after_restart(task):
-            return "queued"
-        return "failed"
+        return self._snapshot_state_facade().restored_task_status(task)
 
     def _recovery_reason_for_task(self, task: TaskSnapshot) -> str:
-        if self._can_retry_after_restart(task):
-            return "restart_retry_queued"
-        return "restart_failed_unknown_inflight"
+        return self._snapshot_state_facade().recovery_reason_for_task(task)
 
     def _recovery_message(self, recovery_reason: str) -> str:
-        if recovery_reason == "restart_retry_queued":
-            return "in-flight task requeued during restart recovery"
-        return "unknown in-flight task failed during restart recovery"
+        return self._snapshot_state_facade().recovery_message(recovery_reason)
 
     def _can_retry_after_restart(self, task: TaskSnapshot) -> bool:
-        if not task.request.constraints.get("retry_on_restart"):
-            return False
-        if task.bundle_id is None:
-            return False
-
-        try:
-            bundle = self._get_bundle(task.bundle_id)
-            plugin = self._get_plugin(bundle.plugin_id)
-        except KeyError:
-            return False
-        return plugin.supports_restart_retry(task.request, bundle)
+        return self._snapshot_state_facade().can_retry_after_restart(task)
 
     def _restore_runtimes(self, runtimes: list[RuntimeSnapshot]) -> None:
-        self._clear_runtime_reservations()
-        recovered_runtimes: list[RuntimeHandle] = []
-
-        for runtime in runtimes:
-            if runtime.status != "running" or runtime.bundle_id is None:
-                continue
-
-            try:
-                bundle = self._get_bundle(runtime.bundle_id)
-                plugin = self._get_plugin(bundle.plugin_id)
-            except KeyError:
-                continue
-
-            recovered_runtime = RuntimeHandle(
-                runtime_id=runtime.runtime_id,
-                command=list(runtime.command),
-                status=runtime.status,
-                bundle_id=runtime.bundle_id,
-                health_status=runtime.health_status,
-                last_error=runtime.last_error,
-                metadata=dict(runtime.metadata),
-            )
-            if self._bundle_in_cooldown(runtime.bundle_id):
-                recovered_runtime.health_status = "cooldown"
-                recovered_runtime.last_error = self._current_bundle_state(
-                    runtime.bundle_id
-                )["cooldown_reason"]
-                recovered_runtimes.append(recovered_runtime)
-                continue
-            if not self._health_check_with_retry(
-                plugin,
-                recovered_runtime,
-                runtime.bundle_id,
-            ):
-                self.record_event(
-                    event_type="runtime.recovery_skipped",
-                    message="runtime health check failed during restart recovery",
-                    bundle_id=runtime.bundle_id,
-                    runtime_id=runtime.runtime_id,
-                )
-                continue
-
-            profile = bundle.resource_profile
-            if self.resources is not None and not self.resources.can_fit(
-                profile.steady_cpu,
-                profile.steady_ram_mb,
-                profile.steady_vram_mb,
-            ):
-                self.record_event(
-                    event_type="runtime.recovery_skipped",
-                    message="runtime recovery skipped due to insufficient resources",
-                    bundle_id=runtime.bundle_id,
-                    runtime_id=runtime.runtime_id,
-                )
-                continue
-
-            recovered_runtime.health_status = "healthy"
-            recovered_runtime.last_error = None
-            if self.resources is not None:
-                self._reserve_runtime_residency(
-                    bundle.bundle_id,
-                    cpu=profile.steady_cpu,
-                    ram_mb=profile.steady_ram_mb,
-                    vram_mb=profile.steady_vram_mb,
-                )
-            self.record_event(
-                event_type="runtime.recovered",
-                message="runtime reconnected during restart recovery",
-                bundle_id=runtime.bundle_id,
-                runtime_id=runtime.runtime_id,
-            )
-            recovered_runtimes.append(recovered_runtime)
-
-        self._replace_runtimes(recovered_runtimes)
+        self._snapshot_state_facade().restore_runtimes(runtimes)
 
     def _clear_runtime_reservations(self) -> None:
-        if self.resources is None:
-            self._runtime_reservations.clear()
-            return
-
-        for reservation_id in list(self._runtime_reservations):
-            self.resources.release(reservation_id)
-        self._runtime_reservations.clear()
+        self._snapshot_state_facade().clear_runtime_reservations()
 
     def _replace_runtimes(self, runtimes: list[RuntimeHandle]) -> None:
-        if hasattr(self.runtimes, "replace_runtimes"):
-            self.runtimes.replace_runtimes(runtimes)
-            return
-        self.runtimes = list(runtimes)
+        self._snapshot_state_facade().replace_runtimes(runtimes)
 
     def _persist_state(self) -> None:
         if self.state_store is None:
             return
         self.state_store.save(self.snapshot_state())
 
+    def _provider_installation_facade(self) -> ProviderInstallationService:
+        facade = getattr(self, "_provider_installation_service", None)
+        if facade is None:
+            facade = ProviderInstallationService(self)
+            self._provider_installation_service = facade
+        return facade
+
+    def _runtime_execution_facade(self) -> RuntimeExecutionService:
+        facade = getattr(self, "_runtime_execution_service", None)
+        if facade is None:
+            facade = RuntimeExecutionService(self)
+            self._runtime_execution_service = facade
+        return facade
+
+    def _task_execution_facade(self) -> TaskExecutionService:
+        facade = getattr(self, "_task_execution_service", None)
+        if facade is None:
+            facade = TaskExecutionService(self)
+            self._task_execution_service = facade
+        return facade
+
+    def _snapshot_state_facade(self) -> SnapshotStateService:
+        facade = getattr(self, "_snapshot_state_service", None)
+        if facade is None:
+            facade = SnapshotStateService(self)
+            self._snapshot_state_service = facade
+        return facade
+
+    def _remote_transport_facade(self) -> RemoteTransportService:
+        facade = getattr(self, "_remote_transport_service", None)
+        if facade is None:
+            facade = RemoteTransportService(self)
+            self._remote_transport_service = facade
+        return facade
+
+    def _allocation_lifecycle_facade(self) -> AllocationLifecycleService:
+        facade = getattr(self, "_allocation_lifecycle_service", None)
+        if facade is None:
+            facade = AllocationLifecycleService(self)
+            self._allocation_lifecycle_service = facade
+        return facade
+
+    def _allocation_catalog_facade(self) -> AllocationCatalogService:
+        facade = getattr(self, "_allocation_catalog_service", None)
+        if facade is None:
+            facade = AllocationCatalogService(self)
+            self._allocation_catalog_service = facade
+        return facade
+
+    def _admission_planning_facade(self) -> AdmissionPlanningService:
+        facade = getattr(self, "_admission_planning_service", None)
+        if facade is None:
+            facade = AdmissionPlanningService(self)
+            self._admission_planning_service = facade
+        return facade
+
+    def _model_install_facade(self) -> ModelInstallService:
+        facade = getattr(self, "_model_install_service", None)
+        if facade is None:
+            facade = ModelInstallService(self)
+            self._model_install_service = facade
+        return facade
+
+    def _bundle_runtime_policy_facade(self) -> BundleRuntimePolicyService:
+        facade = getattr(self, "_bundle_runtime_policy_service", None)
+        if facade is None:
+            facade = BundleRuntimePolicyService(self)
+            self._bundle_runtime_policy_service = facade
+        return facade
+
+    def _operator_application_facade(self) -> OperatorApplicationService:
+        facade = getattr(self, "_operator_application_service", None)
+        if facade is None:
+            facade = OperatorApplicationService(self)
+            self._operator_application_service = facade
+        return facade
+
+    def _event_projection_facade(self) -> EventProjectionService:
+        facade = getattr(self, "_event_projection_service", None)
+        if facade is None:
+            facade = EventProjectionService(self)
+            self._event_projection_service = facade
+        return facade
+
+    def _integration_facade(self) -> HypervisorIntegrationService:
+        facade = getattr(self, "_integration_service", None)
+        if facade is None:
+            facade = HypervisorIntegrationService(self)
+            self._integration_service = facade
+        return facade
+
+    def _provider_inventory_application_facade(
+        self,
+    ) -> ProviderInventoryApplicationService:
+        facade = getattr(self, "_provider_inventory_application_service", None)
+        if facade is None:
+            facade = ProviderInventoryApplicationService(self)
+            self._provider_inventory_application_service = facade
+        return facade
+
+    def _wallet_application_facade(self) -> WalletApplicationService:
+        facade = getattr(self, "_wallet_application_service", None)
+        if facade is None:
+            facade = WalletApplicationService(self)
+            self._wallet_application_service = facade
+        return facade
+
+    def _settlement_application_facade(self) -> SettlementApplicationService:
+        facade = getattr(self, "_settlement_application_service", None)
+        if facade is None:
+            facade = SettlementApplicationService(self)
+            self._settlement_application_service = facade
+        return facade
+
+    def _allocation_unavailable_error(self, **kwargs) -> AllocationUnavailableError:
+        return AllocationUnavailableError(**kwargs)
+
+    def _wallet_allocation_now(self) -> float:
+        return time.time()
+
+    def _current_time_seconds(self) -> float:
+        return time.time()
+
+    def _retry_sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
+
     def _prune_wallet_usage_events(self) -> None:
-        if self.wallet_usage_retention_limit is None:
-            return
-        if len(self._wallet_usage_events) <= self.wallet_usage_retention_limit:
-            return
-        self._wallet_usage_events = self._wallet_usage_events[
-            -self.wallet_usage_retention_limit :
-        ]
+        self._wallet_economics_service.prune_wallet_usage_events()
 
     def _replace_bundle(self, updated_bundle: BundleConfig) -> None:
-        replaced = False
-        bundles: list[BundleConfig] = []
-        for bundle in self.bundles:
-            if bundle.bundle_id == updated_bundle.bundle_id:
-                bundles.append(updated_bundle)
-                replaced = True
-            else:
-                bundles.append(bundle)
-        if not replaced:
-            bundles.append(updated_bundle)
-        self.bundles = bundles
+        self._bundle_runtime_policy_facade().replace_bundle(updated_bundle)
 
     def _persist_bundle_config_if_available(self) -> None:
-        if self.bundle_registry is None:
-            return
-        self.bundle_registry.save(self.bundles)
+        self._bundle_runtime_policy_facade().persist_bundle_config_if_available()
 
     def _require_bundle_registry(self):
-        if self.bundle_registry is None:
-            raise ValueError("Bundle registry is not configured")
-        return self.bundle_registry
+        return self._bundle_runtime_policy_facade().require_bundle_registry()
 
     def _validate_bundles(self, bundles: list[BundleConfig]) -> None:
-        for bundle in bundles:
-            plugin = self._get_plugin(bundle.plugin_id)
-            plugin.validate_bundle(bundle)
+        self._bundle_runtime_policy_facade().validate_bundles(bundles)
 
     def _has_plugins(self) -> bool:
         if hasattr(self.plugins, "list"):
@@ -6795,113 +2759,28 @@ class HypervisorService:
     def _active_bundle_task_count(
         self, bundle_id: str, *, exclude_task_id: str | None = None
     ) -> int:
-        count = 0
-        for task in self.queue.snapshot():
-            if exclude_task_id is not None and task.task_id == exclude_task_id:
-                continue
-            if task.status not in _ACTIVE_EXECUTION_STATUSES:
-                continue
-            if self.selected_bundle_id(task.task_id) == bundle_id:
-                count += 1
-        return count
+        return self._bundle_runtime_policy_facade().active_bundle_task_count(
+            bundle_id,
+            exclude_task_id=exclude_task_id,
+        )
 
     def runtime_active_task_count(self, bundle_id: str) -> int:
-        return self._active_bundle_task_count(bundle_id)
+        return self._bundle_runtime_policy_facade().runtime_active_task_count(bundle_id)
 
     def _pending_task_order(self) -> list[str]:
-        return [item["task_id"] for item in self._pending_task_plan()]
+        return self._admission_planning_facade().pending_task_order()
 
     def _record_admission_events(self, admission_plan: list[dict[str, int | str]]) -> None:
-        for item in admission_plan:
-            self.record_event(
-                event_type="admission.selected",
-                message="task selected for admission attempt",
-                task_id=str(item["task_id"]),
-                bundle_id=str(item["bundle_id"]),
-                details={
-                    "base_priority": item["base_priority"],
-                    "aging_bonus": item["aging_bonus"],
-                    "effective_priority": item["effective_priority"],
-                    "fair_share_round": item["fair_share_round"],
-                    "admission_rank": item["admission_rank"],
-                    "selection_reason": item["selection_reason"],
-                },
-            )
+        self._admission_planning_facade().record_admission_events(admission_plan)
 
     def _pending_task_plan(self) -> list[dict[str, int | str]]:
-        queued_tasks = [task for task in self.queue.snapshot() if task.status == "queued"]
-        if not queued_tasks:
-            return []
-
-        tasks_by_bundle: dict[str, list[QueuedTask]] = {}
-        for task in queued_tasks:
-            bundle_id = self.selected_bundle_id(task.task_id) or ""
-            tasks_by_bundle.setdefault(bundle_id, []).append(task)
-
-        for bundle_id in tasks_by_bundle:
-            tasks_by_bundle[bundle_id].sort(
-                key=lambda task: (
-                    -self._effective_task_priority(task),
-                    task.enqueue_index,
-                )
-            )
-
-        bundle_dispatch_counts = {bundle_id: 0 for bundle_id in tasks_by_bundle}
-        admission_plan: list[dict[str, int | str]] = []
-        while tasks_by_bundle:
-            min_dispatch_count = min(
-                bundle_dispatch_counts[bundle_id] for bundle_id in tasks_by_bundle
-            )
-            dispatch_candidates = [
-                bundle_id
-                for bundle_id in tasks_by_bundle
-                if bundle_dispatch_counts[bundle_id] == min_dispatch_count
-            ]
-            next_bundle_id = min(
-                dispatch_candidates,
-                key=lambda bundle_id: (
-                    -self._effective_task_priority(tasks_by_bundle[bundle_id][0]),
-                    tasks_by_bundle[bundle_id][0].enqueue_index,
-                ),
-            )
-            selection_reason = self._selection_reason(
-                tasks_by_bundle=tasks_by_bundle,
-                dispatch_candidates=dispatch_candidates,
-                next_bundle_id=next_bundle_id,
-            )
-            next_task = tasks_by_bundle[next_bundle_id].pop(0)
-            aging_bonus = self._aging_bonus(next_task)
-            admission_plan.append(
-                {
-                    "task_id": next_task.task_id,
-                    "bundle_id": self.selected_bundle_id(next_task.task_id) or "",
-                    "base_priority": next_task.priority,
-                    "aging_bonus": aging_bonus,
-                    "effective_priority": next_task.priority + aging_bonus,
-                    "fair_share_round": min_dispatch_count,
-                    "admission_rank": len(admission_plan) + 1,
-                    "selection_reason": selection_reason,
-                }
-            )
-            bundle_dispatch_counts[next_bundle_id] += 1
-            if not tasks_by_bundle[next_bundle_id]:
-                del tasks_by_bundle[next_bundle_id]
-        return admission_plan
+        return self._admission_planning_facade().pending_task_plan()
 
     def _effective_task_priority(self, task: QueuedTask) -> int:
-        return task.priority + self._aging_bonus(task)
+        return self._admission_planning_facade().effective_task_priority(task)
 
     def _aging_bonus(self, task: QueuedTask) -> int:
-        try:
-            created_at = datetime.fromisoformat(task.created_at)
-        except ValueError:
-            return 0
-        waiting_seconds = max(0.0, time.time() - created_at.timestamp())
-        return min(
-            _AGING_PRIORITY_MAX_BONUS,
-            int(waiting_seconds // _AGING_PRIORITY_INTERVAL_SECONDS)
-            * _AGING_PRIORITY_STEP,
-        )
+        return self._admission_planning_facade().aging_bonus(task)
 
     def _selection_reason(
         self,
@@ -6910,25 +2789,11 @@ class HypervisorService:
         dispatch_candidates: list[str],
         next_bundle_id: str,
     ) -> str:
-        if len(tasks_by_bundle) == 1:
-            return "only_remaining_bundle"
-        if len(dispatch_candidates) == 1:
-            return "lowest_dispatch_count"
-
-        max_priority = max(
-            self._effective_task_priority(tasks_by_bundle[bundle_id][0])
-            for bundle_id in dispatch_candidates
+        return self._admission_planning_facade().selection_reason(
+            tasks_by_bundle=tasks_by_bundle,
+            dispatch_candidates=dispatch_candidates,
+            next_bundle_id=next_bundle_id,
         )
-        highest_priority_candidates = [
-            bundle_id
-            for bundle_id in dispatch_candidates
-            if self._effective_task_priority(tasks_by_bundle[bundle_id][0]) == max_priority
-        ]
-        if len(highest_priority_candidates) == 1:
-            return "highest_effective_priority"
-        if next_bundle_id in highest_priority_candidates:
-            return "fifo_tiebreak"
-        return "highest_effective_priority"
 
     def _evict_idle_runtimes_for_task(
         self,
@@ -6939,131 +2804,28 @@ class HypervisorService:
         ram_mb: int,
         vram_mb: int,
     ) -> None:
-        for bundle in self._eviction_candidates(waiting_task=task):
-            if bundle.bundle_id == requested_bundle.bundle_id:
-                continue
-            if self._runtime_for_bundle(bundle.bundle_id) is None:
-                continue
-            if self._active_bundle_task_count(bundle.bundle_id) > 0:
-                continue
-
-            self._stop_runtime_for_bundle(bundle)
-            if self.resources.can_fit(cpu, ram_mb, vram_mb):
-                return
+        self._admission_planning_facade().evict_idle_runtimes_for_task(
+            task=task,
+            requested_bundle=requested_bundle,
+            cpu=cpu,
+            ram_mb=ram_mb,
+            vram_mb=vram_mb,
+        )
 
     def _eviction_candidates(self, *, waiting_task: TaskRequest) -> list[BundleConfig]:
-        auto_bundles = [
-            bundle
-            for bundle in self.bundles
-            if bundle.warm_policy == "auto"
-        ]
-        always_bundles = [
-            bundle
-            for bundle in self.bundles
-            if bundle.warm_policy == "always"
-            and waiting_task.priority > bundle.priority_class
-        ]
-        return auto_bundles + always_bundles
+        return self._bundle_runtime_policy_facade().eviction_candidates(
+            waiting_task=waiting_task
+        )
 
     def _diagnose_queued_task(self, task_id: str) -> dict[str, str]:
-        task = self.queue.get(task_id)
-        bundle_id = self.selected_bundle_id(task_id)
-        if bundle_id is None:
-            return {"task_id": task_id, "bundle_id": "", "reason": "unrouted"}
-
-        bundle = self._get_bundle(bundle_id)
-        if not bundle.enabled:
-            return {
-                "task_id": task_id,
-                "bundle_id": bundle.bundle_id,
-                "reason": "bundle_disabled",
-            }
-        plugin = self._get_plugin(bundle.plugin_id)
-        runtime = self._runtime_for_bundle(bundle.bundle_id)
-        if self._current_bundle_state(bundle.bundle_id)["drain_mode"]:
-            return {
-                "task_id": task_id,
-                "bundle_id": bundle.bundle_id,
-                "reason": "runtime_draining",
-            }
-        if self._bundle_in_cooldown(bundle.bundle_id):
-            return {
-                "task_id": task_id,
-                "bundle_id": bundle.bundle_id,
-                "reason": "provider_cooldown",
-            }
-        if runtime is not None and not plugin.health_check(runtime):
-            runtime = None
-
-        estimate = plugin.estimate_resources(task.request, bundle, runtime)
-        concurrency_limit = estimate.get("concurrency_limit")
-        effective_concurrency_limit = bundle.max_parallel_requests
-        if concurrency_limit is not None:
-            effective_concurrency_limit = min(
-                bundle.max_parallel_requests,
-                concurrency_limit,
-            )
-        active_tasks = self._active_bundle_task_count(
-            bundle.bundle_id,
-            exclude_task_id=task_id,
-        )
-        if active_tasks >= effective_concurrency_limit:
-            return {
-                "task_id": task_id,
-                "bundle_id": bundle.bundle_id,
-                "reason": "concurrency_limit",
-            }
-
-        startup = estimate.get("startup_transient", {})
-        resident = estimate.get("runtime_resident", {})
-        request = estimate.get("request_active", {})
-        needed_cpu = request.get("cpu", 0.0) + (
-            0.0 if runtime else startup.get("cpu", 0.0) + resident.get("cpu", 0.0)
-        )
-        needed_ram = request.get("ram_mb", 0) + (
-            0 if runtime else startup.get("ram_mb", 0) + resident.get("ram_mb", 0)
-        )
-        needed_vram = request.get("vram_mb", 0) + (
-            0 if runtime else startup.get("vram_mb", 0) + resident.get("vram_mb", 0)
-        )
-
-        if self.resources.can_fit(needed_cpu, needed_ram, needed_vram):
-            reason = "ready"
-        elif self._eviction_blocked(task.request, bundle):
-            reason = "eviction_policy_blocked"
-        else:
-            reason = "insufficient_resources"
-
-        return {
-            "task_id": task_id,
-            "bundle_id": bundle.bundle_id,
-            "reason": reason,
-        }
+        return self._bundle_runtime_policy_facade().diagnose_queued_task(task_id)
 
     def _eviction_blocked(
         self,
         waiting_task: TaskRequest,
         requested_bundle: BundleConfig,
     ) -> bool:
-        if self.resources is None:
-            return False
-
-        has_auto_runtime = False
-        has_blocking_always_runtime = False
-        for bundle in self.bundles:
-            if bundle.bundle_id == requested_bundle.bundle_id:
-                continue
-            if self._runtime_for_bundle(bundle.bundle_id) is None:
-                continue
-            if self._active_bundle_task_count(bundle.bundle_id) > 0:
-                continue
-
-            if bundle.warm_policy == "auto":
-                has_auto_runtime = True
-            elif (
-                bundle.warm_policy == "always"
-                and waiting_task.priority <= bundle.priority_class
-            ):
-                has_blocking_always_runtime = True
-
-        return has_blocking_always_runtime and not has_auto_runtime
+        return self._bundle_runtime_policy_facade().eviction_blocked(
+            waiting_task,
+            requested_bundle,
+        )

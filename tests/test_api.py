@@ -3214,6 +3214,7 @@ def test_operator_dashboard_shell_route_exposes_wallet_drawer_controls() -> None
     assert 'data-wallet-open="ops"' in response.text
     assert 'data-wallet-close="true"' in response.text
     assert 'id="wallet-drawer"' in response.text
+    assert "/operators/dashboard/wallet" in response.text
     assert "/operators/wallet/usage" in response.text
     assert "/operators/wallet/allocations" in response.text
     assert "/operators/wallet/allocations/disputes" in response.text
@@ -9113,6 +9114,25 @@ def test_operator_dashboard_shell_exposes_signed_publication_operator_summary() 
     assert "Proxy Target" in response.text
     assert "Open Execution Market" in response.text
     assert "Back To Endpoint Summary" in response.text
+
+
+def test_operator_dashboard_wallet_endpoint_returns_aggregated_payload() -> None:
+    service = _service()
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/dashboard/wallet")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "owner_wallet" in payload
+    assert "node_identity" in payload
+    assert isinstance(payload["usage_events"], list)
+    assert isinstance(payload["allocation_events"], list)
+    assert isinstance(payload["dispute_events"], list)
+    assert "economics_summary" in payload
+    assert isinstance(payload["economics_history"], list)
+    assert "economics_history_cursor" in payload
+    assert "faucet_preview" in payload
 
 
 def test_operator_dashboard_endpoints_payload_includes_publication_history() -> None:

@@ -44,8 +44,47 @@ from aidn_hypervisor.registry_models import (
 from aidn_hypervisor.registry_models import RegistryWalletIdentityResolutionRequest
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointDependencyError
+from aidn_hypervisor.session_read_models import (
+    build_operator_sessions_payload,
+    build_session_accounting_payload,
+)
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
+from aidn_hypervisor.session_application_service import SessionApplicationService
 from aidn_hypervisor.state import HypervisorStateSnapshot
+from aidn_hypervisor.validation_read_models import (
+    build_endpoint_validation_history_payload,
+    build_endpoint_proof_payload,
+    build_endpoint_validation_summary_payload,
+    build_publication_validation_payload,
+    build_validation_epoch_payload,
+    build_validation_maintenance_payload,
+    build_validation_report_payload,
+    build_validation_request_payload,
+    expanded_validation_summary,
+    validation_summary_for,
+)
+from aidn_hypervisor.wallet_read_models import build_operator_wallet_payload
+from aidn_hypervisor.wallet_read_models import (
+    build_ledger_operations_export_payload,
+    build_ledger_operations_payload,
+    build_wallet_allocation_activation_events_payload,
+    build_wallet_allocation_activation_export_payload,
+    build_wallet_allocation_dispute_events_payload,
+    build_wallet_allocation_dispute_export_payload,
+    build_wallet_allocation_events_payload,
+    build_wallet_allocation_export_payload,
+    build_wallet_economics_export_payload,
+    build_wallet_economics_summary_payload,
+    build_wallet_endpoint_publications_export_payload,
+    build_wallet_endpoint_publications_payload,
+    build_wallet_faucet_preview_payload,
+    build_wallet_ledger_events_payload,
+    build_wallet_ledger_export_payload,
+    build_wallet_session_events_payload,
+    build_wallet_session_export_payload,
+    build_wallet_usage_events_payload,
+    build_wallet_usage_export_payload,
+)
 from aidn_hypervisor.wallet_models import (
     WalletAllocationDisputeRequest,
     WalletAllocationDisputeResolveRequest,
@@ -224,28 +263,6 @@ def _error(
     )
 
 
-def _public_usage_acknowledgement_snapshot(snapshot: dict | None) -> dict:
-    return {
-        key: value
-        for key, value in dict(snapshot or {}).items()
-        if not str(key).startswith("_")
-    }
-
-
-def _public_session_payload(session) -> dict:
-    payload = session.model_dump(mode="json")
-    payload["last_usage_acknowledgement_snapshot"] = _public_usage_acknowledgement_snapshot(
-        payload.get("last_usage_acknowledgement_snapshot")
-    )
-    payload["usage_acknowledgement_chain"] = [
-        _public_usage_acknowledgement_snapshot(item)
-        if isinstance(item, dict)
-        else item
-        for item in payload.get("usage_acknowledgement_chain", [])
-    ]
-    return payload
-
-
 def _execution_payload_for_manifest(manifest) -> dict:
     runtime_binding = {"runtime_binding_id": manifest.runtime_binding_id}
     if manifest.execution_strategy != "proxy" or manifest.proxy_target is None:
@@ -287,91 +304,6 @@ def _publication_sync_status(
     if local_configuration_hash == published_configuration_hash:
         return "in_sync"
     return "local_changes_not_published"
-
-
-def _validation_summary_for(
-    validation_service,
-    *,
-    endpoint_id: str,
-    configuration_hash: str | None,
-) -> dict | None:
-    if validation_service is None or configuration_hash is None:
-        return None
-    return _expanded_validation_summary(
-        validation_service.validation_summary(
-            endpoint_id,
-            configuration_hash=configuration_hash,
-        )
-    )
-
-
-def _certification_status_from_validation_status(validation_status: str) -> str:
-    return {
-        "validated": "certified",
-        "pending_initial": "pending_initial",
-        "revoked": "revoked",
-        "superseded": "superseded",
-        "validation_failed": "uncertified",
-        "unvalidated": "uncertified",
-    }.get(validation_status, "uncertified")
-
-
-def _validation_status_from_certification_status(certification_status: str) -> str:
-    return {
-        "certified": "validated",
-        "certified_with_issues": "validated",
-        "pending_initial": "pending_initial",
-        "revoked": "revoked",
-        "superseded": "superseded",
-        "uncertified": "unvalidated",
-    }.get(certification_status, "unvalidated")
-
-
-def _compat_validation_status_from_certification_status(
-    certification_status: str,
-) -> str:
-    return {
-        "uncertified": "unvalidated",
-        "pending_initial": "pending_initial",
-        "maintenance_due": "pending_maintenance",
-        "maintenance_in_progress": "pending_maintenance",
-        "certified": "validated",
-        "certified_with_issues": "validated",
-        "revoked": "validation_failed",
-        "superseded": "superseded",
-    }.get(certification_status, "unvalidated")
-
-
-def _expanded_validation_summary(summary: dict) -> dict:
-    expanded = dict(summary)
-    certification_status = expanded.get("certification_status")
-    validation_status = expanded.get("validation_status")
-    if certification_status is None and validation_status is not None:
-        certification_status = _certification_status_from_validation_status(
-            str(validation_status)
-        )
-    if validation_status is None and certification_status is not None:
-        validation_status = _validation_status_from_certification_status(
-            str(certification_status)
-        )
-    expanded["certification_status"] = certification_status or "uncertified"
-    expanded["validation_status"] = validation_status or "unvalidated"
-    expanded["latest_recommendation"] = expanded.get("latest_recommendation")
-    expanded["critical_issue_count"] = int(expanded.get("critical_issue_count", 0))
-    expanded["warning_issue_count"] = int(expanded.get("warning_issue_count", 0))
-    expanded["maintenance_report_count"] = int(
-        expanded.get("maintenance_report_count", 0)
-    )
-    return expanded
-
-
-def _response_validation_snapshot(snapshot) -> dict:
-    payload = _expanded_validation_summary(snapshot.model_dump(mode="json"))
-    payload["validation_status"] = _compat_validation_status_from_certification_status(
-        str(payload["certification_status"])
-    )
-    payload["status"] = payload["validation_status"]
-    return payload
 
 
 def _snapshot_publication_configuration_hash(manifest, snapshot) -> str:
@@ -450,12 +382,12 @@ def _registry_published_endpoint_summaries(
         )
         item["published_validation_summary"] = item.get(
             "published_validation_summary"
-        ) or _validation_summary_for(
+        ) or validation_summary_for(
             validation_service,
             endpoint_id=item["endpoint_id"],
             configuration_hash=published_endpoint_configuration_hash,
         )
-        item["live_validation_summary"] = item.get("live_validation_summary") or _validation_summary_for(
+        item["live_validation_summary"] = item.get("live_validation_summary") or validation_summary_for(
             validation_service,
             endpoint_id=item["endpoint_id"],
             configuration_hash=live_configuration_hash,
@@ -485,212 +417,11 @@ def _operator_dashboard_sessions_payload(
     endpoint_service=None,
     session_service=None,
 ) -> dict:
-    current_time = datetime.now().astimezone()
-    session_tasks: dict[str, list[dict]] = {}
-    session_activity: dict[str, list[dict]] = {}
-
-    def _task_input_preview(task_request: TaskRequest) -> str | None:
-        payload = task_request.payload if isinstance(task_request.payload, dict) else {}
-        if "prompt" in payload:
-            return str(payload["prompt"])
-        if "audio_ref" in payload:
-            return str(payload["audio_ref"])
-        if payload:
-            first_key = next(iter(payload))
-            return str(payload[first_key])
-        return None
-
-    def _settlement_preview(session, deposit) -> dict:
-        minimum_session_fee = float(
-            session.session_policy_snapshot.get("minimum_session_fee", 0.0) or 0.0
-        )
-        network_fee_q = float(
-            session.session_policy_snapshot.get("network_fee_q", 0.01) or 0.0
-        )
-        idle_fee_per_minute = float(
-            session.session_policy_snapshot.get("idle_fee_per_minute", 0.0) or 0.0
-        )
-        usage_charged_q = float(deposit.consumed_q)
-        minimum_session_fee_q = (
-            min(float(deposit.locked_q), minimum_session_fee)
-            if int(session.request_count or 0) == 0
-            else 0.0
-        )
-        idle_elapsed_seconds = 0
-        idle_exposure_q = 0.0
-        if (
-            session.status == "active"
-            and int(session.request_count or 0) > 0
-            and idle_fee_per_minute > 0.0
-            and session.last_activity_at
-        ):
-            try:
-                last_activity_at = datetime.fromisoformat(session.last_activity_at)
-                idle_elapsed_seconds = max(
-                    0,
-                    int((current_time - last_activity_at).total_seconds()),
-                )
-            except ValueError:
-                idle_elapsed_seconds = 0
-            idle_exposure_q = min(
-                max(0.0, float(deposit.locked_q) - usage_charged_q),
-                (idle_elapsed_seconds / 60.0) * idle_fee_per_minute,
-            )
-        projected_payout_q = max(minimum_session_fee_q, usage_charged_q + idle_exposure_q)
-        projected_network_fee_q = min(
-            network_fee_q,
-            max(0.0, float(deposit.locked_q) - projected_payout_q),
-        )
-        projected_charged_q = min(
-            float(deposit.locked_q),
-            projected_payout_q + projected_network_fee_q,
-        )
-        projected_refundable_q = max(
-            0.0,
-            float(deposit.locked_q) - projected_charged_q,
-        )
-        seconds_until_idle_timeout = 0
-        if session.idle_deadline_at:
-            try:
-                idle_deadline_at = datetime.fromisoformat(session.idle_deadline_at)
-                seconds_until_idle_timeout = max(
-                    0,
-                    int((idle_deadline_at - current_time).total_seconds()),
-                )
-            except ValueError:
-                seconds_until_idle_timeout = 0
-        return {
-            "usage_charged_q": usage_charged_q,
-            "minimum_session_fee_q": minimum_session_fee_q,
-            "network_fee_q": projected_network_fee_q,
-            "idle_exposure_q": idle_exposure_q,
-            "projected_charged_q": projected_charged_q,
-            "projected_refundable_q": projected_refundable_q,
-            "idle_elapsed_seconds": idle_elapsed_seconds,
-            "seconds_until_idle_timeout": seconds_until_idle_timeout,
-        }
-
-    for task in service.queue.snapshot():
-        session_id = task.request.constraints.get("session_id")
-        if session_id is None:
-            continue
-        task_id = str(task.task_id)
-        task_result = service.task_result(task_id)
-        serialized = {
-            "task_id": task_id,
-            "created_at": task.created_at,
-            "status": task.status,
-            "task_type": task.request.task_type,
-            "bundle_id": service.selected_bundle_id(task_id),
-            "session_id": str(session_id),
-            "endpoint_id": task.request.constraints.get("endpoint_id"),
-            "input_preview": _task_input_preview(task.request),
-            "usage": (
-                task_result.get("usage") if isinstance(task_result, dict) else None
-            ),
-            "session_accounting": (
-                task_result.get("session_accounting")
-                if isinstance(task_result, dict)
-                else None
-            ),
-        }
-        session_tasks.setdefault(str(session_id), []).append(serialized)
-        history = [
-            {
-                "timestamp": event.timestamp,
-                "event_type": event.event_type,
-                "message": event.message,
-                "task_id": event.task_id,
-                "details": dict(event.details or {}),
-            }
-            for event in service.task_history(task_id)
-        ]
-        session_activity.setdefault(str(session_id), []).extend(history)
-
-    for event in service.event_journal():
-        event_session_id = event.details.get("session_id")
-        if event_session_id is None:
-            continue
-        session_activity.setdefault(str(event_session_id), []).append(
-            {
-                "timestamp": event.timestamp,
-                "event_type": event.event_type,
-                "message": event.message,
-                "task_id": event.task_id,
-                "details": dict(event.details or {}),
-            }
-        )
-
-    for session_id in session_tasks:
-        session_tasks[session_id] = sorted(
-            session_tasks[session_id],
-            key=lambda item: item["created_at"],
-            reverse=True,
-        )[:8]
-    for session_id in session_activity:
-        session_activity[session_id] = sorted(
-            session_activity[session_id],
-            key=lambda item: item["timestamp"],
-            reverse=True,
-        )[:12]
-
-    if session_service is None:
-        return {
-            "owner_wallet": service.owner_wallet_state(),
-            "node_identity": service.node_identity(),
-            "summary": {"total": 0, "active": 0, "queued": 0, "closed": 0},
-            "items": [],
-        }
-    endpoint_names: dict[str, str] = {}
-    if endpoint_service is not None:
-        for manifest in endpoint_service.list_endpoints():
-            endpoint_names[manifest.endpoint_id] = manifest.display_name
-    items = []
-    for session in sorted(
-        session_service.list_sessions(),
-        key=lambda item: (item.status != "active", item.status != "queued", item.created_at),
-    ):
-        result = session_service.get_session(session.session_id)
-        items.append(
-            {
-                "session": result.session.model_dump(mode="json"),
-                "deposit": result.deposit.model_dump(mode="json"),
-                "settlement": (
-                    result.settlement.model_dump(mode="json")
-                    if result.settlement is not None
-                    else None
-                ),
-                "display_name": endpoint_names.get(session.endpoint_id, session.endpoint_id),
-                "proxy_session": (
-                    (
-                        session_service.try_get_proxy_session_binding(session.session_id)
-                    ).model_dump(mode="json")
-                    if session_service.try_get_proxy_session_binding(session.session_id)
-                    is not None
-                    else None
-                ),
-                "remaining_q": max(
-                    0.0, result.deposit.locked_q - result.deposit.consumed_q
-                ),
-                "settlement_preview": _settlement_preview(
-                    result.session,
-                    result.deposit,
-                ),
-                "related_tasks": session_tasks.get(session.session_id, []),
-                "activity": session_activity.get(session.session_id, []),
-            }
-        )
-    return {
-        "owner_wallet": service.owner_wallet_state(),
-        "node_identity": service.node_identity(),
-        "summary": {
-            "total": len(items),
-            "active": sum(1 for item in items if item["session"]["status"] == "active"),
-            "queued": sum(1 for item in items if item["session"]["status"] == "queued"),
-            "closed": sum(1 for item in items if item["session"]["status"] == "closed"),
-        },
-        "items": items,
-    }
+    return build_operator_sessions_payload(
+        service=service,
+        endpoint_service=endpoint_service,
+        session_service=session_service,
+    )
 
 
 class OperatorRequestsPolicyRequest(BaseModel):
@@ -776,6 +507,14 @@ def build_api_router(
     validation_service=None,
 ) -> APIRouter:
     router = APIRouter()
+    session_application_service = (
+        SessionApplicationService(
+            hypervisor_service=service,
+            session_service=session_service,
+        )
+        if session_service is not None
+        else None
+    )
 
     def _effective_registry_service() -> RegistryService:
         if registry_service is not None:
@@ -1691,37 +1430,27 @@ def build_api_router(
     async def operator_dashboard_close_session(
         request: OperatorSessionCloseActionRequest,
     ) -> JSONResponse:
-        if session_service is None:
+        if session_application_service is None:
             return _error(
                 503,
                 "session_service_unavailable",
                 "Session service is not configured",
             )
         try:
-            result = service.close_endpoint_session(request.session_id)
+            result = session_application_service.close_session(request.session_id)
         except KeyError:
             return _error(
                 404,
                 "session_not_found",
                 f"Unknown session: {request.session_id}",
             )
-        return _ok(
-            {
-                "session": result.session.model_dump(mode="json"),
-                "deposit": result.deposit.model_dump(mode="json"),
-                "settlement": (
-                    result.settlement.model_dump(mode="json")
-                    if result.settlement is not None
-                    else None
-                ),
-            }
-        )
+        return _ok(result["payload"])
 
     @router.post("/operators/dashboard/sessions/actions/sweep-idle")
     async def operator_dashboard_sweep_idle_sessions(
         request: OperatorSessionSweepIdleActionRequest,
     ) -> JSONResponse:
-        if session_service is None:
+        if session_application_service is None:
             return _error(
                 503,
                 "session_service_unavailable",
@@ -1737,83 +1466,53 @@ def build_api_router(
                     "invalid_timestamp",
                     "Expected ISO-8601 timestamp for now",
                 )
-        results = session_service.sweep_idle_sessions(now=current_time)
-        for result in results:
-            service.propagate_proxy_session_close(result.session.session_id)
-        return _ok(
-            {
-                "closed_count": len(results),
-                "items": [
-                    {
-                        "session": result.session.model_dump(mode="json"),
-                        "deposit": result.deposit.model_dump(mode="json"),
-                        "settlement": (
-                            result.settlement.model_dump(mode="json")
-                            if result.settlement is not None
-                            else None
-                        ),
-                    }
-                    for result in results
-                ],
-            }
-        )
+        result = session_application_service.sweep_idle_sessions(now=current_time)
+        return _ok(result["payload"])
 
     @router.get("/api/v1/sessions")
     async def list_sessions() -> JSONResponse:
-        if session_service is None:
+        if session_application_service is None:
             return _error(
                 503,
                 "session_service_unavailable",
                 "Session service is not configured",
             )
-        return _ok(
-            {
-                "items": [_public_session_payload(session) for session in session_service.list_sessions()]
-            }
-        )
+        return _ok(session_application_service.list_sessions())
 
     @router.get("/api/v1/sessions/{session_id}")
     async def get_session(session_id: str) -> JSONResponse:
-        if session_service is None:
+        if session_application_service is None:
             return _error(
                 503,
                 "session_service_unavailable",
                 "Session service is not configured",
             )
         try:
-            result = session_service.get_session(session_id)
+            result = session_application_service.get_session_detail(
+                session_id=session_id
+            )
         except KeyError:
             return _error(
                 404,
                 "session_not_found",
                 f"Unknown session: {session_id}",
             )
-        return _ok(
-            {
-                "session": _public_session_payload(result.session),
-                "deposit": result.deposit.model_dump(mode="json"),
-                "settlement": (
-                    result.settlement.model_dump(mode="json")
-                    if result.settlement is not None
-                    else None
-                ),
-            }
-        )
+        return _ok(result["payload"])
 
     @router.post("/api/v1/sessions/{session_id}/usage-reports")
     async def record_session_usage_report(
         session_id: str,
         request: SessionUsageReportRecordRequest,
     ) -> JSONResponse:
-        if session_service is None:
+        if session_application_service is None:
             return _error(
                 503,
                 "session_service_unavailable",
                 "Session service is not configured",
             )
         try:
-            updated_session = session_service.record_usage_report(
-                session_id,
+            result = session_application_service.record_usage_report(
+                session_id=session_id,
                 usage_report=request.usage_report.model_dump(mode="json"),
                 acknowledgement_timeout_seconds=request.acknowledgement_timeout_seconds,
             )
@@ -1829,32 +1528,29 @@ def build_api_router(
                 "session_accounting_conflict",
                 str(error),
             )
-        session_accounting = service._build_session_accounting_view(updated_session)
-        if updated_session.accounting_status == "mismatch":
+        if result["conflicted"]:
             return _error(
                 409,
                 "session_accounting_conflict",
                 "Session accounting mismatch recorded",
-                details={"session_accounting": session_accounting},
+                details={"session_accounting": result["session_accounting"]},
             )
-        return _ok(
-            {"session_accounting": session_accounting}
-        )
+        return _ok({"session_accounting": result["session_accounting"]})
 
     @router.post("/api/v1/sessions/{session_id}/usage-acknowledgements")
     async def record_session_usage_acknowledgement(
         session_id: str,
         request: SessionUsageAcknowledgementRecordRequest,
     ) -> JSONResponse:
-        if session_service is None:
+        if session_application_service is None:
             return _error(
                 503,
                 "session_service_unavailable",
                 "Session service is not configured",
             )
         try:
-            updated_session = session_service.record_usage_acknowledgement(
-                session_id,
+            result = session_application_service.record_usage_acknowledgement(
+                session_id=session_id,
                 usage_acknowledgement=request.usage_acknowledgement.model_dump(mode="json"),
                 accepted_charge_q=request.accepted_charge_q,
             )
@@ -1870,69 +1566,52 @@ def build_api_router(
                 "session_accounting_conflict",
                 str(error),
             )
-        session_accounting = service._build_session_accounting_view(updated_session)
-        if updated_session.accounting_status == "mismatch":
+        if result["conflicted"]:
             return _error(
                 409,
                 "session_accounting_conflict",
                 "Session accounting mismatch recorded",
-                details={"session_accounting": session_accounting},
+                details={"session_accounting": result["session_accounting"]},
             )
-        return _ok(
-            {"session_accounting": session_accounting}
-        )
+        return _ok({"session_accounting": result["session_accounting"]})
 
     @router.get("/api/v1/sessions/{session_id}/accounting")
     async def get_session_accounting(session_id: str) -> JSONResponse:
-        if session_service is None:
+        if session_application_service is None:
             return _error(
                 503,
                 "session_service_unavailable",
                 "Session service is not configured",
             )
         try:
-            result = session_service.get_session(session_id)
+            session_accounting = session_application_service.get_session_accounting(
+                session_id=session_id
+            )
         except KeyError:
             return _error(
                 404,
                 "session_not_found",
                 f"Unknown session: {session_id}",
             )
-        return _ok(
-            {
-                "session_accounting": service._build_session_accounting_view(
-                    result.session
-                )
-            }
-        )
+        return _ok({"session_accounting": session_accounting})
 
     @router.post("/api/v1/sessions/{session_id}/close")
     async def close_session(session_id: str) -> JSONResponse:
-        if session_service is None:
+        if session_application_service is None:
             return _error(
                 503,
                 "session_service_unavailable",
                 "Session service is not configured",
             )
         try:
-            result = service.close_endpoint_session(session_id)
+            result = session_application_service.close_session(session_id)
         except KeyError:
             return _error(
                 404,
                 "session_not_found",
                 f"Unknown session: {session_id}",
             )
-        return _ok(
-            {
-                "session": result.session.model_dump(mode="json"),
-                "deposit": result.deposit.model_dump(mode="json"),
-                "settlement": (
-                    result.settlement.model_dump(mode="json")
-                    if result.settlement is not None
-                    else None
-                ),
-            }
-        )
+        return _ok(result["payload"])
 
     @router.post("/api/v1/endpoints/{endpoint_id}/publish-configuration")
     async def publish_endpoint_configuration(endpoint_id: str) -> JSONResponse:
@@ -1971,13 +1650,7 @@ def build_api_router(
             )
         except ValueError as error:
             return _error(409, "publication_conflict", str(error))
-        validation_summary = None
-        if validation_service is not None:
-            endpoint = endpoint_service.get_endpoint(endpoint_id).endpoint
-            validation_summary = validation_service.validation_summary(
-                endpoint_id,
-                configuration_hash=endpoint.configuration_hash,
-            )
+        endpoint = endpoint_service.get_endpoint(endpoint_id).endpoint
         onboarding = service.sync_operator_onboarding_state(
             endpoint_items=_operator_dashboard_endpoints_payload(
                 service=service,
@@ -1987,11 +1660,13 @@ def build_api_router(
             )["items"]
         )
         return _ok(
-            {
-                "publication": record.model_dump(mode="json"),
-                "validation_summary": validation_summary,
-                "onboarding": onboarding,
-            }
+            build_publication_validation_payload(
+                record=record,
+                endpoint_id=endpoint_id,
+                endpoint_configuration_hash=endpoint.configuration_hash,
+                validation_service=validation_service,
+                onboarding=onboarding,
+            )
         )
 
     @router.post("/api/v1/endpoints/{endpoint_id}/request-validation")
@@ -2016,13 +1691,7 @@ def build_api_router(
             configuration_hash=endpoint.configuration_hash,
             minimum_session_deposit_q=endpoint.session.minimum_deposit,
         )
-        return _ok(
-            {
-                "request": result.request.model_dump(mode="json"),
-                "bond": result.bond.model_dump(mode="json"),
-                "snapshot": _response_validation_snapshot(result.snapshot),
-            }
-        )
+        return _ok(build_validation_request_payload(result))
 
     @router.post("/api/v1/validation/epochs")
     async def create_validation_epoch(
@@ -2042,17 +1711,7 @@ def build_api_router(
             )
         except ValueError as error:
             return _error(409, "validation_conflict", str(error))
-        return _ok(
-            {
-                "epoch": result.epoch.model_dump(mode="json"),
-                "assignments": [
-                    item.model_dump(mode="json") for item in result.assignments
-                ],
-                "authorizations": [
-                    item.model_dump(mode="json") for item in result.authorizations
-                ],
-            }
-        )
+        return _ok(build_validation_epoch_payload(result))
 
     @router.get("/api/v1/endpoints/{endpoint_id}/validation")
     async def endpoint_validation_summary(endpoint_id: str) -> JSONResponse:
@@ -2072,18 +1731,16 @@ def build_api_router(
                     f"Unknown endpoint: {endpoint_id}",
                 )
             return _ok(
-                _expanded_validation_summary(
-                    validation_service.validation_summary(
-                        endpoint_id,
-                        configuration_hash=endpoint.configuration_hash,
-                    )
+                build_endpoint_validation_summary_payload(
+                    endpoint_id=endpoint_id,
+                    validation_service=validation_service,
+                    endpoint_service=endpoint_service,
                 )
             )
         return _ok(
-            _expanded_validation_summary(
-                validation_service.validation_summary(
-                    endpoint_id,
-                )
+            build_endpoint_validation_summary_payload(
+                endpoint_id=endpoint_id,
+                validation_service=validation_service,
             )
         )
 
@@ -2095,7 +1752,12 @@ def build_api_router(
                 "validation_unavailable",
                 "Validation service is not configured",
             )
-        return _ok(validation_service.validation_history(endpoint_id))
+        return _ok(
+            build_endpoint_validation_history_payload(
+                endpoint_id=endpoint_id,
+                validation_service=validation_service,
+            )
+        )
 
     @router.get("/api/v1/endpoints/{endpoint_id}/proof")
     async def endpoint_proof(endpoint_id: str) -> JSONResponse:
@@ -2131,46 +1793,36 @@ def build_api_router(
             ),
         )
         validation_summary = (
-            _validation_summary_for(
+            validation_summary_for(
                 validation_service,
                 endpoint_id=endpoint_id,
                 configuration_hash=endpoint.configuration_hash,
             )
         )
         published_validation_summary = (
-            _validation_summary_for(
+            validation_summary_for(
                 validation_service,
                 endpoint_id=endpoint_id,
                 configuration_hash=published_endpoint_configuration_hash,
             )
         )
         return _ok(
-            {
-                "proof": {
-                    "endpoint_id": endpoint.endpoint_id,
-                    "node_id": service.node_id,
-                    "configuration_hash": endpoint.configuration_hash,
-                    "local_publication_configuration_hash": local_publication_configuration_hash,
-                    "publication_sync_status": _publication_sync_status(
-                        local_configuration_hash=local_publication_configuration_hash,
-                        published_configuration_hash=(
-                            current_publication.configuration_hash
-                            if current_publication is not None
-                            else None
-                        ),
-                    ),
-                    "bundle_hash": endpoint.bundle_hash,
-                    "runtime_status": endpoint.status,
-                    "publication": endpoint.publication.model_dump(mode="json"),
-                    "validation_summary": validation_summary,
-                    "published_validation_summary": published_validation_summary,
-                    "current_publication": (
-                        current_publication.model_dump(mode="json")
+            build_endpoint_proof_payload(
+                endpoint=endpoint,
+                node_id=service.node_id,
+                local_publication_configuration_hash=local_publication_configuration_hash,
+                publication_sync_status=_publication_sync_status(
+                    local_configuration_hash=local_publication_configuration_hash,
+                    published_configuration_hash=(
+                        current_publication.configuration_hash
                         if current_publication is not None
                         else None
                     ),
-                }
-            }
+                ),
+                validation_summary=validation_summary,
+                published_validation_summary=published_validation_summary,
+                current_publication=current_publication,
+            )
         )
 
     @router.post("/api/v1/validation/requests/{request_id}/reports")
@@ -2201,13 +1853,7 @@ def build_api_router(
             )
         except ValueError as error:
             return _error(409, "validation_conflict", str(error))
-        return _ok(
-            {
-                "request": result.request.model_dump(mode="json"),
-                "snapshot": _response_validation_snapshot(result.snapshot),
-                "report": result.report.model_dump(mode="json"),
-            }
-        )
+        return _ok(build_validation_report_payload(result))
 
     @router.post("/api/v1/validation/requests/{request_id}/maintenance")
     async def resolve_validation_maintenance(
@@ -2237,14 +1883,7 @@ def build_api_router(
             )
         except ValueError as error:
             return _error(409, "validation_conflict", str(error))
-        return _ok(
-            {
-                "request": result.request.model_dump(mode="json"),
-                "bond": result.bond.model_dump(mode="json"),
-                "snapshot": _response_validation_snapshot(result.snapshot),
-                "report": result.report.model_dump(mode="json"),
-            }
-        )
+        return _ok(build_validation_maintenance_payload(result))
 
     @router.post("/api/v1/endpoints/{endpoint_id}/revoke-publication")
     async def revoke_endpoint_publication(endpoint_id: str) -> JSONResponse:
@@ -2437,21 +2076,38 @@ def build_api_router(
     async def wallet_quote(request: WalletQuoteRequest) -> dict:
         return service.quote_wallet_usage(**request.model_dump(mode="json"))
 
+    @router.get("/operators/dashboard/wallet")
+    async def operator_dashboard_wallet(
+        usage_limit: int = 100,
+        allocation_limit: int = 100,
+        dispute_limit: int = 100,
+        economics_recent_limit: int = 8,
+        economics_history_limit: int = 12,
+    ) -> dict:
+        return build_operator_wallet_payload(
+            service,
+            usage_limit=usage_limit,
+            allocation_limit=allocation_limit,
+            dispute_limit=dispute_limit,
+            economics_recent_limit=economics_recent_limit,
+            economics_history_limit=economics_history_limit,
+        )
+
     @router.get("/operators/wallet/usage")
     async def wallet_usage_events(limit: int = 100) -> list[dict]:
-        return service.list_wallet_usage_events(limit=limit)
+        return build_wallet_usage_events_payload(service, limit=limit)
 
     @router.get("/operators/wallet/sessions")
     async def wallet_session_events(limit: int = 100) -> list[dict]:
-        return service.list_wallet_session_events(limit=limit)
+        return build_wallet_session_events_payload(service, limit=limit)
 
     @router.get("/operators/wallet/ledger")
     async def wallet_ledger_events(limit: int = 100) -> list[dict]:
-        return service.list_wallet_ledger_events(limit=limit)
+        return build_wallet_ledger_events_payload(service, limit=limit)
 
     @router.get("/operators/ledger/operations")
     async def ledger_operations(limit: int = 100) -> list[dict]:
-        return service.list_ledger_operations(limit=limit)
+        return build_ledger_operations_payload(service, limit=limit)
 
     @router.get("/operators/ledger/operations/export")
     async def export_ledger_operations(
@@ -2459,7 +2115,8 @@ def build_api_router(
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return service.export_ledger_operations(
+        return build_ledger_operations_export_payload(
+            service,
             after_operation_id=after_operation_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -2467,7 +2124,10 @@ def build_api_router(
 
     @router.get("/operators/wallet/economics")
     async def wallet_economics_summary(recent_limit: int = 10) -> dict:
-        return service.get_wallet_economics_summary(recent_limit=recent_limit)
+        return build_wallet_economics_summary_payload(
+            service,
+            recent_limit=recent_limit,
+        )
 
     @router.get("/operators/wallet/economics/export")
     async def export_wallet_economics_events(
@@ -2475,7 +2135,8 @@ def build_api_router(
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return service.export_wallet_economics_events(
+        return build_wallet_economics_export_payload(
+            service,
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -2483,7 +2144,7 @@ def build_api_router(
 
     @router.get("/operators/wallet/economics/faucet")
     async def wallet_faucet_preview() -> dict:
-        return service.get_faucet_claim_preview()
+        return build_wallet_faucet_preview_payload(service)
 
     @router.post("/operators/wallet/economics/faucet/claim")
     async def claim_wallet_faucet_share() -> dict:
@@ -2494,33 +2155,33 @@ def build_api_router(
 
     @router.get("/operators/wallet/endpoints/publications")
     async def wallet_endpoint_publications(endpoint_id: str | None = None) -> dict:
-        if endpoint_publication_service is None:
-            return {"items": []}
-        records = endpoint_publication_service.list_publications(endpoint_id=endpoint_id)
-        return {"items": [record.model_dump(mode="json") for record in records]}
+        return build_wallet_endpoint_publications_payload(
+            endpoint_publication_service,
+            endpoint_id=endpoint_id,
+        )
 
     @router.get("/operators/wallet/endpoints/publications/export")
     async def export_wallet_endpoint_publications(
         endpoint_id: str | None = None,
         limit: int = 100,
     ) -> dict:
-        if endpoint_publication_service is None:
-            return {"items": [], "count": 0}
-        records = endpoint_publication_service.list_publications(endpoint_id=endpoint_id)
-        items = [record.model_dump(mode="json") for record in records[: max(0, limit)]]
-        return {"items": items, "count": len(items)}
+        return build_wallet_endpoint_publications_export_payload(
+            endpoint_publication_service,
+            endpoint_id=endpoint_id,
+            limit=limit,
+        )
 
     @router.get("/operators/wallet/allocations")
     async def wallet_allocation_events(limit: int = 100) -> list[dict]:
-        return service.list_wallet_allocation_events(limit=limit)
+        return build_wallet_allocation_events_payload(service, limit=limit)
 
     @router.get("/operators/wallet/allocations/activations")
     async def wallet_allocation_activation_events(limit: int = 100) -> list[dict]:
-        return service.list_wallet_allocation_activation_events(limit=limit)
+        return build_wallet_allocation_activation_events_payload(service, limit=limit)
 
     @router.get("/operators/wallet/allocations/disputes")
     async def wallet_allocation_dispute_events(limit: int = 100) -> list[dict]:
-        return service.list_wallet_allocation_dispute_events(limit=limit)
+        return build_wallet_allocation_dispute_events_payload(service, limit=limit)
 
     @router.get("/operators/wallet/usage/export")
     async def export_wallet_usage_events(
@@ -2528,7 +2189,8 @@ def build_api_router(
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return service.export_wallet_usage_events(
+        return build_wallet_usage_export_payload(
+            service,
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -2540,7 +2202,8 @@ def build_api_router(
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return service.export_wallet_session_events(
+        return build_wallet_session_export_payload(
+            service,
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -2552,7 +2215,8 @@ def build_api_router(
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return service.export_wallet_ledger_events(
+        return build_wallet_ledger_export_payload(
+            service,
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -2564,7 +2228,8 @@ def build_api_router(
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return service.export_wallet_allocation_events(
+        return build_wallet_allocation_export_payload(
+            service,
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -2576,7 +2241,8 @@ def build_api_router(
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return service.export_wallet_allocation_activation_events(
+        return build_wallet_allocation_activation_export_payload(
+            service,
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,
@@ -2588,7 +2254,8 @@ def build_api_router(
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return service.export_wallet_allocation_dispute_events(
+        return build_wallet_allocation_dispute_export_payload(
+            service,
             after_event_id=after_event_id,
             after_sequence=after_sequence,
             limit=limit,

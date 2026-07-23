@@ -679,6 +679,39 @@ def test_operator_wallet_economics_export_reports_cursor_metadata() -> None:
     assert response.json()["cursor_status"] == "ok"
 
 
+def test_operator_dashboard_wallet_aggregates_usage_allocations_and_economics() -> None:
+    service = _service()
+    service.record_wallet_usage(
+        owner_id="wallet-1",
+        bundle_id="phi4-local",
+        workload_type="llm_text",
+        task_id="task-1",
+        input_tokens=120,
+        output_tokens=45,
+    )
+    service.record_recyclable_removal(
+        category="network_fee",
+        amount_q=12.5,
+        owner_id="wallet-1",
+        source_event_type="session_network_fee_charged",
+        source_reference="session-1",
+        source_epoch_id="epoch-20",
+    )
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/dashboard/wallet")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["usage_events"][0]["task_id"] == "task-1"
+    assert isinstance(payload["allocation_events"], list)
+    assert isinstance(payload["dispute_events"], list)
+    assert payload["economics_summary"]["removals"]["total_q"] == 12.5
+    assert isinstance(payload["economics_history"], list)
+    assert "cursor_status" in payload["economics_history_cursor"]
+    assert "eligible" in payload["faucet_preview"]
+
+
 def test_operator_wallet_faucet_preview_and_claim_flow() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())

@@ -87,23 +87,14 @@ def build_app(
         validation_service
         or _build_default_validation_service(state_store=state_store)
     )
-    resolved_service.endpoint_publication_service = (
-        resolved_endpoint_publication_service
+    resolved_service.bind_external_services(
+        registry_service=resolved_registry_service,
+        endpoint_service=resolved_endpoint_service,
+        endpoint_publication_service=resolved_endpoint_publication_service,
+        remote_endpoint_service=resolved_remote_endpoint_service,
+        session_service=resolved_session_service,
+        validation_service=resolved_validation_service,
     )
-    resolved_service.registry_service = resolved_registry_service
-    resolved_service.endpoint_service = resolved_endpoint_service
-    resolved_service.remote_endpoint_service = resolved_remote_endpoint_service
-    resolved_service.session_service = resolved_session_service
-    resolved_service.bind_validation_service(resolved_validation_service)
-    resolved_session_service.registry_service = resolved_registry_service
-    resolved_endpoint_service.operation_recorder = (
-        resolved_service.record_ledger_operation
-    )
-    resolved_endpoint_publication_service.operation_recorder = (
-        resolved_service.record_ledger_operation
-    )
-    resolved_session_service.event_recorder = resolved_service.record_event
-    resolved_session_service.operation_recorder = resolved_service.record_ledger_operation
 
     app.include_router(
         build_api_router(
