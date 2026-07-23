@@ -30,3 +30,9 @@ class RuntimeProtocolBoundaryService:
 
     def restart_runtime(self, runtime_id: str) -> dict[str, str]:
         return self._hv._bundle_runtime_policy_facade().restart_runtime(runtime_id)
+
+    def list_runtimes(self) -> list:
+        return self._hv._bundle_runtime_policy_facade().list_runtimes()
+
+    def list_runtime_bindings(self) -> list[dict]:
+        return self._hv._provider_installation_facade().list_runtime_bindings()

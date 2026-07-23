@@ -1119,7 +1119,7 @@ class HypervisorService:
         return self._provider_installation_facade().list_model_deployments()
 
     def list_runtime_bindings(self) -> list[dict]:
-        return self._provider_installation_facade().list_runtime_bindings()
+        return self._runtime_boundary.list_runtime_bindings()
 
     def build_provider_installation_plan(
         self,
@@ -1537,7 +1537,7 @@ class HypervisorService:
         return self._bundle_runtime_policy_facade().stop_bundle(bundle_id)
 
     def list_runtimes(self) -> list[RuntimeHandle]:
-        return self._bundle_runtime_policy_facade().list_runtimes()
+        return self._runtime_boundary.list_runtimes()
 
     def process_pending(self) -> dict[str, int]:
         if self.resources is None or not self._has_plugins():
