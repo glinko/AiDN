@@ -193,3 +193,16 @@ class RuntimeProtocolBoundaryService:
 
     def _recovery_message(self, recovery_reason: str) -> str:
         return self._hv._snapshot_state_facade().recovery_message(recovery_reason)
+
+    # ------------------------------------------------------------------
+    # Runtime endpoint resolution
+    # ------------------------------------------------------------------
+
+    def _resolve_runtime_endpoint(
+        self,
+        bundle: "BundleConfig",
+        runtime: "RuntimeHandle",
+    ) -> str:
+        return self._hv._allocation_catalog_facade().resolve_runtime_endpoint(
+            bundle, runtime
+        )

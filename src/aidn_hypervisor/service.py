@@ -1672,13 +1672,6 @@ class HypervisorService:
     def _select_allocation_bundle(self, request: AllocationRequest) -> BundleConfig:
         return self._allocation_catalog_facade().select_allocation_bundle(request)
 
-    def _resolve_runtime_endpoint(
-        self,
-        bundle: BundleConfig,
-        runtime: RuntimeHandle,
-    ) -> str:
-        return self._allocation_catalog_facade().resolve_runtime_endpoint(bundle, runtime)
-
     def _allocation_unavailability(
         self,
         *,

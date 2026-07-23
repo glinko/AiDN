@@ -96,7 +96,7 @@ class AllocationLifecycleService:
             "workload_type": request.workload_type,
             "bundle_id": bundle.bundle_id,
             "runtime_id": runtime.runtime_id,
-            "endpoint": self._host._resolve_runtime_endpoint(bundle, runtime),
+            "endpoint": self._host._runtime_boundary._resolve_runtime_endpoint(bundle, runtime),
             "status": "active",
             "created_at": created_at,
             "expires_at": expires_at,
