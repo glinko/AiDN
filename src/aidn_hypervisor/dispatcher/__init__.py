@@ -24,8 +24,10 @@ from aidn_hypervisor.dispatcher.routes import (
 )
 from aidn_hypervisor.dispatcher.service import DispatcherError, NetworkDispatcher
 from aidn_hypervisor.dispatcher.store import DispatcherStore
+from aidn_hypervisor.dispatcher.transport.lifecycle import BackpressureSignal
 
 __all__ = [
+    "BackpressureSignal",
     "DeadLetterRecord",
     "DeliveryRecord",
     "DispatcherError",

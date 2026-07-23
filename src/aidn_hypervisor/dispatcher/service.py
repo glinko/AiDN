@@ -1,3 +1,4 @@
+import time
 from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -11,6 +12,7 @@ from aidn_hypervisor.dispatcher.models import (
     NetworkMessage,
 )
 from aidn_hypervisor.dispatcher.store import DispatcherStore
+from aidn_hypervisor.dispatcher.transport.lifecycle import BackpressureSignal
 
 
 class DispatcherError(ValueError):
@@ -31,9 +33,13 @@ class NetworkDispatcher:
         network_revision: str,
         maximum_queue_messages: int = 256,
         store: DispatcherStore | None = None,
+        max_messages_per_second: int = 1000,
+        safe_mode: bool = False,
     ) -> None:
         if maximum_queue_messages <= 0:
             raise ValueError("maximum_queue_messages must be positive")
+        if max_messages_per_second <= 0:
+            raise ValueError("max_messages_per_second must be positive")
         self.network_id = network_id
         self.chain_id = chain_id
         self.network_revision = network_revision
@@ -46,6 +52,11 @@ class NetworkDispatcher:
         self._processed_messages = self.store.replays
         self._dead_letters = self.store.dead_letters
         self._metrics = DispatcherMetrics()
+        # Overload protection: rate limiter
+        self._max_messages_per_second = max_messages_per_second
+        self._rate_limit_timestamps: deque[float] = deque()
+        # Safe mode
+        self._safe_mode = safe_mode
 
     def register_local_route(
         self,
@@ -115,6 +126,42 @@ class NetworkDispatcher:
     def route(self, *, destination_type: str, destination_id: str) -> DispatcherRoute | None:
         return self._routes.get((destination_type, destination_id))
 
+    # ------------------------------------------------------------------
+    # Rate limiting (overload protection)
+    # ------------------------------------------------------------------
+
+    def _check_rate_limit(self) -> BackpressureSignal:
+        """Return the current back-pressure signal."""
+        now = time.monotonic()
+        # Evict timestamps older than 1 second
+        while self._rate_limit_timestamps and self._rate_limit_timestamps[0] < now - 1.0:
+            self._rate_limit_timestamps.popleft()
+        if len(self._rate_limit_timestamps) >= self._max_messages_per_second:
+            return BackpressureSignal.THROTTLED
+        self._rate_limit_timestamps.append(now)
+        return BackpressureSignal.OK
+
+    # ------------------------------------------------------------------
+    # Safe mode
+    # ------------------------------------------------------------------
+
+    @property
+    def safe_mode(self) -> bool:
+        """Whether the dispatcher is in safe (read-only / critical-only) mode."""
+        return self._safe_mode
+
+    def enable_safe_mode(self) -> None:
+        """Enter safe mode — only CRITICAL_CONTROL and HIGH priority messages accepted."""
+        self._safe_mode = True
+
+    def disable_safe_mode(self) -> None:
+        """Exit safe mode — all priority classes accepted again."""
+        self._safe_mode = False
+
+    # ------------------------------------------------------------------
+    # Message submission
+    # ------------------------------------------------------------------
+
     def submit(self, message: NetworkMessage) -> DeliveryRecord:
         now = self._now()
         record = DeliveryRecord(
@@ -126,6 +173,47 @@ class NetworkDispatcher:
             received_at=now,
             payload_hash=message.payload_hash,
         )
+
+        # -- Rate limiting -------------------------------------------------
+        signal = self._check_rate_limit()
+        if signal == BackpressureSignal.THROTTLED:
+            rate_limited = record.model_copy(update={"delivery_state": "RATE_LIMITED"})
+            self._delivery_records[message.message_id] = rate_limited
+            self._metrics.increment_rejected()
+            self.store.flush()
+            return rate_limited
+
+        # -- Safe mode gate ------------------------------------------------
+        if self._safe_mode:
+            policy_priority = {
+                "SESSION_CLOSE": "HIGH",
+                "SESSION_CANCELLATION": "HIGH",
+                "SESSION_DEPOSIT_EXTENSION": "HIGH",
+                "SESSION_REQUEST": "INTERACTIVE",
+                "SESSION_RESPONSE_STREAM": "INTERACTIVE",
+                "SESSION_CAPABILITY_EVENT": "INTERACTIVE",
+                "REGISTRY_REPLICATION": "BULK",
+                "REGISTRY_SNAPSHOT_TRANSFER": "BACKGROUND",
+            }.get(message.message_type, "NORMAL")
+            ranks = {"CRITICAL_CONTROL": 0, "HIGH": 1, "INTERACTIVE": 2, "NORMAL": 3, "BULK": 4, "BACKGROUND": 5}
+            effective_priority = min(
+                ranks.get(message.priority_class, 3),
+                ranks.get(policy_priority, 3),
+            )
+            if effective_priority > 1:  # allow only CRITICAL_CONTROL(0) and HIGH(1)
+                rejected = record.model_copy(
+                    update={"delivery_state": "DELIVERY_FAILED", "completed_at": now, "last_error_code": "SAFE_MODE_REJECTED"}
+                )
+                self._delivery_records[message.message_id] = rejected
+                self._metrics.increment_rejected()
+                self.store.flush()
+                raise DispatcherError(
+                    "SAFE_MODE_REJECTED",
+                    "admission",
+                    "Message rejected: safe mode active, only CRITICAL_CONTROL and HIGH priority allowed",
+                )
+
+        # -- Replay guard --------------------------------------------------
         existing_replay = self._processed_messages.get(message.message_id)
         if existing_replay is not None:
             if existing_replay.payload_hash != message.payload_hash:
@@ -138,12 +226,30 @@ class NetworkDispatcher:
             self._delivery_records[message.message_id] = duplicate
             self.store.flush()
             return duplicate
+
+        # -- Validation pipeline with state transitions --------------------
         try:
             self._validate_domain(message)
+            validated = record.model_copy(update={"delivery_state": "ENVELOPE_VALIDATED"})
+            self._delivery_records[message.message_id] = validated
+
             self._validate_expiration(message)
+            self._delivery_records[message.message_id] = record.model_copy(
+                update={"delivery_state": "AUTHENTICATED"}
+            )
+
             self._resolve_and_authorize(message)
+            self._delivery_records[message.message_id] = record.model_copy(
+                update={"delivery_state": "AUTHORIZED"}
+            )
+            self._delivery_records[message.message_id] = record.model_copy(
+                update={"delivery_state": "ROUTE_RESOLVED"}
+            )
+
+            # -- Queue admission -------------------------------------------
             if len(self._queue) >= self.maximum_queue_messages:
                 raise DispatcherError("QUEUE_FULL", "admission", "Dispatcher queue is full")
+
             queued = record.model_copy(
                 update={"delivery_state": "QUEUED", "queued_at": now}
             )
@@ -171,17 +277,25 @@ class NetworkDispatcher:
             self._validate_domain(message)
             self._validate_expiration(message)
             route = self._resolve_and_authorize(message)
+            # State transition: QUEUED → DELIVERY_ATTEMPTED
+            attempted = record.model_copy(update={"delivery_state": "DELIVERY_ATTEMPTED"})
+            self._delivery_records[message.message_id] = attempted
+
             key = (route.destination_type, route.destination_id)
             handler = self._handlers[key]
             result = handler(message.payload)
-            completed = record.model_copy(
+
+            # State transition: DELIVERY_ATTEMPTED → DELIVERED
+            delivered = record.model_copy(
                 update={
-                    "delivery_state": "APPLICATION_ACCEPTED",
+                    "delivery_state": "DELIVERED",
                     "delivered_at": self._now(),
                     "completed_at": self._now(),
                     "attempt_count": record.attempt_count + 1,
                 }
             )
+            # Also keep APPLICATION_ACCEPTED as the final accepted state for backwards compat
+            completed = delivered.model_copy(update={"delivery_state": "APPLICATION_ACCEPTED"})
             self._processed_messages[message.message_id] = DispatcherReplayRecord(
                 message_id=message.message_id,
                 payload_hash=message.payload_hash,
