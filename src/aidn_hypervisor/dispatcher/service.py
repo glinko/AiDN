@@ -2,6 +2,7 @@ from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from aidn_hypervisor.dispatcher.metrics import DispatcherMetrics
 from aidn_hypervisor.dispatcher.models import (
     DeadLetterRecord,
     DeliveryRecord,
@@ -44,6 +45,7 @@ class NetworkDispatcher:
         self._delivery_records = self.store.delivery_records
         self._processed_messages = self.store.replays
         self._dead_letters = self.store.dead_letters
+        self._metrics = DispatcherMetrics()
 
     def register_local_route(
         self,
@@ -148,10 +150,13 @@ class NetworkDispatcher:
             self._queue.append(message)
             self.store.queued_messages[message.message_id] = message
             self._delivery_records[message.message_id] = queued
+            self._metrics.increment_submitted()
+            self._metrics.increment_queue_depth()
             self.store.flush()
             return queued
         except DispatcherError as exc:
             self._reject(record, message, exc)
+            self._metrics.increment_rejected()
             raise
 
     def drain_once(self) -> tuple[DeliveryRecord, object] | None:
@@ -160,6 +165,7 @@ class NetworkDispatcher:
         message = min(self._queue, key=self._queue_priority)
         self._queue.remove(message)
         self.store.queued_messages.pop(message.message_id, None)
+        self._metrics.decrement_queue_depth()
         record = self._delivery_records[message.message_id]
         try:
             self._validate_domain(message)
@@ -182,6 +188,7 @@ class NetworkDispatcher:
                 processed_at=self._now(),
             )
             self._delivery_records[message.message_id] = completed
+            self._metrics.increment_delivered()
             self.store.flush()
             return completed, result
         except (DispatcherError, Exception) as exc:
@@ -192,6 +199,7 @@ class NetworkDispatcher:
                     str(exc),
                 )
             self._reject(record, message, exc)
+            self._metrics.increment_rejected()
             raise exc
 
     def delivery_record(self, message_id: str) -> DeliveryRecord:
@@ -213,6 +221,7 @@ class NetworkDispatcher:
         for i, dl in enumerate(self._dead_letters):
             if dl.message_id == dead_letter_id:
                 self._dead_letters.pop(i)
+                self._metrics.decrement_dead_letter_count()
                 self.store.flush()
                 return True
         return False
@@ -221,6 +230,7 @@ class NetworkDispatcher:
         """Remove all dead-lettered messages and return the count purged."""
         count = len(self._dead_letters)
         self._dead_letters.clear()
+        self._metrics.dead_letter_count = 0
         self.store.flush()
         return count
 
@@ -448,6 +458,8 @@ class NetworkDispatcher:
                 payload_hash=message.payload_hash,
             )
         )
+        self._metrics.increment_dead_lettered()
+        self._metrics.increment_dead_letter_count()
         self.store.flush()
 
     @staticmethod

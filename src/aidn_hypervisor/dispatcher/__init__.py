@@ -1,4 +1,5 @@
 from aidn_hypervisor.dispatcher.lifecycle import DispatcherRouteLifecycle
+from aidn_hypervisor.dispatcher.metrics import DispatcherMetrics
 from aidn_hypervisor.dispatcher.models import (
     DeadLetterRecord,
     DeliveryRecord,
@@ -28,6 +29,7 @@ __all__ = [
     "DeadLetterRecord",
     "DeliveryRecord",
     "DispatcherError",
+    "DispatcherMetrics",
     "DispatcherReplayRecord",
     "DispatcherRoute",
     "NetworkDispatcher",
