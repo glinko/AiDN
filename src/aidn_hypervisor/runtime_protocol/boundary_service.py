@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aidn_hypervisor.service import HypervisorService
+    from aidn_hypervisor.domain.models import BundleConfig
 
 
 class RuntimeProtocolBoundaryService:
@@ -36,3 +37,28 @@ class RuntimeProtocolBoundaryService:
 
     def list_runtime_bindings(self) -> list[dict]:
         return self._hv._provider_installation_facade().list_runtime_bindings()
+
+    def create_runtime_binding(
+        self,
+        *,
+        model_deployment_id: str,
+        capability_id: str,
+        capability_version: str,
+        capability_definition_hash: str,
+    ) -> dict:
+        return self._hv._provider_inventory_application_facade().create_runtime_binding(
+            model_deployment_id=model_deployment_id,
+            capability_id=capability_id,
+            capability_version=capability_version,
+            capability_definition_hash=capability_definition_hash,
+        )
+
+    def bundle_for_runtime_binding(self, runtime_binding_id: str) -> BundleConfig:
+        return self._hv._provider_inventory_application_facade().bundle_for_runtime_binding(
+            runtime_binding_id
+        )
+
+    def bundle_hash_for_runtime_binding(self, runtime_binding_id: str) -> str:
+        return self._hv._provider_inventory_application_facade().bundle_hash_for_runtime_binding(
+            runtime_binding_id
+        )

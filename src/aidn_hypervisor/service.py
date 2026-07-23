@@ -1370,7 +1370,7 @@ class HypervisorService:
         capability_version: str,
         capability_definition_hash: str,
     ) -> dict:
-        return self._provider_inventory_application_facade().create_runtime_binding(
+        return self._runtime_boundary.create_runtime_binding(
             model_deployment_id=model_deployment_id,
             capability_id=capability_id,
             capability_version=capability_version,
@@ -1378,14 +1378,10 @@ class HypervisorService:
         )
 
     def bundle_for_runtime_binding(self, runtime_binding_id: str) -> BundleConfig:
-        return self._provider_inventory_application_facade().bundle_for_runtime_binding(
-            runtime_binding_id
-        )
+        return self._runtime_boundary.bundle_for_runtime_binding(runtime_binding_id)
 
     def bundle_hash_for_runtime_binding(self, runtime_binding_id: str) -> str:
-        return self._provider_inventory_application_facade().bundle_hash_for_runtime_binding(
-            runtime_binding_id
-        )
+        return self._runtime_boundary.bundle_hash_for_runtime_binding(runtime_binding_id)
 
     def runtime_binding_endpoint_admission(
         self,
