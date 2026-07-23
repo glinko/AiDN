@@ -113,8 +113,10 @@ class ValidationService:
         transfer_signer=None,
         require_signed_transfer_envelope: bool = False,
         require_storage_receipt_for_positive_certification: bool = False,
+        dispatcher_store=None,
     ) -> None:
         self.store = store
+        self.dispatcher_store = dispatcher_store
         self.bond_escrow = bond_escrow or LocalOperatorBondEscrowAdapter()
         self.validator_escrow = validator_escrow or LocalValidatorEscrowPoolAdapter()
         self.event_recorder = event_recorder

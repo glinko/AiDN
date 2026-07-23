@@ -15,6 +15,7 @@ from aidn_hypervisor.dispatcher import (
     canonical_payload_hash,
 )
 from aidn_hypervisor.dispatcher.models import canonical_payload_bytes
+from aidn_hypervisor.dispatcher.store import DispatcherStore
 from aidn_hypervisor.validation.custody_signing import (
     Ed25519ValidationReportCustodySigner,
     verify_storage_receipt,
@@ -358,7 +359,7 @@ def test_validation_channel_transfer_is_idempotent_and_rejects_conflict(tmp_path
     requested = sender.request_validation(endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0)
     sender.assign_epoch_requests(epoch_id="epoch-1", validator_entries=[{"validator_id": "val-1", "validator_label": "validator-a", "shares": 1, "capability_profiles": ["llm_text"], "contribution_q": 500.0}], seed="seed-1")
     outcome = sender.submit_validation_report(request_id=requested.request.request_id, outcome="pass", validator_label="validator-a", evidence_summary="all checks passed")
-    receiver = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True)
+    receiver = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True, dispatcher_store=DispatcherStore())
     receiver.store.save_request(sender.store.get_request(requested.request.request_id))
     receiver.store.save_assignment(sender.store.list_assignments()[0])
     receiver.store.save_authorization(sender.store.list_authorizations()[0])
@@ -386,11 +387,13 @@ def test_validation_channel_replay_survives_store_restore(tmp_path) -> None:
     receiver_store.save_request(sender.store.get_request(requested.request.request_id))
     receiver_store.save_assignment(sender.store.list_assignments()[0])
     receiver_store.save_authorization(sender.store.list_authorizations()[0])
-    receiver = ValidationService(receiver_store, custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True)
+    dispatcher_store = DispatcherStore(state_store)
+    receiver = ValidationService(receiver_store, custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True, dispatcher_store=dispatcher_store)
     message = ValidationReportTransferMessage(message_id="msg-persistent", envelope=sender.build_report_transfer_envelope(report_id=outcome.report.report_id), report=outcome.report)
 
     assert ValidationReportTransferChannel(receiver).handle(message)["replayed"] is False
-    restored_receiver = ValidationService(ValidationStore(state_store), custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True)
+    restored_dispatcher_store = DispatcherStore(state_store)
+    restored_receiver = ValidationService(ValidationStore(state_store), custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True, dispatcher_store=restored_dispatcher_store)
 
     assert ValidationReportTransferChannel(restored_receiver).handle(message)["replayed"] is True
 
@@ -401,7 +404,7 @@ def test_validation_transfer_runs_through_network_dispatcher(tmp_path) -> None:
     requested = sender.request_validation(endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0)
     sender.assign_epoch_requests(epoch_id="epoch-1", validator_entries=[{"validator_id": "val-1", "validator_label": "validator-a", "shares": 1, "capability_profiles": ["llm_text"], "contribution_q": 500.0}], seed="seed-1")
     outcome = sender.submit_validation_report(request_id=requested.request.request_id, outcome="pass", validator_label="validator-a", evidence_summary="all checks passed")
-    receiver = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True)
+    receiver = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True, dispatcher_store=DispatcherStore())
     receiver.store.save_request(sender.store.get_request(requested.request.request_id))
     receiver.store.save_assignment(sender.store.list_assignments()[0])
     receiver.store.save_authorization(sender.store.list_authorizations()[0])

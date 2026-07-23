@@ -9,7 +9,11 @@ from uuid import uuid4
 import pytest
 
 from aidn_hypervisor.dispatcher import NetworkDispatcher
-from aidn_hypervisor.validation.channel import ValidationReportTransferChannel
+from aidn_hypervisor.dispatcher.store import DispatcherStore
+from aidn_hypervisor.validation.channel import (
+    ValidationReportTransferChannel,
+    ValidationReportTransferMessage,
+)
 from aidn_hypervisor.validation.custody_store import ValidationReportCustodyStore
 from aidn_hypervisor.validation.dispatcher_adapter import ValidationDispatcherAdapter
 from aidn_hypervisor.validation.models import (
@@ -33,7 +37,8 @@ def _build_validation_service(tmp_path: Path):
     custody_store = ValidationReportCustodyStore(custody_root)
 
     store = ValidationStore()
-    service = ValidationService(store, custody_store=custody_store)
+    dispatcher_store = DispatcherStore()
+    service = ValidationService(store, custody_store=custody_store, dispatcher_store=dispatcher_store)
 
     # Create and authorize a validation request
     req_outcome = service.request_validation(
@@ -317,3 +322,67 @@ class TestValidationDispatcherAdapter:
             report=report.model_dump(),
         )
         assert dup["delivery_state"] == "DUPLICATE"
+
+    def test_replay_survives_dispatcher_store_restore(self, tmp_path: Path) -> None:
+        """Replay records persist through DispatcherStore flush/restore cycle."""
+        from aidn_hypervisor.persistence import FileStateStore
+
+        custody_root = tmp_path / "custody"
+        custody_root.mkdir()
+        custody_store = ValidationReportCustodyStore(custody_root)
+        state_store = FileStateStore(tmp_path / "state.json")
+
+        # Phase 1: first service instance processes a message
+        store1 = ValidationStore(state_store)
+        dstore1 = DispatcherStore(state_store)
+        service1 = ValidationService(store1, custody_store=custody_store, dispatcher_store=dstore1)
+        req_out = service1.request_validation(
+            endpoint_id="ep-1",
+            owner_wallet="wallet-1",
+            configuration_hash="cfg-1",
+            minimum_session_deposit_q=25.0,
+        )
+        assign_out = service1.assign_epoch_requests(
+            epoch_id="epoch-1",
+            validator_entries=[
+                {
+                    "validator_id": "val-1",
+                    "validator_label": "validator-a",
+                    "shares": 1,
+                    "capability_profiles": ["llm_text"],
+                    "contribution_q": 500.0,
+                }
+            ],
+            seed="seed-1",
+        )
+
+        report, envelope = _build_report_and_envelope(
+            req_out.request,
+            assign_out.assignments[0],
+            assign_out.authorizations[0],
+        )
+
+        channel1 = ValidationReportTransferChannel(service1)
+        result = channel1.handle(
+            ValidationReportTransferMessage(
+                message_id="persist-replay-1",
+                envelope=envelope,
+                report=report,
+            )
+        )
+        assert result["replayed"] is False
+
+        # Phase 2: restore both stores from persistence
+        store2 = ValidationStore(state_store)
+        dstore2 = DispatcherStore(state_store)
+        service2 = ValidationService(store2, custody_store=custody_store, dispatcher_store=dstore2)
+
+        channel2 = ValidationReportTransferChannel(service2)
+        result2 = channel2.handle(
+            ValidationReportTransferMessage(
+                message_id="persist-replay-1",
+                envelope=envelope,
+                report=report,
+            )
+        )
+        assert result2["replayed"] is True
