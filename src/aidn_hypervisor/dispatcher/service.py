@@ -204,6 +204,51 @@ class NetworkDispatcher:
     def queue_depth(self) -> int:
         return len(self._queue)
 
+    def restart_revalidation(self) -> int:
+        """Re-validate all queued messages after a restore.
+
+        After state is restored from persistence, queued messages may have
+        expired or their routes may have changed.  This method walks the
+        queue and dead-letters any message that no longer passes validation
+        (domain mismatch, expiration, missing/invalid route).
+
+        Returns the number of messages dead-lettered.
+        """
+        dead_lettered = 0
+        to_remove: list[NetworkMessage] = []
+
+        for message in self._queue:
+            try:
+                self._validate_domain(message)
+                self._validate_expiration(message)
+                self._resolve_and_authorize(message)
+            except DispatcherError as exc:
+                record = self._delivery_records.get(message.message_id)
+                if record is not None:
+                    self._reject(record, message, exc)
+                else:
+                    # Delivery record not available — create a minimal one
+                    now = self._now()
+                    record = DeliveryRecord(
+                        message_id=message.message_id,
+                        source_subject=message.source_subject,
+                        destination_subject=message.destination_subject,
+                        route_generation=message.route_generation,
+                        delivery_state="QUEUED",
+                        received_at=now,
+                        payload_hash=message.payload_hash,
+                    )
+                    self._reject(record, message, exc)
+                to_remove.append(message)
+                dead_lettered += 1
+
+        for message in to_remove:
+            self._queue.remove(message)
+            self.store.queued_messages.pop(message.message_id, None)
+
+        self.store.flush()
+        return dead_lettered
+
     def _validate_domain(self, message: NetworkMessage) -> None:
         if message.network_id != self.network_id:
             raise DispatcherError("NETWORK_ID_MISMATCH", "domain", "Network ID mismatch")
