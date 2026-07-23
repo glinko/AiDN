@@ -1,16 +1,17 @@
-from copy import deepcopy
-from datetime import UTC, datetime
 import hashlib
 import json
-from pathlib import Path
 import time
-from urllib import error as urllib_error, request as urllib_request
+from copy import deepcopy
+from datetime import UTC, datetime
+from pathlib import Path
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 from aidn_hypervisor.registry_models import (
-    RegistryConflictEvidence,
-    RegistryCompletenessIssue,
     RegistryCompletenessIntegrity,
+    RegistryCompletenessIssue,
     RegistryCompletenessTotals,
+    RegistryConflictEvidence,
     RegistryDiscoveryQuery,
     RegistryLocalCompletenessSummary,
     RegistryNodeAdvertisement,
@@ -18,7 +19,6 @@ from aidn_hypervisor.registry_models import (
     RegistryWalletIdentityGovernancePolicy,
     RegistryWalletIdentityPeerConfig,
 )
-
 
 _REGISTRY_OBJECT_SNAPSHOT_SCHEMA_VERSION = "registry-object-store.v1"
 _LOCAL_REGISTRY_COMPLETENESS_SUMMARY_VERSION = (

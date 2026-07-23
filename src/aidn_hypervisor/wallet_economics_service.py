@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from aidn_hypervisor.economics.models import (
@@ -207,7 +207,7 @@ class WalletEconomicsService:
             operator_id=self._host.operator_id,
             amount_q=float(preview["share_q"]),
             active_local_endpoint_count=int(preview["active_local_endpoint_count"]),
-            claimed_at=datetime.now(timezone.utc).isoformat(),
+            claimed_at=datetime.now(UTC).isoformat(),
         ).model_dump(mode="json")
         self._host._faucet_claims.append(claim)
         self._host._next_faucet_claim_sequence += 1
@@ -432,7 +432,7 @@ class WalletEconomicsService:
             category=category,
             amount_q=float(amount_q),
             owner_id=owner_id,
-            removed_at=removed_at or datetime.now(timezone.utc).isoformat(),
+            removed_at=removed_at or datetime.now(UTC).isoformat(),
             source_event_type=source_event_type,
             source_reference=source_reference,
             source_epoch_id=source_epoch_id,
@@ -482,7 +482,7 @@ class WalletEconomicsService:
         )
         budget = EpochRewardBudget(
             epoch_id=epoch_id,
-            derived_at=datetime.now(timezone.utc).isoformat(),
+            derived_at=datetime.now(UTC).isoformat(),
             base_emission_q=self._host.base_emission_q,
             eligible_removed_q=eligible_removed_q,
             recycle_backlog_q=float(recycle_backlog_q),
@@ -612,7 +612,7 @@ class WalletEconomicsService:
             measurement_kind=measurement_kind,
             measurement_source=measurement_source,
             source=source,
-            occurred_at=datetime.now(timezone.utc).isoformat(),
+            occurred_at=datetime.now(UTC).isoformat(),
             quote=self.quote_wallet_usage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,

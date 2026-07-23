@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from aidn_hypervisor.domain.models import BundleConfig
@@ -178,7 +178,7 @@ class OperatorReadModelService:
         created_at = datetime.fromisoformat(task.created_at)
         age_seconds = max(
             0,
-            int((datetime.now(timezone.utc) - created_at).total_seconds()),
+            int((datetime.now(UTC) - created_at).total_seconds()),
         )
         terminal_at = self.task_terminal_timestamp(task.task_id)
         return {

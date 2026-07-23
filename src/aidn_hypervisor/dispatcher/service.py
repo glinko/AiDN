@@ -1,6 +1,6 @@
 from collections import deque
-from datetime import datetime, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
 
 from aidn_hypervisor.dispatcher.models import (
     DeadLetterRecord,
@@ -217,7 +217,7 @@ class NetworkDispatcher:
             )
 
     def _validate_expiration(self, message: NetworkMessage) -> None:
-        if datetime.fromisoformat(message.expiration) <= datetime.now(timezone.utc):
+        if datetime.fromisoformat(message.expiration) <= datetime.now(UTC):
             raise DispatcherError("MESSAGE_EXPIRED", "expiration", "Message expired")
 
     def _resolve_and_authorize(self, message: NetworkMessage) -> DispatcherRoute:
@@ -324,7 +324,7 @@ class NetworkDispatcher:
 
     @staticmethod
     def _now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
     def _queue_priority(message: NetworkMessage) -> tuple[int, str, int]:

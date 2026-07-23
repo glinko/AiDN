@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from aidn_hypervisor.accounting.models import (
@@ -16,8 +16,8 @@ from aidn_hypervisor.sessions.models import (
     EndpointSession,
     LockedDeposit,
     ProxySessionBinding,
-    SessionRuntimeTerminalEvidence,
     SessionResult,
+    SessionRuntimeTerminalEvidence,
     SessionSettlementSummary,
 )
 
@@ -443,7 +443,7 @@ class SessionService:
             raise ValueError("deposit is below the minimum deposit")
         max_sessions = int(session_policy.get("max_concurrent_sessions", 1) or 1)
         queue_policy = str(session_policy.get("queue_policy", "busy") or "busy")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         active_sessions = [
             session
             for session in self.store.list_sessions()
@@ -604,7 +604,7 @@ class SessionService:
         result = self._settle_and_close_session(
             current,
             deposit,
-            closed_at=datetime.now(timezone.utc),
+            closed_at=datetime.now(UTC),
             close_reason=current.close_reason or "closed_by_client",
         )
         self._promote_next_waiting_session(endpoint_id=current.endpoint_id)
@@ -676,7 +676,7 @@ class SessionService:
         current = self.store.get_session(session_id)
         if current.status != "active":
             raise ValueError(f"Session is not active: {session_id}")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         idle_timeout_seconds = int(
             current.session_policy_snapshot.get("idle_timeout_seconds", 600) or 600
         )
@@ -868,7 +868,7 @@ class SessionService:
         try:
             report_created_at = datetime.fromisoformat(report.created_at)
         except ValueError:
-            report_created_at = datetime.now(timezone.utc)
+            report_created_at = datetime.now(UTC)
         report_chain = list(current.usage_report_chain or [])
         report_chain.append(report.model_dump(mode="json"))
         accounting_status = "ack_pending"
@@ -1090,7 +1090,7 @@ class SessionService:
         checkpoint = self._checkpoint_from_session(current)
         if current.accounting_status != "ack_pending" or checkpoint.ack_deadline_at is None:
             return current
-        current_time = now or datetime.now(timezone.utc)
+        current_time = now or datetime.now(UTC)
         try:
             ack_deadline = datetime.fromisoformat(checkpoint.ack_deadline_at)
         except ValueError:
@@ -1135,7 +1135,7 @@ class SessionService:
         *,
         now: datetime | None = None,
     ) -> list[SessionResult]:
-        current_time = now or datetime.now(timezone.utc)
+        current_time = now or datetime.now(UTC)
         closed: list[SessionResult] = []
         for session in self.store.list_sessions():
             if session.status != "active":
@@ -1363,7 +1363,7 @@ class SessionService:
         )
         if len(active_sessions) >= max_sessions:
             return
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         promoted = candidate.model_copy(
             update={
                 "status": "active",

@@ -2,8 +2,8 @@
 
 import hashlib
 import os
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 
 def _validated_package_digest(package_digest: str) -> str:

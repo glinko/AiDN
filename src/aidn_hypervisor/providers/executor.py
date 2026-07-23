@@ -1,34 +1,33 @@
-from copy import deepcopy
-from datetime import datetime, timezone
-from datetime import timedelta
 import hashlib
+import ipaddress
+import json
 import os
+import shutil
 import stat
 import tarfile
-import json
+import zipfile
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-import shutil
 from typing import Protocol
 from urllib.parse import urlparse
-import ipaddress
-import zipfile
 
 from aidn_hypervisor.providers.models import (
     ExecutorSandboxCapabilities,
     InstallationPlan,
     ModelArtifact,
-    ModelArtifactInventory,
     ModelArtifactGarbageCollectionResult,
+    ModelArtifactInventory,
     ModelArtifactSet,
     ModelArtifactSetFile,
     ProviderArtifactMaterialization,
     ProviderInstallationApproval,
-    ProviderInstallationArtifact,
     ProviderInstallationArchiveExtractionResult,
+    ProviderInstallationArtifact,
     ProviderInstallationArtifactInventory,
     ProviderInstallationDiagnosticCheck,
-    ProviderInstallationRollbackResult,
     ProviderInstallationExecutionResult,
+    ProviderInstallationRollbackResult,
     ProviderInstallationStepResult,
 )
 
@@ -1089,7 +1088,7 @@ class ControlledFilesystemProviderInstallationExecutor(
             ).as_posix(),
             source_type="STAGED_IMPORT",
             source_reference=staged_relative_path.as_posix(),
-            created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         )
         manifest_path = self._model_artifact_manifest_path(artifact_id)
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1180,7 +1179,7 @@ class ControlledFilesystemProviderInstallationExecutor(
             display_name=normalized_display_name,
             files=canonical_files,
             manifest_hash=f"sha256:{manifest_digest}",
-            created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         )
         manifest_path = self._model_artifact_set_manifest_path(artifact_set_id)
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1233,7 +1232,7 @@ class ControlledFilesystemProviderInstallationExecutor(
         manifest_path.unlink()
 
     def collect_model_artifact_garbage(self) -> ModelArtifactGarbageCollectionResult:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         retained_artifact_ids: list[str] = []
         pending_artifact_ids: list[str] = []
         collected_artifact_ids: list[str] = []
@@ -1326,7 +1325,7 @@ class ControlledFilesystemProviderInstallationExecutor(
             destination=relative_destination.as_posix(),
             status="READY",
             files=files,
-            created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         )
 
     def apply(
@@ -2295,7 +2294,7 @@ class ControlledFilesystemProviderInstallationExecutor(
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         updated_at = datetime.fromtimestamp(
             path.stat().st_mtime,
-            tz=timezone.utc,
+            tz=UTC,
         ).isoformat().replace("+00:00", "Z")
         return ProviderInstallationArtifact(
             relative_path=relative_path.as_posix(),

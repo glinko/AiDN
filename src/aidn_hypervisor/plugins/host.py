@@ -1,9 +1,9 @@
 """Install-scoped identity checks for a future isolated Provider Plugin Host."""
 
-from collections.abc import Callable
 import hashlib
 import hmac
 import json
+from collections.abc import Callable
 from uuid import uuid4
 
 from pydantic import BaseModel, Field

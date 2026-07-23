@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from aidn_hypervisor.remote_endpoints.models import (
@@ -83,7 +83,7 @@ class RemoteEndpointService:
         routing_mode: RemoteEndpointRoutingMode = "preferred",
     ) -> RemoteEndpointReference:
         records = self.store.list_records()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         existing = next(
             (
                 item

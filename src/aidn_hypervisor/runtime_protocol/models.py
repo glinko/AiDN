@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from aidn_hypervisor.accounting.models import UsageDimensionEvidence
 
-
 RuntimeConnectionState = Literal[
     "CONNECTING",
     "HELLO_EXCHANGING",

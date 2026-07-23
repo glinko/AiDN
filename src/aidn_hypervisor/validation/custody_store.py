@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 import stat
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -119,4 +119,4 @@ class ValidationReportCustodyStore:
 
     @staticmethod
     def _now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()

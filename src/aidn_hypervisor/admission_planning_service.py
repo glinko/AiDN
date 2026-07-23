@@ -66,7 +66,7 @@ class AdmissionPlanningService:
                 )
             )
 
-        bundle_dispatch_counts = {bundle_id: 0 for bundle_id in tasks_by_bundle}
+        bundle_dispatch_counts = dict.fromkeys(tasks_by_bundle, 0)
         admission_plan: list[dict[str, int | str]] = []
         while tasks_by_bundle:
             min_dispatch_count = min(

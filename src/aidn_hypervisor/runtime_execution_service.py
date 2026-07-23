@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
 from aidn_hypervisor.process_manager import RuntimeHandle
@@ -118,7 +118,7 @@ class RuntimeExecutionService:
         }
         request_deadline = str(
             task.constraints.get("request_deadline")
-            or (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+            or (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         )
         request = RuntimeExecuteRequest(
             runtime_id=runtime_id,
@@ -165,7 +165,7 @@ class RuntimeExecutionService:
             if existing.terminal_result_hash is not None:
                 return existing
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         result = self._host._task_results.get(task_id)
         result_payload = result if isinstance(result, dict) else {"result": result}
         final_usage = RuntimeUsageReport(
@@ -472,7 +472,7 @@ class RuntimeExecutionService:
                     remote_node_id=proxy_target.source_node_id,
                     source_base_url=proxy_target.source_base_url,
                     status="degraded",
-                    opened_at=datetime.now(timezone.utc).isoformat(),
+                    opened_at=datetime.now(UTC).isoformat(),
                     last_error=str(error),
                     close_status="not_requested",
                 )
@@ -489,7 +489,7 @@ class RuntimeExecutionService:
                 status="active",
                 opened_at=str(
                     remote_session.get("opened_at")
-                    or datetime.now(timezone.utc).isoformat()
+                    or datetime.now(UTC).isoformat()
                 ),
                 last_error=None,
                 close_status="not_requested",

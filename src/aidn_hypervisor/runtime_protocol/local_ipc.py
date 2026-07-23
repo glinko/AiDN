@@ -17,21 +17,20 @@ from aidn_hypervisor.dispatcher import (
 )
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol.models import (
-    RuntimeCapacity,
     RuntimeArtifactDeclare,
     RuntimeCancelResult,
+    RuntimeCapacity,
+    RuntimeDrainComplete,
+    RuntimeDrainStatus,
     RuntimeHealth,
     RuntimeReady,
+    RuntimeRecoveryState,
     RuntimeResult,
+    RuntimeStateCheckpoint,
     RuntimeStreamChunk,
     RuntimeStreamClose,
     RuntimeStreamOpen,
-    RuntimeStateCheckpoint,
-    RuntimeRecoveryState,
-    RuntimeDrainStatus,
-    RuntimeDrainComplete,
 )
-
 
 RuntimeIngressEventType = Literal[
     "RUNTIME_READY",

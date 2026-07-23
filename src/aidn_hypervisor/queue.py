@@ -1,5 +1,5 @@
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import get_args
 from uuid import uuid4
 
@@ -32,7 +32,7 @@ class InMemoryTaskQueue:
         task = QueuedTask(
             priority=request.priority,
             enqueue_index=self._next_enqueue_index,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
             task_id=str(uuid4()),
             request=request.model_copy(deep=True),
         )

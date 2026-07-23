@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from aidn_hypervisor.ledger.models import LedgerOperationRecord, LedgerOperationResult
 from aidn_hypervisor.settlement.models import (
@@ -168,7 +168,7 @@ class LedgerOperationService:
         now: str | None = None,
         created_at: str | None = None,
     ) -> SessionFundingAccount:
-        current_time = datetime.fromisoformat(now) if now else datetime.now(timezone.utc)
+        current_time = datetime.fromisoformat(now) if now else datetime.now(UTC)
         deadline = datetime.fromisoformat(force_after)
         if current_time < deadline:
             raise ValueError("forced Settlement timeout has not elapsed")
@@ -401,7 +401,7 @@ class LedgerOperationService:
         expected_sequence: int | None = None,
         operation_version: str = "0.1",
     ) -> dict:
-        now = created_at or datetime.now(timezone.utc).isoformat()
+        now = created_at or datetime.now(UTC).isoformat()
         sender_sequence: int | None = None
         next_wallet_sequence: int | None = None
         if origin_type == "wallet":

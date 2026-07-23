@@ -1,7 +1,7 @@
+import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from hashlib import sha256
-import random
 from uuid import uuid4
 
 from aidn_hypervisor.validation.models import ValidationAuthorization
@@ -63,7 +63,7 @@ class LocalValidatorEscrowPoolAdapter:
         guarantee_q: float,
         issued_at: str,
     ) -> ValidationAuthorization:
-        token = sha256(f"{epoch_id}:{request_id}:{guarantee_q}".encode("utf-8")).hexdigest()
+        token = sha256(f"{epoch_id}:{request_id}:{guarantee_q}".encode()).hexdigest()
         expires_at = (datetime.fromisoformat(issued_at) + timedelta(hours=1)).isoformat()
         return ValidationAuthorization(
             authorization_id=f"auth-{uuid4().hex[:12]}",

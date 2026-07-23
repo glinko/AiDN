@@ -2,7 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 LedgerOriginType = Literal["wallet", "multi_party", "protocol", "evidence_triggered"]
 LedgerFeeClass = Literal[
     "standard",

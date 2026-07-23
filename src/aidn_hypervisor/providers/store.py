@@ -2,9 +2,9 @@ from aidn_hypervisor.providers.models import (
     InstalledPlugin,
     ModelDeployment,
     PluginRelease,
+    ProviderArtifactMaterialization,
     ProviderInstallationApproval,
     ProviderInstallationJob,
-    ProviderArtifactMaterialization,
     ProviderInstance,
     RuntimeBinding,
 )

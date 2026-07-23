@@ -11,7 +11,6 @@ from aidn_hypervisor.dispatcher.routes import (
 from aidn_hypervisor.providers.models import ProviderPluginManifest, RuntimeBinding
 from aidn_hypervisor.sessions.models import EndpointSession
 
-
 RouteHandler = Callable[[dict], object]
 
 

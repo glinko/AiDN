@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from aidn_hypervisor.canonical_projection import (
     project_canonical_advertisements,
@@ -40,7 +40,7 @@ class NetworkProjectionService:
         self._host = host
 
     def node_advertisement(self, *, heartbeat_at: str | None = None) -> dict:
-        timestamp = heartbeat_at or datetime.now(timezone.utc).isoformat()
+        timestamp = heartbeat_at or datetime.now(UTC).isoformat()
         resources = (
             self._host.resources.summary()
             if self._host.resources is not None

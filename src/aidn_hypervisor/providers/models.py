@@ -4,7 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-
 ProviderConnectionMode = Literal["attached", "managed"]
 ProviderOperationalState = Literal["created", "ready", "degraded", "error", "removed"]
 ModelOperationalState = Literal["discovered", "installing", "ready", "error", "removed"]

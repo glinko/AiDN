@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 
@@ -70,7 +70,7 @@ class OperatorApplicationService:
 
         resolved_private_key = private_key or f"sk-{uuid4().hex}{uuid4().hex}"
         digest = hashlib.sha256(resolved_private_key.encode("utf-8")).hexdigest()
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(UTC).isoformat()
         self._host._owner_wallet = {
             "wallet_id": f"wallet-{digest[:12]}",
             "public_key": f"pk-{digest[:24]}",
@@ -117,7 +117,7 @@ class OperatorApplicationService:
                 onboarding.get("completed_via") or "first_local_endpoint_published"
             )
             if onboarding["completed_at"] is None:
-                onboarding["completed_at"] = datetime.now(timezone.utc).isoformat()
+                onboarding["completed_at"] = datetime.now(UTC).isoformat()
             onboarding["current_step"] = "operate"
         elif endpoint_items:
             onboarding["completed"] = False

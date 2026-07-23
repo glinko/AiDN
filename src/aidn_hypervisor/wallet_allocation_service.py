@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from aidn_hypervisor.wallet_models import (
@@ -91,7 +91,7 @@ class WalletAllocationService:
             raise ValueError(f"Wallet allocation event is disputed: {event_id}")
 
         current_time = self._host._wallet_allocation_now()
-        timestamp = datetime.fromtimestamp(current_time, timezone.utc).isoformat()
+        timestamp = datetime.fromtimestamp(current_time, UTC).isoformat()
         normalized_reason = reason.strip() if isinstance(reason, str) else None
         closed_immediately = self._host.wallet_allocation_grace_period_seconds == 0
         event["settlement_status"] = "closed" if closed_immediately else "grace"
@@ -100,7 +100,7 @@ class WalletAllocationService:
             if closed_immediately
             else datetime.fromtimestamp(
                 current_time + self._host.wallet_allocation_grace_period_seconds,
-                timezone.utc,
+                UTC,
             ).isoformat()
         )
         event["closed_at"] = timestamp if closed_immediately else None
@@ -131,7 +131,7 @@ class WalletAllocationService:
             raise ValueError(f"Wallet allocation event is already disputed: {event_id}")
 
         timestamp = datetime.fromtimestamp(
-            self._host._wallet_allocation_now(), timezone.utc
+            self._host._wallet_allocation_now(), UTC
         ).isoformat()
         dispute_id = str(uuid4())
         event["dispute_id"] = dispute_id
@@ -201,7 +201,7 @@ class WalletAllocationService:
             raise ValueError(f"Wallet allocation event is not disputed: {event_id}")
 
         current_time = self._host._wallet_allocation_now()
-        timestamp = datetime.fromtimestamp(current_time, timezone.utc).isoformat()
+        timestamp = datetime.fromtimestamp(current_time, UTC).isoformat()
         normalized_reason = reason.strip() if isinstance(reason, str) else None
         event["dispute_status"] = "resolved"
         event["dispute_resolved_at"] = timestamp
@@ -215,7 +215,7 @@ class WalletAllocationService:
                 if closed_immediately
                 else datetime.fromtimestamp(
                     current_time + self._host.wallet_allocation_grace_period_seconds,
-                    timezone.utc,
+                    UTC,
                 ).isoformat()
             )
             event["closed_at"] = timestamp if closed_immediately else None
@@ -293,18 +293,18 @@ class WalletAllocationService:
             bundle_id=str(allocation["bundle_id"]),
             workload_type=str(allocation["workload_type"]),
             status=status,
-            occurred_at=datetime.now(timezone.utc).isoformat(),
+            occurred_at=datetime.now(UTC).isoformat(),
             settlement_status="closed" if closed_immediately else "grace",
             grace_expires_at=(
                 None
                 if closed_immediately
                 else datetime.fromtimestamp(
                     current_time + self._host.wallet_allocation_grace_period_seconds,
-                    timezone.utc,
+                    UTC,
                 ).isoformat()
             ),
             closed_at=(
-                datetime.fromtimestamp(current_time, timezone.utc).isoformat()
+                datetime.fromtimestamp(current_time, UTC).isoformat()
                 if closed_immediately
                 else None
             ),
@@ -378,7 +378,7 @@ class WalletAllocationService:
             endpoint=allocation.get("endpoint"),
             activation_source=activation_source,
             lease_seconds=request["lease_seconds"],
-            occurred_at=datetime.now(timezone.utc).isoformat(),
+            occurred_at=datetime.now(UTC).isoformat(),
         )
         payload = event.model_dump(mode="json")
         self._host._wallet_allocation_activation_events.append(payload)
@@ -451,7 +451,7 @@ class WalletAllocationService:
                 continue
             event["settlement_status"] = "closed"
             event["closed_at"] = datetime.fromtimestamp(
-                current_time, timezone.utc
+                current_time, UTC
             ).isoformat()
             changed = True
 

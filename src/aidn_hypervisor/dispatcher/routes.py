@@ -1,10 +1,9 @@
-from datetime import datetime, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
 
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.providers.models import ProviderPluginManifest, RuntimeBinding
 from aidn_hypervisor.sessions.models import EndpointSession
-
 
 RUNTIME_MESSAGE_TYPES = {
     "RUNTIME_EXECUTE",
@@ -79,7 +78,7 @@ def runtime_route(
         allowed_channel_classes={"RUNTIME"},
         allowed_message_types=set(RUNTIME_MESSAGE_TYPES),
         runtime_binding_hash=binding.binding_hash(),
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -102,7 +101,7 @@ def remote_runtime_route(
         allowed_channel_classes={"RUNTIME"},
         allowed_message_types=set(RUNTIME_MESSAGE_TYPES),
         runtime_binding_hash=binding.binding_hash(),
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -126,7 +125,7 @@ def runtime_ingress_route(
         allowed_channel_classes={"RUNTIME"},
         allowed_message_types=set(RUNTIME_INGRESS_MESSAGE_TYPES),
         runtime_binding_hash=binding.binding_hash(),
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -157,7 +156,7 @@ def plugin_control_route(
         allowed_channel_classes={"PLUGIN_CONTROL"},
         allowed_message_types=allowed_messages,
         configuration_hash=manifest.manifest_hash,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -192,7 +191,7 @@ def session_route(
         allowed_message_types=allowed_messages,
         configuration_hash=session.endpoint_configuration_hash,
         session_contract_hash=session.session_contract_hash,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
 
 

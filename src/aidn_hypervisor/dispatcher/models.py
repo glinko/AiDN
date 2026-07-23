@@ -4,7 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-
 ChannelClass = Literal[
     "CONTROL",
     "SERVICE_CONTROL",

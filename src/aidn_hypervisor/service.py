@@ -1,9 +1,7 @@
 import hashlib
 import json
-from copy import deepcopy
-from datetime import datetime, timedelta, timezone
 import time
-from uuid import uuid4
+from datetime import UTC, datetime
 
 from pydantic import ValidationError
 
@@ -13,81 +11,59 @@ from aidn_hypervisor.accounting.models import (
     SessionAccountingCheckpoint,
     UsageReport,
 )
-from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, TaskRequest
 from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
 from aidn_hypervisor.allocation_catalog_service import AllocationCatalogService
-from aidn_hypervisor.bundle_runtime_policy_service import BundleRuntimePolicyService
-from aidn_hypervisor.economics.models import (
-    EpochRewardBudget,
-    EpochRewardPoolShares,
-    FaucetClaim,
-    RecyclableRemoval,
-)
-from aidn_hypervisor.endpoints.state import (
-    EndpointConfigurationSnapshotRecord,
-    EndpointManifestSnapshot,
-)
-from aidn_hypervisor.ledger.service import LedgerOperationService
-from aidn_hypervisor.mvp_session_economics_service import MvpSessionEconomicsService
-from aidn_hypervisor.network_projection_service import NetworkProjectionService
 from aidn_hypervisor.allocation_lifecycle_service import AllocationLifecycleService
-from aidn_hypervisor.model_install_service import ModelInstallService
+from aidn_hypervisor.bundle_runtime_policy_service import BundleRuntimePolicyService
+from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, TaskRequest
+from aidn_hypervisor.economics.models import (
+    EpochRewardPoolShares,
+)
 from aidn_hypervisor.event_projection_service import EventProjectionService
 from aidn_hypervisor.hypervisor_integration_service import (
     HypervisorIntegrationService,
 )
+from aidn_hypervisor.ledger.service import LedgerOperationService
+from aidn_hypervisor.model_install_service import ModelInstallService
+from aidn_hypervisor.mvp_session_economics_service import MvpSessionEconomicsService
+from aidn_hypervisor.network_projection_service import NetworkProjectionService
 from aidn_hypervisor.operator_application_service import OperatorApplicationService
 from aidn_hypervisor.operator_read_models import OperatorReadModelService
 from aidn_hypervisor.process_manager import RuntimeHandle
+from aidn_hypervisor.provider_installation_service import ProviderInstallationService
 from aidn_hypervisor.provider_inventory_application_service import (
     ProviderInventoryApplicationService,
 )
-from aidn_hypervisor.provider_installation_service import ProviderInstallationService
-from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.package_store import PluginPackageStore
+from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.queue import InMemoryTaskQueue, QueuedTask
 from aidn_hypervisor.registry_models import (
-    RegistryNodeAdvertisement,
     RegistryPricing,
     RegistryRating,
 )
-from aidn_hypervisor.remote_transport_service import RemoteTransportService
 from aidn_hypervisor.registry_service import RegistryService
+from aidn_hypervisor.remote_transport_service import RemoteTransportService
 from aidn_hypervisor.runtime_execution_service import RuntimeExecutionService
-from aidn_hypervisor.snapshot_state_service import SnapshotStateService
 from aidn_hypervisor.runtime_protocol.models import RuntimeRequestRecord
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
 from aidn_hypervisor.scheduler import Scheduler
-from aidn_hypervisor.settlement_application_service import SettlementApplicationService
 from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.settlement.models import (
     SessionFundingAccount,
 )
+from aidn_hypervisor.settlement_application_service import SettlementApplicationService
+from aidn_hypervisor.snapshot_state_service import SnapshotStateService
 from aidn_hypervisor.state import (
-    AllocationSnapshot,
-    BundleStateSnapshot,
-    EndpointSessionSnapshot,
     HypervisorStateSnapshot,
     JournalEvent,
-    LockedDepositSnapshot,
-    OperatorOnboardingSnapshot,
-    ModelInstallSnapshot,
-    OwnerWalletSnapshot,
-    ProxySessionBindingSnapshot,
     RuntimeSnapshot,
     TaskSnapshot,
-    WalletAllocationActivationSnapshot,
-    WalletAllocationDisputeSnapshot,
-    WalletAllocationSnapshot,
-    WalletLedgerSnapshot,
-    WalletSessionSnapshot,
-    WalletUsageSnapshot,
 )
-from aidn_hypervisor.wallet_economics_service import WalletEconomicsService
+from aidn_hypervisor.task_execution_service import TaskExecutionService
 from aidn_hypervisor.wallet_allocation_service import WalletAllocationService
 from aidn_hypervisor.wallet_application_service import WalletApplicationService
-from aidn_hypervisor.task_execution_service import TaskExecutionService
+from aidn_hypervisor.wallet_economics_service import WalletEconomicsService
 
 Q_ATOMS_PER_Q = 1_000_000
 from aidn_hypervisor.wallet_models import (
@@ -219,7 +195,7 @@ class HypervisorService:
         self.rating = rating or {
             "score": 0.0,
             "tier": "unrated",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
         self.heartbeat_ttl_seconds = heartbeat_ttl_seconds
         self.wallet_usage_retention_limit = (
@@ -2143,7 +2119,7 @@ class HypervisorService:
             sequence=sequence,
             cumulative_usage=cumulative_usage,
             measurement_sources=measurement_sources,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
             signature=f"local:{report_id}",
         )
         result = self._task_results.get(task_id)

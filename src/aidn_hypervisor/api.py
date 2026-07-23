@@ -17,6 +17,7 @@ from aidn_hypervisor.domain.models import (
     RegisterBundleFromInstallRequest,
     TaskRequest,
 )
+from aidn_hypervisor.domain.types import TaskStatus
 from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
@@ -24,7 +25,6 @@ from aidn_hypervisor.endpoint_publications.models import (
 from aidn_hypervisor.endpoint_publications.service import (
     EndpointPublicationReadinessError,
 )
-from aidn_hypervisor.domain.types import TaskStatus
 from aidn_hypervisor.operator_views import (
     build_operator_bundles_payload,
     build_operator_endpoints_payload,
@@ -35,38 +35,44 @@ from aidn_hypervisor.operator_views import (
     build_operator_remote_endpoints_payload,
 )
 from aidn_hypervisor.process_manager import RuntimeHandle
-from aidn_hypervisor.registry_models import RegistryNodeAdvertisement, RegistryObjectQuery
 from aidn_hypervisor.registry_models import (
+    RegistryNodeAdvertisement,
+    RegistryObjectQuery,
     RegistryWalletIdentityGovernancePolicyUpdateRequest,
     RegistryWalletIdentityQuorumApprovalRequest,
     RegistryWalletIdentityQuorumProposalRequest,
+    RegistryWalletIdentityResolutionRequest,
 )
-from aidn_hypervisor.registry_models import RegistryWalletIdentityResolutionRequest
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointDependencyError
-from aidn_hypervisor.session_read_models import (
-    build_operator_sessions_payload,
-    build_session_accounting_payload,
-)
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
 from aidn_hypervisor.session_application_service import SessionApplicationService
+from aidn_hypervisor.session_read_models import (
+    build_operator_sessions_payload,
+)
 from aidn_hypervisor.state import HypervisorStateSnapshot
 from aidn_hypervisor.validation_read_models import (
-    build_endpoint_validation_history_payload,
     build_endpoint_proof_payload,
+    build_endpoint_validation_history_payload,
     build_endpoint_validation_summary_payload,
     build_publication_validation_payload,
     build_validation_epoch_payload,
     build_validation_maintenance_payload,
     build_validation_report_payload,
     build_validation_request_payload,
-    expanded_validation_summary,
     validation_summary_for,
 )
-from aidn_hypervisor.wallet_read_models import build_operator_wallet_payload
+from aidn_hypervisor.wallet_models import (
+    WalletAllocationDisputeRequest,
+    WalletAllocationDisputeResolveRequest,
+    WalletAllocationReopenRequest,
+    WalletQuoteRequest,
+    WalletUsageRecordRequest,
+)
 from aidn_hypervisor.wallet_read_models import (
     build_ledger_operations_export_payload,
     build_ledger_operations_payload,
+    build_operator_wallet_payload,
     build_wallet_allocation_activation_events_payload,
     build_wallet_allocation_activation_export_payload,
     build_wallet_allocation_dispute_events_payload,
@@ -84,13 +90,6 @@ from aidn_hypervisor.wallet_read_models import (
     build_wallet_session_export_payload,
     build_wallet_usage_events_payload,
     build_wallet_usage_export_payload,
-)
-from aidn_hypervisor.wallet_models import (
-    WalletAllocationDisputeRequest,
-    WalletAllocationDisputeResolveRequest,
-    WalletAllocationReopenRequest,
-    WalletQuoteRequest,
-    WalletUsageRecordRequest,
 )
 
 _ACTIVE_TASK_STATUSES: set[TaskStatus] = {"queued", "admitted", "starting", "running"}

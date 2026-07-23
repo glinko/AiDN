@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from aidn_hypervisor.endpoints.models import CreateEndpointCommand, UpdateEndpointCommand
+from aidn_hypervisor.endpoints.models import (
+    CreateEndpointCommand,
+    UpdateEndpointCommand,
+)
 
 
 class RemoteEndpointServiceUnavailableError(RuntimeError):

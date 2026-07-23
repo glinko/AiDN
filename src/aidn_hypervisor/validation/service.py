@@ -1,7 +1,11 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
+from aidn_hypervisor.validation.custody_signing import (
+    storage_receipt_signing_payload,
+    verify_storage_receipt,
+)
 from aidn_hypervisor.validation.escrow import (
     LocalOperatorBondEscrowAdapter,
     LocalValidatorEscrowPoolAdapter,
@@ -25,15 +29,10 @@ from aidn_hypervisor.validation.models import (
     canonical_validation_hash,
     validation_report_integrity,
 )
-from aidn_hypervisor.validation.custody_signing import (
-    storage_receipt_signing_payload,
-    verify_storage_receipt,
-)
 from aidn_hypervisor.validation.transfer_signing import (
     transfer_envelope_signing_payload,
     verify_report_transfer_envelope,
 )
-
 
 DEFAULT_VALIDATION_BOND_Q = 500.0
 
@@ -1060,7 +1059,7 @@ class ValidationService:
             raise ValueError("validation authorization does not bind to report request")
         if authorization.status != "issued":
             raise ValueError("validation authorization is not active")
-        if datetime.fromisoformat(authorization.expires_at) <= datetime.now(timezone.utc):
+        if datetime.fromisoformat(authorization.expires_at) <= datetime.now(UTC):
             raise ValueError("validation authorization is expired")
         commitment = self.store.get_report_commitment(report_id)
         transfer_seed = canonical_validation_hash(
@@ -1679,7 +1678,7 @@ class ValidationService:
         )
 
     def _now(self) -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     def _new_id(self, prefix: str) -> str:
         return f"{prefix}-{uuid4().hex[:12]}"

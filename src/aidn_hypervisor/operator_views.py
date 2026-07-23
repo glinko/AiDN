@@ -3,7 +3,10 @@ from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
 )
-from aidn_hypervisor.operator_onboarding import ONBOARDING_STEPS, build_onboarding_payload
+from aidn_hypervisor.operator_onboarding import (
+    ONBOARDING_STEPS,
+    build_onboarding_payload,
+)
 from aidn_hypervisor.provider_read_models import (
     build_operator_providers_payload as build_provider_workspace_payload,
 )
@@ -322,11 +325,7 @@ def _normalize_home_onboarding(
             "create": "bundles",
         }.get(action, "bundles")
         completed = historical_completed
-    elif state == "draft_exists":
-        current_step = "publish_endpoint"
-        workspace = "endpoints"
-        completed = historical_completed
-    elif state == "published_drifted":
+    elif state == "draft_exists" or state == "published_drifted":
         current_step = "publish_endpoint"
         workspace = "endpoints"
         completed = historical_completed

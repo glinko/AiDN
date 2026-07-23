@@ -1,18 +1,18 @@
 """RFC-0054 executor for a non-streaming OpenAI-compatible llama.cpp server."""
 
-from datetime import datetime, timezone
 import hashlib
 import json
+from datetime import UTC, datetime
 from urllib import request as urllib_request
 
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeCancelRequest,
     RuntimeCancelResult,
     RuntimeExecuteRequest,
-    RuntimeRequestAccept,
     RuntimeRecoveryPlan,
     RuntimeRecoveryResult,
     RuntimeRecoveryState,
+    RuntimeRequestAccept,
     RuntimeResult,
     RuntimeStreamChunk,
     RuntimeStreamClose,
@@ -475,4 +475,4 @@ class LlamaCppOpenAIAdapter:
 
     @staticmethod
     def _now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()

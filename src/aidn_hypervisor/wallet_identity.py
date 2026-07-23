@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -65,7 +65,7 @@ def verify_wallet_identity_registration(
     return WalletIdentity(
         wallet_id=wallet_id,
         public_key=public_key,
-        registered_at=datetime.now(timezone.utc).isoformat(),
+        registered_at=datetime.now(UTC).isoformat(),
         registration_nonce=registration_nonce,
     )
 
@@ -87,7 +87,7 @@ def session_open_authorization_payload(
 def verify_session_open_authorization(*, public_key: str, signature: str, **payload: object) -> None:
     try:
         expires_at = datetime.fromisoformat(str(payload["expires_at"]))
-        if expires_at <= datetime.now(timezone.utc):
+        if expires_at <= datetime.now(UTC):
             raise ValueError("Session-open authorization has expired")
     except (ValueError, InvalidSignature) as error:
         raise ValueError("Session-open authorization signature is invalid") from error

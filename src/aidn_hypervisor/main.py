@@ -26,11 +26,11 @@ from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
-from aidn_hypervisor.validation.service import ValidationService
-from aidn_hypervisor.validation.custody_store import ValidationReportCustodyStore
 from aidn_hypervisor.validation.custody_signing import (
     Ed25519ValidationReportCustodySigner,
 )
+from aidn_hypervisor.validation.custody_store import ValidationReportCustodyStore
+from aidn_hypervisor.validation.service import ValidationService
 from aidn_hypervisor.validation.store import ValidationStore
 
 

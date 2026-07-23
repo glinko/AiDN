@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from aidn_hypervisor.domain.models import AllocationRequest
+from aidn_hypervisor.economics.models import (
+    EpochRewardBudget,
+    FaucetClaim,
+    RecyclableRemoval,
+)
 from aidn_hypervisor.endpoints.state import (
     EndpointConfigurationSnapshotRecord,
     EndpointManifestSnapshot,
@@ -28,7 +33,6 @@ from aidn_hypervisor.state import (
     WalletSessionSnapshot,
     WalletUsageSnapshot,
 )
-from aidn_hypervisor.economics.models import EpochRewardBudget, FaucetClaim, RecyclableRemoval
 
 _ACTIVE_EXECUTION_STATUSES = {"admitted", "starting", "running"}
 

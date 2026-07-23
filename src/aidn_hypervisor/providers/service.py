@@ -2,54 +2,54 @@ import hashlib
 import json
 import secrets
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
-from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
+from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
+from aidn_hypervisor.plugins.host import (
+    HmacPluginHostActivationProofVerifier,
+    PluginHostActivationCredentialStore,
+    PluginHostAuthenticator,
+    PluginHostConnectionStore,
+    PluginHostHandshakeService,
+    PluginHostLocalIpcIngress,
+)
 from aidn_hypervisor.providers.executor import (
     ProviderInstallationExecutor,
     RecordedProviderInstallationExecutor,
     SandboxEnforcedProviderInstallationExecutor,
 )
 from aidn_hypervisor.providers.models import (
-    InstalledPlugin,
     InstallationPlan,
+    InstalledPlugin,
     ModelArtifact,
-    ModelArtifactInventory,
     ModelArtifactGarbageCollectionResult,
+    ModelArtifactInventory,
     ModelArtifactSet,
-    ProviderArtifactMaterialization,
     ModelDeployment,
     PluginPackageVerification,
     PluginRelease,
+    ProviderArtifactMaterialization,
     ProviderInstallationApproval,
-    ProviderInstallationArtifact,
     ProviderInstallationArchiveExtractionResult,
+    ProviderInstallationArtifact,
     ProviderInstallationArtifactInventory,
     ProviderInstallationDiagnosticCheck,
     ProviderInstallationDiagnostics,
     ProviderInstallationJob,
+    ProviderInstallationRollbackResult,
     ProviderInstallationStepResult,
     ProviderInstallationUpgradeReview,
-    ProviderPluginManifest,
     ProviderInstance,
-    ProviderInstallationRollbackResult,
+    ProviderPluginManifest,
     RuntimeBinding,
     SelectedSecretHandle,
 )
+from aidn_hypervisor.providers.package_store import PluginPackageStore
 from aidn_hypervisor.providers.package_verification import (
     DEFAULT_TRUSTED_PUBLISHER_KEYS,
     verify_plugin_manifest_package,
-)
-from aidn_hypervisor.providers.package_store import PluginPackageStore
-from aidn_hypervisor.plugins.host import (
-    HmacPluginHostActivationProofVerifier,
-    PluginHostActivationCredentialStore,
-    PluginHostAuthenticator,
-    PluginHostHandshakeService,
-    PluginHostConnectionStore,
-    PluginHostLocalIpcIngress,
 )
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
@@ -65,7 +65,7 @@ def _canonical_hash(value: dict) -> str:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 class ProviderInventoryService:
