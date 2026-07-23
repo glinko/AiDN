@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from aidn_hypervisor.domain.models import BundleConfig
     from aidn_hypervisor.process_manager import RuntimeHandle
     from aidn_hypervisor.state import JournalEvent
+    from aidn_hypervisor.state import RuntimeSnapshot
 
 
 class RuntimeProtocolBoundaryService:
@@ -103,3 +104,19 @@ class RuntimeProtocolBoundaryService:
 
     def _release_runtime_reservation(self, bundle_id: str) -> None:
         self._hv._bundle_runtime_policy_facade().release_runtime_reservation(bundle_id)
+
+    # ------------------------------------------------------------------
+    # Runtime lifecycle helpers
+    # ------------------------------------------------------------------
+
+    def _stop_runtime_for_bundle(self, bundle: "BundleConfig") -> None:
+        self._hv._bundle_runtime_policy_facade().stop_runtime_for_bundle(bundle)
+
+    def _clear_runtime_reservations(self) -> None:
+        self._hv._snapshot_state_facade().clear_runtime_reservations()
+
+    def _replace_runtimes(self, runtimes: list["RuntimeHandle"]) -> None:
+        self._hv._snapshot_state_facade().replace_runtimes(runtimes)
+
+    def _restore_runtimes(self, runtimes: list["RuntimeSnapshot"]) -> None:
+        self._hv._snapshot_state_facade().restore_runtimes(runtimes)

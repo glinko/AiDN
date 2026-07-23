@@ -1786,7 +1786,7 @@ class HypervisorService:
         self._runtime_boundary._release_runtime_reservation(bundle_id)
 
     def _stop_runtime_for_bundle(self, bundle: BundleConfig) -> None:
-        self._bundle_runtime_policy_facade().stop_runtime_for_bundle(bundle)
+        self._runtime_boundary._stop_runtime_for_bundle(bundle)
 
     def _runtime_reservation_id(self, bundle_id: str) -> str:
         return self._runtime_boundary._runtime_reservation_id(bundle_id)
@@ -2569,13 +2569,13 @@ class HypervisorService:
         return self._snapshot_state_facade().can_retry_after_restart(task)
 
     def _restore_runtimes(self, runtimes: list[RuntimeSnapshot]) -> None:
-        self._snapshot_state_facade().restore_runtimes(runtimes)
+        self._runtime_boundary._restore_runtimes(runtimes)
 
     def _clear_runtime_reservations(self) -> None:
-        self._snapshot_state_facade().clear_runtime_reservations()
+        self._runtime_boundary._clear_runtime_reservations()
 
     def _replace_runtimes(self, runtimes: list[RuntimeHandle]) -> None:
-        self._snapshot_state_facade().replace_runtimes(runtimes)
+        self._runtime_boundary._replace_runtimes(runtimes)
 
     def _persist_state(self) -> None:
         if self.state_store is None:
