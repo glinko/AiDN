@@ -14,6 +14,10 @@ if TYPE_CHECKING:
     from aidn_hypervisor.state import JournalEvent
     from aidn_hypervisor.state import RuntimeSnapshot
 
+from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
+from aidn_hypervisor.bundle_runtime_policy_service import BundleRuntimePolicyService
+from aidn_hypervisor.runtime_execution_service import RuntimeExecutionService
+
 
 class RuntimeProtocolBoundaryService:
     """Boundary service for runtime lifecycle operations (drain, force-stop, restart).
@@ -30,22 +34,22 @@ class RuntimeProtocolBoundaryService:
     # ------------------------------------------------------------------
 
     def drain_runtime(self, runtime_id: str) -> dict[str, str | bool]:
-        return self._hv._bundle_runtime_policy_facade().drain_runtime(runtime_id)
+        return self._bundle_runtime_policy_facade().drain_runtime(runtime_id)
 
     def force_stop_runtime(self, runtime_id: str) -> dict[str, str]:
-        return self._hv._bundle_runtime_policy_facade().force_stop_runtime(runtime_id)
+        return self._bundle_runtime_policy_facade().force_stop_runtime(runtime_id)
 
     def restart_runtime(self, runtime_id: str) -> dict[str, str]:
-        return self._hv._bundle_runtime_policy_facade().restart_runtime(runtime_id)
+        return self._bundle_runtime_policy_facade().restart_runtime(runtime_id)
 
     def get_runtime(self, runtime_id: str) -> RuntimeHandle:
-        return self._hv._bundle_runtime_policy_facade().get_runtime(runtime_id)
+        return self._bundle_runtime_policy_facade().get_runtime(runtime_id)
 
     def runtime_history(self, runtime_id: str) -> list[JournalEvent]:
-        return self._hv._bundle_runtime_policy_facade().runtime_history(runtime_id)
+        return self._bundle_runtime_policy_facade().runtime_history(runtime_id)
 
     def list_runtimes(self) -> list:
-        return self._hv._bundle_runtime_policy_facade().list_runtimes()
+        return self._bundle_runtime_policy_facade().list_runtimes()
 
     def list_runtime_bindings(self) -> list[dict]:
         return self._hv._provider_installation_facade().list_runtime_bindings()
@@ -90,15 +94,15 @@ class RuntimeProtocolBoundaryService:
     # ------------------------------------------------------------------
 
     def _runtime_for_bundle(self, bundle_id: str) -> "RuntimeHandle | None":
-        return self._hv._bundle_runtime_policy_facade().runtime_for_bundle(bundle_id)
+        return self._bundle_runtime_policy_facade().runtime_for_bundle(bundle_id)
 
     def _runtime_reservation_id(self, bundle_id: str) -> str:
-        return self._hv._bundle_runtime_policy_facade().runtime_reservation_id(bundle_id)
+        return self._bundle_runtime_policy_facade().runtime_reservation_id(bundle_id)
 
     def _reserve_runtime_residency(
         self, bundle_id: str, *, cpu: float, ram_mb: int, vram_mb: int
     ) -> None:
-        self._hv._bundle_runtime_policy_facade().reserve_runtime_residency(
+        self._bundle_runtime_policy_facade().reserve_runtime_residency(
             bundle_id,
             cpu=cpu,
             ram_mb=ram_mb,
@@ -106,14 +110,14 @@ class RuntimeProtocolBoundaryService:
         )
 
     def _release_runtime_reservation(self, bundle_id: str) -> None:
-        self._hv._bundle_runtime_policy_facade().release_runtime_reservation(bundle_id)
+        self._bundle_runtime_policy_facade().release_runtime_reservation(bundle_id)
 
     # ------------------------------------------------------------------
     # Runtime lifecycle helpers
     # ------------------------------------------------------------------
 
     def _stop_runtime_for_bundle(self, bundle: "BundleConfig") -> None:
-        self._hv._bundle_runtime_policy_facade().stop_runtime_for_bundle(bundle)
+        self._bundle_runtime_policy_facade().stop_runtime_for_bundle(bundle)
 
     def _clear_runtime_reservations(self) -> None:
         self._hv._snapshot_state_facade().clear_runtime_reservations()
@@ -136,7 +140,7 @@ class RuntimeProtocolBoundaryService:
         task: "TaskRequest",
         runtime: "RuntimeHandle | None",
     ) -> "RuntimeRequestRecord | None":
-        return self._hv._runtime_execution_facade().record_mvp_runtime_evidence_for_completed_task(
+        return self._runtime_execution_facade().record_mvp_runtime_evidence_for_completed_task(
             task_id=task_id,
             bundle=bundle,
             task=task,
@@ -151,7 +155,7 @@ class RuntimeProtocolBoundaryService:
         endpoint_manifest: object,
         result: object,
     ) -> None:
-        self._hv._runtime_execution_facade().record_session_runtime_terminal_evidence(
+        self._runtime_execution_facade().record_session_runtime_terminal_evidence(
             session_service=session_service,
             session=session,
             endpoint_manifest=endpoint_manifest,
@@ -163,7 +167,7 @@ class RuntimeProtocolBoundaryService:
     # ------------------------------------------------------------------
 
     def _uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:
-        return self._hv._runtime_execution_facade().uses_approved_llamacpp_runtime(
+        return self._runtime_execution_facade().uses_approved_llamacpp_runtime(
             endpoint_manifest
         )
 
@@ -174,7 +178,7 @@ class RuntimeProtocolBoundaryService:
         bundle: "BundleConfig",
         endpoint_manifest,
     ) -> bool:
-        return self._hv._runtime_execution_facade().attempt_approved_runtime_task(
+        return self._runtime_execution_facade().attempt_approved_runtime_task(
             task_id,
             task,
             bundle,
@@ -205,4 +209,71 @@ class RuntimeProtocolBoundaryService:
     ) -> str:
         return self._hv._allocation_catalog_facade().resolve_runtime_endpoint(
             bundle, runtime
+        )
+
+    # ------------------------------------------------------------------
+    # Facade accessors (lazy-initialized service instances)
+    # ------------------------------------------------------------------
+
+    def _runtime_execution_facade(self) -> "RuntimeExecutionService":
+        facade = getattr(self._hv, "_runtime_execution_service", None)
+        if facade is None:
+            facade = RuntimeExecutionService(self._hv)
+            self._hv._runtime_execution_service = facade
+        return facade
+
+    def _admission_planning_facade(self) -> "AdmissionPlanningService":
+        facade = getattr(self._hv, "_admission_planning_service", None)
+        if facade is None:
+            facade = AdmissionPlanningService(self._hv)
+            self._hv._admission_planning_service = facade
+        return facade
+
+    def _bundle_runtime_policy_facade(self) -> "BundleRuntimePolicyService":
+        facade = getattr(self._hv, "_bundle_runtime_policy_service", None)
+        if facade is None:
+            facade = BundleRuntimePolicyService(self._hv)
+            self._hv._bundle_runtime_policy_service = facade
+        return facade
+
+    # ------------------------------------------------------------------
+    # Admission telemetry
+    # ------------------------------------------------------------------
+
+    def admission_telemetry(self) -> list[dict[str, int | str]]:
+        return self._admission_planning_facade().admission_telemetry()
+
+    # ------------------------------------------------------------------
+    # Runtime active task count
+    # ------------------------------------------------------------------
+
+    def runtime_active_task_count(self, bundle_id: str) -> int:
+        return self._bundle_runtime_policy_facade().runtime_active_task_count(bundle_id)
+
+    # ------------------------------------------------------------------
+    # Admission event recording
+    # ------------------------------------------------------------------
+
+    def _record_admission_events(self, admission_plan: list[dict[str, int | str]]) -> None:
+        self._admission_planning_facade().record_admission_events(admission_plan)
+
+    # ------------------------------------------------------------------
+    # Idle runtime eviction for task admission
+    # ------------------------------------------------------------------
+
+    def _evict_idle_runtimes_for_task(
+        self,
+        *,
+        task: "TaskRequest",
+        requested_bundle: "BundleConfig",
+        cpu: float,
+        ram_mb: int,
+        vram_mb: int,
+    ) -> None:
+        self._admission_planning_facade().evict_idle_runtimes_for_task(
+            task=task,
+            requested_bundle=requested_bundle,
+            cpu=cpu,
+            ram_mb=ram_mb,
+            vram_mb=vram_mb,
         )
