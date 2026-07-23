@@ -1388,7 +1388,7 @@ class HypervisorService:
         runtime_binding_id: str,
         endpoint_payload: dict | None = None,
     ) -> dict:
-        return self._provider_inventory_application_facade().runtime_binding_endpoint_admission(
+        return self._runtime_boundary.runtime_binding_endpoint_admission(
             runtime_binding_id,
             endpoint_payload=endpoint_payload,
         )

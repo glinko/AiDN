@@ -62,3 +62,13 @@ class RuntimeProtocolBoundaryService:
         return self._hv._provider_inventory_application_facade().bundle_hash_for_runtime_binding(
             runtime_binding_id
         )
+
+    def runtime_binding_endpoint_admission(
+        self,
+        runtime_binding_id: str,
+        endpoint_payload: dict | None = None,
+    ) -> dict:
+        return self._hv._provider_inventory_application_facade().runtime_binding_endpoint_admission(
+            runtime_binding_id,
+            endpoint_payload=endpoint_payload,
+        )
