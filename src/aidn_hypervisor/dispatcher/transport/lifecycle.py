@@ -59,8 +59,14 @@ class ConnectionPool:
                     self._active.add(conn)
                     return conn
 
-            # Pool full — cannot create more
-            if len(self._active) + len(self._idle) >= self._max_size:
+            # If no matching idle conn but we have *any* idle conn, reuse it
+            if self._idle:
+                conn = self._idle.pop(0)
+                self._active.add(conn)
+                return conn
+
+            # No idle connections — check active limit
+            if len(self._active) >= self._max_size:
                 return None
 
             conn = TcpTransport(host, port)
