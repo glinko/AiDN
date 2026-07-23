@@ -702,7 +702,7 @@ def build_api_router(
     async def admission_diagnostics() -> dict:
         return {
             "summary": service.queue_summary(),
-            "items": service.admission_telemetry(),
+            "items": service._runtime_boundary.admission_telemetry(),
         }
 
     @router.get("/bundles")
@@ -736,7 +736,7 @@ def build_api_router(
                 "command": runtime.command,
                 "status": runtime.status,
                 "health_status": runtime.health_status,
-                "active_task_count": service.runtime_active_task_count(
+                "active_task_count": service._runtime_boundary.runtime_active_task_count(
                     runtime.bundle_id or ""
                 ),
                 "failure_streak": service.bundle_state(runtime.bundle_id or "")[
@@ -771,7 +771,7 @@ def build_api_router(
             "command": runtime.command,
             "status": runtime.status,
             "health_status": runtime.health_status,
-            "active_task_count": service.runtime_active_task_count(
+            "active_task_count": service._runtime_boundary.runtime_active_task_count(
                 runtime.bundle_id or ""
             ),
             "failure_streak": service.bundle_state(runtime.bundle_id or "")[

@@ -148,7 +148,7 @@ class OperatorReadModelService:
             "queue": queue,
             "active": active,
             "recent": recent,
-            "admission": service.admission_telemetry(),
+            "admission": service._runtime_boundary.admission_telemetry(),
             "policy": service.operator_requests_policy(),
             "market_spillover_preview": preview,
         }

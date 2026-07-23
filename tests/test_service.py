@@ -3755,7 +3755,7 @@ def test_service_admission_telemetry_reports_fair_share_priority_and_aging(
         ]
     )
 
-    telemetry = service.admission_telemetry()
+    telemetry = service._runtime_boundary.admission_telemetry()
 
     assert telemetry == [
         {
