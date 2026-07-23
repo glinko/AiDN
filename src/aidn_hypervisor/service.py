@@ -2406,25 +2406,6 @@ class HypervisorService:
     def _endpoint_manifest_for_request(self, request: TaskRequest):
         return self._runtime_execution_facade().endpoint_manifest_for_request(request)
 
-    def _uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:
-        return self._runtime_execution_facade().uses_approved_llamacpp_runtime(
-            endpoint_manifest
-        )
-
-    def _attempt_approved_runtime_task(
-        self,
-        task_id: str,
-        task: QueuedTask,
-        bundle: BundleConfig,
-        endpoint_manifest,
-    ) -> bool:
-        return self._runtime_execution_facade().attempt_approved_runtime_task(
-            task_id,
-            task,
-            bundle,
-            endpoint_manifest,
-        )
-
     def _record_session_runtime_terminal_evidence(
         self,
         *,

@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from aidn_hypervisor.service import HypervisorService
     from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
     from aidn_hypervisor.process_manager import RuntimeHandle
+    from aidn_hypervisor.queue import QueuedTask
     from aidn_hypervisor.runtime_protocol.models import RuntimeRequestRecord
     from aidn_hypervisor.state import JournalEvent
     from aidn_hypervisor.state import RuntimeSnapshot
@@ -154,4 +155,27 @@ class RuntimeProtocolBoundaryService:
             session=session,
             endpoint_manifest=endpoint_manifest,
             result=result,
+        )
+
+    # ------------------------------------------------------------------
+    # Approved llama.cpp runtime helpers
+    # ------------------------------------------------------------------
+
+    def _uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:
+        return self._hv._runtime_execution_facade().uses_approved_llamacpp_runtime(
+            endpoint_manifest
+        )
+
+    def _attempt_approved_runtime_task(
+        self,
+        task_id: str,
+        task: "QueuedTask",
+        bundle: "BundleConfig",
+        endpoint_manifest,
+    ) -> bool:
+        return self._hv._runtime_execution_facade().attempt_approved_runtime_task(
+            task_id,
+            task,
+            bundle,
+            endpoint_manifest,
         )
