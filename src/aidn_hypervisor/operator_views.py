@@ -486,10 +486,7 @@ def _bundle_endpoint_relationship(*, bundle: dict, relationship: dict | None) ->
                 "endpoint_id": endpoint_id,
             },
         }
-    if relationship.get("publication_status") == "published":
-        state = "published_endpoint"
-    else:
-        state = "draft_endpoint"
+    state = "published_endpoint" if relationship.get("publication_status") == "published" else "draft_endpoint"
     return {
         "state": state,
         "recommended_action": {

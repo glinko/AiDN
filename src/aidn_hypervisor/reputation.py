@@ -106,7 +106,8 @@ def build_reputation_profile(
     else:
         publication_integrity = _clamp((in_sync_count - drift_count) / max(total_endpoints, 1) + 0.5)
 
-    if certified_count == 0 and certified_with_issues_count == 0 and validated_count == 0 and pending_count == 0 and attention_count == 0:
+    if (certified_count == 0 and certified_with_issues_count == 0
+            and validated_count == 0 and pending_count == 0 and attention_count == 0):
         validation_posture = 0.0
     else:
         validation_posture = _clamp(
@@ -129,10 +130,7 @@ def build_reputation_profile(
         + validation_posture * 0.25
         + operational_reliability * 0.20
     )
-    if score == 0.0:
-        tier = "unrated"
-    else:
-        tier = reputation_tier_for(score)
+    tier = "unrated" if score == 0.0 else reputation_tier_for(score)
 
     return {
         "score": score,

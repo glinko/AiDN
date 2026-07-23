@@ -62,7 +62,7 @@ class InMemoryTaskQueue:
         return list(self._tasks)
 
     def restore(self, tasks: list[QueuedTask]) -> None:
-        self._tasks = sorted(list(tasks), key=lambda item: item.sort_key)
+        self._tasks = sorted(tasks, key=lambda item: item.sort_key)
         if self._tasks:
             self._next_enqueue_index = max(
                 task.enqueue_index for task in self._tasks

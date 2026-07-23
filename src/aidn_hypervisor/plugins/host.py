@@ -292,7 +292,9 @@ class PluginHostLocalIpcIngress:
                 if self.attach_existing_provider is None:
                     raise PluginHostAuthenticationError("Plugin Host provider attach is not configured")
                 if command.configuration is None or not command.display_name:
-                    raise PluginHostAuthenticationError("Plugin Host attach configuration and display name are required")
+                    raise PluginHostAuthenticationError(
+                        "Plugin Host attach configuration and display name are required"
+                    )
                 return {
                     "status": "OK", "command": "ATTACH_EXISTING_PROVIDER",
                     "plugin_host_connection_id": connection.plugin_host_connection_id,
@@ -313,7 +315,10 @@ class PluginHostLocalIpcIngress:
                     ),
                 }
             if command.command == "CREATE_RUNTIME_BINDING":
-                fields = (command.model_deployment_id, command.capability_id, command.capability_version, command.capability_definition_hash)
+                fields = (
+                command.model_deployment_id, command.capability_id,
+                command.capability_version, command.capability_definition_hash
+            )
                 if self.runtime_binding_creator is None or not all(fields):
                     raise PluginHostAuthenticationError("Plugin Host Runtime Binding parameters are required")
                 return {"status": "OK", "command": "CREATE_RUNTIME_BINDING",

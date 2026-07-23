@@ -540,7 +540,7 @@ class SandboxEnforcedProviderInstallationExecutor(RecordedProviderInstallationEx
         validated_network_names: list[str] = []
         for network in plan.networks:
             unexpected_network_keys = sorted(
-                key for key in network.keys() if key not in self._ALLOWED_NETWORK_KEYS
+                key for key in network if key not in self._ALLOWED_NETWORK_KEYS
             )
             if unexpected_network_keys:
                 raise ValueError(
@@ -563,7 +563,7 @@ class SandboxEnforcedProviderInstallationExecutor(RecordedProviderInstallationEx
             )
         for check in plan.health_checks:
             unexpected_health_check_keys = sorted(
-                key for key in check.keys() if key not in self._ALLOWED_HEALTH_CHECK_KEYS
+                key for key in check if key not in self._ALLOWED_HEALTH_CHECK_KEYS
             )
             if unexpected_health_check_keys:
                 raise ValueError(
@@ -599,8 +599,10 @@ class SandboxEnforcedProviderInstallationExecutor(RecordedProviderInstallationEx
                     f"bounded subset: {method}"
                 )
             expected_status = check.get("expected_status")
-            if expected_status is not None:
-                if not isinstance(expected_status, int) or not (200 <= expected_status <= 399):
+            if (
+                expected_status is not None
+                and (not isinstance(expected_status, int) or not (200 <= expected_status <= 399))
+            ):
                     raise ValueError(
                         "sandbox executor requires expected health check status to be an integer "
                         "between 200 and 399"
@@ -1109,7 +1111,8 @@ class ControlledFilesystemProviderInstallationExecutor(
         normalized_artifact_id = self._validated_model_artifact_id(artifact_id)
         if self._has_unreadable_model_artifact_set_manifest():
             raise ValueError(
-                "controlled filesystem executor cannot delete model artifacts while an artifact set manifest is unreadable"
+                "controlled filesystem executor cannot delete model artifacts "
+                "while an artifact set manifest is unreadable"
             )
         referencing_sets = self._artifact_set_ids_referencing(normalized_artifact_id)
         if referencing_sets:
@@ -1730,7 +1733,7 @@ class ControlledFilesystemProviderInstallationExecutor(
             )
         for volume in plan.volumes:
             unexpected_volume_keys = sorted(
-                key for key in volume.keys() if key not in self._ALLOWED_VOLUME_KEYS
+                key for key in volume if key not in self._ALLOWED_VOLUME_KEYS
             )
             if unexpected_volume_keys:
                 raise ValueError(
@@ -1760,7 +1763,7 @@ class ControlledFilesystemProviderInstallationExecutor(
         for download in plan.model_downloads:
             unexpected_download_keys = sorted(
                 key
-                for key in download.keys()
+                for key in download
                 if key not in self._ALLOWED_MODEL_DOWNLOAD_KEYS
             )
             if unexpected_download_keys:
@@ -2017,11 +2020,13 @@ class ControlledFilesystemProviderInstallationExecutor(
         digest = candidate.removeprefix(prefix)
         if not candidate.startswith(prefix) or len(digest) != 64:
             raise ValueError(
-                "controlled filesystem executor requires model artifact set ids in model-artifact-set:sha256:<64-hex> form"
+                "controlled filesystem executor requires model artifact set ids "
+                "in model-artifact-set:sha256:<64-hex> form"
             )
         if any(character not in "0123456789abcdef" for character in digest):
             raise ValueError(
-                "controlled filesystem executor requires model artifact set ids in model-artifact-set:sha256:<64-hex> form"
+                "controlled filesystem executor requires model artifact set ids "
+                "in model-artifact-set:sha256:<64-hex> form"
             )
         return candidate
 

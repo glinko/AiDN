@@ -1722,7 +1722,7 @@ def build_api_router(
             )
         if endpoint_service is not None:
             try:
-                endpoint = endpoint_service.get_endpoint(endpoint_id).endpoint
+                endpoint_service.get_endpoint(endpoint_id)
             except KeyError:
                 return _error(
                     404,

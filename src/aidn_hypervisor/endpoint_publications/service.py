@@ -186,7 +186,8 @@ class EndpointPublicationService:
         if external_access and not pricing_configured:
             warn(
                 "ENDPOINT_PRICING_NOT_CONFIGURED",
-                "External Endpoint publication has no explicit price; it will be treated as free until pricing is configured.",
+                "External Endpoint publication has no explicit price; "
+                "it will be treated as free until pricing is configured.",
             )
         if paid_pricing and manifest.session.minimum_deposit <= 0:
             warn(

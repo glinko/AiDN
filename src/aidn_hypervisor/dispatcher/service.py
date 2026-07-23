@@ -139,7 +139,7 @@ class NetworkDispatcher:
         try:
             self._validate_domain(message)
             self._validate_expiration(message)
-            route = self._resolve_and_authorize(message)
+            self._resolve_and_authorize(message)
             if len(self._queue) >= self.maximum_queue_messages:
                 raise DispatcherError("QUEUE_FULL", "admission", "Dispatcher queue is full")
             queued = record.model_copy(

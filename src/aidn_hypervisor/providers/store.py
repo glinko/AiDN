@@ -78,8 +78,14 @@ class InMemoryProviderInventoryStore:
             raise ValueError("provider_instance_id must reference an existing provider instance")
         self._artifact_materializations[materialization.materialization_id] = materialization.model_copy(deep=True)
 
-    def list_artifact_materializations(self, provider_instance_id: str | None = None) -> list[ProviderArtifactMaterialization]:
-        return [item.model_copy(deep=True) for item in self._artifact_materializations.values() if provider_instance_id is None or item.provider_instance_id == provider_instance_id]
+    def list_artifact_materializations(
+        self, provider_instance_id: str | None = None
+    ) -> list[ProviderArtifactMaterialization]:
+        return [
+            item.model_copy(deep=True)
+            for item in self._artifact_materializations.values()
+            if provider_instance_id is None or item.provider_instance_id == provider_instance_id
+        ]
 
     def save_provider_instance(self, instance: ProviderInstance) -> None:
         current = self._provider_instances.get(instance.provider_instance_id)
@@ -182,15 +188,14 @@ class InMemoryProviderInventoryStore:
                     "runtime binding ownership fields are immutable within one Runtime Generation"
                 )
         binding = RuntimeBinding.model_validate(binding.model_dump(mode="json"))
-        if current is not None:
-            if (
-                binding.runtime_generation == current.runtime_generation
-                and current.runtime_configuration_hash
-                != binding.runtime_configuration_hash
-            ):
-                raise ValueError(
-                    "Runtime configuration change requires a higher Runtime Generation"
-                )
+        if current is not None and (
+            binding.runtime_generation == current.runtime_generation
+            and current.runtime_configuration_hash
+            != binding.runtime_configuration_hash
+        ):
+            raise ValueError(
+                "Runtime configuration change requires a higher Runtime Generation"
+            )
         if binding.provider_instance_id not in self._provider_instances:
             raise ValueError("provider_instance_id must reference an existing provider instance")
         provider_instance = self._provider_instances[binding.provider_instance_id]

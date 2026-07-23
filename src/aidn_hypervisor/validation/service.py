@@ -442,7 +442,7 @@ class ValidationService:
         ]
         current_snapshot = snapshots[-1] if snapshots else None
         latest_request = requests[-1] if requests else None
-        latest_report = reports[-1] if reports else None
+        reports[-1] if reports else None
         resolved_configuration_hash = configuration_hash or (
             current_snapshot.configuration_hash
             if current_snapshot is not None

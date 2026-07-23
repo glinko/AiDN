@@ -64,11 +64,11 @@ from aidn_hypervisor.task_execution_service import TaskExecutionService
 from aidn_hypervisor.wallet_allocation_service import WalletAllocationService
 from aidn_hypervisor.wallet_application_service import WalletApplicationService
 from aidn_hypervisor.wallet_economics_service import WalletEconomicsService
-
-Q_ATOMS_PER_Q = 1_000_000
 from aidn_hypervisor.wallet_models import (
     WalletUsageMeasurement,
 )
+
+Q_ATOMS_PER_Q = 1_000_000
 
 _CANCELLABLE_TASK_STATUSES = {"queued", "admitted", "starting"}
 _ACTIVE_EXECUTION_STATUSES = {"admitted", "starting", "running"}
@@ -2148,15 +2148,13 @@ class HypervisorService:
         )
         result = self._task_results.get(task_id)
         if isinstance(result, dict):
-            result["usage_acknowledgement"] = dict(
-                {
+            result["usage_acknowledgement"] = {
                     key: value
                     for key, value in dict(
                         updated_session.last_usage_acknowledgement_snapshot
                     ).items()
                     if not str(key).startswith("_")
                 }
-            )
             result["session_accounting"] = self._build_session_accounting_view(
                 updated_session
             )

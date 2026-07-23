@@ -415,7 +415,8 @@ class LedgerOperationService:
             )
             if sender_sequence != next_wallet_sequence:
                 raise ValueError(
-                    f"invalid wallet sequence for {sender_wallet}: expected {next_wallet_sequence}, got {sender_sequence}"
+                    f"invalid wallet sequence for {sender_wallet}: "
+                    f"expected {next_wallet_sequence}, got {sender_sequence}"
                 )
 
         unsigned = {

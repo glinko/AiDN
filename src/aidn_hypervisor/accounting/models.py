@@ -257,9 +257,11 @@ class AccountingContract(BaseModel):
                 if policy == "REQUEST_REJECTED_BEFORE_EXECUTION":
                     errors.append(f"required Usage dimension is undeclared: {unit.unit}")
                 continue
-            if dimension.expected_availability in {"UNAVAILABLE", "NOT_APPLICABLE"}:
-                if policy == "REQUEST_REJECTED_BEFORE_EXECUTION":
-                    errors.append(f"required Usage dimension is unavailable: {unit.unit}")
+            if (
+                dimension.expected_availability in {"UNAVAILABLE", "NOT_APPLICABLE"}
+                and policy == "REQUEST_REJECTED_BEFORE_EXECUTION"
+            ):
+                errors.append(f"required Usage dimension is unavailable: {unit.unit}")
             if (
                 unit.required_authority is not None
                 and dimension.authority != unit.required_authority

@@ -912,9 +912,8 @@ class RegistryService:
                 if candidate["object_id"] == object_id:
                     item = candidate
                     break
-        if item is not None:
-            if stored is None:
-                return item
+        if item is not None and stored is None:
+            return item
 
         # Scan node-backed compatibility objects directly so lookups are not limited by list pagination.
         for node_id in self._nodes:
@@ -1287,9 +1286,7 @@ class RegistryService:
         ):
             if left.get(field) != right.get(field):
                 return True
-        if "payload" in left and "payload" in right and left.get("payload") != right.get("payload"):
-            return True
-        return False
+        return bool("payload" in left and "payload" in right and left.get("payload") != right.get("payload"))
 
     def _record_conflict_evidence(
         self,
@@ -1630,7 +1627,8 @@ class RegistryService:
             "object_version": object_version,
             "payload_hash": payload_hash,
         }
-        object_id = f"sha256:{hashlib.sha256(json.dumps(identity_payload, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()}"
+        canonical = json.dumps(identity_payload, sort_keys=True, separators=(',', ':'))
+        object_id = f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
         return {
             "object_id": object_id,
             "object_type": object_type,
@@ -2057,9 +2055,7 @@ class RegistryService:
             return False
         if query.require_queue_support and not bundle["supports_queue"]:
             return False
-        if query.ready_endpoint_only and not self._bundle_endpoint_ready(bundle):
-            return False
-        return True
+        return not (query.ready_endpoint_only and not self._bundle_endpoint_ready(bundle))
 
     def _uses_canonical_filters(self, query: RegistryDiscoveryQuery) -> bool:
         return any(
@@ -2243,9 +2239,7 @@ class RegistryService:
             and candidate.get("owner_wallet") != query.owner_wallet
         ):
             return False
-        if query.runtime_id is not None and candidate.get("runtime_id") != query.runtime_id:
-            return False
-        return True
+        return not (query.runtime_id is not None and candidate.get("runtime_id") != query.runtime_id)
 
     def _canonical_trust_summary(self, node: dict) -> dict:
         published_endpoints = node.get("published_endpoints", [])

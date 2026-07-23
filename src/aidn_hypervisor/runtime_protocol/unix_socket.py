@@ -1,5 +1,6 @@
 """Unix domain socket transport for authenticated RFC-0054 Local IPC events."""
 
+import contextlib
 import json
 import os
 import socket
@@ -61,10 +62,8 @@ class UnixSocketRuntimeListener:
             thread.join(timeout=5)
         self._server = None
         self._thread = None
-        try:
+        with contextlib.suppress(FileNotFoundError):
             Path(self.address).unlink()
-        except FileNotFoundError:
-            pass
 
     def _serve(self) -> None:
         server = self._server
