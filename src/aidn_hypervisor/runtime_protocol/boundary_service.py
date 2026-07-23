@@ -80,3 +80,26 @@ class RuntimeProtocolBoundaryService:
             runtime_binding_id,
             endpoint_payload=endpoint_payload,
         )
+
+    # ------------------------------------------------------------------
+    # Runtime residency helpers
+    # ------------------------------------------------------------------
+
+    def _runtime_for_bundle(self, bundle_id: str) -> "RuntimeHandle | None":
+        return self._hv._bundle_runtime_policy_facade().runtime_for_bundle(bundle_id)
+
+    def _runtime_reservation_id(self, bundle_id: str) -> str:
+        return self._hv._bundle_runtime_policy_facade().runtime_reservation_id(bundle_id)
+
+    def _reserve_runtime_residency(
+        self, bundle_id: str, *, cpu: float, ram_mb: int, vram_mb: int
+    ) -> None:
+        self._hv._bundle_runtime_policy_facade().reserve_runtime_residency(
+            bundle_id,
+            cpu=cpu,
+            ram_mb=ram_mb,
+            vram_mb=vram_mb,
+        )
+
+    def _release_runtime_reservation(self, bundle_id: str) -> None:
+        self._hv._bundle_runtime_policy_facade().release_runtime_reservation(bundle_id)

@@ -1598,7 +1598,7 @@ class HypervisorService:
         raise KeyError(plugin_id)
 
     def _runtime_for_bundle(self, bundle_id: str) -> RuntimeHandle | None:
-        return self._bundle_runtime_policy_facade().runtime_for_bundle(bundle_id)
+        return self._runtime_boundary._runtime_for_bundle(bundle_id)
 
     def _filtered_catalog_bundles(
         self,
@@ -1775,7 +1775,7 @@ class HypervisorService:
     def _reserve_runtime_residency(
         self, bundle_id: str, *, cpu: float, ram_mb: int, vram_mb: int
     ) -> None:
-        self._bundle_runtime_policy_facade().reserve_runtime_residency(
+        self._runtime_boundary._reserve_runtime_residency(
             bundle_id,
             cpu=cpu,
             ram_mb=ram_mb,
@@ -1783,13 +1783,13 @@ class HypervisorService:
         )
 
     def _release_runtime_reservation(self, bundle_id: str) -> None:
-        self._bundle_runtime_policy_facade().release_runtime_reservation(bundle_id)
+        self._runtime_boundary._release_runtime_reservation(bundle_id)
 
     def _stop_runtime_for_bundle(self, bundle: BundleConfig) -> None:
         self._bundle_runtime_policy_facade().stop_runtime_for_bundle(bundle)
 
     def _runtime_reservation_id(self, bundle_id: str) -> str:
-        return self._bundle_runtime_policy_facade().runtime_reservation_id(bundle_id)
+        return self._runtime_boundary._runtime_reservation_id(bundle_id)
 
     def _circuit_breaker_policy_for(self, plugin) -> dict:
         policy = plugin.circuit_breaker_policy()
