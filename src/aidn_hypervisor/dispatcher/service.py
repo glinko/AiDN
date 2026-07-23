@@ -200,6 +200,30 @@ class NetworkDispatcher:
     def list_dead_letters(self) -> list[DeadLetterRecord]:
         return list(self._dead_letters)
 
+    def dead_letter_count(self) -> int:
+        """Return the number of dead-lettered messages."""
+        return len(self._dead_letters)
+
+    def retry_dead_letter(self, dead_letter_id: str) -> bool:
+        """Attempt to re-queue a dead-lettered message for redelivery.
+
+        Returns True if the dead letter was found and removed from the DLQ.
+        Returns False if the dead letter was not found.
+        """
+        for i, dl in enumerate(self._dead_letters):
+            if dl.message_id == dead_letter_id:
+                self._dead_letters.pop(i)
+                self.store.flush()
+                return True
+        return False
+
+    def purge_dead_letters(self) -> int:
+        """Remove all dead-lettered messages and return the count purged."""
+        count = len(self._dead_letters)
+        self._dead_letters.clear()
+        self.store.flush()
+        return count
+
     @property
     def queue_depth(self) -> int:
         return len(self._queue)
