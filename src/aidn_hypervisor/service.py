@@ -1414,10 +1414,10 @@ class HypervisorService:
         )
 
     def get_runtime(self, runtime_id: str) -> RuntimeHandle:
-        return self._bundle_runtime_policy_facade().get_runtime(runtime_id)
+        return self._runtime_boundary.get_runtime(runtime_id)
 
     def runtime_history(self, runtime_id: str) -> list[JournalEvent]:
-        return self._bundle_runtime_policy_facade().runtime_history(runtime_id)
+        return self._runtime_boundary.runtime_history(runtime_id)
 
     def bundle_state(self, bundle_id: str) -> dict:
         return self._bundle_runtime_policy_facade().bundle_state(bundle_id)

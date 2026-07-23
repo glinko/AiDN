@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from aidn_hypervisor.service import HypervisorService
     from aidn_hypervisor.domain.models import BundleConfig
+    from aidn_hypervisor.process_manager import RuntimeHandle
+    from aidn_hypervisor.state import JournalEvent
 
 
 class RuntimeProtocolBoundaryService:
@@ -31,6 +33,12 @@ class RuntimeProtocolBoundaryService:
 
     def restart_runtime(self, runtime_id: str) -> dict[str, str]:
         return self._hv._bundle_runtime_policy_facade().restart_runtime(runtime_id)
+
+    def get_runtime(self, runtime_id: str) -> RuntimeHandle:
+        return self._hv._bundle_runtime_policy_facade().get_runtime(runtime_id)
+
+    def runtime_history(self, runtime_id: str) -> list[JournalEvent]:
+        return self._hv._bundle_runtime_policy_facade().runtime_history(runtime_id)
 
     def list_runtimes(self) -> list:
         return self._hv._bundle_runtime_policy_facade().list_runtimes()
