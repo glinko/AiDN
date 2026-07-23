@@ -259,8 +259,14 @@ def validation_route(
     *,
     destination_id: str = "validation_handler",
     route_generation: int,
+    hypervisor_key: str | None = None,
 ) -> DispatcherRoute:
-    """Create a route for VALIDATION-channel messages from validators."""
+    """Create a route for VALIDATION-channel messages from validators.
+
+    When ``hypervisor_key`` is provided, the route enforces assignment-key
+    validation on every submitted message (canonical Hypervisor-key
+    registration).
+    """
     return DispatcherRoute(
         destination_type="VALIDATION_TARGET",
         destination_id=destination_id,
@@ -269,6 +275,7 @@ def validation_route(
         allowed_source_types={"VALIDATOR"},
         allowed_channel_classes={"VALIDATION"},
         allowed_message_types=set(VALIDATION_MESSAGE_TYPES),
+        hypervisor_key=hypervisor_key,
         created_at=datetime.now(UTC).isoformat(),
     )
 
@@ -279,10 +286,19 @@ def bind_validation_route(
     *,
     destination_id: str = "validation_handler",
     route_generation: int,
+    hypervisor_key: str | None = None,
 ) -> DispatcherRoute:
+    """Bind the VALIDATION-channel route and optionally register the canonical
+    Hypervisor key.
+
+    When ``hypervisor_key`` is supplied the dispatcher will reject any
+    VALIDATION_REPORT_TRANSFER message that does not carry a matching
+    ``assignment_key``.
+    """
     route = validation_route(
         destination_id=destination_id,
         route_generation=route_generation,
+        hypervisor_key=hypervisor_key,
     )
     dispatcher.register_local_route(route, handler)
     return route

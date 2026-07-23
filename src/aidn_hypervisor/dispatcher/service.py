@@ -286,7 +286,66 @@ class NetworkDispatcher:
                 "authorization",
                 "Message type is not authorized for route",
             )
+        # Assignment-key signed transfer envelope validation (VALIDATION channel)
+        self._validate_assignment_key(message, route)
         return route
+
+    def _validate_assignment_key(
+        self, message: NetworkMessage, route: DispatcherRoute
+    ) -> None:
+        """Validate assignment-key binding for signed transfer envelopes.
+
+        When the route carries a canonical hypervisor_key, every message on that
+        route must present a matching assignment_key.  An assignment_key is
+        considered valid when it is a non-empty string that encodes the
+        hypervisor_key as its prefix (``{hypervisor_key}:{assignment_id}``).
+        """
+        hv_key = route.hypervisor_key
+        if hv_key is None:
+            return  # no canonical key registered — skip assignment-key checks
+        if message.assignment_key is None:
+            raise DispatcherError(
+                "ASSIGNMENT_KEY_MISSING",
+                "authorization",
+                "Assignment key is required for signed transfer envelopes",
+            )
+        if not self._assignment_key_matches(message.assignment_key, hv_key):
+            raise DispatcherError(
+                "ASSIGNMENT_KEY_INVALID",
+                "authorization",
+                "Assignment key does not match the registered Hypervisor key",
+            )
+
+    @staticmethod
+    def _assignment_key_matches(assignment_key: str, hypervisor_key: str) -> bool:
+        """Check that ``assignment_key`` is bound to ``hypervisor_key``.
+
+        Canonical format: ``{hypervisor_key}:{assignment_id}``.
+        """
+        if not assignment_key.startswith(hypervisor_key + ":"):
+            return False
+        suffix = assignment_key[len(hypervisor_key) + 1 :]
+        return len(suffix) > 0
+
+    def register_hypervisor_key(
+        self,
+        *,
+        destination_type: str,
+        destination_id: str,
+        hypervisor_key: str,
+    ) -> None:
+        """Register the canonical Hypervisor key for a route.
+
+        After registration, every message submitted on that route must carry
+        an ``assignment_key`` that is bound to this ``hypervisor_key``.
+        """
+        key = (destination_type, destination_id)
+        route = self._routes.get(key)
+        if route is None:
+            raise ValueError(f"No route found for ({destination_type}, {destination_id})")
+        updated = route.model_copy(update={"hypervisor_key": hypervisor_key})
+        self._routes[key] = updated
+        self.store.flush()
 
     def _reject(
         self,

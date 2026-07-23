@@ -97,6 +97,10 @@ class NetworkMessage(BaseModel):
     payload_encoding: str = "CANONICAL_JSON"
     payload: dict
     authentication: dict = Field(default_factory=dict)
+    assignment_key: str | None = None
+    """Assignment-key for signed transfer envelopes on the VALIDATION channel.
+    When present, the dispatcher validates that the key matches a registered
+    assignment binding before the message is queued."""
 
     @model_validator(mode="after")
     def _validate_payload_metadata(self):
@@ -133,6 +137,10 @@ class DispatcherRoute(BaseModel):
     runtime_binding_hash: str | None = None
     runtime_generation: int | None = Field(default=None, ge=1)
     session_contract_hash: str | None = None
+    hypervisor_key: str | None = None
+    """Canonical Hypervisor key registered for this route.
+    On VALIDATION-channel routes, transfer envelopes must carry an
+    assignment_key that is bound to this hypervisor_key."""
     created_at: str
     expires_at: str | None = None
 
