@@ -317,7 +317,7 @@ class HypervisorService:
         return self._task_results.get(task_id)
 
     def task_recovery_reason(self, task_id: str) -> str | None:
-        return self._task_recovery_reasons.get(task_id)
+        return self._runtime_boundary.task_recovery_reason(task_id)
 
     def task_proxy_trace(self, task_id: str) -> dict | None:
         result = self.task_result(task_id) or {}
@@ -2539,12 +2539,6 @@ class HypervisorService:
 
     def _restored_task_status(self, task: TaskSnapshot) -> str:
         return self._snapshot_state_facade().restored_task_status(task)
-
-    def _recovery_reason_for_task(self, task: TaskSnapshot) -> str:
-        return self._snapshot_state_facade().recovery_reason_for_task(task)
-
-    def _recovery_message(self, recovery_reason: str) -> str:
-        return self._snapshot_state_facade().recovery_message(recovery_reason)
 
     def _can_retry_after_restart(self, task: TaskSnapshot) -> bool:
         return self._snapshot_state_facade().can_retry_after_restart(task)

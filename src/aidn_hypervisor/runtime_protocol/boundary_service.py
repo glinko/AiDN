@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from aidn_hypervisor.service import HypervisorService
     from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
+    from aidn_hypervisor.state import TaskSnapshot
     from aidn_hypervisor.process_manager import RuntimeHandle
     from aidn_hypervisor.queue import QueuedTask
     from aidn_hypervisor.runtime_protocol.models import RuntimeRequestRecord
@@ -179,3 +180,16 @@ class RuntimeProtocolBoundaryService:
             bundle,
             endpoint_manifest,
         )
+
+    # ------------------------------------------------------------------
+    # Task recovery reason helpers
+    # ------------------------------------------------------------------
+
+    def task_recovery_reason(self, task_id: str) -> str | None:
+        return self._hv._task_recovery_reasons.get(task_id)
+
+    def _recovery_reason_for_task(self, task: "TaskSnapshot") -> str:
+        return self._hv._snapshot_state_facade().recovery_reason_for_task(task)
+
+    def _recovery_message(self, recovery_reason: str) -> str:
+        return self._hv._snapshot_state_facade().recovery_message(recovery_reason)
