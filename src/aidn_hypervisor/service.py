@@ -45,6 +45,7 @@ from aidn_hypervisor.registry_models import (
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_transport_service import RemoteTransportService
 from aidn_hypervisor.runtime_execution_service import RuntimeExecutionService
+from aidn_hypervisor.runtime_protocol import RuntimeProtocolBoundaryService
 from aidn_hypervisor.runtime_protocol.models import RuntimeRequestRecord
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
 from aidn_hypervisor.scheduler import Scheduler
@@ -266,6 +267,7 @@ class HypervisorService:
         self._settlement_application_service = SettlementApplicationService(self)
         self.operator_read_models = OperatorReadModelService(self)
         self._events: list[JournalEvent] = []
+        self._runtime_boundary = RuntimeProtocolBoundaryService(self)
 
     @property
     def pricing(self) -> dict:
@@ -1506,13 +1508,13 @@ class HypervisorService:
         )
 
     def drain_runtime(self, runtime_id: str) -> dict[str, str | bool]:
-        return self._bundle_runtime_policy_facade().drain_runtime(runtime_id)
+        return self._runtime_boundary.drain_runtime(runtime_id)
 
     def force_stop_runtime(self, runtime_id: str) -> dict[str, str]:
-        return self._bundle_runtime_policy_facade().force_stop_runtime(runtime_id)
+        return self._runtime_boundary.force_stop_runtime(runtime_id)
 
     def restart_runtime(self, runtime_id: str) -> dict[str, str]:
-        return self._bundle_runtime_policy_facade().restart_runtime(runtime_id)
+        return self._runtime_boundary.restart_runtime(runtime_id)
 
     def cancel_task(self, task_id: str):
         task = self.queue.get(task_id)

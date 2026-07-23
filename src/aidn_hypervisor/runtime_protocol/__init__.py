@@ -1,4 +1,7 @@
 from aidn_hypervisor.runtime_protocol.adapters import LlamaCppOpenAIAdapter
+from aidn_hypervisor.runtime_protocol.boundary_service import (
+    RuntimeProtocolBoundaryService,
+)
 from aidn_hypervisor.runtime_protocol.approved_dispatch import (
     ApprovedRuntimeDispatcher,
     ApprovedRuntimeDispatchError,
@@ -67,6 +70,7 @@ from aidn_hypervisor.runtime_protocol.unix_socket import (
 )
 
 __all__ = [
+    "RuntimeProtocolBoundaryService",
     "HypervisorRuntimeHello",
     "RuntimeArtifactDeclare",
     "RuntimeCapacity",
