@@ -16,12 +16,18 @@ from aidn_hypervisor.dispatcher.transport.tls import (
     TlsListener,
     TlsTransport,
 )
+from aidn_hypervisor.dispatcher.transport.lifecycle import (
+    BackpressureSignal,
+    ConnectionPool,
+)
 from aidn_hypervisor.dispatcher.transport.unix_socket import (
     UnixSocketListener,
     UnixSocketTransport,
 )
 
 __all__ = [
+    "BackpressureSignal",
+    "ConnectionPool",
     "MessageFramer",
     "TransportGateway",
     "TransportStatus",
