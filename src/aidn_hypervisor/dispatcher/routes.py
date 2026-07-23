@@ -250,6 +250,44 @@ def bind_plugin_control_route(
     return route
 
 
+VALIDATION_MESSAGE_TYPES = {
+    "VALIDATION_REPORT_TRANSFER",
+}
+
+
+def validation_route(
+    *,
+    destination_id: str = "validation_handler",
+    route_generation: int,
+) -> DispatcherRoute:
+    """Create a route for VALIDATION-channel messages from validators."""
+    return DispatcherRoute(
+        destination_type="VALIDATION_TARGET",
+        destination_id=destination_id,
+        route_type="LOCAL_PROTOCOL_HANDLER",
+        route_generation=route_generation,
+        allowed_source_types={"VALIDATOR"},
+        allowed_channel_classes={"VALIDATION"},
+        allowed_message_types=set(VALIDATION_MESSAGE_TYPES),
+        created_at=datetime.now(UTC).isoformat(),
+    )
+
+
+def bind_validation_route(
+    dispatcher,
+    handler: Callable[[dict], object],
+    *,
+    destination_id: str = "validation_handler",
+    route_generation: int,
+) -> DispatcherRoute:
+    route = validation_route(
+        destination_id=destination_id,
+        route_generation=route_generation,
+    )
+    dispatcher.register_local_route(route, handler)
+    return route
+
+
 def bind_session_route(
     dispatcher,
     session: EndpointSession,
