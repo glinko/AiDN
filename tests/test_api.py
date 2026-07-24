@@ -10572,3 +10572,239 @@ def test_operator_restart_runtime_endpoint_clears_drain_and_processes_queue() ->
     assert service.get_task(task.task_id).status == "completed"
     assert bundles_response.status_code == 200
     assert bundles_response.json()[0]["status"] == "running"
+
+
+# ---------------------------------------------------------------------------
+# Wallet settlement hold / release / correction API endpoints
+# ---------------------------------------------------------------------------
+
+class _UsageMeteringPlugin(FakeManagedPlugin):
+    """Fake plugin that returns usage data for wallet allocation events."""
+
+    plugin_id = "fake-usage-metering"
+
+    def invoke(self, task, runtime_handle) -> dict:
+        return {
+            "ok": True,
+            "task_type": task.task_type,
+            "usage": {
+                "input_tokens": 250_000,
+                "output_tokens": 500_000,
+                "fixed_request_count": 1,
+                "measurement_kind": "exact",
+                "measurement_source": "provider_api",
+            },
+        }
+
+
+def _wallet_service() -> HypervisorService:
+    """Build a service with usage-metering plugin for wallet settlement tests."""
+    plugins = PluginRegistry()
+    plugins.register(_UsageMeteringPlugin())
+    bundle = _bundle("phi4-local", "llm_text").model_copy(
+        update={"plugin_id": "fake-usage-metering", "endpoint": "http://127.0.0.1:8080"}
+    )
+    return HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
+        ),
+        bundles=[bundle],
+        plugins=plugins,
+        runtimes=ProviderProcessManager(),
+        bundle_registry=FileBundleRegistry("bundles.json"),
+        node_id="node-a",
+        operator_id="operator-a",
+        pricing={
+            "unit": "q_per_1kk_tokens",
+            "input": 12,
+            "output": 18,
+            "fixed_request": 4,
+        },
+        wallet_allocation_grace_period_seconds=30,
+    )
+
+
+def _make_wallet_allocation_event(service: HypervisorService) -> dict:
+    """Create an allocation, submit a task, release it, and return the event."""
+    allocation = service.create_allocation(
+        AllocationRequest(
+            workload_type="llm_text",
+            owner_id="agent-a",
+            bundle_id="phi4-local",
+        )
+    )
+    service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={"allocation_id": allocation["allocation_id"]},
+        )
+    )
+    service.release_allocation(allocation["allocation_id"])
+    return service.list_wallet_allocation_events()[0]
+
+
+def test_operator_wallet_hold_endpoint_success() -> None:
+    service = _wallet_service()
+    event = _make_wallet_allocation_event(service)
+    client = TestClient(build_app(service=service))
+
+    response = client.post(
+        f"/operators/wallet/allocations/{event['event_id']}/hold",
+        json={"reason": "manual review"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["event_id"] == event["event_id"]
+    assert body["settlement_status"] == "hold"
+    assert body["hold_reason"] == "manual review"
+    assert body["hold_started_at"] is not None
+
+
+def test_operator_wallet_hold_endpoint_returns_404() -> None:
+    service = _wallet_service()
+    client = TestClient(build_app(service=service))
+
+    response = client.post(
+        "/operators/wallet/allocations/nonexistent-event-id/hold",
+        json={"reason": "manual review"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_operator_wallet_hold_endpoint_returns_409_when_already_held() -> None:
+    service = _wallet_service()
+    event = _make_wallet_allocation_event(service)
+    client = TestClient(build_app(service=service))
+
+    client.post(
+        f"/operators/wallet/allocations/{event['event_id']}/hold",
+        json={"reason": "first hold"},
+    )
+
+    response = client.post(
+        f"/operators/wallet/allocations/{event['event_id']}/hold",
+        json={"reason": "second hold"},
+    )
+
+    assert response.status_code == 409
+
+
+def test_operator_wallet_release_endpoint_success() -> None:
+    service = _wallet_service()
+    event = _make_wallet_allocation_event(service)
+    client = TestClient(build_app(service=service))
+
+    client.post(
+        f"/operators/wallet/allocations/{event['event_id']}/hold",
+        json={"reason": "manual review"},
+    )
+
+    response = client.post(
+        f"/operators/wallet/allocations/{event['event_id']}/release",
+        json={"reason": "review complete", "target_status": "closed"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["settlement_status"] == "closed"
+    assert body["hold_released_at"] is not None
+    assert body["closed_at"] is not None
+
+
+def test_operator_wallet_release_endpoint_returns_409_when_not_held() -> None:
+    service = _wallet_service()
+    event = _make_wallet_allocation_event(service)
+    client = TestClient(build_app(service=service))
+
+    response = client.post(
+        f"/operators/wallet/allocations/{event['event_id']}/release",
+        json={"reason": "release", "target_status": "closed"},
+    )
+
+    assert response.status_code == 409
+
+
+def test_operator_wallet_correction_endpoint_success() -> None:
+    service = _wallet_service()
+    event = _make_wallet_allocation_event(service)
+    client = TestClient(build_app(service=service))
+
+    client.post(
+        f"/operators/wallet/allocations/{event['event_id']}/hold",
+        json={"reason": "manual review"},
+    )
+
+    response = client.post(
+        f"/operators/wallet/allocations/{event['event_id']}/corrections",
+        json={
+            "reason": "remove duplicate charge",
+            "effective_usage_total_q": 0.0,
+            "annotations": {"reviewer": "ops"},
+            "release_after_apply": False,
+            "release_target_status": None,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["effective_usage_total_q"] == 0.0
+    assert body["base_usage_total_q"] > 0.0
+    assert body["correction_count"] == 1
+
+
+def test_operator_wallet_corrections_export_with_cursor() -> None:
+    service = _wallet_service()
+    event = _make_wallet_allocation_event(service)
+    client = TestClient(build_app(service=service))
+
+    # Hold the event
+    client.post(
+        f"/operators/wallet/allocations/{event['event_id']}/hold",
+        json={"reason": "manual review"},
+    )
+
+    # Apply a correction
+    client.post(
+        f"/operators/wallet/allocations/{event['event_id']}/corrections",
+        json={
+            "reason": "ops correction",
+            "effective_usage_total_q": 0.0,
+            "annotations": {"reviewer": "ops"},
+        },
+    )
+
+    # Export corrections
+    response = client.get(
+        "/operators/wallet/allocations/corrections/export",
+        params={"after_sequence": 0, "limit": 10},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "items" in body
+    assert len(body["items"]) == 1
+    assert body["items"][0]["reason"] == "ops correction"
+    assert "next_after_sequence" in body
+    assert "cursor_status" in body
+
+
+def test_operator_wallet_corrections_export_empty() -> None:
+    service = _wallet_service()
+    client = TestClient(build_app(service=service))
+
+    response = client.get(
+        "/operators/wallet/allocations/corrections/export",
+        params={"limit": 10},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "items" in body
+    assert len(body["items"]) == 0
+    assert "next_after_sequence" in body
+    assert "cursor_status" in body

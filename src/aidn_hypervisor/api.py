@@ -63,8 +63,11 @@ from aidn_hypervisor.validation_read_models import (
     validation_summary_for,
 )
 from aidn_hypervisor.wallet_models import (
+    WalletAllocationCorrectionRequest,
     WalletAllocationDisputeRequest,
     WalletAllocationDisputeResolveRequest,
+    WalletAllocationHoldRequest,
+    WalletAllocationReleaseRequest,
     WalletAllocationReopenRequest,
     WalletQuoteRequest,
     WalletUsageRecordRequest,
@@ -2297,6 +2300,74 @@ def build_api_router(
                 event_id,
                 resolution=request.resolution,
                 reason=request.reason,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown wallet allocation event: {event_id}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/operators/wallet/allocations/corrections")
+    async def list_wallet_allocation_correction_events(limit: int = 100) -> list[dict]:
+        return service.list_wallet_allocation_correction_events(limit=limit)
+
+    @router.get("/operators/wallet/allocations/corrections/export")
+    async def export_wallet_allocation_correction_events(
+        after_event_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return service.export_wallet_allocation_correction_events(
+            after_event_id=after_event_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
+    @router.post("/operators/wallet/allocations/{event_id}/hold")
+    async def hold_wallet_allocation_event(
+        event_id: str, request: WalletAllocationHoldRequest
+    ) -> dict:
+        try:
+            return service.hold_wallet_allocation_event(event_id, reason=request.reason)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown wallet allocation event: {event_id}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/wallet/allocations/{event_id}/release")
+    async def release_wallet_allocation_event(
+        event_id: str, request: WalletAllocationReleaseRequest
+    ) -> dict:
+        try:
+            return service.release_wallet_allocation_event(
+                event_id,
+                reason=request.reason,
+                target_status=request.target_status,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown wallet allocation event: {event_id}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/wallet/allocations/{event_id}/corrections")
+    async def apply_wallet_allocation_correction(
+        event_id: str, request: WalletAllocationCorrectionRequest
+    ) -> dict:
+        try:
+            kwargs = request.model_dump(mode="json")
+            kwargs.pop("release_after_apply", None)
+            kwargs.pop("release_target_status", None)
+            return service.apply_wallet_allocation_correction(
+                event_id,
+                **kwargs,
             )
         except KeyError as error:
             raise HTTPException(
