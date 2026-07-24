@@ -143,6 +143,14 @@ class WalletAllocationService:
         event["dispute_resolved_at"] = None
         event["dispute_resolution"] = None
         event["dispute_resolution_reason"] = None
+        # Auto-hold settlement when dispute is opened
+        event["settlement_status"] = "hold"
+        event["hold_reason"] = "dispute_opened"
+        event["hold_source"] = "dispute"
+        event["hold_started_at"] = timestamp
+        event["hold_released_at"] = None
+        event["grace_expires_at"] = None
+        event["closed_at"] = None
         dispute_payload = WalletAllocationDisputeEvent(
             sequence_id=self._host._next_wallet_allocation_dispute_sequence,
             event_id=str(uuid4()),
@@ -334,6 +342,20 @@ class WalletAllocationService:
             correction_count=0,
         )
         payload = event.model_dump(mode="json")
+        # Auto-hold if strict-accounting blocked usage for this allocation
+        alloc_id = str(allocation["allocation_id"])
+        if alloc_id in self._host._wallet_strict_held_allocations:
+            timestamp = datetime.fromtimestamp(
+                self._host._wallet_allocation_now(), UTC
+            ).isoformat()
+            payload["settlement_status"] = "hold"
+            payload["hold_reason"] = "strict_accounting_blocked"
+            payload["hold_source"] = "strict_accounting"
+            payload["hold_started_at"] = timestamp
+            payload["hold_released_at"] = None
+            payload["grace_expires_at"] = None
+            payload["closed_at"] = None
+            self._host._wallet_strict_held_allocations.discard(alloc_id)
         self._host._wallet_allocation_events.append(payload)
         self._host._next_wallet_allocation_sequence += 1
         self._host._append_wallet_ledger_event(
@@ -426,6 +448,9 @@ class WalletAllocationService:
         current_time = self._host._wallet_allocation_now()
         for event in self._host._wallet_allocation_events:
             dispute_open = event.get("dispute_status") == "open"
+            # Skip held events — they must be explicitly released before reconciliation
+            if event.get("settlement_status") == "hold":
+                continue
             if event.get("settlement_status") == "closed" and not dispute_open:
                 continue
 
@@ -442,6 +467,7 @@ class WalletAllocationService:
             if event["usage_event_count"] != next_usage_event_count:
                 event["usage_event_count"] = next_usage_event_count
                 changed = True
+            # base_usage_total_q tracks raw usage total (unchanged by corrections)
             if event.get("base_usage_total_q") is not None and event.get("base_usage_total_q") != next_usage_total_q:
                 event["base_usage_total_q"] = next_usage_total_q
                 changed = True

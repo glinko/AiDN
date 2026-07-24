@@ -1408,7 +1408,6 @@ def test_service_opens_dispute_during_grace_and_prevents_auto_close_until_resolv
         service.list_wallet_allocation_events()[0]["event_id"],
         reason="provider usage mismatch",
     )
-    original_grace_expiry = disputed["grace_expires_at"]
     current_time[0] += 31
     still_disputed = dict(service.list_wallet_allocation_events()[0])
     resolved = service.resolve_wallet_allocation_dispute(
@@ -1419,16 +1418,21 @@ def test_service_opens_dispute_during_grace_and_prevents_auto_close_until_resolv
     current_time[0] += 31
     reclosed = dict(service.list_wallet_allocation_events()[0])
 
-    assert disputed["settlement_status"] == "grace"
+    # Dispute auto-holds the event (settlement_status → hold)
+    assert disputed["settlement_status"] == "hold"
+    assert disputed["hold_reason"] == "dispute_opened"
+    assert disputed["hold_source"] == "dispute"
     assert disputed["closed_at"] is None
-    assert disputed["grace_expires_at"] == original_grace_expiry
+    assert disputed["grace_expires_at"] is None
     assert disputed["dispute_status"] == "open"
     assert disputed["dispute_id"] is not None
     assert disputed["dispute_opened_at"] is not None
     assert disputed["dispute_reason"] == "provider usage mismatch"
     assert disputed["dispute_opened_by"] == "operator-a"
-    assert still_disputed["settlement_status"] == "grace"
+    # Held events are skipped by reconcile — status stays hold after time advance
+    assert still_disputed["settlement_status"] == "hold"
     assert still_disputed["dispute_status"] == "open"
+    # Resolving with "accepted" reopens to grace
     assert resolved["settlement_status"] == "grace"
     assert resolved["dispute_status"] == "resolved"
     assert resolved["dispute_resolution"] == "accepted"
@@ -1436,6 +1440,7 @@ def test_service_opens_dispute_during_grace_and_prevents_auto_close_until_resolv
     assert resolved["dispute_resolved_at"] is not None
     assert resolved["reopened_at"] is not None
     assert resolved["grace_expires_at"] is not None
+    # After grace expires the event closes
     assert reclosed["settlement_status"] == "closed"
     assert reclosed["closed_at"] is not None
 
@@ -1653,7 +1658,8 @@ def test_operator_wallet_allocation_dispute_endpoints_manage_settlement(
 
     assert dispute_response.status_code == 200
     assert dispute_response.json()["event_id"] == event_id
-    assert dispute_response.json()["settlement_status"] == "closed"
+    # Dispute auto-holds the event
+    assert dispute_response.json()["settlement_status"] == "hold"
     assert dispute_response.json()["dispute_status"] == "open"
     assert dispute_response.json()["dispute_reason"] == "operator dispute"
     assert dispute_response.json()["dispute_id"] is not None
@@ -2293,3 +2299,262 @@ def test_service_snapshot_and_restore_preserves_wallet_settlement_hold_and_corre
     assert restored_event["correction_count"] == 1
     assert restored_correction["reason"] == "billing correction"
     assert restored_correction["effective_usage_total_q_after"] == 0.0
+
+
+def test_dispute_auto_holds_allocation(monkeypatch) -> None:
+    """Opening a dispute automatically puts the allocation event on hold."""
+    current_time = [1_781_827_800.0]
+    monkeypatch.setattr("aidn_hypervisor.service.time.time", lambda: current_time[0])
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={
+                "plugin_id": "fake-usage-metering",
+                "endpoint": "http://127.0.0.1:8080",
+            }
+        ),
+        wallet_allocation_grace_period_seconds=30,
+    )
+    allocation = service.create_allocation(
+        AllocationRequest(
+            workload_type="llm_text",
+            owner_id="agent-a",
+            bundle_id="phi4-local",
+        )
+    )
+    service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={"allocation_id": allocation["allocation_id"]},
+        )
+    )
+    service.release_allocation(allocation["allocation_id"])
+
+    # Before dispute the event is in grace status
+    event_before = service.list_wallet_allocation_events()[0]
+    assert event_before["settlement_status"] == "grace"
+    assert event_before["hold_reason"] is None
+
+    # Open dispute — should auto-hold
+    disputed = service.dispute_wallet_allocation_event(
+        event_before["event_id"],
+        reason="provider usage mismatch",
+    )
+
+    assert disputed["settlement_status"] == "hold"
+    assert disputed["hold_reason"] == "dispute_opened"
+    assert disputed["hold_source"] == "dispute"
+    assert disputed["hold_started_at"] is not None
+    assert disputed["grace_expires_at"] is None
+    assert disputed["closed_at"] is None
+    assert disputed["dispute_status"] == "open"
+
+
+def test_strict_accounting_auto_holds_allocation(monkeypatch) -> None:
+    """Strict-accounting with missing usage auto-holds the allocation event."""
+    current_time = [1_781_827_800.0]
+    monkeypatch.setattr("aidn_hypervisor.service.time.time", lambda: current_time[0])
+    service = _service(
+        plugin=StrictMissingUsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={
+                "plugin_id": "fake-strict-missing-usage-metering",
+                "endpoint": "http://127.0.0.1:8080",
+            }
+        ),
+        wallet_allocation_grace_period_seconds=30,
+    )
+    allocation = service.create_allocation(
+        AllocationRequest(
+            workload_type="llm_text",
+            owner_id="agent-a",
+            bundle_id="phi4-local",
+        )
+    )
+    service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={"allocation_id": allocation["allocation_id"]},
+        )
+    )
+    service.release_allocation(allocation["allocation_id"])
+
+    event = service.list_wallet_allocation_events()[0]
+
+    assert event["settlement_status"] == "hold"
+    assert event["hold_reason"] == "strict_accounting_blocked"
+    assert event["hold_source"] == "strict_accounting"
+    assert event["hold_started_at"] is not None
+    # Grace timer should NOT have advanced because event is held
+    current_time[0] += 31
+    still_held = service.list_wallet_allocation_events()[0]
+    assert still_held["settlement_status"] == "hold"
+    assert still_held["closed_at"] is None
+
+
+def test_reconcile_skips_held_events(monkeypatch) -> None:
+    """Reconcile does not modify held events (no auto-close, no usage recalc)."""
+    current_time = [1_781_827_800.0]
+    monkeypatch.setattr("aidn_hypervisor.service.time.time", lambda: current_time[0])
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={
+                "plugin_id": "fake-usage-metering",
+                "endpoint": "http://127.0.0.1:8080",
+            }
+        ),
+        wallet_allocation_grace_period_seconds=30,
+    )
+    allocation = service.create_allocation(
+        AllocationRequest(
+            workload_type="llm_text",
+            owner_id="agent-a",
+            bundle_id="phi4-local",
+        )
+    )
+    service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={"allocation_id": allocation["allocation_id"]},
+        )
+    )
+    service.release_allocation(allocation["allocation_id"])
+    event = service.list_wallet_allocation_events()[0]
+
+    # Manually hold the event
+    held = service.hold_wallet_allocation_event(
+        event["event_id"], reason="manual review"
+    )
+    assert held["settlement_status"] == "hold"
+
+    # Advance time past grace period
+    current_time[0] += 60
+
+    # Record additional usage — reconcile should NOT update held event
+    service.record_wallet_usage(
+        owner_id="agent-a",
+        bundle_id="phi4-local",
+        workload_type="llm_text",
+        input_tokens=100_000,
+        output_tokens=200_000,
+    )
+
+    # Trigger reconcile (list_wallet_allocation_events calls reconcile)
+    after_reconcile = service.list_wallet_allocation_events()[0]
+
+    # Held event should be unchanged
+    assert after_reconcile["settlement_status"] == "hold"
+    assert after_reconcile["closed_at"] is None
+    assert after_reconcile["hold_reason"] == "manual review"
+    # Base/effective totals should NOT have been recalculated
+    assert after_reconcile["base_usage_total_q"] == held["base_usage_total_q"]
+    assert after_reconcile["effective_usage_total_q"] == held["effective_usage_total_q"]
+
+
+def test_effective_total_changes_with_corrections(monkeypatch) -> None:
+    """effective_usage_total_q changes when corrections are applied."""
+    current_time = [1_781_827_800.0]
+    monkeypatch.setattr("aidn_hypervisor.service.time.time", lambda: current_time[0])
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={
+                "plugin_id": "fake-usage-metering",
+                "endpoint": "http://127.0.0.1:8080",
+            }
+        ),
+        wallet_allocation_grace_period_seconds=30,
+    )
+    allocation = service.create_allocation(
+        AllocationRequest(
+            workload_type="llm_text",
+            owner_id="agent-a",
+            bundle_id="phi4-local",
+        )
+    )
+    service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={"allocation_id": allocation["allocation_id"]},
+        )
+    )
+    service.release_allocation(allocation["allocation_id"])
+    event = service.list_wallet_allocation_events()[0]
+
+    original_effective = event["effective_usage_total_q"]
+    assert original_effective > 0
+
+    # Hold then correct
+    service.hold_wallet_allocation_event(
+        event["event_id"], reason="correction needed"
+    )
+    corrected = service.apply_wallet_allocation_correction(
+        event["event_id"],
+        reason="remove duplicated charge",
+        effective_usage_total_q=5.0,
+        annotations={"reviewer": "ops"},
+    )
+
+    assert corrected["effective_usage_total_q"] == 5.0
+    assert corrected["effective_usage_total_q"] != original_effective
+    assert corrected["correction_count"] == 1
+
+
+def test_base_total_unchanged_by_corrections(monkeypatch) -> None:
+    """base_usage_total_q remains unchanged after corrections are applied."""
+    current_time = [1_781_827_800.0]
+    monkeypatch.setattr("aidn_hypervisor.service.time.time", lambda: current_time[0])
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={
+                "plugin_id": "fake-usage-metering",
+                "endpoint": "http://127.0.0.1:8080",
+            }
+        ),
+        wallet_allocation_grace_period_seconds=30,
+    )
+    allocation = service.create_allocation(
+        AllocationRequest(
+            workload_type="llm_text",
+            owner_id="agent-a",
+            bundle_id="phi4-local",
+        )
+    )
+    service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={"allocation_id": allocation["allocation_id"]},
+        )
+    )
+    service.release_allocation(allocation["allocation_id"])
+    event = service.list_wallet_allocation_events()[0]
+
+    original_base = event["base_usage_total_q"]
+    assert original_base > 0
+
+    # Hold then apply multiple corrections
+    service.hold_wallet_allocation_event(
+        event["event_id"], reason="correction needed"
+    )
+    service.apply_wallet_allocation_correction(
+        event["event_id"],
+        reason="first correction",
+        effective_usage_total_q=5.0,
+    )
+    service.apply_wallet_allocation_correction(
+        event["event_id"],
+        reason="second correction",
+        effective_usage_total_q=3.0,
+    )
+
+    after_corrections = service.list_wallet_allocation_events()[0]
+    assert after_corrections["base_usage_total_q"] == original_base
+    assert after_corrections["effective_usage_total_q"] == 3.0
+    assert after_corrections["correction_count"] == 2

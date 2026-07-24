@@ -244,6 +244,8 @@ class HypervisorService:
         self._next_wallet_allocation_sequence = 1
         self._wallet_allocation_correction_events: list[dict] = []
         self._next_wallet_allocation_correction_sequence = 1
+        # Track allocation_ids that must be auto-held due to strict-accounting blocks
+        self._wallet_strict_held_allocations: set[str] = set()
         self._ledger_operation_service = LedgerOperationService()
         self._mvp_session_economics_service = MvpSessionEconomicsService(self)
         self._wallet_economics_service = WalletEconomicsService(self)
@@ -1974,6 +1976,11 @@ class HypervisorService:
                     owner_id=str(owner_id),
                     reason="missing_provider_usage",
                 )
+                # Auto-hold the allocation for strict-accounting blocked tasks
+                if allocation_id is not None:
+                    self._wallet_strict_held_allocations.add(
+                        str(allocation_id)
+                    )
             return
         try:
             measurement = WalletUsageMeasurement(**usage)
@@ -1991,6 +1998,12 @@ class HypervisorService:
                     usage_contract.get("missing_usage_behavior") == "strict_accounting"
                 ),
             )
+            # Auto-hold the allocation for strict-accounting blocked tasks
+            if (
+                usage_contract.get("missing_usage_behavior") == "strict_accounting"
+                and allocation_id is not None
+            ):
+                self._wallet_strict_held_allocations.add(str(allocation_id))
             return
         usage_quote = self.quote_wallet_usage(
             input_tokens=measurement.input_tokens,
