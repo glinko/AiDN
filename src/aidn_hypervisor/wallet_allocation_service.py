@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from aidn_hypervisor.wallet_models import (
     WalletAllocationActivationEvent,
+    WalletAllocationCorrectionEvent,
     WalletAllocationDisputeEvent,
     WalletAllocationEvent,
 )
@@ -283,6 +284,10 @@ class WalletAllocationService:
         ]
         closed_immediately = self._host.wallet_allocation_grace_period_seconds == 0
         current_time = self._host._wallet_allocation_now()
+        usage_total = sum(
+            float(item["quote"]["charges"]["total_q"])
+            for item in matching_usage_events
+        )
         event = WalletAllocationEvent(
             sequence_id=self._host._next_wallet_allocation_sequence,
             event_id=str(uuid4()),
@@ -295,6 +300,10 @@ class WalletAllocationService:
             status=status,
             occurred_at=datetime.now(UTC).isoformat(),
             settlement_status="closed" if closed_immediately else "grace",
+            hold_reason=None,
+            hold_source=None,
+            hold_started_at=None,
+            hold_released_at=None,
             grace_expires_at=(
                 None
                 if closed_immediately
@@ -320,10 +329,9 @@ class WalletAllocationService:
             dispute_resolution=None,
             dispute_resolution_reason=None,
             usage_event_count=len(matching_usage_events),
-            usage_total_q=sum(
-                float(item["quote"]["charges"]["total_q"])
-                for item in matching_usage_events
-            ),
+            base_usage_total_q=usage_total,
+            effective_usage_total_q=usage_total,
+            correction_count=0,
         )
         payload = event.model_dump(mode="json")
         self._host._wallet_allocation_events.append(payload)
@@ -338,7 +346,7 @@ class WalletAllocationService:
             workload_type=str(payload["workload_type"]),
             status=str(payload["status"]),
             settlement_status=str(payload["settlement_status"]),
-            amount_q=float(payload["usage_total_q"]),
+            amount_q=float(payload["effective_usage_total_q"]),
         )
         self._host.record_event(
             event_type="wallet.allocation_finalized",
@@ -353,7 +361,8 @@ class WalletAllocationService:
                 "status": payload["status"],
                 "settlement_status": payload["settlement_status"],
                 "usage_event_count": payload["usage_event_count"],
-                "usage_total_q": payload["usage_total_q"],
+                "base_usage_total_q": payload["base_usage_total_q"],
+                "effective_usage_total_q": payload["effective_usage_total_q"],
             },
         )
         return payload
@@ -433,8 +442,13 @@ class WalletAllocationService:
             if event["usage_event_count"] != next_usage_event_count:
                 event["usage_event_count"] = next_usage_event_count
                 changed = True
-            if event["usage_total_q"] != next_usage_total_q:
-                event["usage_total_q"] = next_usage_total_q
+            if event.get("base_usage_total_q") is not None and event.get("base_usage_total_q") != next_usage_total_q:
+                event["base_usage_total_q"] = next_usage_total_q
+                changed = True
+            # Do not recalculate effective_usage_total_q if corrections were applied
+            # (corrections override the raw usage total)
+            if event.get("correction_count", 0) == 0 and event.get("effective_usage_total_q") is not None and event.get("effective_usage_total_q") != next_usage_total_q:
+                event["effective_usage_total_q"] = next_usage_total_q
                 changed = True
 
             if dispute_open:
@@ -457,6 +471,179 @@ class WalletAllocationService:
 
         if changed:
             self._host._persist_state()
+
+    def hold_wallet_allocation_event(self, event_id: str, *, reason: str) -> dict:
+        self.reconcile_wallet_allocation_events()
+        event = self._find_allocation_event(event_id)
+        if event.get("settlement_status") == "hold":
+            raise ValueError(f"Wallet allocation event is already held: {event_id}")
+        if event.get("dispute_status") == "open":
+            raise ValueError(f"Wallet allocation event is disputed: {event_id}")
+
+        current_time = self._host._wallet_allocation_now()
+        timestamp = datetime.fromtimestamp(current_time, UTC).isoformat()
+        event["settlement_status"] = "hold"
+        event["hold_reason"] = reason
+        event["hold_source"] = "manual"
+        event["hold_started_at"] = timestamp
+        self._host.record_event(
+            event_type="wallet.allocation_held",
+            message="wallet allocation settlement held",
+            bundle_id=event["bundle_id"],
+            details={
+                "event_id": event["event_id"],
+                "sequence_id": event["sequence_id"],
+                "allocation_id": event["allocation_id"],
+                "owner_id": event["owner_id"],
+                "hold_reason": reason,
+                "settlement_status": "hold",
+            },
+        )
+        self._host._persist_state()
+        return dict(event)
+
+    def release_wallet_allocation_event(
+        self,
+        event_id: str,
+        *,
+        reason: str,
+        target_status: str = "closed",
+    ) -> dict:
+        self.reconcile_wallet_allocation_events()
+        event = self._find_allocation_event(event_id)
+        if event.get("settlement_status") != "hold":
+            raise ValueError(f"Wallet allocation event is not held: {event_id}")
+
+        current_time = self._host._wallet_allocation_now()
+        timestamp = datetime.fromtimestamp(current_time, UTC).isoformat()
+        event["settlement_status"] = target_status
+        event["hold_released_at"] = timestamp
+        event["hold_reason"] = None
+        event["hold_source"] = None
+        event["hold_started_at"] = None
+
+        if target_status == "closed":
+            event["closed_at"] = timestamp
+            event["grace_expires_at"] = None
+        else:
+            event["grace_expires_at"] = datetime.fromtimestamp(
+                current_time + self._host.wallet_allocation_grace_period_seconds, UTC
+            ).isoformat()
+            event["closed_at"] = None
+
+        self._host.record_event(
+            event_type="wallet.allocation_released",
+            message="wallet allocation settlement released",
+            bundle_id=event["bundle_id"],
+            details={
+                "event_id": event["event_id"],
+                "sequence_id": event["sequence_id"],
+                "allocation_id": event["allocation_id"],
+                "owner_id": event["owner_id"],
+                "release_reason": reason,
+                "target_status": target_status,
+                "settlement_status": target_status,
+            },
+        )
+        self._host._persist_state()
+        return dict(event)
+
+    def apply_wallet_allocation_correction(
+        self,
+        event_id: str,
+        *,
+        reason: str,
+        effective_usage_total_q: float,
+        annotations: dict | None = None,
+        resolution_note: str | None = None,
+    ) -> dict:
+        self.reconcile_wallet_allocation_events()
+        event = self._find_allocation_event(event_id)
+
+        current_time = self._host._wallet_allocation_now()
+        timestamp = datetime.fromtimestamp(current_time, UTC).isoformat()
+        base = float(event.get("base_usage_total_q", 0.0))
+        effective_before = float(event.get("effective_usage_total_q", 0.0))
+        delta_q = effective_usage_total_q - effective_before
+
+        event["effective_usage_total_q"] = effective_usage_total_q
+        event["correction_count"] = int(event.get("correction_count", 0)) + 1
+
+        correction_id = str(uuid4())
+        correction_payload = WalletAllocationCorrectionEvent(
+            sequence_id=self._host._next_wallet_allocation_correction_sequence,
+            event_id=str(uuid4()),
+            correction_id=correction_id,
+            allocation_event_id=event["event_id"],
+            allocation_id=event["allocation_id"],
+            owner_id=event["owner_id"],
+            node_id=self._host.node_id,
+            operator_id=self._host.operator_id,
+            bundle_id=event["bundle_id"],
+            workload_type=event["workload_type"],
+            occurred_at=timestamp,
+            created_by=self._host.operator_id,
+            reason=reason,
+            base_usage_total_q=base,
+            effective_usage_total_q_before=effective_before,
+            effective_usage_total_q_after=effective_usage_total_q,
+            delta_q=delta_q,
+            annotations=annotations or {},
+            resolution_note=resolution_note,
+        ).model_dump(mode="json")
+        self._host._wallet_allocation_correction_events.append(correction_payload)
+        self._host._next_wallet_allocation_correction_sequence += 1
+        self._host._append_wallet_ledger_event(
+            stream="allocation",
+            source_event=correction_payload,
+            event_type="corrected",
+            owner_id=str(correction_payload["owner_id"]),
+            allocation_id=str(correction_payload["allocation_id"]),
+            bundle_id=str(correction_payload["bundle_id"]),
+            workload_type=str(correction_payload["workload_type"]),
+            amount_q=float(correction_payload["effective_usage_total_q_after"]),
+        )
+        self._host.record_event(
+            event_type="wallet.allocation_corrected",
+            message="wallet allocation settlement corrected",
+            bundle_id=event["bundle_id"],
+            details={
+                "event_id": event["event_id"],
+                "sequence_id": event["sequence_id"],
+                "correction_id": correction_id,
+                "allocation_id": event["allocation_id"],
+                "owner_id": event["owner_id"],
+                "reason": reason,
+                "base_usage_total_q": base,
+                "effective_usage_total_q_before": effective_before,
+                "effective_usage_total_q_after": effective_usage_total_q,
+                "delta_q": delta_q,
+                "correction_count": event["correction_count"],
+            },
+        )
+        self._host._persist_state()
+        return dict(event)
+
+    def list_wallet_allocation_correction_events(
+        self, *, limit: int | None = None
+    ) -> list[dict]:
+        return self._list_tail(
+            self._host._wallet_allocation_correction_events, limit=limit
+        )
+
+    def export_wallet_allocation_correction_events(
+        self,
+        *,
+        after_event_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return self._host._export_wallet_event_stream(
+            self._host._wallet_allocation_correction_events,
+            after_event_id=after_event_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
 
     def _find_allocation_event(self, event_id: str) -> dict:
         event = next(

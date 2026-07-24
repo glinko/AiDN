@@ -57,6 +57,46 @@ class WalletAllocationDisputeResolveRequest(BaseModel):
     reason: str | None = Field(default=None, min_length=1)
 
 
+class WalletAllocationHoldRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class WalletAllocationReleaseRequest(BaseModel):
+    reason: str = Field(min_length=1)
+    target_status: Literal["grace", "closed"]
+
+
+class WalletAllocationCorrectionRequest(BaseModel):
+    reason: str = Field(min_length=1)
+    effective_usage_total_q: float = Field(ge=0.0)
+    annotations: dict = Field(default_factory=dict)
+    resolution_note: str | None = None
+    release_after_apply: bool = False
+    release_target_status: Literal["grace", "closed"] | None = None
+
+
+class WalletAllocationCorrectionEvent(BaseModel):
+    sequence_id: int = Field(ge=1)
+    event_id: str
+    correction_id: str
+    allocation_event_id: str
+    allocation_id: str
+    owner_id: str
+    node_id: str
+    operator_id: str
+    bundle_id: str
+    workload_type: str
+    occurred_at: str
+    created_by: str
+    reason: str
+    base_usage_total_q: float = Field(ge=0.0)
+    effective_usage_total_q_before: float = Field(ge=0.0)
+    effective_usage_total_q_after: float = Field(ge=0.0)
+    delta_q: float
+    annotations: dict = Field(default_factory=dict)
+    resolution_note: str | None = None
+
+
 class WalletUsageEvent(BaseModel):
     sequence_id: int = Field(ge=1)
     event_id: str
@@ -119,8 +159,12 @@ class WalletAllocationEvent(BaseModel):
     bundle_id: str
     workload_type: str
     status: Literal["released", "expired"]
-    settlement_status: Literal["grace", "closed"]
+    settlement_status: Literal["grace", "hold", "closed"]
     occurred_at: str
+    hold_reason: str | None = None
+    hold_source: Literal["manual", "dispute", "strict_accounting", "system"] | None = None
+    hold_started_at: str | None = None
+    hold_released_at: str | None = None
     grace_expires_at: str | None = None
     closed_at: str | None = None
     reopened_at: str | None = None
@@ -135,7 +179,9 @@ class WalletAllocationEvent(BaseModel):
     dispute_resolution: Literal["accepted", "rejected", "withdrawn"] | None = None
     dispute_resolution_reason: str | None = None
     usage_event_count: int = Field(ge=0)
-    usage_total_q: float = Field(ge=0.0)
+    base_usage_total_q: float = Field(ge=0.0)
+    effective_usage_total_q: float = Field(ge=0.0)
+    correction_count: int = Field(default=0, ge=0)
 
 
 class WalletSessionEvent(BaseModel):

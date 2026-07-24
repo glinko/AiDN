@@ -242,6 +242,8 @@ class HypervisorService:
         self._next_wallet_allocation_dispute_sequence = 1
         self._wallet_allocation_events: list[dict] = []
         self._next_wallet_allocation_sequence = 1
+        self._wallet_allocation_correction_events: list[dict] = []
+        self._next_wallet_allocation_correction_sequence = 1
         self._ledger_operation_service = LedgerOperationService()
         self._mvp_session_economics_service = MvpSessionEconomicsService(self)
         self._wallet_economics_service = WalletEconomicsService(self)
@@ -837,6 +839,62 @@ class HypervisorService:
             event_id,
             resolution=resolution,
             reason=reason,
+        )
+
+    def hold_wallet_allocation_event(self, event_id: str, *, reason: str) -> dict:
+        return self._wallet_application_facade().hold_wallet_allocation_event(
+            event_id,
+            reason=reason,
+        )
+
+    def release_wallet_allocation_event(
+        self,
+        event_id: str,
+        *,
+        reason: str,
+        target_status: str = "closed",
+    ) -> dict:
+        return self._wallet_application_facade().release_wallet_allocation_event(
+            event_id,
+            reason=reason,
+            target_status=target_status,
+        )
+
+    def apply_wallet_allocation_correction(
+        self,
+        event_id: str,
+        *,
+        reason: str,
+        effective_usage_total_q: float,
+        annotations: dict | None = None,
+        resolution_note: str | None = None,
+    ) -> dict:
+        return self._wallet_application_facade().apply_wallet_allocation_correction(
+            event_id,
+            reason=reason,
+            effective_usage_total_q=effective_usage_total_q,
+            annotations=annotations,
+            resolution_note=resolution_note,
+        )
+
+    def list_wallet_allocation_correction_events(
+        self, *, limit: int | None = None
+    ) -> list[dict]:
+        return self._wallet_application_facade().list_wallet_allocation_correction_events(
+            limit=limit
+        )
+
+    def export_wallet_allocation_correction_events(
+        self,
+        *,
+        after_event_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return self._wallet_application_facade().export_wallet_allocation_correction_events(
+            after_event_id=after_event_id,
+            after_sequence=after_sequence,
+            limit=limit,
         )
 
     def _export_wallet_event_stream(

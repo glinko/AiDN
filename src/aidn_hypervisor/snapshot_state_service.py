@@ -27,6 +27,7 @@ from aidn_hypervisor.state import (
     RuntimeSnapshot,
     TaskSnapshot,
     WalletAllocationActivationSnapshot,
+    WalletAllocationCorrectionSnapshot,
     WalletAllocationDisputeSnapshot,
     WalletAllocationSnapshot,
     WalletLedgerSnapshot,
@@ -250,6 +251,10 @@ class SnapshotStateService:
                 WalletAllocationDisputeSnapshot(**event)
                 for event in self._host._wallet_allocation_dispute_events
             ],
+            wallet_allocation_correction_events=[
+                WalletAllocationCorrectionSnapshot(**event)
+                for event in self._host._wallet_allocation_correction_events
+            ],
             wallet_allocation_events=[
                 WalletAllocationSnapshot(**event)
                 for event in self._host._wallet_allocation_events
@@ -380,6 +385,7 @@ class SnapshotStateService:
         self._host._epoch_reward_budgets = []
         self._host._wallet_allocation_activation_events = []
         self._host._wallet_allocation_dispute_events = []
+        self._host._wallet_allocation_correction_events = []
         self._host._wallet_allocation_events = []
         self._host._ledger_operation_service.restore(
             operations=[
@@ -703,6 +709,20 @@ class SnapshotStateService:
                 (
                     event["sequence_id"]
                     for event in self._host._wallet_allocation_dispute_events
+                ),
+                default=0,
+            )
+            + 1
+        )
+        self._host._wallet_allocation_correction_events = [
+            event.model_dump(mode="json")
+            for event in snapshot.wallet_allocation_correction_events
+        ]
+        self._host._next_wallet_allocation_correction_sequence = (
+            max(
+                (
+                    event["sequence_id"]
+                    for event in self._host._wallet_allocation_correction_events
                 ),
                 default=0,
             )

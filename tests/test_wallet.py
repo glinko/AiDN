@@ -1237,7 +1237,8 @@ def test_service_records_wallet_allocation_finalization_on_release() -> None:
     assert finalization_events[0]["grace_expires_at"] is not None
     assert finalization_events[0]["closed_at"] is None
     assert finalization_events[0]["usage_event_count"] == 1
-    assert finalization_events[0]["usage_total_q"] == 16.0
+    assert finalization_events[0]["base_usage_total_q"] == 16.0
+    assert finalization_events[0]["effective_usage_total_q"] == 16.0
 
 
 def test_service_records_wallet_allocation_finalization_on_expiry() -> None:
@@ -1277,7 +1278,8 @@ def test_service_records_wallet_allocation_finalization_on_expiry() -> None:
     assert finalization_events[0]["status"] == "expired"
     assert finalization_events[0]["settlement_status"] == "grace"
     assert finalization_events[0]["usage_event_count"] == 1
-    assert finalization_events[0]["usage_total_q"] == 16.0
+    assert finalization_events[0]["base_usage_total_q"] == 16.0
+    assert finalization_events[0]["effective_usage_total_q"] == 16.0
 
 
 def test_service_closes_wallet_allocation_finalization_after_grace_period(
@@ -2038,3 +2040,256 @@ def test_service_builds_provider_metered_accounting_contract_for_paid_endpoint()
         "output_tokens",
     }
     assert any(item["mode"] == "provider_metered" for item in contract["billable_units"])
+
+
+# ---------------------------------------------------------------------------
+# A.1 — Hold / Release / Correction model tests
+# ---------------------------------------------------------------------------
+
+def test_wallet_allocation_hold_request_validation() -> None:
+    from aidn_hypervisor.wallet_models import WalletAllocationHoldRequest
+
+    req = WalletAllocationHoldRequest(reason="manual review")
+    assert req.reason == "manual review"
+
+    import pytest
+
+    with pytest.raises(Exception):
+        WalletAllocationHoldRequest(reason="")
+
+
+def test_wallet_allocation_release_request_validation() -> None:
+    from aidn_hypervisor.wallet_models import WalletAllocationReleaseRequest
+
+    req = WalletAllocationReleaseRequest(reason="review done", target_status="closed")
+    assert req.reason == "review done"
+    assert req.target_status == "closed"
+
+    req2 = WalletAllocationReleaseRequest(reason="reopened", target_status="grace")
+    assert req2.target_status == "grace"
+
+
+def test_wallet_allocation_correction_request_validation() -> None:
+    import pytest
+
+    from aidn_hypervisor.wallet_models import WalletAllocationCorrectionRequest
+
+    req = WalletAllocationCorrectionRequest(
+        reason="billing correction",
+        effective_usage_total_q=0.0,
+    )
+    assert req.reason == "billing correction"
+    assert req.effective_usage_total_q == 0.0
+    assert req.annotations == {}
+    assert req.resolution_note is None
+    assert req.release_after_apply is False
+
+    with pytest.raises(Exception):
+        WalletAllocationCorrectionRequest(reason="", effective_usage_total_q=0.0)
+
+    with pytest.raises(Exception):
+        WalletAllocationCorrectionRequest(reason="x", effective_usage_total_q=-1.0)
+
+
+def test_wallet_allocation_correction_event_serialization() -> None:
+    from aidn_hypervisor.wallet_models import WalletAllocationCorrectionEvent
+
+    event = WalletAllocationCorrectionEvent(
+        sequence_id=1,
+        event_id="evt-1",
+        correction_id="cor-1",
+        allocation_event_id="alloc-evt-1",
+        allocation_id="alloc-1",
+        owner_id="agent-a",
+        node_id="node-a",
+        operator_id="operator-a",
+        bundle_id="phi4-local",
+        workload_type="llm_text",
+        occurred_at="2026-07-24T10:00:00+00:00",
+        created_by="operator-a",
+        reason="billing correction",
+        base_usage_total_q=16.0,
+        effective_usage_total_q_before=16.0,
+        effective_usage_total_q_after=0.0,
+        delta_q=-16.0,
+        annotations={"reviewer": "ops"},
+        resolution_note="approved",
+    )
+
+    data = event.model_dump(mode="json")
+    assert data["sequence_id"] == 1
+    assert data["correction_id"] == "cor-1"
+    assert data["effective_usage_total_q_before"] == 16.0
+    assert data["effective_usage_total_q_after"] == 0.0
+    assert data["delta_q"] == -16.0
+    assert data["annotations"] == {"reviewer": "ops"}
+    assert data["resolution_note"] == "approved"
+
+
+def test_wallet_allocation_event_new_fields_defaults() -> None:
+    from aidn_hypervisor.wallet_models import WalletAllocationEvent
+
+    event = WalletAllocationEvent(
+        sequence_id=1,
+        event_id="evt-1",
+        allocation_id="alloc-1",
+        owner_id="agent-a",
+        node_id="node-a",
+        operator_id="operator-a",
+        bundle_id="phi4-local",
+        workload_type="llm_text",
+        status="released",
+        settlement_status="grace",
+        occurred_at="2026-07-24T10:00:00+00:00",
+        usage_event_count=1,
+        base_usage_total_q=16.0,
+        effective_usage_total_q=16.0,
+    )
+
+    assert event.hold_reason is None
+    assert event.hold_source is None
+    assert event.hold_started_at is None
+    assert event.hold_released_at is None
+    assert event.correction_count == 0
+    assert event.base_usage_total_q == 16.0
+    assert event.effective_usage_total_q == 16.0
+
+
+def test_wallet_allocation_event_base_equals_effective_on_creation() -> None:
+    from aidn_hypervisor.wallet_models import WalletAllocationEvent
+
+    event = WalletAllocationEvent(
+        sequence_id=1,
+        event_id="evt-1",
+        allocation_id="alloc-1",
+        owner_id="agent-a",
+        node_id="node-a",
+        operator_id="operator-a",
+        bundle_id="phi4-local",
+        workload_type="llm_text",
+        status="released",
+        settlement_status="grace",
+        occurred_at="2026-07-24T10:00:00+00:00",
+        usage_event_count=1,
+        base_usage_total_q=16.0,
+        effective_usage_total_q=16.0,
+    )
+
+    assert event.base_usage_total_q == event.effective_usage_total_q
+
+    # Simulate correction: effective changes, base stays the same
+    event.effective_usage_total_q = 0.0
+    event.correction_count = 1
+    assert event.base_usage_total_q == 16.0
+    assert event.effective_usage_total_q == 0.0
+    assert event.correction_count == 1
+
+
+def test_service_hold_release_and_correction_flow_updates_effective_total(
+    monkeypatch,
+) -> None:
+    current_time = [1_781_827_800.0]
+    monkeypatch.setattr("aidn_hypervisor.service.time.time", lambda: current_time[0])
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={
+                "plugin_id": "fake-usage-metering",
+                "endpoint": "http://127.0.0.1:8080",
+            }
+        ),
+        wallet_allocation_grace_period_seconds=30,
+    )
+    allocation = service.create_allocation(
+        AllocationRequest(
+            workload_type="llm_text",
+            owner_id="agent-a",
+            bundle_id="phi4-local",
+        )
+    )
+    service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={"allocation_id": allocation["allocation_id"]},
+        )
+    )
+    service.release_allocation(allocation["allocation_id"])
+    event = service.list_wallet_allocation_events()[0]
+
+    held = service.hold_wallet_allocation_event(event["event_id"], reason="manual review")
+    corrected = service.apply_wallet_allocation_correction(
+        held["event_id"],
+        reason="remove duplicated settlement charge",
+        effective_usage_total_q=0.0,
+        annotations={"reviewer": "ops"},
+    )
+    released = service.release_wallet_allocation_event(
+        held["event_id"],
+        reason="review complete",
+        target_status="closed",
+    )
+
+    assert held["settlement_status"] == "hold"
+    assert held["hold_reason"] == "manual review"
+    assert corrected["effective_usage_total_q"] == 0.0
+    assert corrected["base_usage_total_q"] > corrected["effective_usage_total_q"]
+    assert corrected["correction_count"] == 1
+    assert released["settlement_status"] == "closed"
+    assert released["hold_released_at"] is not None
+
+
+def test_service_snapshot_and_restore_preserves_wallet_settlement_hold_and_corrections(
+    monkeypatch,
+) -> None:
+    current_time = [1_781_827_800.0]
+    monkeypatch.setattr("aidn_hypervisor.service.time.time", lambda: current_time[0])
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={
+                "plugin_id": "fake-usage-metering",
+                "endpoint": "http://127.0.0.1:8080",
+            }
+        ),
+        wallet_allocation_grace_period_seconds=30,
+    )
+    allocation = service.create_allocation(
+        AllocationRequest(
+            workload_type="llm_text",
+            owner_id="agent-a",
+            bundle_id="phi4-local",
+        )
+    )
+    service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={"allocation_id": allocation["allocation_id"]},
+        )
+    )
+    service.release_allocation(allocation["allocation_id"])
+    event = service.list_wallet_allocation_events()[0]
+    held = service.hold_wallet_allocation_event(
+        event["event_id"], reason="manual review"
+    )
+    service.apply_wallet_allocation_correction(
+        held["event_id"],
+        reason="billing correction",
+        effective_usage_total_q=0.0,
+        annotations={"source": "ops"},
+    )
+
+    snapshot = service.snapshot_state()
+    restored = _service()
+    restored.restore_state(snapshot)
+
+    restored_event = restored.list_wallet_allocation_events()[0]
+    restored_correction = restored.list_wallet_allocation_correction_events()[0]
+
+    assert restored_event["settlement_status"] == "hold"
+    assert restored_event["hold_reason"] == "manual review"
+    assert restored_event["effective_usage_total_q"] == 0.0
+    assert restored_event["correction_count"] == 1
+    assert restored_correction["reason"] == "billing correction"
+    assert restored_correction["effective_usage_total_q_after"] == 0.0

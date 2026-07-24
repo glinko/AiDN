@@ -182,6 +182,10 @@ class WalletAllocationSnapshot(BaseModel):
     status: str
     settlement_status: str
     occurred_at: str
+    hold_reason: str | None = None
+    hold_source: str | None = None
+    hold_started_at: str | None = None
+    hold_released_at: str | None = None
     grace_expires_at: str | None = None
     closed_at: str | None = None
     reopened_at: str | None = None
@@ -196,7 +200,9 @@ class WalletAllocationSnapshot(BaseModel):
     dispute_resolution: str | None = None
     dispute_resolution_reason: str | None = None
     usage_event_count: int = Field(ge=0)
-    usage_total_q: float = Field(ge=0.0)
+    base_usage_total_q: float = Field(ge=0.0)
+    effective_usage_total_q: float = Field(ge=0.0)
+    correction_count: int = Field(default=0, ge=0)
 
 
 class WalletAllocationActivationSnapshot(BaseModel):
@@ -232,6 +238,28 @@ class WalletAllocationDisputeSnapshot(BaseModel):
     opened_by: str | None = None
     resolution: str | None = None
     resolution_reason: str | None = None
+
+
+class WalletAllocationCorrectionSnapshot(BaseModel):
+    sequence_id: int = Field(ge=1)
+    event_id: str
+    correction_id: str
+    allocation_event_id: str
+    allocation_id: str
+    owner_id: str
+    node_id: str
+    operator_id: str
+    bundle_id: str
+    workload_type: str
+    occurred_at: str
+    created_by: str
+    reason: str
+    base_usage_total_q: float = Field(ge=0.0)
+    effective_usage_total_q_before: float = Field(ge=0.0)
+    effective_usage_total_q_after: float = Field(ge=0.0)
+    delta_q: float
+    annotations: dict = Field(default_factory=dict)
+    resolution_note: str | None = None
 
 
 class WalletSessionSnapshot(BaseModel):
@@ -448,6 +476,9 @@ class HypervisorStateSnapshot(BaseModel):
         default_factory=list
     )
     wallet_allocation_dispute_events: list[WalletAllocationDisputeSnapshot] = Field(
+        default_factory=list
+    )
+    wallet_allocation_correction_events: list[WalletAllocationCorrectionSnapshot] = Field(
         default_factory=list
     )
     recyclable_removals: list[RecyclableRemoval] = Field(default_factory=list)
