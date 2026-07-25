@@ -1,4 +1,8 @@
-from aidn_hypervisor.sessions.models import EndpointSession, LockedDeposit, ProxySessionBinding
+from aidn_hypervisor.sessions.models import (
+    EndpointSession,
+    LockedDeposit,
+    ProxySessionBinding,
+)
 from aidn_hypervisor.state import (
     EndpointSessionSnapshot,
     LockedDepositSnapshot,

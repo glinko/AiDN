@@ -11,11 +11,11 @@ from aidn_hypervisor.providers.models import (
     RuntimeInstance,
     plugin_permission_hash,
 )
-from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.providers.package_store import (
     FilesystemPluginPackageStore,
     PluginPackageStore,
 )
+from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 __all__ = [
     "ProviderPluginManifest",

@@ -1,9 +1,7 @@
 import hashlib
 import json
-from copy import deepcopy
-from datetime import datetime, timedelta, timezone
 import time
-from uuid import uuid4
+from datetime import UTC, datetime
 
 from pydantic import ValidationError
 
@@ -13,86 +11,65 @@ from aidn_hypervisor.accounting.models import (
     SessionAccountingCheckpoint,
     UsageReport,
 )
-from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, TaskRequest
 from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
 from aidn_hypervisor.allocation_catalog_service import AllocationCatalogService
-from aidn_hypervisor.bundle_runtime_policy_service import BundleRuntimePolicyService
-from aidn_hypervisor.economics.models import (
-    EpochRewardBudget,
-    EpochRewardPoolShares,
-    FaucetClaim,
-    RecyclableRemoval,
-)
-from aidn_hypervisor.endpoints.state import (
-    EndpointConfigurationSnapshotRecord,
-    EndpointManifestSnapshot,
-)
-from aidn_hypervisor.ledger.service import LedgerOperationService
-from aidn_hypervisor.mvp_session_economics_service import MvpSessionEconomicsService
-from aidn_hypervisor.network_projection_service import NetworkProjectionService
 from aidn_hypervisor.allocation_lifecycle_service import AllocationLifecycleService
-from aidn_hypervisor.model_install_service import ModelInstallService
+from aidn_hypervisor.bundle_runtime_policy_service import BundleRuntimePolicyService
+from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, TaskRequest
+from aidn_hypervisor.economics.models import (
+    EpochRewardPoolShares,
+)
 from aidn_hypervisor.event_projection_service import EventProjectionService
 from aidn_hypervisor.hypervisor_integration_service import (
     HypervisorIntegrationService,
 )
+from aidn_hypervisor.ledger.service import LedgerOperationService
+from aidn_hypervisor.model_install_service import ModelInstallService
+from aidn_hypervisor.mvp_session_economics_service import MvpSessionEconomicsService
+from aidn_hypervisor.network_projection_service import NetworkProjectionService
 from aidn_hypervisor.operator_application_service import OperatorApplicationService
 from aidn_hypervisor.operator_read_models import OperatorReadModelService
 from aidn_hypervisor.process_manager import RuntimeHandle
+from aidn_hypervisor.provider_installation_service import ProviderInstallationService
 from aidn_hypervisor.provider_inventory_application_service import (
     ProviderInventoryApplicationService,
 )
-from aidn_hypervisor.provider_installation_service import ProviderInstallationService
-from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.package_store import PluginPackageStore
+from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.queue import InMemoryTaskQueue, QueuedTask
 from aidn_hypervisor.registry_models import (
-    RegistryNodeAdvertisement,
     RegistryPricing,
     RegistryRating,
 )
-from aidn_hypervisor.remote_transport_service import RemoteTransportService
 from aidn_hypervisor.registry_service import RegistryService
+from aidn_hypervisor.remote_transport_service import RemoteTransportService
 from aidn_hypervisor.runtime_execution_service import RuntimeExecutionService
-from aidn_hypervisor.snapshot_state_service import SnapshotStateService
+from aidn_hypervisor.runtime_protocol import RuntimeProtocolBoundaryService
 from aidn_hypervisor.runtime_protocol.models import RuntimeRequestRecord
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
 from aidn_hypervisor.scheduler import Scheduler
-from aidn_hypervisor.settlement_application_service import SettlementApplicationService
 from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.settlement.models import (
     SessionFundingAccount,
 )
+from aidn_hypervisor.settlement_application_service import SettlementApplicationService
+from aidn_hypervisor.snapshot_state_service import SnapshotStateService
 from aidn_hypervisor.state import (
-    AllocationSnapshot,
-    BundleStateSnapshot,
-    EndpointSessionSnapshot,
     HypervisorStateSnapshot,
     JournalEvent,
-    LockedDepositSnapshot,
-    OperatorOnboardingSnapshot,
-    ModelInstallSnapshot,
-    OwnerWalletSnapshot,
-    ProxySessionBindingSnapshot,
     RuntimeSnapshot,
     TaskSnapshot,
-    WalletAllocationActivationSnapshot,
-    WalletAllocationDisputeSnapshot,
-    WalletAllocationSnapshot,
-    WalletLedgerSnapshot,
-    WalletSessionSnapshot,
-    WalletUsageSnapshot,
 )
-from aidn_hypervisor.wallet_economics_service import WalletEconomicsService
+from aidn_hypervisor.task_execution_service import TaskExecutionService
 from aidn_hypervisor.wallet_allocation_service import WalletAllocationService
 from aidn_hypervisor.wallet_application_service import WalletApplicationService
-from aidn_hypervisor.task_execution_service import TaskExecutionService
-
-Q_ATOMS_PER_Q = 1_000_000
+from aidn_hypervisor.wallet_economics_service import WalletEconomicsService
 from aidn_hypervisor.wallet_models import (
     WalletUsageMeasurement,
 )
+
+Q_ATOMS_PER_Q = 1_000_000
 
 _CANCELLABLE_TASK_STATUSES = {"queued", "admitted", "starting"}
 _ACTIVE_EXECUTION_STATUSES = {"admitted", "starting", "running"}
@@ -219,7 +196,7 @@ class HypervisorService:
         self.rating = rating or {
             "score": 0.0,
             "tier": "unrated",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
         self.heartbeat_ttl_seconds = heartbeat_ttl_seconds
         self.wallet_usage_retention_limit = (
@@ -290,6 +267,7 @@ class HypervisorService:
         self._settlement_application_service = SettlementApplicationService(self)
         self.operator_read_models = OperatorReadModelService(self)
         self._events: list[JournalEvent] = []
+        self._runtime_boundary = RuntimeProtocolBoundaryService(self)
 
     @property
     def pricing(self) -> dict:
@@ -339,7 +317,7 @@ class HypervisorService:
         return self._task_results.get(task_id)
 
     def task_recovery_reason(self, task_id: str) -> str | None:
-        return self._task_recovery_reasons.get(task_id)
+        return self._runtime_boundary.task_recovery_reason(task_id)
 
     def task_proxy_trace(self, task_id: str) -> dict | None:
         result = self.task_result(task_id) or {}
@@ -1141,7 +1119,7 @@ class HypervisorService:
         return self._provider_installation_facade().list_model_deployments()
 
     def list_runtime_bindings(self) -> list[dict]:
-        return self._provider_installation_facade().list_runtime_bindings()
+        return self._runtime_boundary.list_runtime_bindings()
 
     def build_provider_installation_plan(
         self,
@@ -1392,7 +1370,7 @@ class HypervisorService:
         capability_version: str,
         capability_definition_hash: str,
     ) -> dict:
-        return self._provider_inventory_application_facade().create_runtime_binding(
+        return self._runtime_boundary.create_runtime_binding(
             model_deployment_id=model_deployment_id,
             capability_id=capability_id,
             capability_version=capability_version,
@@ -1400,21 +1378,17 @@ class HypervisorService:
         )
 
     def bundle_for_runtime_binding(self, runtime_binding_id: str) -> BundleConfig:
-        return self._provider_inventory_application_facade().bundle_for_runtime_binding(
-            runtime_binding_id
-        )
+        return self._runtime_boundary.bundle_for_runtime_binding(runtime_binding_id)
 
     def bundle_hash_for_runtime_binding(self, runtime_binding_id: str) -> str:
-        return self._provider_inventory_application_facade().bundle_hash_for_runtime_binding(
-            runtime_binding_id
-        )
+        return self._runtime_boundary.bundle_hash_for_runtime_binding(runtime_binding_id)
 
     def runtime_binding_endpoint_admission(
         self,
         runtime_binding_id: str,
         endpoint_payload: dict | None = None,
     ) -> dict:
-        return self._provider_inventory_application_facade().runtime_binding_endpoint_admission(
+        return self._runtime_boundary.runtime_binding_endpoint_admission(
             runtime_binding_id,
             endpoint_payload=endpoint_payload,
         )
@@ -1440,13 +1414,13 @@ class HypervisorService:
         )
 
     def get_runtime(self, runtime_id: str) -> RuntimeHandle:
-        return self._bundle_runtime_policy_facade().get_runtime(runtime_id)
+        return self._runtime_boundary.get_runtime(runtime_id)
 
     def runtime_history(self, runtime_id: str) -> list[JournalEvent]:
-        return self._bundle_runtime_policy_facade().runtime_history(runtime_id)
+        return self._runtime_boundary.runtime_history(runtime_id)
 
     def bundle_state(self, bundle_id: str) -> dict:
-        return self._bundle_runtime_policy_facade().bundle_state(bundle_id)
+        return self._runtime_boundary._bundle_runtime_policy_facade().bundle_state(bundle_id)
 
     def record_event(
         self,
@@ -1509,34 +1483,34 @@ class HypervisorService:
         return self.queue.get(task_id)
 
     def bundle_config(self) -> list[BundleConfig]:
-        return self._bundle_runtime_policy_facade().bundle_config()
+        return self._runtime_boundary._bundle_runtime_policy_facade().bundle_config()
 
     def replace_bundle_config(self, bundles: list[BundleConfig]) -> int:
-        return self._bundle_runtime_policy_facade().replace_bundle_config(bundles)
+        return self._runtime_boundary._bundle_runtime_policy_facade().replace_bundle_config(bundles)
 
     def reload_bundle_config(self) -> int:
-        return self._bundle_runtime_policy_facade().reload_bundle_config()
+        return self._runtime_boundary._bundle_runtime_policy_facade().reload_bundle_config()
 
     def reset_bundle_cooldown(self, bundle_id: str) -> dict:
-        return self._bundle_runtime_policy_facade().reset_bundle_cooldown(bundle_id)
+        return self._runtime_boundary._bundle_runtime_policy_facade().reset_bundle_cooldown(bundle_id)
 
     def retry_bundle(self, bundle_id: str) -> dict[str, int]:
-        return self._bundle_runtime_policy_facade().retry_bundle(bundle_id)
+        return self._runtime_boundary._bundle_runtime_policy_facade().retry_bundle(bundle_id)
 
     def set_bundle_enabled(self, bundle_id: str, enabled: bool) -> dict[str, str | bool]:
-        return self._bundle_runtime_policy_facade().set_bundle_enabled(
+        return self._runtime_boundary._bundle_runtime_policy_facade().set_bundle_enabled(
             bundle_id,
             enabled,
         )
 
     def drain_runtime(self, runtime_id: str) -> dict[str, str | bool]:
-        return self._bundle_runtime_policy_facade().drain_runtime(runtime_id)
+        return self._runtime_boundary.drain_runtime(runtime_id)
 
     def force_stop_runtime(self, runtime_id: str) -> dict[str, str]:
-        return self._bundle_runtime_policy_facade().force_stop_runtime(runtime_id)
+        return self._runtime_boundary.force_stop_runtime(runtime_id)
 
     def restart_runtime(self, runtime_id: str) -> dict[str, str]:
-        return self._bundle_runtime_policy_facade().restart_runtime(runtime_id)
+        return self._runtime_boundary.restart_runtime(runtime_id)
 
     def cancel_task(self, task_id: str):
         task = self.queue.get(task_id)
@@ -1553,13 +1527,13 @@ class HypervisorService:
         return cancelled_task
 
     def start_bundle(self, bundle_id: str) -> RuntimeHandle:
-        return self._bundle_runtime_policy_facade().start_bundle(bundle_id)
+        return self._runtime_boundary._bundle_runtime_policy_facade().start_bundle(bundle_id)
 
     def stop_bundle(self, bundle_id: str) -> dict[str, str]:
-        return self._bundle_runtime_policy_facade().stop_bundle(bundle_id)
+        return self._runtime_boundary._bundle_runtime_policy_facade().stop_bundle(bundle_id)
 
     def list_runtimes(self) -> list[RuntimeHandle]:
-        return self._bundle_runtime_policy_facade().list_runtimes()
+        return self._runtime_boundary.list_runtimes()
 
     def process_pending(self) -> dict[str, int]:
         if self.resources is None or not self._has_plugins():
@@ -1570,7 +1544,7 @@ class HypervisorService:
         while True:
             progressed = False
             admission_plan = self._pending_task_plan()
-            self._record_admission_events(admission_plan)
+            self._runtime_boundary._record_admission_events(admission_plan)
             for item in admission_plan:
                 task_id = str(item["task_id"])
                 task_before = self.queue.get(task_id)
@@ -1606,13 +1580,10 @@ class HypervisorService:
         return summary
 
     def queue_diagnostics(self) -> list[dict[str, str]]:
-        return self._admission_planning_facade().queue_diagnostics()
-
-    def admission_telemetry(self) -> list[dict[str, int | str]]:
-        return self._admission_planning_facade().admission_telemetry()
+        return self._runtime_boundary._admission_planning_facade().queue_diagnostics()
 
     def _get_bundle(self, bundle_id: str) -> BundleConfig:
-        return self._bundle_runtime_policy_facade().get_bundle(bundle_id)
+        return self._runtime_boundary._bundle_runtime_policy_facade().get_bundle(bundle_id)
 
     def _get_plugin(self, plugin_id: str):
         if hasattr(self.plugins, "get"):
@@ -1624,7 +1595,7 @@ class HypervisorService:
         raise KeyError(plugin_id)
 
     def _runtime_for_bundle(self, bundle_id: str) -> RuntimeHandle | None:
-        return self._bundle_runtime_policy_facade().runtime_for_bundle(bundle_id)
+        return self._runtime_boundary._runtime_for_bundle(bundle_id)
 
     def _filtered_catalog_bundles(
         self,
@@ -1697,13 +1668,6 @@ class HypervisorService:
 
     def _select_allocation_bundle(self, request: AllocationRequest) -> BundleConfig:
         return self._allocation_catalog_facade().select_allocation_bundle(request)
-
-    def _resolve_runtime_endpoint(
-        self,
-        bundle: BundleConfig,
-        runtime: RuntimeHandle,
-    ) -> str:
-        return self._allocation_catalog_facade().resolve_runtime_endpoint(bundle, runtime)
 
     def _allocation_unavailability(
         self,
@@ -1790,10 +1754,10 @@ class HypervisorService:
         )
 
     def _bundle_inventory_status(self, bundle: BundleConfig) -> str:
-        return self._bundle_runtime_policy_facade().bundle_inventory_status(bundle)
+        return self._runtime_boundary._bundle_runtime_policy_facade().bundle_inventory_status(bundle)
 
     def _bundle_registry_status(self, bundle: BundleConfig) -> str:
-        return self._bundle_runtime_policy_facade().bundle_registry_status(bundle)
+        return self._runtime_boundary._bundle_runtime_policy_facade().bundle_registry_status(bundle)
 
     def _attempt_task(self, task_id: str) -> bool:
         return self._task_execution_facade().attempt_task(task_id)
@@ -1801,7 +1765,7 @@ class HypervisorService:
     def _reserve_runtime_residency(
         self, bundle_id: str, *, cpu: float, ram_mb: int, vram_mb: int
     ) -> None:
-        self._bundle_runtime_policy_facade().reserve_runtime_residency(
+        self._runtime_boundary._reserve_runtime_residency(
             bundle_id,
             cpu=cpu,
             ram_mb=ram_mb,
@@ -1809,13 +1773,13 @@ class HypervisorService:
         )
 
     def _release_runtime_reservation(self, bundle_id: str) -> None:
-        self._bundle_runtime_policy_facade().release_runtime_reservation(bundle_id)
+        self._runtime_boundary._release_runtime_reservation(bundle_id)
 
     def _stop_runtime_for_bundle(self, bundle: BundleConfig) -> None:
-        self._bundle_runtime_policy_facade().stop_runtime_for_bundle(bundle)
+        self._runtime_boundary._stop_runtime_for_bundle(bundle)
 
     def _runtime_reservation_id(self, bundle_id: str) -> str:
-        return self._bundle_runtime_policy_facade().runtime_reservation_id(bundle_id)
+        return self._runtime_boundary._runtime_reservation_id(bundle_id)
 
     def _circuit_breaker_policy_for(self, plugin) -> dict:
         policy = plugin.circuit_breaker_policy()
@@ -1825,10 +1789,10 @@ class HypervisorService:
         }
 
     def _current_bundle_state(self, bundle_id: str) -> dict:
-        return self._bundle_runtime_policy_facade().current_bundle_state(bundle_id)
+        return self._runtime_boundary._bundle_runtime_policy_facade().current_bundle_state(bundle_id)
 
     def _bundle_state_is_non_default(self, bundle_id: str) -> bool:
-        return self._bundle_runtime_policy_facade().bundle_state_is_non_default(
+        return self._runtime_boundary._bundle_runtime_policy_facade().bundle_state_is_non_default(
             bundle_id
         )
 
@@ -1851,7 +1815,7 @@ class HypervisorService:
         drain_mode: bool,
         drain_reason: str | None,
     ) -> dict:
-        return self._bundle_runtime_policy_facade().set_bundle_state(
+        return self._runtime_boundary._bundle_runtime_policy_facade().set_bundle_state(
             bundle_id,
             failure_streak=failure_streak,
             cooldown_until=cooldown_until,
@@ -1868,7 +1832,7 @@ class HypervisorService:
         runtime: RuntimeHandle | None,
         reason: str,
     ) -> None:
-        self._bundle_runtime_policy_facade().register_bundle_failure(
+        self._runtime_boundary._bundle_runtime_policy_facade().register_bundle_failure(
             bundle_id=bundle_id,
             plugin=plugin,
             runtime=runtime,
@@ -1880,13 +1844,13 @@ class HypervisorService:
         bundle_id: str,
         runtime: RuntimeHandle | None = None,
     ) -> None:
-        self._bundle_runtime_policy_facade().register_bundle_success(
+        self._runtime_boundary._bundle_runtime_policy_facade().register_bundle_success(
             bundle_id,
             runtime=runtime,
         )
 
     def _bundle_in_cooldown(self, bundle_id: str) -> bool:
-        return self._bundle_runtime_policy_facade().bundle_in_cooldown(bundle_id)
+        return self._runtime_boundary._bundle_runtime_policy_facade().bundle_in_cooldown(bundle_id)
 
     def _health_check_with_retry(
         self,
@@ -1922,7 +1886,7 @@ class HypervisorService:
         task: TaskRequest,
         runtime: RuntimeHandle | None,
     ) -> RuntimeRequestRecord | None:
-        return self._runtime_execution_facade().record_mvp_runtime_evidence_for_completed_task(
+        return self._runtime_boundary._record_mvp_runtime_evidence_for_completed_task(
             task_id=task_id,
             bundle=bundle,
             task=task,
@@ -2143,7 +2107,7 @@ class HypervisorService:
             sequence=sequence,
             cumulative_usage=cumulative_usage,
             measurement_sources=measurement_sources,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
             signature=f"local:{report_id}",
         )
         result = self._task_results.get(task_id)
@@ -2172,15 +2136,13 @@ class HypervisorService:
         )
         result = self._task_results.get(task_id)
         if isinstance(result, dict):
-            result["usage_acknowledgement"] = dict(
-                {
+            result["usage_acknowledgement"] = {
                     key: value
                     for key, value in dict(
                         updated_session.last_usage_acknowledgement_snapshot
                     ).items()
                     if not str(key).startswith("_")
                 }
-            )
             result["session_accounting"] = self._build_session_accounting_view(
                 updated_session
             )
@@ -2429,29 +2391,10 @@ class HypervisorService:
             raise ValueError(f"Unknown session: {session_id}") from error
 
     def _touch_task_session(self, request: TaskRequest) -> None:
-        self._runtime_execution_facade().touch_task_session(request)
+        self._runtime_boundary._runtime_execution_facade().touch_task_session(request)
 
     def _endpoint_manifest_for_request(self, request: TaskRequest):
-        return self._runtime_execution_facade().endpoint_manifest_for_request(request)
-
-    def _uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:
-        return self._runtime_execution_facade().uses_approved_llamacpp_runtime(
-            endpoint_manifest
-        )
-
-    def _attempt_approved_runtime_task(
-        self,
-        task_id: str,
-        task: QueuedTask,
-        bundle: BundleConfig,
-        endpoint_manifest,
-    ) -> bool:
-        return self._runtime_execution_facade().attempt_approved_runtime_task(
-            task_id,
-            task,
-            bundle,
-            endpoint_manifest,
-        )
+        return self._runtime_boundary._runtime_execution_facade().endpoint_manifest_for_request(request)
 
     def _record_session_runtime_terminal_evidence(
         self,
@@ -2461,7 +2404,7 @@ class HypervisorService:
         endpoint_manifest,
         result,
     ) -> None:
-        self._runtime_execution_facade().record_session_runtime_terminal_evidence(
+        self._runtime_boundary._record_session_runtime_terminal_evidence(
             session_service=session_service,
             session=session,
             endpoint_manifest=endpoint_manifest,
@@ -2469,34 +2412,34 @@ class HypervisorService:
         )
 
     def close_endpoint_session(self, session_id: str):
-        return self._runtime_execution_facade().close_endpoint_session(session_id)
+        return self._runtime_boundary._runtime_execution_facade().close_endpoint_session(session_id)
 
     def propagate_proxy_session_close(self, session_id: str) -> None:
-        self._runtime_execution_facade().propagate_proxy_session_close(session_id)
+        self._runtime_boundary._runtime_execution_facade().propagate_proxy_session_close(session_id)
 
     def _close_remote_proxy_session_binding(
         self,
         session_service,
         binding: ProxySessionBinding,
     ) -> None:
-        self._runtime_execution_facade().close_remote_proxy_session_binding(
+        self._runtime_boundary._runtime_execution_facade().close_remote_proxy_session_binding(
             session_service,
             binding,
         )
 
     def _proxy_target_requires_remote_session(self, endpoint_manifest) -> bool:
-        return self._runtime_execution_facade().proxy_target_requires_remote_session(
+        return self._runtime_boundary._runtime_execution_facade().proxy_target_requires_remote_session(
             endpoint_manifest
         )
 
     def _ensure_proxy_session_binding(self, endpoint_manifest, task_request: TaskRequest):
-        return self._runtime_execution_facade().ensure_proxy_session_binding(
+        return self._runtime_boundary._runtime_execution_facade().ensure_proxy_session_binding(
             endpoint_manifest,
             task_request,
         )
 
     def _attempt_proxy_task(self, task_id: str, task: QueuedTask, bundle: BundleConfig, endpoint_manifest) -> bool:
-        return self._runtime_execution_facade().attempt_proxy_task(
+        return self._runtime_boundary._runtime_execution_facade().attempt_proxy_task(
             task_id,
             task,
             bundle,
@@ -2504,7 +2447,7 @@ class HypervisorService:
         )
 
     def _invoke_proxy_endpoint(self, endpoint_manifest, task_request: TaskRequest) -> dict:
-        return self._runtime_execution_facade().invoke_proxy_endpoint(
+        return self._runtime_boundary._runtime_execution_facade().invoke_proxy_endpoint(
             endpoint_manifest,
             task_request,
         )
@@ -2587,23 +2530,17 @@ class HypervisorService:
     def _restored_task_status(self, task: TaskSnapshot) -> str:
         return self._snapshot_state_facade().restored_task_status(task)
 
-    def _recovery_reason_for_task(self, task: TaskSnapshot) -> str:
-        return self._snapshot_state_facade().recovery_reason_for_task(task)
-
-    def _recovery_message(self, recovery_reason: str) -> str:
-        return self._snapshot_state_facade().recovery_message(recovery_reason)
-
     def _can_retry_after_restart(self, task: TaskSnapshot) -> bool:
         return self._snapshot_state_facade().can_retry_after_restart(task)
 
     def _restore_runtimes(self, runtimes: list[RuntimeSnapshot]) -> None:
-        self._snapshot_state_facade().restore_runtimes(runtimes)
+        self._runtime_boundary._restore_runtimes(runtimes)
 
     def _clear_runtime_reservations(self) -> None:
-        self._snapshot_state_facade().clear_runtime_reservations()
+        self._runtime_boundary._clear_runtime_reservations()
 
     def _replace_runtimes(self, runtimes: list[RuntimeHandle]) -> None:
-        self._snapshot_state_facade().replace_runtimes(runtimes)
+        self._runtime_boundary._replace_runtimes(runtimes)
 
     def _persist_state(self) -> None:
         if self.state_store is None:
@@ -2615,13 +2552,6 @@ class HypervisorService:
         if facade is None:
             facade = ProviderInstallationService(self)
             self._provider_installation_service = facade
-        return facade
-
-    def _runtime_execution_facade(self) -> RuntimeExecutionService:
-        facade = getattr(self, "_runtime_execution_service", None)
-        if facade is None:
-            facade = RuntimeExecutionService(self)
-            self._runtime_execution_service = facade
         return facade
 
     def _task_execution_facade(self) -> TaskExecutionService:
@@ -2659,25 +2589,11 @@ class HypervisorService:
             self._allocation_catalog_service = facade
         return facade
 
-    def _admission_planning_facade(self) -> AdmissionPlanningService:
-        facade = getattr(self, "_admission_planning_service", None)
-        if facade is None:
-            facade = AdmissionPlanningService(self)
-            self._admission_planning_service = facade
-        return facade
-
     def _model_install_facade(self) -> ModelInstallService:
         facade = getattr(self, "_model_install_service", None)
         if facade is None:
             facade = ModelInstallService(self)
             self._model_install_service = facade
-        return facade
-
-    def _bundle_runtime_policy_facade(self) -> BundleRuntimePolicyService:
-        facade = getattr(self, "_bundle_runtime_policy_service", None)
-        if facade is None:
-            facade = BundleRuntimePolicyService(self)
-            self._bundle_runtime_policy_service = facade
         return facade
 
     def _operator_application_facade(self) -> OperatorApplicationService:
@@ -2740,16 +2656,16 @@ class HypervisorService:
         self._wallet_economics_service.prune_wallet_usage_events()
 
     def _replace_bundle(self, updated_bundle: BundleConfig) -> None:
-        self._bundle_runtime_policy_facade().replace_bundle(updated_bundle)
+        self._runtime_boundary._bundle_runtime_policy_facade().replace_bundle(updated_bundle)
 
     def _persist_bundle_config_if_available(self) -> None:
-        self._bundle_runtime_policy_facade().persist_bundle_config_if_available()
+        self._runtime_boundary._bundle_runtime_policy_facade().persist_bundle_config_if_available()
 
     def _require_bundle_registry(self):
-        return self._bundle_runtime_policy_facade().require_bundle_registry()
+        return self._runtime_boundary._bundle_runtime_policy_facade().require_bundle_registry()
 
     def _validate_bundles(self, bundles: list[BundleConfig]) -> None:
-        self._bundle_runtime_policy_facade().validate_bundles(bundles)
+        self._runtime_boundary._bundle_runtime_policy_facade().validate_bundles(bundles)
 
     def _has_plugins(self) -> bool:
         if hasattr(self.plugins, "list"):
@@ -2759,28 +2675,22 @@ class HypervisorService:
     def _active_bundle_task_count(
         self, bundle_id: str, *, exclude_task_id: str | None = None
     ) -> int:
-        return self._bundle_runtime_policy_facade().active_bundle_task_count(
+        return self._runtime_boundary._bundle_runtime_policy_facade().active_bundle_task_count(
             bundle_id,
             exclude_task_id=exclude_task_id,
         )
 
-    def runtime_active_task_count(self, bundle_id: str) -> int:
-        return self._bundle_runtime_policy_facade().runtime_active_task_count(bundle_id)
-
     def _pending_task_order(self) -> list[str]:
-        return self._admission_planning_facade().pending_task_order()
-
-    def _record_admission_events(self, admission_plan: list[dict[str, int | str]]) -> None:
-        self._admission_planning_facade().record_admission_events(admission_plan)
+        return self._runtime_boundary._admission_planning_facade().pending_task_order()
 
     def _pending_task_plan(self) -> list[dict[str, int | str]]:
-        return self._admission_planning_facade().pending_task_plan()
+        return self._runtime_boundary._admission_planning_facade().pending_task_plan()
 
     def _effective_task_priority(self, task: QueuedTask) -> int:
-        return self._admission_planning_facade().effective_task_priority(task)
+        return self._runtime_boundary._admission_planning_facade().effective_task_priority(task)
 
     def _aging_bonus(self, task: QueuedTask) -> int:
-        return self._admission_planning_facade().aging_bonus(task)
+        return self._runtime_boundary._admission_planning_facade().aging_bonus(task)
 
     def _selection_reason(
         self,
@@ -2789,43 +2699,26 @@ class HypervisorService:
         dispatch_candidates: list[str],
         next_bundle_id: str,
     ) -> str:
-        return self._admission_planning_facade().selection_reason(
+        return self._runtime_boundary._admission_planning_facade().selection_reason(
             tasks_by_bundle=tasks_by_bundle,
             dispatch_candidates=dispatch_candidates,
             next_bundle_id=next_bundle_id,
         )
 
-    def _evict_idle_runtimes_for_task(
-        self,
-        *,
-        task: TaskRequest,
-        requested_bundle: BundleConfig,
-        cpu: float,
-        ram_mb: int,
-        vram_mb: int,
-    ) -> None:
-        self._admission_planning_facade().evict_idle_runtimes_for_task(
-            task=task,
-            requested_bundle=requested_bundle,
-            cpu=cpu,
-            ram_mb=ram_mb,
-            vram_mb=vram_mb,
-        )
-
     def _eviction_candidates(self, *, waiting_task: TaskRequest) -> list[BundleConfig]:
-        return self._bundle_runtime_policy_facade().eviction_candidates(
+        return self._runtime_boundary._bundle_runtime_policy_facade().eviction_candidates(
             waiting_task=waiting_task
         )
 
     def _diagnose_queued_task(self, task_id: str) -> dict[str, str]:
-        return self._bundle_runtime_policy_facade().diagnose_queued_task(task_id)
+        return self._runtime_boundary._bundle_runtime_policy_facade().diagnose_queued_task(task_id)
 
     def _eviction_blocked(
         self,
         waiting_task: TaskRequest,
         requested_bundle: BundleConfig,
     ) -> bool:
-        return self._bundle_runtime_policy_facade().eviction_blocked(
+        return self._runtime_boundary._bundle_runtime_policy_facade().eviction_blocked(
             waiting_task,
             requested_bundle,
         )

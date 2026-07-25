@@ -1,4 +1,7 @@
-from aidn_hypervisor.endpoints.models import EndpointConfigurationSnapshot, EndpointManifest
+from aidn_hypervisor.endpoints.models import (
+    EndpointConfigurationSnapshot,
+    EndpointManifest,
+)
 
 
 class EndpointManifestSnapshot(EndpointManifest):

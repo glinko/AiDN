@@ -1,34 +1,33 @@
-from copy import deepcopy
-from datetime import datetime, timezone
-from datetime import timedelta
 import hashlib
+import ipaddress
+import json
 import os
+import shutil
 import stat
 import tarfile
-import json
+import zipfile
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-import shutil
 from typing import Protocol
 from urllib.parse import urlparse
-import ipaddress
-import zipfile
 
 from aidn_hypervisor.providers.models import (
     ExecutorSandboxCapabilities,
     InstallationPlan,
     ModelArtifact,
-    ModelArtifactInventory,
     ModelArtifactGarbageCollectionResult,
+    ModelArtifactInventory,
     ModelArtifactSet,
     ModelArtifactSetFile,
     ProviderArtifactMaterialization,
     ProviderInstallationApproval,
-    ProviderInstallationArtifact,
     ProviderInstallationArchiveExtractionResult,
+    ProviderInstallationArtifact,
     ProviderInstallationArtifactInventory,
     ProviderInstallationDiagnosticCheck,
-    ProviderInstallationRollbackResult,
     ProviderInstallationExecutionResult,
+    ProviderInstallationRollbackResult,
     ProviderInstallationStepResult,
 )
 
@@ -541,7 +540,7 @@ class SandboxEnforcedProviderInstallationExecutor(RecordedProviderInstallationEx
         validated_network_names: list[str] = []
         for network in plan.networks:
             unexpected_network_keys = sorted(
-                key for key in network.keys() if key not in self._ALLOWED_NETWORK_KEYS
+                key for key in network if key not in self._ALLOWED_NETWORK_KEYS
             )
             if unexpected_network_keys:
                 raise ValueError(
@@ -564,7 +563,7 @@ class SandboxEnforcedProviderInstallationExecutor(RecordedProviderInstallationEx
             )
         for check in plan.health_checks:
             unexpected_health_check_keys = sorted(
-                key for key in check.keys() if key not in self._ALLOWED_HEALTH_CHECK_KEYS
+                key for key in check if key not in self._ALLOWED_HEALTH_CHECK_KEYS
             )
             if unexpected_health_check_keys:
                 raise ValueError(
@@ -600,8 +599,10 @@ class SandboxEnforcedProviderInstallationExecutor(RecordedProviderInstallationEx
                     f"bounded subset: {method}"
                 )
             expected_status = check.get("expected_status")
-            if expected_status is not None:
-                if not isinstance(expected_status, int) or not (200 <= expected_status <= 399):
+            if (
+                expected_status is not None
+                and (not isinstance(expected_status, int) or not (200 <= expected_status <= 399))
+            ):
                     raise ValueError(
                         "sandbox executor requires expected health check status to be an integer "
                         "between 200 and 399"
@@ -1089,7 +1090,7 @@ class ControlledFilesystemProviderInstallationExecutor(
             ).as_posix(),
             source_type="STAGED_IMPORT",
             source_reference=staged_relative_path.as_posix(),
-            created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         )
         manifest_path = self._model_artifact_manifest_path(artifact_id)
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1110,7 +1111,8 @@ class ControlledFilesystemProviderInstallationExecutor(
         normalized_artifact_id = self._validated_model_artifact_id(artifact_id)
         if self._has_unreadable_model_artifact_set_manifest():
             raise ValueError(
-                "controlled filesystem executor cannot delete model artifacts while an artifact set manifest is unreadable"
+                "controlled filesystem executor cannot delete model artifacts "
+                "while an artifact set manifest is unreadable"
             )
         referencing_sets = self._artifact_set_ids_referencing(normalized_artifact_id)
         if referencing_sets:
@@ -1180,7 +1182,7 @@ class ControlledFilesystemProviderInstallationExecutor(
             display_name=normalized_display_name,
             files=canonical_files,
             manifest_hash=f"sha256:{manifest_digest}",
-            created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         )
         manifest_path = self._model_artifact_set_manifest_path(artifact_set_id)
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1233,7 +1235,7 @@ class ControlledFilesystemProviderInstallationExecutor(
         manifest_path.unlink()
 
     def collect_model_artifact_garbage(self) -> ModelArtifactGarbageCollectionResult:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         retained_artifact_ids: list[str] = []
         pending_artifact_ids: list[str] = []
         collected_artifact_ids: list[str] = []
@@ -1326,7 +1328,7 @@ class ControlledFilesystemProviderInstallationExecutor(
             destination=relative_destination.as_posix(),
             status="READY",
             files=files,
-            created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         )
 
     def apply(
@@ -1731,7 +1733,7 @@ class ControlledFilesystemProviderInstallationExecutor(
             )
         for volume in plan.volumes:
             unexpected_volume_keys = sorted(
-                key for key in volume.keys() if key not in self._ALLOWED_VOLUME_KEYS
+                key for key in volume if key not in self._ALLOWED_VOLUME_KEYS
             )
             if unexpected_volume_keys:
                 raise ValueError(
@@ -1761,7 +1763,7 @@ class ControlledFilesystemProviderInstallationExecutor(
         for download in plan.model_downloads:
             unexpected_download_keys = sorted(
                 key
-                for key in download.keys()
+                for key in download
                 if key not in self._ALLOWED_MODEL_DOWNLOAD_KEYS
             )
             if unexpected_download_keys:
@@ -2018,11 +2020,13 @@ class ControlledFilesystemProviderInstallationExecutor(
         digest = candidate.removeprefix(prefix)
         if not candidate.startswith(prefix) or len(digest) != 64:
             raise ValueError(
-                "controlled filesystem executor requires model artifact set ids in model-artifact-set:sha256:<64-hex> form"
+                "controlled filesystem executor requires model artifact set ids "
+                "in model-artifact-set:sha256:<64-hex> form"
             )
         if any(character not in "0123456789abcdef" for character in digest):
             raise ValueError(
-                "controlled filesystem executor requires model artifact set ids in model-artifact-set:sha256:<64-hex> form"
+                "controlled filesystem executor requires model artifact set ids "
+                "in model-artifact-set:sha256:<64-hex> form"
             )
         return candidate
 
@@ -2295,7 +2299,7 @@ class ControlledFilesystemProviderInstallationExecutor(
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         updated_at = datetime.fromtimestamp(
             path.stat().st_mtime,
-            tz=timezone.utc,
+            tz=UTC,
         ).isoformat().replace("+00:00", "Z")
         return ProviderInstallationArtifact(
             relative_path=relative_path.as_posix(),

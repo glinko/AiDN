@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from aidn_hypervisor.accounting.models import UsageDimensionEvidence
 
-
 RuntimeConnectionState = Literal[
     "CONNECTING",
     "HELLO_EXCHANGING",
@@ -279,9 +278,8 @@ class RuntimeExecuteRequest(BaseModel):
         locations = [self.request_payload is not None, self.request_payload_reference is not None]
         if sum(locations) != 1:
             raise ValueError("exactly one Request payload location is required")
-        if self.request_payload is not None:
-            if canonical_hash(self.request_payload) != self.request_payload_hash:
-                raise ValueError("request_payload_hash does not match Request payload")
+        if self.request_payload is not None and canonical_hash(self.request_payload) != self.request_payload_hash:
+            raise ValueError("request_payload_hash does not match Request payload")
         return self
 
     def semantic_hash(self) -> str:

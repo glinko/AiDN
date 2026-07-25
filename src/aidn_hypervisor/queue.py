@@ -1,5 +1,5 @@
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import get_args
 from uuid import uuid4
 
@@ -32,7 +32,7 @@ class InMemoryTaskQueue:
         task = QueuedTask(
             priority=request.priority,
             enqueue_index=self._next_enqueue_index,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
             task_id=str(uuid4()),
             request=request.model_copy(deep=True),
         )
@@ -62,7 +62,7 @@ class InMemoryTaskQueue:
         return list(self._tasks)
 
     def restore(self, tasks: list[QueuedTask]) -> None:
-        self._tasks = sorted(list(tasks), key=lambda item: item.sort_key)
+        self._tasks = sorted(tasks, key=lambda item: item.sort_key)
         if self._tasks:
             self._next_enqueue_index = max(
                 task.enqueue_index for task in self._tasks

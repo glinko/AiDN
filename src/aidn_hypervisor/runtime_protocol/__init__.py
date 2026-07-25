@@ -1,21 +1,39 @@
+from aidn_hypervisor.runtime_protocol.adapters import LlamaCppOpenAIAdapter
+from aidn_hypervisor.runtime_protocol.boundary_service import (
+    RuntimeProtocolBoundaryService,
+)
+from aidn_hypervisor.runtime_protocol.approved_dispatch import (
+    ApprovedRuntimeDispatcher,
+    ApprovedRuntimeDispatchError,
+)
+from aidn_hypervisor.runtime_protocol.conformance import (
+    RuntimeConformanceCase,
+    RuntimeConformanceReport,
+    RuntimeProtocolConformanceHarness,
+)
+from aidn_hypervisor.runtime_protocol.local_ipc import (
+    LocalIpcRuntimeEvent,
+    LocalIpcRuntimeIngress,
+)
 from aidn_hypervisor.runtime_protocol.models import (
     HypervisorRuntimeHello,
     RuntimeArtifactDeclare,
-    RuntimeCapacity,
     RuntimeCancellationRecord,
     RuntimeCancelRequest,
     RuntimeCancelResult,
+    RuntimeCapacity,
     RuntimeConnection,
     RuntimeDrainComplete,
     RuntimeDrainRequest,
     RuntimeDrainStatus,
     RuntimeExecuteRequest,
+    RuntimeHealth,
     RuntimeHello,
     RuntimeHelloComplete,
-    RuntimeHealth,
     RuntimeMessage,
-    RuntimeReady,
+    RuntimeProviderAttempt,
     RuntimeReadinessDimensions,
+    RuntimeReady,
     RuntimeRecoveryPlan,
     RuntimeRecoveryResult,
     RuntimeRecoveryState,
@@ -30,43 +48,29 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeUsageAck,
     RuntimeUsageConflict,
     RuntimeUsageDimension,
-    RuntimeProviderAttempt,
     RuntimeUsageReport,
     canonical_hash,
-)
-from aidn_hypervisor.runtime_protocol.service import (
-    RuntimeProtocolError,
-    RuntimeProtocolService,
-)
-from aidn_hypervisor.runtime_protocol.local_ipc import (
-    LocalIpcRuntimeEvent,
-    LocalIpcRuntimeIngress,
-)
-from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
-from aidn_hypervisor.runtime_protocol.conformance import (
-    RuntimeConformanceCase,
-    RuntimeConformanceReport,
-    RuntimeProtocolConformanceHarness,
-)
-from aidn_hypervisor.runtime_protocol.adapters import LlamaCppOpenAIAdapter
-from aidn_hypervisor.runtime_protocol.approved_dispatch import (
-    ApprovedRuntimeDispatchError,
-    ApprovedRuntimeDispatcher,
 )
 from aidn_hypervisor.runtime_protocol.named_pipe import (
     WindowsNamedPipeRuntimeClient,
     WindowsNamedPipeRuntimeListener,
 )
-from aidn_hypervisor.runtime_protocol.unix_socket import (
-    UnixSocketRuntimeClient,
-    UnixSocketRuntimeListener,
-)
 from aidn_hypervisor.runtime_protocol.remote_tls import (
     TlsRuntimeClient,
     TlsRuntimeListener,
 )
+from aidn_hypervisor.runtime_protocol.service import (
+    RuntimeProtocolError,
+    RuntimeProtocolService,
+)
+from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
+from aidn_hypervisor.runtime_protocol.unix_socket import (
+    UnixSocketRuntimeClient,
+    UnixSocketRuntimeListener,
+)
 
 __all__ = [
+    "RuntimeProtocolBoundaryService",
     "HypervisorRuntimeHello",
     "RuntimeArtifactDeclare",
     "RuntimeCapacity",

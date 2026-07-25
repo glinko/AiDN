@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from aidn_hypervisor.settlement.models import (
     RequestSettlementInput,
@@ -66,7 +66,9 @@ class MvpSessionEconomicsService:
                 "Public MVP Endpoint Payment Beneficiary identity is not registered"
             )
         if consumer_authorization is not None:
-            from aidn_hypervisor.wallet_identity import verify_session_open_authorization
+            from aidn_hypervisor.wallet_identity import (
+                verify_session_open_authorization,
+            )
 
             identity = self._host.resolve_wallet_identity(client_wallet)
             if identity is None:
@@ -424,7 +426,7 @@ class MvpSessionEconomicsService:
             ),
             accepted_network_fees_q_atoms=proposal.actual_network_fees_q_atoms,
             consumer_signature=consumer_signature,
-            accepted_at=accepted_at or datetime.now(timezone.utc).isoformat(),
+            accepted_at=accepted_at or datetime.now(UTC).isoformat(),
         )
         if session.consumer_authorization_public_key is not None:
             from aidn_hypervisor.settlement.signing import verify_settlement_acceptance

@@ -171,11 +171,11 @@ class TlsRuntimeClient:
         self.maximum_message_bytes = maximum_message_bytes
 
     def send(self, message: NetworkMessage) -> dict[str, Any]:
-        with socket.create_connection((self.host, self.port)) as raw_connection:
-            with self.client_context.wrap_socket(
-                raw_connection,
-                server_hostname=self.server_hostname,
-            ) as connection:
+        with socket.create_connection((self.host, self.port)) as raw_connection, \
+                self.client_context.wrap_socket(
+                    raw_connection,
+                    server_hostname=self.server_hostname,
+                ) as connection:
                 payload = message.model_dump_json().encode("utf-8")
                 TlsRuntimeListener._send_frame(connection, payload)
                 header = TlsRuntimeListener._receive_exact(connection, 4)

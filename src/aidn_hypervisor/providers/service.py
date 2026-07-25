@@ -2,54 +2,54 @@ import hashlib
 import json
 import secrets
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
-from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
+from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
+from aidn_hypervisor.plugins.host import (
+    HmacPluginHostActivationProofVerifier,
+    PluginHostActivationCredentialStore,
+    PluginHostAuthenticator,
+    PluginHostConnectionStore,
+    PluginHostHandshakeService,
+    PluginHostLocalIpcIngress,
+)
 from aidn_hypervisor.providers.executor import (
     ProviderInstallationExecutor,
     RecordedProviderInstallationExecutor,
     SandboxEnforcedProviderInstallationExecutor,
 )
 from aidn_hypervisor.providers.models import (
-    InstalledPlugin,
     InstallationPlan,
+    InstalledPlugin,
     ModelArtifact,
-    ModelArtifactInventory,
     ModelArtifactGarbageCollectionResult,
+    ModelArtifactInventory,
     ModelArtifactSet,
-    ProviderArtifactMaterialization,
     ModelDeployment,
     PluginPackageVerification,
     PluginRelease,
+    ProviderArtifactMaterialization,
     ProviderInstallationApproval,
-    ProviderInstallationArtifact,
     ProviderInstallationArchiveExtractionResult,
+    ProviderInstallationArtifact,
     ProviderInstallationArtifactInventory,
     ProviderInstallationDiagnosticCheck,
     ProviderInstallationDiagnostics,
     ProviderInstallationJob,
+    ProviderInstallationRollbackResult,
     ProviderInstallationStepResult,
     ProviderInstallationUpgradeReview,
-    ProviderPluginManifest,
     ProviderInstance,
-    ProviderInstallationRollbackResult,
+    ProviderPluginManifest,
     RuntimeBinding,
     SelectedSecretHandle,
 )
+from aidn_hypervisor.providers.package_store import PluginPackageStore
 from aidn_hypervisor.providers.package_verification import (
     DEFAULT_TRUSTED_PUBLISHER_KEYS,
     verify_plugin_manifest_package,
-)
-from aidn_hypervisor.providers.package_store import PluginPackageStore
-from aidn_hypervisor.plugins.host import (
-    HmacPluginHostActivationProofVerifier,
-    PluginHostActivationCredentialStore,
-    PluginHostAuthenticator,
-    PluginHostHandshakeService,
-    PluginHostConnectionStore,
-    PluginHostLocalIpcIngress,
 )
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
@@ -65,7 +65,7 @@ def _canonical_hash(value: dict) -> str:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 class ProviderInventoryService:
@@ -162,10 +162,12 @@ class ProviderInventoryService:
             model_discoverer=lambda plugin_id, provider_instance_id: self._host_discover_models(
                 plugin_id, provider_instance_id
             ),
-            runtime_binding_creator=lambda plugin_id, model_deployment_id, capability_id, capability_version, capability_definition_hash: self._host_create_runtime_binding(
+            runtime_binding_creator=lambda plugin_id, model_deployment_id, capability_id, capability_version, capability_definition_hash: self._host_create_runtime_binding(  # noqa: E501
                 plugin_id, model_deployment_id, capability_id, capability_version, capability_definition_hash
             ),
-            runtime_binding_admission=lambda plugin_id, runtime_binding_id: self._host_runtime_binding_admission(plugin_id, runtime_binding_id),
+            runtime_binding_admission=lambda plugin_id, runtime_binding_id: self._host_runtime_binding_admission(  # noqa: E501
+                plugin_id, runtime_binding_id
+            ),
             connection_store=self.plugin_host_connection_store,
         )
 
@@ -199,11 +201,18 @@ class ProviderInventoryService:
             raise ValueError("Provider Instance does not belong to the Plugin Host")
         return [item.model_dump(mode="json") for item in self.discover_models(provider_instance_id)]
 
-    def _host_create_runtime_binding(self, plugin_id: str, model_deployment_id: str, capability_id: str, capability_version: str, capability_definition_hash: str) -> dict:
+    def _host_create_runtime_binding(
+        self, plugin_id: str, model_deployment_id: str, capability_id: str,
+        capability_version: str, capability_definition_hash: str
+    ) -> dict:
         deployment = self.store.get_model_deployment(model_deployment_id)
         if self.store.get_provider_instance(deployment.provider_instance_id).plugin_id != plugin_id:
             raise ValueError("Model Deployment does not belong to the Plugin Host")
-        return self.create_runtime_binding(model_deployment_id=model_deployment_id, capability_id=capability_id, capability_version=capability_version, capability_definition_hash=capability_definition_hash).model_dump(mode="json")
+        return self.create_runtime_binding(
+            model_deployment_id=model_deployment_id, capability_id=capability_id,
+            capability_version=capability_version,
+            capability_definition_hash=capability_definition_hash
+        ).model_dump(mode="json")
 
     def _host_runtime_binding_admission(self, plugin_id: str, runtime_binding_id: str) -> dict:
         binding = self.store.get_runtime_binding(runtime_binding_id)
@@ -272,9 +281,12 @@ class ProviderInventoryService:
     ) -> InstalledPlugin:
         """Persist local approval; package acquisition and Plugin Host activation are separate."""
         release = self.store.get_plugin_release(release_id)
-        if installation_source == "PACKAGE" and self.package_store is not None:
-            if not self.package_store.has(release.package_digest):
-                raise ValueError("verified plugin package is required before activation")
+        if (
+            installation_source == "PACKAGE"
+            and self.package_store is not None
+            and not self.package_store.has(release.package_digest)
+        ):
+            raise ValueError("verified plugin package is required before activation")
         if release.release_status in {"SECURITY_BLOCKED", "REVOKED"}:
             raise ValueError(
                 f"plugin release cannot be installed while {release.release_status.lower()}"

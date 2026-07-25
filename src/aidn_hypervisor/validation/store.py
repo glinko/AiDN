@@ -3,14 +3,13 @@ from aidn_hypervisor.validation.models import (
     ValidationAssignment,
     ValidationAuthorization,
     ValidationBond,
+    ValidationEpoch,
+    ValidationReport,
     ValidationReportCommitment,
     ValidationReportCustodyObject,
     ValidationReportCustodyState,
-    ValidationEpoch,
-    ValidationReport,
     ValidationReportStorageFailure,
     ValidationReportStorageReceipt,
-    ValidationReportTransferReplay,
     ValidationRequest,
     ValidationStatusSnapshot,
     ValidationValidatorEntry,
@@ -26,7 +25,6 @@ class ValidationStore:
         self._report_commitments: dict[str, ValidationReportCommitment] = {}
         self._report_storage_receipts: dict[str, ValidationReportStorageReceipt] = {}
         self._report_storage_failures: dict[str, ValidationReportStorageFailure] = {}
-        self._report_transfer_replays: dict[str, ValidationReportTransferReplay] = {}
         self._report_custody_states: dict[str, ValidationReportCustodyState] = {}
         self._report_custody_objects: dict[str, ValidationReportCustodyObject] = {}
         self._snapshots: dict[tuple[str, str], ValidationStatusSnapshot] = {}
@@ -70,12 +68,6 @@ class ValidationStore:
                 item.model_dump(mode="json")
             )
             for item in snapshot.validation_report_storage_failures
-        }
-        self._report_transfer_replays = {
-            item.message_id: ValidationReportTransferReplay.model_validate(
-                item.model_dump(mode="json")
-            )
-            for item in snapshot.validation_report_transfer_replays
         }
         self._report_custody_states = {
             item.report_hash: ValidationReportCustodyState.model_validate(
@@ -198,24 +190,6 @@ class ValidationStore:
 
     def list_report_storage_failures(self) -> list[ValidationReportStorageFailure]:
         return list(self._report_storage_failures.values())
-
-    def get_report_transfer_replay(
-        self,
-        message_id: str,
-    ) -> ValidationReportTransferReplay | None:
-        return self._report_transfer_replays.get(message_id)
-
-    def save_report_transfer_replay(
-        self,
-        replay: ValidationReportTransferReplay,
-    ) -> None:
-        existing = self._report_transfer_replays.get(replay.message_id)
-        if existing is not None and existing != replay:
-            raise ValueError(
-                f"Validation report transfer replay conflict: {replay.message_id}"
-            )
-        self._report_transfer_replays[replay.message_id] = replay
-        self._flush()
 
     def save_report_custody_state(self, state: ValidationReportCustodyState) -> None:
         self._report_custody_states[state.report_hash] = state
@@ -342,9 +316,6 @@ class ValidationStore:
                 ),
                 "validation_report_storage_failures": list(
                     self._report_storage_failures.values()
-                ),
-                "validation_report_transfer_replays": list(
-                    self._report_transfer_replays.values()
                 ),
                 "validation_report_custody_states": list(
                     self._report_custody_states.values()

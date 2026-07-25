@@ -3,13 +3,13 @@ from fastapi import APIRouter, HTTPException
 from aidn_hypervisor.registry_models import (
     RegistryDiscoveryQuery,
     RegistryNodeAdvertisement,
-    RegistryWalletIdentityQuorumApprovalRequest,
     RegistryWalletIdentityPeerConfig,
     RegistryWalletIdentityPeerDiscoveryRequest,
     RegistryWalletIdentityPeerRepairRequest,
+    RegistryWalletIdentityPeerSyncRequest,
+    RegistryWalletIdentityQuorumApprovalRequest,
     RegistryWalletIdentityQuorumProposalRequest,
     RegistryWalletIdentityResolutionRequest,
-    RegistryWalletIdentityPeerSyncRequest,
     RegistryWalletIdentitySyncImportRequest,
 )
 from aidn_hypervisor.registry_service import RegistryService

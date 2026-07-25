@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from aidn_hypervisor.endpoints.models import (
@@ -33,7 +33,7 @@ class EndpointService:
 
     def create_endpoint(self, cmd: CreateEndpointCommand) -> CreateEndpointResult:
         endpoint_id = f"ep-{uuid4().hex[:12]}"
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(UTC).isoformat()
         execution_config = self._execution_config(
             cmd.runtime,
             cmd.publication,
@@ -129,7 +129,7 @@ class EndpointService:
                 endpoint_id=current.endpoint_id,
                 bundle_hash=current.bundle_hash,
                 runtime_binding_id=current.runtime_binding_id,
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
                 runtime=next_runtime,
                 publication=next_publication,
                 session=next_session,
@@ -161,7 +161,7 @@ class EndpointService:
 
     def attach_proxy_target(self, endpoint_id: str, remote_endpoint) -> UpdateEndpointResult:
         current = self.store.get_manifest(endpoint_id)
-        attached_at = datetime.now(timezone.utc).isoformat()
+        attached_at = datetime.now(UTC).isoformat()
         proxy_target = EndpointProxyTarget(
             remote_endpoint_id=remote_endpoint.remote_endpoint_id,
             source_node_id=remote_endpoint.source_node_id,
@@ -221,7 +221,7 @@ class EndpointService:
 
     def detach_proxy_target(self, endpoint_id: str) -> UpdateEndpointResult:
         current = self.store.get_manifest(endpoint_id)
-        detached_at = datetime.now(timezone.utc).isoformat()
+        detached_at = datetime.now(UTC).isoformat()
         execution_config = self._execution_config(
             current.runtime,
             current.publication,
@@ -364,7 +364,7 @@ class EndpointService:
             created_at=(
                 snapshot.created_at
                 if snapshot is not None
-                else datetime.now(timezone.utc).isoformat()
+                else datetime.now(UTC).isoformat()
             ),
             emitted_events=["EndpointUpdated"],
         )

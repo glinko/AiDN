@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig
@@ -78,10 +78,10 @@ class AllocationLifecycleService:
             raise self._host._allocation_unavailable_error(**owner_quota)
         allocation_id = str(uuid4())
         now_ts = self._host._current_time_seconds()
-        created_at = datetime.fromtimestamp(now_ts, timezone.utc).isoformat()
+        created_at = datetime.fromtimestamp(now_ts, UTC).isoformat()
         expires_at = datetime.fromtimestamp(
             now_ts + request.lease_seconds,
-            timezone.utc,
+            UTC,
         ).isoformat()
         reservation_id = self._host._reserve_allocation_residency(
             allocation_id=allocation_id,
@@ -96,7 +96,7 @@ class AllocationLifecycleService:
             "workload_type": request.workload_type,
             "bundle_id": bundle.bundle_id,
             "runtime_id": runtime.runtime_id,
-            "endpoint": self._host._resolve_runtime_endpoint(bundle, runtime),
+            "endpoint": self._host._runtime_boundary._resolve_runtime_endpoint(bundle, runtime),
             "status": "active",
             "created_at": created_at,
             "expires_at": expires_at,
@@ -146,10 +146,10 @@ class AllocationLifecycleService:
     ) -> dict:
         allocation_id = str(uuid4())
         now_ts = self._host._current_time_seconds()
-        created_at = datetime.fromtimestamp(now_ts, timezone.utc).isoformat()
+        created_at = datetime.fromtimestamp(now_ts, UTC).isoformat()
         expires_at = datetime.fromtimestamp(
             now_ts + request.lease_seconds,
-            timezone.utc,
+            UTC,
         ).isoformat()
         self._host._allocations[allocation_id] = {
             "allocation_id": allocation_id,

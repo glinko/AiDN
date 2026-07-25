@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from aidn_hypervisor.state import JournalEvent
@@ -24,7 +24,7 @@ class EventProjectionService:
         details: dict | None = None,
     ) -> JournalEvent:
         event = JournalEvent(
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             event_type=event_type,
             message=message,
             task_id=task_id,

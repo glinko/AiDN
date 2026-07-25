@@ -31,8 +31,8 @@ class TaskExecutionService:
                 bundle,
                 endpoint_manifest,
             )
-        if self._host._uses_approved_llamacpp_runtime(endpoint_manifest):
-            return self._host._attempt_approved_runtime_task(
+        if self._host._runtime_boundary._uses_approved_llamacpp_runtime(endpoint_manifest):
+            return self._host._runtime_boundary._attempt_approved_runtime_task(
                 task_id,
                 task,
                 bundle,
@@ -100,7 +100,7 @@ class TaskExecutionService:
         needed_ram = request_ram + (0 if runtime else startup_ram + resident_ram)
         needed_vram = request_vram + (0 if runtime else startup_vram + resident_vram)
         if not self._host.resources.can_fit(needed_cpu, needed_ram, needed_vram):
-            self._host._evict_idle_runtimes_for_task(
+            self._host._runtime_boundary._evict_idle_runtimes_for_task(
                 task=task,
                 requested_bundle=bundle,
                 cpu=needed_cpu,

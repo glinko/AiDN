@@ -1,6 +1,6 @@
 """Direct RFC-0054 execution for an Endpoint-approved Runtime Binding."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
@@ -107,7 +107,7 @@ class ApprovedRuntimeDispatcher:
             allowed_channel_classes={"RUNTIME"},
             allowed_message_types={"RUNTIME_EXECUTE"},
             runtime_binding_hash=binding.binding_hash(),
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
         protocol = RuntimeProtocolService(
             hypervisor_id=self.hypervisor_id,
@@ -154,7 +154,7 @@ class ApprovedRuntimeDispatcher:
             accounting_contract_hash=session.accounting_contract_hash,
             idempotency_key=request_id,
             request_deadline=request_deadline
-            or (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
+            or (datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
         )
         adapter = LlamaCppOpenAIAdapter(
             endpoint=endpoint_url,

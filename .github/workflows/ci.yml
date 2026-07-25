@@ -6,8 +6,39 @@ on:
       - main
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  collect:
+  # ── Stage 1: Quality Gates (parallel) ──────────────────────────────
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: python -m pip install --upgrade pip ruff
+      - name: Ruff check
+        run: ruff check src/
+
+  mypy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install mypy
+        run: python -m pip install --upgrade pip mypy
+      - name: Mypy type check (warn-only)
+        run: python -m mypy src/ || true
+
+  # ── Stage 2: Tests (parallel, need quality gates) ──────────────────
+  coverage:
+    needs: [lint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,10 +49,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
-      - name: Collect tests
-        run: python -m pytest --collect-only -q
+      - name: Run tests with coverage
+        run: python -m pytest --cov-fail-under=70 -k "not integration"
 
   smoke:
+    needs: [lint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +68,7 @@ jobs:
         run: python -m pytest tests/test_smoke.py -q
 
   service-contracts:
+    needs: [lint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +82,9 @@ jobs:
       - name: Run operator dashboard service checks
         run: python -m pytest tests/test_service.py -q -k "home_bootstrap or endpoints_dashboard_defaults_to_empty or requests_dashboard or snapshot_and_restore_preserves_requests_policy"
 
+  # ── Stage 3: Integration (need stage 2 to pass) ────────────────────
   providers-plugins:
+    needs: [coverage, smoke, service-contracts]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,6 +99,7 @@ jobs:
         run: python -m pytest tests/providers tests/plugins tests/test_operator_views.py -q -k "not integration"
 
   dispatcher-runtime:
+    needs: [coverage, smoke, service-contracts]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,6 +114,7 @@ jobs:
         run: python -m pytest tests/dispatcher tests/runtime_protocol -q -k "not integration"
 
   endpoint-session-paid-flow:
+    needs: [coverage, smoke, service-contracts]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from aidn_hypervisor.endpoint_publications.models import (
@@ -77,7 +77,7 @@ class EndpointPublicationService:
             session=manifest.session.model_dump(mode="json"),
             execution=execution_payload,
             validation_requirement=manifest.validation.model_dump(mode="json"),
-            published_at=datetime.now(timezone.utc).isoformat(),
+            published_at=datetime.now(UTC).isoformat(),
             sequence=sequence,
             status="published",
             wallet_signature=f"sig-{configuration_hash[:16]}-{wallet_private_key[:8]}",
@@ -186,7 +186,8 @@ class EndpointPublicationService:
         if external_access and not pricing_configured:
             warn(
                 "ENDPOINT_PRICING_NOT_CONFIGURED",
-                "External Endpoint publication has no explicit price; it will be treated as free until pricing is configured.",
+                "External Endpoint publication has no explicit price; "
+                "it will be treated as free until pricing is configured.",
             )
         if paid_pricing and manifest.session.minimum_deposit <= 0:
             warn(
@@ -388,6 +389,6 @@ class EndpointPublicationService:
                 "owner_wallet": record.owner_wallet,
                 "status": record.status,
             },
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
             emitted_events=["AdvertisementWithdrawn"],
         )

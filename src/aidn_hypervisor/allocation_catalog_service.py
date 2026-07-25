@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig
@@ -389,10 +389,10 @@ class AllocationCatalogService:
     ) -> dict:
         allocation_id = str(uuid4())
         now_ts = self._host._current_time_seconds()
-        created_at = datetime.fromtimestamp(now_ts, timezone.utc).isoformat()
+        created_at = datetime.fromtimestamp(now_ts, UTC).isoformat()
         expires_at = datetime.fromtimestamp(
             now_ts + request.lease_seconds,
-            timezone.utc,
+            UTC,
         ).isoformat()
         self._host._allocations[allocation_id] = {
             "allocation_id": allocation_id,
@@ -484,7 +484,7 @@ class AllocationCatalogService:
                     "retry_after_seconds": retry_after_seconds,
                     "next_attempt_at": datetime.fromtimestamp(
                         cooldown_until,
-                        timezone.utc,
+                        UTC,
                     ).isoformat(),
                 }
         next_attempt_ts = time.time() + _ALLOCATION_RETRY_INTERVAL_SECONDS
@@ -492,6 +492,6 @@ class AllocationCatalogService:
             "retry_after_seconds": _ALLOCATION_RETRY_INTERVAL_SECONDS,
             "next_attempt_at": datetime.fromtimestamp(
                 next_attempt_ts,
-                timezone.utc,
+                UTC,
             ).isoformat(),
         }

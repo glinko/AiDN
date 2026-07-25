@@ -16,7 +16,7 @@ from aidn_hypervisor.dispatcher.handshake import (
     TransportProfile,
 )
 from aidn_hypervisor.dispatcher.models import NetworkMessage
-from aidn_hypervisor.dispatcher.transport import (
+from aidn_hypervisor.dispatcher.transport.quic import (
     QUICTransport,
     TransportProfileBase,
     create_transport,

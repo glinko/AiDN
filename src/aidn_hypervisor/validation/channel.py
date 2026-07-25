@@ -23,6 +23,9 @@ class ValidationReportTransferChannel:
 
     def __init__(self, validation_service) -> None:
         self.validation_service = validation_service
+        self.dispatcher_store = getattr(
+            validation_service, "dispatcher_store", None
+        )
 
     def dispatcher_handler(self, payload: dict) -> dict:
         """Typed local-delivery adapter for RFC-0042 Network Dispatcher."""
@@ -34,9 +37,12 @@ class ValidationReportTransferChannel:
         if message.message_type != "VALIDATION_REPORT_TRANSFER":
             raise ValueError("unsupported validation channel message type")
         fingerprint = canonical_validation_hash(message.model_dump(mode="json"))
-        existing = self.validation_service.store.get_report_transfer_replay(
-            message.message_id
-        )
+        # Replay check lives in the shared DispatcherStore
+        if self.dispatcher_store is not None:
+            replay_store = self.dispatcher_store
+        else:
+            replay_store = self.validation_service.store
+        existing = replay_store.get_validation_replay(message.message_id)
         if existing is not None:
             if existing.payload_hash != fingerprint:
                 raise ValueError("validation channel message replay conflicts with prior payload")
@@ -50,7 +56,7 @@ class ValidationReportTransferChannel:
             envelope=message.envelope,
             report=message.report,
         )
-        self.validation_service.store.save_report_transfer_replay(
+        replay_store.save_validation_replay(
             ValidationReportTransferReplay(
                 message_id=message.message_id,
                 payload_hash=fingerprint,

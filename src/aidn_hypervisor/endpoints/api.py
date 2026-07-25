@@ -2,6 +2,8 @@ from uuid import uuid4
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
 from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
@@ -10,13 +12,12 @@ from aidn_hypervisor.endpoints.endpoint_application_service import (
     EndpointApplicationService,
     RemoteEndpointNotFoundError,
 )
+from aidn_hypervisor.endpoints.models import UpdateEndpointCommand
 from aidn_hypervisor.endpoints.mvp_session_application_service import (
     MvpPaidSmokeEvidenceMissingError,
     MvpSessionApplicationService,
 )
-from aidn_hypervisor.endpoints.models import UpdateEndpointCommand
 from aidn_hypervisor.session_application_service import SessionApplicationService
-from pydantic import BaseModel, Field
 
 
 class AttachProxyTargetRequest(BaseModel):

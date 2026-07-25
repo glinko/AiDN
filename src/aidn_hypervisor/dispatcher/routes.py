@@ -1,10 +1,9 @@
-from datetime import datetime, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
 
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.providers.models import ProviderPluginManifest, RuntimeBinding
 from aidn_hypervisor.sessions.models import EndpointSession
-
 
 RUNTIME_MESSAGE_TYPES = {
     "RUNTIME_EXECUTE",
@@ -79,7 +78,7 @@ def runtime_route(
         allowed_channel_classes={"RUNTIME"},
         allowed_message_types=set(RUNTIME_MESSAGE_TYPES),
         runtime_binding_hash=binding.binding_hash(),
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -102,7 +101,7 @@ def remote_runtime_route(
         allowed_channel_classes={"RUNTIME"},
         allowed_message_types=set(RUNTIME_MESSAGE_TYPES),
         runtime_binding_hash=binding.binding_hash(),
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -126,7 +125,7 @@ def runtime_ingress_route(
         allowed_channel_classes={"RUNTIME"},
         allowed_message_types=set(RUNTIME_INGRESS_MESSAGE_TYPES),
         runtime_binding_hash=binding.binding_hash(),
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -157,7 +156,7 @@ def plugin_control_route(
         allowed_channel_classes={"PLUGIN_CONTROL"},
         allowed_message_types=allowed_messages,
         configuration_hash=manifest.manifest_hash,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -192,7 +191,7 @@ def session_route(
         allowed_message_types=allowed_messages,
         configuration_hash=session.endpoint_configuration_hash,
         session_contract_hash=session.session_contract_hash,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -246,6 +245,60 @@ def bind_plugin_control_route(
         provider_instance_id=provider_instance_id,
         approved_permissions=approved_permissions,
         route_generation=route_generation,
+    )
+    dispatcher.register_local_route(route, handler)
+    return route
+
+
+VALIDATION_MESSAGE_TYPES = {
+    "VALIDATION_REPORT_TRANSFER",
+}
+
+
+def validation_route(
+    *,
+    destination_id: str = "validation_handler",
+    route_generation: int,
+    hypervisor_key: str | None = None,
+) -> DispatcherRoute:
+    """Create a route for VALIDATION-channel messages from validators.
+
+    When ``hypervisor_key`` is provided, the route enforces assignment-key
+    validation on every submitted message (canonical Hypervisor-key
+    registration).
+    """
+    return DispatcherRoute(
+        destination_type="VALIDATION_TARGET",
+        destination_id=destination_id,
+        route_type="LOCAL_PROTOCOL_HANDLER",
+        route_generation=route_generation,
+        allowed_source_types={"VALIDATOR"},
+        allowed_channel_classes={"VALIDATION"},
+        allowed_message_types=set(VALIDATION_MESSAGE_TYPES),
+        hypervisor_key=hypervisor_key,
+        created_at=datetime.now(UTC).isoformat(),
+    )
+
+
+def bind_validation_route(
+    dispatcher,
+    handler: Callable[[dict], object],
+    *,
+    destination_id: str = "validation_handler",
+    route_generation: int,
+    hypervisor_key: str | None = None,
+) -> DispatcherRoute:
+    """Bind the VALIDATION-channel route and optionally register the canonical
+    Hypervisor key.
+
+    When ``hypervisor_key`` is supplied the dispatcher will reject any
+    VALIDATION_REPORT_TRANSFER message that does not carry a matching
+    ``assignment_key``.
+    """
+    route = validation_route(
+        destination_id=destination_id,
+        route_generation=route_generation,
+        hypervisor_key=hypervisor_key,
     )
     dispatcher.register_local_route(route, handler)
     return route

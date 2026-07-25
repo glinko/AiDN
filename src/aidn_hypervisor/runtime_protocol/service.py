@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -10,14 +10,14 @@ from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol.models import (
     HypervisorRuntimeHello,
     RuntimeArtifactDeclare,
-    RuntimeConnection,
-    RuntimeDrainComplete,
-    RuntimeDrainRequest,
-    RuntimeDrainStatus,
     RuntimeCancellationRecord,
     RuntimeCancelRequest,
     RuntimeCancelResult,
     RuntimeCapacity,
+    RuntimeConnection,
+    RuntimeDrainComplete,
+    RuntimeDrainRequest,
+    RuntimeDrainStatus,
     RuntimeExecuteRequest,
     RuntimeHealth,
     RuntimeHello,
@@ -183,7 +183,7 @@ class RuntimeProtocolService:
                 "Runtime route changed before handshake completion",
             )
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for connection_id, connection in list(self.store.connections.items()):
             if (
                 connection.runtime_id == complete.runtime_id
@@ -223,7 +223,7 @@ class RuntimeProtocolService:
             route_generation=message.route_generation,
             allow_recovering=True,
         )
-        if datetime.fromisoformat(message.expiration) <= datetime.now(timezone.utc):
+        if datetime.fromisoformat(message.expiration) <= datetime.now(UTC):
             raise RuntimeProtocolError(
                 "RUNTIME_MESSAGE_EXPIRED", "message", "Runtime message expired"
             )
@@ -426,7 +426,7 @@ class RuntimeProtocolService:
                 "request",
                 "Required Runtime features are unavailable",
             )
-        if datetime.fromisoformat(request.request_deadline) <= datetime.now(timezone.utc):
+        if datetime.fromisoformat(request.request_deadline) <= datetime.now(UTC):
             raise RuntimeProtocolError(
                 "RUNTIME_REQUEST_EXPIRED", "request", "Request deadline expired"
             )
@@ -450,7 +450,7 @@ class RuntimeProtocolService:
             request_hash=request_hash,
             request=request,
             request_state="SUBMITTED",
-            updated_at=datetime.now(timezone.utc).isoformat(),
+            updated_at=datetime.now(UTC).isoformat(),
         )
         self.store.requests[request.request_id] = record
         self.store.flush()
@@ -498,7 +498,7 @@ class RuntimeProtocolService:
                 "admission_state": acceptance.admission_state,
                 "runtime_request_handle": acceptance.runtime_request_handle,
                 "accepted_at": acceptance.accepted_at,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             }
         )
         self.store.requests[record.request_id] = updated
@@ -712,7 +712,7 @@ class RuntimeProtocolService:
                 "cancellation",
                 "Runtime Binding does not declare cancellation support",
             )
-        if datetime.fromisoformat(cancellation.deadline) <= datetime.now(timezone.utc):
+        if datetime.fromisoformat(cancellation.deadline) <= datetime.now(UTC):
             raise RuntimeProtocolError(
                 "RUNTIME_CANCELLATION_TOO_LATE",
                 "cancellation",
@@ -754,12 +754,12 @@ class RuntimeProtocolService:
         self.store.cancellations[cancellation.cancellation_id] = RuntimeCancellationRecord(
             cancellation=cancellation.model_copy(deep=True),
             request_state_before_cancel=record.request_state,
-            updated_at=datetime.now(timezone.utc).isoformat(),
+            updated_at=datetime.now(UTC).isoformat(),
         )
         self.store.requests[cancellation.request_id] = record.model_copy(
             update={
                 "request_state": "CANCEL_REQUESTED",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             }
         )
         self.store.flush()
@@ -826,7 +826,7 @@ class RuntimeProtocolService:
                 self.store.requests[result.request_id] = request.model_copy(
                     update={
                         "request_state": cancellation_record.request_state_before_cancel,
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "updated_at": datetime.now(UTC).isoformat(),
                     }
                 )
         self.store.cancellation_results[result.cancellation_id] = result.model_copy(
@@ -1277,7 +1277,7 @@ class RuntimeProtocolService:
                 "request_state": terminal_state,
                 "terminal_result_hash": terminal_result_hash,
                 "terminal_final_usage_report_id": final_usage_report_id,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             }
         )
         self.store.requests[request_id] = updated
@@ -1453,7 +1453,7 @@ class RuntimeProtocolService:
             accepted_usage_sequence=accepted_sequence,
             accepted_report_hash=accepted_hash,
             rejection_code=rejection_code,
-            acknowledged_at=datetime.now(timezone.utc).isoformat(),
+            acknowledged_at=datetime.now(UTC).isoformat(),
         )
         signature_payload = ack.model_dump(
             mode="json",
@@ -1483,7 +1483,7 @@ class RuntimeProtocolService:
             accepted_report_hash=accepted_report_hash,
             conflicting_report_hash=report.report_hash,
             conflict_type=conflict_type,
-            observed_at=datetime.now(timezone.utc).isoformat(),
+            observed_at=datetime.now(UTC).isoformat(),
         )
         self.store.usage_conflicts[conflict.conflict_id] = conflict
         return conflict
@@ -1657,7 +1657,7 @@ class RuntimeProtocolService:
             route_generation=current_route.route_generation,
             plan_id=f"rrp-{uuid4().hex}",
             request_directives=directives,
-            issued_at=datetime.now(timezone.utc).isoformat(),
+            issued_at=datetime.now(UTC).isoformat(),
         )
         self.store.recovery_plans[plan.plan_id] = plan
         self.store.connections[runtime_connection_id] = connection.model_copy(
@@ -1865,7 +1865,7 @@ class RuntimeProtocolService:
             raise RuntimeProtocolError(
                 "RUNTIME_NOT_READY", "connection", "Runtime connection is not ready"
             )
-        if datetime.fromisoformat(connection.expires_at) <= datetime.now(timezone.utc):
+        if datetime.fromisoformat(connection.expires_at) <= datetime.now(UTC):
             raise RuntimeProtocolError(
                 "RUNTIME_CONNECTION_EXPIRED", "connection", "Runtime connection expired"
             )

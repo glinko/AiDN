@@ -4,7 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-
 ProviderConnectionMode = Literal["attached", "managed"]
 ProviderOperationalState = Literal["created", "ready", "degraded", "error", "removed"]
 ModelOperationalState = Literal["discovered", "installing", "ready", "error", "removed"]
@@ -867,7 +866,8 @@ class RuntimeBinding(BaseModel):
             "recovery_profile_hash": self.recovery_profile_hash,
             "dispatcher_route_scope": self.dispatcher_route_scope,
         }
-        expected = f"sha256:{hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('utf-8')).hexdigest()}"
+        canonical = json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+        expected = f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
         if self.runtime_configuration_hash is None:
             self.runtime_configuration_hash = expected
         elif self.runtime_configuration_hash != expected:

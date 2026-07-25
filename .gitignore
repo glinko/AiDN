@@ -2,3 +2,5 @@
 .superpowers/
 .codex-preview/
 __pycache__/
+.coverage
+src/aidn_hypervisor.egg-info/
