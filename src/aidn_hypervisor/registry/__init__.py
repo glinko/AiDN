@@ -28,6 +28,17 @@ from .sync import (
     SyncMode,
     SyncState,
 )
+from .verification import (
+    ConsistencyChecker,
+    ConsistencyIssue,
+    ObjectVerifier,
+    VerificationBatchResult,
+    VerificationResult,
+)
+from .anti_entropy import (
+    AntiEntropyEngine,
+    AntiEntropyRound,
+)
 
 __all__ = [
     # object_envelope
@@ -63,4 +74,13 @@ __all__ = [
     "SyncController",
     "SyncMode",
     "SyncState",
+    # verification
+    "ConsistencyChecker",
+    "ConsistencyIssue",
+    "ObjectVerifier",
+    "VerificationBatchResult",
+    "VerificationResult",
+    # anti_entropy
+    "AntiEntropyEngine",
+    "AntiEntropyRound",
 ]
