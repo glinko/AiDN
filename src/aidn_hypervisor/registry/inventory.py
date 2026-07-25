@@ -7,7 +7,7 @@ import math
 import time
 from typing import Any
 
-import mmh3
+
 from pydantic import BaseModel, Field
 
 from .object_envelope import RegistryObjectEnvelope
@@ -55,17 +55,25 @@ class BloomFilter:
         """Number of elements added."""
         return self._count
 
+    @staticmethod
+    def _hash(item: str, index: int) -> int:
+        """Multi-purpose hash using hashlib with dual-hash technique."""
+        key = f"{index}:{item}".encode("utf-8")
+        h1 = int(hashlib.sha256(key).hexdigest()[:16], 16)
+        h2 = int(hashlib.sha512(key).hexdigest()[:16], 16)
+        return (h1 + index * h2)
+
     def add(self, item: str) -> None:
         """Add an item to the filter."""
         for i in range(self._hash_count):
-            h = mmh3.hash(item, seed=i) % self._bits
+            h = self._hash(item, i) % self._bits
             self._bit_array[h] = 1
         self._count += 1
 
     def might_contain(self, item: str) -> bool:
         """Check if item might be in the set (false positives possible)."""
         for i in range(self._hash_count):
-            h = mmh3.hash(item, seed=i) % self._bits
+            h = self._hash(item, i) % self._bits
             if self._bit_array[h] == 0:
                 return False
         return True
