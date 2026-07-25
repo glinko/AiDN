@@ -382,6 +382,56 @@ class LedgerOperationService:
     def wallet_next_sequence(self, wallet_id: str) -> int:
         return int(self._wallet_next_sequences.get(wallet_id, 1))
 
+    def get_next_sequence(self, wallet_id: str) -> int:
+        """Get the next expected sequence number for a wallet."""
+        return self.wallet_next_sequence(wallet_id)
+
+    def submit_operation(
+        self,
+        *,
+        operation_type: str,
+        origin_type: str,
+        fee_class: str,
+        admission_validator: "AdmissionValidator",
+        envelope: "LedgerOperationEnvelope",
+        **kwargs,
+    ) -> dict:
+        """Submit an operation through admission validation, then record."""
+        result = admission_validator.validate(envelope)
+        if not result.admitted:
+            return {
+                "admitted": False,
+                "reason": result.reason,
+                "operation_id": envelope.operation_id,
+            }
+
+        # Record the operation — pass envelope fields through
+        record = self.record_operation(
+            operation_type=operation_type,
+            origin_type=origin_type,
+            fee_class=fee_class,
+            initiator_id=envelope.initiator_id,
+            sender_wallet=envelope.sender_wallet,
+            fee_payer=envelope.fee_payer,
+            created_at=envelope.created_at,
+            expires_at=envelope.expires_at,
+            target_epoch=envelope.target_epoch,
+            payload=envelope.payload if envelope.payload else None,
+            evidence_references=envelope.evidence_references or None,
+            signatures=envelope.signatures or None,
+            expected_sequence=envelope.sender_sequence,
+            **kwargs,
+        )
+
+        # Advance wallet sequence for subsequent operations
+        if envelope.sender_wallet is not None:
+            admission_validator.advance_wallet_sequence(envelope.sender_wallet)
+
+        # Mark as finalized for duplicate detection
+        admission_validator.record_finalized(envelope.operation_id)
+
+        return {"admitted": True, "operation_id": envelope.operation_id, "record": record}
+
     def record_operation(
         self,
         *,
