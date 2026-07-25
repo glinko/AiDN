@@ -25,6 +25,9 @@ from aidn_hypervisor.reputation_engine.models import (
 )
 from aidn_hypervisor.reputation_engine.store import ReputationStore
 from aidn_hypervisor.reputation_engine.engine import ReputationEngine
+from aidn_hypervisor.reputation_engine.registry_publication import (
+    ReputationProfilePublisher,
+)
 
 __all__ = [
     # Types
@@ -45,4 +48,6 @@ __all__ = [
     # Infrastructure
     "ReputationStore",
     "ReputationEngine",
+    # Registry publication
+    "ReputationProfilePublisher",
 ]

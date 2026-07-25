@@ -81,6 +81,9 @@ class ReputationEngine:
         # Store event in log
         self.store.store_event(event)
 
+        # Mark profile as dirty for registry publication
+        self.store.mark_dirty(event.subject_type, event.subject_id)
+
         return profile
 
     def ingest_events(self, events: list[ReputationEvent]) -> dict[str, ReputationProfile]:

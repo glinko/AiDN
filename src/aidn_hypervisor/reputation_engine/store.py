@@ -22,6 +22,10 @@ class ReputationStore:
         self._profiles: dict[tuple[str, str], ReputationProfile] = {}
         # (profile_type, subject_id) → list[ReputationEvent]
         self._events: dict[tuple[str, str], list[ReputationEvent]] = {}
+        # set of (profile_type, subject_id) marked dirty for publication
+        self._dirty: set[tuple[str, str]] = set()
+        # set of (profile_type, subject_id) marked retired
+        self._retired: set[tuple[str, str]] = set()
 
     def _key(self, profile_type: str, subject_id: str) -> tuple[str, str]:
         return (profile_type, subject_id)
@@ -129,8 +133,35 @@ class ReputationStore:
         key = self._key(profile_type, subject_id)
         return len(self._events.get(key, []))
 
+    # ── Publication tracking ──────────────
+
+    def mark_dirty(self, profile_type: str, subject_id: str) -> None:
+        """Mark a profile as needing re-publication."""
+        self._dirty.add(self._key(profile_type, subject_id))
+
+    def clear_dirty(self, profile_type: str, subject_id: str) -> None:
+        """Clear dirty flag after successful publication."""
+        self._dirty.discard(self._key(profile_type, subject_id))
+
+    def is_dirty(self, profile_type: str, subject_id: str) -> bool:
+        return self._key(profile_type, subject_id) in self._dirty
+
+    def get_dirty_profiles(self) -> list[tuple[str, str]]:
+        """Return list of (profile_type, subject_id) marked dirty."""
+        return list(self._dirty)
+
+    def mark_retired(self, profile_type: str, subject_id: str) -> None:
+        """Mark a profile as retired (should not be re-published)."""
+        self._retired.add(self._key(profile_type, subject_id))
+        self._dirty.discard(self._key(profile_type, subject_id))
+
+    def is_retired(self, profile_type: str, subject_id: str) -> bool:
+        return self._key(profile_type, subject_id) in self._retired
+
     # ── Maintenance ────────────────────────
 
     def reset(self) -> None:
         self._profiles.clear()
         self._events.clear()
+        self._dirty.clear()
+        self._retired.clear()
