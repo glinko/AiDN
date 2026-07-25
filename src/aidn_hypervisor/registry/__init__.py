@@ -18,6 +18,16 @@ from .profile import (
     RegistryProfileService,
     RequiredRegistryProfile,
 )
+from .replication import (
+    ReplicationEngine,
+    TransferProgress,
+    TransferState,
+)
+from .sync import (
+    SyncController,
+    SyncMode,
+    SyncState,
+)
 
 __all__ = [
     # object_envelope
@@ -45,4 +55,12 @@ __all__ = [
     "RegistryClass",
     "RegistryProfileService",
     "RequiredRegistryProfile",
+    # replication
+    "ReplicationEngine",
+    "TransferProgress",
+    "TransferState",
+    # sync
+    "SyncController",
+    "SyncMode",
+    "SyncState",
 ]
