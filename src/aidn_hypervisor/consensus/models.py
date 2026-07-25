@@ -8,7 +8,9 @@ import json
 from pydantic import BaseModel, Field
 
 
-OperationType = Literal[
+# Canonical operation types defined by the protocol.
+# Custom handlers may register additional types dynamically.
+KNOWN_OPERATION_TYPES = frozenset({
     "WALLET_TRANSFER",
     "SESSION_OPEN",
     "DEPOSIT_LOCK",
@@ -23,7 +25,9 @@ OperationType = Literal[
     "EPOCH_TASK",
     "SETTLEMENT_PROPOSE",
     "SETTLEMENT_ACCEPT",
-]
+})
+
+OperationType = str  # extensible — any non-empty string accepted
 
 LedgerOriginType = Literal["wallet", "multi_party", "protocol", "evidence_triggered"]
 
