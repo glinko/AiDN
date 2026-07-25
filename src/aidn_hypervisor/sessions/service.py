@@ -20,6 +20,12 @@ from aidn_hypervisor.sessions.models import (
     SessionResult,
     SessionSettlementSummary,
 )
+from aidn_hypervisor.session_failure.models import (
+    FailureClass,
+    RecoveryWindowConfig,
+)
+from aidn_hypervisor.session_failure.poller import SessionFailurePoller
+from aidn_hypervisor.session_failure.service import SessionFailureHandler
 
 
 def _hash_payload(payload: dict) -> str:
@@ -47,12 +53,30 @@ class SessionService:
         operation_recorder=None,
         network_fee_q: float = 0.01,
         registry_service: RegistryService | None = None,
+        failure_handler: SessionFailureHandler | None = None,
+        recovery_config: RecoveryWindowConfig | None = None,
     ) -> None:
         self.store = store
         self.event_recorder = event_recorder
         self.operation_recorder = operation_recorder
         self.network_fee_q = max(0.0, float(network_fee_q))
         self.registry_service = registry_service or RegistryService()
+
+        # RFC-0060: failure handler (separate component)
+        self.failure_handler = failure_handler
+        if self.failure_handler is not None:
+            # Wire up status change callback: when failure handler transitions
+            # a session, sync the status back to SessionService's store
+            self.failure_handler.set_status_change_callback(
+                self._on_failure_status_change
+            )
+            # Register any existing active/queued sessions
+            for session in self.store.list_sessions():
+                if session.status in {"queued", "active"}:
+                    self.failure_handler.register_session(
+                        session.session_id, session.status
+                    )
+        self._recovery_config = recovery_config
 
     def _emit(
         self,
@@ -89,6 +113,88 @@ class SessionService:
             payload=dict(payload),
             created_at=created_at,
             emitted_events=list(emitted_events or []),
+        )
+
+    # ------------------------------------------------------------------
+    # RFC-0060: Failure handler integration
+    # ------------------------------------------------------------------
+
+    def _on_failure_status_change(
+        self, session_id: str, old_status: str, new_status: str
+    ) -> None:
+        """Callback when failure handler transitions a session status."""
+        try:
+            session = self.store.get_session(session_id)
+            if session.status != old_status:
+                return  # SessionService already moved it
+            updated = session.model_copy(update={"status": new_status})
+            self.store.save_session(updated)
+            self._emit(
+                event_type="session.failure_status_change",
+                message=f"session status changed via failure handler",
+                details={
+                    "session_id": session_id,
+                    "old_status": old_status,
+                    "new_status": new_status,
+                },
+            )
+        except Exception:
+            pass  # Session may have been removed concurrently
+
+    def sweep_failure_recovery(self) -> list[str]:
+        """Run the failure poller to expire any recovery windows.
+
+        Returns:
+            List of session IDs that were transitioned to force_closing.
+        """
+        if self.failure_handler is None:
+            return []
+        poller = SessionFailurePoller(self.failure_handler)
+        return poller.sweep_expired_recoveries()
+
+    def classify_session_failure(
+        self,
+        *,
+        session_id: str,
+        failure_class: FailureClass,
+        attribution=None,
+        details: str = "",
+    ) -> None:
+        """Classify a session failure via the failure handler.
+
+        The failure handler will transition the session status and
+        emit events; the _on_failure_status_change callback will
+        sync the status back to SessionService's store.
+        """
+        if self.failure_handler is None:
+            return
+        self.failure_handler.classify_failure(
+            session_id=session_id,
+            failure_class=failure_class,
+            attribution=attribution,
+            details=details,
+        )
+
+    def recover_session_from_failure(self, session_id: str) -> None:
+        """Recover a session that is in the 'recovering' failure state."""
+        if self.failure_handler is None:
+            return
+        self.failure_handler.recover_session(session_id)
+
+    def handle_proxy_failure(
+        self,
+        *,
+        session_id: str,
+        remote_endpoint_id: str,
+        error: str = "",
+    ) -> None:
+        """Handle a proxy endpoint failure (RFC-0060 §90+)."""
+        if self.failure_handler is None:
+            return
+        self.failure_handler.handle_proxy_failure(
+            session_id=session_id,
+            remote_endpoint_id=remote_endpoint_id,
+            error=error,
         )
 
     def list_sessions(self) -> list[EndpointSession]:
@@ -579,6 +685,11 @@ class SessionService:
             deposit_q=deposit_q,
             status=status,
         )
+
+        # RFC-0060: register session with failure handler
+        if self.failure_handler is not None:
+            self.failure_handler.register_session(session_id, status)
+
         return SessionResult(session=session, deposit=deposit)
 
     def bind_canonical_funding(
@@ -607,6 +718,11 @@ class SessionService:
             closed_at=datetime.now(timezone.utc),
             close_reason=current.close_reason or "closed_by_client",
         )
+
+        # RFC-0060: unregister session from failure handler
+        if self.failure_handler is not None:
+            self.failure_handler.unregister_session(session_id)
+
         self._promote_next_waiting_session(endpoint_id=current.endpoint_id)
         return result
 

@@ -2,7 +2,27 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-SessionStatus = Literal["queued", "active", "closed"]
+# RFC-0060: expanded Session status (15 states)
+# Terminal: closed, rejected, cancelled, expired, force_settled, unrecoverable
+SessionStatus = Literal[
+    # ordinary lifecycle
+    "queued",
+    "active",
+    "closed",
+    # failure / recovery states
+    "rejected",
+    "cancelled",
+    "expired",
+    "recovering",
+    "paused",
+    "deposit_exhausted",
+    "accounting_mismatch",
+    "provider_unavailable",
+    "consumer_unavailable",
+    "force_closing",
+    "force_settled",
+    "unrecoverable",
+]
 DepositStatus = Literal["locked", "released"]
 SessionAccountingStatus = Literal["open", "ack_pending", "mismatch", "force_settle_required"]
 ProxySessionBindingStatus = Literal[
