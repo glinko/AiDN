@@ -116,13 +116,17 @@ class DownloadPlanner:
                     candidates.append(prov)
 
             if candidates:
-                # Assign to the next provider in round-robin that has this chunk
-                assigned: list[str] = []
-                for offset in range(len(providers)):
-                    check_idx = (provider_idx + offset) % len(providers)
-                    if providers[check_idx] in candidates:
-                        assigned.append(providers[check_idx])
-                        break
+                # Primary provider selected by round-robin for diversity;
+                # all remaining candidates appended for fallback on verification failure
+                primary = candidates[
+                    candidates.index(providers[provider_idx % len(providers)])
+                    if providers[provider_idx % len(providers)] in candidates
+                    else 0
+                ]
+                assigned = [primary]
+                for c in candidates:
+                    if c not in assigned:
+                        assigned.append(c)
                 plan[chunk_idx] = assigned
                 provider_idx = (provider_idx + 1) % len(providers)
             else:
@@ -183,11 +187,15 @@ class SnapshotDownloader:
                 prov_list = plan.get(chunk_idx, [])
                 downloaded = False
 
-                for attempt in range(self._config.max_retry_count + 1):
-                    for prov in prov_list:
-                        if not self._source.is_provider_available(prov):
-                            continue
+                # Try all providers for this chunk (not just one)
+                # Each provider counts as one attempt cycle
+                for prov in prov_list:
+                    if downloaded:
+                        break
+                    if not self._source.is_provider_available(prov):
+                        continue
 
+                    for attempt in range(self._config.max_retry_count + 1):
                         chunk = self._source.get_chunk(snapshot_id, chunk_idx, prov)
                         if chunk is None:
                             continue
@@ -202,7 +210,9 @@ class SnapshotDownloader:
                     if downloaded:
                         break
 
-                if not downloaded:
+                if downloaded:
+                    failed = [f for f in failed if f != chunk_idx]
+                elif chunk_idx not in failed:
                     failed.append(chunk_idx)
 
         # Remove successfully downloaded from pending
@@ -254,9 +264,10 @@ class SnapshotDownloader:
         total_bytes = session.total_bytes_downloaded
 
         # Only download missing/failed chunks
+        # Include failed chunks for retry with new providers
         needed = [
             i for i in range(total)
-            if not bitmap[i] and i not in failed
+            if not bitmap[i]
         ]
 
         if not needed:
@@ -289,11 +300,14 @@ class SnapshotDownloader:
                 prov_list = plan.get(chunk_idx, [])
                 downloaded = False
 
-                for attempt in range(self._config.max_retry_count + 1):
-                    for prov in prov_list:
-                        if not self._source.is_provider_available(prov):
-                            continue
+                # Try all providers for this chunk
+                for prov in prov_list:
+                    if downloaded:
+                        break
+                    if not self._source.is_provider_available(prov):
+                        continue
 
+                    for attempt in range(self._config.max_retry_count + 1):
                         chunk = self._source.get_chunk(
                             session.snapshot_id, chunk_idx, prov
                         )
@@ -309,7 +323,9 @@ class SnapshotDownloader:
                     if downloaded:
                         break
 
-                if not downloaded:
+                if downloaded:
+                    failed = [f for f in failed if f != chunk_idx]
+                elif chunk_idx not in failed:
                     failed.append(chunk_idx)
 
         still_pending = [i for i in range(total) if not bitmap[i]]
