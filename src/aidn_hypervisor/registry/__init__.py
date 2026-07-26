@@ -72,6 +72,14 @@ from .bridge import (
     envelope_to_legacy_record,
     legacy_record_to_envelope,
 )
+from .grpc_transport import (
+    GrpcConnectionState,
+    GrpcProtoRegistryMessage,
+    GrpcRegistryStream,
+    GrpcRegistryTransport,
+    GrpcTransportConfig,
+)
+from .grpc_proto_spec import PROTO_SPEC
 
 __all__ = [
     # messages
@@ -143,4 +151,12 @@ __all__ = [
     "RegistryServiceAdapter",
     "envelope_to_legacy_record",
     "legacy_record_to_envelope",
+    # grpc_transport
+    "GrpcConnectionState",
+    "GrpcProtoRegistryMessage",
+    "GrpcRegistryStream",
+    "GrpcRegistryTransport",
+    "GrpcTransportConfig",
+    # grpc_proto_spec
+    "PROTO_SPEC",
 ]
