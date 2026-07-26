@@ -22,8 +22,22 @@ from aidn_hypervisor.snapshot.producer import (
     SnapshotProducerConfig,
     SnapshotProducerError,
 )
+from aidn_hypervisor.snapshot.trust_anchor import (
+    CheckpointValidationResult,
+    CheckpointValidator,
+    TrustAnchor,
+    TrustAnchorStore,
+)
+from aidn_hypervisor.snapshot.sync_mode import (
+    SyncMode,
+    SyncModeConfig,
+    SyncModeSelector,
+    SyncModeSelection,
+)
 
 __all__ = [
+    "CheckpointValidationResult",
+    "CheckpointValidator",
     "Chunker",
     "ChunkVerifier",
     "CompressionAlgorithm",
@@ -42,5 +56,11 @@ __all__ = [
     "SnapshotProducerError",
     "SnapshotType",
     "STATE_NAMESPACES",
+    "SyncMode",
+    "SyncModeConfig",
+    "SyncModeSelector",
+    "SyncModeSelection",
+    "TrustAnchor",
+    "TrustAnchorStore",
     "compute_snapshot_id",
 ]
