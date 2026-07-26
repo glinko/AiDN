@@ -49,6 +49,24 @@ from aidn_hypervisor.snapshot.download import (
     DownloadSession,
     SnapshotDownloader,
 )
+from aidn_hypervisor.snapshot.staging import (
+    RestorationResult,
+    StateRestorer,
+    StagingStateStore,
+)
+from aidn_hypervisor.snapshot.verification import (
+    InvariantCheckResult,
+    InvariantChecker,
+    InvariantError,
+    SnapshotVerifier,
+    VerificationResult,
+)
+from aidn_hypervisor.snapshot.activation import (
+    ActivationRecord,
+    ActivationResult,
+    ActivationState,
+    AtomicActivator,
+)
 
 __all__ = [
     "CheckpointValidationResult",
@@ -86,6 +104,18 @@ __all__ = [
     "SyncModeConfig",
     "SyncModeSelector",
     "SyncModeSelection",
+    "ActivationRecord",
+    "ActivationResult",
+    "ActivationState",
+    "AtomicActivator",
+    "InvariantCheckResult",
+    "InvariantChecker",
+    "InvariantError",
+    "RestorationResult",
+    "SnapshotVerifier",
+    "StateRestorer",
+    "StagingStateStore",
+    "VerificationResult",
     "TrustAnchor",
     "TrustAnchorStore",
     "compute_snapshot_id",
