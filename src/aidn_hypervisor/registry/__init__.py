@@ -39,6 +39,18 @@ from .anti_entropy import (
     AntiEntropyEngine,
     AntiEntropyRound,
 )
+from .completeness import (
+    CompletenessScore,
+    CompletenessTracker,
+)
+from .rewards import (
+    ParticipantLedger,
+    PenaltyEntry,
+    RewardConfig,
+    RewardEngine,
+    RewardEntry,
+    SettlementResult,
+)
 
 __all__ = [
     # object_envelope
@@ -83,4 +95,14 @@ __all__ = [
     # anti_entropy
     "AntiEntropyEngine",
     "AntiEntropyRound",
+    # completeness
+    "CompletenessScore",
+    "CompletenessTracker",
+    # rewards
+    "ParticipantLedger",
+    "PenaltyEntry",
+    "RewardConfig",
+    "RewardEngine",
+    "RewardEntry",
+    "SettlementResult",
 ]
