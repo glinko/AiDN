@@ -74,7 +74,7 @@ The distributed registry is a target architecture, not the first milestone.
 
 ## Current Stage
 
-Status: `M2 complete, M3 complete, M4 complete, M5 in progress`
+Status: `M1-M9 complete, M8 target architecture`
 
 Product alignment summary:
 - the new RFC set is now authoritative for service, capability, runtime, registry, marketplace, verification, reputation, ledger, and settlement architecture;
@@ -459,6 +459,40 @@ Checkpoints:
 Exit criteria:
 - network discovery no longer depends on one central registry instance;
 - node metadata and ratings can propagate across trusted registry peers.
+
+### M9: Network Transport And Registry Replication
+
+Goal: implement the network transport layer and registry replication protocol for distributed peer-to-peer communication.
+
+Status: `MVP complete`
+
+Checkpoints:
+- [x] Registry network message types (inventory, object transfer, bloom filters, sync status, announcements)
+- [x] Channel and route binding with authorization and rate-limiting
+- [x] Replication transport with RegistryReplicator controller
+- [x] gRPC transport profile with proto specification
+- [x] Peer discovery and auto-synchronization
+- [x] Integration and end-to-end replication tests
+
+Exit criteria:
+- registry peers can discover, connect, and synchronize inventory via bloom filters;
+- object transfer completes with hash verification and anti-entropy convergence;
+- network transport layer provides bidirectional streaming with keepalive and backpressure.
+
+## Immediate Priorities
+
+Order of work right now:
+
+1. Close the operator bootstrap loop from `install -> wallet ownership -> provider attach -> model/bundle setup -> first endpoint publish`
+2. Make endpoint management the primary operator object, including privacy mode, publication mode, and validation as separate actions
+3. Finish migrating the operator shell onto the endpoint-first trust layer, so publish/proof/sync state are first-class controls across `Home`, `Endpoints`, and later marketplace flows
+4. Expand Endpoint readiness beyond draft admission into publish-time checks for pricing, validation policy, visibility, Session limits and signed-publication compatibility
+5. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
+6. Finish the remaining `M3/M4` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
+7. Define `M5` rating, validation economics, and `M6` custom model onboarding contracts around the endpoint-centric operator experience
+8. Add minimal governance/authorization certificates for quorum-finalized wallet-identity network changes, so registry authority can travel as signed network evidence instead of only local policy state
+9. Introduce the `M7` consensus boundary cleanly, so future ledger, epoch, validator, and registry work land on finalized protocol state instead of local-only mutation
+10. Build the `M9` network transport layer to enable distributed registry replication and peer-to-peer synchronization
 
 ## Immediate Priorities
 
