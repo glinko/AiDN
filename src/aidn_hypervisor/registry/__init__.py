@@ -80,6 +80,12 @@ from .grpc_transport import (
     GrpcTransportConfig,
 )
 from .grpc_proto_spec import PROTO_SPEC
+from .discovery import (
+    AutoSyncController,
+    DiscoveryConfig,
+    PeerDiscoveryEvent,
+    RegistryPeerDiscovery,
+)
 
 __all__ = [
     # messages
@@ -159,4 +165,9 @@ __all__ = [
     "GrpcTransportConfig",
     # grpc_proto_spec
     "PROTO_SPEC",
+    # discovery
+    "AutoSyncController",
+    "DiscoveryConfig",
+    "PeerDiscoveryEvent",
+    "RegistryPeerDiscovery",
 ]
