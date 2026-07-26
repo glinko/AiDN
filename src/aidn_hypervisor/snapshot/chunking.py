@@ -75,6 +75,10 @@ class Chunker:
 
     def verify_chunk(self, chunk: SnapshotChunk) -> bool:
         """Return ``True`` when ``chunk.chunk_hash`` matches SHA-256(payload)."""
+        return self._verify_chunk_hash(chunk)
+
+    def _verify_chunk_hash(self, chunk: SnapshotChunk) -> bool:
+        """Internal: verify a single chunk hash."""
         expected = hashlib.sha256(chunk.payload).hexdigest()
         return chunk.chunk_hash == expected
 
