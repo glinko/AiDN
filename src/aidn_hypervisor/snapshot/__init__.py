@@ -10,11 +10,17 @@ from aidn_hypervisor.snapshot.models import (
     compute_snapshot_id,
 )
 from aidn_hypervisor.snapshot.manifest import ManifestBuilder, ManifestVerifier
+from aidn_hypervisor.snapshot.chunking import Chunker, ChunkVerifier, MerkleTree
+from aidn_hypervisor.snapshot.compression import CompressionHandler
 
 __all__ = [
+    "Chunker",
+    "ChunkVerifier",
     "CompressionAlgorithm",
+    "CompressionHandler",
     "ManifestBuilder",
     "ManifestVerifier",
+    "MerkleTree",
     "SnapshotChunk",
     "SnapshotEncoding",
     "SnapshotIdentity",
