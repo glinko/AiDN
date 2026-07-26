@@ -74,7 +74,7 @@ The distributed registry is a target architecture, not the first milestone.
 
 ## Current Stage
 
-Status: `M1-M9 complete, M8 target architecture`
+Status: `M1-M10 complete, M8 target architecture`
 
 Product alignment summary:
 - the new RFC set is now authoritative for service, capability, runtime, registry, marketplace, verification, reputation, ledger, and settlement architecture;
@@ -479,6 +479,29 @@ Exit criteria:
 - object transfer completes with hash verification and anti-entropy convergence;
 - network transport layer provides bidirectional streaming with keepalive and backpressure.
 
+### M10: Snapshot And State Sync Protocol
+
+Goal: implement the snapshot production, distribution, discovery, download, verification, restoration, and activation pipeline for decentralized node bootstrapping.
+
+Status: `MVP complete`
+
+Checkpoints:
+- [x] Snapshot models, manifest, and identity (RFC-0062 §1-§21)
+- [x] Chunking, Merkle tree, and chunk verification (RFC-0062 §22-§25)
+- [x] Snapshot producer and portable encoding (RFC-0062 §26-§36)
+- [x] Trust anchor management and sync mode selection (RFC-0062 §55-§67)
+- [x] Snapshot discovery, selection, and multi-source download (RFC-0062 §37-§44)
+- [x] Staging restoration, invariant verification, and atomic activation (RFC-0062 §45-§51)
+- [x] Later-block replay and sync completion (RFC-0062 §52-§54, §88-§89)
+- [x] Integration and end-to-end pipeline tests
+
+Exit criteria:
+- snapshot lifecycle: produce → distribute → discover → download → verify → restore → activate → replay;
+- multi-source download with fallback on verification failure;
+- Merkle chunk roots for integrity, portable encoding with namespace ordering;
+- trust anchor management for sync modes, staging restoration with invariant validation;
+- atomic activation with crash recovery, block replay with state hash verification.
+
 ## Immediate Priorities
 
 Order of work right now:
@@ -493,6 +516,7 @@ Order of work right now:
 8. Add minimal governance/authorization certificates for quorum-finalized wallet-identity network changes, so registry authority can travel as signed network evidence instead of only local policy state
 9. Introduce the `M7` consensus boundary cleanly, so future ledger, epoch, validator, and registry work land on finalized protocol state instead of local-only mutation
 10. Build the `M9` network transport layer to enable distributed registry replication and peer-to-peer synchronization
+11. Implement `M10` snapshot and state sync protocol for decentralized node bootstrapping (DONE)
 
 ## Immediate Priorities
 
