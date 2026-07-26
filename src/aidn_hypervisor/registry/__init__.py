@@ -51,6 +51,11 @@ from .rewards import (
     RewardEntry,
     SettlementResult,
 )
+from .bridge import (
+    RegistryServiceAdapter,
+    envelope_to_legacy_record,
+    legacy_record_to_envelope,
+)
 
 __all__ = [
     # object_envelope
@@ -105,4 +110,8 @@ __all__ = [
     "RewardEngine",
     "RewardEntry",
     "SettlementResult",
+    # bridge
+    "RegistryServiceAdapter",
+    "envelope_to_legacy_record",
+    "legacy_record_to_envelope",
 ]
