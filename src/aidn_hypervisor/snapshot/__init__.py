@@ -67,6 +67,20 @@ from aidn_hypervisor.snapshot.activation import (
     ActivationState,
     AtomicActivator,
 )
+from aidn_hypervisor.snapshot.replay import (
+    BlockReplayer,
+    BlockSource,
+    ReplayBlock,
+    ReplayConfig,
+    ReplayResult,
+)
+from aidn_hypervisor.snapshot.progress import (
+    SyncMetrics,
+    SyncMetricsCollector,
+    SyncPhase,
+    SyncProgress,
+    SyncProgressTracker,
+)
 
 __all__ = [
     "CheckpointValidationResult",
@@ -119,4 +133,16 @@ __all__ = [
     "TrustAnchor",
     "TrustAnchorStore",
     "compute_snapshot_id",
+    # replay
+    "BlockReplayer",
+    "BlockSource",
+    "ReplayBlock",
+    "ReplayConfig",
+    "ReplayResult",
+    # progress
+    "SyncMetrics",
+    "SyncMetricsCollector",
+    "SyncPhase",
+    "SyncProgress",
+    "SyncProgressTracker",
 ]
