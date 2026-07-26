@@ -1,3 +1,19 @@
+from .messages import (
+    RegistryChannelClass,
+    RegistryMessageType,
+    RegistryPayload,
+    RegistryMessageBuilder,
+)
+from .channel import (
+    RegistryChannelConfig,
+    RegistryChannelManager,
+    DEFAULT_REGISTRY_CHANNELS,
+)
+from .routes import (
+    create_default_registry_channels,
+    build_registry_route,
+    build_registry_broadcast_route,
+)
 from .object_envelope import (
     LedgerCommitmentClass,
     ObjectIdentity,
@@ -58,6 +74,19 @@ from .bridge import (
 )
 
 __all__ = [
+    # messages
+    "RegistryChannelClass",
+    "RegistryMessageType",
+    "RegistryPayload",
+    "RegistryMessageBuilder",
+    # channel
+    "RegistryChannelConfig",
+    "RegistryChannelManager",
+    "DEFAULT_REGISTRY_CHANNELS",
+    # routes
+    "create_default_registry_channels",
+    "build_registry_route",
+    "build_registry_broadcast_route",
     # object_envelope
     "LedgerCommitmentClass",
     "ObjectIdentity",
