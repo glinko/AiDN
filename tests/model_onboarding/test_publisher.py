@@ -6,7 +6,6 @@ capability objects to the Registry service.
 
 import hashlib
 import json
-from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest

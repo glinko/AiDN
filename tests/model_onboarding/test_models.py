@@ -4,7 +4,6 @@ Tests the OnboardingCapability model used to advertise a node's
 custom model hosting capabilities to the registry.
 """
 
-import pytest
 from datetime import datetime, timezone
 
 
@@ -14,7 +13,6 @@ class TestOnboardingCapabilityModel:
     def test_create_minimal_capability(self):
         from aidn_hypervisor.model_onboarding.models import (
             OnboardingCapability,
-            ProviderCapability,
         )
 
         cap = OnboardingCapability(

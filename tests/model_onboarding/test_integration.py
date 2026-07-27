@@ -6,7 +6,7 @@ service state, and registry query integration.
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -149,7 +149,7 @@ class TestAutoPublish:
             tmp_path=tmp_path,
         )
 
-        onboarding = OnboardingService(
+        _ = OnboardingService(
             service, registry=mock_registry, auto_publish=True
         )
 

@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Any, Callable
 
 from aidn_hypervisor.model_onboarding.models import OnboardingCapability
