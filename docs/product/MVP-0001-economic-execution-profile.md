@@ -149,6 +149,10 @@ Implemented now:
 - The same public fixed-price execution and restart/Settlement boundary is
   covered against an attached live `vLLM` Runtime Binding. Provider-reported
   token Usage remains evidence only under `MVP-0001`; payment stays fixed-price.
+- Legacy provider-plugin telemetry now preserves partial token observation:
+  Ollama, llama.cpp and vLLM omit an unavailable token dimension rather than
+  reporting it as zero. Fixed-price `MVP-0001` Settlement remains valid when
+  upstream token telemetry is partial or unavailable.
 - Ollama has an explicit RFC-0054 `ollama-generate` adapter for native
   `/api/generate` execution and JSONL streaming. It maps emitted token counts
   as Provider-authoritative Usage, records delivered stream bytes locally and

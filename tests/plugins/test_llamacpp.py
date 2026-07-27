@@ -317,3 +317,14 @@ def test_llamacpp_plugin_invoke_requires_prompt_payload() -> None:
 
     with pytest.raises(ValueError, match="prompt"):
         plugin.invoke(task, runtime)
+
+
+def test_llamacpp_partial_usage_does_not_invent_unknown_tokens() -> None:
+    usage = LlamaCppPlugin()._usage_from_response({"tokens_evaluated": 7})
+
+    assert usage == {
+        "input_tokens": 7,
+        "fixed_request_count": 1,
+        "measurement_kind": "estimated",
+        "measurement_source": "provider_api_partial",
+    }

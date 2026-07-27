@@ -193,10 +193,21 @@ class VllmPlugin(ProviderPlugin):
     def _usage_from_response(usage: dict) -> dict:
         input_tokens, output_tokens = usage.get("prompt_tokens"), usage.get("completion_tokens")
         exact = isinstance(input_tokens, int) and isinstance(output_tokens, int)
-        return {
-            "input_tokens": int(input_tokens) if isinstance(input_tokens, int) else 0,
-            "output_tokens": int(output_tokens) if isinstance(output_tokens, int) else 0,
+        if exact:
+            return {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "fixed_request_count": 1,
+                "measurement_kind": "exact",
+                "measurement_source": "provider_api",
+            }
+        result = {
             "fixed_request_count": 1,
-            "measurement_kind": "exact" if exact else "estimated",
-            "measurement_source": "provider_api" if exact else "provider_api_partial",
+            "measurement_kind": "estimated",
+            "measurement_source": "provider_api_partial",
         }
+        if isinstance(input_tokens, int):
+            result["input_tokens"] = input_tokens
+        if isinstance(output_tokens, int):
+            result["output_tokens"] = output_tokens
+        return result

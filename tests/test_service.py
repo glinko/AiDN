@@ -4042,8 +4042,6 @@ def test_service_executes_llm_task_via_ollama_plugin() -> None:
         "output_text": "Hello from Ollama",
         "done": True,
         "usage": {
-            "input_tokens": 0,
-            "output_tokens": 0,
             "fixed_request_count": 1,
             "measurement_kind": "estimated",
             "measurement_source": "provider_api_partial",
@@ -4222,8 +4220,6 @@ def test_service_executes_llm_task_via_llamacpp_plugin() -> None:
         "model_id": "C:/models/phi4.gguf",
         "output_text": "hello from llama.cpp",
         "usage": {
-            "input_tokens": 0,
-            "output_tokens": 0,
             "fixed_request_count": 1,
             "measurement_kind": "estimated",
             "measurement_source": "provider_api_partial",

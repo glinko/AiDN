@@ -264,10 +264,13 @@ class LlamaCppPlugin(ProviderPlugin):
                 "measurement_kind": "exact",
                 "measurement_source": "provider_api",
             }
-        return {
-            "input_tokens": int(input_tokens) if isinstance(input_tokens, int) else 0,
-            "output_tokens": int(output_tokens) if isinstance(output_tokens, int) else 0,
+        result = {
             "fixed_request_count": 1,
             "measurement_kind": "estimated",
             "measurement_source": "provider_api_partial",
         }
+        if isinstance(input_tokens, int):
+            result["input_tokens"] = input_tokens
+        if isinstance(output_tokens, int):
+            result["output_tokens"] = output_tokens
+        return result

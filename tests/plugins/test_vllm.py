@@ -45,3 +45,14 @@ def test_vllm_plugin_is_attached_only_and_projects_runtime_binding() -> None:
         )["adapter_id"]
         == "vllm-openai"
     )
+
+
+def test_vllm_partial_usage_does_not_invent_unknown_tokens() -> None:
+    usage = VllmPlugin._usage_from_response({"prompt_tokens": 7})
+
+    assert usage == {
+        "input_tokens": 7,
+        "fixed_request_count": 1,
+        "measurement_kind": "estimated",
+        "measurement_source": "provider_api_partial",
+    }
