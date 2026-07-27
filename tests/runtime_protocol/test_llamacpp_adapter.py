@@ -93,6 +93,7 @@ class _Protocol:
 class _RequestRecord:
     def __init__(self, runtime_request_handle: str | None = None) -> None:
         self.runtime_request_handle = runtime_request_handle
+        self.request_state = "ADMITTED"
 
     def model_copy(self, *, update: dict):
         return _RequestRecord(update.get("runtime_request_handle", self.runtime_request_handle))
@@ -321,3 +322,34 @@ def test_proxy_adapter_confirms_cancellation_only_from_upstream_operation(monkey
     assert result.cancellation_state == "CANCELLED"
     assert result.output_stopped is True
     assert result.provider_confirmed_stopped is True
+
+
+def test_proxy_adapter_recovers_upstream_operation_without_reexecution(monkeypatch) -> None:
+    adapter = ProxyOpenAIAdapter(
+        endpoint="http://provider",
+        model="opaque-model",
+        runtime_signature="runtime-signed",
+    )
+    protocol = _Protocol()
+    request = _request()
+    protocol.register_execute_request("connection-1", request)
+    adapter._operation_ids[request.request_id] = "operation-1"
+    monkeypatch.setattr(adapter, "_request_json", lambda *_: {"status": "running"})
+
+    state = adapter.recovery_state(protocol, request, instance_id="restarted")
+    result = adapter.apply_recovery_plan(
+        protocol,
+        "connection-2",
+        RuntimeRecoveryPlan(
+            runtime_id=request.runtime_id,
+            runtime_generation=request.runtime_generation,
+            route_generation=request.route_generation,
+            plan_id="proxy-plan-1",
+            request_directives={request.request_id: "WAIT_FOR_PROVIDER"},
+            issued_at=datetime.now(UTC).isoformat(),
+        ),
+    )
+
+    assert state.recoverable_requests[0]["provider_execution_reference"] == "operation-1"
+    assert result.request_results == {request.request_id: "UPSTREAM_OPERATION_ACTIVE"}
+    assert result.remaining_conflicts == []

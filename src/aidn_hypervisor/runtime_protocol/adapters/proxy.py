@@ -7,6 +7,8 @@ from aidn_hypervisor.runtime_protocol.adapters.llamacpp import LlamaCppOpenAIAda
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeCancelRequest,
     RuntimeCancelResult,
+    RuntimeRecoveryPlan,
+    RuntimeRecoveryResult,
     RuntimeRecoveryState,
     RuntimeUsageDimension,
 )
@@ -107,6 +109,57 @@ class ProxyOpenAIAdapter(LlamaCppOpenAIAdapter):
         }
         return state.model_copy(update={"recoverable_requests": [*state.recoverable_requests, recoverable]})
 
+    def apply_recovery_plan(
+        self,
+        protocol,
+        runtime_connection_id: str,
+        plan: RuntimeRecoveryPlan,
+    ) -> RuntimeRecoveryResult:
+        """Reconcile operation handles without re-executing opaque upstream work."""
+        existing = protocol.store.recovery_results.get(plan.plan_id)
+        if existing is not None:
+            return existing
+        request_results: dict[str, str] = {}
+        remaining_conflicts: list[str] = []
+        for request_id, directive in plan.request_directives.items():
+            if directive != "WAIT_FOR_PROVIDER":
+                request_results[request_id] = directive
+                continue
+            operation_id = self._operation_id(protocol, request_id)
+            if operation_id is None:
+                remaining_conflicts.append(f"{request_id}:UPSTREAM_OPERATION_NOT_FOUND")
+                continue
+            try:
+                response = self._request_json(
+                    "GET",
+                    self.status_path_template.format(operation_id=operation_id),
+                )
+            except Exception:
+                remaining_conflicts.append(f"{request_id}:UPSTREAM_STATUS_UNAVAILABLE")
+                continue
+            status = str(response.get("status", "unknown")).lower()
+            request_results[request_id] = {
+                "queued": "UPSTREAM_OPERATION_QUEUED",
+                "running": "UPSTREAM_OPERATION_ACTIVE",
+                "in_progress": "UPSTREAM_OPERATION_ACTIVE",
+                "completed": "UPSTREAM_COMPLETED_RESULT_REQUIRED",
+                "succeeded": "UPSTREAM_COMPLETED_RESULT_REQUIRED",
+                "cancelled": "UPSTREAM_CANCELLED_CONFIRMED",
+                "canceled": "UPSTREAM_CANCELLED_CONFIRMED",
+                "failed": "UPSTREAM_FAILED_CONFIRMED",
+            }.get(status, "UPSTREAM_STATUS_UNKNOWN")
+        result = RuntimeRecoveryResult(
+            runtime_id=plan.runtime_id,
+            runtime_generation=plan.runtime_generation,
+            route_generation=plan.route_generation,
+            plan_id=plan.plan_id,
+            request_results=request_results,
+            remaining_conflicts=remaining_conflicts,
+            completed_at=self._now(),
+        )
+        protocol.record_recovery_result(runtime_connection_id, result)
+        return result
+
     def _usage_dimensions(self, usage: dict) -> list[RuntimeUsageDimension]:
         return [
             RuntimeUsageDimension(
@@ -156,8 +209,12 @@ class ProxyOpenAIAdapter(LlamaCppOpenAIAdapter):
             ),
         )
 
-    def _request_json(self, method: str, path: str, payload: dict) -> dict:
-        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    def _request_json(self, method: str, path: str, payload: dict | None = None) -> dict:
+        body = (
+            json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            if payload is not None
+            else None
+        )
         request = urllib_request.Request(
             f"{self.endpoint}{path}",
             method=method,
