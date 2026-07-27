@@ -355,3 +355,24 @@ def test_atomic_gas_reset_on_rollback():
     )
 
     assert engine._gas_used == 0
+
+
+def test_atomic_rollback_restores_admission_state():
+    """A failed block must not consume replay protection for rolled-back work."""
+    engine = _engine()
+
+    def fatal_handler(envelope, ledger):
+        raise RuntimeError("fatal: handler failure")
+
+    engine.register_handler("FATAL_OP", fatal_handler)
+    first = _tx(created_at="2025-06-01T11:00:00Z")
+    result = engine.execute_block(
+        block_height=1,
+        block_hash=BLOCK_HASH,
+        txs=[first, _tx(operation_type="FATAL_OP", created_at="2025-06-01T11:01:00Z")],
+    )
+
+    assert result.error is not None
+    assert engine.admission.validate(
+        LedgerOperationEnvelope.model_validate(json.loads(first))
+    ).admitted is True

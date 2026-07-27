@@ -166,6 +166,26 @@ def test_accept_signatures_under_limit():
     assert r.admitted is True
 
 
+def test_required_signature_is_enforced_for_configured_origin():
+    v = AdmissionValidator(
+        current_time=NOW,
+        require_signature_for_origins=frozenset({"wallet"}),
+    )
+    r = v.validate(_envelope())
+    assert r.admitted is False
+    assert r.reason == "signature_required"
+
+
+def test_signature_verifier_rejects_invalid_signature():
+    v = AdmissionValidator(
+        current_time=NOW,
+        signature_verifier=lambda envelope: False,
+    )
+    r = v.validate(_envelope(signatures=["ed25519:invalid"]))
+    assert r.admitted is False
+    assert r.reason == "signature_invalid"
+
+
 # ── 15. record_finalized then reject duplicate ──────────────────────
 
 def test_record_finalized_then_reject_duplicate():
@@ -190,9 +210,9 @@ def test_advance_wallet_sequence():
 
 def test_advance_wallet_sequence_multiple():
     v = _validator(wallet_sequences={})
-    assert v.advance_wallet_sequence("w1") == 1
     assert v.advance_wallet_sequence("w1") == 2
     assert v.advance_wallet_sequence("w1") == 3
+    assert v.advance_wallet_sequence("w1") == 4
 
 
 # ── 18. Admit without sender_wallet ─────────────────────────────────

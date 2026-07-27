@@ -61,6 +61,18 @@ def test_operation_id_differs_on_type_change():
     assert env1.operation_id != env2.operation_id
 
 
+def test_operation_id_cannot_be_overridden():
+    with pytest.raises(ValueError, match="operation_id does not match"):
+        _make_envelope(operation_id="forged")
+
+
+def test_signature_does_not_change_operation_identity():
+    unsigned = _make_envelope(payload={"amount": 100})
+    signed = _make_envelope(payload={"amount": 100}, signatures=["ed25519:deadbeef"])
+    assert signed.operation_id == unsigned.operation_id
+    assert signed.signing_bytes() == unsigned.signing_bytes()
+
+
 # ── 3. Canonical bytes ───────────────────────────────────────────────
 
 def test_canonical_bytes_deterministic():

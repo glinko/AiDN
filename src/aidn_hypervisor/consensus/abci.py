@@ -6,10 +6,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from aidn_hypervisor.consensus.abci_models import (
-    ABCIResult,
-    ABCIInfoResponse,
     ABCICommitResponse,
+    ABCIInfoResponse,
     ABCIQueryResponse,
+    ABCIResult,
     ABCITag,
 )
 from aidn_hypervisor.consensus.admission import AdmissionValidator
@@ -368,12 +368,10 @@ class AIDNABCIApplication:
 
         # Record in ledger
         try:
-            self.ledger.record_operation(
-                operation_type=envelope.operation_type,
-                origin_type=envelope.origin_type,
-                fee_class=envelope.fee_class,
-            )
+            self.ledger.record_admitted_envelope(envelope)
             self._admission.record_finalized(envelope.operation_id)
+            if envelope.sender_wallet is not None:
+                self._admission.advance_wallet_sequence(envelope.sender_wallet)
 
             return ABCIResult(
                 code="ok",

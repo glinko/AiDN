@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
-
 
 # ── Data models ─────────────────────────────────────────────────────
 
@@ -33,6 +33,7 @@ class ExecutionEvent:
     operation_id: str
     operation_type: str
     success: bool
+    envelope: LedgerOperationEnvelope | None = field(default=None, repr=False)
     state_changes: list[StateChange] = field(default_factory=list)
     emitted_events: list[str] = field(default_factory=list)
     error: str | None = None
@@ -122,12 +123,15 @@ class ExecutionEngine:
 
         # Capture pre-state for potential rollback
         pre_state = self._capture_state()
+        pre_admission_state = self.admission.snapshot_state()
 
         events: list[ExecutionEvent] = []
         changes: list[StateChange] = []
         executed = 0
         rejected = 0
         fatal_error: str | None = None
+        successful_envelopes: list[LedgerOperationEnvelope] = []
+        seen_operation_ids: set[str] = set()
 
         for tx_data in txs:
             # Block-level gas check
@@ -143,11 +147,26 @@ class ExecutionEngine:
                 )
                 continue
 
-            result = self._execute_one(tx_data)
+            result = self._execute_one(tx_data, seen_operation_ids)
 
             if result.success:
-                executed += 1
-            else:
+                if result.envelope is None:
+                    result.success = False
+                    result.error = "fatal: successful execution has no envelope"
+                else:
+                    try:
+                        self.ledger.record_admitted_envelope(
+                            result.envelope,
+                            emitted_events=result.emitted_events,
+                        )
+                    except Exception as error:
+                        result.success = False
+                        result.error = f"fatal: ledger commit failed: {error}"
+                    else:
+                        successful_envelopes.append(result.envelope)
+                        seen_operation_ids.add(result.envelope.operation_id)
+                        executed += 1
+            if not result.success:
                 rejected += 1
                 # Check for fatal error — triggers atomic rollback
                 if result.error and "fatal" in result.error.lower():
@@ -160,6 +179,7 @@ class ExecutionEngine:
         # Atomic rollback on fatal error
         if fatal_error:
             self._restore_state(pre_state)
+            self.admission.restore_state(pre_admission_state)
             return BlockExecutionResult(
                 block_height=block_height,
                 block_hash=block_hash,
@@ -172,17 +192,13 @@ class ExecutionEngine:
                 error=fatal_error,
             )
 
-        # Compute state root from current ledger state
-        state_root = self._compute_state_root()
+        for envelope in successful_envelopes:
+            self.admission.record_finalized(envelope.operation_id)
+            if envelope.sender_wallet is not None:
+                self.admission.advance_wallet_sequence(envelope.sender_wallet)
 
-        # Record successful operations in ledger
-        for event in events:
-            if event.success:
-                self.ledger.record_operation(
-                    operation_type=event.operation_type,
-                    origin_type="protocol",
-                    fee_class="standard",
-                )
+        # The root commits to this block's records, not only pre-block state.
+        state_root = self._compute_state_root()
 
         # Store results in tracking lists
         self._execution_events.extend(events)
@@ -226,7 +242,11 @@ class ExecutionEngine:
 
     # ── Internal: single-operation execution ──────────────────────
 
-    def _execute_one(self, tx_data: bytes) -> ExecutionEvent:
+    def _execute_one(
+        self,
+        tx_data: bytes,
+        seen_operation_ids: set[str],
+    ) -> ExecutionEvent:
         """Execute a single transaction."""
         # 1. Parse
         try:
@@ -248,15 +268,29 @@ class ExecutionEngine:
                 success=False,
                 error=f"admission: {admission.reason}",
             )
+        if envelope.operation_id in seen_operation_ids:
+            return ExecutionEvent(
+                operation_id=envelope.operation_id,
+                operation_type=envelope.operation_type,
+                success=False,
+                error="admission: duplicate_operation_id",
+            )
 
         # 3. Per-operation gas check
         gas_cost = self._get_gas_cost(envelope.operation_type)
-        if self._gas_used + gas_cost > self._gas_limit_operation:
+        if gas_cost > self._gas_limit_operation:
             return ExecutionEvent(
                 operation_id=envelope.operation_id,
                 operation_type=envelope.operation_type,
                 success=False,
                 error="operation gas limit exceeded",
+            )
+        if self._gas_used + gas_cost > self._gas_limit_block:
+            return ExecutionEvent(
+                operation_id=envelope.operation_id,
+                operation_type=envelope.operation_type,
+                success=False,
+                error="block gas limit exceeded",
             )
 
         # 4. Execute via registered handler or default path
@@ -284,9 +318,6 @@ class ExecutionEngine:
                 )
                 emitted.append(f"operation.recorded:{envelope.operation_id}")
 
-            # Mark as finalized for duplicate detection
-            self.admission.record_finalized(envelope.operation_id)
-
         except Exception as e:
             error = str(e)
 
@@ -296,6 +327,7 @@ class ExecutionEngine:
             operation_id=envelope.operation_id,
             operation_type=envelope.operation_type,
             success=error is None,
+            envelope=envelope,
             state_changes=state_changes,
             emitted_events=emitted,
             error=error,

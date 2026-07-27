@@ -128,6 +128,28 @@ def test_integration_ledger_state_consistent():
     assert len(ops) >= 3
 
 
+def test_integration_ledger_preserves_admitted_envelope():
+    """Consensus persistence keeps the original identity and payload."""
+    engine = _engine()
+    envelope = LedgerOperationEnvelope(
+        operation_type="WALLET_TRANSFER",
+        origin_type="protocol",
+        created_at="2025-06-01T11:00:00Z",
+        payload={"recipient": "wallet-b", "amount_q_atoms": 42},
+    )
+
+    result = engine.execute_block(
+        block_height=1,
+        block_hash=BLOCK_HASH,
+        txs=[json.dumps(envelope.model_dump(mode="json")).encode("utf-8")],
+    )
+
+    assert result.operations_executed == 1
+    record = engine.ledger.snapshot_operations()[0]
+    assert record["operation_id"] == envelope.operation_id
+    assert record["payload"] == envelope.payload
+
+
 # ── 4. Integration: state root deterministic ──────────────────────
 
 def test_integration_state_root_deterministic():

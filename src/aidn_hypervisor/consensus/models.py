@@ -1,12 +1,10 @@
 """RFC-0047 §7-§9 — Ledger Operation Envelope."""
 
-from typing import Literal
-
 import hashlib
 import json
+from typing import Literal
 
 from pydantic import BaseModel, Field
-
 
 # Canonical operation types defined by the protocol.
 # Custom handlers may register additional types dynamically.
@@ -75,15 +73,23 @@ class LedgerOperationEnvelope(BaseModel):
     model_config = {"frozen": True}  # immutable after creation
 
     def model_post_init(self, __context):
-        """Compute operation_id from canonical serialization."""
+        """Compute and verify the immutable operation identity."""
+        computed_id = _compute_operation_id(self.canonical_bytes().decode("utf-8"))
+        if self.operation_id and self.operation_id != computed_id:
+            raise ValueError("operation_id does not match the canonical envelope")
         if not self.operation_id:
-            obj_dict = self.model_dump(mode="json")
-            obj_dict["operation_id"] = ""  # exclude operation_id from its own hash
-            canonical = _canonical_json(obj_dict)
-            object.__setattr__(self, "operation_id", _compute_operation_id(canonical))
+            object.__setattr__(self, "operation_id", computed_id)
 
     def canonical_bytes(self) -> bytes:
-        """Return canonical serialized bytes for signing."""
+        """Return the canonical, unsigned operation identity preimage."""
         obj_dict = self.model_dump(mode="json")
-        obj_dict["operation_id"] = ""
+        obj_dict["operation_id"] = ""  # exclude operation_id from its own hash
+        # Signatures authorize an operation but cannot change its identity.
+        obj_dict["signatures"] = []
+        return _canonical_json(obj_dict).encode("utf-8")
+
+    def signing_bytes(self) -> bytes:
+        """Return the stable payload an authorization signature must cover."""
+        obj_dict = self.model_dump(mode="json")
+        obj_dict["signatures"] = []
         return _canonical_json(obj_dict).encode("utf-8")

@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from aidn_hypervisor.ledger.models import LedgerOperationRecord, LedgerOperationResult
 from aidn_hypervisor.settlement.models import (
@@ -9,6 +10,10 @@ from aidn_hypervisor.settlement.models import (
     SessionSettlementProposal,
     SettlementEvaluation,
 )
+
+if TYPE_CHECKING:
+    from aidn_hypervisor.consensus.admission import AdmissionValidator
+    from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 
 
 def _canonical_json(value: dict) -> str:
@@ -406,21 +411,20 @@ class LedgerOperationService:
             }
 
         # Record the operation — pass envelope fields through
-        record = self.record_operation(
-            operation_type=operation_type,
-            origin_type=origin_type,
-            fee_class=fee_class,
-            initiator_id=envelope.initiator_id,
-            sender_wallet=envelope.sender_wallet,
-            fee_payer=envelope.fee_payer,
-            created_at=envelope.created_at,
-            expires_at=envelope.expires_at,
-            target_epoch=envelope.target_epoch,
-            payload=envelope.payload if envelope.payload else None,
-            evidence_references=envelope.evidence_references or None,
-            signatures=envelope.signatures or None,
-            expected_sequence=envelope.sender_sequence,
-            **kwargs,
+        if operation_type != envelope.operation_type:
+            raise ValueError("operation_type must match the admitted envelope")
+        if origin_type != envelope.origin_type:
+            raise ValueError("origin_type must match the admitted envelope")
+        if fee_class != envelope.fee_class:
+            raise ValueError("fee_class must match the admitted envelope")
+
+        emitted_events = kwargs.pop("emitted_events", None)
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(f"unexpected submit_operation arguments: {unexpected}")
+        record = self.record_admitted_envelope(
+            envelope,
+            emitted_events=emitted_events,
         )
 
         # Advance wallet sequence for subsequent operations
@@ -431,6 +435,68 @@ class LedgerOperationService:
         admission_validator.record_finalized(envelope.operation_id)
 
         return {"admitted": True, "operation_id": envelope.operation_id, "record": record}
+
+    def record_admitted_envelope(
+        self,
+        envelope: "LedgerOperationEnvelope",
+        *,
+        emitted_events: list[str] | None = None,
+    ) -> dict:
+        """Persist one already-admitted consensus envelope without rehashing it."""
+        operation_id = envelope.operation_id
+        if operation_id in self._operation_ids:
+            raise ValueError(f"duplicate operation id: {operation_id}")
+
+        wallet_next_sequence: int | None = None
+        if envelope.origin_type == "wallet":
+            if envelope.sender_wallet is None or envelope.sender_sequence is None:
+                raise ValueError("wallet operations require sender_wallet and sender_sequence")
+            expected_sequence = self.wallet_next_sequence(envelope.sender_wallet)
+            if envelope.sender_sequence != expected_sequence:
+                raise ValueError(
+                    f"invalid wallet sequence for {envelope.sender_wallet}: "
+                    f"expected {expected_sequence}, got {envelope.sender_sequence}"
+                )
+            wallet_next_sequence = envelope.sender_sequence + 1
+
+        result = LedgerOperationResult(
+            status="applied",
+            state_changes_root=_hash_dict(
+                {
+                    "operation_id": operation_id,
+                    "operation_type": envelope.operation_type,
+                    "payload": envelope.payload,
+                }
+            ),
+            emitted_events=list(emitted_events or []),
+        )
+        record = LedgerOperationRecord(
+            sequence_id=self._next_sequence_id,
+            operation_id=operation_id,
+            operation_type=envelope.operation_type,
+            operation_version=envelope.operation_version,
+            protocol_version=envelope.protocol_version,
+            origin_type=envelope.origin_type,
+            initiator_id=envelope.initiator_id,
+            sender_wallet=envelope.sender_wallet,
+            sender_sequence=envelope.sender_sequence,
+            fee_class=envelope.fee_class,
+            fee_payer=envelope.fee_payer,
+            created_at=envelope.created_at,
+            expires_at=envelope.expires_at,
+            target_epoch=envelope.target_epoch,
+            payload=dict(envelope.payload),
+            evidence_references=list(envelope.evidence_references),
+            signatures=list(envelope.signatures),
+            result=result,
+            wallet_next_sequence=wallet_next_sequence,
+        ).model_dump(mode="json")
+        self._operations.append(record)
+        self._operation_ids.add(operation_id)
+        self._next_sequence_id += 1
+        if envelope.sender_wallet is not None and wallet_next_sequence is not None:
+            self._wallet_next_sequences[envelope.sender_wallet] = wallet_next_sequence
+        return record
 
     def record_operation(
         self,

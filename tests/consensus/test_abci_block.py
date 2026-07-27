@@ -236,8 +236,8 @@ def test_block_hash_tracking(app):
 
 
 def test_finalize_block_with_mixed_admission(app):
-    valid1 = tx_bytes(make_envelope(origin_type="protocol"))
-    valid2 = tx_bytes(make_envelope(origin_type="protocol"))
+    valid1 = tx_bytes(make_envelope(origin_type="protocol", payload={"ordinal": 1}))
+    valid2 = tx_bytes(make_envelope(origin_type="protocol", payload={"ordinal": 2}))
     expired = tx_bytes(make_envelope(origin_type="protocol", expires_at=_past_iso()))
     result = app.finalize_block(
         block_height=1,
