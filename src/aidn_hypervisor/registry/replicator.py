@@ -10,31 +10,23 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from .object_envelope import RegistryObjectEnvelope
-from .storage import ImmutableObjectStore
+from .channel import RegistryChannelManager
 from .inventory import BloomFilter
-from .replication import ReplicationEngine
-from .sync import SyncController, SyncMode
 from .messages import (
-    RegistryMessageType,
-    RegistryChannelClass,
-    RegistryMessageBuilder,
-    InventoryRequestPayload,
     InventoryResponsePayload,
-    ObjectRequestPayload,
     ObjectResponsePayload,
-    BloomFilterPayload,
-    SyncStatusPayload,
-    AnnouncementPayload,
+    RegistryMessageBuilder,
+    RegistryMessageType,
 )
-from .channel import RegistryChannelManager, DEFAULT_REGISTRY_CHANNELS
+from .replication import ReplicationEngine
 from .routes import create_default_registry_channels
-from .bridge import RegistryServiceAdapter, legacy_record_to_envelope
-
+from .storage import ImmutableObjectStore
+from .sync import SyncController, SyncMode
 
 # ---------------------------------------------------------------------------
 # Peer replication state

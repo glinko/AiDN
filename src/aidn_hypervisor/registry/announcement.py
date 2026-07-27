@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
-from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ObjectAnnouncement(BaseModel, frozen=True):

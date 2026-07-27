@@ -1,6 +1,6 @@
 """Dead Letter operator surface — retry, purge, count."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -14,7 +14,6 @@ from aidn_hypervisor.dispatcher.models import (
     canonical_payload_bytes,
     canonical_payload_hash,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers — reuse the same message/dispatcher factory as test_service.py
@@ -34,7 +33,7 @@ def _message(
     expiration_offset: timedelta = timedelta(minutes=5),
 ) -> NetworkMessage:
     body = payload or {"value": "ok"}
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return NetworkMessage(
         message_id=message_id,
         message_type=message_type,
@@ -70,7 +69,7 @@ def _dispatcher() -> NetworkDispatcher:
         allowed_source_types={"SERVICE"},
         allowed_channel_classes={"VALIDATION"},
         allowed_message_types={"VALIDATION_REPORT_TRANSFER"},
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
     dispatcher.register_local_route(route, lambda p: p)
     return dispatcher

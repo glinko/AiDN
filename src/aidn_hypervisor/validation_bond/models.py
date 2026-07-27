@@ -10,7 +10,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field, computed_field
 
-
 # ── Constants ────────────────────────────────────────────────────────
 
 # ECO-0003: Validation Bond = 500Q = 500_000_000 q-atoms

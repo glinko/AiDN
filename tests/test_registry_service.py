@@ -4,8 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from urllib import error as urllib_error
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService

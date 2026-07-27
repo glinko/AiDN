@@ -4,11 +4,11 @@ RFC-0062 §22-§25
 """
 
 import hashlib
+
 import pytest
 
-from aidn_hypervisor.snapshot.chunking import Chunker, MerkleTree, ChunkVerifier
+from aidn_hypervisor.snapshot.chunking import Chunker, ChunkVerifier, MerkleTree
 from aidn_hypervisor.snapshot.models import SnapshotChunk
-
 
 # ── Helpers ────────────────────────────────────────────────────────
 

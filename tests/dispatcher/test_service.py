@@ -1,17 +1,17 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from aidn_hypervisor.dispatcher import (
     DispatcherError,
+    DispatcherRoute,
     DispatcherRouteLifecycle,
     DispatcherStore,
-    DispatcherRoute,
     NetworkDispatcher,
     NetworkMessage,
     bind_plugin_control_route,
-    bind_runtime_route,
     bind_remote_runtime_route,
+    bind_runtime_route,
     bind_session_route,
     canonical_payload_hash,
 )
@@ -38,7 +38,7 @@ def _message(
     destination_subject: dict | None = None,
 ) -> NetworkMessage:
     body = payload or {"value": "ok"}
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return NetworkMessage(
         message_id=message_id,
         message_type=message_type,
@@ -76,7 +76,7 @@ def _dispatcher(*, maximum_queue_messages: int = 2):
         allowed_source_types={"SERVICE"},
         allowed_channel_classes={"VALIDATION"},
         allowed_message_types={"VALIDATION_REPORT_TRANSFER"},
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
     dispatcher.register_local_route(route, lambda payload: received.append(payload) or {"ok": True})
     return dispatcher, received
@@ -120,7 +120,7 @@ def test_dispatcher_revalidates_route_generation_before_delivery() -> None:
             allowed_source_types={"SERVICE"},
             allowed_channel_classes={"VALIDATION"},
             allowed_message_types={"VALIDATION_REPORT_TRANSFER"},
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         ),
         lambda payload: received.append(payload),
     )
@@ -173,7 +173,7 @@ def test_dispatcher_restores_queue_and_persistent_replay_state(tmp_path) -> None
         allowed_source_types={"SERVICE"},
         allowed_channel_classes={"VALIDATION"},
         allowed_message_types={"VALIDATION_REPORT_TRANSFER"},
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
     first.register_local_route(route, lambda payload: received.append(payload))
     message = _message(message_id="durable-msg")
@@ -486,9 +486,9 @@ def test_session_route_binds_contract_configuration_and_subject_identity() -> No
         provider_wallet="wallet-provider",
         node_id="node-1",
         status="active",
-        created_at=datetime.now(timezone.utc).isoformat(),
-        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
-        idle_deadline_at=(datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
+        expires_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        idle_deadline_at=(datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
         deposit_locked_q=10.0,
         queue_policy_snapshot="busy",
         endpoint_configuration_hash="cfg-accepted",
@@ -532,9 +532,9 @@ def test_queued_session_route_allows_control_but_not_data() -> None:
         provider_wallet="wallet-provider",
         node_id="node-1",
         status="queued",
-        created_at=datetime.now(timezone.utc).isoformat(),
-        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
-        idle_deadline_at=(datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
+        expires_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        idle_deadline_at=(datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
         deposit_locked_q=10.0,
         queue_policy_snapshot="queue",
         endpoint_configuration_hash="cfg-accepted",
@@ -575,9 +575,9 @@ def test_session_lifecycle_rotates_on_activation_and_revokes_on_close() -> None:
         provider_wallet="wallet-provider",
         node_id="node-1",
         status="queued",
-        created_at=datetime.now(timezone.utc).isoformat(),
-        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
-        idle_deadline_at=(datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
+        expires_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        idle_deadline_at=(datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
         deposit_locked_q=10.0,
         queue_policy_snapshot="queue",
         endpoint_configuration_hash="cfg-accepted",
@@ -616,7 +616,7 @@ def test_dispatcher_derives_priority_from_message_policy() -> None:
         allowed_source_types={"CONSUMER_SESSION"},
         allowed_channel_classes={"SESSION_CONTROL", "SESSION_DATA"},
         allowed_message_types={"SESSION_CLOSE", "SESSION_REQUEST"},
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
     dispatcher.register_local_route(route, lambda payload: delivered.append(payload["kind"]))
     request = _message(

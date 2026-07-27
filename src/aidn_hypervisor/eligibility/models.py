@@ -7,7 +7,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field, computed_field
 
-
 # ── Constants ──────────────────────────────────────────────────────
 
 # ECO-0006 §8: Minimum activation age in epochs

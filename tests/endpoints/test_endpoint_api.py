@@ -1,5 +1,5 @@
-from fastapi.testclient import TestClient
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi.testclient import TestClient
 
 from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
@@ -22,11 +22,11 @@ from aidn_hypervisor.runtime_protocol.models import (
     canonical_hash,
 )
 from aidn_hypervisor.scheduler import Scheduler
-from aidn_hypervisor.settlement.models import SessionSettlementAcceptance
-from aidn_hypervisor.settlement.signing import settlement_acceptance_signing_payload
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
+from aidn_hypervisor.settlement.models import SessionSettlementAcceptance
+from aidn_hypervisor.settlement.signing import settlement_acceptance_signing_payload
 from aidn_hypervisor.wallet_identity import (
     session_open_authorization_payload,
     wallet_identity_registration_payload,

@@ -14,7 +14,6 @@ from aidn_hypervisor.consensus.service import (
 )
 from aidn_hypervisor.ledger.service import LedgerOperationService
 
-
 # ---- helpers ----
 
 def _make_envelope(**kw) -> LedgerOperationEnvelope:

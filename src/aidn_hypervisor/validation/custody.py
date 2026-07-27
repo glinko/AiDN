@@ -15,12 +15,10 @@ RFC-0041 §104: Corrections — new correction event, not silent rewrite.
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Custody Configuration
@@ -77,7 +75,7 @@ class CustodyCheckResult:
     status: CustodyStatus
     action: CustodyAction
     failure_streak: int
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     @property
     def ok(self) -> bool:
@@ -115,25 +113,25 @@ class CustodyState:
         """Mark report as unavailable, starting or extending grace period."""
         self.failure_streak += 1
         self.total_failure_count += 1
-        self.last_checked_at = datetime.now(timezone.utc).isoformat()
+        self.last_checked_at = datetime.now(UTC).isoformat()
 
         if self._status == CustodyStatus.AVAILABLE:
             self._status = CustodyStatus.GRACE_PERIOD
             self.grace_expires_at = (
-                datetime.now(timezone.utc) + timedelta(seconds=grace_seconds)
+                datetime.now(UTC) + timedelta(seconds=grace_seconds)
             ).isoformat()
         elif self._status == CustodyStatus.GRACE_PERIOD:
             # Extend grace but increment streak
             self.grace_expires_at = (
-                datetime.now(timezone.utc) + timedelta(seconds=grace_seconds)
+                datetime.now(UTC) + timedelta(seconds=grace_seconds)
             ).isoformat()
 
     def mark_available(self) -> None:
         """Mark report as available again (restoration)."""
         self.failure_streak = 0
         self._status = CustodyStatus.AVAILABLE
-        self.last_available_at = datetime.now(timezone.utc).isoformat()
-        self.last_checked_at = datetime.now(timezone.utc).isoformat()
+        self.last_available_at = datetime.now(UTC).isoformat()
+        self.last_checked_at = datetime.now(UTC).isoformat()
         self.grace_expires_at = None
 
     def check_grace_expired(self) -> bool:
@@ -141,7 +139,7 @@ class CustodyState:
         if self.grace_expires_at is None:
             return False
         expires = datetime.fromisoformat(self.grace_expires_at)
-        return datetime.now(timezone.utc) > expires
+        return datetime.now(UTC) > expires
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +193,7 @@ class CustodyService:
                 failure_streak=0,
             )
 
-        state.last_checked_at = datetime.now(timezone.utc).isoformat()
+        state.last_checked_at = datetime.now(UTC).isoformat()
 
         if available:
             prev_failed = state._status == CustodyStatus.CUSTODY_FAILED
@@ -261,7 +259,7 @@ class CustodyService:
             )
 
         stored = datetime.fromisoformat(state.stored_at)
-        age_seconds = (datetime.now(timezone.utc) - stored).total_seconds()
+        age_seconds = (datetime.now(UTC) - stored).total_seconds()
 
         if age_seconds < self.config.minimum_retention_seconds:
             return CustodyCheckResult(
@@ -329,7 +327,7 @@ class Challenge:
     state: ChallengeState = ChallengeState.PENDING
     outcome: ChallengeOutcome | None = None
     resolution_note: str | None = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     resolved_at: str | None = None
 
     def resolve(
@@ -343,7 +341,7 @@ class Challenge:
         self.state = ChallengeState.RESOLVED
         self.outcome = outcome
         self.resolution_note = note
-        self.resolved_at = datetime.now(timezone.utc).isoformat()
+        self.resolved_at = datetime.now(UTC).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +362,7 @@ class Correction:
     corrected_values: dict[str, Any]
 
     resulting_score_adjustment: float | None = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +389,7 @@ class ReputationEventRecord:
     finalization_state: EventFinalizationState = EventFinalizationState.PENDING
     challenge_id: str | None = None
     correction_id: str | None = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     finalized_at: str | None = None
 
     def finalize(self) -> None:
@@ -401,7 +399,7 @@ class ReputationEventRecord:
         if self.finalization_state == EventFinalizationState.CHALLENGED:
             raise ValueError("Cannot finalize challenged event without resolution")
         self.finalization_state = EventFinalizationState.FINALIZED
-        self.finalized_at = datetime.now(timezone.utc).isoformat()
+        self.finalized_at = datetime.now(UTC).isoformat()
 
     def challenge(self, challenge_id: str) -> None:
         """Place this event under challenge."""
@@ -529,7 +527,7 @@ class FinalizationService:
     def sweep(self) -> int:
         """Auto-finalize old pending events. Returns count finalized."""
         finalized = 0
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=self.finalization_hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=self.finalization_hours)
 
         for event in self.store.list_pending():
             created = datetime.fromisoformat(event.created_at)

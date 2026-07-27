@@ -8,7 +8,7 @@ import hashlib
 import logging
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
@@ -34,21 +34,21 @@ class RelayEnvelope(BaseModel):
     hop_count: int = 0
     hop_limit: int = DEFAULT_MAX_RELAY_HOPS
     expiration: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     source_signature: str = ""  # end-to-end signature
     payload: bytes = b""  # encrypted payload (relay cannot read)
     created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
 
     def is_expired(self) -> bool:
         """Check if envelope has expired."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         exp = datetime.fromisoformat(self.expiration)
         # Normalize to both aware or both naive
         if exp.tzinfo is None:
-            exp = exp.replace(tzinfo=timezone.utc)
+            exp = exp.replace(tzinfo=UTC)
         return now >= exp
 
     def has_hops_remaining(self) -> bool:
@@ -238,7 +238,7 @@ class RelayRouter:
         # Calculate expiration
         from datetime import timedelta
 
-        expiration = datetime.now(timezone.utc) + timedelta(seconds=DEFAULT_RELAY_EXPIRATION_SECS)
+        expiration = datetime.now(UTC) + timedelta(seconds=DEFAULT_RELAY_EXPIRATION_SECS)
 
         return RelayEnvelope(
             relay_message_id=str(uuid.uuid4()),

@@ -6,15 +6,15 @@ including serialization, signing, versioning, and query integration.
 
 import hashlib
 import json
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from aidn_hypervisor.reputation_engine.models import (
     ReputationProfile,
     ReputationSubject,
 )
 from aidn_hypervisor.reputation_engine.store import ReputationStore
-
 
 # ──────────────────────────────────────────────
 # Fixtures
@@ -511,7 +511,6 @@ class TestStoreIntegration:
         # Ingest an event for SubA only → marks it dirty
         from aidn_hypervisor.reputation_engine.models import (
             ReputationEvent,
-            ReputationEventClass,
         )
 
         event = ReputationEvent(

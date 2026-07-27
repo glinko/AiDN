@@ -1,13 +1,12 @@
 """Tests for peer discovery (RFC-0042 §27-32)."""
 
 import pytest
+
 from aidn_hypervisor.dispatcher.discovery import (
     DiscoveryManager,
     PeerAddress,
     PeerRecord,
-    TrustState,
 )
-
 
 # ── PeerRecord tests ─────────────────────────────────────────────────────
 
@@ -122,7 +121,7 @@ class TestDiscoveryManager:
         manager.add_static_seed("peer1.example.com", 443)
         manager.add_static_seed("peer2.example.com", 443)
         manager.update_trust_state(
-            f"static:peer1.example.com:443",
+            "static:peer1.example.com:443",
             "AUTHENTICATED",
         )
         trusted = manager.list_peers(trust_state="AUTHENTICATED")
@@ -134,7 +133,7 @@ class TestDiscoveryManager:
         manager.add_static_seed("peer1.example.com", 443)
         manager.add_static_seed("peer2.example.com", 443)
         manager.update_trust_state(
-            f"static:peer1.example.com:443",
+            "static:peer1.example.com:443",
             "ESTABLISHED",
         )
         trusted = manager.list_trusted_peers()
@@ -144,7 +143,7 @@ class TestDiscoveryManager:
         manager.add_static_seed("peer1.example.com", 443)
         manager.add_static_seed("peer2.example.com", 443)
         manager.update_trust_state(
-            f"static:peer1.example.com:443",
+            "static:peer1.example.com:443",
             "ESTABLISHED",
         )
         untrusted = manager.list_untrusted_peers()
@@ -152,7 +151,7 @@ class TestDiscoveryManager:
 
     def test_update_trust_state(self, manager):
         manager.add_static_seed("peer1.example.com", 443)
-        peer_id = f"static:peer1.example.com:443"
+        peer_id = "static:peer1.example.com:443"
         manager.update_trust_state(peer_id, "HANDSHAKE_PENDING")
         peer = manager.get_peer(peer_id)
         assert peer.trust_state == "HANDSHAKE_PENDING"
@@ -160,7 +159,7 @@ class TestDiscoveryManager:
 
     def test_record_connection_success(self, manager):
         manager.add_static_seed("peer1.example.com", 443)
-        peer_id = f"static:peer1.example.com:443"
+        peer_id = "static:peer1.example.com:443"
         manager.record_connection_success(peer_id)
         manager.record_connection_success(peer_id)
         peer = manager.get_peer(peer_id)
@@ -169,7 +168,7 @@ class TestDiscoveryManager:
 
     def test_record_connection_failure(self, manager):
         manager.add_static_seed("peer1.example.com", 443)
-        peer_id = f"static:peer1.example.com:443"
+        peer_id = "static:peer1.example.com:443"
         manager.record_connection_success(peer_id)
         manager.record_connection_failure(peer_id)
         peer = manager.get_peer(peer_id)
@@ -177,7 +176,7 @@ class TestDiscoveryManager:
 
     def test_quarantine_peer(self, manager):
         manager.add_static_seed("peer1.example.com", 443)
-        peer_id = f"static:peer1.example.com:443"
+        peer_id = "static:peer1.example.com:443"
         manager.quarantine_peer(peer_id)
         peer = manager.get_peer(peer_id)
         assert peer.trust_state == "QUARANTINED"
@@ -185,7 +184,7 @@ class TestDiscoveryManager:
 
     def test_revoke_peer(self, manager):
         manager.add_static_seed("peer1.example.com", 443)
-        peer_id = f"static:peer1.example.com:443"
+        peer_id = "static:peer1.example.com:443"
         manager.revoke_peer(peer_id)
         peer = manager.get_peer(peer_id)
         assert peer.trust_state == "REVOKED"

@@ -11,8 +11,8 @@ Responsible for:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
 
 from aidn_hypervisor.session_failure.models import (
     EvidenceLevel,
@@ -26,7 +26,6 @@ from aidn_hypervisor.session_failure.models import (
     is_terminal_status,
 )
 from aidn_hypervisor.session_failure.store import SessionFailureEvidenceStore
-
 
 # FailureClass -> initial status transition map
 _FAILURE_STATE_MAP: dict[FailureClass, str] = {
@@ -196,7 +195,7 @@ class SessionFailureHandler:
         )
 
         # Record evidence
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         evidence = FailureEvidenceRecord(
             session_id=session_id,
             evidence_level=EvidenceLevel.OBSERVATIONAL,
@@ -244,7 +243,7 @@ class SessionFailureHandler:
         """Set the recovery deadline based on failure class and config."""
         from datetime import timedelta
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if failure_class in {
             FailureClass.PROVIDER_DISCONNECTED,
             FailureClass.RUNTIME_FAILURE,
@@ -282,7 +281,7 @@ class SessionFailureHandler:
             deadline_dt = datetime.fromisoformat(deadline)
         except ValueError:
             return True
-        return datetime.now(timezone.utc) >= deadline_dt
+        return datetime.now(UTC) >= deadline_dt
 
     def expire_recovery(self, session_id: str) -> SessionFailureEvent | None:
         """Expire a recovery window, transitioning to force_closing.
@@ -340,7 +339,7 @@ class SessionFailureHandler:
             evidence_level=EvidenceLevel.OBSERVATIONAL,
             category="recovery_success",
             detail="Session recovered within recovery window",
-            recorded_at=datetime.now(timezone.utc).isoformat(),
+            recorded_at=datetime.now(UTC).isoformat(),
             source="failure_handler",
         )
         self.evidence_store.add_evidence(session_id, evidence)
@@ -362,7 +361,7 @@ class SessionFailureHandler:
 
         Transitions the session to recovering and records proxy-specific evidence.
         """
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # Record proxy-specific evidence
         evidence = FailureEvidenceRecord(
@@ -450,7 +449,7 @@ class SessionFailureHandler:
 
         self._session_states[session_id] = new_status
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         event = SessionFailureEvent(
             session_id=session_id,
             event_type=event_type,
@@ -508,7 +507,7 @@ class SessionFailureHandler:
             attribution=attribution,
             evidence_level=evidence_level,
             penalty_hint=penalty_hint,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
         )
 
         try:

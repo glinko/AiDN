@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 # ──────────────────────────────────────────────
@@ -194,7 +194,7 @@ class ProfileDimensionWeight:
         return configs.get(profile_type, configs["HYPERVISOR"])
 
     @classmethod
-    def create(cls, profile_type: str) -> "ProfileDimensionWeight":
+    def create(cls, profile_type: str) -> ProfileDimensionWeight:
         return cls(weights=cls.get_weights(profile_type))
 
 
@@ -264,7 +264,7 @@ class ReputationDimensionAccumulator:
         self.negative_mass += max(0.0, negative)
         self.event_count += 1
 
-    def to_score(self) -> "ReputationDimensionScore":
+    def to_score(self) -> ReputationDimensionScore:
         """Snapshot current accumulator state as a score."""
         return ReputationDimensionScore(
             dimension=self.dimension,
@@ -321,8 +321,8 @@ class ReputationProfile:
     subject: ReputationSubject
     profile_type: ReputationProfileType
     accumulators: dict[str, ReputationDimensionAccumulator] = field(default_factory=dict)
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    last_updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    last_updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     profile_version: str = "reputation.v1"
 
     def __post_init__(self):
@@ -429,7 +429,7 @@ class ReputationProfile:
             return "C"
         return "D"
 
-    def add_event(self, event: "ReputationEvent") -> None:
+    def add_event(self, event: ReputationEvent) -> None:
         """Ingest a finalized ReputationEvent into the profile."""
         dim = event.profile_dimension
         acc = self.accumulators.get(dim)
@@ -450,7 +450,7 @@ class ReputationProfile:
         elif event.direction == "NEUTRAL":
             acc.event_count += 1
 
-        self.last_updated_at = datetime.now(timezone.utc).isoformat()
+        self.last_updated_at = datetime.now(UTC).isoformat()
 
 
 # ──────────────────────────────────────────────
@@ -473,6 +473,6 @@ class ReputationEvent:
     source_type: str | None = None
     source_reference: str | None = None
     evidence_root: str | None = None
-    observed_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    observed_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     event_id: str = field(default_factory=lambda: f"rep-{uuid.uuid4().hex[:12]}")
     event_version: str = "reputation.v1"

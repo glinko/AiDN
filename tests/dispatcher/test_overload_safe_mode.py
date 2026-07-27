@@ -1,7 +1,6 @@
 """Tests for overload protection (rate limiting), safe mode, and enhanced delivery states."""
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -14,7 +13,6 @@ from aidn_hypervisor.dispatcher import (
     canonical_payload_hash,
 )
 from aidn_hypervisor.dispatcher.models import canonical_payload_bytes
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -33,7 +31,7 @@ def _message(
     destination_subject: dict | None = None,
 ) -> NetworkMessage:
     body = payload or {"value": "ok"}
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return NetworkMessage(
         message_id=message_id,
         message_type=message_type,
@@ -72,7 +70,7 @@ def _dispatcher(*, maximum_queue_messages: int = 2, max_messages_per_second: int
         allowed_source_types={"SERVICE"},
         allowed_channel_classes={"VALIDATION"},
         allowed_message_types={"VALIDATION_REPORT_TRANSFER"},
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
     dispatcher.register_local_route(route, lambda payload: received.append(payload) or {"ok": True})
     return dispatcher, received
@@ -188,7 +186,7 @@ class TestSafeMode:
             allowed_source_types={"SERVICE"},
             allowed_channel_classes={"VALIDATION"},
             allowed_message_types={"SESSION_CLOSE"},
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
         )
         dispatcher.register_local_route(route, lambda payload: {"ok": True})
         dispatcher.enable_safe_mode()

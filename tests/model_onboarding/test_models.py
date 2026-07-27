@@ -4,7 +4,7 @@ Tests the OnboardingCapability model used to advertise a node's
 custom model hosting capabilities to the registry.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 class TestOnboardingCapabilityModel:
@@ -62,8 +62,8 @@ class TestOnboardingCapabilityModel:
 
     def test_create_with_installed_models(self):
         from aidn_hypervisor.model_onboarding.models import (
-            OnboardingCapability,
             InstalledModelInfo,
+            OnboardingCapability,
         )
 
         cap = OnboardingCapability(
@@ -124,7 +124,7 @@ class TestOnboardingCapabilityModel:
     def test_timestamps_are_set(self):
         from aidn_hypervisor.model_onboarding.models import OnboardingCapability
 
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         cap = OnboardingCapability(
             node_id="node-001",
             operator_id="op-001",
@@ -132,7 +132,7 @@ class TestOnboardingCapabilityModel:
             supported_providers=[],
             installed_models=[],
         )
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         assert before <= cap.created_at <= after
         assert before <= cap.updated_at <= after
@@ -140,9 +140,9 @@ class TestOnboardingCapabilityModel:
 
     def test_full_capability(self):
         from aidn_hypervisor.model_onboarding.models import (
+            InstalledModelInfo,
             OnboardingCapability,
             ProviderCapability,
-            InstalledModelInfo,
             ResourceLimits,
         )
 

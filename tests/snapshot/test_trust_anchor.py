@@ -2,29 +2,28 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timedelta, timezone
 
 from aidn_hypervisor.snapshot.trust_anchor import (
-    CheckpointValidationResult,
     CheckpointValidator,
     TrustAnchor,
     TrustAnchorStore,
 )
 
-
 # ── helpers ────────────────────────────────────────────────────────
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _future_iso(offset_days: int = 30) -> str:
-    return (datetime.now(timezone.utc) + timedelta(days=offset_days)).isoformat()
+    return (datetime.now(UTC) + timedelta(days=offset_days)).isoformat()
 
 
 def _past_iso(offset_days: int = 1) -> str:
-    return (datetime.now(timezone.utc) - timedelta(days=offset_days)).isoformat()
+    return (datetime.now(UTC) - timedelta(days=offset_days)).isoformat()
 
 
 def _make_anchor(
@@ -192,7 +191,7 @@ class TestCheckpointValidator:
 
     def test_validate_expired_by_time(self):
         # created 31 days ago → exceeds default 30-day window
-        old_time = (datetime.now(timezone.utc) - timedelta(days=31)).isoformat()
+        old_time = (datetime.now(UTC) - timedelta(days=31)).isoformat()
         v = self._validator()
         a = _make_anchor(created_at=old_time)
         result = v.validate(a, current_height=100_000, current_time=_now_iso())
@@ -252,14 +251,14 @@ class TestCheckpointValidator:
         assert v.is_within_trust_period(a, current_height=10_000, current_time=_now_iso()) is False
 
     def test_is_within_trust_period_false_by_time(self):
-        old_time = (datetime.now(timezone.utc) - timedelta(days=31)).isoformat()
+        old_time = (datetime.now(UTC) - timedelta(days=31)).isoformat()
         v = self._validator()
         a = _make_anchor(created_at=old_time)
         assert v.is_within_trust_period(a, current_height=100_000, current_time=_now_iso()) is False
 
     def test_long_range_attack_old_checkpoint_rejected(self):
         # Very old checkpoint — should be rejected
-        ancient = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+        ancient = (datetime.now(UTC) - timedelta(days=90)).isoformat()
         v = self._validator()
         a = _make_anchor(block_height=100, created_at=ancient)
         result = v.validate(a, current_height=500_000, current_time=_now_iso())

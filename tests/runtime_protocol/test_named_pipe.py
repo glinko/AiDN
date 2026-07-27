@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -11,13 +11,12 @@ from aidn_hypervisor.runtime_protocol import (
     WindowsNamedPipeRuntimeListener,
 )
 
-
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows Named Pipe only")
 
 
 def _message() -> NetworkMessage:
     payload = {"event_type": "RUNTIME_HEALTH", "event": {"state": "HEALTHY"}}
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return NetworkMessage(
         message_id="named-pipe-message-1",
         message_type="RUNTIME_HEALTH",

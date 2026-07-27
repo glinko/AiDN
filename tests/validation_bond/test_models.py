@@ -5,16 +5,15 @@ from __future__ import annotations
 import pytest
 
 from aidn_hypervisor.validation_bond.models import (
+    RECOVERY_DECAY_FACTOR,
+    VALIDATION_BOND_Q_ATOMS,
     BondEvent,
     BondEventType,
     BondForfeitRecord,
     BondRecoveryRecord,
     BondStatus,
-    RECOVERY_DECAY_FACTOR,
-    VALIDATION_BOND_Q_ATOMS,
     ValidationBond,
 )
-
 
 # ── Constants ──────────────────────────────────────────────────────
 

@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
-
 import pytest
-from pydantic import BaseModel
 
 from aidn_hypervisor.snapshot.discovery import (
     SnapshotAvailability,
@@ -20,7 +17,6 @@ from aidn_hypervisor.snapshot.models import (
     SnapshotManifest,
     SnapshotType,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────
 

@@ -1,17 +1,14 @@
 """Integration tests: SessionService <-> SessionFailureHandler wire-up."""
 
-import pytest
 
-from aidn_hypervisor.registry_service import RegistryService
-from aidn_hypervisor.sessions.models import EndpointSession
-from aidn_hypervisor.sessions.service import SessionService
-from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.session_failure.models import (
     FailureClass,
     RecoveryWindowConfig,
     ReputationEvent,
 )
 from aidn_hypervisor.session_failure.service import SessionFailureHandler
+from aidn_hypervisor.sessions.service import SessionService
+from aidn_hypervisor.sessions.store import SessionStore
 
 
 def _session_policy(**overrides):

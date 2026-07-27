@@ -6,7 +6,7 @@ custom model hosting capabilities to the registry.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -57,7 +57,7 @@ class OnboardingCapability(BaseModel):
 
     def __init__(self, /, **data: Any) -> None:
         super().__init__(**data)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if self.created_at is None:
             self.created_at = now
         if self.updated_at is None:

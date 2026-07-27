@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-import time
 import uuid
 
 import pytest
@@ -24,7 +21,6 @@ from aidn_hypervisor.registry.messages import (
     RepairPayload,
     SyncStatusPayload,
 )
-
 
 # ─── Enum Tests ─────────────────────────────────────────────────────────────
 

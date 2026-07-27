@@ -1,6 +1,6 @@
 """Tests for session_failure.service — SessionFailureHandler (RFC-0060)."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -11,10 +11,8 @@ from aidn_hypervisor.session_failure.models import (
     FailureEvidenceRecord,
     RecoveryWindowConfig,
     ReputationEvent,
-    SessionFailureEvent,
 )
 from aidn_hypervisor.session_failure.service import SessionFailureHandler
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -170,7 +168,7 @@ class TestRecoveryWindow:
             failure_class=FailureClass.PROVIDER_DISCONNECTED,
         )
         # Manually set deadline to the past
-        past = datetime.now(timezone.utc).isoformat()
+        past = datetime.now(UTC).isoformat()
         # We need to simulate the deadline being in the past
         handler._recovery_deadlines["sess-001"] = "2020-01-01T00:00:00+00:00"
         assert handler.is_recovery_expired("sess-001") is True
@@ -198,7 +196,7 @@ class TestEvidenceRecording:
             evidence_level=EvidenceLevel.CRYPTOGRAPHIC,
             category="signed_termination",
             detail="Provider signed termination",
-            recorded_at=datetime.now(timezone.utc).isoformat(),
+            recorded_at=datetime.now(UTC).isoformat(),
             source="provider",
         )
         handler.add_evidence("sess-001", record)

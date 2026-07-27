@@ -11,7 +11,6 @@ from aidn_hypervisor.consensus.epoch import (
     EpochStatus,
 )
 
-
 # ── EpochConfig ──────────────────────────────────────────────────────
 
 

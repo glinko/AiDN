@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from aidn_hypervisor.rating.models import (
     RatingConfig,
     RatingDimension,
@@ -11,12 +10,11 @@ from aidn_hypervisor.rating.models import (
 )
 from aidn_hypervisor.rating.scoring import (
     RatingScorer,
+    _apply_decay,
     _bayesian_update,
     _compute_confidence,
-    _apply_decay,
     _is_negative_dimension,
 )
-
 
 # ── Bayesian helpers ─────────────────────────────────────────────────
 

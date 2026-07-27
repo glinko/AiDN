@@ -9,12 +9,10 @@ and reliability reporting.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field
-
 
 # ── SyncPhase ─────────────────────────────────────────────────────
 
@@ -114,7 +112,7 @@ class SyncProgressTracker:
         return self._phase
 
     def _now(self) -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     def _emit(self) -> SyncProgress:
         lag: int | None = None

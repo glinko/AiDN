@@ -8,14 +8,11 @@ from __future__ import annotations
 
 import time
 from enum import Enum
-from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from .object_envelope import RegistryObjectEnvelope
-from .replication import ReplicationEngine, TransferProgress
+from .replication import ReplicationEngine
 from .storage import ImmutableObjectStore
-
 
 # ---------------------------------------------------------------------------
 # Sync modes (§41)

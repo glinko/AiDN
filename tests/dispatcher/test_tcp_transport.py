@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import socket
 import threading
 from typing import Any
 
@@ -23,7 +22,6 @@ from aidn_hypervisor.dispatcher.models import (
     canonical_payload_hash,
 )
 from aidn_hypervisor.dispatcher.transport import (
-    MessageFramer,
     TransportGateway,
     TransportStatus,
 )
@@ -31,7 +29,6 @@ from aidn_hypervisor.dispatcher.transport.tcp import (
     TcpListener,
     TcpTransport,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

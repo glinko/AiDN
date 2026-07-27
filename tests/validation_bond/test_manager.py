@@ -11,13 +11,12 @@ from aidn_hypervisor.validation_bond.manager import (
     ValidationBondManager,
 )
 from aidn_hypervisor.validation_bond.models import (
-    BondEventType,
-    BondStatus,
     RECOVERY_DECAY_FACTOR,
     VALIDATION_BOND_Q_ATOMS,
+    BondEventType,
+    BondStatus,
 )
 from aidn_hypervisor.validation_bond.store import BondStore
-
 
 # ── Helpers ────────────────────────────────────────────────────────
 

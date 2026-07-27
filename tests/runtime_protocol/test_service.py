@@ -1,5 +1,5 @@
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -18,36 +18,36 @@ from aidn_hypervisor.dispatcher.models import DispatcherRoute, canonical_payload
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.runtime_protocol import (
-    RuntimeCapacity,
+    LocalIpcRuntimeIngress,
     RuntimeArtifactDeclare,
     RuntimeCancelRequest,
     RuntimeCancelResult,
+    RuntimeCapacity,
     RuntimeDrainComplete,
     RuntimeDrainRequest,
     RuntimeDrainStatus,
     RuntimeExecuteRequest,
+    RuntimeHealth,
     RuntimeHello,
     RuntimeHelloComplete,
-    RuntimeHealth,
     RuntimeMessage,
-    RuntimeReady,
-    RuntimeReadinessDimensions,
+    RuntimeProtocolConformanceHarness,
     RuntimeProtocolError,
     RuntimeProtocolService,
     RuntimeProtocolStore,
-    RuntimeRecoveryState,
+    RuntimeReadinessDimensions,
+    RuntimeReady,
     RuntimeRecoveryResult,
+    RuntimeRecoveryState,
     RuntimeRequestAccept,
     RuntimeResult,
     RuntimeShutdown,
+    RuntimeStateCheckpoint,
     RuntimeStreamChunk,
     RuntimeStreamClose,
     RuntimeStreamOpen,
-    RuntimeStateCheckpoint,
     RuntimeUsageDimension,
     RuntimeUsageReport,
-    LocalIpcRuntimeIngress,
-    RuntimeProtocolConformanceHarness,
     canonical_hash,
 )
 
@@ -150,7 +150,7 @@ def _route(binding: RuntimeBinding, *, route_generation: int = 5) -> DispatcherR
         allowed_channel_classes={"RUNTIME"},
         allowed_message_types={"RUNTIME_EXECUTE"},
         runtime_binding_hash=binding.binding_hash(),
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
 
 
@@ -256,7 +256,7 @@ def _execute_request(binding: RuntimeBinding, *, request_id: str = "request-1", 
         request_charge_ceiling=2.0,
         accounting_contract_hash=_accounting_contract().payload_hash,
         idempotency_key=f"idempotency-{request_id}",
-        request_deadline=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        request_deadline=(datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
     )
 
 
@@ -278,7 +278,7 @@ def _accept_request(
             runtime_request_handle=f"provider-{request.request_id}",
             accepted_capability_definition_hash=binding.capability_definition_hash,
             accepted_features=request.required_features,
-            accepted_at=datetime.now(timezone.utc).isoformat(),
+            accepted_at=datetime.now(UTC).isoformat(),
         ),
     )
 
@@ -303,13 +303,13 @@ def _ready(binding: RuntimeBinding, *, route_generation: int = 5) -> RuntimeRead
         capability_definition_hash=binding.capability_definition_hash,
         supported_features=binding.supported_features,
         usage_profile_hash=binding.usage_reporting_profile_hash,
-        ready_at=datetime.now(timezone.utc).isoformat(),
+        ready_at=datetime.now(UTC).isoformat(),
         runtime_signature="runtime-signed",
     )
 
 
 def _health(binding: RuntimeBinding, *, sequence: int = 1) -> RuntimeHealth:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return RuntimeHealth(
         runtime_id=binding.runtime_id,
         runtime_generation=binding.runtime_generation,
@@ -333,7 +333,7 @@ def _health(binding: RuntimeBinding, *, sequence: int = 1) -> RuntimeHealth:
 
 
 def _capacity(binding: RuntimeBinding, *, sequence: int = 1) -> RuntimeCapacity:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return RuntimeCapacity(
         runtime_id=binding.runtime_id,
         runtime_generation=binding.runtime_generation,
@@ -394,7 +394,7 @@ def _runtime_usage_report(
         ],
         request_state=terminal_state,
         terminal=terminal_state is not None,
-        observed_at=datetime.now(timezone.utc).isoformat(),
+        observed_at=datetime.now(UTC).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -426,7 +426,7 @@ def _runtime_result(
         artifact_references=artifact_references or [],
         final_usage_report_id=final_usage_report_id,
         provider_attempt_count=1,
-        completed_at=datetime.now(timezone.utc).isoformat(),
+        completed_at=datetime.now(UTC).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -437,7 +437,7 @@ def _runtime_cancel_request(
     *,
     cancellation_id: str = "cancel-1",
 ) -> RuntimeCancelRequest:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return RuntimeCancelRequest(
         runtime_id=binding.runtime_id,
         runtime_generation=binding.runtime_generation,
@@ -476,7 +476,7 @@ def _runtime_cancel_result(
         output_stopped=output_stopped,
         provider_confirmed_stopped=provider_confirmed_stopped,
         side_effect_state="NONE",
-        observed_at=datetime.now(timezone.utc).isoformat(),
+        observed_at=datetime.now(UTC).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -499,7 +499,7 @@ def _runtime_stream_open(
         modality="text",
         content_type="text/plain",
         result_root_policy="FULL_CONTENT_HASH",
-        opened_at=datetime.now(timezone.utc).isoformat(),
+        opened_at=datetime.now(UTC).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -525,7 +525,7 @@ def _runtime_stream_chunk(
         chunk_hash=f"sha256:{hashlib.sha256(encoded).hexdigest()}",
         chunk_length=len(encoded),
         content=content,
-        emitted_at=datetime.now(timezone.utc).isoformat(),
+        emitted_at=datetime.now(UTC).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -566,7 +566,7 @@ def _runtime_stream_close(
         final_content_root=_stream_root(stream_id, chunks),
         delivered_length=sum(item.chunk_length for item in chunks),
         close_reason="completed",
-        closed_at=datetime.now(timezone.utc).isoformat(),
+        closed_at=datetime.now(UTC).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -591,7 +591,7 @@ def _runtime_artifact(
         storage_reference=storage_reference,
         access_class="SESSION_PARTICIPANTS",
         retention_policy="SESSION_RETENTION",
-        declared_at=datetime.now(timezone.utc).isoformat(),
+        declared_at=datetime.now(UTC).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -614,7 +614,7 @@ def _runtime_state_checkpoint(
         checkpoint_sequence=sequence,
         recoverability="CHECKPOINT_RECOVERABLE",
         retention="SESSION_RETENTION",
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -627,7 +627,7 @@ def _runtime_drain_request(binding: RuntimeBinding) -> RuntimeDrainRequest:
         route_generation=5,
         drain_id="drain-1",
         reason="rolling_update",
-        drain_deadline=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        drain_deadline=(datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
         hypervisor_signature="hypervisor-signed",
     )
 
@@ -651,7 +651,7 @@ def _runtime_drain_status(
         queued_requests=0,
         recoverable_requests=0,
         blocked_requests=0,
-        updated_at=datetime.now(timezone.utc).isoformat(),
+        updated_at=datetime.now(UTC).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -663,7 +663,7 @@ def _runtime_drain_complete(binding: RuntimeBinding) -> RuntimeDrainComplete:
         runtime_configuration_hash=binding.runtime_configuration_hash,
         route_generation=5,
         drain_id="drain-1",
-        completed_at=datetime.now(timezone.utc).isoformat(),
+        completed_at=datetime.now(UTC).isoformat(),
         runtime_signature="runtime-signed",
     )
 
@@ -677,7 +677,7 @@ def _runtime_shutdown(binding: RuntimeBinding, *, mode: str = "GRACEFUL") -> Run
         shutdown_id=f"shutdown-{mode.lower()}",
         shutdown_mode=mode,
         reason="maintenance",
-        deadline=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        deadline=(datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
         preserve_recovery_state=True,
         hypervisor_signature="hypervisor-signed",
     )
@@ -738,8 +738,8 @@ def test_runtime_message_has_semantic_replay_and_sequence_protection() -> None:
         route_generation=5,
         runtime_connection_id=connection.runtime_connection_id,
         runtime_sequence=1,
-        created_at=datetime.now(timezone.utc).isoformat(),
-        expiration=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
+        expiration=(datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
         payload_hash=canonical_hash(payload),
         payload=payload,
     )
@@ -847,7 +847,7 @@ def test_local_ipc_runtime_ingress_uses_dispatcher_route_and_peer_authentication
         "runtime_connection_id": connection.runtime_connection_id,
         "event": health.model_dump(mode="json"),
     }
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     message = NetworkMessage(
         message_id="local-ipc-health-1",
         message_type="RUNTIME_HEALTH",
@@ -931,7 +931,7 @@ def test_local_ipc_runtime_ingress_routes_terminal_result() -> None:
         "runtime_connection_id": connection.runtime_connection_id,
         "event": runtime_result.model_dump(mode="json"),
     }
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     message = NetworkMessage(
         message_id="local-ipc-result-1",
         message_type="RUNTIME_RESULT",
@@ -997,7 +997,7 @@ def test_local_ipc_runtime_ingress_routes_cancel_result() -> None:
         "runtime_connection_id": connection.runtime_connection_id,
         "event": cancel_result.model_dump(mode="json"),
     }
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     message = NetworkMessage(
         message_id="local-ipc-cancel-result-1",
         message_type="RUNTIME_CANCEL_RESULT",
@@ -1058,7 +1058,7 @@ def test_local_ipc_runtime_ingress_routes_stream_open() -> None:
         "runtime_connection_id": connection.runtime_connection_id,
         "event": stream.model_dump(mode="json"),
     }
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     message = NetworkMessage(
         message_id="local-ipc-stream-open-1",
         message_type="RUNTIME_STREAM_OPEN",
@@ -1117,7 +1117,7 @@ def test_local_ipc_runtime_ingress_routes_artifact_declaration() -> None:
         "runtime_connection_id": connection.runtime_connection_id,
         "event": artifact.model_dump(mode="json"),
     }
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     message = NetworkMessage(
         message_id="local-ipc-artifact-1",
         message_type="RUNTIME_ARTIFACT_DECLARE",
@@ -1180,7 +1180,7 @@ def test_execute_request_is_idempotent_and_acceptance_is_not_completion() -> Non
             runtime_request_handle="provider-request-1",
             accepted_capability_definition_hash=binding.capability_definition_hash,
             accepted_features=["streaming"],
-            accepted_at=datetime.now(timezone.utc).isoformat(),
+            accepted_at=datetime.now(UTC).isoformat(),
         ),
     )
     assert accepted.request_state == "ACCEPTED"
@@ -1278,7 +1278,7 @@ def test_usage_reports_preserve_dimension_authority_and_hash_chain(tmp_path) -> 
                 availability="UNAVAILABLE",
             ),
         ],
-        observed_at=datetime.now(timezone.utc).isoformat(),
+        observed_at=datetime.now(UTC).isoformat(),
         runtime_signature="runtime-signed",
     )
     ack = service.record_usage_report(connection.runtime_connection_id, report)
@@ -1333,7 +1333,7 @@ def test_recovery_requires_explicit_route_rebind(tmp_path) -> None:
         route_generation=6,
         plan_id=plan.plan_id,
         request_results={request.request_id: "CONTINUING"},
-        completed_at=datetime.now(timezone.utc).isoformat(),
+        completed_at=datetime.now(UTC).isoformat(),
     )
     ready = service.record_recovery_result(connection.runtime_connection_id, result)
     assert ready.connection_state == "READY"
@@ -1365,7 +1365,7 @@ def test_recovery_conflicts_keep_connection_recovering() -> None:
         route_generation=5,
         plan_id=plan.plan_id,
         remaining_conflicts=["request-unknown"],
-        completed_at=datetime.now(timezone.utc).isoformat(),
+        completed_at=datetime.now(UTC).isoformat(),
     )
 
     recovering = service.record_recovery_result(

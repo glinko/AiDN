@@ -8,8 +8,7 @@ from __future__ import annotations
 import hashlib
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator, model_validator
-
+from pydantic import BaseModel, Field, model_validator
 
 # ── Enums ──────────────────────────────────────────────────────────
 
@@ -134,7 +133,7 @@ class SnapshotChunk(BaseModel, frozen=True):
     payload: bytes
 
     @model_validator(mode="after")
-    def _check_chunk_index_range(self) -> "SnapshotChunk":
+    def _check_chunk_index_range(self) -> SnapshotChunk:
         """chunk_index must be < total_chunks."""
         if self.chunk_index >= self.total_chunks:
             raise ValueError(

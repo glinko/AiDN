@@ -1,12 +1,10 @@
 """Tests for AIDNABCIApplication lifecycle — init, info, commit, snapshot, query."""
 
-import json
 
 import pytest
 
-from aidn_hypervisor.consensus.abci import AIDNABCIApplication, ABCIMempool
-from aidn_hypervisor.consensus.abci_models import ABCIResult, ABCIInfoResponse
-from aidn_hypervisor.consensus.admission import AdmissionValidator
+from aidn_hypervisor.consensus.abci import AIDNABCIApplication
+from aidn_hypervisor.consensus.abci_models import ABCIInfoResponse
 from aidn_hypervisor.ledger.service import LedgerOperationService
 
 

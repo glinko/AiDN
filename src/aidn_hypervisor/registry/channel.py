@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 from .messages import (
     RegistryChannelClass,
     RegistryMessageType,
-    RegistryPayload,
 )
 
 

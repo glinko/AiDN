@@ -12,10 +12,10 @@ from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.runtime_protocol.adapters.llamacpp import LlamaCppOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.approved_dispatch import ApprovedRuntimeDispatcher
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
-from aidn_hypervisor.sessions.service import SessionService
-from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.sessions.service import SessionService
+from aidn_hypervisor.sessions.store import SessionStore
 
 
 def test_approved_llamacpp_binding_executes_through_runtime_protocol(monkeypatch) -> None:

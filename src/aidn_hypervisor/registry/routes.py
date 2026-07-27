@@ -7,8 +7,8 @@ the dispatcher's DispatcherRoute format.
 
 from __future__ import annotations
 
+from .channel import DEFAULT_REGISTRY_CHANNELS, RegistryChannelManager
 from .messages import RegistryChannelClass, RegistryMessageType
-from .channel import RegistryChannelManager, DEFAULT_REGISTRY_CHANNELS
 
 
 def create_default_registry_channels() -> RegistryChannelManager:

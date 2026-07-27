@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from aidn_hypervisor.eligibility.kcg import KCGManager
 
-
 # ── Group Creation ──────────────────────────────────────────────
 
 class TestKCGCreation:

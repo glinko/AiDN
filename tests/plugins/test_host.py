@@ -1,19 +1,20 @@
-import pytest
 import json
 import os
 from uuid import uuid4
+
+import pytest
 
 from aidn_hypervisor.plugins.host import (
     HmacPluginHostActivationProofVerifier,
     PluginHostActivationCredentialStore,
     PluginHostAuthenticationError,
     PluginHostAuthenticator,
+    PluginHostConnectionStore,
     PluginHostHandshakeService,
     PluginHostHello,
-    PluginHostLocalIpcIngress,
-    PluginHostJsonWireAdapter,
-    PluginHostConnectionStore,
     PluginHostIdentity,
+    PluginHostJsonWireAdapter,
+    PluginHostLocalIpcIngress,
     build_plugin_host_activation_proof,
 )
 from aidn_hypervisor.plugins.host_named_pipe import (

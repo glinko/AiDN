@@ -5,8 +5,6 @@ Route binding helpers for registry replication messages.
 
 from __future__ import annotations
 
-import pytest
-
 from aidn_hypervisor.registry.messages import (
     RegistryChannelClass,
     RegistryMessageType,
@@ -16,7 +14,6 @@ from aidn_hypervisor.registry.routes import (
     build_registry_route,
     create_default_registry_channels,
 )
-
 
 # ─── build_registry_route ────────────────────────────────────────────
 

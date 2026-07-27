@@ -17,7 +17,6 @@ from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.state import (
     HypervisorStateSnapshot,
-    JournalEvent,
     RuntimeSnapshot,
     TaskSnapshot,
 )

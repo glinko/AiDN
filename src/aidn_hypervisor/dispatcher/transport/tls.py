@@ -11,9 +11,8 @@ For mutual authentication use ``certfile`` + ``keyfile`` + ``ca_certs``.
 
 from __future__ import annotations
 
-import ssl
 import socket
-from typing import Optional
+import ssl
 
 from aidn_hypervisor.dispatcher.models import NetworkMessage
 from aidn_hypervisor.dispatcher.transport.abc import (
@@ -21,7 +20,6 @@ from aidn_hypervisor.dispatcher.transport.abc import (
     TransportStatus,
 )
 from aidn_hypervisor.dispatcher.transport.tcp import TcpTransport
-
 
 # ---------------------------------------------------------------------------
 # TlsTransport
@@ -58,9 +56,9 @@ class TlsTransport(TcpTransport):
         host: str,
         port: int,
         *,
-        certfile: Optional[str] = None,
-        keyfile: Optional[str] = None,
-        ca_certs: Optional[str] = None,
+        certfile: str | None = None,
+        keyfile: str | None = None,
+        ca_certs: str | None = None,
         verify: bool = True,
         send_timeout: float = 5.0,
         recv_timeout: float = 5.0,
@@ -70,9 +68,9 @@ class TlsTransport(TcpTransport):
         self._keyfile = keyfile
         self._ca_certs = ca_certs
         self._verify = verify
-        self._ssl_context: Optional[ssl.SSLContext] = None
+        self._ssl_context: ssl.SSLContext | None = None
         self._tls_established = False
-        self._raw_socket: Optional[socket.socket] = None
+        self._raw_socket: socket.socket | None = None
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -239,7 +237,7 @@ class TlsListener:
         *,
         certfile: str,
         keyfile: str,
-        ca_certs: Optional[str] = None,
+        ca_certs: str | None = None,
         verify_client: bool = False,
         backlog: int = 5,
     ) -> None:
@@ -250,8 +248,8 @@ class TlsListener:
         self._ca_certs = ca_certs
         self._verify_client = verify_client
         self._backlog = backlog
-        self._raw_server: Optional[ssl.SSLSocket] = None
-        self._client: Optional[ssl.SSLSocket] = None
+        self._raw_server: ssl.SSLSocket | None = None
+        self._client: ssl.SSLSocket | None = None
         self._status = TransportStatus.DISCONNECTED
         self._recv_buffer: bytes = b""
         self._pending_messages: list[NetworkMessage] = []

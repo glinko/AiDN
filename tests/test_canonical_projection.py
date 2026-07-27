@@ -9,12 +9,12 @@ from aidn_hypervisor.canonical_projection import (
     project_protocol_services,
     project_registry_objects,
 )
+from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
 from aidn_hypervisor.endpoint_publications.models import (
     PublishedEndpointConfiguration,
     canonical_configuration_payload,
     configuration_hash_for_publication,
 )
-from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.scheduler import Scheduler

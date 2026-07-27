@@ -1,13 +1,17 @@
-import io
 import hashlib
+import io
 import json
-import json
-from pathlib import Path
 import zipfile
+from pathlib import Path
 
 import pytest
 
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
+from aidn_hypervisor.plugins.host import (
+    PluginHostHello,
+    PluginHostIdentity,
+    build_plugin_host_activation_proof,
+)
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.providers.executor import (
     ControlledFilesystemProviderInstallationExecutor,
@@ -20,17 +24,12 @@ from aidn_hypervisor.providers.models import (
     ProviderInstallationExecutionResult,
     ProviderInstallationJob,
 )
-from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.package_store import (
     FilesystemPluginPackageStore,
     PluginPackageStore,
 )
 from aidn_hypervisor.providers.package_verification import compute_manifest_hash
-from aidn_hypervisor.plugins.host import (
-    PluginHostHello,
-    PluginHostIdentity,
-    build_plugin_host_activation_proof,
-)
+from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 

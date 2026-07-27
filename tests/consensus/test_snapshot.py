@@ -11,7 +11,6 @@ from aidn_hypervisor.consensus.snapshot import (
     SnapshotProducer,
 )
 
-
 # ── SnapshotMetadata ────────────────────────────────────────────────
 
 

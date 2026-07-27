@@ -7,14 +7,13 @@ and coordinates with the replicator for sync operations.
 from __future__ import annotations
 
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .peer import PeerManager, RegistryPeer, PeerState
+from .peer import PeerManager, PeerState, RegistryPeer
 from .replicator import RegistryReplicator
-from .messages import RegistryChannelClass
-
 
 # ---------------------------------------------------------------------------
 # Configuration

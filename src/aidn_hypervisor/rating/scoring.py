@@ -13,7 +13,6 @@ from aidn_hypervisor.rating.models import (
     RatingUpdateResult,
 )
 
-
 # ── Direction mapping ────────────────────────────────────────────────
 
 # Dimensions where higher evidence value = worse rating

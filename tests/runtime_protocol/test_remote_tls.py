@@ -1,5 +1,5 @@
-from datetime import datetime, timedelta, timezone
 import ssl
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from cryptography import x509
@@ -14,7 +14,7 @@ from aidn_hypervisor.runtime_protocol import TlsRuntimeClient, TlsRuntimeListene
 
 def _message() -> NetworkMessage:
     payload = {"event_type": "RUNTIME_HEALTH", "event": {"state": "HEALTHY"}}
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return NetworkMessage(
         message_id="remote-tls-message-1",
         message_type="RUNTIME_HEALTH",
@@ -50,8 +50,8 @@ def _write_certificate_pair(tmp_path, name: str, ca_key, ca_certificate, *, serv
         .issuer_name(ca_certificate.subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.now(timezone.utc) - timedelta(minutes=1))
-        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+        .not_valid_before(datetime.now(UTC) - timedelta(minutes=1))
+        .not_valid_after(datetime.now(UTC) + timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
         .add_extension(
@@ -109,8 +109,8 @@ def _tls_contexts(tmp_path) -> tuple[ssl.SSLContext, ssl.SSLContext]:
         .issuer_name(ca_subject)
         .public_key(ca_key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.now(timezone.utc) - timedelta(minutes=1))
-        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+        .not_valid_before(datetime.now(UTC) - timedelta(minutes=1))
+        .not_valid_after(datetime.now(UTC) + timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
         .add_extension(

@@ -3,7 +3,6 @@
 Full snapshot production pipeline with local restoration verification.
 """
 
-import copy
 import pytest
 
 from aidn_hypervisor.snapshot.models import (
@@ -12,12 +11,11 @@ from aidn_hypervisor.snapshot.models import (
     SnapshotType,
 )
 from aidn_hypervisor.snapshot.producer import (
+    ProduceResult,
     SnapshotProducer,
     SnapshotProducerConfig,
     SnapshotProducerError,
-    ProduceResult,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────
 

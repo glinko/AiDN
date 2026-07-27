@@ -3,12 +3,11 @@
 import pytest
 
 from aidn_hypervisor.consensus.abci_models import (
-    ABCIResult,
-    ABCIInfoResponse,
     ABCICommitResponse,
+    ABCIInfoResponse,
     ABCIQueryResponse,
+    ABCIResult,
     ABCITag,
-    ABCICode,
 )
 
 

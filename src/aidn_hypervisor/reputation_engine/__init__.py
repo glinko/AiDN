@@ -8,26 +8,26 @@ Provides structured Reputation Profiles with:
 - Advisory overall score with critical dimension cap
 """
 
+from aidn_hypervisor.reputation_engine.engine import ReputationEngine
 from aidn_hypervisor.reputation_engine.models import (
-    ReputationSubject,
+    EvidenceConfidenceClass,
+    ProfileDimensionWeight,
+    ReputationDimension,
     ReputationDimensionAccumulator,
     ReputationDimensionScore,
-    ReputationProfile,
     ReputationEvent,
-    ProfileDimensionWeight,
-    ReputationProfileType,
-    ReputationDimension,
+    ReputationEventClass,
     ReputationEventDirection,
     ReputationEventSeverity,
-    EvidenceConfidenceClass,
-    ReputationEventClass,
+    ReputationProfile,
     ReputationProfileState,
+    ReputationProfileType,
+    ReputationSubject,
 )
-from aidn_hypervisor.reputation_engine.store import ReputationStore
-from aidn_hypervisor.reputation_engine.engine import ReputationEngine
 from aidn_hypervisor.reputation_engine.registry_publication import (
     ReputationProfilePublisher,
 )
+from aidn_hypervisor.reputation_engine.store import ReputationStore
 
 __all__ = [
     # Types

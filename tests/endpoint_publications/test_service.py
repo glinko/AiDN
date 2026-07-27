@@ -1,10 +1,10 @@
+import pytest
+
 from aidn_hypervisor.endpoint_publications.models import (
     PublishedEndpointConfiguration,
     canonical_configuration_payload,
     configuration_hash_for_publication,
 )
-import pytest
-
 from aidn_hypervisor.endpoint_publications.service import (
     EndpointPublicationReadinessError,
     EndpointPublicationService,

@@ -10,11 +10,9 @@ prevent long-range attacks where an adversary presents an ancient checkpoint as 
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
-
 
 # ── Trust Anchor ───────────────────────────────────────────────────
 
@@ -37,7 +35,7 @@ class TrustAnchor(BaseModel, frozen=True):
     """One of: local_state, software_release, operator_config, deployment_image."""
     created_at: str
     """ISO-8601 timestamp when this anchor was created."""
-    expires_at: Optional[str] = None
+    expires_at: str | None = None
     """ISO-8601 expiry; None means no explicit expiry."""
 
 
@@ -58,13 +56,13 @@ class TrustAnchorStore:
         """Add a trusted checkpoint anchor."""
         self._anchors.append(anchor)
 
-    def get_latest(self) -> Optional[TrustAnchor]:
+    def get_latest(self) -> TrustAnchor | None:
         """Return the anchor with the highest *block_height*, or ``None``."""
         if not self._anchors:
             return None
         return max(self._anchors, key=lambda a: a.block_height)
 
-    def get_for_height(self, height: int) -> Optional[TrustAnchor]:
+    def get_for_height(self, height: int) -> TrustAnchor | None:
         """Return the closest anchor whose *block_height* ≤ *height*.
 
         Returns ``None`` when no anchor exists at or below the requested height.
@@ -182,9 +180,9 @@ class CheckpointValidator:
             created = datetime.fromisoformat(anchor.created_at)
             now = datetime.fromisoformat(current_time)
             if created.tzinfo is None:
-                created = created.replace(tzinfo=timezone.utc)
+                created = created.replace(tzinfo=UTC)
             if now.tzinfo is None:
-                now = now.replace(tzinfo=timezone.utc)
+                now = now.replace(tzinfo=UTC)
             age_seconds = (now - created).total_seconds()
             if age_seconds > self.max_checkpoint_age_seconds:
                 reasons.append(
@@ -234,9 +232,9 @@ class CheckpointValidator:
             created = datetime.fromisoformat(anchor.created_at)
             now = datetime.fromisoformat(current_time)
             if created.tzinfo is None:
-                created = created.replace(tzinfo=timezone.utc)
+                created = created.replace(tzinfo=UTC)
             if now.tzinfo is None:
-                now = now.replace(tzinfo=timezone.utc)
+                now = now.replace(tzinfo=UTC)
             age_seconds = (now - created).total_seconds()
             if age_seconds > self.max_checkpoint_age_seconds:
                 return False

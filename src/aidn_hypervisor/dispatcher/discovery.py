@@ -5,7 +5,7 @@ Every discovered peer SHALL complete authentication before communication.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -67,7 +67,7 @@ class PeerRecord(BaseModel):
     discovery_source: DiscoverySource = "STATIC_CONFIGURATION"
     trust_state: TrustState = "UNVERIFIED"
     first_seen: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     last_seen: str | None = None
     last_heartbeat: str | None = None
@@ -274,14 +274,14 @@ class DiscoveryManager:
         record = self._peers.get(peer_id)
         if record:
             record.trust_state = new_state
-            record.last_seen = datetime.now(timezone.utc).isoformat()
+            record.last_seen = datetime.now(UTC).isoformat()
 
     def record_connection_success(self, peer_id: str) -> None:
         """Record a successful connection attempt."""
         record = self._peers.get(peer_id)
         if record:
             record.connection_success_count += 1
-            record.last_heartbeat = datetime.now(timezone.utc).isoformat()
+            record.last_heartbeat = datetime.now(UTC).isoformat()
 
     def record_connection_failure(self, peer_id: str) -> None:
         """Record a failed connection attempt."""

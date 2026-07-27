@@ -6,27 +6,22 @@ generate reputation events consumed by the ReputationEngine.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-import pytest
-
-from aidn_hypervisor.reputation_engine.store import ReputationStore
 from aidn_hypervisor.reputation_engine.engine import ReputationEngine
 from aidn_hypervisor.reputation_engine.models import ReputationEvent
+from aidn_hypervisor.reputation_engine.store import ReputationStore
 from aidn_hypervisor.validation.custody import (
-    CustodyConfig,
-    CustodyState,
-    CustodyStore,
-    CustodyService,
-    CustodyStatus,
-    Challenge,
-    ChallengeOutcome,
-    ChallengeReason,
     Correction,
-    FinalizationStore,
-    FinalizationService,
-    ReputationEventRecord,
+    CustodyConfig,
+    CustodyService,
+    CustodyState,
+    CustodyStatus,
+    CustodyStore,
     EventFinalizationState,
+    FinalizationService,
+    FinalizationStore,
+    ReputationEventRecord,
 )
 
 
@@ -65,7 +60,7 @@ class CustodyReputationBridge:
 
         # Track for finalization
         record = ReputationEventRecord(
-            event_id=f"custody-{report_hash[:16]}-{datetime.now(timezone.utc).timestamp()}",
+            event_id=f"custody-{report_hash[:16]}-{datetime.now(UTC).timestamp()}",
             subject_id=endpoint_id,
             dimension=self.CUSTODY_DIMENSION,
             direction="NEGATIVE",
@@ -120,7 +115,7 @@ class TestCustodyReputationIntegration:
         self.custody_store.add(CustodyState(
             report_hash="sha256:" + "ab" * 32,
             endpoint_id=endpoint_id,
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         ))
 
     def test_custody_failure_reduces_reliability(self):
@@ -131,7 +126,7 @@ class TestCustodyReputationIntegration:
         # Force grace expiry to trigger failure
         state = self.custody_store.get("sha256:" + "ab" * 32)
         state.grace_expires_at = (
-            datetime.now(timezone.utc) - timedelta(seconds=1)
+            datetime.now(UTC) - timedelta(seconds=1)
         ).isoformat()
         result = self.custody_svc.check_custody("sha256:" + "ab" * 32, available=False)
 

@@ -5,12 +5,9 @@ from __future__ import annotations
 import hashlib
 import math
 import time
-from typing import Any
-
 
 from pydantic import BaseModel, Field
 
-from .object_envelope import RegistryObjectEnvelope
 from .storage import ImmutableObjectStore
 
 
@@ -58,7 +55,7 @@ class BloomFilter:
     @staticmethod
     def _hash(item: str, index: int) -> int:
         """Multi-purpose hash using hashlib with dual-hash technique."""
-        key = f"{index}:{item}".encode("utf-8")
+        key = f"{index}:{item}".encode()
         h1 = int(hashlib.sha256(key).hexdigest()[:16], 16)
         h2 = int(hashlib.sha512(key).hexdigest()[:16], 16)
         return (h1 + index * h2)

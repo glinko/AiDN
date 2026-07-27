@@ -1,4 +1,6 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
+from fastapi.testclient import TestClient
 
 from aidn_hypervisor.accounting.models import (
     UsageAcknowledgement,
@@ -7,7 +9,7 @@ from aidn_hypervisor.accounting.models import (
     usage_report_hash,
 )
 from aidn_hypervisor.bundle_registry import FileBundleRegistry
-from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, NodeCapacity, ResourceProfile
+from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, NodeCapacity, ResourceProfile, TaskRequest
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
@@ -21,11 +23,9 @@ from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
-from aidn_hypervisor.domain.models import TaskRequest
 from aidn_hypervisor.validation.service import ValidationService
 from aidn_hypervisor.validation.store import ValidationStore
 from aidn_hypervisor.wallet import quote_usage_q
-from fastapi.testclient import TestClient
 
 
 def _bundle(bundle_id: str, workload_type: str) -> BundleConfig:
@@ -1266,7 +1266,7 @@ def test_service_records_wallet_allocation_finalization_on_expiry() -> None:
         )
     )
     service._allocations[allocation["allocation_id"]]["expires_at"] = (
-        datetime.now(timezone.utc) - timedelta(seconds=1)
+        datetime.now(UTC) - timedelta(seconds=1)
     ).isoformat()
 
     expired = service.get_allocation(allocation["allocation_id"])

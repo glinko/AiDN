@@ -3,15 +3,15 @@
 Deterministic logical snapshot encoding with namespace ordering.
 """
 
-import json
 import hashlib
+import json
+
 import pytest
 
 from aidn_hypervisor.snapshot.encoding import (
-    PortableSnapshotEncoder,
     STATE_NAMESPACES,
+    PortableSnapshotEncoder,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────
 

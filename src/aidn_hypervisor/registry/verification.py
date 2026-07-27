@@ -5,13 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .object_envelope import RegistryObjectEnvelope
 from .storage import ImmutableObjectStore
-
 
 # ---------------------------------------------------------------------------
 # Verification results

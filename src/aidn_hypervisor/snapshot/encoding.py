@@ -10,7 +10,6 @@ import hashlib
 import json
 from typing import Any
 
-
 # ── Namespace ordering (RFC-0062 §14) ─────────────────────────────
 
 STATE_NAMESPACES: list[str] = [

@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .storage import ImmutableObjectStore, StorageStats
-from .manifest import SegmentManifest, InventoryRoot
-from .profile import RequiredRegistryProfile, RegistryProfileService
-
+from .profile import RegistryProfileService
+from .storage import ImmutableObjectStore
 
 # ---------------------------------------------------------------------------
 # CompletenessScore

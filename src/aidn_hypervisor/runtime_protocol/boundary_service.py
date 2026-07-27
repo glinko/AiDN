@@ -5,14 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aidn_hypervisor.service import HypervisorService
     from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
-    from aidn_hypervisor.state import TaskSnapshot
     from aidn_hypervisor.process_manager import RuntimeHandle
     from aidn_hypervisor.queue import QueuedTask
     from aidn_hypervisor.runtime_protocol.models import RuntimeRequestRecord
-    from aidn_hypervisor.state import JournalEvent
-    from aidn_hypervisor.state import RuntimeSnapshot
+    from aidn_hypervisor.service import HypervisorService
+    from aidn_hypervisor.state import JournalEvent, RuntimeSnapshot, TaskSnapshot
 
 from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
 from aidn_hypervisor.bundle_runtime_policy_service import BundleRuntimePolicyService
@@ -26,7 +24,7 @@ class RuntimeProtocolBoundaryService:
     actual work, keeping the hypervisor top-level class lean.
     """
 
-    def __init__(self, hypervisor: "HypervisorService") -> None:
+    def __init__(self, hypervisor: HypervisorService) -> None:
         self._hv = hypervisor
 
     # ------------------------------------------------------------------
@@ -93,7 +91,7 @@ class RuntimeProtocolBoundaryService:
     # Runtime residency helpers
     # ------------------------------------------------------------------
 
-    def _runtime_for_bundle(self, bundle_id: str) -> "RuntimeHandle | None":
+    def _runtime_for_bundle(self, bundle_id: str) -> RuntimeHandle | None:
         return self._bundle_runtime_policy_facade().runtime_for_bundle(bundle_id)
 
     def _runtime_reservation_id(self, bundle_id: str) -> str:
@@ -116,16 +114,16 @@ class RuntimeProtocolBoundaryService:
     # Runtime lifecycle helpers
     # ------------------------------------------------------------------
 
-    def _stop_runtime_for_bundle(self, bundle: "BundleConfig") -> None:
+    def _stop_runtime_for_bundle(self, bundle: BundleConfig) -> None:
         self._bundle_runtime_policy_facade().stop_runtime_for_bundle(bundle)
 
     def _clear_runtime_reservations(self) -> None:
         self._hv._snapshot_state_facade().clear_runtime_reservations()
 
-    def _replace_runtimes(self, runtimes: list["RuntimeHandle"]) -> None:
+    def _replace_runtimes(self, runtimes: list[RuntimeHandle]) -> None:
         self._hv._snapshot_state_facade().replace_runtimes(runtimes)
 
-    def _restore_runtimes(self, runtimes: list["RuntimeSnapshot"]) -> None:
+    def _restore_runtimes(self, runtimes: list[RuntimeSnapshot]) -> None:
         self._hv._snapshot_state_facade().restore_runtimes(runtimes)
 
     # ------------------------------------------------------------------
@@ -136,10 +134,10 @@ class RuntimeProtocolBoundaryService:
         self,
         *,
         task_id: str,
-        bundle: "BundleConfig",
-        task: "TaskRequest",
-        runtime: "RuntimeHandle | None",
-    ) -> "RuntimeRequestRecord | None":
+        bundle: BundleConfig,
+        task: TaskRequest,
+        runtime: RuntimeHandle | None,
+    ) -> RuntimeRequestRecord | None:
         return self._runtime_execution_facade().record_mvp_runtime_evidence_for_completed_task(
             task_id=task_id,
             bundle=bundle,
@@ -174,8 +172,8 @@ class RuntimeProtocolBoundaryService:
     def _attempt_approved_runtime_task(
         self,
         task_id: str,
-        task: "QueuedTask",
-        bundle: "BundleConfig",
+        task: QueuedTask,
+        bundle: BundleConfig,
         endpoint_manifest,
     ) -> bool:
         return self._runtime_execution_facade().attempt_approved_runtime_task(
@@ -192,7 +190,7 @@ class RuntimeProtocolBoundaryService:
     def task_recovery_reason(self, task_id: str) -> str | None:
         return self._hv._task_recovery_reasons.get(task_id)
 
-    def _recovery_reason_for_task(self, task: "TaskSnapshot") -> str:
+    def _recovery_reason_for_task(self, task: TaskSnapshot) -> str:
         return self._hv._snapshot_state_facade().recovery_reason_for_task(task)
 
     def _recovery_message(self, recovery_reason: str) -> str:
@@ -204,8 +202,8 @@ class RuntimeProtocolBoundaryService:
 
     def _resolve_runtime_endpoint(
         self,
-        bundle: "BundleConfig",
-        runtime: "RuntimeHandle",
+        bundle: BundleConfig,
+        runtime: RuntimeHandle,
     ) -> str:
         return self._hv._allocation_catalog_facade().resolve_runtime_endpoint(
             bundle, runtime
@@ -215,21 +213,21 @@ class RuntimeProtocolBoundaryService:
     # Facade accessors (lazy-initialized service instances)
     # ------------------------------------------------------------------
 
-    def _runtime_execution_facade(self) -> "RuntimeExecutionService":
+    def _runtime_execution_facade(self) -> RuntimeExecutionService:
         facade = getattr(self._hv, "_runtime_execution_service", None)
         if facade is None:
             facade = RuntimeExecutionService(self._hv)
             self._hv._runtime_execution_service = facade
         return facade
 
-    def _admission_planning_facade(self) -> "AdmissionPlanningService":
+    def _admission_planning_facade(self) -> AdmissionPlanningService:
         facade = getattr(self._hv, "_admission_planning_service", None)
         if facade is None:
             facade = AdmissionPlanningService(self._hv)
             self._hv._admission_planning_service = facade
         return facade
 
-    def _bundle_runtime_policy_facade(self) -> "BundleRuntimePolicyService":
+    def _bundle_runtime_policy_facade(self) -> BundleRuntimePolicyService:
         facade = getattr(self._hv, "_bundle_runtime_policy_service", None)
         if facade is None:
             facade = BundleRuntimePolicyService(self._hv)
@@ -264,8 +262,8 @@ class RuntimeProtocolBoundaryService:
     def _evict_idle_runtimes_for_task(
         self,
         *,
-        task: "TaskRequest",
-        requested_bundle: "BundleConfig",
+        task: TaskRequest,
+        requested_bundle: BundleConfig,
         cpu: float,
         ram_mb: int,
         vram_mb: int,

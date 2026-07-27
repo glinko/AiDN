@@ -15,28 +15,24 @@ RFC-0041 §104: Corrections — new correction event, not silent rewrite.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from aidn_hypervisor.validation.custody import (
-    CustodyConfig,
-    CustodyCheckResult,
-    CustodyStatus,
-    CustodyState,
-    CustodyStore,
-    CustodyService,
     Challenge,
     ChallengeOutcome,
-    ChallengeState,
     Correction,
+    CustodyConfig,
+    CustodyService,
+    CustodyState,
+    CustodyStatus,
+    CustodyStore,
     EventFinalizationState,
-    ReputationEventRecord,
-    FinalizationStore,
     FinalizationService,
+    FinalizationStore,
+    ReputationEventRecord,
 )
-
 
 # ---------------------------------------------------------------------------
 # CustodyConfig
@@ -79,7 +75,7 @@ class TestCustodyState:
         state = CustodyState(
             report_hash="sha256:" + "ab" * 32,
             endpoint_id="ep-1",
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         )
         assert state.status == "available"
         assert state.failure_streak == 0
@@ -89,7 +85,7 @@ class TestCustodyState:
         state = CustodyState(
             report_hash="sha256:" + "ab" * 32,
             endpoint_id="ep-1",
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         )
         state.mark_unavailable()
         assert state.status == "grace_period"
@@ -100,12 +96,12 @@ class TestCustodyState:
         state = CustodyState(
             report_hash="sha256:" + "ab" * 32,
             endpoint_id="ep-1",
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         )
         state.mark_unavailable()
         # Simulate grace still active
         state.grace_expires_at = (
-            datetime.now(timezone.utc) + timedelta(hours=1)
+            datetime.now(UTC) + timedelta(hours=1)
         ).isoformat()
         state.mark_unavailable()
         assert state.status == "grace_period"
@@ -115,7 +111,7 @@ class TestCustodyState:
         state = CustodyState(
             report_hash="sha256:" + "ab" * 32,
             endpoint_id="ep-1",
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         )
         state.mark_unavailable()
         state.mark_unavailable()
@@ -128,12 +124,12 @@ class TestCustodyState:
         state = CustodyState(
             report_hash="sha256:" + "ab" * 32,
             endpoint_id="ep-1",
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         )
         state.mark_unavailable()
         # Force grace expiry
         state.grace_expires_at = (
-            datetime.now(timezone.utc) - timedelta(seconds=1)
+            datetime.now(UTC) - timedelta(seconds=1)
         ).isoformat()
         assert state.check_grace_expired()
 
@@ -141,7 +137,7 @@ class TestCustodyState:
         state = CustodyState(
             report_hash="sha256:" + "ab" * 32,
             endpoint_id="ep-1",
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         )
         state.mark_unavailable()
         state.mark_unavailable()
@@ -164,7 +160,7 @@ class TestCustodyStore:
         state = CustodyState(
             report_hash="sha256:" + "ab" * 32,
             endpoint_id="ep-1",
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         )
         store.add(state)
         retrieved = store.get("sha256:" + "ab" * 32)
@@ -179,17 +175,17 @@ class TestCustodyStore:
         store.add(CustodyState(
             report_hash="sha256:" + "aa" * 32,
             endpoint_id="ep-1",
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         ))
         store.add(CustodyState(
             report_hash="sha256:" + "bb" * 32,
             endpoint_id="ep-2",
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         ))
         store.add(CustodyState(
             report_hash="sha256:" + "cc" * 32,
             endpoint_id="ep-1",
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         ))
         ep1_reports = store.list_by_endpoint("ep-1")
         assert len(ep1_reports) == 2
@@ -199,7 +195,7 @@ class TestCustodyStore:
         store.add(CustodyState(
             report_hash="sha256:" + "ab" * 32,
             endpoint_id="ep-1",
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         ))
         store.remove("sha256:" + "ab" * 32)
         assert store.get("sha256:" + "ab" * 32) is None
@@ -209,7 +205,7 @@ class TestCustodyStore:
         store.add(CustodyState(
             report_hash="sha256:" + "ab" * 32,
             endpoint_id="ep-1",
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         ))
         store.clear()
         assert store.get("sha256:" + "ab" * 32) is None
@@ -239,7 +235,7 @@ class TestCustodyService:
         self.store.add(CustodyState(
             report_hash=report_hash,
             endpoint_id=endpoint_id,
-            stored_at=datetime.now(timezone.utc),
+            stored_at=datetime.now(UTC),
         ))
 
     def test_check_available_report(self):
@@ -267,7 +263,7 @@ class TestCustodyService:
         # Force grace expiry
         state = self.store.get("sha256:" + "ab" * 32)
         state.grace_expires_at = (
-            datetime.now(timezone.utc) - timedelta(seconds=1)
+            datetime.now(UTC) - timedelta(seconds=1)
         ).isoformat()
         result = self.svc.check_custody("sha256:" + "ab" * 32, available=False)
         assert result.status == "custody_failed"
@@ -278,7 +274,7 @@ class TestCustodyService:
         self.svc.check_custody("sha256:" + "ab" * 32, available=False)
         state = self.store.get("sha256:" + "ab" * 32)
         state.grace_expires_at = (
-            datetime.now(timezone.utc) - timedelta(seconds=1)
+            datetime.now(UTC) - timedelta(seconds=1)
         ).isoformat()
         self.svc.check_custody("sha256:" + "ab" * 32, available=False)
         # Now restore
@@ -291,7 +287,7 @@ class TestCustodyService:
         self.svc.check_custody("sha256:" + "ab" * 32, available=False)
         state = self.store.get("sha256:" + "ab" * 32)
         state.grace_expires_at = (
-            datetime.now(timezone.utc) - timedelta(seconds=1)
+            datetime.now(UTC) - timedelta(seconds=1)
         ).isoformat()
         swept = self.svc.sweep()
         assert swept >= 1
@@ -308,7 +304,7 @@ class TestCustodyService:
         state = self.store.get("sha256:" + "ab" * 32)
         # Store report long ago
         state.stored_at = (
-            datetime.now(timezone.utc) - timedelta(days=10)
+            datetime.now(UTC) - timedelta(days=10)
         ).isoformat()
         result = self.svc.check_retention("sha256:" + "ab" * 32)
         # Should be OK since we stored long ago and retention is 3600s
@@ -320,7 +316,7 @@ class TestCustodyService:
             self.svc.check_custody("sha256:" + "ab" * 32, available=False)
             state = self.store.get("sha256:" + "ab" * 32)
             state.grace_expires_at = (
-                datetime.now(timezone.utc) - timedelta(seconds=1)
+                datetime.now(UTC) - timedelta(seconds=1)
             ).isoformat()
         state = self.store.get("sha256:" + "ab" * 32)
         assert state.failure_streak <= self.cfg.max_failure_streak
@@ -505,7 +501,7 @@ class TestFinalizationService:
             score_delta=-0.1,
         )
         evt.created_at = (
-            datetime.now(timezone.utc) - timedelta(hours=48)
+            datetime.now(UTC) - timedelta(hours=48)
         ).isoformat()
         self.svc.add_event(evt)
         swept = self.svc.sweep()

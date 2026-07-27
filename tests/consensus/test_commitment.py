@@ -5,11 +5,9 @@ from __future__ import annotations
 import pytest
 
 from aidn_hypervisor.consensus.commitment import (
-    CommitmentRecord,
     StateCommitment,
     StateCommitmentService,
 )
-
 
 # ── StateCommitment model ───────────────────────────────────────────
 

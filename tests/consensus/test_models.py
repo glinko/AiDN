@@ -1,17 +1,15 @@
 """Tests for consensus/models.py — LedgerOperationEnvelope."""
 
 import json
+
 import pytest
 
 from aidn_hypervisor.consensus.models import (
-    LedgerOperationEnvelope,
-    OperationType,
-    LedgerOriginType,
     LedgerFeeClass,
-    _canonical_json,
-    _compute_operation_id,
+    LedgerOperationEnvelope,
+    LedgerOriginType,
+    OperationType,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

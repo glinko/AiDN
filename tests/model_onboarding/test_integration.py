@@ -32,12 +32,12 @@ def _make_service(
     with_resources: bool = True,
 ):
     """Helper to create a HypervisorService for testing."""
-    from aidn_hypervisor.service import HypervisorService
-    from aidn_hypervisor.scheduler import Scheduler
-    from aidn_hypervisor.queue import InMemoryTaskQueue
-    from aidn_hypervisor.model_store import FileModelStore
-    from aidn_hypervisor.resources import ResourceOrchestrator
     from aidn_hypervisor.domain.models import NodeCapacity
+    from aidn_hypervisor.model_store import FileModelStore
+    from aidn_hypervisor.queue import InMemoryTaskQueue
+    from aidn_hypervisor.resources import ResourceOrchestrator
+    from aidn_hypervisor.scheduler import Scheduler
+    from aidn_hypervisor.service import HypervisorService
 
     resources = None
     if with_resources:

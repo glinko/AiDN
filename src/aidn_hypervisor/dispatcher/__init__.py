@@ -1,16 +1,3 @@
-from aidn_hypervisor.dispatcher.lifecycle import DispatcherRouteLifecycle
-from aidn_hypervisor.dispatcher.metrics import DispatcherMetrics
-from aidn_hypervisor.dispatcher.handshake import (
-    ClientHello,
-    ConnectionIdentity,
-    ConnectionState,
-    HandshakeError,
-    HandshakeProtocol,
-    PROTOCOL_VERSION,
-    ServerHello,
-    SUPPORTED_VERSIONS,
-    TransportProfile,
-)
 from aidn_hypervisor.dispatcher.channels import (
     ChannelAuthorization,
     ChannelIdentity,
@@ -23,15 +10,23 @@ from aidn_hypervisor.dispatcher.discovery import (
     PeerAddress,
     PeerRecord,
 )
-from aidn_hypervisor.dispatcher.relay import (
-    RelayEnvelope,
-    RelayRouter,
-    RelayStats,
-)
 from aidn_hypervisor.dispatcher.gateway import (
     GatewayConfig,
     NetworkGateway,
 )
+from aidn_hypervisor.dispatcher.handshake import (
+    PROTOCOL_VERSION,
+    SUPPORTED_VERSIONS,
+    ClientHello,
+    ConnectionIdentity,
+    ConnectionState,
+    HandshakeError,
+    HandshakeProtocol,
+    ServerHello,
+    TransportProfile,
+)
+from aidn_hypervisor.dispatcher.lifecycle import DispatcherRouteLifecycle
+from aidn_hypervisor.dispatcher.metrics import DispatcherMetrics
 from aidn_hypervisor.dispatcher.models import (
     DeadLetterRecord,
     DeliveryRecord,
@@ -39,6 +34,11 @@ from aidn_hypervisor.dispatcher.models import (
     DispatcherRoute,
     NetworkMessage,
     canonical_payload_hash,
+)
+from aidn_hypervisor.dispatcher.relay import (
+    RelayEnvelope,
+    RelayRouter,
+    RelayStats,
 )
 from aidn_hypervisor.dispatcher.routes import (
     bind_plugin_control_route,

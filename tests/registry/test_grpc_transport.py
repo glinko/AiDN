@@ -11,11 +11,11 @@ Covers:
 from __future__ import annotations
 
 import time
-import uuid
 
 import pytest
 
 from aidn_hypervisor.dispatcher.transport.abc import TransportStatus
+from aidn_hypervisor.registry.grpc_proto_spec import PROTO_SPEC
 from aidn_hypervisor.registry.grpc_transport import (
     GrpcConnectionState,
     GrpcProtoRegistryMessage,
@@ -23,8 +23,6 @@ from aidn_hypervisor.registry.grpc_transport import (
     GrpcRegistryTransport,
     GrpcTransportConfig,
 )
-from aidn_hypervisor.registry.grpc_proto_spec import PROTO_SPEC
-
 
 # ─── Config tests ──────────────────────────────────────────────────────────
 

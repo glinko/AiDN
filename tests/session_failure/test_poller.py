@@ -1,6 +1,5 @@
 """Tests for session_failure.poller — SessionFailurePoller (RFC-0060 timeout enforcement)."""
 
-from datetime import datetime, timedelta, timezone
 
 import pytest
 

@@ -9,11 +9,11 @@ Covers:
 """
 
 import pytest
+
 from aidn_hypervisor.validation.selection import (
-    ValidatorQualificationCriteria,
     ValidatorCandidate,
+    ValidatorQualificationCriteria,
     ValidatorSelectionPolicy,
-    SelectionResult,
 )
 
 

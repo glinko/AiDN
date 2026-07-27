@@ -9,37 +9,17 @@ Mock infrastructure:
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
-from datetime import datetime, timezone
 from typing import Any
 
-import pytest
-
-# ── Snapshot module imports ────────────────────────────────────────
-
-from aidn_hypervisor.snapshot.models import (
-    CompressionAlgorithm,
-    Encoding,
-    SnapshotChunk,
-    SnapshotManifest,
-    SnapshotType,
-    compute_snapshot_id,
-)
-from aidn_hypervisor.snapshot.producer import (
-    ProduceResult,
-    SnapshotProducer,
-    SnapshotProducerConfig,
-)
-from aidn_hypervisor.snapshot.encoding import (
-    PortableSnapshotEncoder,
-    STATE_NAMESPACES,
+from aidn_hypervisor.snapshot.activation import (
+    ActivationState,
+    AtomicActivator,
 )
 from aidn_hypervisor.snapshot.chunking import Chunker, MerkleTree
 from aidn_hypervisor.snapshot.compression import CompressionHandler
 from aidn_hypervisor.snapshot.discovery import (
-    SnapshotAvailability,
     SnapshotCandidate,
     SnapshotDiscovery,
     SnapshotRegistrySource,
@@ -48,34 +28,34 @@ from aidn_hypervisor.snapshot.discovery import (
 from aidn_hypervisor.snapshot.download import (
     ChunkTransferSource,
     DownloadConfig,
-    DownloadPlanner,
-    DownloadResult,
-    DownloadSession,
     SnapshotDownloader,
 )
-from aidn_hypervisor.snapshot.staging import (
-    RestorationResult,
-    StateRestorer,
-    StagingStateStore,
+
+# ── Snapshot module imports ────────────────────────────────────────
+from aidn_hypervisor.snapshot.models import (
+    CompressionAlgorithm,
+    SnapshotChunk,
+    SnapshotManifest,
+    SnapshotType,
 )
-from aidn_hypervisor.snapshot.verification import (
-    InvariantCheckResult,
-    InvariantChecker,
-    SnapshotVerifier,
-    VerificationResult,
-)
-from aidn_hypervisor.snapshot.activation import (
-    ActivationRecord,
-    ActivationResult,
-    ActivationState,
-    AtomicActivator,
+from aidn_hypervisor.snapshot.producer import (
+    ProduceResult,
+    SnapshotProducer,
+    SnapshotProducerConfig,
 )
 from aidn_hypervisor.snapshot.replay import (
     BlockReplayer,
     BlockSource,
     ReplayBlock,
     ReplayConfig,
-    ReplayResult,
+)
+from aidn_hypervisor.snapshot.staging import (
+    StagingStateStore,
+    StateRestorer,
+)
+from aidn_hypervisor.snapshot.verification import (
+    InvariantChecker,
+    SnapshotVerifier,
 )
 
 # ── Constants ──────────────────────────────────────────────────────

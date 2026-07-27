@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -770,7 +770,7 @@ def test_session_accounting_timeout_records_force_settlement_required_operation(
     )
     session_service.expire_usage_acknowledgement(
         opened.session.session_id,
-        now=datetime(2026, 7, 12, 12, 0, 31, tzinfo=timezone.utc),
+        now=datetime(2026, 7, 12, 12, 0, 31, tzinfo=UTC),
     )
 
     operation = service.list_ledger_operations()[-1]

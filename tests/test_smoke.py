@@ -1,5 +1,5 @@
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from aidn_hypervisor.bundle_registry import FileBundleRegistry
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile

@@ -10,15 +10,10 @@ RFC-0042 §50-§131 compliance for message envelope structure.
 from __future__ import annotations
 
 import hashlib
-import json
 import time
 import uuid
-from typing import Any
 
 from pydantic import BaseModel, Field
-
-from .object_envelope import RegistryObjectEnvelope, ObjectVersion
-from .inventory import BloomFilter
 
 
 class RegistryMessageType(str):

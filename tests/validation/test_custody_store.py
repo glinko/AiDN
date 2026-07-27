@@ -1,13 +1,8 @@
 import stat
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from aidn_hypervisor.validation.custody_store import ValidationReportCustodyStore
-from aidn_hypervisor.validation.channel import (
-    ValidationReportTransferChannel,
-    ValidationReportTransferMessage,
-)
 from aidn_hypervisor.dispatcher import (
     DispatcherRoute,
     NetworkDispatcher,
@@ -16,18 +11,23 @@ from aidn_hypervisor.dispatcher import (
 )
 from aidn_hypervisor.dispatcher.models import canonical_payload_bytes
 from aidn_hypervisor.dispatcher.store import DispatcherStore
+from aidn_hypervisor.persistence import FileStateStore
+from aidn_hypervisor.validation.channel import (
+    ValidationReportTransferChannel,
+    ValidationReportTransferMessage,
+)
 from aidn_hypervisor.validation.custody_signing import (
     Ed25519ValidationReportCustodySigner,
     verify_storage_receipt,
 )
+from aidn_hypervisor.validation.custody_store import ValidationReportCustodyStore
+from aidn_hypervisor.validation.models import ValidationReport, validation_report_integrity
+from aidn_hypervisor.validation.service import ValidationService
+from aidn_hypervisor.validation.store import ValidationStore
 from aidn_hypervisor.validation.transfer_signing import (
     Ed25519ValidationReportTransferSigner,
     verify_report_transfer_envelope,
 )
-from aidn_hypervisor.validation.models import ValidationReport, validation_report_integrity
-from aidn_hypervisor.persistence import FileStateStore
-from aidn_hypervisor.validation.service import ValidationService
-from aidn_hypervisor.validation.store import ValidationStore
 
 
 def _report(*, report_id: str = "report-1", signature: str = "signature-1") -> ValidationReport:
@@ -413,7 +413,7 @@ def test_validation_transfer_runs_through_network_dispatcher(tmp_path) -> None:
     payload = transfer.model_dump(mode="json")
     dispatcher = NetworkDispatcher(network_id="aidn-test", chain_id="chain-test", network_revision="rev-1")
     dispatcher.register_local_route(DispatcherRoute(destination_type="ENDPOINT", destination_id="ep-1", route_type="LOCAL_PROTOCOL_HANDLER", route_generation=1, allowed_source_types={"SERVICE"}, allowed_channel_classes={"VALIDATION"}, allowed_message_types={"VALIDATION_REPORT_TRANSFER"}, created_at="2026-07-18T00:00:00+00:00"), channel.dispatcher_handler)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     network_message = NetworkMessage(message_id="network-msg-1", message_type="VALIDATION_REPORT_TRANSFER", network_id="aidn-test", chain_id="chain-test", network_revision="rev-1", channel_id="validation-1", channel_class="VALIDATION", source_subject={"subject_type": "SERVICE", "subject_id": "val-1"}, destination_subject={"subject_type": "ENDPOINT", "subject_id": "ep-1"}, source_sequence=1, route_generation=1, created_at=now.isoformat(), expiration=(now + timedelta(minutes=5)).isoformat(), payload_hash=canonical_payload_hash(payload), payload_length=len(canonical_payload_bytes(payload)), payload=payload)
 
     assert dispatcher.submit(network_message).delivery_state == "QUEUED"

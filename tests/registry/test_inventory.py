@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from aidn_hypervisor.registry.inventory import (
@@ -15,7 +13,6 @@ from aidn_hypervisor.registry.inventory import (
 )
 from aidn_hypervisor.registry.object_envelope import RegistryObjectEnvelope
 from aidn_hypervisor.registry.storage import ImmutableObjectStore
-
 
 # ─── BloomFilter ────────────────────────────────────────────────────────────
 

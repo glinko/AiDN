@@ -12,7 +12,6 @@ from aidn_hypervisor.snapshot.progress import (
     SyncProgressTracker,
 )
 
-
 # ── SyncPhase enum ─────────────────────────────────────────────────
 
 class TestSyncPhase:

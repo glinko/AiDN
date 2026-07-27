@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from typing import Any
 
 import pytest
@@ -11,13 +10,14 @@ import pytest
 from aidn_hypervisor.snapshot.models import (
     CompressionAlgorithm,
     SnapshotChunk,
-    Encoding as SnapshotEncoding,
     SnapshotIdentity,
     SnapshotManifest,
     SnapshotType,
     compute_snapshot_id,
 )
-
+from aidn_hypervisor.snapshot.models import (
+    Encoding as SnapshotEncoding,
+)
 
 # ── SnapshotType enum ──────────────────────────────────────────────
 

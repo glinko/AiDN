@@ -28,9 +28,9 @@ def mock_registry():
 def sample_capability():
     """Create a sample OnboardingCapability for testing."""
     from aidn_hypervisor.model_onboarding.models import (
+        InstalledModelInfo,
         OnboardingCapability,
         ProviderCapability,
-        InstalledModelInfo,
         ResourceLimits,
     )
 

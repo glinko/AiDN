@@ -18,16 +18,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from aidn_hypervisor.reputation_engine.models import (
     ReputationProfile,
     ReputationProfileType,
 )
 from aidn_hypervisor.reputation_engine.store import ReputationStore
-
 
 # ──────────────────────────────────────────────
 # Constants
@@ -152,7 +151,7 @@ class ReputationProfilePublisher:
 
     def _sign_record(self, record: dict[str, Any]) -> dict[str, Any]:
         """Add signature metadata to a record."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         if self.signer_key:
             record["signature"] = {

@@ -6,7 +6,7 @@ authentication, protocol version negotiation, and network domain validation.
 
 import hashlib
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -59,7 +59,7 @@ class ClientHello(BaseModel):
     transport_profile: TransportProfile = "QUIC_TLS"
     nonce: str = Field(default_factory=lambda: secrets.token_hex(32))
     timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
 
     def compute_hello_hash(self) -> str:
@@ -79,7 +79,7 @@ class ServerHello(BaseModel):
     transport_profile: TransportProfile
     challenge: str
     timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
 
     @property
@@ -100,7 +100,7 @@ class HandshakeComplete(BaseModel):
     network_revision: str
     transport_profile: TransportProfile
     established_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
 
 
@@ -245,7 +245,7 @@ class HandshakeProtocol:
             local_nonce=local_nonce,
             remote_nonce=remote_nonce,
             negotiated_version=negotiated_version,
-            established_at=datetime.now(timezone.utc).isoformat(),
+            established_at=datetime.now(UTC).isoformat(),
         )
 
     @staticmethod

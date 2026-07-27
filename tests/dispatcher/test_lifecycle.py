@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
-
 from aidn_hypervisor.dispatcher.transport.lifecycle import (
     BackpressureSignal,
     ConnectionPool,
 )
 from aidn_hypervisor.dispatcher.transport.tcp import TcpTransport
-
 
 # ---------------------------------------------------------------------------
 # BackpressureSignal

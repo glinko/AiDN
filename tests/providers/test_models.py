@@ -2,9 +2,9 @@ from pydantic import ValidationError
 
 from aidn_hypervisor.providers.models import (
     ExecutorSandboxCapabilities,
-    InstalledPlugin,
     InstallationPlan,
     InstallationRecipe,
+    InstalledPlugin,
     ModelArtifact,
     ModelArtifactSet,
     ModelArtifactSetFile,
@@ -12,7 +12,6 @@ from aidn_hypervisor.providers.models import (
     PluginPermission,
     PluginSandboxPolicy,
     PluginSecretRequirement,
-    PluginTrustStatus,
     PluginUISchema,
     ProviderInstallationApproval,
     ProviderInstallationDiagnostics,
@@ -20,7 +19,6 @@ from aidn_hypervisor.providers.models import (
     ProviderInstallationJob,
     ProviderInstallationRollbackResult,
     ProviderInstallationStepResult,
-    ProviderInstance,
     ProviderPluginManifest,
     RuntimeBinding,
     RuntimeIdentity,

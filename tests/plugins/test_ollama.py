@@ -1,8 +1,8 @@
 import pytest
 
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile, TaskRequest
-from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.plugins.ollama import OllamaPlugin
+from aidn_hypervisor.process_manager import RuntimeHandle
 
 
 def _bundle(

@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
-
 from aidn_hypervisor.registry import ImmutableObjectStore, RegistryObjectEnvelope
 from aidn_hypervisor.registry.sync import (
     SyncController,
     SyncMode,
     SyncState,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

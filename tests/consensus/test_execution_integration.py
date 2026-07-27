@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.execution import (
     ExecutionEngine,
@@ -11,7 +9,6 @@ from aidn_hypervisor.consensus.execution import (
 )
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.ledger.service import LedgerOperationService
-
 
 # ── Helpers ─────────────────────────────────────────────────────────
 

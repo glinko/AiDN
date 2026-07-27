@@ -11,7 +11,6 @@ from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.wallet_identity import (
     session_open_authorization_payload,
-    verify_wallet_identity_registration,
     wallet_identity_registration_payload,
 )
 

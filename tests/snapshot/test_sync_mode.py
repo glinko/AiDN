@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
-
 from aidn_hypervisor.snapshot.sync_mode import (
     SyncMode,
     SyncModeConfig,
     SyncModeSelector,
-    SyncModeSelection,
 )
-
 
 # ── SyncMode enum ──────────────────────────────────────────────────
 

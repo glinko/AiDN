@@ -20,8 +20,8 @@ from aidn_hypervisor.main import _build_default_service
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
-from aidn_hypervisor.providers.models import InstalledPlugin, PluginRelease
 from aidn_hypervisor.process_manager import ProviderProcessManager
+from aidn_hypervisor.providers.models import InstalledPlugin, PluginRelease
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.remote_endpoints.models import RemoteEndpointReference
 from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore

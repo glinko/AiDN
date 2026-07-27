@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from aidn_hypervisor.runtime_protocol import (
     LlamaCppOpenAIAdapter,
@@ -29,7 +29,7 @@ def _request(*, request_id: str = "request-1") -> RuntimeExecuteRequest:
         request_charge_ceiling=1,
         accounting_contract_hash="accounting-contract-1",
         idempotency_key=f"key-{request_id}",
-        request_deadline=(datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
+        request_deadline=(datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
     )
 
 
@@ -88,7 +88,7 @@ class _Protocol:
 
 
 def _cancellation(request: RuntimeExecuteRequest) -> RuntimeCancelRequest:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return RuntimeCancelRequest(
         runtime_id=request.runtime_id,
         runtime_generation=request.runtime_generation,
@@ -252,7 +252,7 @@ def test_llamacpp_adapter_recovers_only_durable_terminal_evidence(monkeypatch) -
             route_generation=execution_request.route_generation,
             plan_id="plan-1",
             request_directives={execution_request.request_id: "REDELIVER_FINAL_RESULT"},
-            issued_at=datetime.now(timezone.utc).isoformat(),
+            issued_at=datetime.now(UTC).isoformat(),
         ),
     )
 

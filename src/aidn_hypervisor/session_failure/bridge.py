@@ -9,11 +9,9 @@ from __future__ import annotations
 from aidn_hypervisor.reputation_engine.engine import ReputationEngine
 from aidn_hypervisor.reputation_engine.models import ReputationEvent
 from aidn_hypervisor.session_failure.models import (
-    FailureReport,
-    FailureEvidenceRecord,
-    FailureClass,
     FailureAttribution,
-    EvidenceLevel,
+    FailureEvidenceRecord,
+    FailureReport,
 )
 
 # ── FailureClass → Dimension mapping ──

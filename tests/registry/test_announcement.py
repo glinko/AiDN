@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from aidn_hypervisor.registry.announcement import (
@@ -11,7 +9,6 @@ from aidn_hypervisor.registry.announcement import (
     AnnouncementCollector,
     ObjectAnnouncement,
 )
-
 
 # ─── ObjectAnnouncement ────────────────────────────────────────────────────
 

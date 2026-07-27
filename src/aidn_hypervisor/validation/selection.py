@@ -10,12 +10,8 @@ Deterministic, reproducible validator selection based on:
 from __future__ import annotations
 
 import hashlib
-import secrets
-from dataclasses import dataclass, field
-from typing import Literal
 
 from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # Qualification Criteria

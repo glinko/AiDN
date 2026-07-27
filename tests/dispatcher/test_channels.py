@@ -1,15 +1,13 @@
 """Tests for channel multiplexing (RFC-0042 §44-47)."""
 
 import pytest
+
 from aidn_hypervisor.dispatcher.channels import (
-    ChannelAuthorization,
     ChannelIdentity,
     ChannelManager,
     ChannelQueue,
     ChannelState,
 )
-from aidn_hypervisor.dispatcher.models import ChannelClass
-
 
 # ── ChannelIdentity tests ────────────────────────────────────────────────
 

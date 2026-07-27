@@ -3,19 +3,17 @@
 Staging state never overwrites active state directly.
 """
 
-import json
 import pytest
 
+from aidn_hypervisor.snapshot.encoding import (
+    STATE_NAMESPACES,
+    PortableSnapshotEncoder,
+)
 from aidn_hypervisor.snapshot.staging import (
+    RestorationResult,
     StagingStateStore,
     StateRestorer,
-    RestorationResult,
 )
-from aidn_hypervisor.snapshot.encoding import (
-    PortableSnapshotEncoder,
-    STATE_NAMESPACES,
-)
-
 
 # ── Helpers ────────────────────────────────────────────────────────
 

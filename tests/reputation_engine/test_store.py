@@ -1,10 +1,8 @@
 """Tests for ReputationStore (RFC-0041 Phase 1)."""
 
-import pytest
 
 from aidn_hypervisor.reputation_engine.models import (
     ReputationEvent,
-    ReputationSubject,
 )
 from aidn_hypervisor.reputation_engine.store import ReputationStore
 

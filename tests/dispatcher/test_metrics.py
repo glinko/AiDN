@@ -1,6 +1,6 @@
 """Tests for DispatcherMetrics counters, gauges, and integration with NetworkDispatcher."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -14,14 +14,13 @@ from aidn_hypervisor.dispatcher import (
 )
 from aidn_hypervisor.dispatcher.models import canonical_payload_bytes
 
-
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
 
 def _make_message(*, message_id: str = "msg-1", route_generation: int = 1) -> NetworkMessage:
     body = {"value": "ok"}
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return NetworkMessage(
         message_id=message_id,
         message_type="VALIDATION_REPORT_TRANSFER",
@@ -59,7 +58,7 @@ def _make_dispatcher(*, maximum_queue_messages: int = 8) -> NetworkDispatcher:
         allowed_source_types={"SERVICE"},
         allowed_channel_classes={"VALIDATION"},
         allowed_message_types={"VALIDATION_REPORT_TRANSFER"},
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
     dispatcher.register_local_route(route, lambda p: received.append(p))
     return dispatcher

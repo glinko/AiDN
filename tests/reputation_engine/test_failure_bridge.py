@@ -4,19 +4,18 @@ When session_failure produces a conclusive attribution,
 the bridge should emit a ReputationEvent into the engine.
 """
 
-import pytest
 
+from aidn_hypervisor.reputation_engine.engine import ReputationEngine
 from aidn_hypervisor.reputation_engine.models import (
     ReputationEvent as RepEngineEvent,
 )
 from aidn_hypervisor.reputation_engine.store import ReputationStore
-from aidn_hypervisor.reputation_engine.engine import ReputationEngine
 from aidn_hypervisor.session_failure.models import (
-    FailureReport,
-    FailureClass,
-    FailureAttribution,
     EvidenceLevel,
+    FailureAttribution,
+    FailureClass,
     FailureEvidenceRecord,
+    FailureReport,
 )
 
 

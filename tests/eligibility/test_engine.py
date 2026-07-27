@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-
 from aidn_hypervisor.eligibility.engine import EligibilityEngine
 from aidn_hypervisor.eligibility.kcg import KCGManager
 from aidn_hypervisor.eligibility.models import (
     EligibilityState,
     IneligibilityReason,
 )
-
 
 # ── Registration ────────────────────────────────────────────────
 

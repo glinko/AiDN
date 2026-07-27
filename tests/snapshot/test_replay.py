@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import time
-from typing import Optional
 
 import pytest
 
@@ -13,9 +11,7 @@ from aidn_hypervisor.snapshot.replay import (
     BlockSource,
     ReplayBlock,
     ReplayConfig,
-    ReplayResult,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────
 

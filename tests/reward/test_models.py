@@ -15,7 +15,6 @@ from aidn_hypervisor.reward.models import (
     ServicePool,
 )
 
-
 # ── Constants ─────────────────────────────────────────────────────
 
 class TestConstants:

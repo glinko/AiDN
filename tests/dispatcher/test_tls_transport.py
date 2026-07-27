@@ -14,7 +14,6 @@ Covers:
 from __future__ import annotations
 
 import os
-import ssl
 import subprocess
 import threading
 from typing import Any
@@ -35,7 +34,6 @@ from aidn_hypervisor.dispatcher.transport.tls import (
     TlsListener,
     TlsTransport,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers — generate self-signed certs on the fly

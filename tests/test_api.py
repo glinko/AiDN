@@ -1,14 +1,13 @@
 import base64
-from dataclasses import replace
-from datetime import datetime, timedelta, timezone
 import io
 import zipfile
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
-from fastapi.testclient import TestClient
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi.testclient import TestClient
 
-import aidn_hypervisor.api as api_module
 import dashboard_seed_preview
 from aidn_hypervisor.accounting.models import (
     UsageAcknowledgement,
@@ -40,7 +39,6 @@ from aidn_hypervisor.providers.executor import (
 )
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
-from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
@@ -57,6 +55,7 @@ from aidn_hypervisor.validation.store import ValidationStore
 from aidn_hypervisor.wallet_identity import (
     wallet_identity_quorum_approval_payload,
     wallet_identity_quorum_proposal_payload,
+    wallet_identity_registration_payload,
 )
 
 
@@ -2126,7 +2125,7 @@ def test_operator_dashboard_market_endpoint_marks_own_and_external_candidates() 
             node_id="node-external",
             operator_id="operator-b",
             base_url="https://remote.example",
-            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            heartbeat_at=datetime.now(UTC).isoformat(),
             resources={
                 "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
                 "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
@@ -2210,7 +2209,7 @@ def test_operator_dashboard_market_endpoint_includes_published_endpoint_counts()
             node_id="node-external",
             operator_id="operator-b",
             base_url="https://remote.example",
-            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            heartbeat_at=datetime.now(UTC).isoformat(),
             resources={
                 "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
                 "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
@@ -2284,7 +2283,7 @@ def test_operator_dashboard_market_endpoint_includes_canonical_candidates() -> N
             node_id="node-canonical",
             operator_id="operator-c",
             base_url="https://canonical.example",
-            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            heartbeat_at=datetime.now(UTC).isoformat(),
             resources={
                 "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
                 "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
@@ -2470,7 +2469,7 @@ def test_operator_dashboard_market_payload_includes_reputation_block() -> None:
 def test_operator_dashboard_market_payload_uses_field_level_reputation_fallback_for_sorting() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     registry = RegistryService()
-    heartbeat_at = datetime.now(timezone.utc).isoformat()
+    heartbeat_at = datetime.now(UTC).isoformat()
     common_bundle = [
         {
             "bundle_id": "remote-text",
@@ -2650,7 +2649,7 @@ def test_operator_dashboard_remote_endpoints_route_returns_discovered_and_attach
             node_id="node-external",
             operator_id="operator-b",
             base_url="https://remote.example",
-            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            heartbeat_at=datetime.now(UTC).isoformat(),
             resources={
                 "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
                 "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
@@ -2727,7 +2726,7 @@ def test_attach_remote_endpoint_route_persists_preferred_catalogue_entry() -> No
             node_id="node-external",
             operator_id="operator-b",
             base_url="https://remote.example",
-            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            heartbeat_at=datetime.now(UTC).isoformat(),
             resources={
                 "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
                 "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
@@ -2885,7 +2884,7 @@ def test_attach_proxy_target_route_updates_endpoint_to_proxy_strategy() -> None:
             node_id="node-external",
             operator_id="operator-b",
             base_url="https://remote.example",
-            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            heartbeat_at=datetime.now(UTC).isoformat(),
             resources={
                 "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
                 "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
@@ -3750,7 +3749,7 @@ def test_dashboard_seed_preview_refreshes_registry_visibility_after_heartbeat_tt
     assert initial_market.status_code == 200
     assert len(initial_market.json()["candidates"]) > 0
 
-    future_now = datetime.now(timezone.utc) + timedelta(seconds=120)
+    future_now = datetime.now(UTC) + timedelta(seconds=120)
 
     class _FutureDateTime:
         @staticmethod
@@ -6032,10 +6031,10 @@ def test_operator_dashboard_sessions_endpoint_includes_settlement_preview() -> N
         session_service.get_session(opened.session.session_id).session.model_copy(
             update={
                 "last_activity_at": (
-                    datetime.now(timezone.utc) - timedelta(minutes=4)
+                    datetime.now(UTC) - timedelta(minutes=4)
                 ).isoformat(),
                 "idle_deadline_at": (
-                    datetime.now(timezone.utc) + timedelta(minutes=6)
+                    datetime.now(UTC) + timedelta(minutes=6)
                 ).isoformat(),
             }
         )
@@ -8660,7 +8659,7 @@ def test_node_advertisement_uses_stale_heartbeat_for_reputation_freshness() -> N
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
 
     advertisement = hypervisor.node_advertisement(
-        heartbeat_at=(datetime.now(timezone.utc) - timedelta(seconds=35)).isoformat()
+        heartbeat_at=(datetime.now(UTC) - timedelta(seconds=35)).isoformat()
     )
 
     assert advertisement["status"] == "stale"
@@ -8764,7 +8763,7 @@ def test_operator_dashboard_market_payload_includes_trust_summary() -> None:
             node_id="node-external",
             operator_id="operator-b",
             base_url="https://remote.example",
-            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            heartbeat_at=datetime.now(UTC).isoformat(),
             resources={
                 "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
                 "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
@@ -8861,7 +8860,7 @@ def test_operator_dashboard_market_payload_includes_certification_counts() -> No
             node_id="node-external",
             operator_id="operator-b",
             base_url="https://remote.example",
-            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            heartbeat_at=datetime.now(UTC).isoformat(),
             resources={
                 "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
                 "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
@@ -8959,7 +8958,7 @@ def test_operator_dashboard_remote_endpoints_payload_includes_trust_fields() -> 
             node_id="node-external",
             operator_id="operator-b",
             base_url="https://remote.example",
-            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            heartbeat_at=datetime.now(UTC).isoformat(),
             resources={
                 "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
                 "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
@@ -9017,7 +9016,7 @@ def test_operator_dashboard_remote_endpoints_payload_surfaces_certification_stat
             node_id="node-external",
             operator_id="operator-b",
             base_url="https://remote.example",
-            heartbeat_at=datetime.now(timezone.utc).isoformat(),
+            heartbeat_at=datetime.now(UTC).isoformat(),
             resources={
                 "total": {"cpu": 12.0, "ram_mb": 32768, "vram_mb": 16384},
                 "free": {"cpu": 8.0, "ram_mb": 24576, "vram_mb": 8192},
@@ -9273,7 +9272,7 @@ def test_hypervisor_advertisement_can_be_registered_and_discovered() -> None:
 
 def test_registry_discovery_orders_ready_nodes_by_reputation_then_price() -> None:
     registry = RegistryService()
-    heartbeat_at = datetime.now(timezone.utc).isoformat()
+    heartbeat_at = datetime.now(UTC).isoformat()
     common_bundle = [
         {
             "bundle_id": "remote-text",
@@ -9375,7 +9374,7 @@ def test_registry_discovery_orders_ready_nodes_by_reputation_then_price() -> Non
 
 def test_registry_discovery_falls_back_to_legacy_rating_when_reputation_absent() -> None:
     registry = RegistryService()
-    heartbeat_at = datetime.now(timezone.utc).isoformat()
+    heartbeat_at = datetime.now(UTC).isoformat()
     common_bundle = [
         {
             "bundle_id": "remote-text",
@@ -9817,7 +9816,7 @@ def test_create_allocation_endpoint_returns_pending_lease_for_wait_policy(
         "retry_after_seconds": 5,
         "next_attempt_at": datetime.fromtimestamp(
             current_time[0] + 5,
-            timezone.utc,
+            UTC,
         ).isoformat(),
     }
 

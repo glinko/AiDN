@@ -1,22 +1,22 @@
 """Tests for Reputation Engine models (RFC-0041 Phase 1)."""
 
+
 import pytest
-from datetime import datetime, timezone
 
 from aidn_hypervisor.reputation_engine.models import (
-    ReputationProfileType,
-    ReputationDimension,
-    ReputationEventDirection,
-    ReputationEventSeverity,
     EvidenceConfidenceClass,
-    ReputationEventClass,
-    ReputationProfileState,
-    ReputationSubject,
+    ProfileDimensionWeight,
+    ReputationDimension,
     ReputationDimensionAccumulator,
     ReputationDimensionScore,
-    ReputationProfile,
     ReputationEvent,
-    ProfileDimensionWeight,
+    ReputationEventClass,
+    ReputationEventDirection,
+    ReputationEventSeverity,
+    ReputationProfile,
+    ReputationProfileState,
+    ReputationProfileType,
+    ReputationSubject,
 )
 
 
@@ -29,7 +29,7 @@ class TestReputationProfileType:
         assert "VALIDATION_SERVICE" in ReputationProfileType.__args__
 
     def test_hypervisor_profile_type(self):
-        assert "HYPERVISOR" == ReputationProfileType.__args__[0]
+        assert ReputationProfileType.__args__[0] == "HYPERVISOR"
 
 
 class TestReputationDimension:

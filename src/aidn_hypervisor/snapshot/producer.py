@@ -10,11 +10,14 @@ import copy
 import hashlib
 import hmac
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel
 
+from aidn_hypervisor.snapshot.chunking import Chunker, MerkleTree
+from aidn_hypervisor.snapshot.compression import CompressionHandler
+from aidn_hypervisor.snapshot.encoding import PortableSnapshotEncoder
 from aidn_hypervisor.snapshot.models import (
     CompressionAlgorithm,
     Encoding,
@@ -23,10 +26,6 @@ from aidn_hypervisor.snapshot.models import (
     SnapshotType,
     compute_snapshot_id,
 )
-from aidn_hypervisor.snapshot.encoding import PortableSnapshotEncoder
-from aidn_hypervisor.snapshot.chunking import Chunker, MerkleTree
-from aidn_hypervisor.snapshot.compression import CompressionHandler
-
 
 # ── Custom Exception ──────────────────────────────────────────────
 
@@ -207,7 +206,7 @@ class SnapshotProducer:
             ]
 
             # ── Step 9: Build manifest with pipeline values ───
-            creation_time = datetime.now(timezone.utc).isoformat()
+            creation_time = datetime.now(UTC).isoformat()
             chunk_count = len(chunks) if chunks else 1
 
             manifest = SnapshotManifest(

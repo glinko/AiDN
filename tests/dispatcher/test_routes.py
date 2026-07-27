@@ -1,9 +1,9 @@
-from aidn_hypervisor.dispatcher.service import NetworkDispatcher
 from aidn_hypervisor.dispatcher.routes import (
     VALIDATION_MESSAGE_TYPES,
     bind_validation_route,
     validation_route,
 )
+from aidn_hypervisor.dispatcher.service import NetworkDispatcher
 
 
 def _make_dispatcher() -> NetworkDispatcher:

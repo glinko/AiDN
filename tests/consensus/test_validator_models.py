@@ -1,17 +1,16 @@
 """Tests for consensus/validator.py — Models (ConsensusValidator, StakeRecord, EpochValidatorSet)."""
 
 import hashlib
+
 import pytest
 
 from aidn_hypervisor.consensus.validator import (
     ConsensusValidator,
-    StakeRecord,
-    EpochValidatorSet,
-    ValidatorStatus,
-    DowntimeType,
     Consequence,
+    EpochValidatorSet,
+    StakeRecord,
+    ValidatorStatus,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

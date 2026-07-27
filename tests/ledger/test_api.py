@@ -3,10 +3,10 @@ from fastapi.testclient import TestClient
 from aidn_hypervisor.accounting.models import UsageReport, usage_report_hash
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
-from aidn_hypervisor.main import build_app
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
+from aidn_hypervisor.main import build_app
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService

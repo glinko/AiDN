@@ -8,6 +8,10 @@ from aidn_hypervisor.dispatcher.transport.abc import (
     TransportGateway,
     TransportStatus,
 )
+from aidn_hypervisor.dispatcher.transport.lifecycle import (
+    BackpressureSignal,
+    ConnectionPool,
+)
 from aidn_hypervisor.dispatcher.transport.tcp import (
     TcpListener,
     TcpTransport,
@@ -15,10 +19,6 @@ from aidn_hypervisor.dispatcher.transport.tcp import (
 from aidn_hypervisor.dispatcher.transport.tls import (
     TlsListener,
     TlsTransport,
-)
-from aidn_hypervisor.dispatcher.transport.lifecycle import (
-    BackpressureSignal,
-    ConnectionPool,
 )
 from aidn_hypervisor.dispatcher.transport.unix_socket import (
     UnixSocketListener,

@@ -6,13 +6,11 @@ import hashlib
 import time
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from .storage import ImmutableObjectStore
 from .inventory import BloomFilter, InventoryExchange
-from .verification import ObjectVerifier, ConsistencyChecker
-from .object_envelope import RegistryObjectEnvelope
-
+from .storage import ImmutableObjectStore
+from .verification import ConsistencyChecker, ObjectVerifier
 
 # ---------------------------------------------------------------------------
 # Anti-Entropy Round

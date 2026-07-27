@@ -21,7 +21,6 @@ from aidn_hypervisor.reward.calculator import RewardCalculator
 from aidn_hypervisor.reward.mint import MintGenerator
 from aidn_hypervisor.reward.models import (
     BASE_EMISSION_Q_ATOMS,
-    MintRecipient,
     ServicePool,
 )
 from aidn_hypervisor.reward.pools import ServicePoolManager
@@ -33,10 +32,8 @@ from aidn_hypervisor.validation_report.maintenance import (
 )
 from aidn_hypervisor.validation_report.models import (
     CertificationStatus,
-    MaintenanceTriggerType,
     ValidationRecommendation,
 )
-
 
 # ── E2E Scenario 1: Node → Rating → Eligible → Reward ──────────
 

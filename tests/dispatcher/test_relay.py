@@ -1,7 +1,8 @@
 """Tests for relay communication (RFC-0042 §37-43)."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timedelta, timezone
 
 from aidn_hypervisor.dispatcher.relay import (
     DEFAULT_MAX_RELAY_HOPS,
@@ -13,7 +14,7 @@ from aidn_hypervisor.dispatcher.relay import (
 
 
 def _future(secs: int = 300) -> str:
-    return (datetime.now(timezone.utc) + timedelta(seconds=secs)).isoformat()
+    return (datetime.now(UTC) + timedelta(seconds=secs)).isoformat()
 
 
 # ── RelayEnvelope tests ──────────────────────────────────────────────────

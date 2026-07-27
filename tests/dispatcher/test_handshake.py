@@ -1,17 +1,13 @@
 """Tests for handshake protocol (RFC-0042 §20-24)."""
 
 import pytest
+
 from aidn_hypervisor.dispatcher.handshake import (
+    PROTOCOL_VERSION,
     ClientHello,
-    ConnectionIdentity,
-    ConnectionState,
     HandshakeError,
     HandshakeProtocol,
-    PROTOCOL_VERSION,
-    ServerHello,
-    SUPPORTED_VERSIONS,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
 

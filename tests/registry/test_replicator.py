@@ -5,16 +5,13 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import pytest
-
 from aidn_hypervisor.registry import ImmutableObjectStore, RegistryObjectEnvelope
+from aidn_hypervisor.registry.messages import RegistryMessageType
 from aidn_hypervisor.registry.replicator import (
     RegistryReplicator,
     ReplicationState,
 )
-from aidn_hypervisor.registry.messages import RegistryMessageType
 from aidn_hypervisor.registry.sync import SyncMode
-
 
 # ---------------------------------------------------------------------------
 # Helpers

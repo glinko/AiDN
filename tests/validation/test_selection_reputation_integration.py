@@ -5,14 +5,13 @@ from the ReputationEngine and use them for validator qualification
 and ranking.
 """
 
-import pytest
 
-from aidn_hypervisor.reputation_engine.store import ReputationStore
 from aidn_hypervisor.reputation_engine.engine import ReputationEngine
 from aidn_hypervisor.reputation_engine.models import ReputationEvent
+from aidn_hypervisor.reputation_engine.store import ReputationStore
 from aidn_hypervisor.validation.selection import (
-    ValidatorQualificationCriteria,
     ValidatorCandidate,
+    ValidatorQualificationCriteria,
     ValidatorSelectionPolicy,
 )
 

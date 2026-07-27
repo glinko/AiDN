@@ -10,29 +10,22 @@ import time
 
 import pytest
 
-from aidn_hypervisor.registry.storage import ImmutableObjectStore
-from aidn_hypervisor.registry.object_envelope import RegistryObjectEnvelope
-from aidn_hypervisor.registry.inventory import BloomFilter, InventoryExchange
-from aidn_hypervisor.registry.replicator import RegistryReplicator
-from aidn_hypervisor.registry.discovery import (
-    RegistryPeerDiscovery,
-    AutoSyncController,
-    DiscoveryConfig,
-)
 from aidn_hypervisor.registry.bridge import (
     RegistryServiceAdapter,
-    legacy_record_to_envelope,
-    envelope_to_legacy_record,
 )
-from aidn_hypervisor.registry.messages import (
-    RegistryMessageType,
-    RegistryMessageBuilder,
+from aidn_hypervisor.registry.discovery import (
+    AutoSyncController,
+    DiscoveryConfig,
+    RegistryPeerDiscovery,
 )
+from aidn_hypervisor.registry.inventory import BloomFilter, InventoryExchange
+from aidn_hypervisor.registry.object_envelope import RegistryObjectEnvelope
+from aidn_hypervisor.registry.replicator import RegistryReplicator
+from aidn_hypervisor.registry.storage import ImmutableObjectStore
 from aidn_hypervisor.registry.verification import (
-    ObjectVerifier,
     ConsistencyChecker,
+    ObjectVerifier,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -209,10 +202,10 @@ class TestGrpcTransportIntegration:
     def test_stream_bidirectional_messaging(self):
         """Stream can send and receive messages between two transports."""
         from aidn_hypervisor.registry.grpc_transport import (
-            GrpcRegistryTransport,
-            GrpcRegistryStream,
-            GrpcTransportConfig,
             GrpcProtoRegistryMessage,
+            GrpcRegistryStream,
+            GrpcRegistryTransport,
+            GrpcTransportConfig,
         )
 
         transport_a = GrpcRegistryTransport(

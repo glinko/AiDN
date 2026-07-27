@@ -3,13 +3,13 @@
 RFC-0062 §25
 """
 
-import hashlib
 import gzip
+import hashlib
+
 import pytest
 
 from aidn_hypervisor.snapshot.compression import CompressionHandler
 from aidn_hypervisor.snapshot.models import CompressionAlgorithm
-
 
 # ── Helpers ────────────────────────────────────────────────────────
 

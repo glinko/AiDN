@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -14,10 +14,10 @@ from aidn_hypervisor.domain.models import (
 )
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
-from aidn_hypervisor.model_store import FileModelStore
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
+from aidn_hypervisor.model_store import FileModelStore
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.ollama import OllamaPlugin
@@ -3515,7 +3515,7 @@ def test_service_pending_allocation_exposes_retry_hint(
     assert allocation["retry_after_seconds"] == 5
     assert allocation["next_attempt_at"] == datetime.fromtimestamp(
         current_time[0] + 5,
-        timezone.utc,
+        UTC,
     ).isoformat()
 
 

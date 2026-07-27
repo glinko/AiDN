@@ -7,10 +7,8 @@ from __future__ import annotations
 
 import threading
 from enum import Enum
-from typing import Optional
 
 from aidn_hypervisor.dispatcher.transport.tcp import TcpTransport
-
 
 # ---------------------------------------------------------------------------
 # BackpressureSignal
@@ -45,7 +43,7 @@ class ConnectionPool:
 
     # -- public API ---------------------------------------------------------
 
-    def get(self, host: str, port: int) -> Optional[TcpTransport]:
+    def get(self, host: str, port: int) -> TcpTransport | None:
         """Return a ``TcpTransport`` for *(host, port)*.
 
         Reuses an idle connection if available; otherwise creates a new one

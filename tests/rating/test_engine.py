@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-
+from aidn_hypervisor.rating.engine import RatingEngine
 from aidn_hypervisor.rating.models import (
     RatingDimension,
 )
-from aidn_hypervisor.rating.engine import RatingEngine
-
 
 # ── Session completion ─────────────────────────────────────────────
 

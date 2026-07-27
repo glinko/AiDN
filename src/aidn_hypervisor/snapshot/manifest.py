@@ -11,7 +11,7 @@ import hashlib
 import hmac
 import json
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from aidn_hypervisor.snapshot.models import (
@@ -21,7 +21,6 @@ from aidn_hypervisor.snapshot.models import (
     SnapshotType,
     compute_snapshot_id,
 )
-
 
 # ── Manifest Builder ──────────────────────────────────────────────
 
@@ -85,7 +84,7 @@ class ManifestBuilder:
         )
 
         # Creation time
-        creation_time = datetime.now(timezone.utc).isoformat()
+        creation_time = datetime.now(UTC).isoformat()
 
         # Build manifest (signature computed after)
         manifest = SnapshotManifest(

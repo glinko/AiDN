@@ -6,10 +6,6 @@ rate limiting for registry replication traffic.
 
 from __future__ import annotations
 
-import time
-
-import pytest
-
 from aidn_hypervisor.registry.channel import (
     DEFAULT_REGISTRY_CHANNELS,
     RegistryChannelConfig,
@@ -19,7 +15,6 @@ from aidn_hypervisor.registry.messages import (
     RegistryChannelClass,
     RegistryMessageType,
 )
-
 
 # ─── RegistryChannelConfig ─────────────────────────────────────────────
 

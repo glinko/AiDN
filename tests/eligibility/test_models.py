@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from aidn_hypervisor.eligibility.models import (
     ACTIVATION_AGE_EPOCHS,
     MIN_GROUP_SHARE_CAP,
@@ -14,7 +13,6 @@ from aidn_hypervisor.eligibility.models import (
     IneligibilityReason,
     KnownControlGroup,
 )
-
 
 # ── Constants ─────────────────────────────────────────────────────
 

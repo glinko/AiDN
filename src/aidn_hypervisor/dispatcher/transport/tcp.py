@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import socket
 import threading
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from aidn_hypervisor.dispatcher.models import NetworkMessage
 from aidn_hypervisor.dispatcher.transport.abc import (
@@ -20,7 +20,6 @@ from aidn_hypervisor.dispatcher.transport.abc import (
     TransportGateway,
     TransportStatus,
 )
-
 
 # ---------------------------------------------------------------------------
 # TcpTransport
@@ -53,7 +52,7 @@ class TcpTransport(TransportGateway):
         self._port = port
         self._send_timeout = send_timeout
         self._recv_timeout = recv_timeout
-        self._socket: Optional[socket.socket] = None
+        self._socket: socket.socket | None = None
         self._status = TransportStatus.DISCONNECTED
         self._lock = threading.Lock()
         self._recv_buffer: bytes = b""
@@ -232,8 +231,8 @@ class TcpListener:
         self._host = host
         self._port = port
         self._backlog = backlog
-        self._server: Optional[socket.socket] = None
-        self._client: Optional[socket.socket] = None
+        self._server: socket.socket | None = None
+        self._client: socket.socket | None = None
         self._status = TransportStatus.DISCONNECTED
         self._recv_buffer: bytes = b""
         self._pending_messages: list[NetworkMessage] = []
@@ -258,7 +257,7 @@ class TcpListener:
             self._client, _addr = self._server.accept()
             self._client.settimeout(5.0)
             self._status = TransportStatus.CONNECTED
-        except (OSError, socket.timeout) as exc:
+        except (TimeoutError, OSError) as exc:
             self._status = TransportStatus.ERROR
             raise ConnectionError(f"accept failed: {exc}") from exc
 

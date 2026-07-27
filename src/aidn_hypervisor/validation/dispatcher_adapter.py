@@ -14,7 +14,6 @@ from aidn_hypervisor.dispatcher.models import canonical_payload_bytes
 from aidn_hypervisor.dispatcher.routes import bind_validation_route
 from aidn_hypervisor.validation.channel import (
     ValidationReportTransferChannel,
-    ValidationReportTransferMessage,
 )
 
 

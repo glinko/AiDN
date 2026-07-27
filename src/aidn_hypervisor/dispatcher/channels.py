@@ -7,7 +7,7 @@ Each channel is individually authorized per route.
 import asyncio
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -43,7 +43,7 @@ class ChannelIdentity(BaseModel):
     priority: int = 3  # 0=highest, 5=lowest
     state: ChannelState = ChannelState.OPENING
     opened_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     closed_at: str | None = None
     message_count: int = 0
@@ -169,7 +169,7 @@ class ChannelManager:
                 return existing
             # Re-open a closed channel
             existing.state = ChannelState.OPENING
-            existing.opened_at = datetime.now(timezone.utc).isoformat()
+            existing.opened_at = datetime.now(UTC).isoformat()
             existing.closed_at = None
             existing.message_count = 0
             existing.byte_count = 0
@@ -209,7 +209,7 @@ class ChannelManager:
             # In async context, would drain the queue
             pass
         identity.state = ChannelState.CLOSED
-        identity.closed_at = datetime.now(timezone.utc).isoformat()
+        identity.closed_at = datetime.now(UTC).isoformat()
         logger.info("Channel closed: %s", channel_id)
 
     def get_channel(self, channel_id: str) -> ChannelIdentity | None:

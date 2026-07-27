@@ -6,16 +6,12 @@ import hashlib
 import json
 from typing import Any
 
-import pytest
-
 from aidn_hypervisor.snapshot.manifest import ManifestBuilder, ManifestVerifier
 from aidn_hypervisor.snapshot.models import (
     CompressionAlgorithm,
-    Encoding as SnapshotEncoding,
     SnapshotManifest,
     SnapshotType,
 )
-
 
 # ── Fixtures / helpers ─────────────────────────────────────────────
 
@@ -217,7 +213,6 @@ class TestManifestVerifier:
         # Verify with original key — should still pass since it was signed with the same key
         # But the content hash will differ, so we need a different test
         # Instead, manually verify that changing the signature breaks verification
-        from aidn_hypervisor.snapshot.models import SnapshotManifest as SM
 
         # We can't modify a frozen model, so we build a manifest and then
         # check that the signature was computed from the canonical form

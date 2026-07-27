@@ -1,10 +1,8 @@
 """Tests for consensus/admission.py — AdmissionValidator."""
 
-import pytest
 
-from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.admission import AdmissionValidator
-
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

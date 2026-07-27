@@ -1,16 +1,13 @@
 """Tests for consensus/validator.py — Participation, Downtime, Consequences."""
 
-import hashlib
-import pytest
 
 from aidn_hypervisor.consensus.validator import (
-    ValidatorSetManager,
-    ValidatorSetConfig,
-    ValidatorStatus,
     Consequence,
     DowntimeType,
+    ValidatorSetConfig,
+    ValidatorSetManager,
+    ValidatorStatus,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

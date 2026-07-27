@@ -4,14 +4,10 @@ After a restore from persisted state, queued messages may have expired or
 their routes may have changed.  restart_revalidation() walks the queue and
 dead-letters any message that no longer passes validation.
 """
-from datetime import datetime, timedelta, timezone
-
-import pytest
+from datetime import UTC, datetime, timedelta
 
 from aidn_hypervisor.dispatcher import (
-    DispatcherError,
     DispatcherRoute,
-    DispatcherStore,
     NetworkDispatcher,
     NetworkMessage,
     canonical_payload_hash,
@@ -20,7 +16,6 @@ from aidn_hypervisor.dispatcher.models import (
     DeliveryRecord,
     canonical_payload_bytes,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -41,7 +36,7 @@ def _message(
 ) -> NetworkMessage:
     """Build a NetworkMessage with sensible defaults."""
     body = payload or {"value": "ok"}
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return NetworkMessage(
         message_id=message_id,
         message_type=message_type,
@@ -87,7 +82,7 @@ def _dispatcher(*, maximum_queue_messages: int = 16) -> NetworkDispatcher:
         allowed_source_types={"SERVICE"},
         allowed_channel_classes={"VALIDATION"},
         allowed_message_types={"VALIDATION_REPORT_TRANSFER"},
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
     dispatcher.register_local_route(route, lambda payload: payload)
     return dispatcher
@@ -109,7 +104,7 @@ def _queue_message(
             destination_subject=message.destination_subject,
             route_generation=message.route_generation,
             delivery_state="QUEUED",
-            received_at=datetime.now(timezone.utc).isoformat(),
+            received_at=datetime.now(UTC).isoformat(),
             payload_hash=message.payload_hash,
         )
 

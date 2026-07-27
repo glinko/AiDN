@@ -2,12 +2,12 @@
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib import request
 
 import pytest
-from fastapi.testclient import TestClient
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi.testclient import TestClient
 
 from aidn_hypervisor.accounting.models import (
     AccountingContract,
@@ -22,13 +22,15 @@ from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
+from aidn_hypervisor.main import build_app
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager
+from aidn_hypervisor.providers.models import RuntimeBinding
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.queue import InMemoryTaskQueue
-from aidn_hypervisor.providers.models import RuntimeBinding
+from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.runtime_protocol import (
     ApprovedRuntimeDispatcher,
     LlamaCppOpenAIAdapter,
@@ -41,18 +43,15 @@ from aidn_hypervisor.runtime_protocol import (
 )
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
 from aidn_hypervisor.scheduler import Scheduler
-from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.service import HypervisorService
-from aidn_hypervisor.settlement.models import SessionSettlementAcceptance
-from aidn_hypervisor.settlement.signing import settlement_acceptance_signing_payload
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
+from aidn_hypervisor.settlement.models import SessionSettlementAcceptance
+from aidn_hypervisor.settlement.signing import settlement_acceptance_signing_payload
 from aidn_hypervisor.wallet_identity import (
     session_open_authorization_payload,
     wallet_identity_registration_payload,
 )
-from aidn_hypervisor.main import build_app
-
 
 pytestmark = pytest.mark.integration
 
@@ -515,7 +514,7 @@ def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:
         allowed_channel_classes={"RUNTIME"},
         allowed_message_types={"RUNTIME_EXECUTE"},
         runtime_binding_hash=binding.binding_hash(),
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
     )
     protocol = RuntimeProtocolService(
         hypervisor_id="live-hypervisor",
@@ -576,7 +575,7 @@ def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:
         request_charge_ceiling=1,
         accounting_contract_hash=contract.payload_hash,
         idempotency_key="live-request-1",
-        request_deadline=(datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
+        request_deadline=(datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
     )
 
     adapter = LlamaCppOpenAIAdapter(

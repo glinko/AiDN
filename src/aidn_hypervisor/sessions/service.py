@@ -12,6 +12,12 @@ from aidn_hypervisor.accounting.models import (
     usage_report_hash,
 )
 from aidn_hypervisor.registry_service import RegistryService
+from aidn_hypervisor.session_failure.models import (
+    FailureClass,
+    RecoveryWindowConfig,
+)
+from aidn_hypervisor.session_failure.poller import SessionFailurePoller
+from aidn_hypervisor.session_failure.service import SessionFailureHandler
 from aidn_hypervisor.sessions.models import (
     EndpointSession,
     LockedDeposit,
@@ -20,12 +26,6 @@ from aidn_hypervisor.sessions.models import (
     SessionRuntimeTerminalEvidence,
     SessionSettlementSummary,
 )
-from aidn_hypervisor.session_failure.models import (
-    FailureClass,
-    RecoveryWindowConfig,
-)
-from aidn_hypervisor.session_failure.poller import SessionFailurePoller
-from aidn_hypervisor.session_failure.service import SessionFailureHandler
 
 
 def _hash_payload(payload: dict) -> str:
@@ -131,7 +131,7 @@ class SessionService:
             self.store.save_session(updated)
             self._emit(
                 event_type="session.failure_status_change",
-                message=f"session status changed via failure handler",
+                message="session status changed via failure handler",
                 details={
                     "session_id": session_id,
                     "old_status": old_status,

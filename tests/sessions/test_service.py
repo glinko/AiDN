@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -268,7 +268,7 @@ def test_sweep_idle_sessions_auto_closes_timed_out_session_with_idle_fee() -> No
     )
 
     swept = service.sweep_idle_sessions(
-        now=datetime(2026, 7, 1, 0, 10, 0, tzinfo=timezone.utc)
+        now=datetime(2026, 7, 1, 0, 10, 0, tzinfo=UTC)
     )
 
     assert len(swept) == 1
@@ -305,7 +305,7 @@ def test_sweep_idle_sessions_keeps_no_request_minimum_fee_rule() -> None:
     )
 
     swept = service.sweep_idle_sessions(
-        now=datetime(2026, 7, 1, 0, 10, 0, tzinfo=timezone.utc)
+        now=datetime(2026, 7, 1, 0, 10, 0, tzinfo=UTC)
     )
 
     assert len(swept) == 1
@@ -798,7 +798,7 @@ def test_expire_usage_acknowledgement_marks_force_settle_required_without_advanc
 
     expired = service.expire_usage_acknowledgement(
         opened.session.session_id,
-        now=datetime(2026, 7, 10, 0, 2, 0, tzinfo=timezone.utc),
+        now=datetime(2026, 7, 10, 0, 2, 0, tzinfo=UTC),
     )
 
     assert expired.accounting_status == "force_settle_required"

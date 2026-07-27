@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import hashlib
-import time
-
 import pytest
 
 from aidn_hypervisor.registry import (
@@ -17,7 +13,6 @@ from aidn_hypervisor.registry import (
     VerificationBatchResult,
     VerificationResult,
 )
-
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 

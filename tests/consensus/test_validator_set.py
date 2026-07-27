@@ -1,15 +1,11 @@
 """Tests for consensus/validator.py — ValidatorSetManager (registration, stake, active set)."""
 
-import hashlib
-import pytest
 
 from aidn_hypervisor.consensus.validator import (
-    ValidatorSetManager,
     ValidatorSetConfig,
+    ValidatorSetManager,
     ValidatorStatus,
-    Consequence,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

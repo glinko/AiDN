@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
-
-import pytest
 
 from aidn_hypervisor.dispatcher import NetworkDispatcher
 from aidn_hypervisor.dispatcher.store import DispatcherStore
@@ -23,7 +21,6 @@ from aidn_hypervisor.validation.models import (
 )
 from aidn_hypervisor.validation.service import ValidationService
 from aidn_hypervisor.validation.store import ValidationStore
-
 
 # ---------------------------------------------------------------------------
 # Helpers

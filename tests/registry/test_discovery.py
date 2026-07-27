@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 import time
-from typing import Any
 
 import pytest
 
-from aidn_hypervisor.registry import ImmutableObjectStore, RegistryObjectEnvelope
+from aidn_hypervisor.registry import ImmutableObjectStore
 from aidn_hypervisor.registry.discovery import (
     AutoSyncController,
     DiscoveryConfig,
     PeerDiscoveryEvent,
     RegistryPeerDiscovery,
 )
-from aidn_hypervisor.registry.peer import PeerState, RegistryPeer
+from aidn_hypervisor.registry.peer import PeerState
 from aidn_hypervisor.registry.replicator import RegistryReplicator
-
 
 # ---------------------------------------------------------------------------
 # Helpers

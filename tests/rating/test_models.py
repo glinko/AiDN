@@ -6,15 +6,14 @@ import pytest
 from pydantic import ValidationError
 
 from aidn_hypervisor.rating.models import (
-    RatingDimension,
-    RatingEvidence,
-    RatingEvidenceType,
     DimensionScore,
     NodeRating,
     RatingConfig,
+    RatingDimension,
+    RatingEvidence,
+    RatingEvidenceType,
     RatingUpdateResult,
 )
-
 
 # ── RatingDimension ──────────────────────────────────────────────────
 

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-
 from aidn_hypervisor.rating.models import (
     RatingDimension,
     RatingEvidence,
     RatingEvidenceType,
 )
 from aidn_hypervisor.rating.store import RatingStore
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

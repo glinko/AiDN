@@ -1,24 +1,24 @@
 """Tests for registry bridge — legacy RecordService ↔ new registry/ adapter."""
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, PropertyMock
 
 from aidn_hypervisor.registry.bridge import (
-    legacy_record_to_envelope,
-    envelope_to_legacy_record,
     RegistryServiceAdapter,
     _compute_content_hash,
     _compute_content_size,
-    _resolve_object_version,
     _resolve_ledger_commitment,
+    _resolve_object_version,
+    envelope_to_legacy_record,
+    legacy_record_to_envelope,
 )
 from aidn_hypervisor.registry.object_envelope import (
-    RegistryObjectEnvelope,
-    ObjectVersion,
     LedgerCommitmentClass,
+    ObjectVersion,
+    RegistryObjectEnvelope,
 )
 from aidn_hypervisor.registry.storage import ImmutableObjectStore
-
 
 # ---------------------------------------------------------------------------
 # Helper factories

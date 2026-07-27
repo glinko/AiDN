@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
-
 from aidn_hypervisor.validation_bond.models import (
-    BondStatus,
     VALIDATION_BOND_Q_ATOMS,
+    BondStatus,
     ValidationBond,
 )
 from aidn_hypervisor.validation_bond.store import BondStore
-
 
 # ── Helpers ────────────────────────────────────────────────────────
 

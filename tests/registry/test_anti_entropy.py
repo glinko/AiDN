@@ -14,7 +14,6 @@ from aidn_hypervisor.registry import (
 )
 from aidn_hypervisor.registry.inventory import BloomFilter
 
-
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 

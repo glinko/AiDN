@@ -6,7 +6,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
-from aidn_hypervisor.consensus.abci_models import ABCIResult
 from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.ledger.service import LedgerOperationService
 
