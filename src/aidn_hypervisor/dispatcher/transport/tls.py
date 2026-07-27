@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import ssl
 import socket
-import threading
 from typing import Optional
 
 from aidn_hypervisor.dispatcher.models import NetworkMessage

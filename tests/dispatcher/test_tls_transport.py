@@ -294,11 +294,13 @@ class TestCertificateValidation:
         self, tls_listener: TlsListener, tls_bound_port: int
     ) -> None:
         """verify=True should fail for self-signed certs without CA."""
-        ready = threading.Event()
+        accept_errors: list[ConnectionError] = []
 
         def _accept() -> None:
-            tls_listener.accept()
-            ready.set()
+            try:
+                tls_listener.accept()
+            except ConnectionError as error:
+                accept_errors.append(error)
 
         accept_thread = threading.Thread(target=_accept, daemon=True)
         accept_thread.start()
@@ -310,13 +312,14 @@ class TestCertificateValidation:
             recv_timeout=2.0,
         )
         t.connect()
-        ready.wait(timeout=3)
 
         # Self-signed cert should fail verification during handshake
         with pytest.raises(ConnectionError, match="TLS handshake failed"):
             t.handshake()
 
         accept_thread.join(timeout=3)
+        assert accept_errors
+        assert "TLS accept failed" in str(accept_errors[0])
         t.disconnect()
         tls_listener.close()
 

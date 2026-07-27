@@ -11,15 +11,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterator
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 # Import PeerRecord from discovery — avoid circular imports
 # by using TYPE_CHECKING

@@ -7,8 +7,6 @@ handshake lifecycle, and keepalives.
 
 import asyncio
 import logging
-import uuid
-from datetime import datetime, timezone
 
 from aidn_hypervisor.dispatcher.handshake import (
     ConnectionIdentity,
@@ -17,7 +15,6 @@ from aidn_hypervisor.dispatcher.handshake import (
 )
 from aidn_hypervisor.dispatcher.models import NetworkMessage
 from aidn_hypervisor.dispatcher.transport.quic import (
-    QUICTransport,
     TransportProfileBase,
     create_transport,
 )
@@ -192,7 +189,7 @@ class NetworkGateway:
     async def _flush_send_buffer(self) -> None:
         """Flush the send buffer."""
         if self._send_buffer:
-            combined = b"\n".join(self._send_buffer)
+            _ = b"\n".join(self._send_buffer)
             # Would send combined buffer over transport
             self._send_buffer.clear()
 

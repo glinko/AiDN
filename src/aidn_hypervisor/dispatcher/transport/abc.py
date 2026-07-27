@@ -8,7 +8,6 @@ handles length-prefixed JSON serialization of ``NetworkMessage`` objects.
 from __future__ import annotations
 
 import enum
-import json
 import struct
 from typing import Protocol, runtime_checkable
 

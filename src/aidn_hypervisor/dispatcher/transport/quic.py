@@ -7,7 +7,6 @@ communication. QUIC_TLS is the preferred public transport profile.
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Literal
 
 from aidn_hypervisor.dispatcher.handshake import (
     ConnectionIdentity,
@@ -121,7 +120,7 @@ class QUICTransport(TransportProfileBase):
 
         # Resolve address
         try:
-            addr_info = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            _ = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
         except socket.gaierror as exc:
             logger.error("DNS resolution failed for %s: %s", host, exc)
             raise ConnectionError(f"Cannot resolve {host}") from exc
