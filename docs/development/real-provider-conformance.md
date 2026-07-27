@@ -68,7 +68,7 @@ vLLM runs as a separate Provider service. The Hypervisor attaches it through
 the `vllm` plugin and owns the Provider Instance, Model Deployment, Runtime
 Binding and Endpoint records; it does not manage the vLLM process lifecycle.
 
-Run the opt-in wire conformance smoke:
+Run the opt-in provider and paid-session smoke:
 
 ```powershell
 $env:AIDN_VLLM_ENDPOINT = "http://provider-host:8000"
@@ -95,3 +95,10 @@ for the chosen deployment, and bind an Endpoint to that Runtime Binding. vLLM
 Usage is provider-authoritative per token dimension. The attach configuration
 must contain only the endpoint and scoped Secret Handle references; do not put
 tokens or credentials in the URL.
+
+The paid-session check uses the attached vLLM Runtime Binding to publish a
+public Endpoint, open a Consumer-signed fixed-price Session, execute one
+Request, retain terminal Result and Usage evidence, restart the local
+Hypervisor from its file store, and cooperatively finalize the original
+Settlement. It verifies that recovery does not create a second provider
+execution or Endpoint payment.

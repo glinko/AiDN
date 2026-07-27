@@ -146,6 +146,9 @@ Implemented now:
   Runtime execution, Final Usage, restart recovery from durable state, signed
   cooperative Settlement acceptance and canonical finalization without a
   second provider execution or payment.
+- The same public fixed-price execution and restart/Settlement boundary is
+  covered against an attached live `vLLM` Runtime Binding. Provider-reported
+  token Usage remains evidence only under `MVP-0001`; payment stays fixed-price.
 - Ollama has an explicit RFC-0054 `ollama-generate` adapter for native
   `/api/generate` execution and JSONL streaming. It maps emitted token counts
   as Provider-authoritative Usage, records delivered stream bytes locally and
