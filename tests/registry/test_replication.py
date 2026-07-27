@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
-import pytest
-
 from aidn_hypervisor.registry import ImmutableObjectStore, RegistryObjectEnvelope
 from aidn_hypervisor.registry.replication import (
     ReplicationEngine,
@@ -13,10 +9,10 @@ from aidn_hypervisor.registry.replication import (
     TransferState,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_envelope(
     object_id: str | None = None,
@@ -38,6 +34,18 @@ def _make_store() -> ImmutableObjectStore:
 
 def _make_engine(store: ImmutableObjectStore | None = None) -> ReplicationEngine:
     return ReplicationEngine(store or _make_store())
+
+
+def _receive_all_chunks(engine: ReplicationEngine, *, object_id: str, total_chunks: int) -> None:
+    for chunk_index in range(total_chunks):
+        assert (
+            engine.receive_chunk(
+                object_id=object_id,
+                chunk_index=chunk_index,
+                chunk_data=f"chunk-{chunk_index}".encode(),
+            )
+            is not None
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +204,8 @@ def test_receive_chunk():
     assert p.bytes_received == 11  # len("chunk0-data")
 
 
-def test_receive_chunk_completes():
-    """Receiving all chunks transitions to COMPLETED."""
+def test_receive_chunk_requires_verified_envelope_to_complete():
+    """Chunks alone do not complete a transfer before envelope verification."""
     engine = _make_engine()
     engine.start_chunked_transfer(object_id="obj-1", total_chunks=2)
 
@@ -205,9 +213,9 @@ def test_receive_chunk_completes():
     p = engine.receive_chunk(object_id="obj-1", chunk_index=1, chunk_data=b"bb")
 
     assert p is not None
-    assert p.state == TransferState.COMPLETED
+    assert p.state == TransferState.IN_PROGRESS
     assert p.chunks_received == 2
-    assert p.completed_at is not None
+    assert p.completed_at is None
 
 
 def test_receive_chunk_unknown_object():
@@ -242,6 +250,7 @@ def test_complete_transfer_success():
     store = _make_store()
     engine = _make_engine(store)
     engine.start_chunked_transfer(object_id="obj-1", total_chunks=2)
+    _receive_all_chunks(engine, object_id="obj-1", total_chunks=2)
 
     env = _make_envelope(object_id="obj-1")
     ok = engine.complete_transfer(object_id="obj-1", envelope=env)
@@ -257,6 +266,7 @@ def test_complete_transfer_fail():
 
     engine = _make_engine(store)
     engine.start_chunked_transfer(object_id="obj-1", total_chunks=1)
+    _receive_all_chunks(engine, object_id="obj-1", total_chunks=1)
 
     ok = engine.complete_transfer(object_id="obj-1", envelope=env)
     assert ok is False
@@ -275,6 +285,53 @@ def test_complete_transfer_not_in_transfers():
     assert ok is False
 
 
+def test_complete_transfer_rejects_incomplete_chunks():
+    engine = _make_engine()
+    engine.start_chunked_transfer(object_id="obj-1", total_chunks=2)
+    engine.receive_chunk(object_id="obj-1", chunk_index=0, chunk_data=b"first")
+    envelope = _make_envelope(object_id="obj-1")
+
+    assert engine.complete_transfer(object_id="obj-1", envelope=envelope) is False
+    transfer = engine.get_transfer("obj-1")
+    assert transfer is not None
+    assert transfer.error == "transfer_incomplete"
+
+
+def test_complete_transfer_rejects_object_id_mismatch():
+    store = _make_store()
+    engine = _make_engine(store)
+    engine.start_chunked_transfer(object_id="expected", total_chunks=1)
+    _receive_all_chunks(engine, object_id="expected", total_chunks=1)
+
+    assert (
+        engine.complete_transfer(
+            object_id="expected",
+            envelope=_make_envelope(object_id="different"),
+        )
+        is False
+    )
+    assert store.has("different") is False
+    transfer = engine.get_transfer("expected")
+    assert transfer is not None
+    assert transfer.error == "object_id_mismatch"
+
+
+def test_duplicate_chunk_is_idempotent_and_invalid_index_fails():
+    engine = _make_engine()
+    engine.start_chunked_transfer(object_id="obj-1", total_chunks=2)
+    first = engine.receive_chunk(object_id="obj-1", chunk_index=0, chunk_data=b"one")
+    duplicate = engine.receive_chunk(object_id="obj-1", chunk_index=0, chunk_data=b"one")
+    assert first is not None
+    assert duplicate is not None
+    assert duplicate.chunks_received == 1
+    assert duplicate.bytes_received == 3
+
+    invalid = engine.receive_chunk(object_id="obj-1", chunk_index=2, chunk_data=b"bad")
+    assert invalid is not None
+    assert invalid.state == TransferState.FAILED
+    assert invalid.error == "chunk_index_invalid"
+
+
 # ---------------------------------------------------------------------------
 # §31 — Transfer resumption
 # ---------------------------------------------------------------------------
@@ -285,6 +342,7 @@ def test_resume_transfer():
     store = _make_store()
     engine = _make_engine(store)
     engine.start_chunked_transfer(object_id="obj-1", total_chunks=3)
+    _receive_all_chunks(engine, object_id="obj-1", total_chunks=3)
 
     env = _make_envelope(object_id="obj-1")
     store.put(env)  # pre-exists to force failure
@@ -303,6 +361,7 @@ def test_resume_failed_transfer():
     store = _make_store()
     engine = _make_engine(store)
     engine.start_chunked_transfer(object_id="obj-1", total_chunks=2)
+    _receive_all_chunks(engine, object_id="obj-1", total_chunks=2)
     # Force failure by storing duplicate
     env = _make_envelope(object_id="obj-1")
     store.put(env)
@@ -345,6 +404,7 @@ def test_get_completed_transfers():
     engine = _make_engine(store)
 
     engine.start_chunked_transfer(object_id="obj-1", total_chunks=1)
+    _receive_all_chunks(engine, object_id="obj-1", total_chunks=1)
     env1 = _make_envelope(object_id="obj-1")
     engine.complete_transfer(object_id="obj-1", envelope=env1)
 
@@ -361,6 +421,7 @@ def test_get_failed_transfers():
 
     engine = _make_engine(store)
     engine.start_chunked_transfer(object_id="obj-1", total_chunks=1)
+    _receive_all_chunks(engine, object_id="obj-1", total_chunks=1)
     engine.complete_transfer(object_id="obj-1", envelope=env)
 
     failed = engine.get_failed_transfers()
@@ -379,7 +440,7 @@ def test_active_transfers_count():
 
     # Complete one
     engine.receive_chunk(object_id="c", chunk_index=0, chunk_data=b"x")
-    assert engine.active_transfers == 2
+    assert engine.active_transfers == 3
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +456,7 @@ def test_transfer_error_state():
 
     engine = _make_engine(store)
     engine.start_chunked_transfer(object_id="obj-1", total_chunks=1)
+    _receive_all_chunks(engine, object_id="obj-1", total_chunks=1)
     engine.complete_transfer(object_id="obj-1", envelope=env)
 
     t = engine.get_transfer("obj-1")
@@ -420,9 +482,9 @@ def test_chunked_transfer_full_flow():
     engine.receive_chunk(object_id="big-obj", chunk_index=1, chunk_data=b"bbb")
     engine.receive_chunk(object_id="big-obj", chunk_index=2, chunk_data=b"ccc")
 
-    # After all chunks, state should be COMPLETED
+    # Chunks are only progress; the envelope is the final integrity proof.
     t = engine.get_transfer("big-obj")
-    assert t.state == TransferState.COMPLETED
+    assert t.state == TransferState.IN_PROGRESS
     assert t.chunks_received == 3
     assert t.bytes_received == 9
 
@@ -470,6 +532,7 @@ def test_transfer_log():
 
     # Successful transfer
     engine.start_chunked_transfer(object_id="ok-1", total_chunks=1)
+    _receive_all_chunks(engine, object_id="ok-1", total_chunks=1)
     env_ok = _make_envelope(object_id="ok-1")
     engine.complete_transfer(object_id="ok-1", envelope=env_ok)
 
@@ -477,6 +540,7 @@ def test_transfer_log():
     env_fail = _make_envelope(object_id="fail-1")
     store.put(env_fail)
     engine.start_chunked_transfer(object_id="fail-1", total_chunks=1)
+    _receive_all_chunks(engine, object_id="fail-1", total_chunks=1)
     engine.complete_transfer(object_id="fail-1", envelope=env_fail)
 
     completed = engine.get_completed_transfers()

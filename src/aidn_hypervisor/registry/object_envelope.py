@@ -1,20 +1,33 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class ObjectVersion(str, Enum):
+def canonical_payload_bytes(payload: dict[str, Any]) -> bytes:
+    """Encode a Registry object payload using the committed JSON form."""
+    return json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+class ObjectVersion(StrEnum):
     """Registry object versioning."""
+
     V1 = "1.0"
 
 
-class LedgerCommitmentClass(str, Enum):
+class LedgerCommitmentClass(StrEnum):
     """How tightly an object is tied to the Ledger."""
+
     FINALIZED_BLOCK = "finalized_block"
     LEDGER_OPERATION = "ledger_operation"
     OPERATION_RESULT = "operation_result"
@@ -65,9 +78,9 @@ class RegistryObjectEnvelope(BaseModel, frozen=True):
         producer_signature: str | None = None,
     ) -> RegistryObjectEnvelope:
         """Factory: compute id, hash, size from payload."""
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        content_hash = hashlib.sha256(canonical.encode()).hexdigest()
-        content_size = len(canonical.encode())
+        canonical = canonical_payload_bytes(payload)
+        content_hash = hashlib.sha256(canonical).hexdigest()
+        content_size = len(canonical)
 
         if object_id is None:
             object_id = content_hash  # content-addressed by default
@@ -87,10 +100,15 @@ class RegistryObjectEnvelope(BaseModel, frozen=True):
         )
 
     def verify_integrity(self) -> bool:
-        """Verify content_hash matches payload."""
-        canonical = json.dumps(self.payload, sort_keys=True, separators=(",", ":"))
-        expected = hashlib.sha256(canonical.encode()).hexdigest()
-        return expected == self.content_hash
+        """Verify identity, content hash and content size against the payload."""
+        if not self.object_id or not self.object_type or self.content_size < 0:
+            return False
+        try:
+            canonical = canonical_payload_bytes(self.payload)
+        except (TypeError, ValueError):
+            return False
+        expected_hash = hashlib.sha256(canonical).hexdigest()
+        return hmac.compare_digest(expected_hash, self.content_hash) and len(canonical) == self.content_size
 
 
 class ObjectIdentity(BaseModel, frozen=True):
@@ -104,6 +122,7 @@ class ObjectIdentity(BaseModel, frozen=True):
         """Compute deterministic id from type + fields."""
         canonical = json.dumps(
             {"type": self.object_type, **self.identity_fields},
-            sort_keys=True, separators=(",", ":"),
+            sort_keys=True,
+            separators=(",", ":"),
         )
         return hashlib.sha256(canonical.encode()).hexdigest()

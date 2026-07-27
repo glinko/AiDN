@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any
 
 from .object_envelope import RegistryObjectEnvelope
 
@@ -10,6 +9,7 @@ from .object_envelope import RegistryObjectEnvelope
 @dataclass
 class StorageStats:
     """Storage engine statistics."""
+
     total_objects: int = 0
     total_bytes: int = 0
     objects_by_type: dict[str, int] = field(default_factory=dict)
@@ -37,9 +37,11 @@ class ImmutableObjectStore:
         Store an object. Returns True if stored, False if already exists.
         Rejects if object_id already maps to a different object.
         """
+        if not envelope.verify_integrity():
+            raise ValueError("Registry object envelope integrity check failed")
         if envelope.object_id in self._objects:
             existing = self._objects[envelope.object_id]
-            if existing.content_hash != envelope.content_hash:
+            if existing != envelope:
                 return False  # conflict
             return False  # duplicate
         if envelope.object_id in self._tombstones:
@@ -106,10 +108,7 @@ class ImmutableObjectStore:
 
     def has(self, object_id: str) -> bool:
         """Check if object exists and is not tombstoned."""
-        return (
-            object_id in self._objects
-            and object_id not in self._tombstones
-        )
+        return object_id in self._objects and object_id not in self._tombstones
 
     def tombstone(self, object_id: str) -> bool:
         """Soft-delete an object. Returns True if tombstoned."""
@@ -129,10 +128,7 @@ class ImmutableObjectStore:
 
     def all_ids(self) -> list[str]:
         """All object ids in deterministic insertion order."""
-        return [
-            oid for oid in self._insertion_order
-            if oid not in self._tombstones
-        ]
+        return [oid for oid in self._insertion_order if oid not in self._tombstones]
 
     def stats(self) -> StorageStats:
         """Storage statistics."""
@@ -159,8 +155,4 @@ class ImmutableObjectStore:
 
     def snapshot(self) -> dict[str, RegistryObjectEnvelope]:
         """Create a snapshot of all objects (for testing/replication)."""
-        return {
-            oid: self._objects[oid]
-            for oid in self._insertion_order
-            if oid not in self._tombstones
-        }
+        return {oid: self._objects[oid] for oid in self._insertion_order if oid not in self._tombstones}

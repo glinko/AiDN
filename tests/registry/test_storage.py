@@ -6,10 +6,10 @@ import pytest
 
 from aidn_hypervisor.registry import ImmutableObjectStore, RegistryObjectEnvelope
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_envelope(
     obj_type: str = "test",
@@ -31,6 +31,7 @@ def _make_envelope(
 # test_put_object
 # ---------------------------------------------------------------------------
 
+
 def test_put_object():
     store = ImmutableObjectStore()
     env = _make_envelope(object_id="obj-1")
@@ -41,6 +42,7 @@ def test_put_object():
 # ---------------------------------------------------------------------------
 # test_get_object
 # ---------------------------------------------------------------------------
+
 
 def test_get_object():
     store = ImmutableObjectStore()
@@ -55,6 +57,7 @@ def test_get_object():
 # test_get_missing
 # ---------------------------------------------------------------------------
 
+
 def test_get_missing():
     store = ImmutableObjectStore()
     assert store.get("nonexistent") is None
@@ -63,6 +66,7 @@ def test_get_missing():
 # ---------------------------------------------------------------------------
 # test_put_duplicate_returns_false
 # ---------------------------------------------------------------------------
+
 
 def test_put_duplicate_returns_false():
     store = ImmutableObjectStore()
@@ -75,6 +79,7 @@ def test_put_duplicate_returns_false():
 # test_put_conflict_returns_false
 # ---------------------------------------------------------------------------
 
+
 def test_put_conflict_returns_false():
     store = ImmutableObjectStore()
     env1 = _make_envelope(object_id="obj-1", payload={"a": 1})
@@ -83,9 +88,26 @@ def test_put_conflict_returns_false():
     assert store.put(env2) is False  # same id, different hash
 
 
+def test_put_rejects_invalid_envelope_integrity():
+    store = ImmutableObjectStore()
+    envelope = _make_envelope(object_id="obj-1")
+    invalid = envelope.model_copy(update={"content_size": envelope.content_size + 1})
+    with pytest.raises(ValueError, match="integrity"):
+        store.put(invalid)
+
+
+def test_put_rejects_same_id_with_different_metadata():
+    store = ImmutableObjectStore()
+    envelope = _make_envelope(object_id="obj-1")
+    assert store.put(envelope) is True
+    conflicting = envelope.model_copy(update={"object_type": "other"})
+    assert store.put(conflicting) is False
+
+
 # ---------------------------------------------------------------------------
 # test_put_after_tombstone_returns_false
 # ---------------------------------------------------------------------------
+
 
 def test_put_after_tombstone_returns_false():
     store = ImmutableObjectStore()
@@ -98,6 +120,7 @@ def test_put_after_tombstone_returns_false():
 # ---------------------------------------------------------------------------
 # test_list_by_type
 # ---------------------------------------------------------------------------
+
 
 def test_list_by_type():
     store = ImmutableObjectStore()
@@ -114,6 +137,7 @@ def test_list_by_type():
 # test_list_by_epoch
 # ---------------------------------------------------------------------------
 
+
 def test_list_by_epoch():
     store = ImmutableObjectStore()
     store.put(_make_envelope(object_id="e1", created_epoch=10))
@@ -129,6 +153,7 @@ def test_list_by_epoch():
 # test_list_with_limit
 # ---------------------------------------------------------------------------
 
+
 def test_list_with_limit():
     store = ImmutableObjectStore()
     store.put(_make_envelope(obj_type="type_a", object_id="a1"))
@@ -142,6 +167,7 @@ def test_list_with_limit():
 # test_has_existing
 # ---------------------------------------------------------------------------
 
+
 def test_has_existing():
     store = ImmutableObjectStore()
     store.put(_make_envelope(object_id="obj-1"))
@@ -152,6 +178,7 @@ def test_has_existing():
 # test_has_missing
 # ---------------------------------------------------------------------------
 
+
 def test_has_missing():
     store = ImmutableObjectStore()
     assert store.has("nonexistent") is False
@@ -160,6 +187,7 @@ def test_has_missing():
 # ---------------------------------------------------------------------------
 # test_has_tombstoned
 # ---------------------------------------------------------------------------
+
 
 def test_has_tombstoned():
     store = ImmutableObjectStore()
@@ -172,6 +200,7 @@ def test_has_tombstoned():
 # test_tombstone
 # ---------------------------------------------------------------------------
 
+
 def test_tombstone():
     store = ImmutableObjectStore()
     store.put(_make_envelope(object_id="obj-1"))
@@ -183,6 +212,7 @@ def test_tombstone():
 # test_tombstone_nonexistent
 # ---------------------------------------------------------------------------
 
+
 def test_tombstone_nonexistent():
     store = ImmutableObjectStore()
     assert store.tombstone("nonexistent") is False
@@ -191,6 +221,7 @@ def test_tombstone_nonexistent():
 # ---------------------------------------------------------------------------
 # test_delete
 # ---------------------------------------------------------------------------
+
 
 def test_delete():
     store = ImmutableObjectStore()
@@ -204,6 +235,7 @@ def test_delete():
 # test_delete_nonexistent
 # ---------------------------------------------------------------------------
 
+
 def test_delete_nonexistent():
     store = ImmutableObjectStore()
     assert store.delete("nonexistent") is False
@@ -212,6 +244,7 @@ def test_delete_nonexistent():
 # ---------------------------------------------------------------------------
 # test_all_ids
 # ---------------------------------------------------------------------------
+
 
 def test_all_ids():
     store = ImmutableObjectStore()
@@ -224,6 +257,7 @@ def test_all_ids():
 # ---------------------------------------------------------------------------
 # test_all_ids_excludes_tombstoned
 # ---------------------------------------------------------------------------
+
 
 def test_all_ids_excludes_tombstoned():
     store = ImmutableObjectStore()
@@ -238,6 +272,7 @@ def test_all_ids_excludes_tombstoned():
 # test_stats_empty
 # ---------------------------------------------------------------------------
 
+
 def test_stats_empty():
     store = ImmutableObjectStore()
     s = store.stats()
@@ -251,6 +286,7 @@ def test_stats_empty():
 # ---------------------------------------------------------------------------
 # test_stats_with_objects
 # ---------------------------------------------------------------------------
+
 
 def test_stats_with_objects():
     store = ImmutableObjectStore()
@@ -267,6 +303,7 @@ def test_stats_with_objects():
 # test_stats_by_type
 # ---------------------------------------------------------------------------
 
+
 def test_stats_by_type():
     store = ImmutableObjectStore()
     store.put(_make_envelope(obj_type="A", object_id="a1"))
@@ -279,6 +316,7 @@ def test_stats_by_type():
 # ---------------------------------------------------------------------------
 # test_stats_epoch_range
 # ---------------------------------------------------------------------------
+
 
 def test_stats_epoch_range():
     store = ImmutableObjectStore()
@@ -293,6 +331,7 @@ def test_stats_epoch_range():
 # ---------------------------------------------------------------------------
 # test_snapshot
 # ---------------------------------------------------------------------------
+
 
 def test_snapshot():
     store = ImmutableObjectStore()
@@ -310,6 +349,7 @@ def test_snapshot():
 # test_get_many
 # ---------------------------------------------------------------------------
 
+
 def test_get_many():
     store = ImmutableObjectStore()
     store.put(_make_envelope(object_id="a"))
@@ -324,6 +364,7 @@ def test_get_many():
 # ---------------------------------------------------------------------------
 # test_insertion_order_preserved
 # ---------------------------------------------------------------------------
+
 
 def test_insertion_order_preserved():
     store = ImmutableObjectStore()

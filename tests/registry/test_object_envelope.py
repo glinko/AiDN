@@ -6,6 +6,7 @@ import hashlib
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry import (
     LedgerCommitmentClass,
@@ -14,10 +15,10 @@ from aidn_hypervisor.registry import (
     RegistryObjectEnvelope,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _payload() -> dict:
     return {"key": "value", "num": 42}
@@ -39,6 +40,7 @@ def _expected_size(payload: dict | None = None) -> int:
 # test_create_envelope
 # ---------------------------------------------------------------------------
 
+
 def test_create_envelope():
     env = RegistryObjectEnvelope.create(object_type="test", payload=_payload())
     assert env.object_type == "test"
@@ -52,6 +54,7 @@ def test_create_envelope():
 # ---------------------------------------------------------------------------
 # test_create_with_explicit_id
 # ---------------------------------------------------------------------------
+
 
 def test_create_with_explicit_id():
     env = RegistryObjectEnvelope.create(
@@ -67,6 +70,7 @@ def test_create_with_explicit_id():
 # test_content_hash_computed
 # ---------------------------------------------------------------------------
 
+
 def test_content_hash_computed():
     env = RegistryObjectEnvelope.create(object_type="test", payload=_payload())
     assert env.content_hash == _expected_hash()
@@ -76,6 +80,7 @@ def test_content_hash_computed():
 # ---------------------------------------------------------------------------
 # test_content_size_computed
 # ---------------------------------------------------------------------------
+
 
 def test_content_size_computed():
     env = RegistryObjectEnvelope.create(object_type="test", payload=_payload())
@@ -87,6 +92,7 @@ def test_content_size_computed():
 # test_verify_integrity_valid
 # ---------------------------------------------------------------------------
 
+
 def test_verify_integrity_valid():
     env = RegistryObjectEnvelope.create(object_type="test", payload=_payload())
     assert env.verify_integrity() is True
@@ -95,6 +101,7 @@ def test_verify_integrity_valid():
 # ---------------------------------------------------------------------------
 # test_verify_integrity_invalid
 # ---------------------------------------------------------------------------
+
 
 def test_verify_integrity_invalid():
     env = RegistryObjectEnvelope.create(object_type="test", payload=_payload())
@@ -110,19 +117,27 @@ def test_verify_integrity_invalid():
     assert bad_env.verify_integrity() is False
 
 
+def test_verify_integrity_rejects_wrong_content_size():
+    env = RegistryObjectEnvelope.create(object_type="test", payload=_payload())
+    bad_env = env.model_copy(update={"content_size": env.content_size + 1})
+    assert bad_env.verify_integrity() is False
+
+
 # ---------------------------------------------------------------------------
 # test_envelope_frozen
 # ---------------------------------------------------------------------------
 
+
 def test_envelope_frozen():
     env = RegistryObjectEnvelope.create(object_type="test", payload=_payload())
-    with pytest.raises(Exception):  # FrozenInstanceError
+    with pytest.raises(ValidationError):
         env.object_type = "other"  # type: ignore
 
 
 # ---------------------------------------------------------------------------
 # test_object_identity_computation
 # ---------------------------------------------------------------------------
+
 
 def test_object_identity_computation():
     ident = ObjectIdentity(
@@ -135,6 +150,7 @@ def test_object_identity_computation():
 # ---------------------------------------------------------------------------
 # test_object_identity_deterministic
 # ---------------------------------------------------------------------------
+
 
 def test_object_identity_deterministic():
     a = ObjectIdentity(
@@ -152,6 +168,7 @@ def test_object_identity_deterministic():
 # test_object_identity_different_fields
 # ---------------------------------------------------------------------------
 
+
 def test_object_identity_different_fields():
     a = ObjectIdentity(
         object_type="validation_report",
@@ -168,6 +185,7 @@ def test_object_identity_different_fields():
 # test_ledger_commitment_class_enum
 # ---------------------------------------------------------------------------
 
+
 def test_ledger_commitment_class_enum():
     assert LedgerCommitmentClass.FINALIZED_BLOCK.value == "finalized_block"
     assert LedgerCommitmentClass.DERIVED.value == "derived"
@@ -178,6 +196,7 @@ def test_ledger_commitment_class_enum():
 # test_object_version_enum
 # ---------------------------------------------------------------------------
 
+
 def test_object_version_enum():
     assert ObjectVersion.V1.value == "1.0"
 
@@ -185,6 +204,7 @@ def test_object_version_enum():
 # ---------------------------------------------------------------------------
 # test_envelope_with_epoch_block
 # ---------------------------------------------------------------------------
+
 
 def test_envelope_with_epoch_block():
     env = RegistryObjectEnvelope.create(
@@ -201,6 +221,7 @@ def test_envelope_with_epoch_block():
 # test_envelope_with_parent_refs
 # ---------------------------------------------------------------------------
 
+
 def test_envelope_with_parent_refs():
     env = RegistryObjectEnvelope.create(
         object_type="test",
@@ -213,6 +234,7 @@ def test_envelope_with_parent_refs():
 # ---------------------------------------------------------------------------
 # test_envelope_with_previous_version
 # ---------------------------------------------------------------------------
+
 
 def test_envelope_with_previous_version():
     env = RegistryObjectEnvelope.create(
@@ -227,6 +249,7 @@ def test_envelope_with_previous_version():
 # test_envelope_with_producer_signature
 # ---------------------------------------------------------------------------
 
+
 def test_envelope_with_producer_signature():
     env = RegistryObjectEnvelope.create(
         object_type="test",
@@ -240,6 +263,7 @@ def test_envelope_with_producer_signature():
 # test_envelope_payload_encoding
 # ---------------------------------------------------------------------------
 
+
 def test_envelope_payload_encoding():
     env = RegistryObjectEnvelope.create(object_type="test", payload=_payload())
     assert env.payload_encoding == "json"
@@ -249,6 +273,7 @@ def test_envelope_payload_encoding():
 # test_envelope_compression
 # ---------------------------------------------------------------------------
 
+
 def test_envelope_compression():
     env = RegistryObjectEnvelope.create(object_type="test", payload=_payload())
     assert env.compression is None
@@ -257,6 +282,7 @@ def test_envelope_compression():
 # ---------------------------------------------------------------------------
 # test_duplicate_object_id_same_hash
 # ---------------------------------------------------------------------------
+
 
 def test_duplicate_object_id_same_hash():
     """Two envelopes with same payload should produce same content-addressed id."""
@@ -269,6 +295,7 @@ def test_duplicate_object_id_same_hash():
 # ---------------------------------------------------------------------------
 # test_content_addressed_default_id
 # ---------------------------------------------------------------------------
+
 
 def test_content_addressed_default_id():
     env = RegistryObjectEnvelope.create(object_type="test", payload=_payload())

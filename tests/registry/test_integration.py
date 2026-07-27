@@ -302,7 +302,11 @@ class TestBridgeIntegration:
                 "object_version": "1.0",
                 "namespace": "default",
                 "payload_hash": hashlib.sha256(
-                    json.dumps({"id": f"legacy:{i}"}).encode()
+                    json.dumps(
+                        {"id": f"legacy:{i}"},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
                 ).hexdigest(),
                 "payload_encoding": "json",
                 "source_reference": None,
@@ -373,16 +377,14 @@ class TestVerificationIntegration:
         assert result.valid == 10
         assert result.invalid == 0
 
-    def test_verify_detects_hash_mismatch(self):
-        """Tampered content hash is detected."""
+    def test_store_rejects_hash_mismatch_at_ingress(self):
+        """Tampered content hash never enters the immutable store."""
         store = ImmutableObjectStore()
         obj = _make_envelope("obj:001")
         tampered = obj.model_copy(update={"content_hash": "invalid_hash"})
-        store.put(tampered)
-        verifier = ObjectVerifier(store)
-        result = verifier.verify_object("obj:001")
-        assert not result.valid
-        assert result.reason == "hash_mismatch"
+        with pytest.raises(ValueError, match="integrity"):
+            store.put(tampered)
+        assert store.get("obj:001") is None
 
     def test_consistency_checker(self):
         """Consistency checker finds no errors for valid objects."""

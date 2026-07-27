@@ -166,6 +166,11 @@ class TestLegacyRecordToEnvelope:
         envelope = legacy_record_to_envelope(record)
         assert envelope.content_hash == _compute_content_hash(record["payload"])
 
+    def test_invalid_legacy_content_hash_is_rejected(self):
+        record = _make_legacy_record(payload_hash="invalid")
+        with pytest.raises(ValueError, match="payload hash"):
+            legacy_record_to_envelope(record)
+
     def test_source_reference_becomes_parent_ref(self):
         record = _make_legacy_record(source_reference="node:abc")
         envelope = legacy_record_to_envelope(record)
@@ -194,8 +199,8 @@ class TestLegacyRecordToEnvelope:
     def test_no_payload(self):
         record = _make_legacy_record()
         record["payload"] = None
-        envelope = legacy_record_to_envelope(record)
-        assert envelope.payload == {}
+        with pytest.raises(ValueError, match="payload hash"):
+            legacy_record_to_envelope(record)
 
     def test_object_id_string_coercion(self):
         record = _make_legacy_record(object_id=123)

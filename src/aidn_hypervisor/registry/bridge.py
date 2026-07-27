@@ -11,13 +11,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 from copy import deepcopy
 from typing import Any
 
-from .object_envelope import RegistryObjectEnvelope, ObjectVersion, LedgerCommitmentClass
+from .object_envelope import LedgerCommitmentClass, ObjectVersion, RegistryObjectEnvelope
 from .storage import ImmutableObjectStore, StorageStats
-
 
 # ---------------------------------------------------------------------------
 # Field mapping: legacy dict ↔ RegistryObjectEnvelope
@@ -88,6 +86,7 @@ def _resolve_ledger_commitment(object_type: str) -> LedgerCommitmentClass | None
 # Conversion functions
 # ---------------------------------------------------------------------------
 
+
 def legacy_record_to_envelope(record: dict) -> RegistryObjectEnvelope:
     """
     Convert a legacy RegistryService dict record to RegistryObjectEnvelope.
@@ -96,21 +95,25 @@ def legacy_record_to_envelope(record: dict) -> RegistryObjectEnvelope:
     """
     payload = record.get("payload") or {}
     object_type = record.get("object_type", "unknown")
+    computed_hash = _compute_content_hash(payload)
+    computed_size = _compute_content_size(payload)
+    supplied_hash = record.get(LEGACY_HASH_FIELD)
+    supplied_size = record.get("content_size")
+    if supplied_hash is not None and supplied_hash != computed_hash:
+        raise ValueError("legacy registry record payload hash does not match payload")
+    if supplied_size is not None and supplied_size != computed_size:
+        raise ValueError("legacy registry record content size does not match payload")
 
     envelope = RegistryObjectEnvelope(
         object_id=str(record.get("object_id", "")),
         object_type=object_type,
         object_version=_resolve_object_version(record.get("object_version", "1.0")),
-        content_hash=record.get(LEGACY_HASH_FIELD) or _compute_content_hash(payload),
-        content_size=record.get("content_size") or _compute_content_size(payload),
+        content_hash=computed_hash,
+        content_size=computed_size,
         created_epoch=record.get("created_epoch"),
         created_block_height=record.get("created_block_height"),
         ledger_commitment=_resolve_ledger_commitment(object_type),
-        parent_references=(
-            [record[LEGACY_SOURCE_REF_FIELD]]
-            if record.get(LEGACY_SOURCE_REF_FIELD)
-            else []
-        ),
+        parent_references=([record[LEGACY_SOURCE_REF_FIELD]] if record.get(LEGACY_SOURCE_REF_FIELD) else []),
         payload_encoding=record.get("payload_encoding", "json"),
         payload=payload,
     )
@@ -137,11 +140,7 @@ def envelope_to_legacy_record(
         "namespace": namespace,
         "payload_hash": envelope.content_hash,
         "payload_encoding": envelope.payload_encoding,
-        "source_reference": (
-            envelope.parent_references[0]
-            if envelope.parent_references
-            else None
-        ),
+        "source_reference": (envelope.parent_references[0] if envelope.parent_references else None),
         "payload": deepcopy(envelope.payload) if envelope.payload else None,
     }
     if source_node_id is not None:
@@ -156,6 +155,7 @@ def envelope_to_legacy_record(
 # ---------------------------------------------------------------------------
 # RegistryServiceAdapter — wraps legacy service with new API
 # ---------------------------------------------------------------------------
+
 
 class RegistryServiceAdapter:
     """
@@ -275,10 +275,7 @@ class RegistryServiceAdapter:
         results: dict[str, dict] = {}
 
         if source in ("store", "both"):
-            if object_type:
-                ids = self._store.list_by_type(object_type)
-            else:
-                ids = self._store.all_ids()
+            ids = self._store.list_by_type(object_type) if object_type else self._store.all_ids()
 
             for oid in ids:
                 envelope = self._store.get(oid)
