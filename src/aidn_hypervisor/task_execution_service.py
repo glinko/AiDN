@@ -221,7 +221,7 @@ class TaskExecutionService:
         runtime: RuntimeHandle,
         bundle_id: str,
     ) -> bool:
-        policy = self._host._retry_policy_for(plugin, "health_check")
+        policy = self.retry_policy_for(plugin, "health_check")
         for attempt in range(1, policy["max_attempts"] + 1):
             if plugin.health_check(runtime):
                 runtime.health_status = "healthy"
@@ -244,7 +244,7 @@ class TaskExecutionService:
         task: TaskRequest,
         runtime: RuntimeHandle,
     ) -> dict:
-        policy = self._host._retry_policy_for(plugin, "invoke")
+        policy = self.retry_policy_for(plugin, "invoke")
         retry_exceptions = policy["retry_exceptions"]
         last_error: Exception | None = None
 
@@ -270,3 +270,18 @@ class TaskExecutionService:
         if last_error is None:
             raise RuntimeError("invoke failed without an error")
         raise last_error
+
+    def retry_policy_for(self, plugin, operation: str) -> dict:
+        policy = plugin.retry_policy()
+        operation_policy = dict(policy.get(operation, {}))
+        retry_exceptions = tuple(
+            operation_policy.get("retry_exceptions", (RuntimeError,))
+        )
+        return {
+            "max_attempts": max(1, int(operation_policy.get("max_attempts", 1))),
+            "backoff_seconds": max(
+                0.0,
+                float(operation_policy.get("backoff_seconds", 0.0)),
+            ),
+            "retry_exceptions": retry_exceptions,
+        }

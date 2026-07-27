@@ -1732,28 +1732,12 @@ class HypervisorService:
     def _runtime_reservation_id(self, bundle_id: str) -> str:
         return self._runtime_boundary._runtime_reservation_id(bundle_id)
 
-    def _circuit_breaker_policy_for(self, plugin) -> dict:
-        policy = plugin.circuit_breaker_policy()
-        return {
-            "failure_threshold": max(0, int(policy.get("failure_threshold", 0))),
-            "cooldown_seconds": max(0.0, float(policy.get("cooldown_seconds", 0.0))),
-        }
-
     def _current_bundle_state(self, bundle_id: str) -> dict:
         return self._runtime_boundary._bundle_runtime_policy_facade().current_bundle_state(bundle_id)
 
     def _bundle_state_is_non_default(self, bundle_id: str) -> bool:
         return self._runtime_boundary._bundle_runtime_policy_facade().bundle_state_is_non_default(
             bundle_id
-        )
-
-    def _bundle_state_is_empty(self, state: dict) -> bool:
-        return (
-            not state["failure_streak"]
-            and state["cooldown_until"] is None
-            and state["cooldown_reason"] is None
-            and not state["drain_mode"]
-            and state["drain_reason"] is None
         )
 
     def _set_bundle_state(
@@ -2054,21 +2038,6 @@ class HypervisorService:
 
     def _task_request_with_allocation_context(self, request: TaskRequest) -> TaskRequest:
         return self._endpoint_execution_context_facade().task_request_with_allocation_context(request)
-
-    def _retry_policy_for(self, plugin, operation: str) -> dict:
-        policy = plugin.retry_policy()
-        operation_policy = dict(policy.get(operation, {}))
-        retry_exceptions = tuple(
-            operation_policy.get("retry_exceptions", (RuntimeError,))
-        )
-        return {
-            "max_attempts": max(1, int(operation_policy.get("max_attempts", 1))),
-            "backoff_seconds": max(
-                0.0,
-                float(operation_policy.get("backoff_seconds", 0.0)),
-            ),
-            "retry_exceptions": retry_exceptions,
-        }
 
     def _restored_task_status(self, task: TaskSnapshot) -> str:
         return self._snapshot_state_facade().restored_task_status(task)

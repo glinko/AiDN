@@ -368,7 +368,7 @@ class BundleRuntimePolicyService:
         runtime: RuntimeHandle | None,
         reason: str,
     ) -> None:
-        policy = self._host._circuit_breaker_policy_for(plugin)
+        policy = self.circuit_breaker_policy_for(plugin)
         if policy["failure_threshold"] <= 0:
             return
 
@@ -641,3 +641,10 @@ class BundleRuntimePolicyService:
             and not state["drain_mode"]
             and state["drain_reason"] is None
         )
+
+    def circuit_breaker_policy_for(self, plugin) -> dict:
+        policy = plugin.circuit_breaker_policy()
+        return {
+            "failure_threshold": max(0, int(policy.get("failure_threshold", 0))),
+            "cooldown_seconds": max(0.0, float(policy.get("cooldown_seconds", 0.0))),
+        }
