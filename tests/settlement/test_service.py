@@ -6,14 +6,13 @@ from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.settlement import (
     RequestSettlementInput,
     SessionFundingAccount,
+    SessionSettlementAcceptance,
     SettlementAccountingTerms,
     SettlementChargeComponent,
     SettlementCorrection,
     SettlementDispute,
     SettlementEngine,
     SettlementError,
-    SessionSettlementAcceptance,
-    TerminalChargePolicy,
 )
 
 
@@ -282,6 +281,91 @@ def test_forced_fixed_price_settlement_requires_timeout_and_completed_evidence()
     ]
 
 
+def test_forced_settlement_retry_does_not_record_duplicate_authorization() -> None:
+    ledger = LedgerOperationService()
+    funding = _funding(payment_reserve=100, fee_reserve=0)
+    ledger.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=100)
+    locked = ledger.lock_session_funding(funding)
+    terms = SettlementAccountingTerms(
+        accounting_contract_hash="sha256:contract-1",
+        accounting_mode="fixed_price",
+        components=[SettlementChargeComponent(component_id="fixed", fixed_amount_q_atoms=100)],
+    )
+    evaluation = SettlementEngine().evaluate_session(
+        funding=locked,
+        session_contract_hash="sha256:session-contract",
+        effective_terms_hash="sha256:effective-terms",
+        request_inputs=[_request(ceiling=100, dimensions=[])],
+        terms_by_hash={"sha256:contract-1": terms},
+        maximum_session_charge_q_atoms=100,
+        actual_network_fees_q_atoms=0,
+        session_close_reference="sha256:close",
+    )
+
+    first = ledger.force_finalize_fixed_price_settlement(
+        evaluation,
+        reason="CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE",
+        force_after="2026-07-18T00:01:00+00:00",
+        now="2026-07-18T00:01:00+00:00",
+    )
+    operation_count = len(ledger.list_operations())
+    repeated = ledger.force_finalize_fixed_price_settlement(
+        evaluation,
+        reason="CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE",
+        force_after="2026-07-18T00:01:00+00:00",
+        now="2026-07-18T00:02:00+00:00",
+    )
+
+    assert repeated == first
+    assert len(ledger.list_operations()) == operation_count
+
+
+def test_stale_forced_settlement_does_not_record_authorization() -> None:
+    ledger = LedgerOperationService()
+    funding = _funding(payment_reserve=100, fee_reserve=0)
+    ledger.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=100)
+    locked = ledger.lock_session_funding(funding)
+    terms = SettlementAccountingTerms(
+        accounting_contract_hash="sha256:contract-1",
+        accounting_mode="fixed_price",
+        components=[SettlementChargeComponent(component_id="fixed", fixed_amount_q_atoms=100)],
+    )
+    first_evaluation = SettlementEngine().evaluate_session(
+        funding=locked,
+        session_contract_hash="sha256:session-contract",
+        effective_terms_hash="sha256:effective-terms",
+        request_inputs=[_request(ceiling=100, dimensions=[])],
+        terms_by_hash={"sha256:contract-1": terms},
+        maximum_session_charge_q_atoms=100,
+        actual_network_fees_q_atoms=0,
+        session_close_reference="sha256:close",
+        settlement_sequence=1,
+    )
+    stale_evaluation = SettlementEngine().evaluate_session(
+        funding=locked,
+        session_contract_hash="sha256:session-contract",
+        effective_terms_hash="sha256:effective-terms",
+        request_inputs=[_request(ceiling=100, dimensions=[])],
+        terms_by_hash={"sha256:contract-1": terms},
+        maximum_session_charge_q_atoms=100,
+        actual_network_fees_q_atoms=0,
+        session_close_reference="sha256:close",
+        settlement_sequence=2,
+    )
+    ledger.apply_settlement_evaluation(first_evaluation)
+    operation_count = len(ledger.list_operations())
+
+    with pytest.raises(ValueError, match="already finalized"):
+        ledger.force_finalize_fixed_price_settlement(
+            stale_evaluation,
+            reason="CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE",
+            force_after="2026-07-18T00:01:00+00:00",
+            now="2026-07-18T00:01:00+00:00",
+        )
+
+    assert len(ledger.list_operations()) == operation_count
+
+
 def test_request_charge_is_capped_and_excess_is_endpoint_absorbed() -> None:
     record = SettlementEngine().evaluate_request(
         _request(ceiling=200),
@@ -300,11 +384,7 @@ def test_fixed_fallback_handles_unavailable_provider_usage_without_invention() -
         unavailable_value_policy="FIXED_FALLBACK",
         fallback_amount_q_atoms=75,
     )
-    request = _request(
-        dimensions=[
-            _dimension(value=None, availability="UNAVAILABLE", authority=None)
-        ]
-    )
+    request = _request(dimensions=[_dimension(value=None, availability="UNAVAILABLE", authority=None)])
 
     record = SettlementEngine().evaluate_request(request, terms)
 

@@ -97,8 +97,7 @@ class LedgerOperationService:
                 "settlement_input_root": proposal.settlement_input_root,
                 "endpoint_payment_q_atoms": proposal.final_endpoint_payment_q_atoms,
                 "consumer_refund_q_atoms": (
-                    proposal.consumer_payment_refund_q_atoms
-                    + proposal.consumer_fee_refund_q_atoms
+                    proposal.consumer_payment_refund_q_atoms + proposal.consumer_fee_refund_q_atoms
                 ),
                 "network_fees_q_atoms": proposal.actual_network_fees_q_atoms,
                 "dispute_reserve_q_atoms": proposal.dispute_reserve_q_atoms,
@@ -119,12 +118,10 @@ class LedgerOperationService:
         if (
             acceptance.session_id != proposal.session_id
             or acceptance.settlement_input_root != proposal.settlement_input_root
-            or acceptance.accepted_endpoint_payment_q_atoms
-            != proposal.final_endpoint_payment_q_atoms
+            or acceptance.accepted_endpoint_payment_q_atoms != proposal.final_endpoint_payment_q_atoms
             or acceptance.accepted_consumer_refund_q_atoms
             != proposal.consumer_payment_refund_q_atoms + proposal.consumer_fee_refund_q_atoms
-            or acceptance.accepted_network_fees_q_atoms
-            != proposal.actual_network_fees_q_atoms
+            or acceptance.accepted_network_fees_q_atoms != proposal.actual_network_fees_q_atoms
         ):
             raise ValueError("Settlement acceptance does not match proposal")
         existing = self._settlement_acceptances.get(acceptance.settlement_id)
@@ -194,6 +191,15 @@ class LedgerOperationService:
         else:
             raise ValueError("unsupported forced Settlement reason")
         funding = self.get_session_funding_account(proposal.session_id)
+        existing_hash = self._settlement_transition_hashes.get(evaluation.transition.settlement_id)
+        if existing_hash is not None:
+            if existing_hash != evaluation.transition.transition_hash:
+                raise ValueError("conflicting Settlement transition")
+            return funding
+        if funding.funding_state in {"RELEASED", "REFUNDED"}:
+            raise ValueError("Session funding account is already finalized")
+        if evaluation.input_set.funding_state_reference != funding.funding_state_hash:
+            raise ValueError("Settlement input does not match current funding state")
         self.record_operation(
             operation_type="SESSION_FORCED_SETTLEMENT",
             origin_type="evidence_triggered",
@@ -253,8 +259,7 @@ class LedgerOperationService:
         )
         if funding.funding_class == "ESCROW_PREPAID":
             self._wallet_q_atom_balances[funding.consumer_funding_account] = (
-                self.wallet_q_atom_balance(funding.consumer_funding_account)
-                - funding.total_locked_amount_q_atoms
+                self.wallet_q_atom_balance(funding.consumer_funding_account) - funding.total_locked_amount_q_atoms
             )
         self._session_funding_accounts[funding.session_id] = locked
         return locked
@@ -276,10 +281,8 @@ class LedgerOperationService:
         if funding.funding_state in {"RELEASED", "REFUNDED"}:
             raise ValueError("Session funding account is already finalized")
         if (
-            transition.endpoint_payment_beneficiary
-            != funding.endpoint_payment_beneficiary
-            or transition.consumer_refund_beneficiary
-            != funding.consumer_refund_beneficiary
+            transition.endpoint_payment_beneficiary != funding.endpoint_payment_beneficiary
+            or transition.consumer_refund_beneficiary != funding.consumer_refund_beneficiary
         ):
             raise ValueError("Settlement beneficiaries do not match Session funding")
         if evaluation.input_set.funding_state_reference != funding.funding_state_hash:
@@ -333,15 +336,11 @@ class LedgerOperationService:
                 "active_dispute_reserve_q_atoms": proposal.dispute_reserve_q_atoms,
                 "unsettled_payment_reserve_q_atoms": 0,
                 "unsettled_fee_reserve_q_atoms": 0,
-                "funding_state": (
-                    "DISPUTE_RESERVED" if proposal.dispute_reserve_q_atoms else "RELEASED"
-                ),
+                "funding_state": ("DISPUTE_RESERVED" if proposal.dispute_reserve_q_atoms else "RELEASED"),
             },
         )
         self._session_funding_accounts[transition.session_id] = next_funding
-        self._settlement_transition_hashes[transition.settlement_id] = str(
-            transition.transition_hash
-        )
+        self._settlement_transition_hashes[transition.settlement_id] = str(transition.transition_hash)
         return next_funding
 
     def list_operations(self, *, limit: int | None = None) -> list[dict]:
@@ -524,11 +523,7 @@ class LedgerOperationService:
             if sender_wallet is None:
                 raise ValueError("wallet operations require sender_wallet")
             next_wallet_sequence = self.wallet_next_sequence(sender_wallet)
-            sender_sequence = (
-                int(expected_sequence)
-                if expected_sequence is not None
-                else next_wallet_sequence
-            )
+            sender_sequence = int(expected_sequence) if expected_sequence is not None else next_wallet_sequence
             if sender_sequence != next_wallet_sequence:
                 raise ValueError(
                     f"invalid wallet sequence for {sender_wallet}: "
@@ -607,16 +602,13 @@ class LedgerOperationService:
         return {
             "wallet_q_atom_balances": dict(self._wallet_q_atom_balances),
             "session_funding_accounts": [
-                account.model_dump(mode="json")
-                for account in self._session_funding_accounts.values()
+                account.model_dump(mode="json") for account in self._session_funding_accounts.values()
             ],
             "settlement_proposals": [
-                proposal.model_dump(mode="json")
-                for proposal in self._settlement_proposals.values()
+                proposal.model_dump(mode="json") for proposal in self._settlement_proposals.values()
             ],
             "settlement_acceptances": [
-                acceptance.model_dump(mode="json")
-                for acceptance in self._settlement_acceptances.values()
+                acceptance.model_dump(mode="json") for acceptance in self._settlement_acceptances.values()
             ],
             "settlement_transition_hashes": dict(self._settlement_transition_hashes),
         }
@@ -635,34 +627,22 @@ class LedgerOperationService:
         self._operations = [LedgerOperationRecord(**item).model_dump(mode="json") for item in operations]
         self._operation_ids = {item["operation_id"] for item in self._operations}
         self._wallet_next_sequences = {str(key): int(value) for key, value in wallet_sequences.items()}
-        self._wallet_q_atom_balances = {
-            str(key): int(value) for key, value in (wallet_q_atom_balances or {}).items()
-        }
+        self._wallet_q_atom_balances = {str(key): int(value) for key, value in (wallet_q_atom_balances or {}).items()}
         self._session_funding_accounts = {
             account.session_id: account
-            for account in (
-                SessionFundingAccount.model_validate(item)
-                for item in (session_funding_accounts or [])
-            )
+            for account in (SessionFundingAccount.model_validate(item) for item in (session_funding_accounts or []))
         }
         self._settlement_transition_hashes = {
-            str(key): str(value)
-            for key, value in (settlement_transition_hashes or {}).items()
+            str(key): str(value) for key, value in (settlement_transition_hashes or {}).items()
         }
         self._settlement_proposals = {
             proposal.settlement_id: proposal
-            for proposal in (
-                SessionSettlementProposal.model_validate(item)
-                for item in (settlement_proposals or [])
-            )
+            for proposal in (SessionSettlementProposal.model_validate(item) for item in (settlement_proposals or []))
         }
         self._settlement_acceptances = {
             acceptance.settlement_id: acceptance
             for acceptance in (
-                SessionSettlementAcceptance.model_validate(item)
-                for item in (settlement_acceptances or [])
+                SessionSettlementAcceptance.model_validate(item) for item in (settlement_acceptances or [])
             )
         }
-        self._next_sequence_id = (
-            max((int(item["sequence_id"]) for item in self._operations), default=0) + 1
-        )
+        self._next_sequence_id = max((int(item["sequence_id"]) for item in self._operations), default=0) + 1
