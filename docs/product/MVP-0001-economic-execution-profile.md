@@ -143,8 +143,9 @@ Implemented now:
   Endpoint Payment Beneficiary identity before escrow can be locked.
 - The integration suite now covers one real public paid path against a live
   `llama.cpp` runtime: signed Endpoint publication, public Session open,
-  Runtime execution, Final Usage, signed cooperative Settlement acceptance and
-  canonical finalization.
+  Runtime execution, Final Usage, restart recovery from durable state, signed
+  cooperative Settlement acceptance and canonical finalization without a
+  second provider execution or payment.
 - Ollama has an explicit RFC-0054 `ollama-generate` adapter for native
   `/api/generate` execution and JSONL streaming. It maps emitted token counts
   as Provider-authoritative Usage, records delivered stream bytes locally and

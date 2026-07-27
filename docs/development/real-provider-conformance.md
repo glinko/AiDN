@@ -43,7 +43,11 @@ compatibility evidence afterwards.
 The same opt-in profile runs a one-request fixed-price Session through that
 approved-Binding path: escrow lock, queue dispatch, provider execution, terminal
 Runtime evidence and Settlement finalization. The Session therefore has no
-post-execution compatibility-evidence bridge.
+post-execution compatibility-evidence bridge. The smoke restarts the local
+Hypervisor after the terminal Result and Final Usage are durable, restores the
+Endpoint, Session and escrow state from the file store, then signs and
+finalizes the same Settlement. It must not re-dispatch the Request to the
+provider or create a second payment.
 
 Streaming endpoints normally do not disclose final Provider token usage. The
 adapter therefore reports only locally observed delivered output bytes for a

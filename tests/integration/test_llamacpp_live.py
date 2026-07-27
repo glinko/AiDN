@@ -23,6 +23,7 @@ from aidn_hypervisor.endpoints.models import CreateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.main import build_app
+from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager
@@ -284,7 +285,7 @@ def test_llamacpp_live_approved_binding_dispatches_session_request() -> None:
     assert result.result_payload["text"]
 
 
-def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
+def test_llamacpp_live_fixed_price_session_executes_and_settles_after_restart(tmp_path) -> None:
     endpoint, model = _live_configuration()
     plugins = PluginRegistry()
     plugins.register(LlamaCppPlugin())
@@ -308,20 +309,23 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
         capability_version="1.0",
         capability_definition_hash="live-paid-session-capability",
     )
+    state_store = FileStateStore(tmp_path / "live-paid-session-state.json")
+    bundle = inventory.bundle_config_for_runtime_binding(binding.runtime_binding_id)
     hypervisor = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
         resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048)),
-        bundles=[inventory.bundle_config_for_runtime_binding(binding.runtime_binding_id)],
+        bundles=[bundle],
         plugins=plugins,
         runtimes=ProviderProcessManager(),
         provider_inventory=inventory,
+        state_store=state_store,
     )
     hypervisor.configure_owner_wallet(mode="create", label="Live Primary Wallet")
     owner_wallet_id = hypervisor.owner_wallet_state()["wallet_id"]
-    endpoint_service = EndpointService(EndpointStore())
+    endpoint_service = EndpointService(EndpointStore(state_store))
     endpoint_publication_service = EndpointPublicationService(
-        store=EndpointPublicationStore(),
+        store=EndpointPublicationStore(state_store),
         endpoint_service=endpoint_service,
     )
     client = TestClient(
@@ -329,7 +333,7 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
             service=hypervisor,
             endpoint_service=endpoint_service,
             endpoint_publication_service=endpoint_publication_service,
-            session_service=SessionService(SessionStore()),
+            session_service=SessionService(SessionStore(state_store)),
         )
     )
     created = client.post(
@@ -408,8 +412,34 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
         "constraints": {"endpoint_id": endpoint_id, "session_id": session["session_id"]}})
     assert task.status_code == 202, task.text
     request_id = task.json()["task_id"]
+    assert hypervisor.task_result(request_id)["output_text"]
+
+    # A restarted Hypervisor must settle the persisted terminal evidence without
+    # contacting the provider or recreating the accepted Request.
+    restored_hypervisor = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048)),
+        bundles=[bundle],
+        plugins=plugins,
+        runtimes=ProviderProcessManager(),
+        state_store=state_store,
+    )
+    restored_hypervisor.restore_state(state_store.load())
+    restored_endpoint_service = EndpointService(EndpointStore(state_store))
+    restored_client = TestClient(
+        build_app(
+            service=restored_hypervisor,
+            endpoint_service=restored_endpoint_service,
+            endpoint_publication_service=EndpointPublicationService(
+                store=EndpointPublicationStore(state_store),
+                endpoint_service=restored_endpoint_service,
+            ),
+            session_service=SessionService(SessionStore(state_store)),
+        )
+    )
     accepted_at = "2026-07-21T12:00:00+00:00"
-    preview = client.post(
+    preview = restored_client.post(
         f"/api/v1/endpoints/{endpoint_id}/mvp-sessions/{session['session_id']}/settlement-preview",
         json={"request_id": request_id, "accepted_at": accepted_at},
     )
@@ -417,7 +447,7 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
     unsigned = SessionSettlementAcceptance(**preview.json()["data"]["acceptance_payload"],
         consumer_signature="ed25519:" + "00" * 64)
     settlement_signature = consumer_key.sign(settlement_acceptance_signing_payload(unsigned)).hex()
-    response = client.post(
+    response = restored_client.post(
         f"/api/v1/endpoints/{endpoint_id}/mvp-sessions/{session['session_id']}/finalize",
         json={"request_id": request_id, "accepted_at": accepted_at,
               "consumer_signature": f"ed25519:{settlement_signature}"},
@@ -425,10 +455,10 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles() -> None:
     body = response.json()["data"]
 
     assert response.status_code == 200, response.text
-    assert hypervisor.task_result(request_id)["output_text"]
+    assert restored_hypervisor.task_result(request_id)["output_text"]
     assert body["funding"]["funding_state"] == "RELEASED"
-    assert hypervisor.wallet_q_atom_balance(owner_wallet_id) == 900
-    assert hypervisor.wallet_q_atom_balance("live-consumer-wallet") == 100
+    assert restored_hypervisor.wallet_q_atom_balance(owner_wallet_id) == 900
+    assert restored_hypervisor.wallet_q_atom_balance("live-consumer-wallet") == 100
 
 
 def test_llamacpp_live_adapter_records_rfc0054_terminal_evidence() -> None:
