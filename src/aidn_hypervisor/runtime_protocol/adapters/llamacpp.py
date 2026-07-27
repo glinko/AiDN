@@ -26,6 +26,8 @@ from aidn_hypervisor.runtime_protocol.models import (
 class LlamaCppOpenAIAdapter:
     """Translate one accepted `llm.chat` Request into `/v1/completions`."""
 
+    adapter_label = "llamacpp"
+
     def __init__(
         self,
         *,
@@ -61,7 +63,7 @@ class LlamaCppOpenAIAdapter:
             result_payload = None
             limitations = [f"UPSTREAM_ERROR:{type(exc).__name__}"]
         report = RuntimeUsageReport(
-            usage_report_id=f"llamacpp-usage-{request.request_id}",
+            usage_report_id=f"{self.adapter_label}-usage-{request.request_id}",
             runtime_id=request.runtime_id,
             runtime_generation=request.runtime_generation,
             runtime_configuration_hash=request.runtime_configuration_hash,
@@ -114,7 +116,7 @@ class LlamaCppOpenAIAdapter:
         if existing is not None:
             return existing
         self._admit(protocol, runtime_connection_id, request, accepted_features=["streaming"])
-        stream_id = f"llamacpp-stream-{request.request_id}"
+        stream_id = f"{self.adapter_label}-stream-{request.request_id}"
         protocol.record_runtime_stream_open(
             runtime_connection_id,
             RuntimeStreamOpen(
@@ -196,7 +198,7 @@ class LlamaCppOpenAIAdapter:
         )
         protocol.record_runtime_stream_close(runtime_connection_id, close)
         report = RuntimeUsageReport(
-            usage_report_id=f"llamacpp-usage-{request.request_id}",
+            usage_report_id=f"{self.adapter_label}-usage-{request.request_id}",
             runtime_id=request.runtime_id,
             runtime_generation=request.runtime_generation,
             runtime_configuration_hash=request.runtime_configuration_hash,
@@ -425,7 +427,7 @@ class LlamaCppOpenAIAdapter:
                 session_id=request.session_id,
                 request_id=request.request_id,
                 admission_state="ACCEPTED",
-                runtime_request_handle=f"llamacpp-{request.request_id}",
+                runtime_request_handle=f"{self.adapter_label}-{request.request_id}",
                 accepted_capability_definition_hash=request.capability_definition_hash,
                 accepted_features=accepted_features,
                 accepted_at=self._now(),

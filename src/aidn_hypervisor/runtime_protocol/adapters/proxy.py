@@ -22,6 +22,8 @@ class ProxyOpenAIAdapter(LlamaCppOpenAIAdapter):
     and status recovery. The adapter never infers token usage from text.
     """
 
+    adapter_label = "proxy"
+
     def __init__(
         self,
         *,

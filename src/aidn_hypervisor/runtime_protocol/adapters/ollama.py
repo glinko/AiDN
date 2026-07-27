@@ -15,6 +15,8 @@ class OllamaGenerateAdapter(LlamaCppOpenAIAdapter):
     best-effort and never reports a confirmed provider stop.
     """
 
+    adapter_label = "ollama"
+
     def _completion(self, execution_request):
         response = self._generate(execution_request, stream=False)
         return self._normalize_response(response)
@@ -54,7 +56,7 @@ class OllamaGenerateAdapter(LlamaCppOpenAIAdapter):
                 session_id=request.session_id,
                 request_id=request.request_id,
                 admission_state="ACCEPTED",
-                runtime_request_handle=f"ollama-{request.request_id}",
+                runtime_request_handle=f"{self.adapter_label}-{request.request_id}",
                 accepted_capability_definition_hash=request.capability_definition_hash,
                 accepted_features=accepted_features,
                 accepted_at=self._now(),

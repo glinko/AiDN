@@ -7,6 +7,8 @@ from aidn_hypervisor.runtime_protocol.models import RuntimeUsageDimension
 class VllmOpenAIAdapter(LlamaCppOpenAIAdapter):
     """Use the shared OpenAI wire mapping with vLLM-specific Usage provenance."""
 
+    adapter_label = "vllm"
+
     def _usage_dimensions(self, usage: dict) -> list[RuntimeUsageDimension]:
         dimensions: list[RuntimeUsageDimension] = []
         for provider_key, dimension_id in (
