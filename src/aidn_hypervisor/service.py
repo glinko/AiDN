@@ -62,6 +62,7 @@ from aidn_hypervisor.state import (
     TaskSnapshot,
 )
 from aidn_hypervisor.task_execution_service import TaskExecutionService
+from aidn_hypervisor.task_lifecycle_service import TaskLifecycleService
 from aidn_hypervisor.wallet_allocation_service import WalletAllocationService
 from aidn_hypervisor.wallet_application_service import WalletApplicationService
 from aidn_hypervisor.wallet_economics_service import WalletEconomicsService
@@ -71,10 +72,6 @@ from aidn_hypervisor.wallet_models import (
 
 Q_ATOMS_PER_Q = 1_000_000
 
-_CANCELLABLE_TASK_STATUSES = {"queued", "admitted", "starting"}
-_ACTIVE_EXECUTION_STATUSES = {"admitted", "starting", "running"}
-_TERMINAL_FAILED_STATUSES = {"failed"}
-_TERMINAL_COMPLETED_STATUSES = {"completed"}
 _DEFAULT_OPERATOR_REQUESTS_POLICY = {
     "allow_spillover": False,
     "dispatch_strategy": "local_first",
@@ -256,6 +253,7 @@ class HypervisorService:
         self._runtime_execution_service = RuntimeExecutionService(self)
         self._remote_transport_service = RemoteTransportService(self)
         self._task_execution_service = TaskExecutionService(self)
+        self._task_lifecycle_service = TaskLifecycleService(self)
         self._allocation_lifecycle_service = AllocationLifecycleService(self)
         self._allocation_catalog_service = AllocationCatalogService(self)
         self._admission_planning_service = AdmissionPlanningService(self)
@@ -296,73 +294,19 @@ class HypervisorService:
         self._rating = RegistryRating(**value)
 
     def submit(self, request: TaskRequest):
-        effective_request = self._task_request_with_allocation_context(request)
-        effective_request = self._task_request_with_endpoint_context(effective_request)
-        bundle = self.scheduler.select_bundle(effective_request, self.bundles)
-        task = self.queue.enqueue(effective_request)
-        self._selected_bundles[task.task_id] = bundle.bundle_id
-        self.record_event(
-            event_type="task.submitted",
-            message="task accepted into queue",
-            task_id=task.task_id,
-            bundle_id=bundle.bundle_id,
-            details={
-                "task_type": effective_request.task_type,
-                "mode": effective_request.mode,
-            },
-        )
-        self.process_pending()
-        return task
+        return self._task_lifecycle_facade().submit(request)
 
     def selected_bundle_id(self, task_id: str) -> str | None:
-        return self._selected_bundles.get(task_id)
+        return self._task_lifecycle_facade().selected_bundle_id(task_id)
 
     def task_result(self, task_id: str) -> dict | None:
-        return self._task_results.get(task_id)
+        return self._task_lifecycle_facade().task_result(task_id)
 
     def task_recovery_reason(self, task_id: str) -> str | None:
-        return self._runtime_boundary.task_recovery_reason(task_id)
+        return self._task_lifecycle_facade().task_recovery_reason(task_id)
 
     def task_proxy_trace(self, task_id: str) -> dict | None:
-        result = self.task_result(task_id) or {}
-        proxy_result = result.get("proxy") if isinstance(result, dict) else None
-        dispatch_event = next(
-            (
-                event
-                for event in reversed(self.task_history(task_id))
-                if event.event_type == "task.proxy_dispatched"
-            ),
-            None,
-        )
-        if proxy_result is None and dispatch_event is None:
-            return None
-        task = self.queue.get(task_id)
-        details = dispatch_event.details if dispatch_event is not None else {}
-        return {
-            "strategy": "proxy",
-            "status": task.status,
-            "remote_task_id": (
-                str(proxy_result.get("remote_task_id"))
-                if proxy_result and proxy_result.get("remote_task_id") is not None
-                else None
-            ),
-            "remote_endpoint_id": (
-                str(proxy_result.get("remote_endpoint_id"))
-                if proxy_result and proxy_result.get("remote_endpoint_id") is not None
-                else details.get("remote_endpoint_id")
-            ),
-            "remote_node_id": (
-                str(proxy_result.get("remote_node_id"))
-                if proxy_result and proxy_result.get("remote_node_id") is not None
-                else details.get("remote_node_id")
-            ),
-            "source_base_url": (
-                str(proxy_result.get("source_base_url"))
-                if proxy_result and proxy_result.get("source_base_url") is not None
-                else details.get("source_base_url")
-            ),
-            "dispatched_at": dispatch_event.timestamp if dispatch_event is not None else None,
-        }
+        return self._task_lifecycle_facade().task_proxy_trace(task_id)
 
     def event_journal(self, *, limit: int | None = None) -> list[JournalEvent]:
         events = list(self._events)
@@ -915,7 +859,7 @@ class HypervisorService:
         )
 
     def task_history(self, task_id: str) -> list[JournalEvent]:
-        return [event for event in self._events if event.task_id == task_id]
+        return self._task_lifecycle_facade().task_history(task_id)
 
     def quote_wallet_usage(
         self,
@@ -1573,18 +1517,7 @@ class HypervisorService:
         return self._runtime_boundary.restart_runtime(runtime_id)
 
     def cancel_task(self, task_id: str):
-        task = self.queue.get(task_id)
-        if task.status not in _CANCELLABLE_TASK_STATUSES:
-            raise ValueError(f"Task is not cancellable: {task_id}")
-        cancelled_task = self.queue.transition_status(task_id, "cancelled")
-        self.record_event(
-            event_type="task.cancelled",
-            message="task cancelled before execution",
-            task_id=task_id,
-            bundle_id=self.selected_bundle_id(task_id),
-        )
-        self.process_pending()
-        return cancelled_task
+        return self._task_lifecycle_facade().cancel_task(task_id)
 
     def start_bundle(self, bundle_id: str) -> RuntimeHandle:
         return self._runtime_boundary._bundle_runtime_policy_facade().start_bundle(bundle_id)
@@ -1596,48 +1529,10 @@ class HypervisorService:
         return self._runtime_boundary.list_runtimes()
 
     def process_pending(self) -> dict[str, int]:
-        if self.resources is None or not self._has_plugins():
-            summary = self.queue_summary()
-            self._persist_state()
-            return summary
-
-        while True:
-            progressed = False
-            admission_plan = self._pending_task_plan()
-            self._runtime_boundary._record_admission_events(admission_plan)
-            for item in admission_plan:
-                task_id = str(item["task_id"])
-                task_before = self.queue.get(task_id)
-                if task_before.status != "queued":
-                    continue
-                previous_status = task_before.status
-                try:
-                    result = self._attempt_task(task_id)
-                    current_status = self.queue.get(task_id).status
-                    if result or current_status != previous_status:
-                        progressed = True
-                except Exception:
-                    if self.queue.get(task_id).status != previous_status:
-                        progressed = True
-                    continue
-            if not progressed:
-                break
-        summary = self.queue_summary()
-        self._persist_state()
-        return summary
+        return self._task_lifecycle_facade().process_pending()
 
     def queue_summary(self) -> dict[str, int]:
-        summary = {"queued": 0, "active": 0, "completed": 0, "failed": 0}
-        for task in self.queue.snapshot():
-            if task.status == "queued":
-                summary["queued"] += 1
-            elif task.status in _ACTIVE_EXECUTION_STATUSES:
-                summary["active"] += 1
-            elif task.status in _TERMINAL_COMPLETED_STATUSES:
-                summary["completed"] += 1
-            elif task.status in _TERMINAL_FAILED_STATUSES:
-                summary["failed"] += 1
-        return summary
+        return self._task_lifecycle_facade().queue_summary()
 
     def queue_diagnostics(self) -> list[dict[str, str]]:
         return self._runtime_boundary._admission_planning_facade().queue_diagnostics()
@@ -2630,6 +2525,13 @@ class HypervisorService:
         if facade is None:
             facade = TaskExecutionService(self)
             self._task_execution_service = facade
+        return facade
+
+    def _task_lifecycle_facade(self) -> TaskLifecycleService:
+        facade = getattr(self, "_task_lifecycle_service", None)
+        if facade is None:
+            facade = TaskLifecycleService(self)
+            self._task_lifecycle_service = facade
         return facade
 
     def _snapshot_state_facade(self) -> SnapshotStateService:
