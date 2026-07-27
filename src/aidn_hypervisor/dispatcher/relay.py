@@ -23,6 +23,7 @@ DEFAULT_RELAY_EXPIRATION_SECS: int = 300
 
 # ── Relay envelope (RFC-0042 §38) ────────────────────────────────────────
 
+
 class RelayEnvelope(BaseModel):
     """Authenticated relay envelope for indirect peer communication."""
 
@@ -33,14 +34,10 @@ class RelayEnvelope(BaseModel):
     relay_path: list[str] = Field(default_factory=list)  # relay IDs visited
     hop_count: int = 0
     hop_limit: int = DEFAULT_MAX_RELAY_HOPS
-    expiration: str = Field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    expiration: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     source_signature: str = ""  # end-to-end signature
     payload: bytes = b""  # encrypted payload (relay cannot read)
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def is_expired(self) -> bool:
         """Check if envelope has expired."""
@@ -66,11 +63,20 @@ class RelayEnvelope(BaseModel):
 
     def compute_integrity_hash(self) -> str:
         """Compute integrity hash for path verification."""
-        data = f"{self.relay_message_id}:{self.source_hypervisor_id}:{self.destination_hypervisor_id}:{self.inner_message_hash}:{','.join(self.relay_path)}"
+        data = ":".join(
+            (
+                self.relay_message_id,
+                self.source_hypervisor_id,
+                self.destination_hypervisor_id,
+                self.inner_message_hash,
+                ",".join(self.relay_path),
+            )
+        )
         return hashlib.sha256(data.encode()).hexdigest()
 
 
 # ── Relay rate limiter ───────────────────────────────────────────────────
+
 
 class RateLimiter:
     """Token bucket rate limiter for relay messages."""
@@ -99,6 +105,7 @@ class RateLimiter:
 
 
 # ── Relay router ─────────────────────────────────────────────────────────
+
 
 class RelayRouter:
     """Handles relay message forwarding (RFC-0042 §37-43).

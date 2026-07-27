@@ -122,9 +122,7 @@ def _service(
     return HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[active_bundle],
         plugins=plugins,
         runtimes=ProviderProcessManager(),
@@ -402,9 +400,7 @@ def test_service_records_wallet_session_events_from_paid_session_lifecycle() -> 
 def test_service_attaches_usage_report_to_paid_session_task_result() -> None:
     service = _service(
         plugin=UsageMeteringPlugin(),
-        bundle=_bundle("phi4-local", "llm_text").model_copy(
-            update={"plugin_id": "fake-usage-metering"}
-        ),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(update={"plugin_id": "fake-usage-metering"}),
     )
     endpoint_service = EndpointService(EndpointStore())
     session_service = SessionService(SessionStore())
@@ -463,12 +459,10 @@ def test_service_attaches_usage_report_to_paid_session_task_result() -> None:
     assert result["usage_report"]["cumulative_usage"]["input_tokens"] == 250_000
     assert result["usage_acknowledgement"]["verification_status"] == "accepted_unverified"
     assert result["usage_acknowledgement"]["sequence"] == 1
-    expected_report_head = UsageReport.model_validate(result["usage_report"]).model_dump(
+    expected_report_head = UsageReport.model_validate(result["usage_report"]).model_dump(mode="json")
+    expected_acknowledgement_head = UsageAcknowledgement.model_validate(result["usage_acknowledgement"]).model_dump(
         mode="json"
     )
-    expected_acknowledgement_head = UsageAcknowledgement.model_validate(
-        result["usage_acknowledgement"]
-    ).model_dump(mode="json")
     accepted_charge_q = session_service.get_session(opened.session.session_id).deposit.consumed_q
     assert result["session_accounting"] == {
         "session_id": opened.session.session_id,
@@ -476,18 +470,14 @@ def test_service_attaches_usage_report_to_paid_session_task_result() -> None:
         "checkpoint": {
             "last_report_id": result["usage_report"]["report_id"],
             "last_report_sequence": 1,
-            "last_report_hash": usage_report_hash(
-                UsageReport.model_validate(result["usage_report"])
-            ),
+            "last_report_hash": usage_report_hash(UsageReport.model_validate(result["usage_report"])),
             "last_ack_sequence": 1,
             "last_ack_hash": usage_acknowledgement_hash(
                 UsageAcknowledgement.model_validate(result["usage_acknowledgement"])
             ),
             "last_accepted_report_sequence": 1,
             "last_accepted_report_id": result["usage_report"]["report_id"],
-            "last_accepted_report_hash": usage_report_hash(
-                UsageReport.model_validate(result["usage_report"])
-            ),
+            "last_accepted_report_hash": usage_report_hash(UsageReport.model_validate(result["usage_report"])),
             "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": accepted_charge_q,
             "mismatch_open": False,
@@ -863,36 +853,18 @@ def test_wallet_ledger_export_merges_session_usage_and_allocation_streams() -> N
     assert ledger["cursor_status"] == "ok"
     items = ledger["items"]
     assert len(items) >= 5
-    assert [item["sequence_id"] for item in items] == sorted(
-        item["sequence_id"] for item in items
-    )
-    assert {"session", "usage", "allocation", "allocation_activation"} <= {
-        item["stream"] for item in items
-    }
-    assert any(
-        item["stream"] == "session" and item["event_type"] == "settled"
-        for item in items
-    )
-    assert any(
-        item["stream"] == "usage" and item["event_type"] == "usage_recorded"
-        for item in items
-    )
-    assert any(
-        item["stream"] == "allocation_activation" and item["event_type"] == "activated"
-        for item in items
-    )
-    assert any(
-        item["stream"] == "allocation" and item["event_type"] == "released"
-        for item in items
-    )
+    assert [item["sequence_id"] for item in items] == sorted(item["sequence_id"] for item in items)
+    assert {"session", "usage", "allocation", "allocation_activation"} <= {item["stream"] for item in items}
+    assert any(item["stream"] == "session" and item["event_type"] == "settled" for item in items)
+    assert any(item["stream"] == "usage" and item["event_type"] == "usage_recorded" for item in items)
+    assert any(item["stream"] == "allocation_activation" and item["event_type"] == "activated" for item in items)
+    assert any(item["stream"] == "allocation" and item["event_type"] == "released" for item in items)
 
 
 def test_wallet_ledger_snapshot_and_restore_preserves_merged_events() -> None:
     service = _service(
         plugin=UsageMeteringPlugin(),
-        bundle=_bundle("phi4-local", "llm_text").model_copy(
-            update={"plugin_id": "fake-usage-metering"}
-        ),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(update={"plugin_id": "fake-usage-metering"}),
     )
     endpoint_service = EndpointService(EndpointStore())
     session_service = SessionService(SessionStore())
@@ -944,7 +916,10 @@ def test_wallet_ledger_snapshot_and_restore_preserves_merged_events() -> None:
     restored = _service()
     restored.restore_state(snapshot)
 
-    assert restored.export_wallet_ledger_events(limit=20)["items"] == service.export_wallet_ledger_events(limit=20)["items"]
+    assert (
+        restored.export_wallet_ledger_events(limit=20)["items"]
+        == service.export_wallet_ledger_events(limit=20)["items"]
+    )
 
 
 def test_validation_events_appear_in_wallet_ledger_export() -> None:
@@ -1005,11 +980,7 @@ def test_validation_wallet_events_survive_certification_refactor() -> None:
 
     ledger = service.export_wallet_ledger_events(limit=20)
     event_types = [item["event_type"] for item in ledger["items"]]
-    maintenance_event = next(
-        item
-        for item in ledger["items"]
-        if item["event_type"] == "maintenance_validation_passed"
-    )
+    maintenance_event = next(item for item in ledger["items"] if item["event_type"] == "maintenance_validation_passed")
 
     assert "validation_bond_locked" in event_types
     assert "validation_bond_refunded" in event_types
@@ -1089,9 +1060,7 @@ def test_service_derives_wallet_owner_from_allocation_when_task_owner_constraint
 
 def test_service_emits_wallet_allocation_activation_hook_on_create() -> None:
     service = _service(
-        bundle=_bundle("phi4-local", "llm_text").model_copy(
-            update={"endpoint": "http://127.0.0.1:8080"}
-        )
+        bundle=_bundle("phi4-local", "llm_text").model_copy(update={"endpoint": "http://127.0.0.1:8080"})
     )
 
     allocation = service.create_allocation(
@@ -1102,9 +1071,7 @@ def test_service_emits_wallet_allocation_activation_hook_on_create() -> None:
         )
     )
     activation_events = [
-        event
-        for event in service.event_journal()
-        if event.event_type == "wallet.allocation_activated"
+        event for event in service.event_journal() if event.event_type == "wallet.allocation_activated"
     ]
 
     assert len(activation_events) == 1
@@ -1144,18 +1111,12 @@ def test_service_emits_wallet_allocation_activation_hook_when_pending_lease_acti
     )
 
     assert allocation["status"] == "pending"
-    assert [
-        event
-        for event in service.event_journal()
-        if event.event_type == "wallet.allocation_activated"
-    ] == []
+    assert [event for event in service.event_journal() if event.event_type == "wallet.allocation_activated"] == []
 
     service.resources.release("busy")
     activated = service.get_allocation(allocation["allocation_id"])
     activation_events = [
-        event
-        for event in service.event_journal()
-        if event.event_type == "wallet.allocation_activated"
+        event for event in service.event_journal() if event.event_type == "wallet.allocation_activated"
     ]
 
     assert activated["status"] == "active"
@@ -1174,9 +1135,7 @@ def test_service_emits_wallet_allocation_activation_hook_when_pending_lease_acti
 
 def test_service_lists_wallet_allocation_activation_events() -> None:
     service = _service(
-        bundle=_bundle("phi4-local", "llm_text").model_copy(
-            update={"endpoint": "http://127.0.0.1:8080"}
-        )
+        bundle=_bundle("phi4-local", "llm_text").model_copy(update={"endpoint": "http://127.0.0.1:8080"})
     )
     first = service.create_allocation(
         AllocationRequest(
@@ -1357,9 +1316,7 @@ def test_service_reopens_closed_wallet_allocation_finalization_with_new_grace_pe
     current_time[0] += 31
     closed = dict(service.list_wallet_allocation_events()[0])
 
-    reopened = service.reopen_wallet_allocation_event(
-        closed["event_id"], reason="late provider usage"
-    )
+    reopened = service.reopen_wallet_allocation_event(closed["event_id"], reason="late provider usage")
     current_time[0] += 31
     reclosed = dict(service.list_wallet_allocation_events()[0])
 
@@ -1527,9 +1484,7 @@ def test_operator_wallet_allocation_export_reports_finalization_events() -> None
 
 def test_operator_wallet_allocation_activation_export_reports_events() -> None:
     service = _service(
-        bundle=_bundle("phi4-local", "llm_text").model_copy(
-            update={"endpoint": "http://127.0.0.1:8080"}
-        )
+        bundle=_bundle("phi4-local", "llm_text").model_copy(update={"endpoint": "http://127.0.0.1:8080"})
     )
     first = service.create_allocation(
         AllocationRequest(
@@ -1669,10 +1624,7 @@ def test_operator_wallet_allocation_dispute_endpoints_manage_settlement(
     assert resolve_response.json()["settlement_status"] == "closed"
     assert resolve_response.json()["dispute_status"] == "resolved"
     assert resolve_response.json()["dispute_resolution"] == "rejected"
-    assert (
-        resolve_response.json()["dispute_resolution_reason"]
-        == "manual settlement override"
-    )
+    assert resolve_response.json()["dispute_resolution_reason"] == "manual settlement override"
 
 
 def test_operator_wallet_allocation_dispute_export_reports_open_and_resolve_events(
@@ -1731,9 +1683,7 @@ def test_operator_wallet_allocation_dispute_export_reports_open_and_resolve_even
 def test_operator_wallet_ledger_export_reports_unified_wallet_journal() -> None:
     service = _service(
         plugin=UsageMeteringPlugin(),
-        bundle=_bundle("phi4-local", "llm_text").model_copy(
-            update={"plugin_id": "fake-usage-metering"}
-        ),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(update={"plugin_id": "fake-usage-metering"}),
     )
     endpoint_service = EndpointService(EndpointStore())
     session_service = SessionService(SessionStore())
@@ -1920,9 +1870,7 @@ def test_operator_wallet_usage_endpoint_accepts_allocation_id() -> None:
 def test_service_skips_invalid_provider_usage_contract_without_failing_task() -> None:
     service = _service(
         plugin=InvalidUsageMeteringPlugin(),
-        bundle=_bundle("phi4-local", "llm_text").model_copy(
-            update={"plugin_id": "fake-invalid-usage-metering"}
-        ),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(update={"plugin_id": "fake-invalid-usage-metering"}),
     )
 
     task = service.submit(
@@ -1941,9 +1889,7 @@ def test_service_skips_invalid_provider_usage_contract_without_failing_task() ->
 def test_service_marks_task_unbillable_when_strict_accounting_rejects_invalid_usage() -> None:
     service = _service(
         plugin=StrictInvalidUsageMeteringPlugin(),
-        bundle=_bundle("phi4-local", "llm_text").model_copy(
-            update={"plugin_id": "fake-strict-invalid-usage-metering"}
-        ),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(update={"plugin_id": "fake-strict-invalid-usage-metering"}),
     )
 
     task = service.submit(
@@ -1974,9 +1920,7 @@ def test_service_marks_task_unbillable_when_strict_accounting_rejects_invalid_us
 def test_service_marks_task_unbillable_when_strict_accounting_usage_is_missing() -> None:
     service = _service(
         plugin=StrictMissingUsageMeteringPlugin(),
-        bundle=_bundle("phi4-local", "llm_text").model_copy(
-            update={"plugin_id": "fake-strict-missing-usage-metering"}
-        ),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(update={"plugin_id": "fake-strict-missing-usage-metering"}),
     )
 
     task = service.submit(
@@ -2007,9 +1951,7 @@ def test_service_marks_task_unbillable_when_strict_accounting_usage_is_missing()
 def test_service_builds_provider_metered_accounting_contract_for_paid_endpoint() -> None:
     service = _service(
         plugin=UsageMeteringPlugin(),
-        bundle=_bundle("phi4-local", "llm_text").model_copy(
-            update={"plugin_id": "fake-usage-metering"}
-        ),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(update={"plugin_id": "fake-usage-metering"}),
     )
     endpoint_service = EndpointService(EndpointStore())
     created = endpoint_service.create_endpoint(
@@ -2052,6 +1994,7 @@ def test_service_builds_provider_metered_accounting_contract_for_paid_endpoint()
 # ---------------------------------------------------------------------------
 # A.1 — Hold / Release / Correction model tests
 # ---------------------------------------------------------------------------
+
 
 def test_wallet_allocation_hold_request_validation() -> None:
     from aidn_hypervisor.wallet_models import WalletAllocationHoldRequest
@@ -2277,9 +2220,7 @@ def test_service_snapshot_and_restore_preserves_wallet_settlement_hold_and_corre
     )
     service.release_allocation(allocation["allocation_id"])
     event = service.list_wallet_allocation_events()[0]
-    held = service.hold_wallet_allocation_event(
-        event["event_id"], reason="manual review"
-    )
+    held = service.hold_wallet_allocation_event(event["event_id"], reason="manual review")
     service.apply_wallet_allocation_correction(
         held["event_id"],
         reason="billing correction",
@@ -2427,9 +2368,7 @@ def test_reconcile_skips_held_events(monkeypatch) -> None:
     event = service.list_wallet_allocation_events()[0]
 
     # Manually hold the event
-    held = service.hold_wallet_allocation_event(
-        event["event_id"], reason="manual review"
-    )
+    held = service.hold_wallet_allocation_event(event["event_id"], reason="manual review")
     assert held["settlement_status"] == "hold"
 
     # Advance time past grace period
@@ -2491,9 +2430,7 @@ def test_effective_total_changes_with_corrections(monkeypatch) -> None:
     assert original_effective > 0
 
     # Hold then correct
-    service.hold_wallet_allocation_event(
-        event["event_id"], reason="correction needed"
-    )
+    service.hold_wallet_allocation_event(event["event_id"], reason="correction needed")
     corrected = service.apply_wallet_allocation_correction(
         event["event_id"],
         reason="remove duplicated charge",
@@ -2541,9 +2478,7 @@ def test_base_total_unchanged_by_corrections(monkeypatch) -> None:
     assert original_base > 0
 
     # Hold then apply multiple corrections
-    service.hold_wallet_allocation_event(
-        event["event_id"], reason="correction needed"
-    )
+    service.hold_wallet_allocation_event(event["event_id"], reason="correction needed")
     service.apply_wallet_allocation_correction(
         event["event_id"],
         reason="first correction",

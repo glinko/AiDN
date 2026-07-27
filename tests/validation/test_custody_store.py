@@ -313,10 +313,23 @@ def test_report_transfer_envelope_can_be_signed_by_validator(tmp_path) -> None:
     )
     service.assign_epoch_requests(
         epoch_id="epoch-1",
-        validator_entries=[{"validator_id": "val-1", "validator_label": "validator-a", "shares": 1, "capability_profiles": ["llm_text"], "contribution_q": 500.0}],
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
         seed="seed-1",
     )
-    outcome = service.submit_validation_report(request_id=requested.request.request_id, outcome="pass", validator_label="validator-a", evidence_summary="all checks passed")
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
 
     envelope = service.build_report_transfer_envelope(report_id=outcome.report.report_id)
 
@@ -332,9 +345,28 @@ def test_receiver_accepts_signed_report_transfer_into_custody(tmp_path) -> None:
         custody_store=ValidationReportCustodyStore(tmp_path / "sender-custody"),
         transfer_signer=signer,
     )
-    requested = sender.request_validation(endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0)
-    sender.assign_epoch_requests(epoch_id="epoch-1", validator_entries=[{"validator_id": "val-1", "validator_label": "validator-a", "shares": 1, "capability_profiles": ["llm_text"], "contribution_q": 500.0}], seed="seed-1")
-    outcome = sender.submit_validation_report(request_id=requested.request.request_id, outcome="pass", validator_label="validator-a", evidence_summary="all checks passed")
+    requested = sender.request_validation(
+        endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0
+    )
+    sender.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = sender.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
     envelope = sender.build_report_transfer_envelope(report_id=outcome.report.report_id)
 
     receiver = ValidationService(
@@ -355,20 +387,52 @@ def test_receiver_accepts_signed_report_transfer_into_custody(tmp_path) -> None:
 
 def test_validation_channel_transfer_is_idempotent_and_rejects_conflict(tmp_path) -> None:
     signer = Ed25519ValidationReportTransferSigner("77" * 32)
-    sender = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "sender"), transfer_signer=signer)
-    requested = sender.request_validation(endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0)
-    sender.assign_epoch_requests(epoch_id="epoch-1", validator_entries=[{"validator_id": "val-1", "validator_label": "validator-a", "shares": 1, "capability_profiles": ["llm_text"], "contribution_q": 500.0}], seed="seed-1")
-    outcome = sender.submit_validation_report(request_id=requested.request.request_id, outcome="pass", validator_label="validator-a", evidence_summary="all checks passed")
-    receiver = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True, dispatcher_store=DispatcherStore())
+    sender = ValidationService(
+        ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "sender"), transfer_signer=signer
+    )
+    requested = sender.request_validation(
+        endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0
+    )
+    sender.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = sender.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+    receiver = ValidationService(
+        ValidationStore(),
+        custody_store=ValidationReportCustodyStore(tmp_path / "receiver"),
+        require_signed_transfer_envelope=True,
+        dispatcher_store=DispatcherStore(),
+    )
     receiver.store.save_request(sender.store.get_request(requested.request.request_id))
     receiver.store.save_assignment(sender.store.list_assignments()[0])
     receiver.store.save_authorization(sender.store.list_authorizations()[0])
     channel = ValidationReportTransferChannel(receiver)
-    message = ValidationReportTransferMessage(message_id="msg-1", envelope=sender.build_report_transfer_envelope(report_id=outcome.report.report_id), report=outcome.report)
+    message = ValidationReportTransferMessage(
+        message_id="msg-1",
+        envelope=sender.build_report_transfer_envelope(report_id=outcome.report.report_id),
+        report=outcome.report,
+    )
 
     first = channel.handle(message)
     replayed = channel.handle(message)
-    conflicting = message.model_copy(update={"report": outcome.report.model_copy(update={"evidence_summary": "tampered"})})
+    conflicting = message.model_copy(
+        update={"report": outcome.report.model_copy(update={"evidence_summary": "tampered"})}
+    )
 
     assert first["replayed"] is False
     assert replayed["replayed"] is True
@@ -379,42 +443,136 @@ def test_validation_channel_transfer_is_idempotent_and_rejects_conflict(tmp_path
 def test_validation_channel_replay_survives_store_restore(tmp_path) -> None:
     state_store = FileStateStore(tmp_path / "state.json")
     signer = Ed25519ValidationReportTransferSigner("88" * 32)
-    sender = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "sender"), transfer_signer=signer)
-    requested = sender.request_validation(endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0)
-    sender.assign_epoch_requests(epoch_id="epoch-1", validator_entries=[{"validator_id": "val-1", "validator_label": "validator-a", "shares": 1, "capability_profiles": ["llm_text"], "contribution_q": 500.0}], seed="seed-1")
-    outcome = sender.submit_validation_report(request_id=requested.request.request_id, outcome="pass", validator_label="validator-a", evidence_summary="all checks passed")
+    sender = ValidationService(
+        ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "sender"), transfer_signer=signer
+    )
+    requested = sender.request_validation(
+        endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0
+    )
+    sender.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = sender.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
     receiver_store = ValidationStore(state_store)
     receiver_store.save_request(sender.store.get_request(requested.request.request_id))
     receiver_store.save_assignment(sender.store.list_assignments()[0])
     receiver_store.save_authorization(sender.store.list_authorizations()[0])
     dispatcher_store = DispatcherStore(state_store)
-    receiver = ValidationService(receiver_store, custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True, dispatcher_store=dispatcher_store)
-    message = ValidationReportTransferMessage(message_id="msg-persistent", envelope=sender.build_report_transfer_envelope(report_id=outcome.report.report_id), report=outcome.report)
+    receiver = ValidationService(
+        receiver_store,
+        custody_store=ValidationReportCustodyStore(tmp_path / "receiver"),
+        require_signed_transfer_envelope=True,
+        dispatcher_store=dispatcher_store,
+    )
+    message = ValidationReportTransferMessage(
+        message_id="msg-persistent",
+        envelope=sender.build_report_transfer_envelope(report_id=outcome.report.report_id),
+        report=outcome.report,
+    )
 
     assert ValidationReportTransferChannel(receiver).handle(message)["replayed"] is False
     restored_dispatcher_store = DispatcherStore(state_store)
-    restored_receiver = ValidationService(ValidationStore(state_store), custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True, dispatcher_store=restored_dispatcher_store)
+    restored_receiver = ValidationService(
+        ValidationStore(state_store),
+        custody_store=ValidationReportCustodyStore(tmp_path / "receiver"),
+        require_signed_transfer_envelope=True,
+        dispatcher_store=restored_dispatcher_store,
+    )
 
     assert ValidationReportTransferChannel(restored_receiver).handle(message)["replayed"] is True
 
 
 def test_validation_transfer_runs_through_network_dispatcher(tmp_path) -> None:
     signer = Ed25519ValidationReportTransferSigner("99" * 32)
-    sender = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "sender"), transfer_signer=signer)
-    requested = sender.request_validation(endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0)
-    sender.assign_epoch_requests(epoch_id="epoch-1", validator_entries=[{"validator_id": "val-1", "validator_label": "validator-a", "shares": 1, "capability_profiles": ["llm_text"], "contribution_q": 500.0}], seed="seed-1")
-    outcome = sender.submit_validation_report(request_id=requested.request.request_id, outcome="pass", validator_label="validator-a", evidence_summary="all checks passed")
-    receiver = ValidationService(ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "receiver"), require_signed_transfer_envelope=True, dispatcher_store=DispatcherStore())
+    sender = ValidationService(
+        ValidationStore(), custody_store=ValidationReportCustodyStore(tmp_path / "sender"), transfer_signer=signer
+    )
+    requested = sender.request_validation(
+        endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0
+    )
+    sender.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = sender.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+    receiver = ValidationService(
+        ValidationStore(),
+        custody_store=ValidationReportCustodyStore(tmp_path / "receiver"),
+        require_signed_transfer_envelope=True,
+        dispatcher_store=DispatcherStore(),
+    )
     receiver.store.save_request(sender.store.get_request(requested.request.request_id))
     receiver.store.save_assignment(sender.store.list_assignments()[0])
     receiver.store.save_authorization(sender.store.list_authorizations()[0])
     channel = ValidationReportTransferChannel(receiver)
-    transfer = ValidationReportTransferMessage(message_id="inner-msg-1", envelope=sender.build_report_transfer_envelope(report_id=outcome.report.report_id), report=outcome.report)
+    transfer = ValidationReportTransferMessage(
+        message_id="inner-msg-1",
+        envelope=sender.build_report_transfer_envelope(report_id=outcome.report.report_id),
+        report=outcome.report,
+    )
     payload = transfer.model_dump(mode="json")
     dispatcher = NetworkDispatcher(network_id="aidn-test", chain_id="chain-test", network_revision="rev-1")
-    dispatcher.register_local_route(DispatcherRoute(destination_type="ENDPOINT", destination_id="ep-1", route_type="LOCAL_PROTOCOL_HANDLER", route_generation=1, allowed_source_types={"SERVICE"}, allowed_channel_classes={"VALIDATION"}, allowed_message_types={"VALIDATION_REPORT_TRANSFER"}, created_at="2026-07-18T00:00:00+00:00"), channel.dispatcher_handler)
+    dispatcher.register_local_route(
+        DispatcherRoute(
+            destination_type="ENDPOINT",
+            destination_id="ep-1",
+            route_type="LOCAL_PROTOCOL_HANDLER",
+            route_generation=1,
+            allowed_source_types={"SERVICE"},
+            allowed_channel_classes={"VALIDATION"},
+            allowed_message_types={"VALIDATION_REPORT_TRANSFER"},
+            created_at="2026-07-18T00:00:00+00:00",
+        ),
+        channel.dispatcher_handler,
+    )
     now = datetime.now(UTC)
-    network_message = NetworkMessage(message_id="network-msg-1", message_type="VALIDATION_REPORT_TRANSFER", network_id="aidn-test", chain_id="chain-test", network_revision="rev-1", channel_id="validation-1", channel_class="VALIDATION", source_subject={"subject_type": "SERVICE", "subject_id": "val-1"}, destination_subject={"subject_type": "ENDPOINT", "subject_id": "ep-1"}, source_sequence=1, route_generation=1, created_at=now.isoformat(), expiration=(now + timedelta(minutes=5)).isoformat(), payload_hash=canonical_payload_hash(payload), payload_length=len(canonical_payload_bytes(payload)), payload=payload)
+    network_message = NetworkMessage(
+        message_id="network-msg-1",
+        message_type="VALIDATION_REPORT_TRANSFER",
+        network_id="aidn-test",
+        chain_id="chain-test",
+        network_revision="rev-1",
+        channel_id="validation-1",
+        channel_class="VALIDATION",
+        source_subject={"subject_type": "SERVICE", "subject_id": "val-1"},
+        destination_subject={"subject_type": "ENDPOINT", "subject_id": "ep-1"},
+        source_sequence=1,
+        route_generation=1,
+        created_at=now.isoformat(),
+        expiration=(now + timedelta(minutes=5)).isoformat(),
+        payload_hash=canonical_payload_hash(payload),
+        payload_length=len(canonical_payload_bytes(payload)),
+        payload=payload,
+    )
 
     assert dispatcher.submit(network_message).delivery_state == "QUEUED"
     delivered, result = dispatcher.drain_once()
@@ -565,9 +723,7 @@ def test_storage_failure_is_idempotent_and_preserves_negative_report(tmp_path) -
     assert first == second
     assert outcome.snapshot.certification_status == "uncertified"
     assert operations[-1]["operation_type"] == "VALIDATION_REPORT_STORAGE_FAILURE"
-    assert service.validation_history("ep-1")["report_storage_failures"] == [
-        first.model_dump(mode="json")
-    ]
+    assert service.validation_history("ep-1")["report_storage_failures"] == [first.model_dump(mode="json")]
 
 
 def test_custody_check_distinguishes_available_missing_and_corrupted(tmp_path) -> None:

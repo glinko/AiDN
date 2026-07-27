@@ -135,7 +135,8 @@ def test_plugin_host_local_ipc_ingress_accepts_only_handshake_envelopes() -> Non
         ),
         manifest_resolver=lambda plugin_id: {"plugin_id": plugin_id, "version": "1.0.0"},
         configuration_validator=lambda plugin_id, configuration: (
-            None if plugin_id == installed.plugin_id and configuration == {"base_url": "http://localhost"}
+            None
+            if plugin_id == installed.plugin_id and configuration == {"base_url": "http://localhost"}
             else (_ for _ in ()).throw(ValueError("unexpected configuration"))
         ),
     )
@@ -151,40 +152,49 @@ def test_plugin_host_local_ipc_ingress_accepts_only_handshake_envelopes() -> Non
     response = ingress.receive({"event_type": "PLUGIN_HOST_HELLO", "event": event})
 
     assert response["installed_plugin_id"] == installed.installed_plugin_id
-    assert ingress.receive(
-        {
-            "event_type": "PLUGIN_CONTROL",
-            "event": {
-                "plugin_host_connection_id": response["plugin_host_connection_id"],
-                "installed_plugin_id": installed.installed_plugin_id,
-                "installation_generation": installed.installation_generation,
-                "command": "PING",
-            },
-        }
-    )["status"] == "OK"
-    assert ingress.receive(
-        {
-            "event_type": "PLUGIN_CONTROL",
-            "event": {
-                "plugin_host_connection_id": response["plugin_host_connection_id"],
-                "installed_plugin_id": installed.installed_plugin_id,
-                "installation_generation": installed.installation_generation,
-                "command": "GET_MANIFEST",
-            },
-        }
-    )["manifest"]["plugin_id"] == installed.plugin_id
-    assert ingress.receive(
-        {
-            "event_type": "PLUGIN_CONTROL",
-            "event": {
-                "plugin_host_connection_id": response["plugin_host_connection_id"],
-                "installed_plugin_id": installed.installed_plugin_id,
-                "installation_generation": installed.installation_generation,
-                "command": "VALIDATE_CONFIGURATION",
-                "configuration": {"base_url": "http://localhost"},
-            },
-        }
-    )["status"] == "OK"
+    assert (
+        ingress.receive(
+            {
+                "event_type": "PLUGIN_CONTROL",
+                "event": {
+                    "plugin_host_connection_id": response["plugin_host_connection_id"],
+                    "installed_plugin_id": installed.installed_plugin_id,
+                    "installation_generation": installed.installation_generation,
+                    "command": "PING",
+                },
+            }
+        )["status"]
+        == "OK"
+    )
+    assert (
+        ingress.receive(
+            {
+                "event_type": "PLUGIN_CONTROL",
+                "event": {
+                    "plugin_host_connection_id": response["plugin_host_connection_id"],
+                    "installed_plugin_id": installed.installed_plugin_id,
+                    "installation_generation": installed.installation_generation,
+                    "command": "GET_MANIFEST",
+                },
+            }
+        )["manifest"]["plugin_id"]
+        == installed.plugin_id
+    )
+    assert (
+        ingress.receive(
+            {
+                "event_type": "PLUGIN_CONTROL",
+                "event": {
+                    "plugin_host_connection_id": response["plugin_host_connection_id"],
+                    "installed_plugin_id": installed.installed_plugin_id,
+                    "installation_generation": installed.installation_generation,
+                    "command": "VALIDATE_CONFIGURATION",
+                    "configuration": {"base_url": "http://localhost"},
+                },
+            }
+        )["status"]
+        == "OK"
+    )
     with pytest.raises(PluginHostAuthenticationError, match="command is not permitted"):
         ingress.receive(
             {
@@ -212,21 +222,28 @@ def test_plugin_host_control_connection_is_revoked_after_generation_change() -> 
         )
     )
     event = {
-        "installed_plugin_id": installed.installed_plugin_id, "plugin_id": installed.plugin_id,
+        "installed_plugin_id": installed.installed_plugin_id,
+        "plugin_id": installed.plugin_id,
         "installation_generation": installed.installation_generation,
         "activation_credential_key_id": installed.activation_credential_key_id,
-        "host_nonce": "nonce", "activation_proof": "proof",
+        "host_nonce": "nonce",
+        "activation_proof": "proof",
     }
     connection = ingress.receive({"event_type": "PLUGIN_HOST_HELLO", "event": event})
     current["plugin"] = installed.model_copy(update={"installation_generation": 3})
 
     with pytest.raises(PluginHostAuthenticationError, match="generation is stale"):
-        ingress.receive({"event_type": "PLUGIN_CONTROL", "event": {
-            "plugin_host_connection_id": connection["plugin_host_connection_id"],
-            "installed_plugin_id": installed.installed_plugin_id,
-            "installation_generation": installed.installation_generation,
-            "command": "PING",
-        }})
+        ingress.receive(
+            {
+                "event_type": "PLUGIN_CONTROL",
+                "event": {
+                    "plugin_host_connection_id": connection["plugin_host_connection_id"],
+                    "installed_plugin_id": installed.installed_plugin_id,
+                    "installation_generation": installed.installation_generation,
+                    "command": "PING",
+                },
+            }
+        )
 
 
 def test_plugin_host_connection_store_restores_snapshot() -> None:
@@ -238,12 +255,19 @@ def test_plugin_host_connection_store_restores_snapshot() -> None:
             now=lambda: "2026-07-19T00:00:00Z",
         )
     )
-    connection = ingress.receive({"event_type": "PLUGIN_HOST_HELLO", "event": {
-        "installed_plugin_id": installed.installed_plugin_id, "plugin_id": installed.plugin_id,
-        "installation_generation": installed.installation_generation,
-        "activation_credential_key_id": installed.activation_credential_key_id,
-        "host_nonce": "nonce", "activation_proof": "proof",
-    }})
+    connection = ingress.receive(
+        {
+            "event_type": "PLUGIN_HOST_HELLO",
+            "event": {
+                "installed_plugin_id": installed.installed_plugin_id,
+                "plugin_id": installed.plugin_id,
+                "installation_generation": installed.installation_generation,
+                "activation_credential_key_id": installed.activation_credential_key_id,
+                "host_nonce": "nonce",
+                "activation_proof": "proof",
+            },
+        }
+    )
     restored = PluginHostConnectionStore(ingress.connection_store.snapshot())
 
     assert restored.get(connection["plugin_host_connection_id"]).plugin_id == installed.plugin_id
@@ -258,18 +282,28 @@ def test_plugin_host_disconnect_revokes_connection() -> None:
             now=lambda: "2026-07-19T00:00:00Z",
         )
     )
-    connection = ingress.receive({"event_type": "PLUGIN_HOST_HELLO", "event": {
-        "installed_plugin_id": installed.installed_plugin_id, "plugin_id": installed.plugin_id,
-        "installation_generation": installed.installation_generation,
-        "activation_credential_key_id": installed.activation_credential_key_id,
-        "host_nonce": "nonce", "activation_proof": "proof",
-    }})
+    connection = ingress.receive(
+        {
+            "event_type": "PLUGIN_HOST_HELLO",
+            "event": {
+                "installed_plugin_id": installed.installed_plugin_id,
+                "plugin_id": installed.plugin_id,
+                "installation_generation": installed.installation_generation,
+                "activation_credential_key_id": installed.activation_credential_key_id,
+                "host_nonce": "nonce",
+                "activation_proof": "proof",
+            },
+        }
+    )
     control = {
         "plugin_host_connection_id": connection["plugin_host_connection_id"],
         "installed_plugin_id": installed.installed_plugin_id,
         "installation_generation": installed.installation_generation,
     }
-    assert ingress.receive({"event_type": "PLUGIN_CONTROL", "event": {**control, "command": "DISCONNECT"}})["status"] == "OK"
+    assert (
+        ingress.receive({"event_type": "PLUGIN_CONTROL", "event": {**control, "command": "DISCONNECT"}})["status"]
+        == "OK"
+    )
     with pytest.raises(PluginHostAuthenticationError, match="not known"):
         ingress.receive({"event_type": "PLUGIN_CONTROL", "event": {**control, "command": "PING"}})
 
@@ -306,17 +340,24 @@ def test_windows_named_pipe_plugin_host_routes_hello() -> None:
         authkey=b"plugin-host-test-key",
         wire_adapter=PluginHostJsonWireAdapter(ingress),
     )
-    payload = json.dumps({"event_type": "PLUGIN_HOST_HELLO", "event": {
-        "installed_plugin_id": installed.installed_plugin_id, "plugin_id": installed.plugin_id,
-        "installation_generation": installed.installation_generation,
-        "activation_credential_key_id": installed.activation_credential_key_id,
-        "host_nonce": "nonce", "activation_proof": "proof",
-    }}).encode()
+    payload = json.dumps(
+        {
+            "event_type": "PLUGIN_HOST_HELLO",
+            "event": {
+                "installed_plugin_id": installed.installed_plugin_id,
+                "plugin_id": installed.plugin_id,
+                "installation_generation": installed.installation_generation,
+                "activation_credential_key_id": installed.activation_credential_key_id,
+                "host_nonce": "nonce",
+                "activation_proof": "proof",
+            },
+        }
+    ).encode()
     listener.start()
     try:
-        response = json.loads(WindowsNamedPipePluginHostClient(
-            address=listener.address, authkey=b"plugin-host-test-key"
-        ).send(payload))
+        response = json.loads(
+            WindowsNamedPipePluginHostClient(address=listener.address, authkey=b"plugin-host-test-key").send(payload)
+        )
     finally:
         listener.stop()
 

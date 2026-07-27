@@ -74,10 +74,13 @@ def test_plugin_release_registration_and_local_install_are_metadata_only() -> No
     assert installed.installation_source == "PACKAGE"
     assert service.list_plugin_releases() == [release]
     assert service.list_installed_plugins() == [installed]
-    assert service.register_plugin_release(
-        manifest_payload=manifest,
-        source_reference="registry://plugins/fake-managed",
-    ) == release
+    assert (
+        service.register_plugin_release(
+            manifest_payload=manifest,
+            source_reference="registry://plugins/fake-managed",
+        )
+        == release
+    )
 
     advanced = service.advance_installed_plugin_generation(
         installed_plugin_id=installed.installed_plugin_id,
@@ -107,9 +110,7 @@ def test_plugin_release_install_rejects_unapproved_or_blocked_permissions() -> N
             release_id=release.release_id,
             granted_permissions=[*release.declared_permissions, "wallet.keys"],
         )
-    service.store.save_plugin_release(
-        release.model_copy(update={"release_status": "SECURITY_BLOCKED"})
-    )
+    service.store.save_plugin_release(release.model_copy(update={"release_status": "SECURITY_BLOCKED"}))
 
     with pytest.raises(ValueError, match="security_blocked"):
         service.install_plugin_release(
@@ -162,10 +163,13 @@ def test_package_install_requires_verified_content_addressed_payload() -> None:
             granted_permissions=release.declared_permissions,
         )
 
-    assert service.stage_plugin_package(
-        package_bytes=package_bytes,
-        expected_digest=package_digest,
-    ) == package_digest
+    assert (
+        service.stage_plugin_package(
+            package_bytes=package_bytes,
+            expected_digest=package_digest,
+        )
+        == package_digest
+    )
     installed = service.install_plugin_release(
         release_id=release.release_id,
         granted_permissions=release.declared_permissions,
@@ -222,16 +226,14 @@ def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:
         **identity.model_dump(),
         host_nonce="nonce",
         activation_proof=build_plugin_host_activation_proof(
-        activation_secret=activation["activation_secret"],
+            activation_secret=activation["activation_secret"],
             identity=identity,
             host_nonce="nonce",
         ),
     )
 
     ingress = service.plugin_host_local_ingress()
-    connection = ingress.receive(
-        {"event_type": "PLUGIN_HOST_HELLO", "event": hello.model_dump(mode="json")}
-    )
+    connection = ingress.receive({"event_type": "PLUGIN_HOST_HELLO", "event": hello.model_dump(mode="json")})
 
     assert connection["installed_plugin_id"] == installed.installed_plugin_id
     plan = ingress.receive(
@@ -248,38 +250,64 @@ def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:
     )
     assert plan["installation_plan"]["plugin_id"] == installed.plugin_id
     attached = ingress.receive(
-        {"event_type": "PLUGIN_CONTROL", "event": {
-            "plugin_host_connection_id": connection["plugin_host_connection_id"],
-            "installed_plugin_id": installed.installed_plugin_id,
-            "installation_generation": installed.installation_generation,
-            "command": "ATTACH_EXISTING_PROVIDER", "display_name": "Local Fake",
-            "configuration": {"base_url": "http://localhost"},
-        }}
+        {
+            "event_type": "PLUGIN_CONTROL",
+            "event": {
+                "plugin_host_connection_id": connection["plugin_host_connection_id"],
+                "installed_plugin_id": installed.installed_plugin_id,
+                "installation_generation": installed.installation_generation,
+                "command": "ATTACH_EXISTING_PROVIDER",
+                "display_name": "Local Fake",
+                "configuration": {"base_url": "http://localhost"},
+            },
+        }
     )
     assert attached["provider_instance"]["connection_mode"] == "attached"
     models = ingress.receive(
-        {"event_type": "PLUGIN_CONTROL", "event": {
-            "plugin_host_connection_id": connection["plugin_host_connection_id"],
-            "installed_plugin_id": installed.installed_plugin_id,
-            "installation_generation": installed.installation_generation,
-            "command": "DISCOVER_MODELS",
-            "provider_instance_id": attached["provider_instance"]["provider_instance_id"],
-        }}
+        {
+            "event_type": "PLUGIN_CONTROL",
+            "event": {
+                "plugin_host_connection_id": connection["plugin_host_connection_id"],
+                "installed_plugin_id": installed.installed_plugin_id,
+                "installation_generation": installed.installation_generation,
+                "command": "DISCOVER_MODELS",
+                "provider_instance_id": attached["provider_instance"]["provider_instance_id"],
+            },
+        }
     )
     assert models["command"] == "DISCOVER_MODELS"
-    binding = ingress.receive({"event_type": "PLUGIN_CONTROL", "event": {
-        "plugin_host_connection_id": connection["plugin_host_connection_id"], "installed_plugin_id": installed.installed_plugin_id,
-        "installation_generation": installed.installation_generation, "command": "CREATE_RUNTIME_BINDING",
-        "model_deployment_id": models["model_deployments"][0]["model_deployment_id"], "capability_id": "llm.chat",
-        "capability_version": "2.1", "capability_definition_hash": "cap-definition-1",
-    }})
+    binding = ingress.receive(
+        {
+            "event_type": "PLUGIN_CONTROL",
+            "event": {
+                "plugin_host_connection_id": connection["plugin_host_connection_id"],
+                "installed_plugin_id": installed.installed_plugin_id,
+                "installation_generation": installed.installation_generation,
+                "command": "CREATE_RUNTIME_BINDING",
+                "model_deployment_id": models["model_deployments"][0]["model_deployment_id"],
+                "capability_id": "llm.chat",
+                "capability_version": "2.1",
+                "capability_definition_hash": "cap-definition-1",
+            },
+        }
+    )
     assert binding["runtime_binding"]["plugin_id"] == installed.plugin_id
-    admission = ingress.receive({"event_type": "PLUGIN_CONTROL", "event": {
-        "plugin_host_connection_id": connection["plugin_host_connection_id"], "installed_plugin_id": installed.installed_plugin_id,
-        "installation_generation": installed.installation_generation, "command": "GET_RUNTIME_BINDING_ADMISSION",
-        "runtime_binding_id": binding["runtime_binding"]["runtime_binding_id"],
-    }})
-    assert admission["admission"]["dimensions"]["runtime_binding"]["runtime_binding_id"] == binding["runtime_binding"]["runtime_binding_id"]
+    admission = ingress.receive(
+        {
+            "event_type": "PLUGIN_CONTROL",
+            "event": {
+                "plugin_host_connection_id": connection["plugin_host_connection_id"],
+                "installed_plugin_id": installed.installed_plugin_id,
+                "installation_generation": installed.installation_generation,
+                "command": "GET_RUNTIME_BINDING_ADMISSION",
+                "runtime_binding_id": binding["runtime_binding"]["runtime_binding_id"],
+            },
+        }
+    )
+    assert (
+        admission["admission"]["dimensions"]["runtime_binding"]["runtime_binding_id"]
+        == binding["runtime_binding"]["runtime_binding_id"]
+    )
 
 
 class ControlledFilesystemPlugin(FakeManagedPlugin):
@@ -463,7 +491,10 @@ def test_provider_inventory_service_attaches_discovers_and_projects_runtime_bind
         "channel_class": "RUNTIME",
         "runtime_id": binding.runtime_id,
     }
-    assert service.store.get_runtime_binding(binding.runtime_binding_id).compatibility_bundle_id == binding.compatibility_bundle_id
+    assert (
+        service.store.get_runtime_binding(binding.runtime_binding_id).compatibility_bundle_id
+        == binding.compatibility_bundle_id
+    )
     assert bundle.bundle_id == binding.compatibility_bundle_id
     assert bundle.plugin_id == "fake-managed"
     assert bundle.provider_type == "fake"
@@ -502,9 +533,7 @@ def test_provider_inventory_service_evaluates_runtime_binding_endpoint_admission
     assert admission["ready"] is True
     assert admission["dimensions"]["runtime_binding"]["ready"] is True
     assert admission["dimensions"]["artifact_materialization"]["status"] == "NOT_REQUIRED"
-    assert admission["dimensions"]["compatibility_bundle"]["bundle_id"] == (
-        binding.compatibility_bundle_id
-    )
+    assert admission["dimensions"]["compatibility_bundle"]["bundle_id"] == (binding.compatibility_bundle_id)
     assert admission["dimensions"]["pricing"]["status"] == "DRAFT_PRICE_UNSET"
     assert admission["warnings"][0]["code"] == "ENDPOINT_PRICING_NOT_CONFIGURED"
 
@@ -518,9 +547,7 @@ def test_provider_inventory_service_evaluates_runtime_binding_endpoint_admission
     )
 
     assert mismatch["ready"] is False
-    assert {
-        blocker["code"] for blocker in mismatch["blockers"]
-    } == {
+    assert {blocker["code"] for blocker in mismatch["blockers"]} == {
         "ENDPOINT_CAPABILITY_MISMATCH",
         "ENDPOINT_CAPABILITY_NOT_ADVERTISED",
     }
@@ -977,9 +1004,7 @@ def test_sandbox_enforced_provider_installation_executor_accepts_supported_fake_
             },
         }
     )
-    plan = InstallationPlan.model_validate(
-        FakeManagedPlugin().build_installation_plan(dict(configuration))
-    )
+    plan = InstallationPlan.model_validate(FakeManagedPlugin().build_installation_plan(dict(configuration)))
 
     result = executor.apply(
         approval=approval,
@@ -991,9 +1016,7 @@ def test_sandbox_enforced_provider_installation_executor_accepts_supported_fake_
 
     assert executor.executor_id == "sandbox-enforced-declarative-v1"
     assert result.step_results[0].step_type == "sandbox_boundary"
-    assert result.step_results[0].details["validated_network_names"] == [
-        "private-provider"
-    ]
+    assert result.step_results[0].details["validated_network_names"] == ["private-provider"]
     assert result.step_results[0].details["validated_health_hosts"] == ["127.0.0.1"]
     assert result.provider_instance["provider_instance_id"] == "pi-fake-sandboxed"
 
@@ -1015,8 +1038,7 @@ def test_sandbox_enforced_provider_installation_executor_rejects_disallowed_plan
         )
 
 
-def test_sandbox_enforced_provider_installation_executor_rejects_health_check_outside_boundary(
-) -> None:
+def test_sandbox_enforced_provider_installation_executor_rejects_health_check_outside_boundary() -> None:
     executor = SandboxEnforcedProviderInstallationExecutor()
     configuration = _installation_configuration()
     plan = InstallationPlan.model_validate(
@@ -1069,8 +1091,7 @@ def test_sandbox_enforced_provider_installation_executor_rejects_health_check_ou
         )
 
 
-def test_sandbox_enforced_provider_installation_executor_rejects_network_keys_outside_bounded_subset(
-) -> None:
+def test_sandbox_enforced_provider_installation_executor_rejects_network_keys_outside_bounded_subset() -> None:
     executor = SandboxEnforcedProviderInstallationExecutor()
     configuration = _installation_configuration()
     plan = InstallationPlan.model_validate(
@@ -1119,8 +1140,7 @@ def test_sandbox_enforced_provider_installation_executor_rejects_network_keys_ou
         )
 
 
-def test_sandbox_enforced_provider_installation_executor_rejects_health_check_query_parameters(
-) -> None:
+def test_sandbox_enforced_provider_installation_executor_rejects_health_check_query_parameters() -> None:
     executor = SandboxEnforcedProviderInstallationExecutor()
     configuration = _installation_configuration()
     plan = InstallationPlan.model_validate(
@@ -1163,8 +1183,7 @@ def test_sandbox_enforced_provider_installation_executor_rejects_health_check_qu
         )
 
 
-def test_sandbox_enforced_provider_installation_executor_rejects_health_check_methods_outside_bounded_subset(
-) -> None:
+def test_sandbox_enforced_provider_installation_executor_rejects_health_check_methods_outside_bounded_subset() -> None:
     executor = SandboxEnforcedProviderInstallationExecutor()
     configuration = _installation_configuration()
     plan = InstallationPlan.model_validate(
@@ -1208,8 +1227,7 @@ def test_sandbox_enforced_provider_installation_executor_rejects_health_check_me
         )
 
 
-def test_sandbox_enforced_provider_installation_executor_rejects_negative_resource_limits(
-) -> None:
+def test_sandbox_enforced_provider_installation_executor_rejects_negative_resource_limits() -> None:
     executor = SandboxEnforcedProviderInstallationExecutor()
     configuration = _installation_configuration()
     plan = InstallationPlan.model_validate(
@@ -1283,28 +1301,10 @@ def test_controlled_filesystem_executor_writes_and_removes_state(tmp_path) -> No
         provider_instance_id="pi-controlled-fs",
     )
 
-    state_path = (
-        tmp_path
-        / "executor-root"
-        / "providers"
-        / "pi-controlled-fs"
-        / "provider-installation-state.json"
-    )
-    volume_path = (
-        tmp_path
-        / "executor-root"
-        / "providers"
-        / "pi-controlled-fs"
-        / "volumes"
-        / "provider-cache"
-    )
+    state_path = tmp_path / "executor-root" / "providers" / "pi-controlled-fs" / "provider-installation-state.json"
+    volume_path = tmp_path / "executor-root" / "providers" / "pi-controlled-fs" / "volumes" / "provider-cache"
     download_manifest_path = (
-        tmp_path
-        / "executor-root"
-        / "providers"
-        / "pi-controlled-fs"
-        / "downloads"
-        / "01-fake-model.json"
+        tmp_path / "executor-root" / "providers" / "pi-controlled-fs" / "downloads" / "01-fake-model.json"
     )
     assert state_path.exists()
     assert volume_path.exists()
@@ -1316,14 +1316,8 @@ def test_controlled_filesystem_executor_writes_and_removes_state(tmp_path) -> No
     assert state_payload["staged_model_downloads"] == ["fake-model"]
     assert download_manifest["destination"] == "provider-cache"
     assert result.rollback_result.status == "PENDING"
-    assert any(
-        step.step_type == "filesystem_prepare_volume"
-        for step in result.step_results
-    )
-    assert any(
-        step.step_type == "filesystem_stage_model_download"
-        for step in result.step_results
-    )
+    assert any(step.step_type == "filesystem_prepare_volume" for step in result.step_results)
+    assert any(step.step_type == "filesystem_stage_model_download" for step in result.step_results)
     assert result.step_results[-1].step_type == "filesystem_state_write"
 
     rollback = executor.rollback(
@@ -1386,21 +1380,14 @@ def test_controlled_filesystem_executor_imports_local_artifact_into_volume(tmp_p
         / "fake-model.gguf"
     )
     state_path = (
-        tmp_path
-        / "executor-root"
-        / "providers"
-        / "pi-controlled-fs-import"
-        / "provider-installation-state.json"
+        tmp_path / "executor-root" / "providers" / "pi-controlled-fs-import" / "provider-installation-state.json"
     )
     state_payload = json.loads(state_path.read_text(encoding="utf-8"))
 
     assert imported_path.exists()
     assert imported_path.read_text(encoding="utf-8") == "fake-model-bytes"
     assert state_payload["imported_local_artifacts"] == ["fake-model-imported"]
-    assert any(
-        step.step_type == "filesystem_import_local_artifact"
-        for step in result.step_results
-    )
+    assert any(step.step_type == "filesystem_import_local_artifact" for step in result.step_results)
 
     rollback = executor.rollback(
         approval=approval,
@@ -1424,16 +1411,12 @@ def test_controlled_filesystem_executor_promotes_and_reuses_model_artifact(
         relative_path="models/fake-model.gguf",
         content_bytes=b"shared-model-bytes",
     )
-    artifact = executor.promote_local_artifact_to_model_store(
-        relative_path="models/fake-model.gguf"
-    )
+    artifact = executor.promote_local_artifact_to_model_store(relative_path="models/fake-model.gguf")
     executor.stage_local_artifact(
         relative_path="copies/fake-model.gguf",
         content_bytes=b"shared-model-bytes",
     )
-    duplicate = executor.promote_local_artifact_to_model_store(
-        relative_path="copies/fake-model.gguf"
-    )
+    duplicate = executor.promote_local_artifact_to_model_store(relative_path="copies/fake-model.gguf")
 
     assert artifact.artifact_id == duplicate.artifact_id
     assert len(executor.model_artifact_inventory().items) == 1
@@ -1492,10 +1475,7 @@ def test_controlled_filesystem_executor_promotes_and_reuses_model_artifact(
         / "fake-model.gguf"
     )
     assert materialized_path.read_bytes() == b"shared-model-bytes"
-    assert any(
-        step.step_type == "filesystem_materialize_model_artifact"
-        for step in result.step_results
-    )
+    assert any(step.step_type == "filesystem_materialize_model_artifact" for step in result.step_results)
 
 
 def test_model_artifact_inventory_excludes_corrupt_payloads(tmp_path) -> None:
@@ -1504,9 +1484,7 @@ def test_model_artifact_inventory_excludes_corrupt_payloads(tmp_path) -> None:
         relative_path="models/fake-model.gguf",
         content_bytes=b"verified-model-bytes",
     )
-    artifact = executor.promote_local_artifact_to_model_store(
-        relative_path="models/fake-model.gguf"
-    )
+    artifact = executor.promote_local_artifact_to_model_store(relative_path="models/fake-model.gguf")
     payload_path = executor._model_artifact_payload_path(artifact.artifact_id)
     payload_path.chmod(0o644)
     payload_path.write_bytes(b"corrupt")
@@ -1562,12 +1540,8 @@ def test_model_artifact_sets_protect_referenced_bytes_and_bind_deployments(tmp_p
         relative_path="models/tokenizer.json",
         content_bytes=b"tokenizer",
     )
-    weights = executor.promote_local_artifact_to_model_store(
-        relative_path="models/weights.gguf"
-    )
-    tokenizer = executor.promote_local_artifact_to_model_store(
-        relative_path="models/tokenizer.json"
-    )
+    weights = executor.promote_local_artifact_to_model_store(relative_path="models/weights.gguf")
+    tokenizer = executor.promote_local_artifact_to_model_store(relative_path="models/tokenizer.json")
     artifact_set = executor.create_model_artifact_set(
         display_name="Fake model package",
         files=[
@@ -1608,9 +1582,7 @@ def test_runtime_binding_requires_materialized_model_artifact_set(tmp_path) -> N
         relative_path="models/weights.gguf",
         content_bytes=b"weights",
     )
-    weights = executor.promote_local_artifact_to_model_store(
-        relative_path="models/weights.gguf"
-    )
+    weights = executor.promote_local_artifact_to_model_store(relative_path="models/weights.gguf")
     artifact_set = executor.create_model_artifact_set(
         display_name="Fake model package",
         files=[
@@ -1657,9 +1629,7 @@ def test_runtime_binding_allows_ready_model_artifact_materialization(tmp_path) -
         relative_path="models/weights.gguf",
         content_bytes=b"weights",
     )
-    weights = executor.promote_local_artifact_to_model_store(
-        relative_path="models/weights.gguf"
-    )
+    weights = executor.promote_local_artifact_to_model_store(relative_path="models/weights.gguf")
     artifact_set = executor.create_model_artifact_set(
         display_name="Fake model package",
         files=[
@@ -1716,9 +1686,7 @@ def test_model_artifact_garbage_collection_respects_references_and_grace_period(
         relative_path="models/fake-model.gguf",
         content_bytes=b"model-bytes",
     )
-    artifact = executor.promote_local_artifact_to_model_store(
-        relative_path="models/fake-model.gguf"
-    )
+    artifact = executor.promote_local_artifact_to_model_store(relative_path="models/fake-model.gguf")
 
     first_collection = executor.collect_model_artifact_garbage()
     assert first_collection.pending_artifact_ids == [artifact.artifact_id]
@@ -1754,9 +1722,7 @@ def test_model_artifact_garbage_collection_fails_closed_for_bad_set_manifest(tmp
         relative_path="models/fake-model.gguf",
         content_bytes=b"model-bytes",
     )
-    artifact = executor.promote_local_artifact_to_model_store(
-        relative_path="models/fake-model.gguf"
-    )
+    artifact = executor.promote_local_artifact_to_model_store(relative_path="models/fake-model.gguf")
     sets_root = executor._model_artifact_sets_root()
     sets_root.mkdir(parents=True, exist_ok=True)
     (sets_root / "broken.json").write_text("not-json", encoding="utf-8")
@@ -1894,14 +1860,11 @@ def test_provider_inventory_rolls_back_succeeded_installation_job_and_cleans_loc
     assert rolled_back.rollback_started_at is not None
     assert rolled_back.rollback_completed_at is not None
     assert rolled_back.rollback_step_results
-    assert rolled_back.rollback_step_results[-1].step_id == (
-        "rollback-delete-local-provider-instance"
-    )
+    assert rolled_back.rollback_step_results[-1].step_id == ("rollback-delete-local-provider-instance")
     assert service.list_provider_instances() == []
 
 
-def test_provider_inventory_rollback_marks_not_needed_when_job_never_created_provider_instance(
-) -> None:
+def test_provider_inventory_rollback_marks_not_needed_when_job_never_created_provider_instance() -> None:
     class ExplodingExecutor(RecordedProviderInstallationExecutor):
         executor_id = "exploding-recorded"
 
@@ -1976,27 +1939,11 @@ def test_provider_inventory_uses_controlled_filesystem_executor_for_real_host_st
 
     job = service.apply_installation_approval(approval.approval_id)
     state_path = (
-        tmp_path
-        / "executor-root"
-        / "providers"
-        / job.provider_instance_id
-        / "provider-installation-state.json"
+        tmp_path / "executor-root" / "providers" / job.provider_instance_id / "provider-installation-state.json"
     )
-    volume_path = (
-        tmp_path
-        / "executor-root"
-        / "providers"
-        / job.provider_instance_id
-        / "volumes"
-        / "provider-cache"
-    )
+    volume_path = tmp_path / "executor-root" / "providers" / job.provider_instance_id / "volumes" / "provider-cache"
     download_manifest_path = (
-        tmp_path
-        / "executor-root"
-        / "providers"
-        / job.provider_instance_id
-        / "downloads"
-        / "01-fake-model.json"
+        tmp_path / "executor-root" / "providers" / job.provider_instance_id / "downloads" / "01-fake-model.json"
     )
 
     assert job.status == "SUCCEEDED"
@@ -2053,10 +2000,7 @@ def test_provider_inventory_uses_controlled_filesystem_executor_for_local_import
     assert job.status == "SUCCEEDED"
     assert imported_path.exists()
     assert imported_path.read_text(encoding="utf-8") == "fake-model-bytes"
-    assert any(
-        step.step_type == "filesystem_import_local_artifact"
-        for step in job.step_results
-    )
+    assert any(step.step_type == "filesystem_import_local_artifact" for step in job.step_results)
 
     rolled_back = service.rollback_installation_job(job.job_id)
 
@@ -2111,9 +2055,7 @@ def test_provider_inventory_run_installation_diagnostics_reports_ready_when_inpu
         "PASS",
         "PASS",
     ]
-    package_check = next(
-        check for check in diagnostics.checks if check.check_id == "package_verification"
-    )
+    package_check = next(check for check in diagnostics.checks if check.check_id == "package_verification")
     assert package_check.status == "PASS"
     assert package_check.details["status"] == "VERIFIED"
 
@@ -2144,9 +2086,7 @@ def test_controlled_filesystem_executor_diagnostics_block_missing_local_import_a
     service = ProviderInventoryService(
         plugins=registry,
         store=InMemoryProviderInventoryStore(),
-        installation_executor=ControlledFilesystemProviderInstallationExecutor(
-            tmp_path / "executor-root"
-        ),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root"),
     )
 
     diagnostics = service.run_installation_diagnostics(
@@ -2162,11 +2102,7 @@ def test_controlled_filesystem_executor_diagnostics_block_missing_local_import_a
     )
 
     assert diagnostics.readiness_status == "BLOCKED"
-    import_check = next(
-        check
-        for check in diagnostics.checks
-        if check.check_id == "local_import_artifacts"
-    )
+    import_check = next(check for check in diagnostics.checks if check.check_id == "local_import_artifacts")
     assert import_check.status == "FAIL"
     assert import_check.details["required_local_import_count"] == 1
     assert import_check.details["missing_local_import_count"] == 1
@@ -2185,9 +2121,7 @@ def test_controlled_filesystem_executor_diagnostics_confirm_ready_local_import_a
     service = ProviderInventoryService(
         plugins=registry,
         store=InMemoryProviderInventoryStore(),
-        installation_executor=ControlledFilesystemProviderInstallationExecutor(
-            tmp_path / "executor-root"
-        ),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root"),
     )
 
     diagnostics = service.run_installation_diagnostics(
@@ -2203,18 +2137,12 @@ def test_controlled_filesystem_executor_diagnostics_confirm_ready_local_import_a
     )
 
     assert diagnostics.readiness_status == "READY"
-    import_check = next(
-        check
-        for check in diagnostics.checks
-        if check.check_id == "local_import_artifacts"
-    )
+    import_check = next(check for check in diagnostics.checks if check.check_id == "local_import_artifacts")
     assert import_check.status == "PASS"
     assert import_check.details["ready_local_import_count"] == 1
     assert import_check.details["missing_local_import_count"] == 0
     assert import_check.details["local_imports"][0]["exists"] is True
-    assert import_check.details["local_imports"][0]["size_bytes"] == len(
-        "fake-model-bytes"
-    )
+    assert import_check.details["local_imports"][0]["size_bytes"] == len("fake-model-bytes")
 
 
 def test_provider_inventory_stages_lists_and_deletes_controlled_installation_artifacts(
@@ -2225,9 +2153,7 @@ def test_provider_inventory_stages_lists_and_deletes_controlled_installation_art
     service = ProviderInventoryService(
         plugins=registry,
         store=InMemoryProviderInventoryStore(),
-        installation_executor=ControlledFilesystemProviderInstallationExecutor(
-            tmp_path / "executor-root"
-        ),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root"),
     )
 
     created = service.stage_local_artifact(
@@ -2240,7 +2166,9 @@ def test_provider_inventory_stages_lists_and_deletes_controlled_installation_art
     assert created.size_bytes == len(b"fake-model-bytes")
     assert created.sha256.startswith("sha256:")
     assert inventory.supported is True
-    assert inventory.imports_root.endswith("executor-root\\imports") or inventory.imports_root.endswith("executor-root/imports")
+    assert inventory.imports_root.endswith("executor-root\\imports") or inventory.imports_root.endswith(
+        "executor-root/imports"
+    )
     assert inventory.items[0].relative_path == "models/fake-model.gguf"
 
     service.delete_local_artifact(relative_path="models/fake-model.gguf")
@@ -2255,9 +2183,7 @@ def test_provider_inventory_extracts_staged_archive_into_controlled_imports_root
     service = ProviderInventoryService(
         plugins=_registry(),
         store=InMemoryProviderInventoryStore(),
-        installation_executor=ControlledFilesystemProviderInstallationExecutor(
-            tmp_path / "executor-root"
-        ),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root"),
     )
 
     service.stage_local_artifact(
@@ -2281,14 +2207,8 @@ def test_provider_inventory_extracts_staged_archive_into_controlled_imports_root
     assert result.extracted_file_count == 2
     assert "models/fake-model/weights/model.gguf" in result.extracted_relative_paths
     assert "models/fake-model/metadata/config.json" in result.extracted_relative_paths
-    assert any(
-        item.relative_path == "models/fake-model/weights/model.gguf"
-        for item in inventory.items
-    )
-    assert any(
-        item.relative_path == "models/fake-model/metadata/config.json"
-        for item in inventory.items
-    )
+    assert any(item.relative_path == "models/fake-model/weights/model.gguf" for item in inventory.items)
+    assert any(item.relative_path == "models/fake-model/metadata/config.json" for item in inventory.items)
 
 
 def test_provider_inventory_rejects_archive_members_outside_controlled_imports_root(
@@ -2297,9 +2217,7 @@ def test_provider_inventory_rejects_archive_members_outside_controlled_imports_r
     service = ProviderInventoryService(
         plugins=_registry(),
         store=InMemoryProviderInventoryStore(),
-        installation_executor=ControlledFilesystemProviderInstallationExecutor(
-            tmp_path / "executor-root"
-        ),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root"),
     )
 
     service.stage_local_artifact(
@@ -2355,9 +2273,7 @@ def test_provider_inventory_run_installation_diagnostics_blocks_missing_permissi
     )
 
     assert diagnostics.readiness_status == "BLOCKED"
-    permission_check = next(
-        check for check in diagnostics.checks if check.check_id == "permissions_acknowledged"
-    )
+    permission_check = next(check for check in diagnostics.checks if check.check_id == "permissions_acknowledged")
     assert permission_check.status == "FAIL"
     assert "approved permissions must match requested permissions exactly" in permission_check.summary
 
@@ -2407,8 +2323,7 @@ def test_provider_inventory_run_installation_diagnostics_blocks_unsupported_sand
     assert "unsupported execution mode" in sandbox_check.summary
 
 
-def test_provider_inventory_executor_capabilities_allow_stricter_sandbox_policy_when_supported(
-) -> None:
+def test_provider_inventory_executor_capabilities_allow_stricter_sandbox_policy_when_supported() -> None:
     class SandboxedPlugin(FakeManagedPlugin):
         plugin_id = "sandbox-supported"
 
@@ -2481,8 +2396,7 @@ def test_provider_inventory_executor_capabilities_allow_stricter_sandbox_policy_
     assert approval.acknowledged_sandbox_policy["execution_mode"] == "SANDBOX_REQUIRED"
 
 
-def test_provider_inventory_run_installation_diagnostics_blocks_unsupported_sandbox_scope(
-) -> None:
+def test_provider_inventory_run_installation_diagnostics_blocks_unsupported_sandbox_scope() -> None:
     class FilesystemHeavyPlugin(FakeManagedPlugin):
         plugin_id = "sandbox-fs-heavy"
 
@@ -2544,8 +2458,9 @@ def test_provider_inventory_approval_rejects_incomplete_explicit_permission_ackn
         )
 
 
-def test_provider_inventory_run_installation_diagnostics_blocks_changed_permission_contract_without_upgrade_ack(
-) -> None:
+def test_provider_inventory_run_installation_diagnostics_blocks_changed_permission_contract_without_upgrade_ack() -> (
+    None
+):
     class MutablePermissionPlugin(FakeManagedPlugin):
         plugin_id = "mutable-permissions"
 
@@ -2625,14 +2540,11 @@ def test_provider_inventory_approval_records_selected_secret_handles() -> None:
         ],
     )
 
-    assert approval.selected_secret_handles[0].secret_handle == (
-        "secret://providers/fake-managed/api-key"
-    )
+    assert approval.selected_secret_handles[0].secret_handle == ("secret://providers/fake-managed/api-key")
     assert approval.selected_secret_handles[0].label == "Optional provider API key handle"
 
 
-def test_provider_inventory_approval_requires_upgrade_acknowledgement_for_changed_contract(
-) -> None:
+def test_provider_inventory_approval_requires_upgrade_acknowledgement_for_changed_contract() -> None:
     class MutablePermissionPlugin(FakeManagedPlugin):
         plugin_id = "mutable-permissions"
 
@@ -2691,8 +2603,7 @@ def test_provider_inventory_approval_requires_upgrade_acknowledgement_for_change
         )
 
 
-def test_provider_inventory_approval_records_upgrade_review_when_contract_change_is_acknowledged(
-) -> None:
+def test_provider_inventory_approval_records_upgrade_review_when_contract_change_is_acknowledged() -> None:
     class MutablePermissionPlugin(FakeManagedPlugin):
         plugin_id = "mutable-permissions"
 

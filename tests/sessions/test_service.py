@@ -17,9 +17,7 @@ from aidn_hypervisor.sessions.store import SessionStore
 
 
 def _canonical_hash(payload: dict) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
@@ -267,9 +265,7 @@ def test_sweep_idle_sessions_auto_closes_timed_out_session_with_idle_fee() -> No
         )
     )
 
-    swept = service.sweep_idle_sessions(
-        now=datetime(2026, 7, 1, 0, 10, 0, tzinfo=UTC)
-    )
+    swept = service.sweep_idle_sessions(now=datetime(2026, 7, 1, 0, 10, 0, tzinfo=UTC))
 
     assert len(swept) == 1
     assert swept[0].session.close_reason == "idle_timeout"
@@ -304,9 +300,7 @@ def test_sweep_idle_sessions_keeps_no_request_minimum_fee_rule() -> None:
         )
     )
 
-    swept = service.sweep_idle_sessions(
-        now=datetime(2026, 7, 1, 0, 10, 0, tzinfo=UTC)
-    )
+    swept = service.sweep_idle_sessions(now=datetime(2026, 7, 1, 0, 10, 0, tzinfo=UTC))
 
     assert len(swept) == 1
     assert swept[0].settlement is not None
@@ -458,10 +452,7 @@ def test_open_session_persists_session_contract_registry_object(tmp_path: Path) 
     assert stored["payload"]["consumer_refund_beneficiary"] == "wallet-a"
     assert stored["payload"]["session_contract_version"] == "session-contract.v2"
     assert opened.session.endpoint_configuration_hash == "cfg-accepted"
-    assert (
-        stored["payload"]["accounting_contract_object_id"]
-        == opened.session.accounting_contract_object_id
-    )
+    assert stored["payload"]["accounting_contract_object_id"] == opened.session.accounting_contract_object_id
 
 
 def test_open_session_binds_explicit_payment_and_refund_beneficiaries() -> None:
@@ -614,9 +605,7 @@ def test_open_session_succeeds_when_observability_side_effects_fail(
     )
 
     assert store.get_session(opened.session.session_id).session_id == opened.session.session_id
-    assert store.get_deposit_for_session(opened.session.session_id).session_id == (
-        opened.session.session_id
-    )
+    assert store.get_deposit_for_session(opened.session.session_id).session_id == (opened.session.session_id)
     stored = registry.get_registry_object(
         opened.session.session_contract_object_id,
         include_payload=True,
@@ -661,9 +650,7 @@ def test_record_usage_checkpoint_creates_acknowledgement_and_updates_accepted_st
     assert updated.last_accepted_report_sequence == 1
     assert updated.last_accepted_usage_charged_q == 6.5
     assert updated.accounting_checkpoint["last_accepted_report_id"] == "rep-1"
-    assert updated.accounting_checkpoint["accounting_contract_hash"] == (
-        opened.session.accounting_contract_hash
-    )
+    assert updated.accounting_checkpoint["accounting_contract_hash"] == (opened.session.accounting_contract_hash)
     assert updated.last_usage_acknowledgement_snapshot["verification_status"] == "accepted_unverified"
 
 
@@ -760,7 +747,9 @@ def test_record_usage_acknowledgement_advances_last_accepted_checkpoint_and_reop
     assert updated.last_accepted_usage_charged_q == 6.5
     assert updated.accounting_checkpoint["last_ack_sequence"] == 1
     assert updated.accounting_checkpoint["last_accepted_report_sequence"] == 1
-    assert updated.accounting_checkpoint["last_accepted_report_hash"] == pending.accounting_checkpoint["last_report_hash"]
+    assert (
+        updated.accounting_checkpoint["last_accepted_report_hash"] == pending.accounting_checkpoint["last_report_hash"]
+    )
     assert updated.accounting_checkpoint["last_accepted_usage_charged_q"] == 6.5
     assert updated.accounting_checkpoint["ack_deadline_at"] is None
 

@@ -266,17 +266,21 @@ def _sign_registry_quorum_proposal(
     quorum_threshold: int,
     operator_note: str | None,
 ) -> str:
-    signature = identity["private_key"].sign(
-        wallet_identity_quorum_proposal_payload(
-            wallet_id=wallet_id,
-            chosen_object_id=chosen_object_id,
-            chosen_payload_hash=chosen_payload_hash,
-            proposer_node_id=identity["node_id"],
-            eligible_voter_node_ids=eligible_voter_node_ids,
-            quorum_threshold=quorum_threshold,
-            operator_note=operator_note,
+    signature = (
+        identity["private_key"]
+        .sign(
+            wallet_identity_quorum_proposal_payload(
+                wallet_id=wallet_id,
+                chosen_object_id=chosen_object_id,
+                chosen_payload_hash=chosen_payload_hash,
+                proposer_node_id=identity["node_id"],
+                eligible_voter_node_ids=eligible_voter_node_ids,
+                quorum_threshold=quorum_threshold,
+                operator_note=operator_note,
+            )
         )
-    ).hex()
+        .hex()
+    )
     return f"ed25519:{signature}"
 
 
@@ -286,13 +290,17 @@ def _sign_registry_quorum_approval(
     resolution_id: str,
     approval_note: str | None,
 ) -> str:
-    signature = identity["private_key"].sign(
-        wallet_identity_quorum_approval_payload(
-            resolution_id=resolution_id,
-            approver_node_id=identity["node_id"],
-            approval_note=approval_note,
+    signature = (
+        identity["private_key"]
+        .sign(
+            wallet_identity_quorum_approval_payload(
+                resolution_id=resolution_id,
+                approver_node_id=identity["node_id"],
+                approval_note=approval_note,
+            )
         )
-    ).hex()
+        .hex()
+    )
     return f"ed25519:{signature}"
 
 
@@ -590,9 +598,7 @@ def test_submit_task_endpoint_rejects_paid_endpoint_request_without_session() ->
     )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == (
-        f"Active session required for paid endpoint: {created.endpoint.endpoint_id}"
-    )
+    assert response.json()["detail"] == (f"Active session required for paid endpoint: {created.endpoint.endpoint_id}")
 
 
 def test_submit_task_endpoint_updates_session_activity_for_paid_endpoint_session() -> None:
@@ -998,9 +1004,7 @@ def test_queue_endpoint_returns_enqueued_tasks_with_selected_bundles() -> None:
             per_request_cpu=0.5,
         ),
     )
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
     client = TestClient(build_app(service=service))
 
     response = client.get("/queue")
@@ -1019,9 +1023,7 @@ def test_queue_endpoint_returns_enqueued_tasks_with_selected_bundles() -> None:
 
 def test_task_detail_endpoint_returns_submitted_task_status() -> None:
     service = _service()
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
     client = TestClient(build_app(service=service))
     history = [event.model_dump(mode="json") for event in service.task_history(task.task_id)]
 
@@ -1095,9 +1097,7 @@ def test_cancel_task_endpoint_marks_queued_task_cancelled() -> None:
             per_request_cpu=0.5,
         ),
     )
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
     client = TestClient(build_app(service=service))
 
     response = client.post(f"/tasks/{task.task_id}/cancel")
@@ -1135,9 +1135,7 @@ def test_queue_endpoint_omits_cancelled_tasks() -> None:
             per_request_cpu=0.5,
         ),
     )
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
     client = TestClient(build_app(service=service))
 
     client.post(f"/tasks/{task.task_id}/cancel")
@@ -1149,9 +1147,7 @@ def test_queue_endpoint_omits_cancelled_tasks() -> None:
 
 def test_cancel_task_endpoint_rejects_non_cancellable_tasks() -> None:
     service = _service()
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
     service.queue.transition_status(task.task_id, "running")
     client = TestClient(build_app(service=service))
 
@@ -1389,9 +1385,7 @@ def test_queue_diagnostics_endpoint_reports_blocked_reason() -> None:
             per_request_cpu=0.5,
         ),
     )
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
     client = TestClient(build_app(service=service))
 
     response = client.get("/diagnostics/queue")
@@ -1440,9 +1434,7 @@ def test_release_allocation_endpoint_marks_lease_released() -> None:
         use_process_manager=True,
         whisper_endpoint="http://127.0.0.1:9000",
     )
-    allocation = service.create_allocation(
-        AllocationRequest(workload_type="speech_to_text", owner_id="agent-a")
-    )
+    allocation = service.create_allocation(AllocationRequest(workload_type="speech_to_text", owner_id="agent-a"))
     client = TestClient(build_app(service=service))
 
     response = client.delete(f"/allocations/{allocation['allocation_id']}")
@@ -1551,11 +1543,7 @@ def test_operator_registry_objects_endpoint_lists_wallet_identity_objects() -> N
     response = client.get("/operators/registry/objects?include_payload=true")
 
     assert response.status_code == 200
-    wallet_identity = next(
-        item
-        for item in response.json()["objects"]
-        if item["object_type"] == "wallet_identity"
-    )
+    wallet_identity = next(item for item in response.json()["objects"] if item["object_type"] == "wallet_identity")
     assert wallet_identity["namespace"] == "identity"
     assert wallet_identity["payload"] == {
         "wallet_id": "wallet-consumer",
@@ -1746,8 +1734,7 @@ def test_operator_wallet_identity_reconciliation_endpoint_reports_registry_state
     assert response.json()["items"][0]["status"] == "consistent"
 
 
-def test_operator_wallet_identity_governance_policy_endpoint_updates_registry_policy(
-) -> None:
+def test_operator_wallet_identity_governance_policy_endpoint_updates_registry_policy() -> None:
     service = _service(with_runtime=False, use_process_manager=True)
     registry = RegistryService()
     client = TestClient(build_app(service=service, registry_service=registry))
@@ -1770,9 +1757,7 @@ def test_operator_wallet_identity_governance_policy_endpoint_updates_registry_po
     assert updated.json()["authorized_voter_statuses"] == ["ready"]
     assert updated.json()["minimum_eligible_voter_count"] == 2
     assert updated.json()["minimum_quorum_threshold"] == 2
-    assert registry.wallet_identity_governance_policy()["authorized_voter_statuses"] == [
-        "ready"
-    ]
+    assert registry.wallet_identity_governance_policy()["authorized_voter_statuses"] == ["ready"]
 
 
 def test_operator_wallet_identity_resolve_conflict_endpoint_applies_resolution() -> None:
@@ -1829,8 +1814,7 @@ def test_operator_wallet_identity_resolve_conflict_endpoint_applies_resolution()
     assert resolved["identity_source"] == "registry_resolution"
 
 
-def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quorum(
-) -> None:
+def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quorum() -> None:
     service = _service(with_runtime=False, use_process_manager=True)
     registry = RegistryService()
     operator_a = _operator_registry_identity("node-a")
@@ -1937,9 +1921,7 @@ def test_operator_registry_objects_endpoint_includes_payload_when_requested() ->
 
     assert response.status_code == 200
     capability_definition = next(
-        item
-        for item in response.json()["objects"]
-        if item["object_type"] == "capability_definition"
+        item for item in response.json()["objects"] if item["object_type"] == "capability_definition"
     )
     assert capability_definition["payload"]["capability_id"] == "llm.chat"
 
@@ -1956,8 +1938,7 @@ def test_operator_registry_object_endpoint_includes_payload_when_requested() -> 
     assert response.json()["payload"]["capability_id"] == "llm.chat"
 
 
-def test_operator_registry_objects_endpoint_uses_local_registry_store_fallback(
-) -> None:
+def test_operator_registry_objects_endpoint_uses_local_registry_store_fallback() -> None:
     service = _service(with_runtime=False, use_process_manager=True)
     advertisement = service.node_advertisement()
     client = TestClient(build_app(service=service))
@@ -1966,9 +1947,7 @@ def test_operator_registry_objects_endpoint_uses_local_registry_store_fallback(
 
     assert response.status_code == 200
     capability_definition = next(
-        item
-        for item in response.json()["objects"]
-        if item["object_type"] == "capability_definition"
+        item for item in response.json()["objects"] if item["object_type"] == "capability_definition"
     )
     assert capability_definition["payload"]["capability_id"] == "llm.chat"
     assert capability_definition["sources"] == [
@@ -1980,8 +1959,7 @@ def test_operator_registry_objects_endpoint_uses_local_registry_store_fallback(
     ]
 
 
-def test_operator_registry_object_endpoint_uses_local_registry_store_fallback(
-) -> None:
+def test_operator_registry_object_endpoint_uses_local_registry_store_fallback() -> None:
     service = _service(with_runtime=False, use_process_manager=True)
     advertisement = service.node_advertisement()
     object_id = advertisement["canonical_registry_objects"][0]["object_id"]
@@ -2040,11 +2018,7 @@ def test_operator_registry_objects_endpoint_lists_session_contract_objects() -> 
     response = client.get("/operators/registry/objects?include_payload=true")
 
     assert response.status_code == 200
-    session_contract = next(
-        item
-        for item in response.json()["objects"]
-        if item["object_type"] == "session_contract"
-    )
+    session_contract = next(item for item in response.json()["objects"] if item["object_type"] == "session_contract")
     assert session_contract["namespace"] == "session"
     assert session_contract["payload"]["advertisement_id"] == "adv-ep-1-v1"
 
@@ -2088,9 +2062,7 @@ def test_operator_registry_objects_endpoint_preserves_publication_objects_with_s
         )
     )
 
-    publish_response = client.post(
-        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration"
-    )
+    publish_response = client.post(f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration")
     assert publish_response.status_code == 200
 
     response = client.get("/operators/registry/objects?include_payload=true")
@@ -2172,8 +2144,7 @@ def test_operator_dashboard_market_endpoint_marks_own_and_external_candidates() 
         "external",
     }
     assert any(
-        item["node_id"] == hypervisor.node_id and item["origin"] == "own"
-        for item in response.json()["candidates"]
+        item["node_id"] == hypervisor.node_id and item["origin"] == "own" for item in response.json()["candidates"]
     )
 
 
@@ -2264,12 +2235,8 @@ def test_operator_dashboard_market_endpoint_includes_published_endpoint_counts()
     response = client.get("/operators/dashboard/market")
 
     assert response.status_code == 200
-    own = next(
-        item for item in response.json()["candidates"] if item["node_id"] == hypervisor.node_id
-    )
-    external = next(
-        item for item in response.json()["candidates"] if item["node_id"] == "node-external"
-    )
+    own = next(item for item in response.json()["candidates"] if item["node_id"] == hypervisor.node_id)
+    external = next(item for item in response.json()["candidates"] if item["node_id"] == "node-external")
     assert own["published_endpoint_count"] == 1
     assert external["published_endpoint_count"] == 1
 
@@ -2390,9 +2357,7 @@ def test_operator_dashboard_market_endpoint_includes_local_canonical_publication
     assert response.status_code == 200
     body = response.json()
     candidate = next(
-        item
-        for item in body["canonical_candidates"]
-        if item["advertisement_id"] == f"adv-{publication.publication_id}"
+        item for item in body["canonical_candidates"] if item["advertisement_id"] == f"adv-{publication.publication_id}"
     )
     assert candidate["origin"] == "own"
     assert candidate["node_id"] == hypervisor.node_id
@@ -2420,13 +2385,9 @@ def test_operator_dashboard_market_payload_includes_reputation_block() -> None:
         "tier": "D",
         "updated_at": "2026-07-06T11:55:00+00:00",
     }
-    completed = hypervisor.queue.enqueue(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "ok.wav"})
-    )
+    completed = hypervisor.queue.enqueue(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "ok.wav"}))
     hypervisor.queue.transition_status(completed.task_id, "completed")
-    failed = hypervisor.queue.enqueue(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "fail.wav"})
-    )
+    failed = hypervisor.queue.enqueue(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "fail.wav"}))
     hypervisor.queue.transition_status(failed.task_id, "failed")
     hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
     endpoint_service = EndpointService(EndpointStore())
@@ -2548,8 +2509,7 @@ def test_operator_dashboard_market_payload_uses_field_level_reputation_fallback_
     assert candidate["rating"]["score"] == 0.94
 
 
-def test_operator_dashboard_market_payload_registry_backed_summary_ignores_unpublished_canonical_overlay(
-) -> None:
+def test_operator_dashboard_market_payload_registry_backed_summary_ignores_unpublished_canonical_overlay() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     registry = RegistryService()
     registry.upsert_node(RegistryNodeAdvertisement(**hypervisor.node_advertisement()))
@@ -2565,8 +2525,7 @@ def test_operator_dashboard_market_payload_registry_backed_summary_ignores_unpub
     }
 
 
-def test_operator_dashboard_market_payload_excludes_non_market_nodes_from_canonical_summary(
-) -> None:
+def test_operator_dashboard_market_payload_excludes_non_market_nodes_from_canonical_summary() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     registry = RegistryService()
     registry.upsert_node(RegistryNodeAdvertisement(**hypervisor.node_advertisement()))
@@ -2807,9 +2766,7 @@ def test_detach_remote_endpoint_route_removes_preferred_catalogue_entry() -> Non
         )
     )
 
-    response = client.delete(
-        f"/operators/remote-endpoints/{attached.remote_endpoint_id}"
-    )
+    response = client.delete(f"/operators/remote-endpoints/{attached.remote_endpoint_id}")
 
     assert response.status_code == 200
     body = response.json()["data"]["remote_endpoint"]
@@ -2854,9 +2811,7 @@ def test_detach_remote_endpoint_route_rejects_proxy_dependencies() -> None:
         )
     )
 
-    response = client.delete(
-        f"/operators/remote-endpoints/{attached.remote_endpoint_id}"
-    )
+    response = client.delete(f"/operators/remote-endpoints/{attached.remote_endpoint_id}")
 
     assert response.status_code == 409
     body = response.json()
@@ -2994,9 +2949,7 @@ def test_detach_proxy_target_route_reverts_endpoint_to_local_strategy() -> None:
         )
     )
 
-    response = client.delete(
-        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/proxy-target"
-    )
+    response = client.delete(f"/api/v1/endpoints/{created.endpoint.endpoint_id}/proxy-target")
 
     assert response.status_code == 200
     body = response.json()["data"]
@@ -3085,7 +3038,7 @@ def test_operator_dashboard_shell_reputation_breakdown_uses_placeholder_for_miss
 
     assert response.status_code == 200
     assert "function renderReputationBreakdown(candidate)" in response.text
-    assert "value == null ? \"-\" : formatRating(value)" in response.text
+    assert 'value == null ? "-" : formatRating(value)' in response.text
     assert "formatRating(Number(value ?? 0))" not in response.text
 
 
@@ -3173,7 +3126,7 @@ def test_operator_dashboard_shell_route_exposes_remote_proxy_handoff_controls() 
     assert 'data-remote-action="stage-proxy"' in response.text
     assert 'button.dataset.remoteAction === "stage-proxy"' in response.text
     assert 'state.screen = "endpoints"' in response.text
-    assert 'state.endpointProxyDraft = {' in response.text
+    assert "state.endpointProxyDraft = {" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_detach_remote_endpoint_action() -> None:
@@ -3187,7 +3140,7 @@ def test_operator_dashboard_shell_route_exposes_detach_remote_endpoint_action() 
     assert '"/operators/remote-endpoints/' in response.text
     assert "function clearDetachedRemoteProxyState(remoteEndpointId)" in response.text
     assert "state.endpointProxyDraft.remoteEndpointId === remoteEndpointId" in response.text
-    assert 'state.endpointProxyDraft = {' in response.text
+    assert "state.endpointProxyDraft = {" in response.text
     assert "state.proxyGuidedFlow?.remoteEndpointId === remoteEndpointId" in response.text
     assert "clearGuidedProxyFlow();" in response.text
     assert "clearDetachedRemoteProxyState(remote.remote_endpoint_id);" in response.text
@@ -3298,7 +3251,9 @@ def test_operator_dashboard_shell_route_exposes_install_registration_controls() 
     assert 'data-install-action="register-bundle"' in response.text
     assert "Register Bundle" in response.text
     assert "Recommended Next Action" in response.text
-    assert "Queue or process a model install first so completed artifacts can be registered as bundles." in response.text
+    assert (
+        "Queue or process a model install first so completed artifacts can be registered as bundles." in response.text
+    )
     assert "Select a completed install, then register it as a bundle so it can become an endpoint." in response.text
     assert "function installRecommendedAction" in response.text
 
@@ -3319,7 +3274,11 @@ def test_operator_dashboard_shell_route_exposes_bundle_endpoint_creation_control
     assert 'data-bundle-endpoint-action="create-endpoint"' in response.text
     assert "Create Endpoint From Bundle" in response.text
     assert "Recommended Next Action" in response.text
-    assert "Select a first-endpoint candidate, then create an endpoint from local inventory without leaving this workspace." in response.text
+    expected_action = (
+        "Select a first-endpoint candidate, then create an endpoint from local "
+        "inventory without leaving this workspace."
+    )
+    assert expected_action in response.text
     assert "function bundleRecommendedAction" in response.text
     assert "action-focus" in response.text
 
@@ -3360,7 +3319,7 @@ def test_operator_dashboard_shell_route_exposes_provider_attach_and_reload_contr
     assert "Declarative preview available" not in response.text
     assert 'data-provider-row="${escapeHtml(provider.plugin_id)}"' in response.text
     assert "${escapeHtml(provider.display_name || provider.plugin_id)}" in response.text
-    assert "${escapeHtml(provider.trust_status || \"UNREVIEWED\")}" in response.text
+    assert '${escapeHtml(provider.trust_status || "UNREVIEWED")}' in response.text
     assert "escapeHtml(permission.label || permission.permission_id)" in response.text
     assert "No providers installed" in response.text
     assert "Manual Provider Attach" in response.text
@@ -3414,7 +3373,7 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert "Custom configuration" in response.text
     assert "data-provider-apply-recipe" in response.text
     assert 'data-provider-apply-field="${escapeHtml(fieldId)}"' in response.text
-    assert 'data-provider-apply-note' in response.text
+    assert "data-provider-apply-note" in response.text
     assert 'data-provider-action="approve-installation"' in response.text
     assert 'data-provider-action="run-installation-diagnostics"' in response.text
     assert 'data-provider-action="apply-installation"' in response.text
@@ -3555,8 +3514,14 @@ def test_operator_dashboard_shell_route_exposes_endpoint_next_step_guidance() ->
     assert "The highlighted control matches the current step above." in response.text
     assert "Save policy and runtime changes before publishing a new configuration snapshot." in response.text
     assert "Publish this endpoint when routing, visibility, and pricing are ready for remote use." in response.text
-    assert "Validation remains optional and can be requested after publication when you want network trust." in response.text
-    assert "Create or select an endpoint to save policy, publish configuration, and request validation later." in response.text
+    assert (
+        "Validation remains optional and can be requested after publication when you want network trust."
+        in response.text
+    )
+    assert (
+        "Create or select an endpoint to save policy, publish configuration, and request validation later."
+        in response.text
+    )
     assert 'key: "snapshot"' in response.text
     assert 'key: "publish"' in response.text
     assert 'key: "validation"' in response.text
@@ -3643,9 +3608,9 @@ def test_operator_dashboard_shell_route_guided_bootstrap_cta_uses_shell_readines
     response = client.get("/operators/dashboard")
 
     assert response.status_code == 200
-    assert 'const recommendation = homeRecommendedAction(state.payloads.home?.bootstrap || {});' in response.text
+    assert "const recommendation = homeRecommendedAction(state.payloads.home?.bootstrap || {});" in response.text
     assert 'return { kind: "screen-jump", action: "home", label: "Open Wallet Setup" };' in response.text
-    assert 'action: recommendation.action,' in response.text
+    assert "action: recommendation.action," in response.text
     assert 'data-screen-jump="${proxyGuidedPrimaryAction.action}"' in response.text
     assert 'return { kind: "endpoint-action", action: "create-endpoint", label: "Create Endpoint" };' in response.text
 
@@ -3673,7 +3638,7 @@ def test_operator_dashboard_shell_route_exposes_guided_proxy_phase_transitions()
     assert "clearGuidedProxyFlow" in response.text
     assert 'state.screen = proxyGuidedFlow?.phase === "publish" ? "endpoints" : "home";' in response.text
     assert "Open the validation controls when you are ready to request it." not in response.text
-    assert '`${endpointApiBase}/${draft.endpoint_id}/request-validation`' in response.text
+    assert "`${endpointApiBase}/${draft.endpoint_id}/request-validation`" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_wallet_and_endpoint_controls() -> None:
@@ -3698,7 +3663,10 @@ def test_operator_dashboard_shell_route_exposes_wallet_and_endpoint_controls() -
     assert 'data-bootstrap-field="sharedWallets"' in response.text
     assert "Recommended Next Action" in response.text
     assert "Create or import a wallet before any publish or market-facing step." in response.text
-    assert "Attach a provider or finish a model install so bootstrap can surface a first endpoint candidate." in response.text
+    assert (
+        "Attach a provider or finish a model install so bootstrap can surface a first endpoint candidate."
+        in response.text
+    )
     assert "function homeRecommendedAction" in response.text
     assert 'data-screen-jump="providers"' in response.text
     assert "/operators/endpoints/bootstrap" not in response.text
@@ -3733,9 +3701,7 @@ def test_operator_dashboard_home_market_preview_matches_market_candidates() -> N
     assert market.status_code == 200
     assert home.json()["bootstrap"]["wallet_ready"] is False
     assert home.json()["bootstrap"]["node_identity"]["node_id"] == hypervisor.node_id
-    assert home.json()["market_preview"]["candidate_count"] == len(
-        market.json()["candidates"]
-    )
+    assert home.json()["market_preview"]["candidate_count"] == len(market.json()["candidates"])
 
 
 def test_dashboard_seed_preview_refreshes_registry_visibility_after_heartbeat_ttl(
@@ -3872,13 +3838,10 @@ def test_operator_dashboard_home_endpoint_pipeline_uses_endpoints_for_in_sync_ma
     assert payload["endpoint_pipeline"]["recommended_action"]["workspace"] == "endpoints"
 
 
-def test_operator_dashboard_home_preserves_completion_history_while_recommending_create(
-) -> None:
+def test_operator_dashboard_home_preserves_completion_history_while_recommending_create() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
-    hypervisor.sync_operator_onboarding_state(
-        endpoint_items=[{"publication_status": "published"}]
-    )
+    hypervisor.sync_operator_onboarding_state(endpoint_items=[{"publication_status": "published"}])
     client = TestClient(build_app(service=hypervisor))
 
     home = client.get("/operators/dashboard/home")
@@ -3893,8 +3856,7 @@ def test_operator_dashboard_home_preserves_completion_history_while_recommending
     assert payload["onboarding"]["recommended_action"]["action"] == "create"
 
 
-def test_operator_dashboard_home_shell_highlights_publish_configuration_recommendation(
-) -> None:
+def test_operator_dashboard_home_shell_highlights_publish_configuration_recommendation() -> None:
     client = TestClient(build_app(service=_service()))
 
     response = client.get("/operators/dashboard")
@@ -3904,8 +3866,7 @@ def test_operator_dashboard_home_shell_highlights_publish_configuration_recommen
     assert 'recommendation.action === "publish-configuration" ? "action-focus" : ""' in response.text
 
 
-def test_operator_dashboard_home_targets_drifted_endpoint_over_older_in_sync_endpoint(
-) -> None:
+def test_operator_dashboard_home_targets_drifted_endpoint_over_older_in_sync_endpoint() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
     endpoint_service = EndpointService(EndpointStore())
@@ -3968,8 +3929,7 @@ def test_operator_dashboard_home_targets_drifted_endpoint_over_older_in_sync_end
     assert payload["endpoint_pipeline"]["primary_endpoint_id"] != older_in_sync.endpoint.endpoint_id
 
 
-def test_operator_dashboard_home_shell_uses_endpoint_pipeline_primary_endpoint_id_for_home_actions(
-) -> None:
+def test_operator_dashboard_home_shell_uses_endpoint_pipeline_primary_endpoint_id_for_home_actions() -> None:
     client = TestClient(build_app(service=_service()))
 
     response = client.get("/operators/dashboard")
@@ -4071,9 +4031,7 @@ def test_operator_dashboard_endpoints_route_uses_endpoint_first_payload(
         "aidn_hypervisor.api.build_operator_endpoints_payload",
         fake_build_operator_endpoints_payload,
     )
-    client = TestClient(
-        build_app(service=hypervisor, endpoint_service=endpoint_service)
-    )
+    client = TestClient(build_app(service=hypervisor, endpoint_service=endpoint_service))
 
     response = client.get("/operators/dashboard/endpoints")
 
@@ -4137,10 +4095,10 @@ def test_operator_dashboard_providers_route_returns_plugin_first_inventory_paylo
     assert payload["plugin_directory"][0]["plugin_id"] == "fake-managed"
     assert payload["plugin_directory"][0]["package_verification"]["status"] == "VERIFIED"
     assert payload["installation_executor"]["executor_id"] == "sandbox-enforced-declarative-v1"
-    assert (
-        payload["installation_executor"]["sandbox_capabilities"]["supported_execution_modes"]
-        == ["RECORDED_ONLY", "SANDBOX_REQUIRED"]
-    )
+    assert payload["installation_executor"]["sandbox_capabilities"]["supported_execution_modes"] == [
+        "RECORDED_ONLY",
+        "SANDBOX_REQUIRED",
+    ]
     assert payload["provider_instances"][0]["provider_instance_id"] == attached["provider_instance_id"]
     assert payload["provider_instances"][0]["model_count"] == 1
     assert payload["provider_instances"][0]["runtime_binding_ready_count"] == 1
@@ -4202,10 +4160,7 @@ def test_operator_dashboard_providers_payload_marks_provider_as_backing_existing
 
     assert first["endpoint_readiness"]["state"] == "already_backing_endpoint_supply"
     assert first["endpoint_readiness"]["recommended_action"]["action"] == "open_endpoint"
-    assert (
-        first["endpoint_readiness"]["recommended_action"]["endpoint_id"]
-        == created.endpoint.endpoint_id
-    )
+    assert first["endpoint_readiness"]["recommended_action"]["endpoint_id"] == created.endpoint.endpoint_id
 
 
 def test_operator_dashboard_providers_payload_counts_endpoint_ready_bundles() -> None:
@@ -4297,9 +4252,7 @@ def test_provider_inventory_operator_routes_attach_discover_and_bind() -> None:
     attached = attach_response.json()
     assert attached["plugin_id"] == "fake-managed"
 
-    discover_response = client.post(
-        f"/operators/provider-instances/{attached['provider_instance_id']}/discover-models"
-    )
+    discover_response = client.post(f"/operators/provider-instances/{attached['provider_instance_id']}/discover-models")
     assert discover_response.status_code == 200
     models = discover_response.json()["items"]
     assert models[0]["provider_instance_id"] == attached["provider_instance_id"]
@@ -4316,9 +4269,7 @@ def test_provider_inventory_operator_routes_attach_discover_and_bind() -> None:
     binding = binding_response.json()
 
     compatibility_bundle = next(
-        bundle
-        for bundle in service.bundles
-        if bundle.bundle_id == binding["compatibility_bundle_id"]
+        bundle for bundle in service.bundles if bundle.bundle_id == binding["compatibility_bundle_id"]
     )
     assert compatibility_bundle.workload_type == "llm.chat"
     assert compatibility_bundle.endpoint == "http://127.0.0.1:9999"
@@ -4331,9 +4282,7 @@ def test_provider_inventory_runtime_binding_route_requires_materialized_artifact
     service.provider_inventory = ProviderInventoryService(
         plugins=service.plugins,
         store=InMemoryProviderInventoryStore(),
-        installation_executor=ControlledFilesystemProviderInstallationExecutor(
-            tmp_path / "executor-root"
-        ),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root"),
     )
     client = TestClient(build_app(service=service))
 
@@ -4375,9 +4324,7 @@ def test_provider_inventory_runtime_binding_route_requires_materialized_artifact
     )
     assert attach_response.status_code == 200
     provider_instance_id = attach_response.json()["provider_instance_id"]
-    models_response = client.post(
-        f"/operators/provider-instances/{provider_instance_id}/discover-models"
-    )
+    models_response = client.post(f"/operators/provider-instances/{provider_instance_id}/discover-models")
     assert models_response.status_code == 200
     model_deployment_id = models_response.json()["items"][0]["model_deployment_id"]
 
@@ -4427,9 +4374,7 @@ def test_provider_plugin_release_routes_record_local_installation_without_execut
     installed_plugin = install_response.json()
     assert installed_plugin["release_id"] == release["release_id"]
     assert installed_plugin["state"] == "INSTALLED"
-    assert client.get("/operators/installed-provider-plugins").json()["items"] == [
-        installed_plugin
-    ]
+    assert client.get("/operators/installed-provider-plugins").json()["items"] == [installed_plugin]
 
 
 def test_plugin_host_status_route_returns_sanitized_observability() -> None:
@@ -4509,8 +4454,7 @@ def test_provider_inventory_operator_routes_reject_malformed_payloads() -> None:
     assert approval_response.status_code == 200
 
     apply_note_response = client.post(
-        "/operators/provider-installation-approvals/"
-        f"{approval_response.json()['approval_id']}/apply",
+        f"/operators/provider-installation-approvals/{approval_response.json()['approval_id']}/apply",
         json={"operator_note": "apply"},
     )
     assert apply_note_response.status_code == 422
@@ -4622,9 +4566,7 @@ def test_provider_installation_job_rollback_route() -> None:
     rolled_back = rollback_response.json()
     assert rolled_back["job_id"] == job["job_id"]
     assert rolled_back["rollback_status"] == "COMPLETED"
-    assert rolled_back["rollback_step_results"][-1]["step_id"] == (
-        "rollback-delete-local-provider-instance"
-    )
+    assert rolled_back["rollback_step_results"][-1]["step_id"] == ("rollback-delete-local-provider-instance")
 
 
 def test_provider_installation_job_rollback_route_rejects_unknown_job() -> None:
@@ -4736,9 +4678,7 @@ def test_provider_installation_routes_require_upgrade_acknowledgement_for_change
     assert diagnostics_response.status_code == 200
     diagnostics = diagnostics_response.json()
     assert diagnostics["readiness_status"] == "BLOCKED"
-    upgrade_check = next(
-        check for check in diagnostics["checks"] if check["check_id"] == "upgrade_review"
-    )
+    upgrade_check = next(check for check in diagnostics["checks"] if check["check_id"] == "upgrade_review")
     assert upgrade_check["status"] == "FAIL"
     assert upgrade_check["details"]["status"] == "CHANGED"
     assert upgrade_check["details"]["added_permissions"] == ["filesystem.write"]
@@ -4798,9 +4738,7 @@ def test_provider_installation_diagnostics_route_returns_readiness_and_rollback_
     assert diagnostics["readiness_status"] == "READY"
     assert diagnostics["executor_id"] == "sandbox-enforced-declarative-v1"
     assert diagnostics["rollback_result"]["status"] == "NOT_REQUIRED"
-    package_check = next(
-        check for check in diagnostics["checks"] if check["check_id"] == "package_verification"
-    )
+    package_check = next(check for check in diagnostics["checks"] if check["check_id"] == "package_verification")
     assert package_check["status"] == "PASS"
     assert any(check["check_id"] == "rollback_preview" for check in diagnostics["checks"])
 
@@ -4822,9 +4760,7 @@ def test_provider_installation_diagnostics_route_surfaces_blocked_state_without_
     assert response.status_code == 200
     diagnostics = response.json()
     assert diagnostics["readiness_status"] == "BLOCKED"
-    permission_check = next(
-        check for check in diagnostics["checks"] if check["check_id"] == "permissions_acknowledged"
-    )
+    permission_check = next(check for check in diagnostics["checks"] if check["check_id"] == "permissions_acknowledged")
     assert permission_check["status"] == "FAIL"
 
 
@@ -4836,9 +4772,7 @@ def test_provider_installation_diagnostics_route_surfaces_missing_local_import_a
     service.provider_inventory = ProviderInventoryService(
         plugins=service.plugins,
         store=InMemoryProviderInventoryStore(),
-        installation_executor=ControlledFilesystemProviderInstallationExecutor(
-            tmp_path / "executor-root"
-        ),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root"),
     )
     client = TestClient(build_app(service=service))
 
@@ -4862,11 +4796,7 @@ def test_provider_installation_diagnostics_route_surfaces_missing_local_import_a
     assert response.status_code == 200
     diagnostics = response.json()
     assert diagnostics["readiness_status"] == "BLOCKED"
-    import_check = next(
-        check
-        for check in diagnostics["checks"]
-        if check["check_id"] == "local_import_artifacts"
-    )
+    import_check = next(check for check in diagnostics["checks"] if check["check_id"] == "local_import_artifacts")
     assert import_check["status"] == "FAIL"
     assert import_check["details"]["missing_local_import_count"] == 1
 
@@ -4882,9 +4812,7 @@ def test_provider_installation_diagnostics_route_surfaces_ready_local_import_art
     service.provider_inventory = ProviderInventoryService(
         plugins=service.plugins,
         store=InMemoryProviderInventoryStore(),
-        installation_executor=ControlledFilesystemProviderInstallationExecutor(
-            tmp_path / "executor-root"
-        ),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root"),
     )
     client = TestClient(build_app(service=service))
 
@@ -4908,11 +4836,7 @@ def test_provider_installation_diagnostics_route_surfaces_ready_local_import_art
     assert response.status_code == 200
     diagnostics = response.json()
     assert diagnostics["readiness_status"] == "READY"
-    import_check = next(
-        check
-        for check in diagnostics["checks"]
-        if check["check_id"] == "local_import_artifacts"
-    )
+    import_check = next(check for check in diagnostics["checks"] if check["check_id"] == "local_import_artifacts")
     assert import_check["status"] == "PASS"
     assert import_check["details"]["ready_local_import_count"] == 1
 
@@ -4924,9 +4848,7 @@ def test_provider_installation_artifact_routes_stage_list_and_remove_artifacts(
     service.provider_inventory = ProviderInventoryService(
         plugins=service.plugins,
         store=InMemoryProviderInventoryStore(),
-        installation_executor=ControlledFilesystemProviderInstallationExecutor(
-            tmp_path / "executor-root"
-        ),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root"),
     )
     client = TestClient(build_app(service=service))
 
@@ -4970,9 +4892,7 @@ def test_provider_installation_artifact_extract_route_unpacks_staged_archive(
     service.provider_inventory = ProviderInventoryService(
         plugins=service.plugins,
         store=InMemoryProviderInventoryStore(),
-        installation_executor=ControlledFilesystemProviderInstallationExecutor(
-            tmp_path / "executor-root"
-        ),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root"),
     )
     client = TestClient(build_app(service=service))
 
@@ -5022,9 +4942,7 @@ def test_model_artifact_routes_promote_deduplicate_and_remove_staged_artifacts(
     service.provider_inventory = ProviderInventoryService(
         plugins=service.plugins,
         store=InMemoryProviderInventoryStore(),
-        installation_executor=ControlledFilesystemProviderInstallationExecutor(
-            tmp_path / "executor-root"
-        ),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root"),
     )
     client = TestClient(build_app(service=service))
     content_base64 = base64.b64encode(b"shared-model-bytes").decode("ascii")
@@ -5069,9 +4987,7 @@ def test_model_artifact_set_routes_create_and_list_sets(tmp_path) -> None:
     service.provider_inventory = ProviderInventoryService(
         plugins=service.plugins,
         store=InMemoryProviderInventoryStore(),
-        installation_executor=ControlledFilesystemProviderInstallationExecutor(
-            tmp_path / "executor-root"
-        ),
+        installation_executor=ControlledFilesystemProviderInstallationExecutor(tmp_path / "executor-root"),
     )
     client = TestClient(build_app(service=service))
     client.post(
@@ -5272,10 +5188,7 @@ def test_operator_dashboard_bundles_payload_marks_published_endpoint_relationshi
 
     assert first["endpoint_relationship"]["state"] == "published_endpoint"
     assert first["endpoint_relationship"]["recommended_action"]["action"] == "open_endpoint"
-    assert (
-        first["endpoint_relationship"]["recommended_action"]["endpoint_id"]
-        == created.endpoint.endpoint_id
-    )
+    assert first["endpoint_relationship"]["recommended_action"]["endpoint_id"] == created.endpoint.endpoint_id
 
 
 def test_operator_dashboard_bundles_payload_marks_published_endpoint_relationship_drifted() -> None:
@@ -5345,10 +5258,7 @@ def test_operator_dashboard_bundles_payload_marks_draft_endpoint_relationship() 
 
     assert first["endpoint_relationship"]["state"] == "draft_endpoint"
     assert first["endpoint_relationship"]["recommended_action"]["action"] == "open_endpoint"
-    assert (
-        first["endpoint_relationship"]["recommended_action"]["endpoint_id"]
-        == created.endpoint.endpoint_id
-    )
+    assert first["endpoint_relationship"]["recommended_action"]["endpoint_id"] == created.endpoint.endpoint_id
 
 
 def test_operator_dashboard_market_route_uses_operator_view_payload(
@@ -5517,9 +5427,7 @@ def test_owner_wallet_bootstrap_create_endpoint_returns_owner_state() -> None:
 
 def test_operator_dashboard_requests_endpoint_returns_grouped_payload() -> None:
     service = _service(with_runtime=False, use_process_manager=True, reserve_runtime=False)
-    service.queue.enqueue(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "queued.wav"})
-    )
+    service.queue.enqueue(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "queued.wav"}))
     client = TestClient(build_app(service=service))
 
     response = client.get("/operators/dashboard/requests")
@@ -5660,17 +5568,9 @@ def test_operator_dashboard_endpoints_endpoint_returns_endpoint_control_payload(
     assert response.json()["items"][0]["visibility"] == "shared"
     assert response.json()["items"][0]["shared_with_wallet_ids"] == ["wallet-a"]
     assert response.json()["items"][0]["mvp_paid_smoke"]["profile"] == "MVP-0001"
-    assert response.json()["items"][0]["mvp_paid_smoke"]["route"].endswith(
-        "/mvp-paid-smoke"
-    )
-    assert (
-        response.json()["items"][0]["mvp_paid_smoke"]["default_task_type"]
-        == "audio.transcribe"
-    )
-    assert (
-        response.json()["items"][0]["mvp_paid_smoke"]["accounting_mode"]
-        == "FIXED_PRICE"
-    )
+    assert response.json()["items"][0]["mvp_paid_smoke"]["route"].endswith("/mvp-paid-smoke")
+    assert response.json()["items"][0]["mvp_paid_smoke"]["default_task_type"] == "audio.transcribe"
+    assert response.json()["items"][0]["mvp_paid_smoke"]["accounting_mode"] == "FIXED_PRICE"
     assert response.json()["policy"]["publish_requires_validation"] is False
 
 
@@ -6030,12 +5930,8 @@ def test_operator_dashboard_sessions_endpoint_includes_settlement_preview() -> N
     session_service.store.save_session(
         session_service.get_session(opened.session.session_id).session.model_copy(
             update={
-                "last_activity_at": (
-                    datetime.now(UTC) - timedelta(minutes=4)
-                ).isoformat(),
-                "idle_deadline_at": (
-                    datetime.now(UTC) + timedelta(minutes=6)
-                ).isoformat(),
+                "last_activity_at": (datetime.now(UTC) - timedelta(minutes=4)).isoformat(),
+                "idle_deadline_at": (datetime.now(UTC) + timedelta(minutes=6)).isoformat(),
             }
         )
     )
@@ -6184,10 +6080,7 @@ def test_operator_dashboard_session_close_action_propagates_proxy_session_close(
         "http://remote-hv/api/v1/sessions/remote-session-1/close",
         None,
     ) in service.remote_transport.calls
-    assert (
-        session_service.get_proxy_session_binding(opened.session.session_id).close_status
-        == "closed"
-    )
+    assert session_service.get_proxy_session_binding(opened.session.session_id).close_status == "closed"
 
 
 def test_public_session_close_endpoint_propagates_proxy_session_close() -> None:
@@ -6253,10 +6146,7 @@ def test_public_session_close_endpoint_propagates_proxy_session_close() -> None:
         "http://remote-hv/api/v1/sessions/remote-session-1/close",
         None,
     ) in service.remote_transport.calls
-    assert (
-        session_service.get_proxy_session_binding(opened.session.session_id).close_status
-        == "closed"
-    )
+    assert session_service.get_proxy_session_binding(opened.session.session_id).close_status == "closed"
 
 
 def test_post_session_usage_reports_returns_ack_pending_checkpoint_view() -> None:
@@ -6312,9 +6202,7 @@ def test_post_session_usage_reports_returns_ack_pending_checkpoint_view() -> Non
         "created_at": "2026-07-12T12:00:00+00:00",
         "signature": "local:report-1",
     }
-    expected_report_head = UsageReport.model_validate(usage_report).model_dump(
-        mode="json"
-    )
+    expected_report_head = UsageReport.model_validate(usage_report).model_dump(mode="json")
 
     response = client.post(
         f"/api/v1/sessions/{opened.session.session_id}/usage-reports",
@@ -6393,9 +6281,7 @@ def test_post_session_usage_acknowledgements_advances_accepted_checkpoint() -> N
         "created_at": "2026-07-12T12:00:00+00:00",
         "signature": "local:report-1",
     }
-    expected_report_head = UsageReport.model_validate(usage_report).model_dump(
-        mode="json"
-    )
+    expected_report_head = UsageReport.model_validate(usage_report).model_dump(mode="json")
     session_service.record_usage_report(
         opened.session.session_id,
         usage_report=usage_report,
@@ -6415,9 +6301,7 @@ def test_post_session_usage_acknowledgements_advances_accepted_checkpoint() -> N
         "verification_status": "accepted_unverified",
         "signature": "local-ack:report-1",
     }
-    expected_acknowledgement_head = UsageAcknowledgement.model_validate(
-        usage_acknowledgement
-    ).model_dump(mode="json")
+    expected_acknowledgement_head = UsageAcknowledgement.model_validate(usage_acknowledgement).model_dump(mode="json")
 
     response = client.post(
         f"/api/v1/sessions/{opened.session.session_id}/usage-acknowledgements",
@@ -6436,14 +6320,10 @@ def test_post_session_usage_acknowledgements_advances_accepted_checkpoint() -> N
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
-            "last_ack_hash": usage_acknowledgement_hash(
-                UsageAcknowledgement.model_validate(usage_acknowledgement)
-            ),
+            "last_ack_hash": usage_acknowledgement_hash(UsageAcknowledgement.model_validate(usage_acknowledgement)),
             "last_accepted_report_sequence": 1,
             "last_accepted_report_id": "report-1",
-            "last_accepted_report_hash": usage_report_hash(
-                UsageReport.model_validate(usage_report)
-            ),
+            "last_accepted_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 3.5,
             "mismatch_open": False,
@@ -6500,9 +6380,7 @@ def test_post_session_usage_acknowledgements_replay_is_idempotent() -> None:
         "created_at": "2026-07-12T12:00:00+00:00",
         "signature": "local:report-1",
     }
-    expected_report_head = UsageReport.model_validate(usage_report).model_dump(
-        mode="json"
-    )
+    expected_report_head = UsageReport.model_validate(usage_report).model_dump(mode="json")
     session_service.record_usage_report(
         opened.session.session_id,
         usage_report=usage_report,
@@ -6522,9 +6400,7 @@ def test_post_session_usage_acknowledgements_replay_is_idempotent() -> None:
         "verification_status": "accepted_unverified",
         "signature": "local-ack:report-1",
     }
-    expected_acknowledgement_head = UsageAcknowledgement.model_validate(
-        usage_acknowledgement
-    ).model_dump(mode="json")
+    expected_acknowledgement_head = UsageAcknowledgement.model_validate(usage_acknowledgement).model_dump(mode="json")
     expected_accounting = {
         "session_id": opened.session.session_id,
         "status": "open",
@@ -6533,14 +6409,10 @@ def test_post_session_usage_acknowledgements_replay_is_idempotent() -> None:
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
-            "last_ack_hash": usage_acknowledgement_hash(
-                UsageAcknowledgement.model_validate(usage_acknowledgement)
-            ),
+            "last_ack_hash": usage_acknowledgement_hash(UsageAcknowledgement.model_validate(usage_acknowledgement)),
             "last_accepted_report_sequence": 1,
             "last_accepted_report_id": "report-1",
-            "last_accepted_report_hash": usage_report_hash(
-                UsageReport.model_validate(usage_report)
-            ),
+            "last_accepted_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 3.5,
             "mismatch_open": False,
@@ -6564,9 +6436,7 @@ def test_post_session_usage_acknowledgements_replay_is_idempotent() -> None:
             "accepted_charge_q": 3.5,
         },
     )
-    accounting_response = client.get(
-        f"/api/v1/sessions/{opened.session.session_id}/accounting"
-    )
+    accounting_response = client.get(f"/api/v1/sessions/{opened.session.session_id}/accounting")
 
     assert first_response.status_code == 200
     assert replay_response.status_code == 200
@@ -6621,9 +6491,7 @@ def test_post_session_usage_acknowledgements_replay_conflicts_on_different_accep
         "created_at": "2026-07-12T12:00:00+00:00",
         "signature": "local:report-1",
     }
-    expected_report_head = UsageReport.model_validate(usage_report).model_dump(
-        mode="json"
-    )
+    expected_report_head = UsageReport.model_validate(usage_report).model_dump(mode="json")
     session_service.record_usage_report(
         opened.session.session_id,
         usage_report=usage_report,
@@ -6643,9 +6511,7 @@ def test_post_session_usage_acknowledgements_replay_conflicts_on_different_accep
         "verification_status": "accepted_unverified",
         "signature": "local-ack:report-1",
     }
-    expected_acknowledgement_head = UsageAcknowledgement.model_validate(
-        usage_acknowledgement
-    ).model_dump(mode="json")
+    expected_acknowledgement_head = UsageAcknowledgement.model_validate(usage_acknowledgement).model_dump(mode="json")
     expected_accounting = {
         "session_id": opened.session.session_id,
         "status": "open",
@@ -6654,14 +6520,10 @@ def test_post_session_usage_acknowledgements_replay_conflicts_on_different_accep
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
-            "last_ack_hash": usage_acknowledgement_hash(
-                UsageAcknowledgement.model_validate(usage_acknowledgement)
-            ),
+            "last_ack_hash": usage_acknowledgement_hash(UsageAcknowledgement.model_validate(usage_acknowledgement)),
             "last_accepted_report_sequence": 1,
             "last_accepted_report_id": "report-1",
-            "last_accepted_report_hash": usage_report_hash(
-                UsageReport.model_validate(usage_report)
-            ),
+            "last_accepted_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 3.5,
             "mismatch_open": False,
@@ -6685,9 +6547,7 @@ def test_post_session_usage_acknowledgements_replay_conflicts_on_different_accep
             "accepted_charge_q": 9.5,
         },
     )
-    accounting_response = client.get(
-        f"/api/v1/sessions/{opened.session.session_id}/accounting"
-    )
+    accounting_response = client.get(f"/api/v1/sessions/{opened.session.session_id}/accounting")
 
     assert first_response.status_code == 200
     assert conflicting_replay_response.status_code == 409
@@ -6876,9 +6736,7 @@ def test_post_session_usage_reports_returns_409_for_broken_chain_continuity() ->
         "created_at": "2026-07-12T12:01:00+00:00",
         "signature": "local:report-2",
     }
-    expected_broken_report_head = UsageReport.model_validate(broken_report).model_dump(
-        mode="json"
-    )
+    expected_broken_report_head = UsageReport.model_validate(broken_report).model_dump(mode="json")
     first_response = client.post(
         f"/api/v1/sessions/{opened.session.session_id}/usage-reports",
         json={
@@ -6966,9 +6824,7 @@ def test_post_session_usage_acknowledgements_returns_409_for_report_hash_mismatc
         "created_at": "2026-07-12T12:00:00+00:00",
         "signature": "local:report-1",
     }
-    expected_report_head = UsageReport.model_validate(usage_report).model_dump(
-        mode="json"
-    )
+    expected_report_head = UsageReport.model_validate(usage_report).model_dump(mode="json")
     client = TestClient(
         build_app(
             service=service,
@@ -6988,9 +6844,9 @@ def test_post_session_usage_acknowledgements_returns_409_for_report_hash_mismatc
         "verification_status": "accepted_unverified",
         "signature": "local-ack:report-1",
     }
-    expected_acknowledgement_head = UsageAcknowledgement.model_validate(
-        mismatched_acknowledgement
-    ).model_dump(mode="json")
+    expected_acknowledgement_head = UsageAcknowledgement.model_validate(mismatched_acknowledgement).model_dump(
+        mode="json"
+    )
 
     response = client.post(
         f"/api/v1/sessions/{opened.session.session_id}/usage-acknowledgements",
@@ -7072,9 +6928,7 @@ def test_get_session_accounting_returns_canonical_read_model() -> None:
         "created_at": "2026-07-12T12:00:00+00:00",
         "signature": "local:report-1",
     }
-    expected_report_head = UsageReport.model_validate(usage_report).model_dump(
-        mode="json"
-    )
+    expected_report_head = UsageReport.model_validate(usage_report).model_dump(mode="json")
     usage_acknowledgement = {
         "session_id": opened.session.session_id,
         "sequence": 1,
@@ -7082,9 +6936,7 @@ def test_get_session_accounting_returns_canonical_read_model() -> None:
         "verification_status": "accepted_unverified",
         "signature": "local-ack:report-1",
     }
-    expected_acknowledgement_head = UsageAcknowledgement.model_validate(
-        usage_acknowledgement
-    ).model_dump(mode="json")
+    expected_acknowledgement_head = UsageAcknowledgement.model_validate(usage_acknowledgement).model_dump(mode="json")
     session_service.record_usage_report(
         opened.session.session_id,
         usage_report=usage_report,
@@ -7114,14 +6966,10 @@ def test_get_session_accounting_returns_canonical_read_model() -> None:
             "last_report_sequence": 1,
             "last_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "last_ack_sequence": 1,
-            "last_ack_hash": usage_acknowledgement_hash(
-                UsageAcknowledgement.model_validate(usage_acknowledgement)
-            ),
+            "last_ack_hash": usage_acknowledgement_hash(UsageAcknowledgement.model_validate(usage_acknowledgement)),
             "last_accepted_report_sequence": 1,
             "last_accepted_report_id": "report-1",
-            "last_accepted_report_hash": usage_report_hash(
-                UsageReport.model_validate(usage_report)
-            ),
+            "last_accepted_report_hash": usage_report_hash(UsageReport.model_validate(usage_report)),
             "accounting_contract_hash": opened.session.accounting_contract_hash,
             "last_accepted_usage_charged_q": 3.5,
             "mismatch_open": False,
@@ -7256,10 +7104,7 @@ def test_session_detail_exposes_session_contract_object_references() -> None:
 
     assert response.status_code == 200
     session_payload = response.json()["data"]["session"]
-    assert (
-        session_payload["session_contract_object_id"]
-        == opened.session.session_contract_object_id
-    )
+    assert session_payload["session_contract_object_id"] == opened.session.session_contract_object_id
     assert session_payload["session_contract_object_version"] == "session-contract.v2"
     assert session_payload["endpoint_payment_beneficiary"] == "wallet-provider"
     assert session_payload["consumer_refund_beneficiary"] == "wallet-client"
@@ -7300,11 +7145,7 @@ def test_operator_dashboard_session_sweep_action_closes_idle_sessions() -> None:
         deposit_q=10.0,
         session_policy=created.endpoint.session.model_dump(mode="json"),
     )
-    session_store.save_session(
-        opened.session.model_copy(
-            update={"idle_deadline_at": "2020-01-01T00:00:00+00:00"}
-        )
-    )
+    session_store.save_session(opened.session.model_copy(update={"idle_deadline_at": "2020-01-01T00:00:00+00:00"}))
     client = TestClient(
         build_app(
             service=service,
@@ -7369,11 +7210,7 @@ def test_operator_dashboard_session_sweep_action_propagates_proxy_session_close(
             opened_at="2026-07-02T00:00:00+00:00",
         )
     )
-    session_store.save_session(
-        opened.session.model_copy(
-            update={"idle_deadline_at": "2020-01-01T00:00:00+00:00"}
-        )
-    )
+    session_store.save_session(opened.session.model_copy(update={"idle_deadline_at": "2020-01-01T00:00:00+00:00"}))
     service.session_service = session_service
     service.remote_transport = _StubRemoteSessionCloseTransport()
     client = TestClient(
@@ -7392,10 +7229,7 @@ def test_operator_dashboard_session_sweep_action_propagates_proxy_session_close(
         "http://remote-hv/api/v1/sessions/remote-session-1/close",
         None,
     ) in service.remote_transport.calls
-    assert (
-        session_service.get_proxy_session_binding(opened.session.session_id).close_status
-        == "closed"
-    )
+    assert session_service.get_proxy_session_binding(opened.session.session_id).close_status == "closed"
 
 
 def test_operator_dashboard_endpoints_endpoint_prefers_endpoint_service_payload_for_configured_endpoint() -> None:
@@ -7466,14 +7300,8 @@ def test_operator_dashboard_endpoints_endpoint_prefers_endpoint_service_payload_
         response.json()["items"][0]["configuration_snapshots"][0]["configuration_hash"]
         == created.endpoint.configuration_hash
     )
-    assert (
-        response.json()["items"][0]["configuration_snapshots"][1]["runtime"]["context_length"]
-        == 16384
-    )
-    assert (
-        response.json()["items"][0]["configuration_snapshots"][1]["runtime"]["timeout"]
-        == 60
-    )
+    assert response.json()["items"][0]["configuration_snapshots"][1]["runtime"]["context_length"] == 16384
+    assert response.json()["items"][0]["configuration_snapshots"][1]["runtime"]["timeout"] == 60
     assert response.json()["items"][0]["publication_status"] == "configured"
     assert response.json()["items"][0]["current_publication"] is None
 
@@ -7563,23 +7391,15 @@ def test_publish_configuration_endpoint_returns_signed_record() -> None:
         )
     )
 
-    response = client.post(
-        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration"
-    )
+    response = client.post(f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration")
 
     assert response.status_code == 200
     body = response.json()
     assert body["data"]["publication"]["endpoint_id"] == created.endpoint.endpoint_id
-    assert (
-        body["data"]["publication"]["owner_wallet"]
-        == service.owner_wallet_state()["wallet_id"]
-    )
+    assert body["data"]["publication"]["owner_wallet"] == service.owner_wallet_state()["wallet_id"]
     assert body["data"]["publication"]["wallet_signature"]
     assert body["data"]["validation_summary"]["validation_status"] == "validated"
-    assert (
-        body["data"]["validation_summary"]["configuration_hash"]
-        == created.endpoint.configuration_hash
-    )
+    assert body["data"]["validation_summary"]["configuration_hash"] == created.endpoint.configuration_hash
 
 
 def test_publish_configuration_returns_readiness_blockers() -> None:
@@ -7612,9 +7432,7 @@ def test_publish_configuration_returns_readiness_blockers() -> None:
         )
     )
 
-    response = client.post(
-        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration"
-    )
+    response = client.post(f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration")
 
     assert response.status_code == 409
     error = response.json()["error"]
@@ -7649,9 +7467,7 @@ def test_publish_configuration_endpoint_refreshes_onboarding_completion() -> Non
         )
     )
 
-    response = client.post(
-        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration"
-    )
+    response = client.post(f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration")
 
     assert response.status_code == 200
     assert response.json()["data"]["onboarding"]["completed"] is True
@@ -7723,15 +7539,9 @@ def test_endpoint_proof_returns_live_configuration_hash() -> None:
     body = response.json()
     assert body["data"]["proof"]["endpoint_id"] == created.endpoint.endpoint_id
     assert body["data"]["proof"]["node_id"] == service.node_id
-    assert (
-        body["data"]["proof"]["configuration_hash"]
-        == updated.endpoint.configuration_hash
-    )
+    assert body["data"]["proof"]["configuration_hash"] == updated.endpoint.configuration_hash
     assert body["data"]["proof"]["publication"]["visibility"] == "shared"
-    assert (
-        body["data"]["proof"]["validation_summary"]["configuration_hash"]
-        == updated.endpoint.configuration_hash
-    )
+    assert body["data"]["proof"]["validation_summary"]["configuration_hash"] == updated.endpoint.configuration_hash
     assert body["data"]["proof"]["validation_summary"]["validation_status"] == "unvalidated"
     assert (
         body["data"]["proof"]["local_publication_configuration_hash"]
@@ -7823,9 +7633,7 @@ def test_request_validation_endpoint_returns_bond_and_snapshot_summary() -> None
         )
     )
 
-    response = client.post(
-        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/request-validation"
-    )
+    response = client.post(f"/api/v1/endpoints/{created.endpoint.endpoint_id}/request-validation")
 
     assert response.status_code == 200
     assert response.json()["data"]["request"]["status"] == "queued"
@@ -7875,9 +7683,7 @@ def test_endpoint_validation_history_endpoint_returns_reports_and_assignments() 
         )
     )
 
-    response = client.get(
-        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/validation/history"
-    )
+    response = client.get(f"/api/v1/endpoints/{created.endpoint.endpoint_id}/validation/history")
 
     assert response.status_code == 200
     assert len(response.json()["data"]["requests"]) == 1
@@ -7886,9 +7692,7 @@ def test_endpoint_validation_history_endpoint_returns_reports_and_assignments() 
     assert len(response.json()["data"]["authorizations"]) == 1
 
 
-def test_create_validation_epoch_endpoint_returns_assignments_and_authorizations() -> (
-    None
-):
+def test_create_validation_epoch_endpoint_returns_assignments_and_authorizations() -> None:
     validation_service = ValidationService(ValidationStore())
     requested = validation_service.request_validation(
         endpoint_id="ep-1",
@@ -7896,9 +7700,7 @@ def test_create_validation_epoch_endpoint_returns_assignments_and_authorizations
         configuration_hash="cfg-1",
         minimum_session_deposit_q=25.0,
     )
-    client = TestClient(
-        build_app(service=_service(), validation_service=validation_service)
-    )
+    client = TestClient(build_app(service=_service(), validation_service=validation_service))
 
     response = client.post(
         "/api/v1/validation/epochs",
@@ -7972,9 +7774,7 @@ def test_validation_summary_endpoint_returns_certification_status_and_compatibil
         )
     )
 
-    response = client.get(
-        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/validation"
-    )
+    response = client.get(f"/api/v1/endpoints/{created.endpoint.endpoint_id}/validation")
 
     assert response.status_code == 200
     payload = response.json()["data"]
@@ -8030,9 +7830,7 @@ def test_validation_summary_endpoint_expands_legacy_service_payload() -> None:
         )
     )
 
-    response = client.get(
-        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/validation"
-    )
+    response = client.get(f"/api/v1/endpoints/{created.endpoint.endpoint_id}/validation")
 
     assert response.status_code == 200
     payload = response.json()["data"]
@@ -8099,10 +7897,7 @@ def test_submit_validation_report_endpoint_accepts_recommendation_payload() -> N
 
     assert response.status_code == 200
     assert response.json()["data"]["request"]["status"] == "passed"
-    assert (
-        response.json()["data"]["snapshot"]["certification_status"]
-        == "certified_with_issues"
-    )
+    assert response.json()["data"]["snapshot"]["certification_status"] == "certified_with_issues"
     assert response.json()["data"]["snapshot"]["status"] == "validated"
 
 
@@ -8161,9 +7956,7 @@ def test_submit_validation_report_endpoint_accepts_valid_legacy_outcome_payload(
     assert response.json()["data"]["snapshot"]["certification_status"] == "certified"
 
 
-def test_submit_validation_report_endpoint_rejects_unimplemented_structured_evidence_fields() -> (
-    None
-):
+def test_submit_validation_report_endpoint_rejects_unimplemented_structured_evidence_fields() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())
     validation_service = ValidationService(ValidationStore())
@@ -8383,9 +8176,7 @@ def test_maintenance_route_forfeits_remaining_bond_on_fail() -> None:
         report_id="report-1",
         validated_at="2026-07-02T00:00:00+00:00",
     )
-    client = TestClient(
-        build_app(service=_service(), validation_service=validation_service)
-    )
+    client = TestClient(build_app(service=_service(), validation_service=validation_service))
 
     response = client.post(
         f"/api/v1/validation/requests/{requested.request.request_id}/maintenance",
@@ -8433,9 +8224,7 @@ def test_revoke_publication_endpoint_returns_revoked_record() -> None:
         )
     )
 
-    response = client.post(
-        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/revoke-publication"
-    )
+    response = client.post(f"/api/v1/endpoints/{created.endpoint.endpoint_id}/revoke-publication")
 
     assert response.status_code == 200
     body = response.json()
@@ -8527,14 +8316,8 @@ def test_registry_advertisement_includes_current_published_configuration_hash() 
     assert response.status_code == 200
     body = response.json()
     assert body["published_endpoints"][0]["endpoint_id"] == created.endpoint.endpoint_id
-    assert (
-        body["published_endpoints"][0]["current_configuration_hash"]
-        == publication.configuration_hash
-    )
-    assert (
-        body["published_endpoints"][0]["current_publication_id"]
-        == publication.publication_id
-    )
+    assert body["published_endpoints"][0]["current_configuration_hash"] == publication.configuration_hash
+    assert body["published_endpoints"][0]["current_publication_id"] == publication.publication_id
 
 
 def test_registry_advertisement_includes_dual_layer_trust_fields() -> None:
@@ -8599,13 +8382,9 @@ def test_node_advertisement_includes_computed_reputation() -> None:
         "tier": "D",
         "updated_at": "2026-07-06T11:55:00+00:00",
     }
-    completed = hypervisor.queue.enqueue(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "ok.wav"})
-    )
+    completed = hypervisor.queue.enqueue(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "ok.wav"}))
     hypervisor.queue.transition_status(completed.task_id, "completed")
-    failed = hypervisor.queue.enqueue(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "fail.wav"})
-    )
+    failed = hypervisor.queue.enqueue(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "fail.wav"}))
     hypervisor.queue.transition_status(failed.task_id, "failed")
     hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
     endpoint_service = EndpointService(EndpointStore())
@@ -8658,9 +8437,7 @@ def test_node_advertisement_includes_computed_reputation() -> None:
 def test_node_advertisement_uses_stale_heartbeat_for_reputation_freshness() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
 
-    advertisement = hypervisor.node_advertisement(
-        heartbeat_at=(datetime.now(UTC) - timedelta(seconds=35)).isoformat()
-    )
+    advertisement = hypervisor.node_advertisement(heartbeat_at=(datetime.now(UTC) - timedelta(seconds=35)).isoformat())
 
     assert advertisement["status"] == "stale"
     assert advertisement["reputation"]["evidence"]["node_status"] == "stale"
@@ -8839,11 +8616,7 @@ def test_operator_dashboard_market_payload_includes_trust_summary() -> None:
     response = client.get("/operators/dashboard/market")
 
     assert response.status_code == 200
-    item = next(
-        candidate
-        for candidate in response.json()["candidates"]
-        if candidate["node_id"] == "node-external"
-    )
+    item = next(candidate for candidate in response.json()["candidates"] if candidate["node_id"] == "node-external")
     assert item["trust_summary"]["total_endpoints"] == 2
     assert item["trust_summary"]["validated_count"] == 1
     assert item["trust_summary"]["attention_count"] == 1
@@ -8938,11 +8711,7 @@ def test_operator_dashboard_market_payload_includes_certification_counts() -> No
     response = client.get("/operators/dashboard/market")
 
     assert response.status_code == 200
-    item = next(
-        candidate
-        for candidate in response.json()["candidates"]
-        if candidate["node_id"] == "node-external"
-    )
+    item = next(candidate for candidate in response.json()["candidates"] if candidate["node_id"] == "node-external")
     assert item["trust_summary"]["certified_count"] == 1
     assert item["trust_summary"]["certified_with_issues_count"] == 1
     assert item["trust_summary"]["validated_count"] == 2
@@ -9074,10 +8843,7 @@ def test_operator_dashboard_shell_preserves_legacy_validation_labels_for_publish
     assert response.status_code == 200
     assert "function publishedTrustStatusLabel(summary)" in response.text
     assert "return trustStatusLabel(summary.certification_status);" in response.text
-    assert (
-        'return trustStatusLabel(validationStatus(summary), { legacyValidation: true });'
-        in response.text
-    )
+    assert "return trustStatusLabel(validationStatus(summary), { legacyValidation: true });" in response.text
     assert 'return legacyValidation ? "Revoked" : "Attention Required";' in response.text
 
 
@@ -9358,9 +9124,7 @@ def test_registry_discovery_orders_ready_nodes_by_reputation_then_price() -> Non
         )
     )
 
-    result = registry.discover(
-        RegistryDiscoveryQuery(workload_type="llm_text", min_rating=0.9)
-    )
+    result = registry.discover(RegistryDiscoveryQuery(workload_type="llm_text", min_rating=0.9))
 
     assert [node["node_id"] for node in result["nodes"]] == [
         "node-high-reputation-cheaper",
@@ -9425,14 +9189,10 @@ def test_registry_discovery_falls_back_to_legacy_rating_when_reputation_absent()
         )
     )
 
-    result = registry.discover(
-        RegistryDiscoveryQuery(workload_type="llm_text", min_rating=0.9)
-    )
+    result = registry.discover(RegistryDiscoveryQuery(workload_type="llm_text", min_rating=0.9))
 
     assert [node["node_id"] for node in result["nodes"]] == ["node-high-rating"]
-    assert [candidate["node_id"] for candidate in result["candidates"]] == [
-        "node-high-rating"
-    ]
+    assert [candidate["node_id"] for candidate in result["candidates"]] == ["node-high-rating"]
 
 
 def test_agent_capabilities_endpoint_reports_ready_bundle_catalog() -> None:
@@ -9872,9 +9632,7 @@ def test_create_allocation_endpoint_returns_409_when_owner_active_quota_is_excee
         whisper_endpoint="http://127.0.0.1:9000",
     )
     service.max_active_allocations_per_owner = 1
-    service.create_allocation(
-        AllocationRequest(workload_type="speech_to_text", owner_id="agent-a")
-    )
+    service.create_allocation(AllocationRequest(workload_type="speech_to_text", owner_id="agent-a"))
     client = TestClient(build_app(service=service))
 
     response = client.post(
@@ -9987,9 +9745,7 @@ def test_process_pending_endpoint_returns_processing_summary() -> None:
             per_request_cpu=0.5,
         ),
     )
-    service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
     client = TestClient(build_app(service=service))
 
     response = client.post("/operators/process-pending")
@@ -10005,9 +9761,7 @@ def test_process_pending_endpoint_returns_processing_summary() -> None:
 
 def test_operator_state_endpoint_returns_snapshot() -> None:
     service = _service()
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
     client = TestClient(build_app(service=service))
 
     response = client.get("/operators/state")
@@ -10158,9 +9912,7 @@ def test_operator_events_endpoint_includes_admission_decision_events(
     response = client.get("/operators/events")
 
     assert response.status_code == 200
-    admission_events = [
-        event for event in response.json() if event["event_type"] == "admission.selected"
-    ]
+    admission_events = [event for event in response.json() if event["event_type"] == "admission.selected"]
     assert admission_events == [
         {
             "timestamp": admission_events[0]["timestamp"],
@@ -10317,23 +10069,13 @@ def test_api_surfaces_bundle_cooldown_status_and_runtime_metadata(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-cooldown-api"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"plugin_id": "fake-cooldown-api"})],
         plugins=plugins,
         runtimes=ProviderProcessManager(),
     )
-    service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"})
-    )
-    queued_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"})
-    )
+    service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"}))
+    queued_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"}))
     client = TestClient(build_app(service=service))
 
     bundles_response = client.get("/bundles")
@@ -10405,20 +10147,12 @@ def test_operator_reset_cooldown_endpoint_clears_bundle_cooldown(monkeypatch) ->
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-cooldown-api"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"plugin_id": "fake-cooldown-api"})],
         plugins=plugins,
         runtimes=ProviderProcessManager(),
     )
-    service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"})
-    )
+    service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"}))
     client = TestClient(build_app(service=service))
 
     response = client.post("/operators/bundles/whisper-a/cooldown/reset")
@@ -10452,23 +10186,13 @@ def test_operator_retry_bundle_endpoint_reprocesses_waiting_task(monkeypatch) ->
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-cooldown-api"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"plugin_id": "fake-cooldown-api"})],
         plugins=plugins,
         runtimes=ProviderProcessManager(),
     )
-    service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"})
-    )
-    queued_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"})
-    )
+    service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"}))
+    queued_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"}))
     plugin.invoke = lambda task, runtime_handle: {
         "ok": True,
         "task_type": task.task_type,
@@ -10554,9 +10278,7 @@ def test_operator_force_stop_runtime_endpoint_removes_runtime() -> None:
 
 def test_operator_restart_runtime_endpoint_clears_drain_and_processes_queue() -> None:
     service = _service(with_runtime=True, use_process_manager=False)
-    task = service.queue.enqueue(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.queue.enqueue(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
     service._selected_bundles[task.task_id] = "whisper-a"
     service.drain_runtime("rt-1")
     service.process_pending()
@@ -10576,6 +10298,7 @@ def test_operator_restart_runtime_endpoint_clears_drain_and_processes_queue() ->
 # ---------------------------------------------------------------------------
 # Wallet settlement hold / release / correction API endpoints
 # ---------------------------------------------------------------------------
+
 
 class _UsageMeteringPlugin(FakeManagedPlugin):
     """Fake plugin that returns usage data for wallet allocation events."""
@@ -10606,9 +10329,7 @@ def _wallet_service() -> HypervisorService:
     return HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[bundle],
         plugins=plugins,
         runtimes=ProviderProcessManager(),

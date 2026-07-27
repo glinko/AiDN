@@ -88,7 +88,9 @@ class TestScoringProgression:
         engine.get_or_create_profile("HYPERVISOR", "node-1")
 
         for _ in range(20):
-            engine.ingest_event(_make_event(direction="POSITIVE", severity="MODERATE", evidence_confidence="MULTI_SOURCE"))
+            engine.ingest_event(
+                _make_event(direction="POSITIVE", severity="MODERATE", evidence_confidence="MULTI_SOURCE")
+            )
 
         profile = engine.get_profile("HYPERVISOR", "node-1")
         avail = profile.accumulators["AVAILABILITY"]
@@ -100,7 +102,9 @@ class TestScoringProgression:
         engine.get_or_create_profile("HYPERVISOR", "node-1")
 
         for _ in range(20):
-            engine.ingest_event(_make_event(direction="NEGATIVE", severity="MODERATE", evidence_confidence="MULTI_SOURCE"))
+            engine.ingest_event(
+                _make_event(direction="NEGATIVE", severity="MODERATE", evidence_confidence="MULTI_SOURCE")
+            )
 
         profile = engine.get_profile("HYPERVISOR", "node-1")
         avail = profile.accumulators["AVAILABILITY"]
@@ -157,16 +161,24 @@ class TestProfileStateDerivation:
         engine.get_or_create_profile("HYPERVISOR", "node-1")
 
         # Feed all 6 hypervisor dimensions with strong positive evidence
-        for dim in ["AVAILABILITY", "RELIABILITY", "PROTOCOL_COMPLIANCE",
-                    "ACCOUNTING_CONSISTENCY", "EVIDENCE_INTEGRITY", "RECOVERY_RELIABILITY"]:
+        for dim in [
+            "AVAILABILITY",
+            "RELIABILITY",
+            "PROTOCOL_COMPLIANCE",
+            "ACCOUNTING_CONSISTENCY",
+            "EVIDENCE_INTEGRITY",
+            "RECOVERY_RELIABILITY",
+        ]:
             for _ in range(15):
-                engine.ingest_event(_make_event(
-                    dimension=dim,
-                    direction="POSITIVE",
-                    severity="MODERATE",
-                    evidence_confidence="MULTI_SOURCE",
-                    event_class="AVAILABILITY_EVENT",
-                ))
+                engine.ingest_event(
+                    _make_event(
+                        dimension=dim,
+                        direction="POSITIVE",
+                        severity="MODERATE",
+                        evidence_confidence="MULTI_SOURCE",
+                        event_class="AVAILABILITY_EVENT",
+                    )
+                )
 
         profile = engine.get_profile("HYPERVISOR", "node-1")
         assert profile.state == "NORMAL"
@@ -176,7 +188,9 @@ class TestProfileStateDerivation:
         engine.get_or_create_profile("HYPERVISOR", "node-1")
 
         for _ in range(25):
-            engine.ingest_event(_make_event(direction="NEGATIVE", severity="CRITICAL", evidence_confidence="FINALIZED_PROTOCOL"))
+            engine.ingest_event(
+                _make_event(direction="NEGATIVE", severity="CRITICAL", evidence_confidence="FINALIZED_PROTOCOL")
+            )
 
         profile = engine.get_profile("HYPERVISOR", "node-1")
         assert profile.state in {"DEGRADED", "CRITICAL"}
@@ -216,16 +230,24 @@ class TestAdvisoryScore:
         engine.get_or_create_profile("HYPERVISOR", "node-1")
 
         # Feed all dimensions with strong, high-confidence evidence
-        for dim in ["AVAILABILITY", "RELIABILITY", "PROTOCOL_COMPLIANCE",
-                    "ACCOUNTING_CONSISTENCY", "EVIDENCE_INTEGRITY", "RECOVERY_RELIABILITY"]:
+        for dim in [
+            "AVAILABILITY",
+            "RELIABILITY",
+            "PROTOCOL_COMPLIANCE",
+            "ACCOUNTING_CONSISTENCY",
+            "EVIDENCE_INTEGRITY",
+            "RECOVERY_RELIABILITY",
+        ]:
             for _ in range(40):
-                engine.ingest_event(_make_event(
-                    dimension=dim,
-                    direction="POSITIVE",
-                    severity="MODERATE",
-                    evidence_confidence="REPRODUCIBLE",
-                    event_class="AVAILABILITY_EVENT",
-                ))
+                engine.ingest_event(
+                    _make_event(
+                        dimension=dim,
+                        direction="POSITIVE",
+                        severity="MODERATE",
+                        evidence_confidence="REPRODUCIBLE",
+                        event_class="AVAILABILITY_EVENT",
+                    )
+                )
 
         profile = engine.get_profile("HYPERVISOR", "node-1")
         # Reproducible (0.75) × 40 events × 0.6 severity = 18 mass → high confidence
@@ -252,11 +274,26 @@ class TestMultiDimension:
 
         # Positive for availability (use higher confidence for measurable effect)
         for _ in range(20):
-            engine.ingest_event(_make_event(dimension="AVAILABILITY", direction="POSITIVE", severity="MODERATE", evidence_confidence="MULTI_SOURCE"))
+            engine.ingest_event(
+                _make_event(
+                    dimension="AVAILABILITY",
+                    direction="POSITIVE",
+                    severity="MODERATE",
+                    evidence_confidence="MULTI_SOURCE",
+                )
+            )
 
         # Negative for reliability
         for _ in range(20):
-            engine.ingest_event(_make_event(dimension="RELIABILITY", direction="NEGATIVE", severity="MODERATE", evidence_confidence="MULTI_SOURCE", event_class="EXECUTION_EVENT"))
+            engine.ingest_event(
+                _make_event(
+                    dimension="RELIABILITY",
+                    direction="NEGATIVE",
+                    severity="MODERATE",
+                    evidence_confidence="MULTI_SOURCE",
+                    event_class="EXECUTION_EVENT",
+                )
+            )
 
         profile = engine.get_profile("HYPERVISOR", "node-1")
         avail = profile.accumulators["AVAILABILITY"]
@@ -272,13 +309,27 @@ class TestMultiDimension:
         engine.get_or_create_profile("HYPERVISOR", "node-1")
 
         # All dimensions positive
-        for dim in ["AVAILABILITY", "RELIABILITY", "PROTOCOL_COMPLIANCE", "ACCOUNTING_CONSISTENCY", "RECOVERY_RELIABILITY"]:
+        for dim in [
+            "AVAILABILITY",
+            "RELIABILITY",
+            "PROTOCOL_COMPLIANCE",
+            "ACCOUNTING_CONSISTENCY",
+            "RECOVERY_RELIABILITY",
+        ]:
             for _ in range(20):
                 engine.ingest_event(_make_event(dimension=dim, direction="POSITIVE", severity="MODERATE"))
 
         # But Evidence Integrity is terrible
         for _ in range(30):
-            engine.ingest_event(_make_event(dimension="EVIDENCE_INTEGRITY", direction="NEGATIVE", severity="CRITICAL", evidence_confidence="FINALIZED_PROTOCOL", event_class="EVIDENCE_EVENT"))
+            engine.ingest_event(
+                _make_event(
+                    dimension="EVIDENCE_INTEGRITY",
+                    direction="NEGATIVE",
+                    severity="CRITICAL",
+                    evidence_confidence="FINALIZED_PROTOCOL",
+                    event_class="EVIDENCE_EVENT",
+                )
+            )
 
         profile = engine.get_profile("HYPERVISOR", "node-1")
         # Overall should be capped despite other dimensions being good

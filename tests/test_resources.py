@@ -22,7 +22,9 @@ def test_reserve_raises_value_error_on_over_capacity_request() -> None:
 
 
 def test_active_reservation_reduces_capacity_until_release() -> None:
-    orchestrator = ResourceOrchestrator(NodeCapacity(cpu_cores=8, ram_mb=4096, gpu_devices=["gpu0"], vram_mb={"gpu0": 2048}))
+    orchestrator = ResourceOrchestrator(
+        NodeCapacity(cpu_cores=8, ram_mb=4096, gpu_devices=["gpu0"], vram_mb={"gpu0": 2048})
+    )
 
     reservation = orchestrator.reserve("task-1", cpu=2.0, ram_mb=1024, vram_mb=512)
 

@@ -107,9 +107,7 @@ class RetryPolicyPlugin(FakeManagedPlugin):
         invoke_backoff_seconds: float = 0.0,
     ) -> None:
         self.health_outcomes = list(health_outcomes or [True])
-        self.invoke_outcomes = list(
-            invoke_outcomes or [{"ok": True, "task_type": "audio.transcribe"}]
-        )
+        self.invoke_outcomes = list(invoke_outcomes or [{"ok": True, "task_type": "audio.transcribe"}])
         self.health_attempts = 0
         self.invoke_attempts = 0
         self.health_backoff_seconds = health_backoff_seconds
@@ -317,9 +315,7 @@ def test_service_create_runtime_binding_projects_and_persists_compatibility_bund
     )
 
     compatibility_bundle = next(
-        bundle
-        for bundle in service.bundles
-        if bundle.bundle_id == binding["compatibility_bundle_id"]
+        bundle for bundle in service.bundles if bundle.bundle_id == binding["compatibility_bundle_id"]
     )
     persisted_bundle = next(
         bundle
@@ -372,11 +368,7 @@ def test_service_create_runtime_binding_reuses_compatibility_bundle_for_same_log
         capability_definition_hash="cap-hash",
     )
 
-    matching_bundles = [
-        bundle
-        for bundle in service.bundles
-        if bundle.bundle_id == first["compatibility_bundle_id"]
-    ]
+    matching_bundles = [bundle for bundle in service.bundles if bundle.bundle_id == first["compatibility_bundle_id"]]
     persisted_matching_bundles = [
         bundle
         for bundle in bundle_registry.load(service.plugins)
@@ -418,14 +410,8 @@ def test_provider_inventory_survives_state_restore() -> None:
     restored.restore_state(service.snapshot_state())
 
     assert restored.list_provider_instances()[0]["display_name"] == "Local Fake"
-    assert (
-        restored.list_model_deployments()[0]["provider_instance_id"]
-        == attached["provider_instance_id"]
-    )
-    assert (
-        restored.list_runtime_bindings()[0]["runtime_binding_id"]
-        == binding["runtime_binding_id"]
-    )
+    assert restored.list_model_deployments()[0]["provider_instance_id"] == attached["provider_instance_id"]
+    assert restored.list_runtime_bindings()[0]["runtime_binding_id"] == binding["runtime_binding_id"]
 
 
 def test_provider_artifact_materialization_survives_state_restore(tmp_path) -> None:
@@ -451,9 +437,7 @@ def test_provider_artifact_materialization_survives_state_restore(tmp_path) -> N
         relative_path="models/model.gguf",
         content_bytes=b"model",
     )
-    artifact = executor.promote_local_artifact_to_model_store(
-        relative_path="models/model.gguf"
-    )
+    artifact = executor.promote_local_artifact_to_model_store(relative_path="models/model.gguf")
     artifact_set = executor.create_model_artifact_set(
         display_name="Model",
         files=[
@@ -505,9 +489,7 @@ def test_restored_provider_inventory_resolves_runtime_binding_bundle_hash() -> N
         capability_version="1.0.0",
         capability_definition_hash="cap-hash",
     )
-    original_hash = service.bundle_hash_for_runtime_binding(
-        binding["runtime_binding_id"]
-    )
+    original_hash = service.bundle_hash_for_runtime_binding(binding["runtime_binding_id"])
 
     restored = HypervisorService(
         queue=InMemoryTaskQueue(),
@@ -517,13 +499,8 @@ def test_restored_provider_inventory_resolves_runtime_binding_bundle_hash() -> N
     )
     restored.restore_state(service.snapshot_state())
 
-    assert restored.bundle_hash_for_runtime_binding(
-        binding["runtime_binding_id"]
-    ) == original_hash
-    assert (
-        restored.bundle_for_runtime_binding(binding["runtime_binding_id"]).endpoint
-        == "http://127.0.0.1:9999"
-    )
+    assert restored.bundle_hash_for_runtime_binding(binding["runtime_binding_id"]) == original_hash
+    assert restored.bundle_for_runtime_binding(binding["runtime_binding_id"]).endpoint == "http://127.0.0.1:9999"
 
 
 def test_service_bundle_for_runtime_binding_delegates_to_provider_inventory() -> None:
@@ -636,18 +613,14 @@ def test_provider_installation_approval_and_job_survive_snapshot_restore() -> No
     assert restored_instance["plugin_id"] == "fake-managed"
     assert restored_instance["operational_state"] == "created"
     assert len(state_store.snapshots) == 3
-    assert state_store.snapshots[0].provider_installation_approvals[0].approval_id == (
-        approval["approval_id"]
-    )
+    assert state_store.snapshots[0].provider_installation_approvals[0].approval_id == (approval["approval_id"])
     persisted_job = state_store.snapshots[-1].provider_installation_jobs[0]
     persisted_instance = state_store.snapshots[-1].provider_instances[0]
     assert persisted_job.job_id == job["job_id"]
     assert persisted_job.executor_id == "custom-test-executor"
     assert persisted_instance.provider_instance_id == job["provider_instance_id"]
     assert persisted_instance.plugin_id == "fake-managed"
-    assert state_store.snapshots[1].provider_installation_approvals[0].approval_id == (
-        approval["approval_id"]
-    )
+    assert state_store.snapshots[1].provider_installation_approvals[0].approval_id == (approval["approval_id"])
     assert state_store.snapshots[1].provider_installation_jobs == []
 
 
@@ -662,9 +635,7 @@ def test_service_submit_routes_and_records_selected_bundle_for_automatic_mode() 
         ],
     )
 
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
     assert service.selected_bundle_id(task.task_id) == "preferred-whisper"
 
@@ -673,9 +644,7 @@ def test_service_submit_uses_active_allocation_bundle_for_routing() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[
             _bundle("preferred-text", "llm_text", priority_class=100),
             _bundle("leased-text", "llm_text", priority_class=10).model_copy(
@@ -711,14 +680,8 @@ def test_service_submit_rejects_task_when_allocation_is_not_active() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
-        bundles=[
-            _bundle("leased-text", "llm_text").model_copy(
-                update={"endpoint": "http://127.0.0.1:8080"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
+        bundles=[_bundle("leased-text", "llm_text").model_copy(update={"endpoint": "http://127.0.0.1:8080"})],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
     )
@@ -749,9 +712,7 @@ def test_service_submit_raises_when_request_cannot_be_routed() -> None:
     )
 
     with pytest.raises(ValueError, match="compatible"):
-        service.submit(
-            TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-        )
+        service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
 
 def test_service_exposes_canonical_overlay_inventory() -> None:
@@ -803,19 +764,14 @@ def test_service_exposes_canonical_overlay_inventory() -> None:
     assert payload["services"][0]["kind"] == "compute"
     assert payload["capabilities"][0]["capability_definition_hash"].startswith("sha256:")
     assert payload["wallet_identities"][0]["wallet_id"] == "wallet-consumer"
-    assert {item["object_type"] for item in payload["registry_objects"]} == {
-        "wallet_identity",
-        "capability_definition"
-    }
+    assert {item["object_type"] for item in payload["registry_objects"]} == {"wallet_identity", "capability_definition"}
 
 
 def test_service_executes_task_via_proxy_endpoint_when_endpoint_constraint_is_provided() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[_bundle("text-a", "llm_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -937,9 +893,7 @@ def test_service_proxy_paid_session_opens_upstream_session_lazily_and_reuses_it(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[_bundle("text-a", "llm_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1028,12 +982,14 @@ def test_service_proxy_paid_session_opens_upstream_session_lazily_and_reuses_it(
     assert service.get_task(second.task_id).status == "completed"
     assert binding.remote_session_id == "remote-session-1"
     assert binding.status == "active"
-    assert sum(
-        1
-        for method, url, _ in service.remote_transport.calls
-        if method == "POST"
-        and url == "http://remote-hv/api/v1/endpoints/ep-remote/sessions"
-    ) == 1
+    assert (
+        sum(
+            1
+            for method, url, _ in service.remote_transport.calls
+            if method == "POST" and url == "http://remote-hv/api/v1/endpoints/ep-remote/sessions"
+        )
+        == 1
+    )
     remote_task_calls = [
         payload
         for method, url, payload in service.remote_transport.calls
@@ -1082,9 +1038,7 @@ def test_service_closing_local_proxy_session_attempts_remote_close() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[_bundle("text-a", "llm_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1171,9 +1125,7 @@ def test_service_proxy_session_open_failure_keeps_local_session_active() -> None
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[_bundle("text-a", "llm_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1243,19 +1195,14 @@ def test_service_proxy_session_open_failure_keeps_local_session_active() -> None
 
     assert service.get_task(task.task_id).status == "failed"
     assert session_service.get_session(local_session.session.session_id).session.status == "active"
-    assert (
-        session_service.get_proxy_session_binding(local_session.session.session_id).status
-        == "degraded"
-    )
+    assert session_service.get_proxy_session_binding(local_session.session.session_id).status == "degraded"
 
 
 def test_service_executes_task_immediately_when_resources_are_available() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -1272,9 +1219,7 @@ def test_service_executes_task_immediately_when_resources_are_available() -> Non
         runtimes=ProviderProcessManager(),
     )
 
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
     stored_task = service.get_task(task.task_id)
 
@@ -1336,9 +1281,7 @@ def test_service_node_advertisement_includes_canonical_registry_sections() -> No
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
         bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"endpoint": "http://127.0.0.1:9000"}
-            ),
+            _bundle("whisper-a", "speech_to_text").model_copy(update={"endpoint": "http://127.0.0.1:9000"}),
             _bundle("text-a", "llm_text"),
         ],
         runtimes=[
@@ -1357,17 +1300,12 @@ def test_service_node_advertisement_includes_canonical_registry_sections() -> No
     assert payload["canonical_services"][0]["kind"] == "compute"
     assert payload["canonical_capabilities"][0]["capability_id"] == "llm.chat"
     assert payload["canonical_capability_runtimes"][0]["capability_id"] == "speech.stt"
-    assert (
-        payload["canonical_compute_compatibility"][0]["legacy_bundle_id"]
-        == "whisper-a"
-    )
+    assert payload["canonical_compute_compatibility"][0]["legacy_bundle_id"] == "whisper-a"
     assert payload["canonical_advertisements"] == []
     assert payload["canonical_feature_profiles"] == []
     assert payload["canonical_limit_profiles"] == []
     assert payload["canonical_implementation_profiles"] == []
-    assert {item["object_type"] for item in payload["canonical_registry_objects"]} == {
-        "capability_definition"
-    }
+    assert {item["object_type"] for item in payload["canonical_registry_objects"]} == {"capability_definition"}
 
 
 def test_service_node_advertisement_keeps_published_endpoints_alongside_canonical_sections() -> None:
@@ -1416,7 +1354,9 @@ def test_service_node_advertisement_keeps_published_endpoints_alongside_canonica
             "capability_definition_hash": payload["canonical_capabilities"][0]["capability_definition_hash"],
             "feature_profile_hash": payload["canonical_feature_profiles"][0]["feature_profile_hash"],
             "limit_profile_hash": payload["canonical_limit_profiles"][0]["limit_profile_hash"],
-            "implementation_profile_hash": payload["canonical_implementation_profiles"][0]["implementation_profile_hash"],
+            "implementation_profile_hash": payload["canonical_implementation_profiles"][0][
+                "implementation_profile_hash"
+            ],
             "visibility": "private",
             "signature_scope": "configuration_publication",
         }
@@ -1424,13 +1364,8 @@ def test_service_node_advertisement_keeps_published_endpoints_alongside_canonica
     assert payload["canonical_services"][0]["kind"] == "compute"
     assert payload["canonical_feature_profiles"][0]["endpoint_id"] == created.endpoint.endpoint_id
     assert payload["canonical_limit_profiles"][0]["endpoint_id"] == created.endpoint.endpoint_id
-    assert (
-        payload["canonical_implementation_profiles"][0]["endpoint_id"]
-        == created.endpoint.endpoint_id
-    )
-    assert {
-        item["object_type"] for item in payload["canonical_registry_objects"]
-    } == {
+    assert payload["canonical_implementation_profiles"][0]["endpoint_id"] == created.endpoint.endpoint_id
+    assert {item["object_type"] for item in payload["canonical_registry_objects"]} == {
         "capability_definition",
         "endpoint_feature_profile",
         "endpoint_limit_profile",
@@ -1438,9 +1373,7 @@ def test_service_node_advertisement_keeps_published_endpoints_alongside_canonica
         "accounting_contract",
     }
     accounting_object = next(
-        item
-        for item in payload["canonical_registry_objects"]
-        if item["object_type"] == "accounting_contract"
+        item for item in payload["canonical_registry_objects"] if item["object_type"] == "accounting_contract"
     )
     assert accounting_object["namespace"] == "usage"
     assert accounting_object["source_reference"] == created.endpoint.endpoint_id
@@ -1487,9 +1420,7 @@ def test_service_node_advertisement_excludes_superseded_and_revoked_canonical_ad
     payload = service.node_advertisement(heartbeat_at="2026-07-05T14:00:00+00:00")
 
     assert first.publication_id != second.publication_id
-    assert [item["current_publication_id"] for item in payload["published_endpoints"]] == [
-        second.publication_id
-    ]
+    assert [item["current_publication_id"] for item in payload["published_endpoints"]] == [second.publication_id]
     assert payload["canonical_advertisements"] == [
         {
             "advertisement_id": f"adv-{second.publication_id}",
@@ -1502,7 +1433,9 @@ def test_service_node_advertisement_excludes_superseded_and_revoked_canonical_ad
             "capability_definition_hash": payload["canonical_capabilities"][0]["capability_definition_hash"],
             "feature_profile_hash": payload["canonical_feature_profiles"][0]["feature_profile_hash"],
             "limit_profile_hash": payload["canonical_limit_profiles"][0]["limit_profile_hash"],
-            "implementation_profile_hash": payload["canonical_implementation_profiles"][0]["implementation_profile_hash"],
+            "implementation_profile_hash": payload["canonical_implementation_profiles"][0][
+                "implementation_profile_hash"
+            ],
             "visibility": "public",
             "signature_scope": "configuration_publication",
         }
@@ -1510,9 +1443,7 @@ def test_service_node_advertisement_excludes_superseded_and_revoked_canonical_ad
 
     publication_service.revoke_publication(created.endpoint.endpoint_id)
 
-    revoked_payload = service.node_advertisement(
-        heartbeat_at="2026-07-05T14:05:00+00:00"
-    )
+    revoked_payload = service.node_advertisement(heartbeat_at="2026-07-05T14:05:00+00:00")
 
     assert revoked_payload["published_endpoints"] == []
     assert revoked_payload["canonical_advertisements"] == []
@@ -1586,9 +1517,7 @@ def test_service_dashboard_home_reduces_to_bootstrap_and_factual_summary(
             )
         ),
         bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"endpoint": "http://127.0.0.1:9000"}
-            ),
+            _bundle("whisper-a", "speech_to_text").model_copy(update={"endpoint": "http://127.0.0.1:9000"}),
             _bundle("text-a", "llm_text"),
             _bundle("disabled-text", "llm_text", enabled=False),
         ],
@@ -1638,9 +1567,7 @@ def test_service_owner_wallet_bootstrap_persists_and_restores_state() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[_bundle("text-a", "llm_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1652,9 +1579,7 @@ def test_service_owner_wallet_bootstrap_persists_and_restores_state() -> None:
     restored = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[_bundle("text-a", "llm_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1672,9 +1597,7 @@ def test_service_onboarding_state_persists_after_wallet_and_publish() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[_bundle("whisper-a", "speech_to_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1706,9 +1629,7 @@ def test_service_onboarding_state_persists_after_wallet_and_publish() -> None:
     restored = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[_bundle("whisper-a", "speech_to_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1725,9 +1646,7 @@ def test_service_onboarding_stays_incomplete_for_unpublished_endpoint() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[_bundle("whisper-a", "speech_to_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1754,9 +1673,7 @@ def test_service_wallet_bootstrap_advances_onboarding_without_manual_sync() -> N
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[_bundle("whisper-a", "speech_to_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1773,9 +1690,7 @@ def test_service_onboarding_completion_remains_after_later_empty_sync() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[_bundle("whisper-a", "speech_to_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1807,9 +1722,7 @@ def test_service_replacing_wallet_resets_completed_onboarding() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[_bundle("whisper-a", "speech_to_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1840,13 +1753,9 @@ def test_service_home_bootstrap_requires_wallet_before_network_actions() -> None
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"endpoint": "http://127.0.0.1:9000"}
-            ),
+            _bundle("whisper-a", "speech_to_text").model_copy(update={"endpoint": "http://127.0.0.1:9000"}),
             _bundle("text-a", "llm_text"),
         ],
         plugins=_registry(),
@@ -1865,13 +1774,9 @@ def test_service_home_bootstrap_surfaces_first_endpoint_candidate_after_wallet_s
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"endpoint": "http://127.0.0.1:9000"}
-            ),
+            _bundle("whisper-a", "speech_to_text").model_copy(update={"endpoint": "http://127.0.0.1:9000"}),
         ],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1890,13 +1795,9 @@ def test_service_endpoints_dashboard_defaults_to_empty_without_endpoint_state() 
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"endpoint": "http://127.0.0.1:9000"}
-            ),
+            _bundle("whisper-a", "speech_to_text").model_copy(update={"endpoint": "http://127.0.0.1:9000"}),
             _bundle("text-a", "llm_text"),
         ],
         plugins=_registry(),
@@ -1925,9 +1826,7 @@ def test_service_requests_dashboard_reports_queue_recent_and_policy() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[
             _bundle("whisper-a", "speech_to_text"),
             _bundle("text-a", "llm_text"),
@@ -1943,12 +1842,8 @@ def test_service_requests_dashboard_reports_queue_recent_and_policy() -> None:
             )
         ],
     )
-    completed = service.submit(
-        TaskRequest(task_type="llm_text.generate", payload={"prompt": "done"})
-    )
-    queued = service.queue.enqueue(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "queued.wav"})
-    )
+    completed = service.submit(TaskRequest(task_type="llm_text.generate", payload={"prompt": "done"}))
+    queued = service.queue.enqueue(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "queued.wav"}))
     service._selected_bundles[queued.task_id] = "whisper-a"
 
     payload = service.operator_dashboard_requests()
@@ -1968,9 +1863,7 @@ def test_service_snapshot_and_restore_preserves_requests_policy() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[_bundle("text-a", "llm_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -1985,9 +1878,7 @@ def test_service_snapshot_and_restore_preserves_requests_policy() -> None:
     restored = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[_bundle("text-a", "llm_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -2005,16 +1896,12 @@ def test_service_requests_dashboard_recent_is_sorted_by_terminal_event_time() ->
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[_bundle("text-a", "llm_text"), _bundle("whisper-a", "speech_to_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
     )
-    task_a = service.queue.enqueue(
-        TaskRequest(task_type="llm_text.generate", payload={"prompt": "a"}, priority=80)
-    )
+    task_a = service.queue.enqueue(TaskRequest(task_type="llm_text.generate", payload={"prompt": "a"}, priority=80))
     task_b = service.queue.enqueue(
         TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "b.wav"}, priority=40)
     )
@@ -2053,9 +1940,7 @@ def test_service_requests_dashboard_spillover_preview_honors_strategy_and_queue_
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 8192})),
         bundles=[_bundle("text-a", "llm_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -2151,9 +2036,7 @@ def test_service_leaves_task_queued_when_resources_are_unavailable() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=1.0, ram_mb=1024, vram_mb={"gpu0": 512})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=1.0, ram_mb=1024, vram_mb={"gpu0": 512})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -2169,9 +2052,7 @@ def test_service_leaves_task_queued_when_resources_are_unavailable() -> None:
         runtimes=ProviderProcessManager(),
     )
 
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
     assert service.get_task(task.task_id).status == "queued"
     assert service.task_result(task.task_id) is None
@@ -2182,9 +2063,7 @@ def test_service_retries_waiting_tasks_after_bundle_stop_frees_resources() -> No
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=2.0, ram_mb=4096, vram_mb={"gpu0": 2048})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=4096, vram_mb={"gpu0": 2048})),
         bundles=[
             _bundle(
                 "text-a",
@@ -2214,9 +2093,7 @@ def test_service_retries_waiting_tasks_after_bundle_stop_frees_resources() -> No
     )
 
     service.submit(TaskRequest(task_type="llm_text.generate", payload={"prompt": "hello"}))
-    queued_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    queued_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
     assert service.get_task(queued_task.task_id).status == "queued"
 
@@ -2271,9 +2148,7 @@ def test_service_respects_bundle_max_parallel_requests_for_running_tasks() -> No
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -2288,14 +2163,10 @@ def test_service_respects_bundle_max_parallel_requests_for_running_tasks() -> No
         runtimes=[RuntimeHandle("rt-1", ["python", "-m", "http.server", "0"], "running", "whisper-a")],
     )
 
-    first_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"})
-    )
+    first_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"}))
     service.queue.transition_status(first_task.task_id, "running")
 
-    second_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"})
-    )
+    second_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"}))
 
     assert service.get_task(second_task.task_id).status == "queued"
     assert service.task_result(second_task.task_id) is None
@@ -2307,9 +2178,7 @@ def test_service_marks_task_failed_when_runtime_health_check_fails() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -2325,9 +2194,7 @@ def test_service_marks_task_failed_when_runtime_health_check_fails() -> None:
         runtimes=ProviderProcessManager(),
     )
 
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
     assert service.get_task(task.task_id).status == "failed"
     assert service.task_result(task.task_id) is None
@@ -2345,9 +2212,7 @@ def test_service_marks_task_failed_when_invoke_raises() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -2363,9 +2228,7 @@ def test_service_marks_task_failed_when_invoke_raises() -> None:
         runtimes=ProviderProcessManager(),
     )
 
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
     assert service.get_task(task.task_id).status == "failed"
     assert service.task_result(task.task_id) is None
@@ -2386,14 +2249,8 @@ def test_service_retries_runtime_health_check_with_backoff_before_running_task(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-retry-policy"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"plugin_id": "fake-retry-policy"})],
         plugins=registry,
         runtimes=[
             RuntimeHandle(
@@ -2405,9 +2262,7 @@ def test_service_retries_runtime_health_check_with_backoff_before_running_task(
         ],
     )
 
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
     runtime = service.list_runtimes()[0]
 
@@ -2435,21 +2290,13 @@ def test_service_retries_invoke_with_backoff_until_real_provider_recovers(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-retry-policy"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"plugin_id": "fake-retry-policy"})],
         plugins=registry,
         runtimes=ProviderProcessManager(),
     )
 
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
     runtime = service.list_runtimes()[0]
 
@@ -2477,21 +2324,13 @@ def test_service_marks_runtime_unhealthy_when_retryable_invoke_errors_exhausted(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-retry-policy"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"plugin_id": "fake-retry-policy"})],
         plugins=registry,
         runtimes=ProviderProcessManager(),
     )
 
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
     runtime = service.list_runtimes()[0]
 
@@ -2520,24 +2359,14 @@ def test_service_places_bundle_into_cooldown_after_retryable_provider_failure(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-cooldown-policy"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"plugin_id": "fake-cooldown-policy"})],
         plugins=registry,
         runtimes=ProviderProcessManager(),
     )
 
-    failed_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"})
-    )
-    queued_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"})
-    )
+    failed_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"}))
+    queued_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"}))
 
     runtime = service.list_runtimes()[0]
 
@@ -2581,24 +2410,14 @@ def test_service_resumes_queued_tasks_after_bundle_cooldown_expires(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-cooldown-policy"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"plugin_id": "fake-cooldown-policy"})],
         plugins=registry,
         runtimes=ProviderProcessManager(),
     )
 
-    service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"})
-    )
-    queued_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"})
-    )
+    service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"}))
+    queued_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"}))
 
     current_time[0] = 1061.0
     service.process_pending()
@@ -2641,24 +2460,14 @@ def test_service_retry_bundle_clears_cooldown_and_reprocesses_waiting_tasks(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-cooldown-policy"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"plugin_id": "fake-cooldown-policy"})],
         plugins=registry,
         runtimes=ProviderProcessManager(),
     )
 
-    service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"})
-    )
-    queued_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"})
-    )
+    service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"}))
+    queued_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"}))
 
     summary = service.retry_bundle("whisper-a")
 
@@ -2682,16 +2491,12 @@ def test_service_disable_bundle_blocks_processing_until_reenabled() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[_bundle("whisper-a", "speech_to_text")],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
     )
-    task = service.queue.enqueue(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.queue.enqueue(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
     service._selected_bundles[task.task_id] = "whisper-a"
 
     result = service.set_bundle_enabled("whisper-a", False)
@@ -2721,16 +2526,12 @@ def test_service_drain_runtime_blocks_new_tasks_until_restart() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[_bundle("whisper-a", "speech_to_text")],
         plugins=_registry(),
         runtimes=runtimes,
     )
-    task = service.queue.enqueue(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.queue.enqueue(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
     service._selected_bundles[task.task_id] = "whisper-a"
 
     drain = service.drain_runtime("rt-1")
@@ -2788,9 +2589,7 @@ def test_service_force_stop_runtime_removes_runtime_without_restarting() -> None
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[_bundle("whisper-a", "speech_to_text")],
         plugins=_registry(),
         runtimes=runtimes,
@@ -2813,16 +2612,10 @@ def test_service_process_pending_fair_shares_between_bundles() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
         bundles=[
-            _bundle("bundle-a", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-recording"}
-            ),
-            _bundle("bundle-b", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-recording"}
-            ),
+            _bundle("bundle-a", "speech_to_text").model_copy(update={"plugin_id": "fake-recording"}),
+            _bundle("bundle-b", "speech_to_text").model_copy(update={"plugin_id": "fake-recording"}),
         ],
         plugins=registry,
         runtimes=ProviderProcessManager(),
@@ -2851,21 +2644,13 @@ def test_service_create_allocation_starts_runtime_and_returns_endpoint() -> None
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"endpoint": "http://127.0.0.1:9000"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"endpoint": "http://127.0.0.1:9000"})],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
     )
 
-    allocation = service.create_allocation(
-        AllocationRequest(workload_type="speech_to_text", owner_id="agent-a")
-    )
+    allocation = service.create_allocation(AllocationRequest(workload_type="speech_to_text", owner_id="agent-a"))
 
     assert allocation == {
         "allocation_id": allocation["allocation_id"],
@@ -2883,14 +2668,8 @@ def test_service_capability_catalog_reports_fit_and_endpoint_readiness() -> None
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"endpoint": "http://127.0.0.1:9000"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"endpoint": "http://127.0.0.1:9000"})],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
         node_id="node-a",
@@ -2958,9 +2737,7 @@ def test_service_capability_catalog_reports_wait_when_resources_are_busy() -> No
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=2.0, ram_mb=2048, vram_mb={"gpu0": 1024})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048, vram_mb={"gpu0": 1024})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -3013,9 +2790,7 @@ def test_service_capability_catalog_reports_missing_resource_delta() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=2.0, ram_mb=2048, vram_mb={"gpu0": 1024})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048, vram_mb={"gpu0": 1024})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -3053,9 +2828,7 @@ def test_service_register_model_install_job_tracks_requested_artifact(tmp_path) 
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
         bundles=[],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -3086,9 +2859,7 @@ def test_service_process_model_installs_materializes_artifact_and_marks_job_comp
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
         bundles=[],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -3108,9 +2879,7 @@ def test_service_process_model_installs_materializes_artifact_and_marks_job_comp
     assert processed[0]["status"] == "completed"
     assert processed[0]["last_error"] is None
     assert service.list_model_installs()[0]["status"] == "completed"
-    assert (tmp_path / "models" / "fake-managed" / "phi-4-mini.gguf").read_text(
-        encoding="utf-8"
-    ) == "model-bytes"
+    assert (tmp_path / "models" / "fake-managed" / "phi-4-mini.gguf").read_text(encoding="utf-8") == "model-bytes"
     assert [event.event_type for event in service.event_journal(limit=3)] == [
         "model.install.requested",
         "model.install.started",
@@ -3124,9 +2893,7 @@ def test_service_process_model_installs_marks_job_failed_on_missing_artifact(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
         bundles=[],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -3158,9 +2925,7 @@ def test_service_registers_bundle_from_completed_install(tmp_path) -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
         bundles=[],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -3191,14 +2956,8 @@ def test_agent_can_discover_then_allocate_same_bundle() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"endpoint": "http://127.0.0.1:9000"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"endpoint": "http://127.0.0.1:9000"})],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
     )
@@ -3207,9 +2966,7 @@ def test_agent_can_discover_then_allocate_same_bundle() -> None:
         owner_id="agent-a",
         workload_type="speech_to_text",
     )
-    allocation = service.create_allocation(
-        AllocationRequest(workload_type="speech_to_text", owner_id="agent-a")
-    )
+    allocation = service.create_allocation(AllocationRequest(workload_type="speech_to_text", owner_id="agent-a"))
 
     assert catalog["bundles"][0]["bundle_id"] == "whisper-a"
     assert catalog["bundles"][0]["can_allocate_now"] is True
@@ -3221,9 +2978,7 @@ def test_operator_can_install_register_and_expose_new_model(tmp_path) -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
         bundles=[],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
@@ -3289,20 +3044,12 @@ def test_service_release_allocation_marks_it_released() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"endpoint": "http://127.0.0.1:9000"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"endpoint": "http://127.0.0.1:9000"})],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
     )
-    allocation = service.create_allocation(
-        AllocationRequest(workload_type="speech_to_text", owner_id="agent-a")
-    )
+    allocation = service.create_allocation(AllocationRequest(workload_type="speech_to_text", owner_id="agent-a"))
 
     released = service.release_allocation(allocation["allocation_id"])
 
@@ -3319,9 +3066,7 @@ def test_service_get_allocation_expires_lease_and_releases_resources(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -3360,9 +3105,7 @@ def test_service_create_allocation_rejects_when_runtime_residency_cannot_fit() -
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=1.0, ram_mb=1024, vram_mb={"gpu0": 256})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=1.0, ram_mb=1024, vram_mb={"gpu0": 256})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -3379,18 +3122,14 @@ def test_service_create_allocation_rejects_when_runtime_residency_cannot_fit() -
     )
 
     with pytest.raises(ValueError, match="insufficient resources"):
-        service.create_allocation(
-            AllocationRequest(workload_type="speech_to_text", owner_id="agent-a")
-        )
+        service.create_allocation(AllocationRequest(workload_type="speech_to_text", owner_id="agent-a"))
 
 
 def test_service_create_allocation_with_wait_policy_returns_pending() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=2.0, ram_mb=2048, vram_mb={"gpu0": 1024})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048, vram_mb={"gpu0": 1024})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -3434,9 +3173,7 @@ def test_service_get_allocation_activates_pending_wait_lease_when_resources_free
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=2.0, ram_mb=2048, vram_mb={"gpu0": 1024})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048, vram_mb={"gpu0": 1024})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -3484,9 +3221,7 @@ def test_service_pending_allocation_exposes_retry_hint(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=2.0, ram_mb=2048, vram_mb={"gpu0": 1024})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048, vram_mb={"gpu0": 1024})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -3513,45 +3248,36 @@ def test_service_pending_allocation_exposes_retry_hint(
     )
 
     assert allocation["retry_after_seconds"] == 5
-    assert allocation["next_attempt_at"] == datetime.fromtimestamp(
-        current_time[0] + 5,
-        UTC,
-    ).isoformat()
+    assert (
+        allocation["next_attempt_at"]
+        == datetime.fromtimestamp(
+            current_time[0] + 5,
+            UTC,
+        ).isoformat()
+    )
 
 
 def test_service_create_allocation_rejects_when_owner_active_quota_is_exceeded() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
-        bundles=[
-            _bundle("whisper-a", "speech_to_text").model_copy(
-                update={"endpoint": "http://127.0.0.1:9000"}
-            )
-        ],
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
+        bundles=[_bundle("whisper-a", "speech_to_text").model_copy(update={"endpoint": "http://127.0.0.1:9000"})],
         plugins=_registry(),
         runtimes=ProviderProcessManager(),
         max_active_allocations_per_owner=1,
     )
-    service.create_allocation(
-        AllocationRequest(workload_type="speech_to_text", owner_id="agent-a")
-    )
+    service.create_allocation(AllocationRequest(workload_type="speech_to_text", owner_id="agent-a"))
 
     with pytest.raises(ValueError, match="owner active allocation quota exceeded"):
-        service.create_allocation(
-            AllocationRequest(workload_type="speech_to_text", owner_id="agent-a")
-        )
+        service.create_allocation(AllocationRequest(workload_type="speech_to_text", owner_id="agent-a"))
 
 
 def test_service_create_wait_allocation_rejects_when_owner_pending_quota_is_exceeded() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=2.0, ram_mb=2048, vram_mb={"gpu0": 1024})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=2048, vram_mb={"gpu0": 1024})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -3597,16 +3323,10 @@ def test_service_process_pending_exports_admission_decisions_to_event_journal(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
         bundles=[
-            _bundle("bundle-a", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-recording"}
-            ),
-            _bundle("bundle-b", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-recording"}
-            ),
+            _bundle("bundle-a", "speech_to_text").model_copy(update={"plugin_id": "fake-recording"}),
+            _bundle("bundle-b", "speech_to_text").model_copy(update={"plugin_id": "fake-recording"}),
         ],
         plugins=registry,
         runtimes=ProviderProcessManager(),
@@ -3651,9 +3371,7 @@ def test_service_process_pending_exports_admission_decisions_to_event_journal(
 
     service.process_pending()
 
-    admission_events = [
-        event for event in service.event_journal() if event.event_type == "admission.selected"
-    ]
+    admission_events = [event for event in service.event_journal() if event.event_type == "admission.selected"]
 
     assert [event.task_id for event in admission_events] == [
         older_task.task_id,
@@ -3707,9 +3425,7 @@ def test_service_admission_telemetry_reports_fair_share_priority_and_aging(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
         bundles=[
             _bundle("bundle-a", "speech_to_text"),
             _bundle("bundle-b", "llm_text"),
@@ -3802,16 +3518,10 @@ def test_service_ages_waiting_task_priority_to_prevent_starvation(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
         bundles=[
-            _bundle("bundle-a", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-recording"}
-            ),
-            _bundle("bundle-b", "speech_to_text").model_copy(
-                update={"plugin_id": "fake-recording"}
-            ),
+            _bundle("bundle-a", "speech_to_text").model_copy(update={"plugin_id": "fake-recording"}),
+            _bundle("bundle-b", "speech_to_text").model_copy(update={"plugin_id": "fake-recording"}),
         ],
         plugins=registry,
         runtimes=ProviderProcessManager(),
@@ -3866,9 +3576,7 @@ def test_service_evicts_idle_auto_runtime_under_resource_pressure() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=2.0, ram_mb=4096, vram_mb={"gpu0": 2048})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=4096, vram_mb={"gpu0": 2048})),
         bundles=[
             _bundle(
                 "text-a",
@@ -3896,9 +3604,7 @@ def test_service_evicts_idle_auto_runtime_under_resource_pressure() -> None:
     )
 
     service.submit(TaskRequest(task_type="llm_text.generate", payload={"prompt": "hello"}))
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
     assert service.get_task(task.task_id).status == "completed"
     assert [runtime.bundle_id for runtime in service.list_runtimes()] == []
@@ -3908,9 +3614,7 @@ def test_service_keeps_idle_always_runtime_for_non_higher_priority_task() -> Non
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=2.0, ram_mb=4096, vram_mb={"gpu0": 2048})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=4096, vram_mb={"gpu0": 2048})),
         bundles=[
             _bundle(
                 "text-a",
@@ -3954,9 +3658,7 @@ def test_service_evicts_idle_always_runtime_for_higher_priority_task() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=2.0, ram_mb=4096, vram_mb={"gpu0": 2048})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=4096, vram_mb={"gpu0": 2048})),
         bundles=[
             _bundle(
                 "text-a",
@@ -4002,9 +3704,7 @@ def test_service_respects_plugin_specific_concurrency_limit() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -4026,14 +3726,10 @@ def test_service_respects_plugin_specific_concurrency_limit() -> None:
         ],
     )
 
-    first_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"})
-    )
+    first_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"}))
     service.queue.transition_status(first_task.task_id, "running")
 
-    second_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"})
-    )
+    second_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"}))
 
     assert service.get_task(second_task.task_id).status == "queued"
 
@@ -4044,9 +3740,7 @@ def test_service_reports_concurrency_limit_as_queue_diagnostic_reason() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 4096})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -4068,13 +3762,9 @@ def test_service_reports_concurrency_limit_as_queue_diagnostic_reason() -> None:
         ],
     )
 
-    first_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"})
-    )
+    first_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-a.wav"}))
     service.queue.transition_status(first_task.task_id, "running")
-    second_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"})
-    )
+    second_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip-b.wav"}))
 
     diagnostics = service.queue_diagnostics()
 
@@ -4094,9 +3784,7 @@ def test_service_attached_service_provider_hint_ignores_cold_start_headroom() ->
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=1.5, ram_mb=2048, vram_mb={"gpu0": 0})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=1.5, ram_mb=2048, vram_mb={"gpu0": 0})),
         bundles=[
             BundleConfig(
                 bundle_id="phi4-ollama",
@@ -4122,9 +3810,7 @@ def test_service_attached_service_provider_hint_ignores_cold_start_headroom() ->
         runtimes=ProviderProcessManager(),
     )
 
-    task = service.submit(
-        TaskRequest(task_type="llm_text.generate", payload={"prompt": "Hi"})
-    )
+    task = service.submit(TaskRequest(task_type="llm_text.generate", payload={"prompt": "Hi"}))
 
     assert service.get_task(task.task_id).status == "completed"
     assert service.resources.summary()["reserved"] == {
@@ -4141,9 +3827,7 @@ def test_service_real_ollama_provider_hint_limits_third_parallel_request() -> No
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=6.0, ram_mb=8192, vram_mb={"gpu0": 0})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=6.0, ram_mb=8192, vram_mb={"gpu0": 0})),
         bundles=[
             BundleConfig(
                 bundle_id="phi4-ollama",
@@ -4174,20 +3858,14 @@ def test_service_real_ollama_provider_hint_limits_third_parallel_request() -> No
         ],
     )
 
-    first_task = service.queue.enqueue(
-        TaskRequest(task_type="llm_text.generate", payload={"prompt": "one"})
-    )
+    first_task = service.queue.enqueue(TaskRequest(task_type="llm_text.generate", payload={"prompt": "one"}))
     service._selected_bundles[first_task.task_id] = "phi4-ollama"
     service.queue.transition_status(first_task.task_id, "running")
-    second_task = service.queue.enqueue(
-        TaskRequest(task_type="llm_text.generate", payload={"prompt": "two"})
-    )
+    second_task = service.queue.enqueue(TaskRequest(task_type="llm_text.generate", payload={"prompt": "two"}))
     service._selected_bundles[second_task.task_id] = "phi4-ollama"
     service.queue.transition_status(second_task.task_id, "running")
 
-    third_task = service.submit(
-        TaskRequest(task_type="llm_text.generate", payload={"prompt": "three"})
-    )
+    third_task = service.submit(TaskRequest(task_type="llm_text.generate", payload={"prompt": "three"}))
 
     assert service.get_task(third_task.task_id).status == "queued"
 
@@ -4196,9 +3874,7 @@ def test_service_reports_insufficient_resources_as_queue_diagnostic_reason() -> 
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=1.0, ram_mb=1024, vram_mb={"gpu0": 512})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=1.0, ram_mb=1024, vram_mb={"gpu0": 512})),
         bundles=[
             _bundle(
                 "whisper-a",
@@ -4214,9 +3890,7 @@ def test_service_reports_insufficient_resources_as_queue_diagnostic_reason() -> 
         runtimes=ProviderProcessManager(),
     )
 
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
     diagnostics = service.queue_diagnostics()
 
@@ -4233,9 +3907,7 @@ def test_service_reports_eviction_policy_blocked_for_idle_always_runtime() -> No
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=2.0, ram_mb=4096, vram_mb={"gpu0": 2048})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=4096, vram_mb={"gpu0": 2048})),
         bundles=[
             _bundle(
                 "text-a",
@@ -4284,9 +3956,7 @@ def test_service_process_pending_returns_summary_counts() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=2.0, ram_mb=4096, vram_mb={"gpu0": 2048})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=2.0, ram_mb=4096, vram_mb={"gpu0": 2048})),
         bundles=[
             _bundle(
                 "text-a",
@@ -4316,9 +3986,7 @@ def test_service_process_pending_returns_summary_counts() -> None:
     )
 
     service.submit(TaskRequest(task_type="llm_text.generate", payload={"prompt": "hello"}))
-    waiting_task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"})
-    )
+    waiting_task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}))
 
     initial = service.process_pending()
     service.stop_bundle("text-a")
@@ -4337,9 +4005,7 @@ def test_service_executes_llm_task_via_ollama_plugin() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 0})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 0})),
         bundles=[
             BundleConfig(
                 bundle_id="phi4-ollama",
@@ -4362,9 +4028,7 @@ def test_service_executes_llm_task_via_ollama_plugin() -> None:
         runtimes=ProviderProcessManager(),
     )
 
-    task = service.submit(
-        TaskRequest(task_type="llm_text.generate", payload={"prompt": "Hi"})
-    )
+    task = service.submit(TaskRequest(task_type="llm_text.generate", payload={"prompt": "Hi"}))
 
     runtime = service.list_runtimes()[0]
 
@@ -4451,9 +4115,7 @@ def test_hypervisor_publishes_plugin_release_registry_objects() -> None:
     assert stored[0]["payload"]["release_id"] == release["release_id"]
     listed = registry.list_registry_objects(query={"namespace": "plugin"})
     assert [item["object_id"] for item in listed] == [stored[0]["object_id"]]
-    assert registry.get_registry_object(
-        stored[0]["object_id"], include_payload=True
-    )["payload"] == stored[0]["payload"]
+    assert registry.get_registry_object(stored[0]["object_id"], include_payload=True)["payload"] == stored[0]["payload"]
 
 
 def test_service_executes_transcription_task_via_whisper_plugin() -> None:
@@ -4463,9 +4125,7 @@ def test_service_executes_transcription_task_via_whisper_plugin() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 0})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 0})),
         bundles=[
             BundleConfig(
                 bundle_id="whisper-local",
@@ -4488,9 +4148,7 @@ def test_service_executes_transcription_task_via_whisper_plugin() -> None:
         runtimes=ProviderProcessManager(),
     )
 
-    task = service.submit(
-        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "C:/audio/clip.wav"})
-    )
+    task = service.submit(TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "C:/audio/clip.wav"}))
 
     runtime = service.list_runtimes()[0]
 
@@ -4530,9 +4188,7 @@ def test_service_executes_llm_task_via_llamacpp_plugin() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(
-            NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 0})
-        ),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=4.0, ram_mb=8192, vram_mb={"gpu0": 0})),
         bundles=[
             BundleConfig(
                 bundle_id="phi4-llamacpp",
@@ -4555,9 +4211,7 @@ def test_service_executes_llm_task_via_llamacpp_plugin() -> None:
         runtimes=ProviderProcessManager(),
     )
 
-    task = service.submit(
-        TaskRequest(task_type="llm_text.generate", payload={"prompt": "Hi"})
-    )
+    task = service.submit(TaskRequest(task_type="llm_text.generate", payload={"prompt": "Hi"}))
 
     runtime = service.list_runtimes()[0]
 

@@ -131,9 +131,7 @@ class WalletAllocationService:
         if event.get("dispute_status") == "open":
             raise ValueError(f"Wallet allocation event is already disputed: {event_id}")
 
-        timestamp = datetime.fromtimestamp(
-            self._host._wallet_allocation_now(), UTC
-        ).isoformat()
+        timestamp = datetime.fromtimestamp(self._host._wallet_allocation_now(), UTC).isoformat()
         dispute_id = str(uuid4())
         event["dispute_id"] = dispute_id
         event["dispute_opened_at"] = timestamp
@@ -292,10 +290,7 @@ class WalletAllocationService:
         ]
         closed_immediately = self._host.wallet_allocation_grace_period_seconds == 0
         current_time = self._host._wallet_allocation_now()
-        usage_total = sum(
-            float(item["quote"]["charges"]["total_q"])
-            for item in matching_usage_events
-        )
+        usage_total = sum(float(item["quote"]["charges"]["total_q"]) for item in matching_usage_events)
         event = WalletAllocationEvent(
             sequence_id=self._host._next_wallet_allocation_sequence,
             event_id=str(uuid4()),
@@ -320,11 +315,7 @@ class WalletAllocationService:
                     UTC,
                 ).isoformat()
             ),
-            closed_at=(
-                datetime.fromtimestamp(current_time, UTC).isoformat()
-                if closed_immediately
-                else None
-            ),
+            closed_at=(datetime.fromtimestamp(current_time, UTC).isoformat() if closed_immediately else None),
             reopened_at=None,
             reopen_reason=None,
             reopen_count=0,
@@ -345,9 +336,7 @@ class WalletAllocationService:
         # Auto-hold if strict-accounting blocked usage for this allocation
         alloc_id = str(allocation["allocation_id"])
         if alloc_id in self._host._wallet_strict_held_allocations:
-            timestamp = datetime.fromtimestamp(
-                self._host._wallet_allocation_now(), UTC
-            ).isoformat()
+            timestamp = datetime.fromtimestamp(self._host._wallet_allocation_now(), UTC).isoformat()
             payload["settlement_status"] = "hold"
             payload["hold_reason"] = "strict_accounting_blocked"
             payload["hold_source"] = "strict_accounting"
@@ -460,10 +449,7 @@ class WalletAllocationService:
                 if usage_event.get("allocation_id") == event["allocation_id"]
             ]
             next_usage_event_count = len(matching_usage_events)
-            next_usage_total_q = sum(
-                float(item["quote"]["charges"]["total_q"])
-                for item in matching_usage_events
-            )
+            next_usage_total_q = sum(float(item["quote"]["charges"]["total_q"]) for item in matching_usage_events)
             if event["usage_event_count"] != next_usage_event_count:
                 event["usage_event_count"] = next_usage_event_count
                 changed = True
@@ -473,7 +459,11 @@ class WalletAllocationService:
                 changed = True
             # Do not recalculate effective_usage_total_q if corrections were applied
             # (corrections override the raw usage total)
-            if event.get("correction_count", 0) == 0 and event.get("effective_usage_total_q") is not None and event.get("effective_usage_total_q") != next_usage_total_q:
+            if (
+                event.get("correction_count", 0) == 0
+                and event.get("effective_usage_total_q") is not None
+                and event.get("effective_usage_total_q") != next_usage_total_q
+            ):
                 event["effective_usage_total_q"] = next_usage_total_q
                 changed = True
 
@@ -490,9 +480,7 @@ class WalletAllocationService:
             if expires_at_ts > current_time:
                 continue
             event["settlement_status"] = "closed"
-            event["closed_at"] = datetime.fromtimestamp(
-                current_time, UTC
-            ).isoformat()
+            event["closed_at"] = datetime.fromtimestamp(current_time, UTC).isoformat()
             changed = True
 
         if changed:
@@ -650,12 +638,8 @@ class WalletAllocationService:
         self._host._persist_state()
         return dict(event)
 
-    def list_wallet_allocation_correction_events(
-        self, *, limit: int | None = None
-    ) -> list[dict]:
-        return self._list_tail(
-            self._host._wallet_allocation_correction_events, limit=limit
-        )
+    def list_wallet_allocation_correction_events(self, *, limit: int | None = None) -> list[dict]:
+        return self._list_tail(self._host._wallet_allocation_correction_events, limit=limit)
 
     def export_wallet_allocation_correction_events(
         self,
@@ -673,11 +657,7 @@ class WalletAllocationService:
 
     def _find_allocation_event(self, event_id: str) -> dict:
         event = next(
-            (
-                item
-                for item in self._host._wallet_allocation_events
-                if item["event_id"] == event_id
-            ),
+            (item for item in self._host._wallet_allocation_events if item["event_id"] == event_id),
             None,
         )
         if event is None:

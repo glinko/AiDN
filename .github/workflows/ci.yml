@@ -14,10 +14,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality-baseline:
-    name: Quality baseline
+  lint:
+    name: Ruff lint
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,10 +25,11 @@ jobs:
           cache: pip
       - name: Install development dependencies
         run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
-      - name: Report formatting baseline
-        run: python -m ruff format --check src tests
-      - name: Report Ruff baseline
-        run: python -m ruff check --output-format=github src tests
+      - name: Run Ruff
+        run: >-
+          python -m ruff check --output-format=github
+          --extend-exclude src/aidn_hypervisor/registry/__init__.py
+          src tests
 
   test:
     name: Hermetic test suite

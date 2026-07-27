@@ -21,6 +21,7 @@ from aidn_hypervisor.snapshot.models import (
 
 # ── Helpers ────────────────────────────────────────────────────────
 
+
 def _make_manifest(
     *,
     snapshot_id: str = "snap-001",
@@ -238,7 +239,9 @@ class TestSnapshotSelector:
     def test_select_highest_scored(self):
         selector = self._make_selector()
         c_high = _make_candidate(block_height=1500, provider_group_count=5, chunk_coverage=1.0, transfer_health="good")
-        c_low = _make_candidate(block_height=500, provider_group_count=3, chunk_coverage=0.5, transfer_health="degraded")
+        c_low = _make_candidate(
+            block_height=500, provider_group_count=3, chunk_coverage=0.5, transfer_health="degraded"
+        )
         result = selector.select([c_high, c_low], finalized_height=2000)
         assert result is not None
         assert result.score > 0
