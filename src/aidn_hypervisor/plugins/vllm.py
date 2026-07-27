@@ -81,6 +81,27 @@ class VllmPlugin(ProviderPlugin):
         if not bundle_config.endpoint:
             raise ValueError("vLLM bundle requires an endpoint")
 
+    def estimate_resources(self, task, bundle_config, runtime_state) -> dict:
+        profile = bundle_config.resource_profile
+        return {
+            "startup_transient": {},
+            "runtime_resident": {
+                "cpu": profile.steady_cpu,
+                "ram_mb": profile.steady_ram_mb,
+                "vram_mb": profile.steady_vram_mb,
+            },
+            "request_active": {
+                "cpu": profile.per_request_cpu,
+                "ram_mb": profile.per_request_ram_mb,
+                "vram_mb": profile.per_request_vram_mb,
+            },
+            "concurrency_limit": 2,
+        }
+
+    def build_launch_spec(self, bundle_config) -> dict:
+        self.validate_bundle(bundle_config)
+        raise ValueError("vLLM attached-service plugin does not manage local process launch")
+
     def invoke(self, task, runtime_handle) -> dict:
         prompt = task.payload.get("prompt")
         if not isinstance(prompt, str) or not prompt:
@@ -98,6 +119,16 @@ class VllmPlugin(ProviderPlugin):
             "output_text": str(choice.get("text", "")),
             "raw": response,
             "usage": self._usage_from_response(response.get("usage") or {}),
+        }
+
+    def stop(self, runtime_handle) -> None:
+        return None
+
+    def bundle_defaults_from_install(self, *, model_id: str, target_path: str) -> dict:
+        return {
+            "model_id": model_id,
+            "launch_mode": "attached_service",
+            "device_affinity": "gpu",
         }
 
     def create_runtime_binding(
