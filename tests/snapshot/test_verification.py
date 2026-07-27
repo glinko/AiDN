@@ -3,30 +3,30 @@
 Snapshot verification and invariant checking.
 """
 
+import gzip
 import hashlib
-import json
 
 import pytest
 
+from aidn_hypervisor.snapshot.chunking import Chunker
 from aidn_hypervisor.snapshot.models import (
+    CompressionAlgorithm,
+    Encoding,
     SnapshotChunk,
     SnapshotManifest,
     SnapshotType,
-    CompressionAlgorithm,
-    Encoding,
 )
-from aidn_hypervisor.snapshot.chunking import Chunker
 from aidn_hypervisor.snapshot.staging import StagingStateStore
 from aidn_hypervisor.snapshot.verification import (
-    SnapshotVerifier,
     InvariantChecker,
-    InvariantError,
-    VerificationResult,
     InvariantCheckResult,
+    InvariantError,
+    SnapshotVerifier,
+    VerificationResult,
 )
 
-
 # ── Helpers ────────────────────────────────────────────────────────
+
 
 def _make_chunks(data: bytes, snapshot_id: str = "test-snap") -> list[SnapshotChunk]:
     """Split data into chunks."""
@@ -40,6 +40,7 @@ def _make_manifest(
     application_state_hash: str = "",
     chunk_count: int = 0,
     snapshot_content_hash: str = "",
+    snapshot_content_size: int = 100,
 ) -> SnapshotManifest:
     """Create a minimal manifest."""
     return SnapshotManifest(
@@ -58,7 +59,7 @@ def _make_manifest(
         epoch=1,
         application_state_hash=application_state_hash,
         snapshot_content_hash=snapshot_content_hash,
-        snapshot_content_size=100,
+        snapshot_content_size=snapshot_content_size,
         chunk_count=chunk_count,
         chunk_size=4096,
         chunk_root=chunk_root,
@@ -81,44 +82,68 @@ def _make_valid_wallets() -> list[dict]:
 def _make_valid_state_store():
     """Create a staging store with valid state."""
     store = StagingStateStore()
-    store.load_namespace("wallets", {
-        "w1": {"balance": 100, "locked": 10, "seq": 5},
-        "w2": {"balance": 200, "locked": 0, "seq": 3},
-    })
-    store.load_namespace("hypervisors", {
-        "h1": {"status": "running", "wallet": "w1"},
-    })
-    store.load_namespace("services", {
-        "s1": {"type": "validator", "hypervisor": "h1"},
-    })
+    store.load_namespace(
+        "wallets",
+        {
+            "w1": {"balance": 100, "locked": 10, "seq": 5},
+            "w2": {"balance": 200, "locked": 0, "seq": 3},
+        },
+    )
+    store.load_namespace(
+        "hypervisors",
+        {
+            "h1": {"status": "running", "wallet": "w1"},
+        },
+    )
+    store.load_namespace(
+        "services",
+        {
+            "s1": {"type": "validator", "hypervisor": "h1"},
+        },
+    )
     store.load_namespace("endpoints", [])
-    store.load_namespace("sessions", [
-        {"id": "sess1", "wallet": "w1", "deposit": 50, "distributed": 10},
-    ])
-    store.load_namespace("stakes", [
-        {"id": "st1", "wallet": "w1", "amount": 50},
-    ])
-    store.load_namespace("bonds", [
-        {"id": "b1", "wallet": "w1", "amount": 20},
-    ])
+    store.load_namespace(
+        "sessions",
+        [
+            {"id": "sess1", "wallet": "w1", "deposit": 50, "distributed": 10},
+        ],
+    )
+    store.load_namespace(
+        "stakes",
+        [
+            {"id": "st1", "wallet": "w1", "amount": 50},
+        ],
+    )
+    store.load_namespace(
+        "bonds",
+        [
+            {"id": "b1", "wallet": "w1", "amount": 20},
+        ],
+    )
     store.load_namespace("certifications", [])
     store.load_namespace("reputation", {"w1": 1.0, "w2": 0.8})
     store.load_namespace("epochs", [])
-    store.load_namespace("protocol_parameters", {
-        "max_block_size": 1_000_000,
-        "version": 1,
-        "declared_height": 1000,
-    })
-    store.load_namespace("evidence", [
-        {"id": "ev1", "type": "signed", "consumed": False},
-    ])
+    store.load_namespace(
+        "protocol_parameters",
+        {
+            "max_block_size": 1_000_000,
+            "version": 1,
+            "declared_height": 1000,
+        },
+    )
+    store.load_namespace(
+        "evidence",
+        [
+            {"id": "ev1", "type": "signed", "consumed": False},
+        ],
+    )
     return store
 
 
 # ── SnapshotVerifier ──────────────────────────────────────────────
 
-class TestVerifyManifestHash:
 
+class TestVerifyManifestHash:
     def test_matching_hash(self):
         verifier = SnapshotVerifier()
         manifest = _make_manifest(application_state_hash="abc123")
@@ -136,13 +161,13 @@ class TestVerifyManifestHash:
 
 
 class TestVerifyChunkRoot:
-
     def test_valid_chunk_root(self):
         verifier = SnapshotVerifier()
         data = b"test snapshot content for verification"
         chunks = _make_chunks(data)
         chunk_hashes = [c.chunk_hash for c in chunks]
         from aidn_hypervisor.snapshot.chunking import MerkleTree
+
         expected_root = MerkleTree(chunk_hashes).root_hash()
         assert verifier.verify_chunk_root(chunks, expected_root) is True
 
@@ -163,6 +188,7 @@ class TestVerifyChunkRoot:
         )
         chunk_hashes = [c.chunk_hash for c in chunks]
         from aidn_hypervisor.snapshot.chunking import MerkleTree
+
         expected_root = MerkleTree(chunk_hashes).root_hash()
         # The root won't match because payload was tampered (hash mismatch)
         assert verifier.verify_chunk_root(chunks, expected_root) is False
@@ -179,7 +205,6 @@ class TestVerifyChunkRoot:
 
 
 class TestVerifyContentHash:
-
     def test_valid_content_hash(self):
         verifier = SnapshotVerifier()
         data = b"test snapshot content for hashing"
@@ -198,15 +223,38 @@ class TestVerifyContentHash:
         empty_hash = hashlib.sha256(b"").hexdigest()
         assert verifier.verify_content_hash([], empty_hash) is True
 
+    def test_gzip_content_hash_uses_declared_compression(self):
+        verifier = SnapshotVerifier()
+        data = b"compressed snapshot content" * 100
+        chunks = _make_chunks(gzip.compress(data))
+
+        assert verifier.verify_content_hash(
+            chunks,
+            hashlib.sha256(data).hexdigest(),
+            compression=CompressionAlgorithm.GZIP,
+            expected_content_size=len(data),
+        )
+
+    def test_invalid_gzip_content_is_rejected(self):
+        verifier = SnapshotVerifier()
+        chunks = _make_chunks(b"not a gzip stream")
+
+        assert not verifier.verify_content_hash(
+            chunks,
+            hashlib.sha256(b"not a gzip stream").hexdigest(),
+            compression=CompressionAlgorithm.GZIP,
+            expected_content_size=len(b"not a gzip stream"),
+        )
+
 
 class TestVerifyComplete:
-
     def test_full_pipeline_passes(self):
         verifier = SnapshotVerifier()
         data = b"test snapshot content for full verification"
         chunks = _make_chunks(data)
         chunk_hashes = [c.chunk_hash for c in chunks]
         from aidn_hypervisor.snapshot.chunking import MerkleTree
+
         chunk_root = MerkleTree(chunk_hashes).root_hash()
         content_hash = hashlib.sha256(data).hexdigest()
 
@@ -215,10 +263,12 @@ class TestVerifyComplete:
             application_state_hash=content_hash,
             chunk_count=len(chunks),
             snapshot_content_hash=content_hash,
+            snapshot_content_size=len(data),
         )
 
         result = verifier.verify_complete(
-            manifest, chunks,
+            manifest,
+            chunks,
             canonical_state_hash=content_hash,
         )
         assert result.valid
@@ -230,7 +280,8 @@ class TestVerifyComplete:
         chunks = _make_chunks(data)
         manifest = _make_manifest(chunk_count=len(chunks) + 1)
         result = verifier.verify_complete(
-            manifest, chunks,
+            manifest,
+            chunks,
             canonical_state_hash="any",
         )
         assert not result.valid
@@ -245,7 +296,8 @@ class TestVerifyComplete:
             chunk_root="0" * 64,
         )
         result = verifier.verify_complete(
-            manifest, chunks,
+            manifest,
+            chunks,
             canonical_state_hash="any",
         )
         assert not result.valid
@@ -257,10 +309,12 @@ class TestVerifyComplete:
         chunks = _make_chunks(data)
         chunk_hashes = [c.chunk_hash for c in chunks]
         from aidn_hypervisor.snapshot.chunking import MerkleTree
+
         chunk_root = MerkleTree(chunk_hashes).root_hash()
         manifest = _make_manifest(chunk_root=chunk_root, chunk_count=len(chunks))
         result = verifier.verify_complete(
-            manifest, chunks,
+            manifest,
+            chunks,
             canonical_state_hash="wrong-hash",
         )
         assert not result.valid
@@ -272,6 +326,7 @@ class TestVerifyComplete:
         chunks = _make_chunks(data)
         chunk_hashes = [c.chunk_hash for c in chunks]
         from aidn_hypervisor.snapshot.chunking import MerkleTree
+
         chunk_root = MerkleTree(chunk_hashes).root_hash()
         content_hash = hashlib.sha256(data).hexdigest()
         manifest = _make_manifest(
@@ -281,7 +336,8 @@ class TestVerifyComplete:
             snapshot_content_hash=content_hash,
         )
         result = verifier.verify_complete(
-            manifest, chunks,
+            manifest,
+            chunks,
             canonical_state_hash=content_hash,
         )
         assert not result.valid
@@ -289,7 +345,6 @@ class TestVerifyComplete:
 
 
 class TestVerificationResult:
-
     def test_all_fields_populated(self):
         r = VerificationResult(
             valid=True,
@@ -317,8 +372,8 @@ class TestVerificationResult:
 
 # ── InvariantChecker ──────────────────────────────────────────────
 
-class TestInvariantCheckerValidState:
 
+class TestInvariantCheckerValidState:
     def test_valid_state_passes(self):
         checker = InvariantChecker()
         store = _make_valid_state_store()
@@ -335,13 +390,15 @@ class TestInvariantCheckerValidState:
 
 
 class TestInvariantCheckerNegativeBalance:
-
     def test_detects_negative_balance(self):
         checker = InvariantChecker()
         store = StagingStateStore()
-        store.load_namespace("wallets", {
-            "w1": {"balance": -50, "locked": 0, "seq": 1},
-        })
+        store.load_namespace(
+            "wallets",
+            {
+                "w1": {"balance": -50, "locked": 0, "seq": 1},
+            },
+        )
         store.load_namespace("protocol_parameters", {"version": 1, "declared_height": 100})
         result = checker.check_all(store)
         assert not result.valid
@@ -350,45 +407,55 @@ class TestInvariantCheckerNegativeBalance:
     def test_detects_negative_locked(self):
         checker = InvariantChecker()
         store = StagingStateStore()
-        store.load_namespace("wallets", {
-            "w1": {"balance": 100, "locked": -10, "seq": 1},
-        })
+        store.load_namespace(
+            "wallets",
+            {
+                "w1": {"balance": 100, "locked": -10, "seq": 1},
+            },
+        )
         store.load_namespace("protocol_parameters", {"version": 1, "declared_height": 100})
         result = checker.check_all(store)
         assert not result.valid
 
 
 class TestInvariantCheckerSupplyConservation:
-
     def test_detects_supply_violation(self):
         checker = InvariantChecker()
         store = StagingStateStore()
         # balance + locked should equal total_supply
-        store.load_namespace("wallets", {
-            "w1": {"balance": 100, "locked": 10, "seq": 1},
-            "w2": {"balance": 200, "locked": 0, "seq": 1},
-        })
+        store.load_namespace(
+            "wallets",
+            {
+                "w1": {"balance": 100, "locked": 10, "seq": 1},
+                "w2": {"balance": 200, "locked": 0, "seq": 1},
+            },
+        )
         # Total supply declared as 500, but actual is 310
-        store.load_namespace("protocol_parameters", {
-            "total_supply": 500,
-            "version": 1,
-            "declared_height": 100,
-        })
+        store.load_namespace(
+            "protocol_parameters",
+            {
+                "total_supply": 500,
+                "version": 1,
+                "declared_height": 100,
+            },
+        )
         result = checker.check_all(store)
         assert not result.valid
 
 
 class TestInvariantCheckerDuplicateIDs:
-
     def test_detects_duplicate_wallet_ids(self):
         checker = InvariantChecker()
         store = StagingStateStore()
         # Wallets as dict — keys are IDs, so no duplicates possible in dict
         # But if stored as list, duplicates can occur
-        store.load_namespace("wallets", [
-            {"id": "w1", "balance": 100, "locked": 0, "seq": 1},
-            {"id": "w1", "balance": 200, "locked": 0, "seq": 2},
-        ])
+        store.load_namespace(
+            "wallets",
+            [
+                {"id": "w1", "balance": 100, "locked": 0, "seq": 1},
+                {"id": "w1", "balance": 200, "locked": 0, "seq": 2},
+            ],
+        )
         store.load_namespace("protocol_parameters", {"version": 1, "declared_height": 100})
         result = checker.check_all(store)
         assert not result.valid
@@ -397,32 +464,36 @@ class TestInvariantCheckerDuplicateIDs:
         checker = InvariantChecker()
         store = StagingStateStore()
         store.load_namespace("wallets", {"w1": {"balance": 100, "locked": 0, "seq": 1}})
-        store.load_namespace("evidence", [
-            {"id": "ev1", "type": "signed", "consumed": False},
-            {"id": "ev1", "type": "signed", "consumed": True},
-        ])
+        store.load_namespace(
+            "evidence",
+            [
+                {"id": "ev1", "type": "signed", "consumed": False},
+                {"id": "ev1", "type": "signed", "consumed": True},
+            ],
+        )
         store.load_namespace("protocol_parameters", {"version": 1, "declared_height": 100})
         result = checker.check_all(store)
         assert not result.valid
 
 
 class TestInvariantCheckerDuplicateEvidence:
-
     def test_consumed_evidence_not_reused(self):
         checker = InvariantChecker()
         store = StagingStateStore()
         store.load_namespace("wallets", {"w1": {"balance": 100, "locked": 0, "seq": 1}})
-        store.load_namespace("evidence", [
-            {"id": "ev1", "type": "signed", "consumed": True},
-            {"id": "ev1", "type": "signed", "consumed": True},
-        ])
+        store.load_namespace(
+            "evidence",
+            [
+                {"id": "ev1", "type": "signed", "consumed": True},
+                {"id": "ev1", "type": "signed", "consumed": True},
+            ],
+        )
         store.load_namespace("protocol_parameters", {"version": 1, "declared_height": 100})
         result = checker.check_all(store)
         assert not result.valid
 
 
 class TestInvariantCheckerBalances:
-
     def test_check_balances_valid(self):
         checker = InvariantChecker()
         violations = checker.check_balances(_make_valid_wallets())
@@ -438,7 +509,6 @@ class TestInvariantCheckerBalances:
 
 
 class TestInvariantCheckerUniqueness:
-
     def test_check_uniqueness_valid(self):
         checker = InvariantChecker()
         data = {"w1": {"balance": 100}, "w2": {"balance": 200}}
@@ -456,7 +526,6 @@ class TestInvariantCheckerUniqueness:
 
 
 class TestInvariantCheckResult:
-
     def test_result_fields(self):
         r = InvariantCheckResult(
             valid=True,
@@ -470,7 +539,6 @@ class TestInvariantCheckResult:
 
 
 class TestInvariantError:
-
     def test_raised_with_message(self):
         with pytest.raises(InvariantError, match="balance"):
             raise InvariantError("negative balance detected")

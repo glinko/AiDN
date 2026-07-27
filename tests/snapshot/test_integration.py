@@ -121,6 +121,7 @@ SAMPLE_STATE: dict[str, Any] = {
 
 # ── Mock Infrastructure ───────────────────────────────────────────
 
+
 class MockRegistrySource(SnapshotRegistrySource):
     """In-memory registry source for integration tests."""
 
@@ -217,9 +218,7 @@ class MockBlockSource(BlockSource):
         blocks: list[ReplayBlock],
         finalized_height: int,
     ) -> None:
-        self._blocks: dict[int, ReplayBlock] = {
-            b.block_height: b for b in blocks
-        }
+        self._blocks: dict[int, ReplayBlock] = {b.block_height: b for b in blocks}
         self._finalized_height = finalized_height
 
     def get_block(self, height: int) -> ReplayBlock | None:
@@ -243,6 +242,7 @@ class MockBlockSource(BlockSource):
 
 
 # ── Helpers ────────────────────────────────────────────────────────
+
 
 def _produce_snapshot() -> ProduceResult:
     """Produce a snapshot from SAMPLE_STATE using default producer config."""
@@ -304,9 +304,7 @@ def _make_replay_blocks(
                 block_height=h,
                 block_hash=hashlib.sha256(f"block-{h}".encode()).hexdigest(),
                 application_state_hash=state_hash,
-                validator_set_hash=hashlib.sha256(
-                    f"validator-set-{h}".encode()
-                ).hexdigest(),
+                validator_set_hash=hashlib.sha256(f"validator-set-{h}".encode()).hexdigest(),
                 timestamp=f"2025-01-01T00:00:{h:02d}Z",
             )
         )
@@ -316,6 +314,7 @@ def _make_replay_blocks(
 # ═══════════════════════════════════════════════════════════════════
 # Class 1: TestSnapshotProduction (~5 tests)
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestSnapshotProduction:
     """Producer creates snapshot from sample state data."""
@@ -370,6 +369,7 @@ class TestSnapshotProduction:
 # Class 2: TestSnapshotDistribution (~4 tests)
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestSnapshotDistribution:
     """Produced chunks stored in mock registry source."""
 
@@ -408,9 +408,7 @@ class TestSnapshotDistribution:
             "provider-A",
             result.chunks,
         )
-        indices = transfer.get_provider_inventory(
-            result.manifest.snapshot_id, "provider-A"
-        )
+        indices = transfer.get_provider_inventory(result.manifest.snapshot_id, "provider-A")
         assert indices == list(range(len(result.chunks)))
 
     def test_multiple_providers_serve_same_snapshot(self) -> None:
@@ -418,19 +416,16 @@ class TestSnapshotDistribution:
         result = _produce_snapshot()
         transfer = MockChunkTransferSource()
         for prov in ["provider-A", "provider-B", "provider-C"]:
-            transfer.store_chunks(
-                result.manifest.snapshot_id, prov, result.chunks
-            )
+            transfer.store_chunks(result.manifest.snapshot_id, prov, result.chunks)
         for prov in ["provider-A", "provider-B", "provider-C"]:
-            indices = transfer.get_provider_inventory(
-                result.manifest.snapshot_id, prov
-            )
+            indices = transfer.get_provider_inventory(result.manifest.snapshot_id, prov)
             assert len(indices) == len(result.chunks)
 
 
 # ═══════════════════════════════════════════════════════════════════
 # Class 3: TestSnapshotDiscovery (~4 tests)
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestSnapshotDiscovery:
     """Discovery finds snapshots from registry."""
@@ -553,6 +548,7 @@ class TestSnapshotDiscovery:
 # Class 4: TestSnapshotDownload (~5 tests)
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestSnapshotDownload:
     """Download retrieves all chunks from providers."""
 
@@ -586,12 +582,8 @@ class TestSnapshotDownload:
         # Split chunks: provider-A gets even indices, provider-B gets odd
         even_chunks = [c for c in result.chunks if c.chunk_index % 2 == 0]
         odd_chunks = [c for c in result.chunks if c.chunk_index % 2 == 1]
-        transfer.store_chunks(
-            result.manifest.snapshot_id, "provider-A", even_chunks
-        )
-        transfer.store_chunks(
-            result.manifest.snapshot_id, "provider-B", odd_chunks
-        )
+        transfer.store_chunks(result.manifest.snapshot_id, "provider-A", even_chunks)
+        transfer.store_chunks(result.manifest.snapshot_id, "provider-B", odd_chunks)
 
         downloader = SnapshotDownloader(
             config=DownloadConfig(),
@@ -622,14 +614,10 @@ class TestSnapshotDownload:
             payload=b"bad data",
         )
         bad_chunks[0] = bad_chunk
-        transfer.store_chunks(
-            result.manifest.snapshot_id, "provider-A", bad_chunks
-        )
+        transfer.store_chunks(result.manifest.snapshot_id, "provider-A", bad_chunks)
 
         # But provider-B has good chunks
-        transfer.store_chunks(
-            result.manifest.snapshot_id, "provider-B", result.chunks
-        )
+        transfer.store_chunks(result.manifest.snapshot_id, "provider-B", result.chunks)
 
         downloader = SnapshotDownloader(
             config=DownloadConfig(),
@@ -650,9 +638,7 @@ class TestSnapshotDownload:
 
         # Initially only provider-A with half the chunks
         half = result.chunks[: len(result.chunks) // 2]
-        transfer.store_chunks(
-            result.manifest.snapshot_id, "provider-A", half
-        )
+        transfer.store_chunks(result.manifest.snapshot_id, "provider-A", half)
 
         downloader = SnapshotDownloader(
             config=DownloadConfig(),
@@ -667,9 +653,7 @@ class TestSnapshotDownload:
         assert dl_result.chunks_downloaded < result.manifest.chunk_count
 
         # Now add provider-B with all chunks
-        transfer.store_chunks(
-            result.manifest.snapshot_id, "provider-B", result.chunks
-        )
+        transfer.store_chunks(result.manifest.snapshot_id, "provider-B", result.chunks)
 
         # Resume
         resume_result = downloader.resume(
@@ -707,6 +691,7 @@ class TestSnapshotDownload:
 # Class 5: TestStagingRestoration (~5 tests)
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestStagingRestoration:
     """Downloaded chunks reassembled and decompressed."""
 
@@ -717,9 +702,7 @@ class TestStagingRestoration:
         compressor = CompressionHandler()
 
         reassembled = chunker.reassemble(result.chunks)
-        decompressed = compressor.decompress(
-            reassembled, result.manifest.compression
-        )
+        decompressed = compressor.decompress(reassembled, result.manifest.compression)
         assert isinstance(decompressed, bytes)
         assert len(decompressed) > 0
 
@@ -730,9 +713,7 @@ class TestStagingRestoration:
         compressor = CompressionHandler()
 
         reassembled = chunker.reassemble(result.chunks)
-        encoded_data = compressor.decompress(
-            reassembled, result.manifest.compression
-        )
+        encoded_data = compressor.decompress(reassembled, result.manifest.compression)
 
         staging = StagingStateStore()
         restorer = StateRestorer(staging)
@@ -749,9 +730,7 @@ class TestStagingRestoration:
         compressor = CompressionHandler()
 
         reassembled = chunker.reassemble(result.chunks)
-        encoded_data = compressor.decompress(
-            reassembled, result.manifest.compression
-        )
+        encoded_data = compressor.decompress(reassembled, result.manifest.compression)
 
         # Compute expected hash from encoded data
         expected_hash = hashlib.sha256(encoded_data).hexdigest()
@@ -764,9 +743,7 @@ class TestStagingRestoration:
         compressor = CompressionHandler()
 
         reassembled = chunker.reassemble(result.chunks)
-        encoded_data = compressor.decompress(
-            reassembled, result.manifest.compression
-        )
+        encoded_data = compressor.decompress(reassembled, result.manifest.compression)
 
         staging = StagingStateStore()
         restorer = StateRestorer(staging)
@@ -781,12 +758,18 @@ class TestStagingRestoration:
         """Invariant checks detect violations."""
         staging = StagingStateStore()
         # Load wallets with negative balance
-        staging.load_namespace("wallets", [
-            {"id": "w1", "balance": -100, "locked": 0, "sequence": 1},
-        ])
-        staging.load_namespace("protocol_parameters", {
-            "version": "1.0.0",
-        })
+        staging.load_namespace(
+            "wallets",
+            [
+                {"id": "w1", "balance": -100, "locked": 0, "sequence": 1},
+            ],
+        )
+        staging.load_namespace(
+            "protocol_parameters",
+            {
+                "version": "1.0.0",
+            },
+        )
 
         checker = InvariantChecker()
         inv_result = checker.check_all(staging)
@@ -798,6 +781,7 @@ class TestStagingRestoration:
 # Class 6: TestAtomicActivation (~4 tests)
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestAtomicActivation:
     """Verified staging state activated atomically."""
 
@@ -808,9 +792,7 @@ class TestAtomicActivation:
         compressor = CompressionHandler()
 
         reassembled = chunker.reassemble(result.chunks)
-        encoded_data = compressor.decompress(
-            reassembled, result.manifest.compression
-        )
+        encoded_data = compressor.decompress(reassembled, result.manifest.compression)
 
         staging = StagingStateStore()
         restorer = StateRestorer(staging)
@@ -834,9 +816,12 @@ class TestAtomicActivation:
         activator._active_state_hash = "previous-hash-123"
 
         staging = StagingStateStore()
-        staging.load_namespace("wallets", [
-            {"id": "w1", "balance": 100, "locked": 0, "sequence": 1},
-        ])
+        staging.load_namespace(
+            "wallets",
+            [
+                {"id": "w1", "balance": 100, "locked": 0, "sequence": 1},
+            ],
+        )
         staging.load_namespace("protocol_parameters", {"version": "1.0.0"})
 
         expected_hash = staging.calculate_state_hash()
@@ -868,9 +853,7 @@ class TestAtomicActivation:
         compressor = CompressionHandler()
 
         reassembled = chunker.reassemble(result.chunks)
-        encoded_data = compressor.decompress(
-            reassembled, result.manifest.compression
-        )
+        encoded_data = compressor.decompress(reassembled, result.manifest.compression)
 
         staging = StagingStateStore()
         restorer = StateRestorer(staging)
@@ -893,6 +876,7 @@ class TestAtomicActivation:
 # Class 7: TestFullPipeline (~6 tests)
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestFullPipeline:
     """Complete lifecycle: produce → chunk → store → discover → select →
     download → verify → restore → activate → replay."""
@@ -910,9 +894,7 @@ class TestFullPipeline:
             providers=["p1", "p2", "p3"],
         )
         transfer = MockChunkTransferSource()
-        transfer.store_chunks(
-            result.manifest.snapshot_id, "p1", result.chunks
-        )
+        transfer.store_chunks(result.manifest.snapshot_id, "p1", result.chunks)
 
         # 3. Discover
         discovery = SnapshotDiscovery(registry)
@@ -958,7 +940,6 @@ class TestFullPipeline:
             result.manifest,
             result.chunks,
             canonical_state_hash=result.manifest.application_state_hash,
-            decompress=False,
         )
         assert verify_result.valid is True
 
@@ -966,9 +947,7 @@ class TestFullPipeline:
         chunker = Chunker(chunk_size=4096)
         compressor = CompressionHandler()
         reassembled = chunker.reassemble(result.chunks)
-        encoded_data = compressor.decompress(
-            reassembled, result.manifest.compression
-        )
+        encoded_data = compressor.decompress(reassembled, result.manifest.compression)
         staging = StagingStateStore()
         restorer = StateRestorer(staging)
         restore_result = restorer.restore(encoded_data)
@@ -982,9 +961,7 @@ class TestFullPipeline:
         assert act_result.success is True
 
         # 9. Replay
-        replay_blocks = _make_replay_blocks(
-            BLOCK_HEIGHT + 1, BLOCK_HEIGHT + 5
-        )
+        replay_blocks = _make_replay_blocks(BLOCK_HEIGHT + 1, BLOCK_HEIGHT + 5)
         block_source = MockBlockSource(
             blocks=replay_blocks,
             finalized_height=BLOCK_HEIGHT + 5,
@@ -1007,15 +984,9 @@ class TestFullPipeline:
         # Split chunks across providers
         even_chunks = [c for c in result.chunks if c.chunk_index % 2 == 0]
         odd_chunks = [c for c in result.chunks if c.chunk_index % 2 == 1]
-        transfer.store_chunks(
-            result.manifest.snapshot_id, "p-A", even_chunks
-        )
-        transfer.store_chunks(
-            result.manifest.snapshot_id, "p-B", odd_chunks
-        )
-        transfer.store_chunks(
-            result.manifest.snapshot_id, "p-C", result.chunks
-        )
+        transfer.store_chunks(result.manifest.snapshot_id, "p-A", even_chunks)
+        transfer.store_chunks(result.manifest.snapshot_id, "p-B", odd_chunks)
+        transfer.store_chunks(result.manifest.snapshot_id, "p-C", result.chunks)
 
         downloader = SnapshotDownloader(
             config=DownloadConfig(),
@@ -1033,9 +1004,7 @@ class TestFullPipeline:
         chunker = Chunker(chunk_size=4096)
         compressor = CompressionHandler()
         reassembled = chunker.reassemble(result.chunks)
-        encoded_data = compressor.decompress(
-            reassembled, result.manifest.compression
-        )
+        encoded_data = compressor.decompress(reassembled, result.manifest.compression)
         staging = StagingStateStore()
         StateRestorer(staging).restore(encoded_data)
 
@@ -1051,9 +1020,7 @@ class TestFullPipeline:
 
         # Start with partial provider
         half = result.chunks[: len(result.chunks) // 2]
-        transfer.store_chunks(
-            result.manifest.snapshot_id, "p-A", half
-        )
+        transfer.store_chunks(result.manifest.snapshot_id, "p-A", half)
 
         downloader = SnapshotDownloader(
             config=DownloadConfig(),
@@ -1068,9 +1035,7 @@ class TestFullPipeline:
         assert dl_result.chunks_downloaded < result.manifest.chunk_count
 
         # Add complete provider
-        transfer.store_chunks(
-            result.manifest.snapshot_id, "p-B", result.chunks
-        )
+        transfer.store_chunks(result.manifest.snapshot_id, "p-B", result.chunks)
         resume_result = downloader.resume(
             dl_result.session,
             ["p-A", "p-B"],
@@ -1088,24 +1053,26 @@ class TestFullPipeline:
             result.manifest,
             result.chunks,
             canonical_state_hash="00" * 32,  # Wrong hash
-            decompress=False,
         )
         assert verify_result.valid is False
-        assert any(
-            "state hash" in e.lower() or "application" in e.lower()
-            for e in verify_result.errors
-        )
+        assert any("state hash" in e.lower() or "application" in e.lower() for e in verify_result.errors)
 
     def test_pipeline_rejects_invariant_violation(self) -> None:
         """Pipeline with invariant violation detection (should reject)."""
         staging = StagingStateStore()
         # Load invalid state: negative balance
-        staging.load_namespace("wallets", [
-            {"id": "w1", "balance": -500, "locked": 0, "sequence": 1},
-        ])
-        staging.load_namespace("protocol_parameters", {
-            "version": "1.0.0",
-        })
+        staging.load_namespace(
+            "wallets",
+            [
+                {"id": "w1", "balance": -500, "locked": 0, "sequence": 1},
+            ],
+        )
+        staging.load_namespace(
+            "protocol_parameters",
+            {
+                "version": "1.0.0",
+            },
+        )
 
         checker = InvariantChecker()
         inv_result = checker.check_all(staging)
@@ -1120,9 +1087,7 @@ class TestFullPipeline:
         compressor = CompressionHandler()
 
         reassembled = chunker.reassemble(result.chunks)
-        encoded_data = compressor.decompress(
-            reassembled, result.manifest.compression
-        )
+        encoded_data = compressor.decompress(reassembled, result.manifest.compression)
 
         staging = StagingStateStore()
         restorer = StateRestorer(staging)
@@ -1134,9 +1099,7 @@ class TestFullPipeline:
         assert act_result.success is True
 
         # Replay blocks starting from snapshot height + 1
-        replay_blocks = _make_replay_blocks(
-            BLOCK_HEIGHT + 1, BLOCK_HEIGHT + 3
-        )
+        replay_blocks = _make_replay_blocks(BLOCK_HEIGHT + 1, BLOCK_HEIGHT + 3)
         block_source = MockBlockSource(
             blocks=replay_blocks,
             finalized_height=BLOCK_HEIGHT + 3,

@@ -9,23 +9,27 @@ InvariantChecker validates business invariants on restored staging state.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from aidn_hypervisor.snapshot.models import SnapshotChunk, SnapshotManifest
 from aidn_hypervisor.snapshot.chunking import Chunker, MerkleTree
 from aidn_hypervisor.snapshot.compression import CompressionHandler
+from aidn_hypervisor.snapshot.models import (
+    CompressionAlgorithm,
+    SnapshotChunk,
+    SnapshotManifest,
+)
 from aidn_hypervisor.snapshot.staging import StagingStateStore
 
-
 # ── Custom Exception ──────────────────────────────────────────────
+
 
 class InvariantError(Exception):
     """Raised when a state invariant is violated."""
 
 
 # ── VerificationResult ────────────────────────────────────────────
+
 
 @dataclass
 class VerificationResult:
@@ -41,6 +45,7 @@ class VerificationResult:
 
 # ── InvariantCheckResult ──────────────────────────────────────────
 
+
 @dataclass
 class InvariantCheckResult:
     """Result of invariant checking."""
@@ -52,6 +57,7 @@ class InvariantCheckResult:
 
 
 # ── SnapshotVerifier ──────────────────────────────────────────────
+
 
 class SnapshotVerifier:
     """Verify snapshot integrity per RFC-0062 §45-§46, §49-§50.
@@ -67,15 +73,11 @@ class SnapshotVerifier:
         self._chunker = Chunker()
         self._compressor = CompressionHandler()
 
-    def verify_manifest_hash(
-        self, manifest: SnapshotManifest, expected_state_hash: str
-    ) -> bool:
+    def verify_manifest_hash(self, manifest: SnapshotManifest, expected_state_hash: str) -> bool:
         """Check manifest application_state_hash matches expected (per §49)."""
         return manifest.application_state_hash == expected_state_hash
 
-    def verify_chunk_root(
-        self, chunks: list[SnapshotChunk], expected_chunk_root: str
-    ) -> bool:
+    def verify_chunk_root(self, chunks: list[SnapshotChunk], expected_chunk_root: str) -> bool:
         """Build Merkle tree from chunk hashes, compare root (per §45)."""
         if not chunks:
             return True
@@ -93,24 +95,38 @@ class SnapshotVerifier:
         self,
         chunks: list[SnapshotChunk],
         expected_content_hash: str,
-        decompress: bool = True,
+        *,
+        compression: CompressionAlgorithm = CompressionAlgorithm.NONE,
+        expected_content_size: int | None = None,
     ) -> bool:
         """Reassemble all chunks, optionally decompress, compute hash (per §46)."""
         if not chunks:
             return hashlib.sha256(b"").hexdigest() == expected_content_hash
 
-        reassembled = self._chunker.reassemble(chunks)
+        if expected_content_size is not None and expected_content_size < 0:
+            return False
 
-        if decompress:
-            # Try to decompress; if chunks are not compressed, pass through
-            try:
-                reassembled = self._compressor.decompress(
-                    reassembled, chunks[0].payload[:0]  # won't work, use NONE
+        try:
+            reassembled = self._chunker.reassemble(chunks)
+            compressor = self._compressor
+            if expected_content_size is not None:
+                if expected_content_size > compressor.max_uncompressed_size:
+                    return False
+                compressor = CompressionHandler(
+                    max_compressed_size=compressor.max_compressed_size,
+                    max_uncompressed_size=expected_content_size,
+                    max_expansion_ratio=max(
+                        compressor.max_expansion_ratio,
+                        expected_content_size / max(1, len(reassembled)),
+                    ),
                 )
-            except Exception:
-                pass  # If decompression fails, use raw data
+            content = compressor.decompress(reassembled, compression)
+        except (OSError, ValueError, NotImplementedError):
+            return False
 
-        computed_hash = hashlib.sha256(reassembled).hexdigest()
+        if expected_content_size is not None and len(content) != expected_content_size:
+            return False
+        computed_hash = hashlib.sha256(content).hexdigest()
         return computed_hash == expected_content_hash
 
     def verify_complete(
@@ -119,7 +135,6 @@ class SnapshotVerifier:
         chunks: list[SnapshotChunk],
         *,
         canonical_state_hash: str,
-        decompress: bool = True,
     ) -> VerificationResult:
         """Full verification pipeline.
 
@@ -133,9 +148,7 @@ class SnapshotVerifier:
         # 1. Chunk count
         chunk_count_ok = len(chunks) == manifest.chunk_count
         if not chunk_count_ok:
-            errors.append(
-                f"chunk count mismatch: {len(chunks)} != {manifest.chunk_count}"
-            )
+            errors.append(f"chunk count mismatch: {len(chunks)} != {manifest.chunk_count}")
 
         # 2. Chunk root
         chunk_root_ok = self.verify_chunk_root(chunks, manifest.chunk_root)
@@ -144,15 +157,16 @@ class SnapshotVerifier:
 
         # 3. Content hash
         content_hash_ok = self.verify_content_hash(
-            chunks, manifest.snapshot_content_hash, decompress=decompress
+            chunks,
+            manifest.snapshot_content_hash,
+            compression=manifest.compression,
+            expected_content_size=manifest.snapshot_content_size,
         )
         if not content_hash_ok:
             errors.append("content hash mismatch")
 
         # 4. Application state hash vs canonical commitment
-        state_hash_ok = self.verify_manifest_hash(
-            manifest, canonical_state_hash
-        )
+        state_hash_ok = self.verify_manifest_hash(manifest, canonical_state_hash)
         if not state_hash_ok:
             errors.append("application state hash mismatch")
 
@@ -169,6 +183,7 @@ class SnapshotVerifier:
 
 
 # ── InvariantChecker ──────────────────────────────────────────────
+
 
 class InvariantChecker:
     """Check state invariants per RFC-0062 §50.
@@ -273,13 +288,9 @@ class InvariantChecker:
             balance = w.get("balance", 0)
             locked = w.get("locked", 0)
             if balance < 0:
-                violations.append(
-                    f"Wallet {w.get('id', '?')} has negative balance: {balance}"
-                )
+                violations.append(f"Wallet {w.get('id', '?')} has negative balance: {balance}")
             if locked < 0:
-                violations.append(
-                    f"Wallet {w.get('id', '?')} has negative locked: {locked}"
-                )
+                violations.append(f"Wallet {w.get('id', '?')} has negative locked: {locked}")
         return violations
 
     def check_uniqueness(self, namespace_data: Any) -> list[str]:
@@ -305,14 +316,10 @@ class InvariantChecker:
         if isinstance(wallets, list):
             return wallets
         if isinstance(wallets, dict):
-            return [
-                {"id": k, **v} for k, v in wallets.items()
-            ]
+            return [{"id": k, **v} for k, v in wallets.items()]
         return []
 
-    def _check_supply_conservation(
-        self, staging: StagingStateStore, wallets: list[dict]
-    ) -> list[str]:
+    def _check_supply_conservation(self, staging: StagingStateStore, wallets: list[dict]) -> list[str]:
         """Check balance + locked = total supply."""
         violations: list[str] = []
         params = staging.get_namespace("protocol_parameters")
@@ -323,14 +330,9 @@ class InvariantChecker:
         if total_supply is None:
             return violations  # No total_supply declared, skip
 
-        actual_total = sum(
-            w.get("balance", 0) + w.get("locked", 0) for w in wallets
-        )
+        actual_total = sum(w.get("balance", 0) + w.get("locked", 0) for w in wallets)
         if actual_total != total_supply:
-            violations.append(
-                f"Supply conservation violated: "
-                f"actual {actual_total} != declared {total_supply}"
-            )
+            violations.append(f"Supply conservation violated: actual {actual_total} != declared {total_supply}")
         return violations
 
     def _check_sessions(self, staging: StagingStateStore) -> list[str]:
@@ -345,10 +347,7 @@ class InvariantChecker:
             deposit = s.get("deposit", 0)
             distributed = s.get("distributed", 0)
             if distributed > deposit:
-                violations.append(
-                    f"Session {s.get('id', '?')} distributed {distributed} "
-                    f"> deposit {deposit}"
-                )
+                violations.append(f"Session {s.get('id', '?')} distributed {distributed} > deposit {deposit}")
         return violations
 
     def _check_stakes_bonds(self, staging: StagingStateStore) -> list[str]:
@@ -363,9 +362,7 @@ class InvariantChecker:
                     continue
                 amount = item.get("amount", 0)
                 if amount < 0:
-                    violations.append(
-                        f"{ns} item {item.get('id', '?')} has negative amount: {amount}"
-                    )
+                    violations.append(f"{ns} item {item.get('id', '?')} has negative amount: {amount}")
         return violations
 
     def _check_wallet_sequences(self, wallets: list[dict]) -> list[str]:
@@ -374,9 +371,7 @@ class InvariantChecker:
         for w in wallets:
             seq = w.get("seq", 0)
             if isinstance(seq, int) and seq < 0:
-                violations.append(
-                    f"Wallet {w.get('id', '?')} has negative seq: {seq}"
-                )
+                violations.append(f"Wallet {w.get('id', '?')} has negative seq: {seq}")
         return violations
 
     def _check_uniqueness_all(self, staging: StagingStateStore) -> list[str]:
@@ -401,9 +396,7 @@ class InvariantChecker:
                 continue
             ev_id = ev.get("id")
             if ev.get("consumed") and ev_id in seen_consumed:
-                violations.append(
-                    f"Consumed evidence {ev_id} duplicated"
-                )
+                violations.append(f"Consumed evidence {ev_id} duplicated")
             if ev.get("consumed"):
                 seen_consumed.add(ev_id)
         return violations
@@ -412,7 +405,6 @@ class InvariantChecker:
         """Check protocol parameter version is present."""
         violations: list[str] = []
         params = staging.get_namespace("protocol_parameters")
-        if isinstance(params, dict):
-            if "version" not in params:
-                violations.append("protocol_parameters missing version field")
+        if isinstance(params, dict) and "version" not in params:
+            violations.append("protocol_parameters missing version field")
         return violations
