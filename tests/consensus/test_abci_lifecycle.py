@@ -49,7 +49,7 @@ def test_commit_returns_app_hash(app):
 
 def test_commit_updates_after_block(ledger, app):
     # Before block
-    h1 = app.commit().data
+    app.commit().data
     # Finalize a block with no txs
     app.finalize_block(block_height=1, block_hash=b"\x01" * 32, txs=[])
     h2 = app.commit().data

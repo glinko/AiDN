@@ -5740,7 +5740,7 @@ def test_operator_dashboard_sessions_endpoint_returns_operator_session_summary()
         deposit_q=10.0,
         session_policy=created.endpoint.session.model_dump(mode="json"),
     )
-    second = session_service.open_session(
+    session_service.open_session(
         endpoint_id=created.endpoint.endpoint_id,
         client_wallet="wallet-b",
         provider_wallet=service.owner_wallet_state()["wallet_id"],
@@ -5749,7 +5749,7 @@ def test_operator_dashboard_sessions_endpoint_returns_operator_session_summary()
         session_policy=created.endpoint.session.model_dump(mode="json"),
     )
     session_service.close_session(first.session.session_id)
-    third = session_service.open_session(
+    session_service.open_session(
         endpoint_id=created.endpoint.endpoint_id,
         client_wallet="wallet-c",
         provider_wallet=service.owner_wallet_state()["wallet_id"],
@@ -8329,7 +8329,7 @@ def test_operator_dashboard_endpoints_payload_includes_dual_layer_trust() -> Non
             session={"minimum_deposit": 25.0},
         )
     )
-    publication = publication_service.publish_configuration(
+    publication_service.publish_configuration(
         endpoint_id=created.endpoint.endpoint_id,
         owner_wallet=created.endpoint.owner_wallet,
         node_id=service.node_id,
@@ -8557,7 +8557,7 @@ def test_registry_advertisement_includes_dual_layer_trust_fields() -> None:
             session={"minimum_deposit": 25.0},
         )
     )
-    publication = publication_service.publish_configuration(
+    publication_service.publish_configuration(
         endpoint_id=created.endpoint.endpoint_id,
         owner_wallet=hypervisor.owner_wallet_state()["wallet_id"],
         node_id=hypervisor.node_id,

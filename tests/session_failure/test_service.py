@@ -167,9 +167,7 @@ class TestRecoveryWindow:
             session_id="sess-001",
             failure_class=FailureClass.PROVIDER_DISCONNECTED,
         )
-        # Manually set deadline to the past
-        past = datetime.now(UTC).isoformat()
-        # We need to simulate the deadline being in the past
+        # Simulate a deadline in the past.
         handler._recovery_deadlines["sess-001"] = "2020-01-01T00:00:00+00:00"
         assert handler.is_recovery_expired("sess-001") is True
 

@@ -347,7 +347,6 @@ class TestChunkVerifier:
         """All valid chunks pass verification."""
         verifier = ChunkVerifier()
         chunks = self._make_chunks(300)
-        chunker = Chunker(chunk_size=100)
         root = MerkleTree([c.chunk_hash for c in chunks]).root_hash()
         assert verifier.verify_all(chunks, root) is True
 
@@ -355,7 +354,6 @@ class TestChunkVerifier:
         """Tampered chunk causes verification to fail."""
         verifier = ChunkVerifier()
         chunks = self._make_chunks(300)
-        chunker = Chunker(chunk_size=100)
         root = MerkleTree([c.chunk_hash for c in chunks]).root_hash()
         # Tamper with chunk 1
         tampered = SnapshotChunk(

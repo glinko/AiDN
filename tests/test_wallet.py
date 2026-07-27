@@ -1850,7 +1850,7 @@ def test_operator_wallet_usage_export_marks_stale_after_sequence_cursor() -> Non
         input_tokens=10_000,
         output_tokens=20_000,
     )
-    second = service.record_wallet_usage(
+    service.record_wallet_usage(
         owner_id="agent-b",
         bundle_id="phi4-local",
         workload_type="llm_text",

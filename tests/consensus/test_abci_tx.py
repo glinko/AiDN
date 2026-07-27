@@ -204,7 +204,7 @@ def test_admission_reject_reason_in_log(app):
 
 
 def test_genesis_accounts_credited(ledger):
-    app = AIDNABCIApplication(
+    AIDNABCIApplication(
         ledger_service=ledger,
         genesis_accounts={"w_genesis": 10000},
     )

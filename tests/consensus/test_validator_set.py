@@ -163,7 +163,7 @@ def test_select_active_set_sets_active_status():
 def test_select_active_set_creates_epoch_set():
     mgr = _make_manager()
     _register(mgr, "node-1")
-    eps = mgr.select_active_set(epoch=5, timestamp=_TS)
+    mgr.select_active_set(epoch=5, timestamp=_TS)
     assert mgr.get_active_set(5) is not None
     assert mgr.get_active_set(5).epoch == 5
 

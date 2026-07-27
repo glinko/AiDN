@@ -287,7 +287,7 @@ class TestManagerQueries:
 
     def test_get_bond_for_endpoint(self):
         mgr = _make_manager()
-        bond = mgr.lock_bond(endpoint_id="ep1", operator_wallet="0xW1")
+        mgr.lock_bond(endpoint_id="ep1", operator_wallet="0xW1")
         found = mgr.get_bond_for_endpoint("ep1")
         assert found is not None
         assert found.endpoint_id == "ep1"
@@ -302,7 +302,7 @@ class TestManagerQueries:
     def test_get_active_bonds(self):
         mgr = _make_manager()
         b1 = mgr.lock_bond(endpoint_id="ep1", operator_wallet="0xW1")
-        b2 = mgr.lock_bond(endpoint_id="ep2", operator_wallet="0xW2")
+        mgr.lock_bond(endpoint_id="ep2", operator_wallet="0xW2")
         mgr.activate_bond(b1.bond_id)
         # b2 still locked
         active = mgr.get_active_bonds()

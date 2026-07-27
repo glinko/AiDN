@@ -200,7 +200,7 @@ class TestStateRestorerFullRestore:
         encoded = _encode_state(state)
         store = StagingStateStore()
         restorer = StateRestorer(store)
-        result = restorer.restore(encoded)
+        restorer.restore(encoded)
         assert not store.is_empty()
         assert store.get_namespace("wallets") is not None
 
@@ -210,7 +210,7 @@ class TestStateRestorerFullRestore:
         state = _make_sample_state()
         encoded = _encode_state(state)
         restorer = StateRestorer(store)
-        result = restorer.restore(encoded)
+        restorer.restore(encoded)
         # old wallet data should be replaced
         assert store.get_namespace("wallets") != {"old": {}}
 

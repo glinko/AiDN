@@ -69,7 +69,7 @@ class TestConnectionPoolMaxSize:
     def test_release_frees_slot(self) -> None:
         pool = ConnectionPool(max_size=2)
         c1 = pool.get("127.0.0.1", 9999)
-        c2 = pool.get("127.0.0.1", 9998)
+        pool.get("127.0.0.1", 9998)
         assert c1 is not None
         pool.release(c1)
         c3 = pool.get("127.0.0.1", 9997)

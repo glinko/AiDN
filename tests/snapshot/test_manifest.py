@@ -204,7 +204,7 @@ class TestManifestVerifier:
         # Tamper: rebuild with different state (different content → different sig)
         tampered_state = {"tampered": True}
         builder = ManifestBuilder(signing_key=SIGNING_KEY)
-        tampered = builder.build_manifest(
+        builder.build_manifest(
             state_data=tampered_state,
             snapshot_type=SnapshotType.FULL_STATE,
             snapshot_format_version=1,

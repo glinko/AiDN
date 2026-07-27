@@ -148,7 +148,7 @@ class TestBlockReplayerBasic:
             _make_block(102, state_hash="wrong-hash"),
             _make_block(103),
         ]
-        source = MockBlockSource(blocks)
+        MockBlockSource(blocks)
 
         def bad_execute(state: dict, block: ReplayBlock) -> dict:
             new = dict(state)
@@ -184,7 +184,7 @@ class TestBlockReplayerBasic:
             _make_block(101, validator_hash=_hash("v1")),
             _make_block(102, validator_hash=_hash("v2")),
         ]
-        source = MockBlockSource(blocks)
+        MockBlockSource(blocks)
 
         class MismatchSource(MockBlockSource):
             def execute_block(self, state: dict, block: ReplayBlock) -> dict:
@@ -307,7 +307,7 @@ class TestBlockReplayerBasic:
         blocks = [
             _make_block(101, validator_hash=_hash("v1")),
         ]
-        source = MockBlockSource(blocks)
+        MockBlockSource(blocks)
 
         class MismatchSource(MockBlockSource):
             def execute_block(self, state: dict, block: ReplayBlock) -> dict:

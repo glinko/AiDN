@@ -563,7 +563,7 @@ class TestRetention:
         )
 
         store = ReputationStore()
-        sub = ReputationSubject(subject_type="HYPERVISOR", subject_id="0xTestSubject")
+        ReputationSubject(subject_type="HYPERVISOR", subject_id="0xTestSubject")
         store.create_profile(profile_type="HYPERVISOR", subject_id="0xTestSubject")
 
         publisher = ReputationProfilePublisher(
