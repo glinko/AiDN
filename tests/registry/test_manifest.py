@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry import (
     InventoryRoot,
@@ -286,7 +287,7 @@ def test_manifest_frozen():
     manifest = SegmentManifest.create(
         segment_id="seg-1", start_epoch=1, end_epoch=1, objects=[],
     )
-    with pytest.raises(Exception):  # FrozenInstanceError
+    with pytest.raises(ValidationError):
         manifest.segment_id = "other"  # type: ignore
 
 
@@ -296,7 +297,7 @@ def test_manifest_frozen():
 
 def test_inventory_root_frozen():
     root = InventoryRoot.create(epoch=1, manifests=[])
-    with pytest.raises(Exception):  # FrozenInstanceError
+    with pytest.raises(ValidationError):
         root.epoch = 99  # type: ignore
 
 

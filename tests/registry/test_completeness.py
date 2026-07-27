@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry import (
     CompletenessScore,
@@ -40,7 +41,7 @@ def _make_store() -> ImmutableObjectStore:
 
 def test_completeness_score_frozen():
     score = CompletenessScore(overall=0.5)
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         score.overall = 0.8  # type: ignore
 
 

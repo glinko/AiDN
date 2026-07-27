@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry.messages import (
     AnnouncementPayload,
@@ -66,7 +67,7 @@ class TestRegistryPayloadBase:
     def test_registry_payload_frozen(self) -> None:
         """Payload models are frozen (immutable)."""
         p = RegistryPayload(registry_message_type="test_type")
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             p.registry_message_type = "other"  # type: ignore
 
 

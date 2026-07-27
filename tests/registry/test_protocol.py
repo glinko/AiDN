@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry import (
     NegotiationResult,
@@ -22,7 +23,7 @@ def test_protocol_version_str():
 
 def test_protocol_version_frozen():
     v = ProtocolVersion(major=1, minor=0, patch=0)
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         v.major = 2  # type: ignore
 
 

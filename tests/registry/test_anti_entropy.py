@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry import (
     AntiEntropyEngine,
@@ -55,7 +56,7 @@ class TestAntiEntropyRound:
             peer_id="peer-1",
             status="pending",
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             round_rec.status = "completed"  # type: ignore
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry.inventory import (
     BloomFilter,
@@ -148,7 +149,7 @@ class TestInventoryEntry:
             content_hash="abc",
             content_size=100,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             entry.object_id = "obj-2"  # type: ignore
 
 
@@ -172,7 +173,7 @@ class TestInventorySummary:
             total_objects=10,
             total_bytes=1024,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             summary.peer_id = "peer-2"  # type: ignore
 
 

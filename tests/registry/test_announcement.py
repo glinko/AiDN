@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry.announcement import (
     AnnouncementBroadcaster,
@@ -33,7 +34,7 @@ class TestObjectAnnouncement:
             content_hash="abc",
             content_size=100,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ann.object_id = "obj-2"  # type: ignore
 
     def test_priority(self) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry import (
     ConsistencyChecker,
@@ -121,12 +122,12 @@ class TestVerificationResult:
         result = VerificationResult(
             object_id="test", valid=True, verified_at=1.0
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             result.valid = False  # type: ignore
 
     def test_verification_batch_result_frozen(self) -> None:
         batch = VerificationBatchResult(total=1, valid=1, invalid=0)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             batch.valid = 0  # type: ignore
 
 
@@ -371,7 +372,7 @@ class TestConsistencyIssue:
             issue_type="test",
             details="test",
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             issue.details = "changed"  # type: ignore
 
     def test_consistency_issue_severity(self) -> None:

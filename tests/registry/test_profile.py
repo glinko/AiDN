@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry import (
     RegistryClass,
@@ -84,7 +85,7 @@ def test_validate_object_type():
 
 def test_profile_frozen():
     profile = RequiredRegistryProfile()
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         profile.version = 2  # type: ignore
 
 
@@ -216,10 +217,10 @@ def test_min_completeness():
     profile = RequiredRegistryProfile(min_completeness=0.8)
     assert profile.min_completeness == 0.8
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         RequiredRegistryProfile(min_completeness=1.5)
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         RequiredRegistryProfile(min_completeness=-0.1)
 
 
@@ -227,5 +228,5 @@ def test_max_lag_epochs():
     profile = RequiredRegistryProfile(max_lag_epochs=5)
     assert profile.max_lag_epochs == 5
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         RequiredRegistryProfile(max_lag_epochs=0)

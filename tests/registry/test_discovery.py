@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry import ImmutableObjectStore
 from aidn_hypervisor.registry.discovery import (
@@ -79,7 +80,7 @@ class TestDiscoveryConfig:
 
     def test_discovery_config_frozen(self) -> None:
         cfg = DiscoveryConfig()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             cfg.enabled = False  # type: ignore
 
 

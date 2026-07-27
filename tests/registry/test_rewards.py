@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry import (
     ParticipantLedger,
@@ -19,7 +20,7 @@ from aidn_hypervisor.registry import (
 
 def test_reward_entry_frozen():
     entry = RewardEntry(peer_id="p1", reward_type="storage", amount=1.0)
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         entry.amount = 2.0  # type: ignore
 
 
@@ -29,7 +30,7 @@ def test_reward_entry_frozen():
 
 def test_penalty_entry_frozen():
     entry = PenaltyEntry(peer_id="p1", penalty_type="stale", amount=0.5)
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         entry.amount = 1.0  # type: ignore
 
 
@@ -308,7 +309,7 @@ def test_settlement_result_frozen():
         total_penalties=2.0,
         net_balance=8.0,
     )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         result.net_balance = 0.0  # type: ignore
 
 
