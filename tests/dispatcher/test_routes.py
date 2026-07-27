@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from aidn_hypervisor.dispatcher.routes import (
     VALIDATION_MESSAGE_TYPES,
     bind_validation_route,
@@ -63,8 +66,7 @@ class TestValidationRoute:
         assert route.configuration_hash is None
 
     def test_generation_must_be_positive(self) -> None:
-        import pytest
-        with pytest.raises(Exception):  # pydantic ValidationError
+        with pytest.raises(ValidationError):
             validation_route(route_generation=0)
 
 

@@ -71,7 +71,7 @@ class TestRatingEvidence:
             epoch=1,
             timestamp="2026-01-01T00:00:00Z",
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ev.value = 0.5  # type: ignore
 
     def test_evidence_value_must_be_in_range(self) -> None:
@@ -201,7 +201,7 @@ class TestDimensionScore:
             score=0.85,
             evidence_count=10,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ds.score = 0.5  # type: ignore
 
     def test_dimension_score_defaults(self) -> None:
@@ -279,7 +279,7 @@ class TestNodeRating:
 
     def test_node_rating_is_frozen(self) -> None:
         rating = self._make_rating()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             rating.composite_score = 0.5  # type: ignore
 
     def test_maturity_epochs(self) -> None:
@@ -317,7 +317,7 @@ class TestRatingConfig:
 
     def test_config_is_frozen(self) -> None:
         config = RatingConfig()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             config.prior_confidence = 0.3  # type: ignore
 
 
@@ -363,5 +363,5 @@ class TestRatingUpdateResult:
             confidence=0.8,
             epoch=5,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             result.new_score = 0.5  # type: ignore
