@@ -5,8 +5,10 @@ from uuid import uuid4
 
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
 from aidn_hypervisor.accounting.models import AccountingContract
+from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.runtime_protocol.adapters.llamacpp import LlamaCppOpenAIAdapter
+from aidn_hypervisor.runtime_protocol.adapters.ollama import OllamaGenerateAdapter
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeExecuteRequest,
     RuntimeHello,
@@ -23,9 +25,8 @@ class ApprovedRuntimeDispatchError(ValueError):
 class ApprovedRuntimeDispatcher:
     """Resolve an Endpoint Binding, handshake it, and dispatch one Request.
 
-    The dispatcher intentionally supports only the declared llama.cpp adapter.
-    Other adapters must provide an explicit implementation rather than falling
-    back to the legacy task-plugin invocation path.
+    Each supported Provider adapter is selected explicitly. Unknown adapters
+    must not fall back to the legacy task-plugin invocation path.
     """
 
     def __init__(
@@ -59,7 +60,7 @@ class ApprovedRuntimeDispatcher:
         binding = self.provider_inventory.store.get_runtime_binding(binding_id)
         if binding.status != "ready" or binding.operational_state != "READY":
             raise ApprovedRuntimeDispatchError("Runtime Binding is not ready")
-        if binding.adapter_id != "llamacpp-openai":
+        if binding.adapter_id not in {"llamacpp-openai", "ollama-generate"}:
             raise ApprovedRuntimeDispatchError(
                 f"Unsupported approved Runtime Adapter: {binding.adapter_id}"
             )
@@ -87,12 +88,7 @@ class ApprovedRuntimeDispatcher:
         contract = AccountingContract.model_validate(session.accounting_contract_snapshot)
         if contract.payload_hash != session.accounting_contract_hash:
             raise ApprovedRuntimeDispatchError("Session Accounting Contract hash mismatch")
-        profile = build_llamacpp_usage_profile(
-            runtime_id=binding.runtime_id,
-            runtime_generation=binding.runtime_generation,
-            runtime_configuration_hash=binding.runtime_configuration_hash,
-            adapter_version=binding.adapter_version or "llamacpp-openai.v1",
-        )
+        profile = self._usage_profile(binding)
         if profile.profile_hash != binding.usage_reporting_profile_hash:
             raise ApprovedRuntimeDispatchError("Runtime Binding Usage Profile mismatch")
 
@@ -156,7 +152,12 @@ class ApprovedRuntimeDispatcher:
             request_deadline=request_deadline
             or (datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
         )
-        adapter = LlamaCppOpenAIAdapter(
+        adapter_class = (
+            LlamaCppOpenAIAdapter
+            if binding.adapter_id == "llamacpp-openai"
+            else OllamaGenerateAdapter
+        )
+        adapter = adapter_class(
             endpoint=endpoint_url,
             model=deployment.provider_model_reference,
             runtime_signature=runtime_signature,
@@ -164,6 +165,22 @@ class ApprovedRuntimeDispatcher:
         if streaming:
             return adapter.execute_streaming(protocol, connection.runtime_connection_id, request)
         return adapter.execute(protocol, connection.runtime_connection_id, request)
+
+    @staticmethod
+    def _usage_profile(binding):
+        if binding.adapter_id == "llamacpp-openai":
+            return build_llamacpp_usage_profile(
+                runtime_id=binding.runtime_id,
+                runtime_generation=binding.runtime_generation,
+                runtime_configuration_hash=binding.runtime_configuration_hash,
+                adapter_version=binding.adapter_version or "llamacpp-openai.v1",
+            )
+        return build_ollama_usage_profile(
+            runtime_id=binding.runtime_id,
+            runtime_generation=binding.runtime_generation,
+            runtime_configuration_hash=binding.runtime_configuration_hash,
+            adapter_version=binding.adapter_version or "ollama-generate.v1",
+        )
 
     @staticmethod
     def _binding(binding, runtime_id: str):

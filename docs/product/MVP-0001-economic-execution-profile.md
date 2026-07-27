@@ -134,6 +134,11 @@ Implemented now:
   `llama.cpp` runtime: signed Endpoint publication, public Session open,
   Runtime execution, Final Usage, signed cooperative Settlement acceptance and
   canonical finalization.
+- Ollama has an explicit RFC-0054 `ollama-generate` adapter for native
+  `/api/generate` execution and JSONL streaming. It maps emitted token counts
+  as Provider-authoritative Usage, records delivered stream bytes locally and
+  retains best-effort cancellation semantics when no upstream operation handle
+  exists.
 - A Session may bind a Consumer Ed25519 authorization key. For such Sessions,
   cooperative Settlement accepts only a signature over the exact Settlement
   identity, input root, amounts and acceptance time.
