@@ -102,14 +102,14 @@ def tls_certs(tmp_path: Any) -> tuple[str, str]:
 def tls_listener(tls_certs: tuple[str, str]) -> TlsListener:
     """Create a bound TLS listener on a random port."""
     cert_path, key_path = tls_certs
-    l = TlsListener(
+    tls_listener = TlsListener(
         host="127.0.0.1",
         port=0,
         certfile=cert_path,
         keyfile=key_path,
     )
-    l.bind()
-    return l
+    tls_listener.bind()
+    return tls_listener
 
 
 @pytest.fixture

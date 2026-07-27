@@ -49,12 +49,13 @@ def test_commit_returns_app_hash(app):
 
 def test_commit_updates_after_block(ledger, app):
     # Before block
-    app.commit().data
+    h1 = app.commit().data
     # Finalize a block with no txs
     app.finalize_block(block_height=1, block_hash=b"\x01" * 32, txs=[])
     h2 = app.commit().data
-    # Hash should still be deterministic (no ops, but height changed)
+    # An empty block leaves the deterministic application state unchanged.
     assert len(h2) == 32
+    assert h2 == h1
 
 
 def test_app_hash_changes_after_operations(ledger, app):

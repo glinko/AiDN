@@ -64,9 +64,9 @@ def _make_message(**overrides: Any) -> NetworkMessage:
 @pytest.fixture
 def listener() -> TcpListener:
     """Create a bound TcpListener on a random port."""
-    l = TcpListener(host="127.0.0.1", port=0)
-    l.bind()
-    return l
+    tcp_listener = TcpListener(host="127.0.0.1", port=0)
+    tcp_listener.bind()
+    return tcp_listener
 
 
 @pytest.fixture
