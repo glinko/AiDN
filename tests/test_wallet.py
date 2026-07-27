@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from aidn_hypervisor.accounting.models import (
     UsageAcknowledgement,
@@ -2060,7 +2061,7 @@ def test_wallet_allocation_hold_request_validation() -> None:
 
     import pytest
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         WalletAllocationHoldRequest(reason="")
 
 
@@ -2090,10 +2091,10 @@ def test_wallet_allocation_correction_request_validation() -> None:
     assert req.resolution_note is None
     assert req.release_after_apply is False
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         WalletAllocationCorrectionRequest(reason="", effective_usage_total_q=0.0)
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         WalletAllocationCorrectionRequest(reason="x", effective_usage_total_q=-1.0)
 
 

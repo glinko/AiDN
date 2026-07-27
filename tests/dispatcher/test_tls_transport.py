@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
+import time
 from typing import Any
 
 import pytest
@@ -234,7 +235,7 @@ class TestTlsMessageExchange:
         assert len(wire) > 4
 
         # Allow data to traverse the network buffer
-        import time; time.sleep(0.2)
+        time.sleep(0.2)
 
         received = tls_listener.receive()
         assert received is not None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.validation_bond.models import (
     RECOVERY_DECAY_FACTOR,
@@ -138,7 +139,7 @@ class TestBondRecoveryRecord:
             epoch=1,
             timestamp=NOW,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             record.recovery_amount = 999  # type: ignore
 
 
@@ -166,7 +167,7 @@ class TestBondForfeitRecord:
             epoch=1,
             timestamp=NOW,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             record.reason = "changed"  # type: ignore
 
 
@@ -399,7 +400,7 @@ class TestValidationBond:
 
     def test_frozen(self):
         bond = _make_bond()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             bond.status = BondStatus.ACTIVE  # type: ignore
 
     def test_model_copy_works(self):

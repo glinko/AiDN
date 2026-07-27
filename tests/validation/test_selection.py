@@ -9,6 +9,7 @@ Covers:
 """
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.validation.selection import (
     ValidatorCandidate,
@@ -42,7 +43,7 @@ class TestValidatorQualificationCriteria:
         assert c.minimum_bond_q == 0.0
 
     def test_requires_positive_bond(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ValidatorQualificationCriteria(minimum_bond_q=-1.0)
 
 
