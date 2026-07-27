@@ -2,7 +2,7 @@
 
 Autonomous Intelligence Dispatch Network — a hypervisor for managing AI agent lifecycles, provider integrations, and paid session orchestration.
 
-[![CI](https://github.com/glinko/AiDN/actions/workflows/ci.yml/badge.svg?branch=p0-infrastructure-overhaul)](https://github.com/glinko/AiDN/actions/workflows/ci.yml)
+[![CI](https://github.com/glinko/AiDN/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/glinko/AiDN/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-70%25%2B-green)](https://github.com/glinko/AiDN/actions/workflows/ci.yml)
 
 ## Quick Start
@@ -14,13 +14,13 @@ pytest
 
 ## CI Pipeline
 
-Three-stage pipeline: **quality** → **tests** → **integration**
+Three-stage pipeline: **quality baseline** → **tests** → **opt-in integration**.
 
 | Stage | Jobs | Blocking |
 |-------|------|----------|
-| Quality | `ruff`, `mypy` (warn-only) | ruff blocks, mypy warns |
-| Tests | `coverage`, `smoke`, `service-contracts` | yes |
-| Integration | `providers-plugins`, `dispatcher-runtime`, `endpoint-session-paid-flow` | yes |
+| Quality baseline | formatting and legacy Ruff findings are reported | non-blocking baseline |
+| Tests | hermetic non-integration suite with coverage | yes |
+| Integration | real provider and network checks via manual dispatch | configured environment only |
 
 ## Docs
 
