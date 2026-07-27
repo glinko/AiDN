@@ -257,13 +257,14 @@ Immediate priorities:
    now also advertise `owner_wallet_id`, and that owner wallet identity must
    resolve to the same public key as the node's `operator_id` identity before
    quorum authority is accepted. The Registry now also exposes a local wallet
-   identity governance policy that snapshots the active voter-status and quorum
-   floor rules used by each proposal. What still does not exist is a stronger
-   network-level governance and ledger-backed authority model above that local
-   ownership linkage and local policy surface. The next implementation step on
-   this path is to issue minimal governance/authorization certificates for
-   quorum-finalized wallet-identity network changes, so those decisions carry
-   portable network evidence instead of remaining only local-policy-valid.
+    identity governance policy that snapshots the active voter-status and quorum
+    floor rules used by each proposal. Quorum finalization now emits a portable
+    Governance Certificate that commits the policy hash, voter keys, candidate,
+    quorum and signed vote set; it is replicated as a Registry object and
+    re-verified before an imported Resolution changes local identity state.
+    What still does not exist is a ledger-backed authority, certificate
+    revocation and broader network governance above that local ownership
+    linkage and local policy surface.
 1. Apply the completed `llama.cpp` Health/model discovery/Runtime Binding/RFC-0054 adapter profile to Ollama, vLLM-compatible and Proxy providers; add Provider-specific cancellation confirmation and in-flight recovery fault scenarios where their native APIs support them.
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
 3. Add production package acquisition from signed sources to the verified local Package Store and Registry `plugin` Directory replication.

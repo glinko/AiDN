@@ -38,6 +38,7 @@ _WALLET_IDENTITY_NETWORK_OBJECT_TYPES = {
     "wallet_identity_resolution_proposal",
     "wallet_identity_resolution_approval",
     "wallet_identity_resolution",
+    "wallet_identity_governance_certificate",
 }
 _ALLOWED_WALLET_IDENTITY_VOTER_STATUSES = {"ready", "stale"}
 
@@ -159,6 +160,17 @@ class RegistryService:
             deepcopy(self._wallet_identity_resolution_proposals[resolution_id])
             for resolution_id in sorted(self._wallet_identity_resolution_proposals)
         ]
+
+    def list_wallet_identity_governance_certificates(self, *, limit: int = 500) -> list[dict]:
+        """Return portable authority evidence for finalized wallet resolutions."""
+        return self.list_registry_objects(
+            {
+                "object_type": "wallet_identity_governance_certificate",
+                "namespace": "identity",
+                "include_payload": True,
+                "limit": limit,
+            }
+        )
 
     def wallet_identity_governance_policy(self) -> dict:
         return deepcopy(self._wallet_identity_governance_policy)
@@ -310,6 +322,7 @@ class RegistryService:
             approval_signature=proposer_signature,
             approval_note=operator_note,
             approved_at=now,
+            approval_kind="proposal",
         )
         self._wallet_identity_resolution_proposals[resolution_id] = proposal
         self.upsert_registry_object(
@@ -356,6 +369,7 @@ class RegistryService:
             approval_signature=approval_signature,
             approval_note=approval_note,
             approved_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            approval_kind="approval",
         )
         self._wallet_identity_resolution_proposals[resolution_id] = proposal
         self.upsert_registry_object(
@@ -376,6 +390,7 @@ class RegistryService:
         chosen_object_id: str | None = None,
         chosen_payload_hash: str | None = None,
         operator_note: str | None = None,
+        governance_certificate: dict | None = None,
     ) -> dict:
         matches = self._wallet_identity_matches(wallet_id)
         selected = self._select_wallet_identity_resolution_candidate(
@@ -406,6 +421,9 @@ class RegistryService:
                 }
             ),
         }
+        if governance_certificate is not None:
+            self._verify_wallet_identity_governance_certificate(governance_certificate)
+            resolution["governance_certificate"] = deepcopy(governance_certificate)
         self._wallet_identity_resolutions[wallet_id] = resolution
         self.upsert_registry_object(
             self._wallet_identity_resolution_registry_object(resolution=resolution)
@@ -752,7 +770,15 @@ class RegistryService:
         if existing is not None and existing != normalized:
             raise ValueError(f"Conflicting registry object for {object_id}")
         self._registry_objects[object_id] = normalized
-        self._apply_registry_object_state(record=normalized)
+        try:
+            self._apply_registry_object_state(record=normalized)
+        except Exception:
+            if existing is None:
+                self._registry_objects.pop(object_id, None)
+            else:
+                self._registry_objects[object_id] = existing
+            self._rebuild_wallet_identity_resolution_state()
+            raise
         if persist:
             try:
                 self._persist_registry_object_snapshot()
@@ -1567,6 +1593,7 @@ class RegistryService:
         approval_signature: str | None,
         approval_note: str | None,
         approved_at: str,
+        approval_kind: str = "approval",
     ) -> dict:
         approvals = list(proposal.get("approvals") or [])
         for existing in approvals:
@@ -1584,6 +1611,7 @@ class RegistryService:
                 "approval_signature": approval_signature,
                 "approval_note": approval_note,
                 "approved_at": approved_at,
+                "approval_kind": approval_kind,
             }
         )
         proposal["approvals"] = approvals
@@ -1597,16 +1625,86 @@ class RegistryService:
         approvals = list(proposal.get("approvals") or [])
         if len(approvals) < threshold:
             return
+        certificate = self._wallet_identity_governance_certificate(proposal=proposal)
+        self.upsert_registry_object(
+            self._wallet_identity_governance_certificate_registry_object(certificate)
+        )
         final_resolution = self.resolve_wallet_identity_conflict(
             wallet_id=str(proposal["wallet_id"]),
             chosen_object_id=str(proposal["chosen_object_id"]),
             chosen_payload_hash=str(proposal["chosen_payload_hash"]),
             operator_note=str(proposal.get("operator_note") or "quorum-approved"),
+            governance_certificate=certificate,
         )
         proposal["status"] = "finalized"
         proposal["finalized_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         proposal["final_resolution"] = final_resolution
+        proposal["governance_certificate"] = certificate
         self._wallet_identity_resolution_proposals[resolution_id] = proposal
+
+    def _wallet_identity_governance_certificate(self, *, proposal: dict) -> dict:
+        """Derive portable evidence from the exact signed quorum state."""
+        from aidn_hypervisor.wallet_identity import wallet_identity_governance_certificate_payload
+
+        authorities = []
+        for node_id in sorted(proposal.get("eligible_voter_node_ids") or []):
+            authority = self._wallet_identity_operator_identity_for_node(node_id=node_id)
+            authorities.append(
+                {
+                    "node_id": node_id,
+                    "operator_wallet_id": str(authority["operator_wallet_id"]),
+                    "owner_wallet_id": str(authority["owner_wallet_id"]),
+                    "public_key": str(authority["operator_identity"]["public_key"]),
+                }
+            )
+        approvals = sorted(
+            [deepcopy(item) for item in proposal.get("approvals") or []],
+            key=lambda item: str(item.get("approver_node_id") or ""),
+        )
+        policy_snapshot = deepcopy(proposal.get("governance_policy_snapshot") or {})
+        policy_hash = "sha256:" + hashlib.sha256(
+            json.dumps(policy_snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        certificate_fields = {
+            "resolution_id": str(proposal["resolution_id"]),
+            "wallet_id": str(proposal["wallet_id"]),
+            "chosen_object_id": str(proposal["chosen_object_id"]),
+            "chosen_payload_hash": str(proposal["chosen_payload_hash"]),
+            "governance_policy_hash": policy_hash,
+            "eligible_voter_node_ids": sorted(proposal.get("eligible_voter_node_ids") or []),
+            "voter_authorities": authorities,
+            "quorum_threshold": int(proposal["quorum_threshold"]),
+            "approvals": approvals,
+        }
+        certificate_id = "sha256:" + hashlib.sha256(
+            wallet_identity_governance_certificate_payload(certificate_id="", **certificate_fields)
+        ).hexdigest()
+        return {
+            "certificate_version": "wallet-identity-governance-certificate.v1",
+            "certificate_id": certificate_id,
+            **certificate_fields,
+            "governance_policy_snapshot": policy_snapshot,
+            "issued_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        }
+
+    def _verify_wallet_identity_governance_certificate(self, certificate: dict) -> None:
+        from aidn_hypervisor.wallet_identity import verify_wallet_identity_governance_certificate
+
+        try:
+            verify_wallet_identity_governance_certificate(
+                certificate_id=str(certificate["certificate_id"]),
+                resolution_id=str(certificate["resolution_id"]),
+                wallet_id=str(certificate["wallet_id"]),
+                chosen_object_id=str(certificate["chosen_object_id"]),
+                chosen_payload_hash=str(certificate["chosen_payload_hash"]),
+                governance_policy_hash=str(certificate["governance_policy_hash"]),
+                eligible_voter_node_ids=list(certificate["eligible_voter_node_ids"]),
+                voter_authorities=list(certificate["voter_authorities"]),
+                quorum_threshold=int(certificate["quorum_threshold"]),
+                approvals=list(certificate["approvals"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Wallet-identity governance certificate is invalid") from exc
 
     def _wallet_identity_registry_object(
         self,
@@ -1680,6 +1778,7 @@ class RegistryService:
             "approval_signature": approval.get("approval_signature"),
             "approval_note": approval.get("approval_note"),
             "approved_at": approval.get("approved_at"),
+            "approval_kind": approval.get("approval_kind") or "approval",
         }
         return self._wallet_identity_registry_object(
             object_type="wallet_identity_resolution_approval",
@@ -1695,6 +1794,14 @@ class RegistryService:
             object_version="wallet-identity-resolution.v1",
             source_reference=str(resolution["wallet_id"]),
             payload=payload,
+        )
+
+    def _wallet_identity_governance_certificate_registry_object(self, certificate: dict) -> dict:
+        return self._wallet_identity_registry_object(
+            object_type="wallet_identity_governance_certificate",
+            object_version="wallet-identity-governance-certificate.v1",
+            source_reference=str(certificate["certificate_id"]),
+            payload=deepcopy(certificate),
         )
 
     def _apply_registry_object_state(self, *, record: dict) -> None:
@@ -1761,6 +1868,7 @@ class RegistryService:
             approval_signature=payload.get("approval_signature"),
             approval_note=payload.get("approval_note"),
             approved_at=str(payload.get("approved_at") or ""),
+            approval_kind=str(payload.get("approval_kind") or "approval"),
         )
         self._wallet_identity_resolution_proposals[resolution_id] = proposal
 
@@ -1769,6 +1877,17 @@ class RegistryService:
         if not wallet_id:
             return
         resolution = deepcopy(payload)
+        certificate = resolution.get("governance_certificate")
+        if certificate is not None:
+            if not isinstance(certificate, dict):
+                raise ValueError("Wallet-identity resolution has an invalid governance certificate")
+            self._verify_wallet_identity_governance_certificate(certificate)
+            if (
+                certificate.get("wallet_id") != wallet_id
+                or certificate.get("chosen_object_id") != resolution.get("chosen_object_id")
+                or certificate.get("chosen_payload_hash") != resolution.get("chosen_payload_hash")
+            ):
+                raise ValueError("Wallet-identity resolution certificate does not bind its selected identity")
         self._wallet_identity_resolutions[wallet_id] = resolution
         for conflict_id in sorted(self._conflicts):
             conflict = self._conflicts[conflict_id]

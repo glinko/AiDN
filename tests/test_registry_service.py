@@ -2509,10 +2509,34 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
 
     assert approved["status"] == "finalized"
     assert approved["final_resolution"]["wallet_id"] == "wallet-consumer"
+    certificate = approved["governance_certificate"]
+    assert certificate["certificate_version"] == "wallet-identity-governance-certificate.v1"
+    assert certificate["quorum_threshold"] == 2
+    assert [item["approver_node_id"] for item in certificate["approvals"]] == [
+        "node-a",
+        "node-b",
+    ]
+    assert approved["final_resolution"]["governance_certificate"] == certificate
+    certificates = service.list_wallet_identity_governance_certificates()
+    assert len(certificates) == 1
+    assert certificates[0]["payload"]["certificate_id"] == certificate["certificate_id"]
     resolved = service.resolve_wallet_identity("wallet-consumer")
     assert resolved is not None
     assert resolved["identity_source"] == "registry_resolution"
     assert resolved["resolution"]["chosen_object_id"] == str(consumer_object["object_id"])
+
+    tampered_resolution = json.loads(json.dumps(approved["final_resolution"]))
+    tampered_resolution["governance_certificate"]["approvals"][1][
+        "approval_signature"
+    ] = "ed25519:" + "00" * 64
+    replica = RegistryService()
+    with pytest.raises(ValueError, match="governance certificate"):
+        replica.upsert_registry_object(
+            service._wallet_identity_resolution_registry_object(
+                resolution=tampered_resolution
+            )
+        )
+    assert replica.list_wallet_identity_resolutions() == []
 
 
 def test_registry_service_wallet_identity_governance_policy_persists_and_shapes_quorum(

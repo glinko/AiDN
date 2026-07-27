@@ -163,6 +163,10 @@ Still required before public paid-MVP launch:
    chosen binding. Each authoritative voter node must also advertise
    `owner_wallet_id`, and that owner wallet identity must resolve to the same
    public key as the node's `operator_id` identity. A local wallet identity
-   governance policy now exists for voter-status and quorum-floor control, but
-   what still remains is a stronger network-level governance and ledger-backed
-   authority model above that local ownership linkage and local policy layer.
+   governance policy now exists for voter-status and quorum-floor control.
+   Finalized decisions now derive a portable Governance Certificate that
+   commits the policy hash, authoritative voter keys, quorum, candidate and
+   each signed vote; it is published as a Registry object and re-verified
+   before an imported final Resolution affects local identity state. What still
+   remains is a ledger-backed authority model, certificate revocation and
+   broader network governance above that local policy layer.

@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import UTC, datetime
 
@@ -194,3 +195,113 @@ def verify_wallet_identity_quorum_approval(
         required_message="Wallet-identity quorum approval requires an Ed25519 signature",
         invalid_message="Wallet-identity quorum approval signature is invalid",
     )
+
+
+def wallet_identity_governance_certificate_payload(
+    *,
+    certificate_id: str,
+    resolution_id: str,
+    wallet_id: str,
+    chosen_object_id: str,
+    chosen_payload_hash: str,
+    governance_policy_hash: str,
+    eligible_voter_node_ids: list[str],
+    voter_authorities: list[dict[str, str]],
+    quorum_threshold: int,
+    approvals: list[dict[str, str | None]],
+) -> bytes:
+    """Build the portable, signed-evidence commitment for a quorum decision."""
+    return json.dumps(
+        {
+            "domain": "aidn.wallet-identity.governance-certificate.v1",
+            "resolution_id": resolution_id,
+            "wallet_id": wallet_id,
+            "chosen_object_id": chosen_object_id,
+            "chosen_payload_hash": chosen_payload_hash,
+            "governance_policy_hash": governance_policy_hash,
+            "eligible_voter_node_ids": list(eligible_voter_node_ids),
+            "voter_authorities": list(voter_authorities),
+            "quorum_threshold": quorum_threshold,
+            "approvals": list(approvals),
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def verify_wallet_identity_governance_certificate(
+    *,
+    certificate_id: str,
+    resolution_id: str,
+    wallet_id: str,
+    chosen_object_id: str,
+    chosen_payload_hash: str,
+    governance_policy_hash: str,
+    eligible_voter_node_ids: list[str],
+    voter_authorities: list[dict[str, str]],
+    quorum_threshold: int,
+    approvals: list[dict[str, str | None]],
+) -> None:
+    """Verify quorum evidence without consulting the certificate issuer's state."""
+    if quorum_threshold < 1:
+        raise ValueError("Wallet-identity governance certificate quorum threshold is invalid")
+    eligible_voters = set(eligible_voter_node_ids)
+    authorities = {
+        str(item.get("node_id") or ""): str(item.get("public_key") or "")
+        for item in voter_authorities
+    }
+    if set(authorities) != eligible_voters or not all(authorities.values()):
+        raise ValueError("Wallet-identity governance certificate authority set is invalid")
+
+    seen_approvers: set[str] = set()
+    for approval in approvals:
+        approver_node_id = str(approval.get("approver_node_id") or "")
+        signature = approval.get("approval_signature")
+        approval_note = approval.get("approval_note")
+        approval_kind = str(approval.get("approval_kind") or "approval")
+        if approver_node_id not in eligible_voters or approver_node_id in seen_approvers:
+            raise ValueError("Wallet-identity governance certificate approval set is invalid")
+        if not isinstance(signature, str):
+            raise ValueError("Wallet-identity governance certificate approval is unsigned")
+        if approval_kind == "proposal":
+            verify_wallet_identity_quorum_proposal(
+                public_key=authorities[approver_node_id],
+                signature=signature,
+                wallet_id=wallet_id,
+                chosen_object_id=chosen_object_id,
+                chosen_payload_hash=chosen_payload_hash,
+                proposer_node_id=approver_node_id,
+                eligible_voter_node_ids=eligible_voter_node_ids,
+                quorum_threshold=quorum_threshold,
+                operator_note=approval_note if isinstance(approval_note, str) else None,
+            )
+        elif approval_kind == "approval":
+            verify_wallet_identity_quorum_approval(
+                public_key=authorities[approver_node_id],
+                signature=signature,
+                resolution_id=resolution_id,
+                approver_node_id=approver_node_id,
+                approval_note=approval_note if isinstance(approval_note, str) else None,
+            )
+        else:
+            raise ValueError("Wallet-identity governance certificate approval kind is invalid")
+        seen_approvers.add(approver_node_id)
+    if len(seen_approvers) < quorum_threshold:
+        raise ValueError("Wallet-identity governance certificate lacks quorum")
+
+    expected_payload = wallet_identity_governance_certificate_payload(
+        certificate_id=certificate_id,
+        resolution_id=resolution_id,
+        wallet_id=wallet_id,
+        chosen_object_id=chosen_object_id,
+        chosen_payload_hash=chosen_payload_hash,
+        governance_policy_hash=governance_policy_hash,
+        eligible_voter_node_ids=eligible_voter_node_ids,
+        voter_authorities=voter_authorities,
+        quorum_threshold=quorum_threshold,
+        approvals=approvals,
+    )
+    expected_id = "sha256:" + hashlib.sha256(expected_payload).hexdigest()
+    if certificate_id != expected_id:
+        raise ValueError("Wallet-identity governance certificate identity is invalid")
