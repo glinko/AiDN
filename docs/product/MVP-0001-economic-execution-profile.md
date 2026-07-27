@@ -21,6 +21,9 @@ unsupported, not silently approximated.
   Generation, Runtime Configuration Hash and Dispatcher Route Generation.
 - A terminal Request emits a Final Usage Report. It may contain unavailable
   dimensions because a fixed price does not require token metering.
+- Legacy operator metering supports `audio_input_seconds` as a distinct
+  observable Whisper-class dimension. A Provider may omit it when no duration
+  evidence exists; it is never represented as zero tokens.
 - Canonical Ledger state locks `q_atoms` in `SESSION_ESCROW_LOCK`, then uses
   `SESSION_SETTLEMENT_PROPOSE`, `SESSION_SETTLEMENT_ACCEPT` and
   `SESSION_SETTLEMENT_FINALIZE` for cooperative completion.
@@ -38,6 +41,8 @@ unsupported, not silently approximated.
 - A proposal, acceptance and finalization bind the same Settlement Input Root.
 - An old Route Generation is never delivered to a new Runtime implicitly.
 - A Runtime Adapter cannot alter the charge ceiling or deadline.
+- A Plugin that declares supported billing units is rejected before execution
+  when an Endpoint Accounting Contract requires an undeclared unit or mode.
 
 ## Explicitly Unsupported
 
@@ -49,6 +54,9 @@ unsupported, not silently approximated.
   collection.
 - Automatic bridge from the legacy float-Q Session API to canonical `q_atoms`
   Settlement. That bridge must be explicit, audited and hash-bound.
+- Variable audio-duration Settlement on the canonical `q_atoms` path. The
+  current `audio_input_seconds` unit is limited to legacy operator accounting
+  and fixed-price sessions remain the public paid-MVP profile.
 
 ## Implementation Status
 

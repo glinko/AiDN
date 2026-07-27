@@ -116,6 +116,21 @@ class TaskExecutionService:
         entered_running = False
         self._host.queue.transition_status(task_id, "admitted")
 
+        accounting_errors = self._host._task_usage_accounting_facade().accounting_compatibility_errors_for_task(
+            task=task.request,
+            bundle=bundle,
+        )
+        if accounting_errors:
+            self._host.queue.transition_status(task_id, "failed")
+            self._host.record_event(
+                event_type="task.accounting_rejected",
+                message="; ".join(accounting_errors),
+                task_id=task_id,
+                bundle_id=bundle.bundle_id,
+                details={"accounting_errors": accounting_errors},
+            )
+            return True
+
         try:
             if runtime is None:
                 if startup_cpu or startup_ram or startup_vram:

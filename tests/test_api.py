@@ -9233,9 +9233,10 @@ def test_agent_capabilities_endpoint_reports_ready_bundle_catalog() -> None:
     service.can_host_custom_model = True
     service.pricing = {
         "unit": "q_per_1kk_tokens",
-        "input": 12,
-        "output": 18,
-        "fixed_request": 4,
+                    "input": 12,
+                    "output": 18,
+                    "fixed_request": 4,
+                    "audio_input_second": 0.0,
     }
     client = TestClient(build_app(service=service))
 
@@ -9255,6 +9256,7 @@ def test_agent_capabilities_endpoint_reports_ready_bundle_catalog() -> None:
                 "input": 12,
                 "output": 18,
                 "fixed_request": 4,
+                "audio_input_second": 0.0,
             },
         },
         "resources": {
@@ -9314,9 +9316,10 @@ def test_agent_capabilities_endpoint_reports_waiting_bundle_catalog() -> None:
     service.can_host_custom_model = True
     service.pricing = {
         "unit": "q_per_1kk_tokens",
-        "input": 12,
-        "output": 18,
-        "fixed_request": 4,
+                    "input": 12,
+                    "output": 18,
+                    "fixed_request": 4,
+                    "audio_input_second": 0.0,
     }
     client = TestClient(build_app(service=service))
 
@@ -9336,6 +9339,7 @@ def test_agent_capabilities_endpoint_reports_waiting_bundle_catalog() -> None:
                 "input": 12,
                 "output": 18,
                 "fixed_request": 4,
+                "audio_input_second": 0.0,
             },
         },
         "resources": {

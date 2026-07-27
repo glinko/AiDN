@@ -267,6 +267,17 @@ def _accounting_contract_for_publication(service, publication) -> dict:
                 verification_method="provider_report",
             )
         )
+    if pricing.get("audio_input_second_price") is not None:
+        billable_units.append(
+            AccountingUnitContract(
+                unit="audio_input_seconds",
+                mode="observable",
+                price=float(pricing["audio_input_second_price"]),
+                measurement_source="provider_response.duration",
+                verification_method="provider_response",
+                unavailable_value_policy="ZERO_VARIABLE_COMPONENT",
+            )
+        )
     if pricing.get("fixed_price") is not None:
         billable_units.append(
             AccountingUnitContract(

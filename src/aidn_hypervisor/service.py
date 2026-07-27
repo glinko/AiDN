@@ -865,14 +865,16 @@ class HypervisorService:
     def quote_wallet_usage(
         self,
         *,
-        input_tokens: int,
-        output_tokens: int,
+        input_tokens: int | None,
+        output_tokens: int | None,
         fixed_request_count: int = 1,
+        audio_input_seconds: float | None = None,
     ) -> dict:
         return self._wallet_application_facade().quote_wallet_usage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             fixed_request_count=fixed_request_count,
+            audio_input_seconds=audio_input_seconds,
         )
 
     def record_wallet_usage(
@@ -883,9 +885,10 @@ class HypervisorService:
         workload_type: str,
         task_id: str | None = None,
         allocation_id: str | None = None,
-        input_tokens: int,
-        output_tokens: int,
+        input_tokens: int | None,
+        output_tokens: int | None,
         fixed_request_count: int = 1,
+        audio_input_seconds: float | None = None,
         measurement_kind: str = "exact",
         measurement_source: str = "manual",
         source: str = "manual",
@@ -899,6 +902,7 @@ class HypervisorService:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             fixed_request_count=fixed_request_count,
+            audio_input_seconds=audio_input_seconds,
             measurement_kind=measurement_kind,
             measurement_source=measurement_source,
             source=source,

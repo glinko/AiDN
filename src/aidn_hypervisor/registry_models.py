@@ -18,6 +18,7 @@ class RegistryPricing(BaseModel):
     input: int = Field(ge=0)
     output: int = Field(ge=0)
     fixed_request: int | None = Field(default=None, ge=0)
+    audio_input_second: float = Field(default=0.0, ge=0.0)
 
 
 class RegistryRating(BaseModel):

@@ -502,9 +502,10 @@ def test_registry_service_discovery_returns_flattened_candidates(monkeypatch) ->
             "can_host_custom_model": True,
             "pricing": {
                 "unit": "q_per_1kk_tokens",
-                "input": 12,
-                "output": 18,
-                "fixed_request": None,
+                    "input": 12,
+                    "output": 18,
+                    "fixed_request": None,
+                    "audio_input_second": 0.0,
             },
             "rating": {
                 "score": 0.91,

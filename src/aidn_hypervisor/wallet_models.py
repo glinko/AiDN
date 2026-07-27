@@ -6,30 +6,34 @@ from aidn_hypervisor.registry_models import RegistryPricing
 
 
 class WalletQuoteRequest(BaseModel):
-    input_tokens: int = Field(ge=0)
-    output_tokens: int = Field(ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
     fixed_request_count: int = Field(default=1, ge=0)
+    audio_input_seconds: float | None = Field(default=None, ge=0.0)
 
 
 class WalletQuoteCharges(BaseModel):
     input_q: float = Field(ge=0.0)
     output_q: float = Field(ge=0.0)
     fixed_q: float = Field(ge=0.0)
+    audio_input_q: float | None = Field(default=None, ge=0.0)
     total_q: float = Field(ge=0.0)
 
 
 class WalletQuote(BaseModel):
     pricing: RegistryPricing
-    input_tokens: int = Field(ge=0)
-    output_tokens: int = Field(ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
     fixed_request_count: int = Field(default=1, ge=0)
+    audio_input_seconds: float | None = Field(default=None, ge=0.0)
     charges: WalletQuoteCharges
 
 
 class WalletUsageMeasurement(BaseModel):
-    input_tokens: int = Field(ge=0)
-    output_tokens: int = Field(ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
     fixed_request_count: int = Field(default=1, ge=0)
+    audio_input_seconds: float | None = Field(default=None, ge=0.0)
     measurement_kind: Literal["exact", "estimated"]
     measurement_source: str = Field(min_length=1)
 

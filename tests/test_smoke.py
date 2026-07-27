@@ -112,6 +112,8 @@ def test_default_app_exposes_builtin_plugins() -> None:
             "usage_contract": {
                 "supports_exact": False,
                 "supports_estimated": True,
+                "supported_billing_units": ["audio_input_seconds"],
+                "supported_accounting_modes": ["fixed_price", "observable"],
                 "default_measurement_source": "provider_request",
                 "fallback_measurement_source": "provider_request",
                 "fallback_policy": "fixed_request_estimate",

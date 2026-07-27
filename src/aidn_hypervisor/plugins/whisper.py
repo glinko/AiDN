@@ -80,18 +80,21 @@ class WhisperPlugin(ProviderPlugin):
                 "audio_ref": audio_ref,
             },
         )
+        usage = {
+            "fixed_request_count": 1,
+            "measurement_kind": "estimated",
+            "measurement_source": "provider_request",
+        }
+        duration_seconds = self._audio_duration_seconds(response)
+        if duration_seconds is not None:
+            usage["audio_input_seconds"] = duration_seconds
+            usage["measurement_source"] = "provider_response.duration"
         return {
             "ok": True,
             "task_type": task.task_type,
             "model_id": self._model_id(runtime_handle),
             "text": response.get("text", ""),
-            "usage": {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "fixed_request_count": 1,
-                "measurement_kind": "estimated",
-                "measurement_source": "provider_request",
-            },
+            "usage": usage,
             "raw": response,
         }
 
@@ -115,11 +118,24 @@ class WhisperPlugin(ProviderPlugin):
         return {
             "supports_exact": False,
             "supports_estimated": True,
+            "supported_billing_units": ["audio_input_seconds"],
+            "supported_accounting_modes": ["fixed_price", "observable"],
             "default_measurement_source": "provider_request",
             "fallback_measurement_source": "provider_request",
             "fallback_policy": "fixed_request_estimate",
             "missing_usage_behavior": "skip",
         }
+
+    @staticmethod
+    def _audio_duration_seconds(response: dict) -> float | None:
+        """Accept only non-negative numeric duration evidence from the Provider."""
+        for key in ("audio_duration_seconds", "duration_seconds", "duration"):
+            value = response.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)) and value >= 0:
+                return float(value)
+        return None
 
     def _endpoint(self, runtime_handle) -> str:
         return runtime_handle.metadata.get("endpoint", self._default_endpoint).rstrip("/")

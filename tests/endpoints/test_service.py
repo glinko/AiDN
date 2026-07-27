@@ -84,6 +84,33 @@ def test_update_endpoint_runtime_creates_new_configuration_hash() -> None:
     assert len(service.list_configuration_snapshots(created.endpoint.endpoint_id)) == 2
 
 
+def test_update_endpoint_pricing_rotates_configuration_hash_and_snapshot() -> None:
+    service = EndpointService(EndpointStore())
+    created = service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Operator STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+            pricing={"fixed_price": 2.0},
+        )
+    )
+
+    updated = service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=created.endpoint.endpoint_id,
+            pricing={"audio_input_second_price": 0.4, "fixed_price": 2.0},
+        )
+    )
+
+    assert updated.endpoint.configuration_hash != created.endpoint.configuration_hash
+    assert updated.snapshot is not None
+    assert updated.snapshot.pricing.audio_input_second_price == 0.4
+    assert len(service.list_configuration_snapshots(created.endpoint.endpoint_id)) == 2
+
+
 def test_suspend_requires_active_endpoint() -> None:
     service = EndpointService(EndpointStore())
     created = service.create_endpoint(

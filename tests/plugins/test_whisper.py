@@ -52,6 +52,8 @@ def test_whisper_plugin_describes_speech_to_text_capability() -> None:
         "usage_contract": {
             "supports_exact": False,
             "supports_estimated": True,
+            "supported_billing_units": ["audio_input_seconds"],
+            "supported_accounting_modes": ["fixed_price", "observable"],
             "default_measurement_source": "provider_request",
             "fallback_measurement_source": "provider_request",
             "fallback_policy": "fixed_request_estimate",
@@ -194,13 +196,36 @@ def test_whisper_plugin_invoke_posts_audio_ref_and_returns_normalized_payload() 
         "model_id": "large-v3",
         "text": "hello world",
         "usage": {
-            "input_tokens": 0,
-            "output_tokens": 0,
             "fixed_request_count": 1,
             "measurement_kind": "estimated",
             "measurement_source": "provider_request",
         },
         "raw": {"text": "hello world", "language": "en"},
+    }
+
+
+def test_whisper_plugin_records_provider_duration_without_inventing_tokens() -> None:
+    plugin = StubWhisperPlugin(
+        transcribe_payload={"text": "hello world", "duration_seconds": 12.5}
+    )
+    runtime = RuntimeHandle(
+        runtime_id="rt-1",
+        command=["whisper-server"],
+        status="running",
+        bundle_id="whisper-local",
+        metadata={"endpoint": "http://127.0.0.1:9000", "model_id": "large-v3"},
+    )
+
+    result = plugin.invoke(
+        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": "clip.wav"}),
+        runtime,
+    )
+
+    assert result["usage"] == {
+        "fixed_request_count": 1,
+        "audio_input_seconds": 12.5,
+        "measurement_kind": "estimated",
+        "measurement_source": "provider_response.duration",
     }
 
 

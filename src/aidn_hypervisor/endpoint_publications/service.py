@@ -131,6 +131,7 @@ class EndpointPublicationService:
                 manifest.pricing.fixed_price,
                 manifest.pricing.input_price,
                 manifest.pricing.output_price,
+                manifest.pricing.audio_input_second_price,
             )
         )
         paid_pricing = any(
@@ -139,6 +140,7 @@ class EndpointPublicationService:
                 manifest.pricing.fixed_price,
                 manifest.pricing.input_price,
                 manifest.pricing.output_price,
+                manifest.pricing.audio_input_second_price,
             )
         )
         validation_requested = manifest.publication.validation == "enabled"

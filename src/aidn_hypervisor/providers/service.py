@@ -815,6 +815,7 @@ class ProviderInventoryService:
             pricing.get("fixed_price"),
             pricing.get("input_price"),
             pricing.get("output_price"),
+            pricing.get("audio_input_second_price"),
         ]
         pricing_configured = any(value is not None for value in configured_prices)
         dimensions["pricing"] = {

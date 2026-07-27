@@ -69,6 +69,7 @@ class EndpointPricing(BaseModel):
     billing_unit: str = "request"
     input_price: float | None = Field(default=None, ge=0.0)
     output_price: float | None = Field(default=None, ge=0.0)
+    audio_input_second_price: float | None = Field(default=None, ge=0.0)
     fixed_price: float | None = Field(default=None, ge=0.0)
 
 
@@ -166,6 +167,7 @@ class EndpointConfigurationSnapshot(BaseModel):
     created_at: str
     runtime: EndpointRuntimeConfig
     publication: EndpointPublicationPolicy
+    pricing: EndpointPricing = Field(default_factory=EndpointPricing)
     session: EndpointSessionPolicy = Field(default_factory=EndpointSessionPolicy)
     proxy_target: EndpointProxyTarget | None = None
     execution_config: dict[str, bool | int | str | None] = Field(default_factory=dict)

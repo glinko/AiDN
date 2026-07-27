@@ -2677,9 +2677,10 @@ def test_service_capability_catalog_reports_fit_and_endpoint_readiness() -> None
         can_host_custom_model=True,
         pricing={
             "unit": "q_per_1kk_tokens",
-            "input": 12,
-            "output": 18,
-            "fixed_request": 4,
+                    "input": 12,
+                    "output": 18,
+                    "fixed_request": 4,
+                    "audio_input_second": 0.0,
         },
     )
 
@@ -2699,6 +2700,7 @@ def test_service_capability_catalog_reports_fit_and_endpoint_readiness() -> None
                 "input": 12,
                 "output": 18,
                 "fixed_request": 4,
+                "audio_input_second": 0.0,
             },
         },
         "resources": {
@@ -4159,8 +4161,6 @@ def test_service_executes_transcription_task_via_whisper_plugin() -> None:
         "model_id": "large-v3",
         "text": "hello from whisper",
         "usage": {
-            "input_tokens": 0,
-            "output_tokens": 0,
             "fixed_request_count": 1,
             "measurement_kind": "estimated",
             "measurement_source": "provider_request",

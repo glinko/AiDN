@@ -47,6 +47,7 @@ class EndpointService:
             runtime_binding_id=cmd.runtime_binding_id,
             runtime=cmd.runtime,
             publication=cmd.publication,
+            pricing=cmd.pricing,
             session=cmd.session,
             proxy_target=None,
             execution_config=execution_config,
@@ -80,6 +81,7 @@ class EndpointService:
             created_at=created_at,
             runtime=cmd.runtime,
             publication=cmd.publication,
+            pricing=cmd.pricing,
             session=cmd.session,
             proxy_target=None,
             execution_config=execution_config,
@@ -93,6 +95,7 @@ class EndpointService:
         current = self.store.get_manifest(cmd.endpoint_id)
         next_runtime = cmd.runtime or current.runtime
         next_publication = cmd.publication or current.publication
+        next_pricing = cmd.pricing or current.pricing
         next_session = cmd.session or current.session
         next_validation = cmd.validation or current.validation
         next_execution_strategy = cmd.execution_strategy or current.execution_strategy
@@ -100,6 +103,7 @@ class EndpointService:
         should_rotate_config = (
             cmd.runtime is not None
             or cmd.publication is not None
+            or cmd.pricing is not None
             or cmd.session is not None
             or cmd.execution_strategy is not None
             or cmd.proxy_target is not None
@@ -120,6 +124,7 @@ class EndpointService:
                 runtime_binding_id=current.runtime_binding_id,
                 runtime=next_runtime,
                 publication=next_publication,
+                pricing=next_pricing,
                 session=next_session,
                 proxy_target=next_proxy_target,
                 execution_config=execution_config,
@@ -132,6 +137,7 @@ class EndpointService:
                 created_at=datetime.now(UTC).isoformat(),
                 runtime=next_runtime,
                 publication=next_publication,
+                pricing=next_pricing,
                 session=next_session,
                 proxy_target=next_proxy_target,
                 execution_config=execution_config,
@@ -143,7 +149,7 @@ class EndpointService:
                 "profile": cmd.profile or current.profile,
                 "runtime": next_runtime,
                 "publication": next_publication,
-                "pricing": cmd.pricing or current.pricing,
+                "pricing": next_pricing,
                 "session": next_session,
                 "validation": next_validation,
                 "execution_strategy": next_execution_strategy,
@@ -187,6 +193,7 @@ class EndpointService:
             runtime_binding_id=current.runtime_binding_id,
             runtime=current.runtime,
             publication=current.publication,
+            pricing=current.pricing,
             session=current.session,
             proxy_target=proxy_target,
             execution_config=execution_config,
@@ -199,6 +206,7 @@ class EndpointService:
             created_at=attached_at,
             runtime=current.runtime,
             publication=current.publication,
+            pricing=current.pricing,
             session=current.session,
             proxy_target=proxy_target,
             execution_config=execution_config,
@@ -235,6 +243,7 @@ class EndpointService:
             runtime_binding_id=current.runtime_binding_id,
             runtime=current.runtime,
             publication=current.publication,
+            pricing=current.pricing,
             session=current.session,
             proxy_target=None,
             execution_config=execution_config,
@@ -247,6 +256,7 @@ class EndpointService:
             created_at=detached_at,
             runtime=current.runtime,
             publication=current.publication,
+            pricing=current.pricing,
             session=current.session,
             proxy_target=None,
             execution_config=execution_config,
@@ -376,6 +386,7 @@ class EndpointService:
         runtime_binding_id: str | None,
         runtime,
         publication,
+        pricing,
         session,
         proxy_target,
         execution_config,
@@ -385,6 +396,7 @@ class EndpointService:
             "runtime_binding_id": runtime_binding_id,
             "runtime": runtime.model_dump(mode="json"),
             "publication": publication.model_dump(mode="json"),
+            "pricing": pricing.model_dump(mode="json"),
             "session": session.model_dump(mode="json"),
             "proxy_target": (
                 proxy_target.model_dump(mode="json")

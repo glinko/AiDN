@@ -108,6 +108,34 @@ class StrictMissingUsageMeteringPlugin(FakeManagedPlugin):
         }
 
 
+class AudioDurationMeteringPlugin(FakeManagedPlugin):
+    plugin_id = "fake-audio-duration-metering"
+
+    def invoke(self, task, runtime_handle) -> dict:
+        return {
+            "ok": True,
+            "task_type": task.task_type,
+            "usage": {
+                "fixed_request_count": 1,
+                "audio_input_seconds": 12.5,
+                "measurement_kind": "estimated",
+                "measurement_source": "provider_response.duration",
+            },
+        }
+
+    def usage_contract(self) -> dict:
+        return {
+            "supports_exact": False,
+            "supports_estimated": True,
+            "supported_billing_units": ["audio_input_seconds"],
+            "supported_accounting_modes": ["fixed_price", "observable"],
+            "default_measurement_source": "provider_response.duration",
+            "fallback_measurement_source": "provider_response.duration",
+            "fallback_policy": "fixed_request_estimate",
+            "missing_usage_behavior": "skip",
+        }
+
+
 def _service(
     *,
     plugin=None,
@@ -159,6 +187,33 @@ def test_quote_usage_q_calculates_q_from_input_output_and_fixed_request() -> Non
         "output_q": 9.0,
         "fixed_q": 8.0,
         "total_q": 20.0,
+    }
+
+
+def test_quote_usage_q_prices_audio_duration_without_token_placeholder() -> None:
+    quote = quote_usage_q(
+        pricing={
+            "unit": "q_per_1kk_tokens",
+            "input": 12,
+            "output": 18,
+            "fixed_request": 4,
+            "audio_input_second": 0.4,
+        },
+        input_tokens=None,
+        output_tokens=None,
+        fixed_request_count=1,
+        audio_input_seconds=12.5,
+    )
+
+    assert "input_tokens" not in quote
+    assert "output_tokens" not in quote
+    assert quote["audio_input_seconds"] == 12.5
+    assert quote["charges"] == {
+        "input_q": 0.0,
+        "output_q": 0.0,
+        "fixed_q": 4.0,
+        "audio_input_q": 5.0,
+        "total_q": 9.0,
     }
 
 
@@ -1989,6 +2044,135 @@ def test_service_builds_provider_metered_accounting_contract_for_paid_endpoint()
         "output_tokens",
     }
     assert any(item["mode"] == "provider_metered" for item in contract["billable_units"])
+
+
+def test_service_builds_observable_audio_accounting_contract() -> None:
+    service = _service(
+        plugin=AudioDurationMeteringPlugin(),
+        bundle=_bundle("whisper-local", "speech_to_text").model_copy(
+            update={"plugin_id": "fake-audio-duration-metering"}
+        ),
+    )
+    endpoint = EndpointService(EndpointStore()).create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="whisper-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid STT",
+            model_class="speech_to_text",
+            capabilities=["speech_to_text.transcribe"],
+            pricing={"audio_input_second_price": 0.4, "fixed_price": 2.0},
+        )
+    ).endpoint
+
+    contract = service.accounting_contract_for_endpoint(endpoint)
+
+    assert any(
+        item == {
+            "unit": "audio_input_seconds",
+            "mode": "observable",
+            "price": 0.4,
+            "measurement_source": "provider_response.duration",
+            "verification_method": "provider_response",
+            "tolerance": None,
+            "rounding": None,
+            "required_authority": None,
+            "unavailable_value_policy": "ZERO_VARIABLE_COMPONENT",
+        }
+        for item in contract["billable_units"]
+    )
+
+
+def test_service_rejects_token_priced_audio_endpoint_before_provider_execution() -> None:
+    service = _service(
+        plugin=AudioDurationMeteringPlugin(),
+        bundle=_bundle("whisper-local", "speech_to_text").model_copy(
+            update={"plugin_id": "fake-audio-duration-metering"}
+        ),
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    service.endpoint_service = endpoint_service
+    endpoint = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="whisper-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Invalid STT token billing",
+            model_class="speech_to_text",
+            capabilities=["speech_to_text.transcribe"],
+            pricing={"input_price": 1.0},
+        )
+    ).endpoint
+
+    task = service.submit(
+        TaskRequest(
+            task_type="audio.transcribe",
+            payload={"audio_ref": "clip.wav"},
+            constraints={"endpoint_id": endpoint.endpoint_id},
+        )
+    )
+
+    assert service.get_task(task.task_id).status == "failed"
+    assert service.task_result(task.task_id) is None
+    rejection = service.event_journal(limit=1)[0]
+    assert rejection.event_type == "task.accounting_rejected"
+    assert rejection.details["accounting_errors"] == [
+        "Provider does not report required billing unit: input_tokens",
+        "Provider does not support required accounting mode: provider_metered",
+    ]
+
+
+def test_service_charges_audio_session_from_endpoint_contract_not_node_quote() -> None:
+    service = _service(
+        plugin=AudioDurationMeteringPlugin(),
+        bundle=_bundle("whisper-local", "speech_to_text").model_copy(
+            update={"plugin_id": "fake-audio-duration-metering"}
+        ),
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    service.endpoint_service = endpoint_service
+    service.session_service = session_service
+    endpoint = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="whisper-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid STT",
+            model_class="speech_to_text",
+            capabilities=["speech_to_text.transcribe"],
+            pricing={"audio_input_second_price": 0.4, "fixed_price": 2.0},
+            session={"minimum_deposit": 10.0, "recommended_deposit": 10.0},
+        )
+    ).endpoint
+    opened = session_service.open_session(
+        endpoint_id=endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy=endpoint.session.model_dump(mode="json"),
+        accounting_contract=service.accounting_contract_for_endpoint(endpoint),
+    )
+
+    task = service.submit(
+        TaskRequest(
+            task_type="audio.transcribe",
+            payload={"audio_ref": "clip.wav"},
+            constraints={
+                "endpoint_id": endpoint.endpoint_id,
+                "session_id": opened.session.session_id,
+            },
+        )
+    )
+
+    result = service.task_result(task.task_id)
+    assert result is not None
+    assert result["usage_report"]["cumulative_usage"] == {
+        "fixed_request_count": 1,
+        "audio_input_seconds": 12.5,
+    }
+    assert session_service.get_session(opened.session.session_id).deposit.consumed_q == 7.0
 
 
 # ---------------------------------------------------------------------------

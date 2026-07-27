@@ -73,11 +73,16 @@ class TaskUsageAccountingService:
             input_tokens=measurement.input_tokens,
             output_tokens=measurement.output_tokens,
             fixed_request_count=measurement.fixed_request_count,
+            audio_input_seconds=measurement.audio_input_seconds,
         )
         session_charge_result = self.record_session_usage_charge_for_task(
             task_id=task_id,
             task=task,
-            amount_q=float(usage_quote["charges"]["total_q"]),
+            amount_q=self.endpoint_charge_for_measurement(
+                task=task,
+                measurement=measurement,
+                fallback_amount_q=float(usage_quote["charges"]["total_q"]),
+            ),
         )
         usage_report = self.attach_usage_report_to_task_result(
             task_id=task_id,
@@ -101,6 +106,7 @@ class TaskUsageAccountingService:
             input_tokens=measurement.input_tokens,
             output_tokens=measurement.output_tokens,
             fixed_request_count=measurement.fixed_request_count,
+            audio_input_seconds=measurement.audio_input_seconds,
             measurement_kind=measurement.measurement_kind,
             measurement_source=measurement.measurement_source,
             source=str(usage.get("source", "task_auto")),
@@ -145,6 +151,47 @@ class TaskUsageAccountingService:
                 },
             )
             return None
+
+    def endpoint_charge_for_measurement(
+        self,
+        *,
+        task: TaskRequest,
+        measurement: WalletUsageMeasurement,
+        fallback_amount_q: float,
+    ) -> float:
+        """Use the Session-bound Endpoint contract rather than node telemetry pricing."""
+        endpoint_id = task.constraints.get("endpoint_id")
+        session_id = task.constraints.get("session_id")
+        endpoint_service = getattr(self._host, "endpoint_service", None)
+        if endpoint_id is None or session_id is None or endpoint_service is None:
+            return fallback_amount_q
+        try:
+            endpoint = endpoint_service.get_endpoint(str(endpoint_id)).endpoint
+        except KeyError:
+            return fallback_amount_q
+
+        contract = AccountingContract.model_validate(
+            self.accounting_contract_for_endpoint(endpoint)
+        )
+        values = {
+            "input_tokens": measurement.input_tokens,
+            "output_tokens": measurement.output_tokens,
+            "audio_input_seconds": measurement.audio_input_seconds,
+        }
+        charge = 0.0
+        for item in contract.billable_units:
+            if item.mode == "fixed_price":
+                charge += item.price
+                continue
+            value = values.get(item.unit)
+            if value is None:
+                policy = item.unavailable_value_policy or contract.unavailable_value_policy
+                if policy == "ZERO_VARIABLE_COMPONENT":
+                    continue
+                return fallback_amount_q
+            multiplier = 1_000_000 if item.unit in {"input_tokens", "output_tokens"} else 1
+            charge += float(value) * item.price / multiplier
+        return charge
 
     def provider_usage_contract_for_bundle(self, bundle: BundleConfig) -> dict:
         plugin = self._host.plugins.get(bundle.plugin_id)
@@ -193,10 +240,14 @@ class TaskUsageAccountingService:
 
         contract = self.accounting_contract_for_endpoint(endpoint)
         cumulative_usage = {
-            "input_tokens": measurement.input_tokens,
-            "output_tokens": measurement.output_tokens,
             "fixed_request_count": measurement.fixed_request_count,
         }
+        if measurement.input_tokens is not None:
+            cumulative_usage["input_tokens"] = measurement.input_tokens
+        if measurement.output_tokens is not None:
+            cumulative_usage["output_tokens"] = measurement.output_tokens
+        if measurement.audio_input_seconds is not None:
+            cumulative_usage["audio_input_seconds"] = measurement.audio_input_seconds
         accounting_modes: dict[str, str] = {}
         measurement_sources: dict[str, str] = {}
         for item in contract["billable_units"]:
@@ -204,7 +255,7 @@ class TaskUsageAccountingService:
             if unit in cumulative_usage:
                 accounting_modes[unit] = str(item["mode"])
                 measurement_sources[unit] = str(item["measurement_source"])
-        for unit in ("input_tokens", "output_tokens"):
+        for unit in ("input_tokens", "output_tokens", "audio_input_seconds"):
             if unit in cumulative_usage:
                 measurement_sources[unit] = measurement.measurement_source
 
@@ -319,6 +370,17 @@ class TaskUsageAccountingService:
                     verification_method="provider_report",
                 )
             )
+        if endpoint.pricing.audio_input_second_price is not None:
+            billable_units.append(
+                AccountingUnitContract(
+                    unit="audio_input_seconds",
+                    mode="observable",
+                    price=float(endpoint.pricing.audio_input_second_price),
+                    measurement_source="provider_response.duration",
+                    verification_method="provider_response",
+                    unavailable_value_policy="ZERO_VARIABLE_COMPONENT",
+                )
+            )
         if endpoint.pricing.fixed_price is not None:
             billable_units.append(
                 AccountingUnitContract(
@@ -357,6 +419,49 @@ class TaskUsageAccountingService:
             failure_pricing_policy="reject_unpriced_usage",
         )
         return contract.model_dump(mode="json")
+
+    def accounting_compatibility_errors_for_task(
+        self,
+        *,
+        task: TaskRequest,
+        bundle: BundleConfig,
+    ) -> list[str]:
+        """Reject priced units the selected Provider cannot truthfully report."""
+        endpoint_id = task.constraints.get("endpoint_id")
+        if endpoint_id is None:
+            return []
+        endpoint_service = getattr(self._host, "endpoint_service", None)
+        if endpoint_service is None:
+            return []
+        try:
+            endpoint = endpoint_service.get_endpoint(str(endpoint_id)).endpoint
+        except KeyError:
+            return ["Endpoint does not exist"]
+
+        contract = AccountingContract.model_validate(
+            self.accounting_contract_for_endpoint(endpoint)
+        )
+        usage_contract = self.provider_usage_contract_for_bundle(bundle)
+        declared_units = usage_contract.get("supported_billing_units")
+        if not declared_units:
+            # Older Plugins predate the declared-unit contract. Keep their
+            # current behavior until they explicitly opt in to this gate.
+            return []
+        supported_units = set(declared_units)
+        supported_modes = set(usage_contract.get("supported_accounting_modes") or [])
+        errors: list[str] = []
+        for item in contract.billable_units:
+            if item.mode == "fixed_price" or item.unit == "idle_minutes":
+                continue
+            if item.unit not in supported_units:
+                errors.append(
+                    f"Provider does not report required billing unit: {item.unit}"
+                )
+            if item.mode not in supported_modes:
+                errors.append(
+                    f"Provider does not support required accounting mode: {item.mode}"
+                )
+        return errors
 
     def mark_task_wallet_accounting_blocked(
         self,
