@@ -1911,6 +1911,14 @@ def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quo
     )
     assert ledger_proof.status_code == 200
     assert ledger_proof.json()["operation_type"] == "GOVERNANCE_AUTHORIZATION_COMMIT"
+    assert ledger_proof.json()["consensus_finality"] is False
+    peer_report = client.get(
+        "/operators/registry/wallet-identities/governance-certificates/"
+        f"{approved.json()['governance_certificate']['certificate_id']}/peer-proof-report"
+    )
+    assert peer_report.status_code == 200
+    assert peer_report.json()["enabled_peer_count"] == 0
+    assert peer_report.json()["consensus_finality"] is False
     resolved = registry.resolve_wallet_identity("wallet-consumer")
     assert resolved is not None
     assert resolved["identity_source"] == "registry_resolution"

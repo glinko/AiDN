@@ -932,6 +932,54 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="Ledger proof is unavailable")
         return proof
 
+    @router.get(
+        "/operators/registry/wallet-identities/governance-certificates/{certificate_id}/peer-proof-report"
+    )
+    async def operator_wallet_identity_governance_certificate_peer_proof_report(
+        certificate_id: str,
+        timeout_seconds: int = 10,
+    ) -> dict:
+        registry = _effective_registry_service()
+        try:
+            return registry.wallet_identity_governance_certificate_peer_proof_report(
+                certificate_id,
+                timeout_seconds=timeout_seconds,
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=f"Unknown certificate: {error.args[0]}") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get(
+        "/operators/registry/wallet-identities/governance-revocations/{certificate_id}/ledger-proof"
+    )
+    async def operator_wallet_identity_governance_revocation_ledger_proof(
+        certificate_id: str,
+    ) -> dict:
+        registry = _effective_registry_service()
+        proof = registry.wallet_identity_governance_revocation_ledger_proof(certificate_id)
+        if proof is None:
+            raise HTTPException(status_code=404, detail="Ledger proof is unavailable")
+        return proof
+
+    @router.get(
+        "/operators/registry/wallet-identities/governance-revocations/{certificate_id}/peer-proof-report"
+    )
+    async def operator_wallet_identity_governance_revocation_peer_proof_report(
+        certificate_id: str,
+        timeout_seconds: int = 10,
+    ) -> dict:
+        registry = _effective_registry_service()
+        try:
+            return registry.wallet_identity_governance_revocation_peer_proof_report(
+                certificate_id,
+                timeout_seconds=timeout_seconds,
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=f"Unknown revocation: {error.args[0]}") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @router.get("/operators/registry/wallet-identities/governance-revocations")
     async def operator_wallet_identity_governance_revocations(limit: int = 500) -> dict:
         registry = _effective_registry_service()

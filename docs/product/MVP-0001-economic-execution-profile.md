@@ -174,6 +174,10 @@ Still required before public paid-MVP launch:
    A certificate can be revoked only through a second quorum from its original
    voter set; that revocation is retained as Registry evidence, commits
    `GOVERNANCE_AUTHORIZATION_REVOKE` and removes the affected Resolution.
-   Operators can retrieve the local Ledger proof. Cross-node
-   consensus-finality verification and broader network governance remain
-   outside this MVP profile.
+   Operators can retrieve local Ledger proofs for both certificates and
+   revocations and compare their deterministic commitment subjects with
+   configured Registry peers. The resulting peer report verifies record
+   integrity and classifies matching, mismatched, unavailable and invalid peer
+   observations, but always reports
+   `consensus_finality: false`. Network consensus-finality verification and
+   broader network governance remain outside this MVP profile.

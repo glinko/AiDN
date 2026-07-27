@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib import error as urllib_error
+from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
 from aidn_hypervisor.registry_models import (
@@ -210,9 +211,156 @@ class RegistryService:
     ) -> dict | None:
         if self._ledger_operation_service is None:
             return None
-        return self._ledger_operation_service.wallet_identity_governance_certificate_commitment(
+        operation = self._ledger_operation_service.wallet_identity_governance_certificate_commitment(
             certificate_id
         )
+        if operation is None:
+            return None
+        return self._ledger_operation_service.governance_commitment_proof(operation)
+
+    def wallet_identity_governance_revocation_ledger_proof(
+        self,
+        certificate_id: str,
+    ) -> dict | None:
+        if self._ledger_operation_service is None:
+            return None
+        operation = self._ledger_operation_service.wallet_identity_governance_certificate_revocation(
+            certificate_id
+        )
+        if operation is None:
+            return None
+        return self._ledger_operation_service.governance_commitment_proof(operation)
+
+    def wallet_identity_governance_certificate_peer_proof_report(
+        self,
+        certificate_id: str,
+        *,
+        timeout_seconds: int = 10,
+    ) -> dict:
+        return self._wallet_identity_governance_peer_proof_report(
+            certificate_id=certificate_id,
+            local_proof=self.wallet_identity_governance_certificate_ledger_proof(certificate_id),
+            expected_operation_type="GOVERNANCE_AUTHORIZATION_COMMIT",
+            peer_path=(
+                "/registry/wallet-identities/governance-certificates/"
+                f"{urllib_parse.quote(certificate_id, safe='')}/ledger-proof"
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def wallet_identity_governance_revocation_peer_proof_report(
+        self,
+        certificate_id: str,
+        *,
+        timeout_seconds: int = 10,
+    ) -> dict:
+        return self._wallet_identity_governance_peer_proof_report(
+            certificate_id=certificate_id,
+            local_proof=self.wallet_identity_governance_revocation_ledger_proof(certificate_id),
+            expected_operation_type="GOVERNANCE_AUTHORIZATION_REVOKE",
+            peer_path=(
+                "/registry/wallet-identities/governance-revocations/"
+                f"{urllib_parse.quote(certificate_id, safe='')}/ledger-proof"
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def _wallet_identity_governance_peer_proof_report(
+        self,
+        *,
+        certificate_id: str,
+        local_proof: dict | None,
+        expected_operation_type: str,
+        peer_path: str,
+        timeout_seconds: int,
+    ) -> dict:
+        """Compare verified local evidence with peer records without claiming finality."""
+        if self._ledger_operation_service is None:
+            raise ValueError("Wallet-identity governance Ledger is unavailable")
+        if local_proof is None:
+            raise KeyError(certificate_id)
+        local_summary = self._ledger_operation_service.verify_governance_commitment_proof(
+            local_proof,
+            certificate_id=certificate_id,
+            expected_operation_type=expected_operation_type,
+        )
+        peer_results: list[dict] = []
+        for peer_base_url in sorted(self._wallet_identity_peers):
+            peer = self._wallet_identity_peers[peer_base_url]
+            if not peer.get("enabled", True):
+                continue
+            request = urllib_request.Request(
+                (
+                    f"{peer_base_url}{peer_path}"
+                ),
+                method="GET",
+            )
+            try:
+                with urllib_request.urlopen(request, timeout=timeout_seconds) as response:
+                    peer_proof = json.loads(response.read().decode("utf-8"))
+                if not isinstance(peer_proof, dict):
+                    raise ValueError("peer response is not an object")
+                peer_summary = self._ledger_operation_service.verify_governance_commitment_proof(
+                    peer_proof,
+                    certificate_id=certificate_id,
+                    expected_operation_type=expected_operation_type,
+                )
+            except (urllib_error.URLError, TimeoutError, json.JSONDecodeError) as error:
+                peer_results.append(
+                    {
+                        "peer_base_url": peer_base_url,
+                        "status": "unavailable",
+                        "error": str(error),
+                    }
+                )
+                continue
+            except (TypeError, ValueError) as error:
+                peer_results.append(
+                    {
+                        "peer_base_url": peer_base_url,
+                        "status": "invalid",
+                        "error": str(error),
+                    }
+                )
+                continue
+            peer_results.append(
+                {
+                    "peer_base_url": peer_base_url,
+                    "status": (
+                        "matching"
+                        if peer_summary["commitment_subject_hash"]
+                        == local_summary["commitment_subject_hash"]
+                        else "mismatched"
+                    ),
+                    "operation_id": peer_summary["operation_id"],
+                    "commitment_subject_hash": peer_summary["commitment_subject_hash"],
+                }
+            )
+        matching_peer_count = sum(
+            1 for item in peer_results if item["status"] == "matching"
+        )
+        return {
+            "report_version": "wallet-identity-governance-peer-proof-report.v1",
+            "certificate_id": certificate_id,
+            "local_proof": local_proof,
+            "enabled_peer_count": len(peer_results),
+            "matching_peer_count": matching_peer_count,
+            "mismatched_peer_count": sum(
+                1 for item in peer_results if item["status"] == "mismatched"
+            ),
+            "invalid_peer_count": sum(
+                1 for item in peer_results if item["status"] == "invalid"
+            ),
+            "unavailable_peer_count": sum(
+                1 for item in peer_results if item["status"] == "unavailable"
+            ),
+            "peer_results": peer_results,
+            "consensus_finality": False,
+            "finality_note": (
+                "Peer agreement verifies matching local Ledger evidence only; "
+                "it does not establish consensus finality."
+            ),
+        }
 
     def revoke_wallet_identity_governance_certificate(
         self,

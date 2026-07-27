@@ -101,6 +101,28 @@ def build_registry_router(service: RegistryService) -> APIRouter:
     async def wallet_identity_sync_state(limit: int = 500) -> dict:
         return service.export_wallet_identity_sync_state(limit=limit)
 
+    @router.get(
+        "/registry/wallet-identities/governance-certificates/{certificate_id}/ledger-proof"
+    )
+    async def wallet_identity_governance_certificate_ledger_proof(
+        certificate_id: str,
+    ) -> dict:
+        proof = service.wallet_identity_governance_certificate_ledger_proof(certificate_id)
+        if proof is None:
+            raise HTTPException(status_code=404, detail="Ledger proof is unavailable")
+        return proof
+
+    @router.get(
+        "/registry/wallet-identities/governance-revocations/{certificate_id}/ledger-proof"
+    )
+    async def wallet_identity_governance_revocation_ledger_proof(
+        certificate_id: str,
+    ) -> dict:
+        proof = service.wallet_identity_governance_revocation_ledger_proof(certificate_id)
+        if proof is None:
+            raise HTTPException(status_code=404, detail="Ledger proof is unavailable")
+        return proof
+
     @router.get("/registry/wallet-identities/peers")
     async def list_wallet_identity_peers() -> dict:
         return {"peers": service.list_wallet_identity_peers()}

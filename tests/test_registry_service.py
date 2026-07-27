@@ -2567,6 +2567,47 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
     assert resolved["identity_source"] == "registry_resolution"
     assert resolved["resolution"]["chosen_object_id"] == str(consumer_object["object_id"])
 
+    service.upsert_wallet_identity_peer(peer_base_url="https://peer-a.example")
+    peer_proof = service.wallet_identity_governance_certificate_ledger_proof(
+        certificate["certificate_id"]
+    )
+    assert peer_proof is not None
+
+    class _ProofResponse:
+        def __init__(self, payload: dict) -> None:
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(self._payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _ProofResponse(peer_proof),
+    )
+    peer_report = service.wallet_identity_governance_certificate_peer_proof_report(
+        certificate["certificate_id"]
+    )
+    assert peer_report["matching_peer_count"] == 1
+    assert peer_report["consensus_finality"] is False
+    assert peer_report["peer_results"][0]["status"] == "matching"
+
+    tampered_peer_proof = json.loads(json.dumps(peer_proof))
+    tampered_peer_proof["payload"]["wallet_id"] = "wallet-attacker"
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _ProofResponse(tampered_peer_proof),
+    )
+    invalid_peer_report = service.wallet_identity_governance_certificate_peer_proof_report(
+        certificate["certificate_id"]
+    )
+    assert invalid_peer_report["invalid_peer_count"] == 1
+
     restored_ledger = LedgerOperationService()
     restored_ledger.restore(
         operations=ledger.snapshot_operations(),
@@ -2641,6 +2682,19 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
     assert revocation["ledger_commitment"]["operation_type"] == "GOVERNANCE_AUTHORIZATION_REVOKE"
     assert service.list_wallet_identity_governance_revocations()[0]["payload"]["revocation_id"] == revocation_id
     assert service.list_wallet_identity_resolutions() == []
+    revocation_peer_proof = service.wallet_identity_governance_revocation_ledger_proof(
+        certificate["certificate_id"]
+    )
+    assert revocation_peer_proof is not None
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _ProofResponse(revocation_peer_proof),
+    )
+    revocation_peer_report = service.wallet_identity_governance_revocation_peer_proof_report(
+        certificate["certificate_id"]
+    )
+    assert revocation_peer_report["matching_peer_count"] == 1
+    assert revocation_peer_report["consensus_finality"] is False
 
     forged_revocation = json.loads(json.dumps(revocation))
     forged_revocation["voter_authorities"] = []

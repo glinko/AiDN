@@ -207,6 +207,96 @@ class LedgerOperationService:
                 return dict(operation)
         return None
 
+    @staticmethod
+    def governance_commitment_subject_hash(operation: dict) -> str:
+        """Return the peer-comparable commitment, excluding local sequence and time."""
+        subject = {
+            "operation_type": operation["operation_type"],
+            "origin_type": operation["origin_type"],
+            "fee_class": operation["fee_class"],
+            "payload": operation["payload"],
+            "evidence_references": sorted(operation["evidence_references"]),
+            "signatures": sorted(operation["signatures"]),
+        }
+        return f"sha256:{_hash_dict(subject)}"
+
+    @staticmethod
+    def verify_operation_record(operation: dict) -> None:
+        """Validate the deterministic parts of one exported local Ledger record.
+
+        This proves record integrity, not that a remote Ledger is consensus-final.
+        """
+        model = LedgerOperationRecord.model_validate(operation)
+        unsigned = {
+            "operation_type": model.operation_type,
+            "operation_version": model.operation_version,
+            "protocol_version": model.protocol_version,
+            "origin_type": model.origin_type,
+            "initiator_id": model.initiator_id,
+            "sender_wallet": model.sender_wallet,
+            "sender_sequence": model.sender_sequence,
+            "fee_class": model.fee_class,
+            "fee_payer": model.fee_payer,
+            "created_at": model.created_at,
+            "expires_at": model.expires_at,
+            "target_epoch": model.target_epoch,
+            "payload": model.payload,
+            "evidence_references": model.evidence_references,
+            "signatures": model.signatures,
+        }
+        if model.operation_id != _hash_dict(unsigned):
+            raise ValueError("Ledger operation record identity is invalid")
+        expected_state_changes_root = _hash_dict(
+            {
+                "operation_id": model.operation_id,
+                "operation_type": model.operation_type,
+                "payload": model.payload,
+            }
+        )
+        if model.result.state_changes_root != expected_state_changes_root:
+            raise ValueError("Ledger operation record state root is invalid")
+
+    def governance_commitment_proof(self, operation: dict) -> dict:
+        self.verify_operation_record(operation)
+        proof = dict(operation)
+        proof.update(
+            {
+                "proof_version": "ledger-governance-commitment-proof.v1",
+                "commitment_subject_hash": self.governance_commitment_subject_hash(operation),
+                "verification_scope": "local_ledger_record",
+                "consensus_finality": False,
+            }
+        )
+        return proof
+
+    def verify_governance_commitment_proof(
+        self,
+        proof: dict,
+        *,
+        certificate_id: str,
+        expected_operation_type: str,
+    ) -> dict:
+        self.verify_operation_record(proof)
+        if proof.get("proof_version") != "ledger-governance-commitment-proof.v1":
+            raise ValueError("Ledger governance proof version is invalid")
+        if proof.get("verification_scope") != "local_ledger_record":
+            raise ValueError("Ledger governance proof scope is invalid")
+        if proof.get("consensus_finality") is not False:
+            raise ValueError("Ledger governance proof falsely claims consensus finality")
+        if proof.get("operation_type") != expected_operation_type:
+            raise ValueError("Ledger governance proof operation type is invalid")
+        payload = proof.get("payload")
+        if not isinstance(payload, dict) or payload.get("certificate_id") != certificate_id:
+            raise ValueError("Ledger governance proof certificate binding is invalid")
+        expected_subject_hash = self.governance_commitment_subject_hash(proof)
+        if proof.get("commitment_subject_hash") != expected_subject_hash:
+            raise ValueError("Ledger governance proof subject hash is invalid")
+        return {
+            "operation_id": proof["operation_id"],
+            "commitment_subject_hash": expected_subject_hash,
+            "operation_type": proof["operation_type"],
+        }
+
     def propose_settlement(
         self,
         evaluation: SettlementEvaluation,
