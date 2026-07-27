@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from aidn_hypervisor.eligibility.engine import EligibilityEngine
 from aidn_hypervisor.eligibility.kcg import KCGManager

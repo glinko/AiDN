@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from aidn_hypervisor.eligibility.models import (
     ACTIVATION_AGE_EPOCHS,

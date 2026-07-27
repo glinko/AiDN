@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-from collections import defaultdict
 
 from aidn_hypervisor.eligibility.models import (
     KnownControlGroup,
-    KCGMembership,
 )
 
 
