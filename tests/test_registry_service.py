@@ -11,6 +11,8 @@ from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.wallet_identity import (
+    wallet_identity_governance_revocation_id,
+    wallet_identity_governance_revocation_payload,
     wallet_identity_quorum_approval_payload,
     wallet_identity_quorum_proposal_payload,
 )
@@ -189,6 +191,27 @@ def _sign_quorum_approval(
             resolution_id=resolution_id,
             approver_node_id=identity["node_id"],
             approval_note=approval_note,
+        )
+    ).hex()
+    return f"ed25519:{signature}"
+
+
+def _sign_governance_revocation(
+    identity: dict,
+    *,
+    certificate_id: str,
+    revocation_id: str,
+    reason: str,
+    eligible_voter_node_ids: list[str],
+    quorum_threshold: int,
+) -> str:
+    signature = identity["private_key"].sign(
+        wallet_identity_governance_revocation_payload(
+            certificate_id=certificate_id,
+            revocation_id=revocation_id,
+            reason=reason,
+            eligible_voter_node_ids=eligible_voter_node_ids,
+            quorum_threshold=quorum_threshold,
         )
     ).hex()
     return f"ed25519:{signature}"
@@ -2579,6 +2602,70 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
                 resolution=approved["final_resolution"]
             )
         )
+
+    revocation_reason = "operator key compromise"
+    revocation_id = wallet_identity_governance_revocation_id(
+        certificate_id=certificate["certificate_id"],
+        reason=revocation_reason,
+        eligible_voter_node_ids=["node-a", "node-b"],
+        quorum_threshold=2,
+    )
+    revocation = service.revoke_wallet_identity_governance_certificate(
+        certificate_id=certificate["certificate_id"],
+        reason=revocation_reason,
+        approvals=[
+            {
+                "approver_node_id": "node-a",
+                "approval_signature": _sign_governance_revocation(
+                    operator_a,
+                    certificate_id=certificate["certificate_id"],
+                    revocation_id=revocation_id,
+                    reason=revocation_reason,
+                    eligible_voter_node_ids=["node-a", "node-b"],
+                    quorum_threshold=2,
+                ),
+            },
+            {
+                "approver_node_id": "node-b",
+                "approval_signature": _sign_governance_revocation(
+                    operator_b,
+                    certificate_id=certificate["certificate_id"],
+                    revocation_id=revocation_id,
+                    reason=revocation_reason,
+                    eligible_voter_node_ids=["node-a", "node-b"],
+                    quorum_threshold=2,
+                ),
+            },
+        ],
+    )
+    assert revocation["ledger_commitment"]["operation_type"] == "GOVERNANCE_AUTHORIZATION_REVOKE"
+    assert service.list_wallet_identity_governance_revocations()[0]["payload"]["revocation_id"] == revocation_id
+    assert service.list_wallet_identity_resolutions() == []
+
+    forged_revocation = json.loads(json.dumps(revocation))
+    forged_revocation["voter_authorities"] = []
+    forged_replica = RegistryService(ledger_operation_service=ledger)
+    forged_replica.update_wallet_identity_governance_policy(
+        quorum_resolution_required=True,
+        ledger_authorization_required=True,
+    )
+    forged_replica.upsert_registry_object(
+        service._wallet_identity_governance_certificate_registry_object(certificate)
+    )
+    with pytest.raises(ValueError, match="revocation authority does not match"):
+        forged_replica.upsert_registry_object(
+            service._wallet_identity_governance_revocation_registry_object(forged_revocation)
+        )
+    assert forged_replica.list_wallet_identity_governance_revocations() == []
+
+    revoked_ledger = LedgerOperationService()
+    revoked_ledger.restore(
+        operations=ledger.snapshot_operations(),
+        wallet_sequences=ledger.snapshot_wallet_sequences(),
+    )
+    revoked_restart = RegistryService(snapshot_path=snapshot_path)
+    revoked_restart.bind_ledger_operation_service(revoked_ledger)
+    assert revoked_restart.list_wallet_identity_resolutions() == []
 
 
 def test_registry_service_wallet_identity_governance_policy_persists_and_shapes_quorum(

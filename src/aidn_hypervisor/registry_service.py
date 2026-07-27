@@ -43,6 +43,7 @@ _WALLET_IDENTITY_NETWORK_OBJECT_TYPES = {
     "wallet_identity_resolution_approval",
     "wallet_identity_resolution",
     "wallet_identity_governance_certificate",
+    "wallet_identity_governance_revocation",
 }
 _ALLOWED_WALLET_IDENTITY_VOTER_STATUSES = {"ready", "stale"}
 
@@ -62,6 +63,7 @@ class RegistryService:
         self._wallet_identity_peers: dict[str, dict] = {}
         self._wallet_identity_resolutions: dict[str, dict] = {}
         self._wallet_identity_resolution_proposals: dict[str, dict] = {}
+        self._wallet_identity_governance_revocations: dict[str, dict] = {}
         self._wallet_identity_governance_policy = (
             RegistryWalletIdentityGovernancePolicy().model_dump(mode="json")
         )
@@ -191,6 +193,84 @@ class RegistryService:
                 "limit": limit,
             }
         )
+
+    def list_wallet_identity_governance_revocations(self, *, limit: int = 500) -> list[dict]:
+        return self.list_registry_objects(
+            {
+                "object_type": "wallet_identity_governance_revocation",
+                "namespace": "identity",
+                "include_payload": True,
+                "limit": limit,
+            }
+        )
+
+    def wallet_identity_governance_certificate_ledger_proof(
+        self,
+        certificate_id: str,
+    ) -> dict | None:
+        if self._ledger_operation_service is None:
+            return None
+        return self._ledger_operation_service.wallet_identity_governance_certificate_commitment(
+            certificate_id
+        )
+
+    def revoke_wallet_identity_governance_certificate(
+        self,
+        *,
+        certificate_id: str,
+        reason: str,
+        approvals: list[dict],
+    ) -> dict:
+        existing = self._wallet_identity_governance_revocations.get(certificate_id)
+        if existing is not None:
+            if existing.get("reason") != reason:
+                raise ValueError("Wallet-identity governance certificate has conflicting revocations")
+            return deepcopy(existing)
+        certificate = self._wallet_identity_governance_certificate_payload(certificate_id)
+        if certificate is None:
+            raise KeyError(certificate_id)
+        self._verify_wallet_identity_governance_certificate(certificate)
+        from aidn_hypervisor.wallet_identity import wallet_identity_governance_revocation_id
+
+        eligible_voter_node_ids = list(certificate["eligible_voter_node_ids"])
+        revocation = {
+            "revocation_version": "wallet-identity-governance-revocation.v1",
+            "certificate_id": certificate_id,
+            "reason": reason,
+            "eligible_voter_node_ids": eligible_voter_node_ids,
+            "voter_authorities": deepcopy(certificate["voter_authorities"]),
+            "quorum_threshold": int(certificate["quorum_threshold"]),
+            "approvals": sorted(
+                [deepcopy(item) for item in approvals],
+                key=lambda item: str(item.get("approver_node_id") or ""),
+            ),
+        }
+        revocation["revocation_id"] = wallet_identity_governance_revocation_id(
+            certificate_id=certificate_id,
+            reason=reason,
+            eligible_voter_node_ids=eligible_voter_node_ids,
+            quorum_threshold=revocation["quorum_threshold"],
+        )
+        self._verify_wallet_identity_governance_revocation(
+            revocation,
+            require_ledger=False,
+        )
+        if self._ledger_operation_service is None:
+            if self._wallet_identity_governance_policy.get("ledger_authorization_required"):
+                raise ValueError("Wallet-identity governance policy requires an available Ledger")
+        else:
+            record = self._ledger_operation_service.commit_wallet_identity_governance_revocation(revocation)
+            revocation["ledger_commitment"] = {
+                "operation_id": record["operation_id"],
+                "sequence_id": record["sequence_id"],
+                "certificate_id": certificate_id,
+                "operation_type": record["operation_type"],
+            }
+        revocation["revoked_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        self.upsert_registry_object(
+            self._wallet_identity_governance_revocation_registry_object(revocation)
+        )
+        return deepcopy(revocation)
 
     def wallet_identity_governance_policy(self) -> dict:
         return deepcopy(self._wallet_identity_governance_policy)
@@ -1746,6 +1826,8 @@ class RegistryService:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("Wallet-identity governance certificate is invalid") from exc
+        if str(certificate["certificate_id"]) in self._wallet_identity_governance_revocations:
+            raise ValueError("Wallet-identity governance certificate is revoked")
         commitment = certificate.get("ledger_commitment")
         requires_ledger = bool(
             self._wallet_identity_governance_policy.get("ledger_authorization_required")
@@ -1770,6 +1852,53 @@ class RegistryService:
         )
         if record is None or record.get("operation_id") != commitment.get("operation_id"):
             raise ValueError("Wallet-identity governance certificate Ledger commitment is unknown")
+
+    def _verify_wallet_identity_governance_revocation(
+        self,
+        revocation: dict,
+        *,
+        require_ledger: bool = True,
+    ) -> None:
+        from aidn_hypervisor.wallet_identity import verify_wallet_identity_governance_revocation
+
+        try:
+            verify_wallet_identity_governance_revocation(
+                certificate_id=str(revocation["certificate_id"]),
+                revocation_id=str(revocation["revocation_id"]),
+                reason=str(revocation["reason"]),
+                eligible_voter_node_ids=list(revocation["eligible_voter_node_ids"]),
+                voter_authorities=list(revocation["voter_authorities"]),
+                quorum_threshold=int(revocation["quorum_threshold"]),
+                approvals=list(revocation["approvals"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Wallet-identity governance revocation is invalid") from exc
+        commitment = revocation.get("ledger_commitment")
+        requires_ledger = bool(
+            self._wallet_identity_governance_policy.get("ledger_authorization_required")
+        )
+        if commitment is None:
+            if requires_ledger and require_ledger:
+                raise ValueError("Wallet-identity governance revocation requires Ledger commitment")
+            return
+        if not isinstance(commitment, dict) or commitment.get("certificate_id") != revocation.get("certificate_id"):
+            raise ValueError("Wallet-identity governance revocation Ledger commitment is invalid")
+        if self._ledger_operation_service is None:
+            if requires_ledger and not self._loading_registry_object_snapshot:
+                raise ValueError("Wallet-identity governance revocation Ledger is unavailable")
+            return
+        record = self._ledger_operation_service.wallet_identity_governance_certificate_revocation(
+            str(revocation["certificate_id"])
+        )
+        if record is None or record.get("operation_id") != commitment.get("operation_id"):
+            raise ValueError("Wallet-identity governance revocation Ledger commitment is unknown")
+
+    def _wallet_identity_governance_certificate_payload(self, certificate_id: str) -> dict | None:
+        for item in self.list_wallet_identity_governance_certificates():
+            payload = item.get("payload")
+            if isinstance(payload, dict) and payload.get("certificate_id") == certificate_id:
+                return deepcopy(payload)
+        return None
 
     def _commit_wallet_identity_governance_certificate(self, certificate: dict) -> dict | None:
         if self._ledger_operation_service is None:
@@ -1882,6 +2011,14 @@ class RegistryService:
             payload=deepcopy(certificate),
         )
 
+    def _wallet_identity_governance_revocation_registry_object(self, revocation: dict) -> dict:
+        return self._wallet_identity_registry_object(
+            object_type="wallet_identity_governance_revocation",
+            object_version="wallet-identity-governance-revocation.v1",
+            source_reference=str(revocation["revocation_id"]),
+            payload=deepcopy(revocation),
+        )
+
     def _apply_registry_object_state(self, *, record: dict) -> None:
         if record.get("namespace") != "identity":
             return
@@ -1895,6 +2032,35 @@ class RegistryService:
             self._apply_wallet_identity_resolution_approval_record(payload)
         elif object_type == "wallet_identity_resolution":
             self._apply_wallet_identity_resolution_record(payload)
+        elif object_type == "wallet_identity_governance_revocation":
+            self._apply_wallet_identity_governance_revocation_record(payload)
+
+    def _apply_wallet_identity_governance_revocation_record(self, payload: dict) -> None:
+        certificate_id = str(payload["certificate_id"])
+        existing = self._wallet_identity_governance_revocations.get(certificate_id)
+        if existing is not None:
+            if existing.get("revocation_id") != payload.get("revocation_id"):
+                raise ValueError("Wallet-identity governance certificate has conflicting revocations")
+            return
+        certificate = self._wallet_identity_governance_certificate_payload(certificate_id)
+        if certificate is None:
+            raise ValueError("Wallet-identity governance revocation references an unknown certificate")
+        self._verify_wallet_identity_governance_certificate(certificate)
+        authority_fields = (
+            "eligible_voter_node_ids",
+            "voter_authorities",
+            "quorum_threshold",
+        )
+        if any(payload.get(field) != certificate.get(field) for field in authority_fields):
+            raise ValueError(
+                "Wallet-identity governance revocation authority does not match its certificate"
+            )
+        self._verify_wallet_identity_governance_revocation(payload)
+        self._wallet_identity_governance_revocations[certificate_id] = deepcopy(payload)
+        for wallet_id, resolution in list(self._wallet_identity_resolutions.items()):
+            certificate = resolution.get("governance_certificate")
+            if isinstance(certificate, dict) and certificate.get("certificate_id") == certificate_id:
+                self._wallet_identity_resolutions.pop(wallet_id, None)
 
     def _apply_wallet_identity_resolution_proposal_record(self, payload: dict) -> None:
         resolution_id = str(payload.get("resolution_id") or "").strip()
@@ -1959,6 +2125,8 @@ class RegistryService:
         if certificate is not None:
             if not isinstance(certificate, dict):
                 raise ValueError("Wallet-identity resolution has an invalid governance certificate")
+            if str(certificate.get("certificate_id") or "") in self._wallet_identity_governance_revocations:
+                return
             self._verify_wallet_identity_governance_certificate(certificate)
             if (
                 certificate.get("wallet_id") != wallet_id
@@ -1986,8 +2154,15 @@ class RegistryService:
     def _rebuild_wallet_identity_resolution_state(self) -> None:
         self._wallet_identity_resolutions = {}
         self._wallet_identity_resolution_proposals = {}
+        self._wallet_identity_governance_revocations = {}
         for object_id in sorted(self._registry_objects):
-            self._apply_registry_object_state(record=self._registry_objects[object_id])
+            record = self._registry_objects[object_id]
+            if record.get("object_type") == "wallet_identity_governance_revocation":
+                self._apply_registry_object_state(record=record)
+        for object_id in sorted(self._registry_objects):
+            record = self._registry_objects[object_id]
+            if record.get("object_type") != "wallet_identity_governance_revocation":
+                self._apply_registry_object_state(record=record)
 
     def _wallet_identity_matches(self, wallet_id: str) -> list[dict]:
         matches: list[dict] = []
@@ -2130,7 +2305,21 @@ class RegistryService:
                 "Registry object snapshot wallet_identity_governance_policy must be an object"
             )
 
-        for index, record in enumerate(objects):
+        identity_dependency_order = {
+            "wallet_identity_governance_certificate": 0,
+            "wallet_identity_governance_revocation": 1,
+            "wallet_identity_resolution": 2,
+        }
+        ordered_objects = sorted(
+            enumerate(objects),
+            key=lambda item: (
+                identity_dependency_order.get(item[1].get("object_type"), 0)
+                if isinstance(item[1], dict)
+                else 0,
+                item[0],
+            ),
+        )
+        for index, record in ordered_objects:
             if not isinstance(record, dict):
                 raise ValueError(
                     f"Registry object snapshot contains invalid object entry at index {index}"

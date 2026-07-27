@@ -266,9 +266,12 @@ Immediate priorities:
     idempotent `GOVERNANCE_AUTHORIZATION_COMMIT` Ledger operation and records
     that reference in the Certificate. A strict local policy can now require
     both quorum evidence and a locally known Ledger commitment before applying
-    a Resolution. Certificate revocation, cross-node Ledger proof retrieval and
-    broader network governance remain required before a public multi-node
-    authority claim.
+    a Resolution. A certificate can now be revoked only by a second quorum of
+    the original voter set; the revocation is replicated as a Registry object,
+    emits `GOVERNANCE_AUTHORIZATION_REVOKE` and removes the affected Resolution.
+    Operators can retrieve the local commit as a Ledger proof. Cross-node
+    consensus-finality verification of that proof and broader network
+    governance remain required before a public multi-node authority claim.
 1. Apply the completed `llama.cpp` Health/model discovery/Runtime Binding/RFC-0054 adapter profile to Ollama, vLLM-compatible and Proxy providers; add Provider-specific cancellation confirmation and in-flight recovery fault scenarios where their native APIs support them.
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
 3. Add production package acquisition from signed sources to the verified local Package Store and Registry `plugin` Directory replication.

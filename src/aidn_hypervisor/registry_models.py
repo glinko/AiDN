@@ -212,6 +212,12 @@ class RegistryWalletIdentityQuorumApprovalRequest(BaseModel):
     approval_note: str | None = None
 
 
+class RegistryWalletIdentityGovernanceRevocationRequest(BaseModel):
+    certificate_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    approvals: list[dict] = Field(min_length=1)
+
+
 class RegistryWalletIdentityGovernancePolicy(BaseModel):
     policy_version: str = "wallet-identity-governance-policy.v1"
     authorized_voter_statuses: list[str] = Field(

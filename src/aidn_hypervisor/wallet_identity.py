@@ -305,3 +305,97 @@ def verify_wallet_identity_governance_certificate(
     expected_id = "sha256:" + hashlib.sha256(expected_payload).hexdigest()
     if certificate_id != expected_id:
         raise ValueError("Wallet-identity governance certificate identity is invalid")
+
+
+def wallet_identity_governance_revocation_payload(
+    *,
+    certificate_id: str,
+    revocation_id: str,
+    reason: str,
+    eligible_voter_node_ids: list[str],
+    quorum_threshold: int,
+) -> bytes:
+    return json.dumps(
+        {
+            "domain": "aidn.wallet-identity.governance-revocation.v1",
+            "certificate_id": certificate_id,
+            "revocation_id": revocation_id,
+            "reason": reason,
+            "eligible_voter_node_ids": list(eligible_voter_node_ids),
+            "quorum_threshold": quorum_threshold,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def wallet_identity_governance_revocation_id(
+    *,
+    certificate_id: str,
+    reason: str,
+    eligible_voter_node_ids: list[str],
+    quorum_threshold: int,
+) -> str:
+    return "sha256:" + hashlib.sha256(
+        wallet_identity_governance_revocation_payload(
+            certificate_id=certificate_id,
+            revocation_id="",
+            reason=reason,
+            eligible_voter_node_ids=eligible_voter_node_ids,
+            quorum_threshold=quorum_threshold,
+        )
+    ).hexdigest()
+
+
+def verify_wallet_identity_governance_revocation(
+    *,
+    certificate_id: str,
+    revocation_id: str,
+    reason: str,
+    eligible_voter_node_ids: list[str],
+    voter_authorities: list[dict[str, str]],
+    quorum_threshold: int,
+    approvals: list[dict[str, str]],
+) -> None:
+    if quorum_threshold < 1:
+        raise ValueError("Wallet-identity governance revocation quorum threshold is invalid")
+    expected_id = wallet_identity_governance_revocation_id(
+        certificate_id=certificate_id,
+        reason=reason,
+        eligible_voter_node_ids=eligible_voter_node_ids,
+        quorum_threshold=quorum_threshold,
+    )
+    if revocation_id != expected_id:
+        raise ValueError("Wallet-identity governance revocation identity is invalid")
+    authorities = {
+        str(item.get("node_id") or ""): str(item.get("public_key") or "")
+        for item in voter_authorities
+    }
+    eligible_voters = set(eligible_voter_node_ids)
+    if set(authorities) != eligible_voters or not all(authorities.values()):
+        raise ValueError("Wallet-identity governance revocation authority set is invalid")
+    seen_approvers: set[str] = set()
+    for approval in approvals:
+        approver_node_id = str(approval.get("approver_node_id") or "")
+        signature = approval.get("approval_signature")
+        if approver_node_id not in eligible_voters or approver_node_id in seen_approvers:
+            raise ValueError("Wallet-identity governance revocation approval set is invalid")
+        if not isinstance(signature, str):
+            raise ValueError("Wallet-identity governance revocation approval is unsigned")
+        _verify_ed25519_signature(
+            public_key=authorities[approver_node_id],
+            signature=signature,
+            payload=wallet_identity_governance_revocation_payload(
+                certificate_id=certificate_id,
+                revocation_id=revocation_id,
+                reason=reason,
+                eligible_voter_node_ids=eligible_voter_node_ids,
+                quorum_threshold=quorum_threshold,
+            ),
+            required_message="Wallet-identity governance revocation requires an Ed25519 signature",
+            invalid_message="Wallet-identity governance revocation signature is invalid",
+        )
+        seen_approvers.add(approver_node_id)
+    if len(seen_approvers) < quorum_threshold:
+        raise ValueError("Wallet-identity governance revocation lacks quorum")

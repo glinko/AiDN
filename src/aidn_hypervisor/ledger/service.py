@@ -143,6 +143,70 @@ class LedgerOperationService:
                 return dict(operation)
         return None
 
+    def commit_wallet_identity_governance_revocation(
+        self,
+        revocation: dict,
+        *,
+        created_at: str | None = None,
+    ) -> dict:
+        from aidn_hypervisor.wallet_identity import verify_wallet_identity_governance_revocation
+
+        try:
+            verify_wallet_identity_governance_revocation(
+                certificate_id=str(revocation["certificate_id"]),
+                revocation_id=str(revocation["revocation_id"]),
+                reason=str(revocation["reason"]),
+                eligible_voter_node_ids=list(revocation["eligible_voter_node_ids"]),
+                voter_authorities=list(revocation["voter_authorities"]),
+                quorum_threshold=int(revocation["quorum_threshold"]),
+                approvals=list(revocation["approvals"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Wallet-identity governance revocation is invalid") from exc
+        payload = {
+            "certificate_id": str(revocation["certificate_id"]),
+            "revocation_id": str(revocation["revocation_id"]),
+            "reason": str(revocation["reason"]),
+            "scope": "wallet_identity_resolution",
+        }
+        existing = self.wallet_identity_governance_certificate_revocation(
+            payload["certificate_id"]
+        )
+        if existing is not None:
+            if existing["payload"] != payload:
+                raise ValueError("conflicting wallet-identity governance certificate revocation")
+            return existing
+        return self.record_operation(
+            operation_type="GOVERNANCE_AUTHORIZATION_REVOKE",
+            origin_type="multi_party",
+            fee_class="protocol_sponsored",
+            initiator_id=payload["certificate_id"],
+            payload=payload,
+            evidence_references=[payload["certificate_id"], payload["revocation_id"]],
+            signatures=[
+                str(item["approval_signature"])
+                for item in revocation["approvals"]
+                if isinstance(item.get("approval_signature"), str)
+            ],
+            created_at=created_at,
+            emitted_events=["WalletIdentityGovernanceCertificateRevoked"],
+        )
+
+    def wallet_identity_governance_certificate_revocation(
+        self,
+        certificate_id: str,
+    ) -> dict | None:
+        for operation in reversed(self._operations):
+            if operation.get("operation_type") != "GOVERNANCE_AUTHORIZATION_REVOKE":
+                continue
+            payload = operation.get("payload") or {}
+            if (
+                payload.get("scope") == "wallet_identity_resolution"
+                and payload.get("certificate_id") == certificate_id
+            ):
+                return dict(operation)
+        return None
+
     def propose_settlement(
         self,
         evaluation: SettlementEvaluation,

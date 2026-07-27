@@ -171,5 +171,9 @@ Still required before public paid-MVP launch:
    composed Hypervisor also records a `GOVERNANCE_AUTHORIZATION_COMMIT` Ledger
    operation and attaches that commitment to the Certificate. Strict local
    policy can require the quorum Certificate and a locally known Ledger commit.
-   Certificate revocation, cross-node Ledger-proof retrieval and broader
-   network governance remain outside this MVP profile.
+   A certificate can be revoked only through a second quorum from its original
+   voter set; that revocation is retained as Registry evidence, commits
+   `GOVERNANCE_AUTHORIZATION_REVOKE` and removes the affected Resolution.
+   Operators can retrieve the local Ledger proof. Cross-node
+   consensus-finality verification and broader network governance remain
+   outside this MVP profile.

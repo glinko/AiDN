@@ -39,6 +39,7 @@ from aidn_hypervisor.registry_models import (
     RegistryNodeAdvertisement,
     RegistryObjectQuery,
     RegistryWalletIdentityGovernancePolicyUpdateRequest,
+    RegistryWalletIdentityGovernanceRevocationRequest,
     RegistryWalletIdentityQuorumApprovalRequest,
     RegistryWalletIdentityQuorumProposalRequest,
     RegistryWalletIdentityResolutionRequest,
@@ -918,6 +919,39 @@ def build_api_router(
     async def operator_wallet_identity_governance_certificates(limit: int = 500) -> dict:
         registry = _effective_registry_service()
         return {"items": registry.list_wallet_identity_governance_certificates(limit=limit)}
+
+    @router.get(
+        "/operators/registry/wallet-identities/governance-certificates/{certificate_id}/ledger-proof"
+    )
+    async def operator_wallet_identity_governance_certificate_ledger_proof(
+        certificate_id: str,
+    ) -> dict:
+        registry = _effective_registry_service()
+        proof = registry.wallet_identity_governance_certificate_ledger_proof(certificate_id)
+        if proof is None:
+            raise HTTPException(status_code=404, detail="Ledger proof is unavailable")
+        return proof
+
+    @router.get("/operators/registry/wallet-identities/governance-revocations")
+    async def operator_wallet_identity_governance_revocations(limit: int = 500) -> dict:
+        registry = _effective_registry_service()
+        return {"items": registry.list_wallet_identity_governance_revocations(limit=limit)}
+
+    @router.post("/operators/registry/wallet-identities/governance-revocations")
+    async def operator_revoke_wallet_identity_governance_certificate(
+        payload: RegistryWalletIdentityGovernanceRevocationRequest,
+    ) -> dict:
+        registry = _effective_registry_service()
+        try:
+            return registry.revoke_wallet_identity_governance_certificate(
+                certificate_id=payload.certificate_id,
+                reason=payload.reason,
+                approvals=payload.approvals,
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=f"Unknown certificate: {error.args[0]}") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.post("/operators/registry/wallet-identities/governance-policy")
     async def update_operator_wallet_identity_governance_policy(
