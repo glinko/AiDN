@@ -7,6 +7,7 @@ from urllib import error as urllib_error
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.wallet_identity import (
@@ -2437,10 +2438,20 @@ def test_registry_service_resolves_wallet_identity_conflict_with_operator_choice
 
 def test_registry_service_finalizes_wallet_identity_quorum_resolution(
     monkeypatch,
+    tmp_path: Path,
 ) -> None:
     ready_time = datetime.fromisoformat("2026-07-05T14:00:05+00:00").timestamp()
     monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
-    service = RegistryService()
+    ledger = LedgerOperationService()
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(
+        snapshot_path=snapshot_path,
+        ledger_operation_service=ledger,
+    )
+    service.update_wallet_identity_governance_policy(
+        quorum_resolution_required=True,
+        ledger_authorization_required=True,
+    )
     operator_a = _operator_signing_identity("node-a")
     operator_b = _operator_signing_identity("node-b")
     consumer_object = _wallet_identity_object(
@@ -2517,6 +2528,14 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
         "node-b",
     ]
     assert approved["final_resolution"]["governance_certificate"] == certificate
+    ledger_commitment = certificate["ledger_commitment"]
+    assert ledger_commitment["certificate_id"] == certificate["certificate_id"]
+    assert ledger_commitment["operation_type"] == "GOVERNANCE_AUTHORIZATION_COMMIT"
+    ledger_record = ledger.wallet_identity_governance_certificate_commitment(
+        certificate["certificate_id"]
+    )
+    assert ledger_record is not None
+    assert ledger_record["operation_id"] == ledger_commitment["operation_id"]
     certificates = service.list_wallet_identity_governance_certificates()
     assert len(certificates) == 1
     assert certificates[0]["payload"]["certificate_id"] == certificate["certificate_id"]
@@ -2524,6 +2543,17 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
     assert resolved is not None
     assert resolved["identity_source"] == "registry_resolution"
     assert resolved["resolution"]["chosen_object_id"] == str(consumer_object["object_id"])
+
+    restored_ledger = LedgerOperationService()
+    restored_ledger.restore(
+        operations=ledger.snapshot_operations(),
+        wallet_sequences=ledger.snapshot_wallet_sequences(),
+    )
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    restarted.bind_ledger_operation_service(restored_ledger)
+    restarted_resolution = restarted.resolve_wallet_identity("wallet-consumer")
+    assert restarted_resolution is not None
+    assert restarted_resolution["identity_source"] == "registry_resolution"
 
     tampered_resolution = json.loads(json.dumps(approved["final_resolution"]))
     tampered_resolution["governance_certificate"]["approvals"][1][
@@ -2537,6 +2567,18 @@ def test_registry_service_finalizes_wallet_identity_quorum_resolution(
             )
         )
     assert replica.list_wallet_identity_resolutions() == []
+
+    strict_replica = RegistryService(ledger_operation_service=LedgerOperationService())
+    strict_replica.update_wallet_identity_governance_policy(
+        quorum_resolution_required=True,
+        ledger_authorization_required=True,
+    )
+    with pytest.raises(ValueError, match="Ledger commitment is unknown"):
+        strict_replica.upsert_registry_object(
+            service._wallet_identity_resolution_registry_object(
+                resolution=approved["final_resolution"]
+            )
+        )
 
 
 def test_registry_service_wallet_identity_governance_policy_persists_and_shapes_quorum(

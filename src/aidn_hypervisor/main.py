@@ -62,6 +62,9 @@ def build_app(
         state_store=state_store,
         registry_service=resolved_registry_service,
     )
+    resolved_registry_service.bind_ledger_operation_service(
+        resolved_service.ledger_operation_service
+    )
     resolved_endpoint_service = endpoint_service or _build_default_endpoint_service(
         state_store=state_store
     )

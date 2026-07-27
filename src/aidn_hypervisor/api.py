@@ -914,6 +914,11 @@ def build_api_router(
         registry = _effective_registry_service()
         return registry.wallet_identity_governance_policy()
 
+    @router.get("/operators/registry/wallet-identities/governance-certificates")
+    async def operator_wallet_identity_governance_certificates(limit: int = 500) -> dict:
+        registry = _effective_registry_service()
+        return {"items": registry.list_wallet_identity_governance_certificates(limit=limit)}
+
     @router.post("/operators/registry/wallet-identities/governance-policy")
     async def update_operator_wallet_identity_governance_policy(
         payload: RegistryWalletIdentityGovernancePolicyUpdateRequest,
@@ -925,6 +930,8 @@ def build_api_router(
                 threshold_mode=payload.threshold_mode,
                 minimum_eligible_voter_count=payload.minimum_eligible_voter_count,
                 minimum_quorum_threshold=payload.minimum_quorum_threshold,
+                quorum_resolution_required=payload.quorum_resolution_required,
+                ledger_authorization_required=payload.ledger_authorization_required,
             )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

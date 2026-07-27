@@ -70,6 +70,79 @@ class LedgerOperationService:
     def get_settlement_proposal(self, settlement_id: str) -> SessionSettlementProposal:
         return self._settlement_proposals[settlement_id]
 
+    def commit_wallet_identity_governance_certificate(
+        self,
+        certificate: dict,
+        *,
+        created_at: str | None = None,
+    ) -> dict:
+        """Commit verified quorum authority without making Registry state canonical itself."""
+        from aidn_hypervisor.wallet_identity import verify_wallet_identity_governance_certificate
+
+        try:
+            verify_wallet_identity_governance_certificate(
+                certificate_id=str(certificate["certificate_id"]),
+                resolution_id=str(certificate["resolution_id"]),
+                wallet_id=str(certificate["wallet_id"]),
+                chosen_object_id=str(certificate["chosen_object_id"]),
+                chosen_payload_hash=str(certificate["chosen_payload_hash"]),
+                governance_policy_hash=str(certificate["governance_policy_hash"]),
+                eligible_voter_node_ids=list(certificate["eligible_voter_node_ids"]),
+                voter_authorities=list(certificate["voter_authorities"]),
+                quorum_threshold=int(certificate["quorum_threshold"]),
+                approvals=list(certificate["approvals"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Wallet-identity governance certificate is invalid") from exc
+
+        commitment_payload = {
+            "certificate_id": str(certificate["certificate_id"]),
+            "resolution_id": str(certificate["resolution_id"]),
+            "wallet_id": str(certificate["wallet_id"]),
+            "chosen_object_id": str(certificate["chosen_object_id"]),
+            "chosen_payload_hash": str(certificate["chosen_payload_hash"]),
+            "governance_policy_hash": str(certificate["governance_policy_hash"]),
+            "scope": "wallet_identity_resolution",
+        }
+        existing = self.wallet_identity_governance_certificate_commitment(
+            commitment_payload["certificate_id"]
+        )
+        if existing is not None:
+            if existing["payload"] != commitment_payload:
+                raise ValueError("conflicting wallet-identity governance certificate commitment")
+            return existing
+
+        return self.record_operation(
+            operation_type="GOVERNANCE_AUTHORIZATION_COMMIT",
+            origin_type="multi_party",
+            fee_class="protocol_sponsored",
+            initiator_id=commitment_payload["wallet_id"],
+            payload=commitment_payload,
+            evidence_references=[commitment_payload["certificate_id"]],
+            signatures=[
+                str(item["approval_signature"])
+                for item in certificate["approvals"]
+                if isinstance(item.get("approval_signature"), str)
+            ],
+            created_at=created_at,
+            emitted_events=["WalletIdentityGovernanceCertificateCommitted"],
+        )
+
+    def wallet_identity_governance_certificate_commitment(
+        self,
+        certificate_id: str,
+    ) -> dict | None:
+        for operation in reversed(self._operations):
+            if operation.get("operation_type") != "GOVERNANCE_AUTHORIZATION_COMMIT":
+                continue
+            payload = operation.get("payload") or {}
+            if (
+                payload.get("scope") == "wallet_identity_resolution"
+                and payload.get("certificate_id") == certificate_id
+            ):
+                return dict(operation)
+        return None
+
     def propose_settlement(
         self,
         evaluation: SettlementEvaluation,

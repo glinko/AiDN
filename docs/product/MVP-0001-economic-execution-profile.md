@@ -167,6 +167,9 @@ Still required before public paid-MVP launch:
    Finalized decisions now derive a portable Governance Certificate that
    commits the policy hash, authoritative voter keys, quorum, candidate and
    each signed vote; it is published as a Registry object and re-verified
-   before an imported final Resolution affects local identity state. What still
-   remains is a ledger-backed authority model, certificate revocation and
-   broader network governance above that local policy layer.
+   before an imported final Resolution affects local identity state. The
+   composed Hypervisor also records a `GOVERNANCE_AUTHORIZATION_COMMIT` Ledger
+   operation and attaches that commitment to the Certificate. Strict local
+   policy can require the quorum Certificate and a locally known Ledger commit.
+   Certificate revocation, cross-node Ledger-proof retrieval and broader
+   network governance remain outside this MVP profile.

@@ -4,6 +4,7 @@ import time
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -19,6 +20,9 @@ from aidn_hypervisor.registry_models import (
     RegistryWalletIdentityGovernancePolicy,
     RegistryWalletIdentityPeerConfig,
 )
+
+if TYPE_CHECKING:
+    from aidn_hypervisor.ledger.service import LedgerOperationService
 
 _REGISTRY_OBJECT_SNAPSHOT_SCHEMA_VERSION = "registry-object-store.v1"
 _LOCAL_REGISTRY_COMPLETENESS_SUMMARY_VERSION = (
@@ -49,6 +53,7 @@ class RegistryService:
         *,
         stale_grace_seconds: int = 30,
         snapshot_path: str | Path | None = None,
+        ledger_operation_service: "LedgerOperationService | None" = None,
     ) -> None:
         self.stale_grace_seconds = stale_grace_seconds
         self._nodes: dict[str, dict] = {}
@@ -60,8 +65,23 @@ class RegistryService:
         self._wallet_identity_governance_policy = (
             RegistryWalletIdentityGovernancePolicy().model_dump(mode="json")
         )
+        self._ledger_operation_service = ledger_operation_service
         self._snapshot_path = Path(snapshot_path) if snapshot_path is not None else None
-        self._load_registry_object_snapshot()
+        self._loading_registry_object_snapshot = True
+        try:
+            self._load_registry_object_snapshot()
+        finally:
+            self._loading_registry_object_snapshot = False
+
+    def bind_ledger_operation_service(
+        self,
+        ledger_operation_service: "LedgerOperationService",
+    ) -> None:
+        """Attach the local canonical ledger used for strict governance policy."""
+        if self._ledger_operation_service not in {None, ledger_operation_service}:
+            raise ValueError("Registry already has a different Ledger operation service")
+        self._ledger_operation_service = ledger_operation_service
+        self._rebuild_wallet_identity_resolution_state()
 
     def upsert_node(self, payload: RegistryNodeAdvertisement) -> dict:
         self._validate_wallet_identity_objects(
@@ -182,6 +202,8 @@ class RegistryService:
         threshold_mode: str | None = None,
         minimum_eligible_voter_count: int | None = None,
         minimum_quorum_threshold: int | None = None,
+        quorum_resolution_required: bool | None = None,
+        ledger_authorization_required: bool | None = None,
     ) -> dict:
         policy = deepcopy(self._wallet_identity_governance_policy)
         if authorized_voter_statuses is not None:
@@ -220,6 +242,12 @@ class RegistryService:
             if minimum_quorum_threshold < 1:
                 raise ValueError("minimum_quorum_threshold must be at least 1")
             policy["minimum_quorum_threshold"] = int(minimum_quorum_threshold)
+        if quorum_resolution_required is not None:
+            policy["quorum_resolution_required"] = bool(quorum_resolution_required)
+        if ledger_authorization_required is not None:
+            policy["ledger_authorization_required"] = bool(ledger_authorization_required)
+        if policy["ledger_authorization_required"] and not policy["quorum_resolution_required"]:
+            raise ValueError("ledger_authorization_required requires quorum_resolution_required")
         policy["updated_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         model = RegistryWalletIdentityGovernancePolicy.model_validate(policy)
         self._wallet_identity_governance_policy = model.model_dump(mode="json")
@@ -392,6 +420,11 @@ class RegistryService:
         operator_note: str | None = None,
         governance_certificate: dict | None = None,
     ) -> dict:
+        if (
+            self._wallet_identity_governance_policy.get("quorum_resolution_required")
+            and governance_certificate is None
+        ):
+            raise ValueError("Wallet-identity resolution requires a quorum governance certificate")
         matches = self._wallet_identity_matches(wallet_id)
         selected = self._select_wallet_identity_resolution_candidate(
             wallet_id=wallet_id,
@@ -987,6 +1020,11 @@ class RegistryService:
             return None
         resolution = self._wallet_identity_resolutions.get(wallet_id)
         if resolution is not None:
+            certificate = resolution.get("governance_certificate")
+            if certificate is not None:
+                if not isinstance(certificate, dict):
+                    raise ValueError("Wallet-identity resolution has an invalid governance certificate")
+                self._verify_wallet_identity_governance_certificate(certificate)
             for item in matches:
                 if (
                     item.get("object_id") == resolution.get("chosen_object_id")
@@ -1626,6 +1664,9 @@ class RegistryService:
         if len(approvals) < threshold:
             return
         certificate = self._wallet_identity_governance_certificate(proposal=proposal)
+        ledger_commitment = self._commit_wallet_identity_governance_certificate(certificate)
+        if ledger_commitment is not None:
+            certificate["ledger_commitment"] = ledger_commitment
         self.upsert_registry_object(
             self._wallet_identity_governance_certificate_registry_object(certificate)
         )
@@ -1705,6 +1746,43 @@ class RegistryService:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("Wallet-identity governance certificate is invalid") from exc
+        commitment = certificate.get("ledger_commitment")
+        requires_ledger = bool(
+            self._wallet_identity_governance_policy.get("ledger_authorization_required")
+        )
+        if commitment is None:
+            if requires_ledger:
+                raise ValueError("Wallet-identity governance certificate requires Ledger commitment")
+            return
+        if not isinstance(commitment, dict):
+            raise ValueError("Wallet-identity governance certificate Ledger commitment is invalid")
+        expected_certificate_id = str(certificate["certificate_id"])
+        if commitment.get("certificate_id") != expected_certificate_id:
+            raise ValueError("Wallet-identity governance certificate Ledger commitment is mismatched")
+        if self._ledger_operation_service is None:
+            if requires_ledger:
+                if self._loading_registry_object_snapshot:
+                    return
+                raise ValueError("Wallet-identity governance certificate Ledger is unavailable")
+            return
+        record = self._ledger_operation_service.wallet_identity_governance_certificate_commitment(
+            expected_certificate_id
+        )
+        if record is None or record.get("operation_id") != commitment.get("operation_id"):
+            raise ValueError("Wallet-identity governance certificate Ledger commitment is unknown")
+
+    def _commit_wallet_identity_governance_certificate(self, certificate: dict) -> dict | None:
+        if self._ledger_operation_service is None:
+            if self._wallet_identity_governance_policy.get("ledger_authorization_required"):
+                raise ValueError("Wallet-identity governance policy requires an available Ledger")
+            return None
+        record = self._ledger_operation_service.commit_wallet_identity_governance_certificate(certificate)
+        return {
+            "operation_id": record["operation_id"],
+            "sequence_id": record["sequence_id"],
+            "certificate_id": certificate["certificate_id"],
+            "operation_type": record["operation_type"],
+        }
 
     def _wallet_identity_registry_object(
         self,

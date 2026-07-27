@@ -322,6 +322,11 @@ class HypervisorService:
     def list_ledger_operations(self, *, limit: int | None = None) -> list[dict]:
         return self._settlement_application_facade().list_ledger_operations(limit=limit)
 
+    @property
+    def ledger_operation_service(self) -> LedgerOperationService:
+        """Expose the canonical ledger dependency for application composition."""
+        return self._ledger_operation_service
+
     def export_ledger_operations(
         self,
         *,

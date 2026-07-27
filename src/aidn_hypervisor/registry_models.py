@@ -222,6 +222,8 @@ class RegistryWalletIdentityGovernancePolicy(BaseModel):
     minimum_quorum_threshold: int = Field(default=1, ge=1)
     owner_wallet_link_required: bool = True
     signature_scheme: str = "ed25519"
+    quorum_resolution_required: bool = False
+    ledger_authorization_required: bool = False
     updated_at: str | None = None
 
 
@@ -230,6 +232,8 @@ class RegistryWalletIdentityGovernancePolicyUpdateRequest(BaseModel):
     threshold_mode: str | None = None
     minimum_eligible_voter_count: int | None = Field(default=None, ge=1)
     minimum_quorum_threshold: int | None = Field(default=None, ge=1)
+    quorum_resolution_required: bool | None = None
+    ledger_authorization_required: bool | None = None
 
 
 class RegistryCompletenessIssue(BaseModel):

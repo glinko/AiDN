@@ -262,9 +262,13 @@ Immediate priorities:
     Governance Certificate that commits the policy hash, voter keys, candidate,
     quorum and signed vote set; it is replicated as a Registry object and
     re-verified before an imported Resolution changes local identity state.
-    What still does not exist is a ledger-backed authority, certificate
-    revocation and broader network governance above that local ownership
-    linkage and local policy surface.
+    In the composed Hypervisor application, finalization also creates an
+    idempotent `GOVERNANCE_AUTHORIZATION_COMMIT` Ledger operation and records
+    that reference in the Certificate. A strict local policy can now require
+    both quorum evidence and a locally known Ledger commitment before applying
+    a Resolution. Certificate revocation, cross-node Ledger proof retrieval and
+    broader network governance remain required before a public multi-node
+    authority claim.
 1. Apply the completed `llama.cpp` Health/model discovery/Runtime Binding/RFC-0054 adapter profile to Ollama, vLLM-compatible and Proxy providers; add Provider-specific cancellation confirmation and in-flight recovery fault scenarios where their native APIs support them.
 2. Continue Validation Report custody with Slice 2: dedicated content-addressed Endpoint custody store, atomic promotion and retrieval APIs.
 3. Add production package acquisition from signed sources to the verified local Package Store and Registry `plugin` Directory replication.

@@ -1750,6 +1750,8 @@ def test_operator_wallet_identity_governance_policy_endpoint_updates_registry_po
             "authorized_voter_statuses": ["ready"],
             "minimum_eligible_voter_count": 2,
             "minimum_quorum_threshold": 2,
+            "quorum_resolution_required": True,
+            "ledger_authorization_required": True,
         },
     )
 
@@ -1757,6 +1759,8 @@ def test_operator_wallet_identity_governance_policy_endpoint_updates_registry_po
     assert updated.json()["authorized_voter_statuses"] == ["ready"]
     assert updated.json()["minimum_eligible_voter_count"] == 2
     assert updated.json()["minimum_quorum_threshold"] == 2
+    assert updated.json()["quorum_resolution_required"] is True
+    assert updated.json()["ledger_authorization_required"] is True
     assert registry.wallet_identity_governance_policy()["authorized_voter_statuses"] == ["ready"]
 
 
@@ -1893,6 +1897,14 @@ def test_operator_wallet_identity_quorum_resolution_endpoints_finalize_after_quo
 
     assert approved.status_code == 200
     assert approved.json()["status"] == "finalized"
+    assert approved.json()["governance_certificate"]["ledger_commitment"]["operation_type"] == (
+        "GOVERNANCE_AUTHORIZATION_COMMIT"
+    )
+    certificates = client.get("/operators/registry/wallet-identities/governance-certificates")
+    assert certificates.status_code == 200
+    assert certificates.json()["items"][0]["payload"]["certificate_id"] == approved.json()[
+        "governance_certificate"
+    ]["certificate_id"]
     resolved = registry.resolve_wallet_identity("wallet-consumer")
     assert resolved is not None
     assert resolved["identity_source"] == "registry_resolution"
