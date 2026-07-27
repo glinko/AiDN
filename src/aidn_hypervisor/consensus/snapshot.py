@@ -6,9 +6,8 @@ import hashlib
 import json
 import time
 from enum import Enum
-from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class SnapshotFormat(str, Enum):
