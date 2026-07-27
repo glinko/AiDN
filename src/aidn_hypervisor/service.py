@@ -3,14 +3,6 @@ import json
 import time
 from datetime import UTC, datetime
 
-from pydantic import ValidationError
-
-from aidn_hypervisor.accounting.models import (
-    AccountingContract,
-    AccountingUnitContract,
-    SessionAccountingCheckpoint,
-    UsageReport,
-)
 from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
 from aidn_hypervisor.allocation_catalog_service import AllocationCatalogService
 from aidn_hypervisor.allocation_lifecycle_service import AllocationLifecycleService
@@ -66,12 +58,11 @@ from aidn_hypervisor.state import (
 )
 from aidn_hypervisor.task_execution_service import TaskExecutionService
 from aidn_hypervisor.task_lifecycle_service import TaskLifecycleService
+from aidn_hypervisor.task_usage_accounting_service import TaskUsageAccountingService
 from aidn_hypervisor.wallet_allocation_service import WalletAllocationService
 from aidn_hypervisor.wallet_application_service import WalletApplicationService
 from aidn_hypervisor.wallet_economics_service import WalletEconomicsService
-from aidn_hypervisor.wallet_models import (
-    WalletUsageMeasurement,
-)
+from aidn_hypervisor.wallet_models import WalletUsageMeasurement
 
 Q_ATOMS_PER_Q = 1_000_000
 
@@ -257,6 +248,7 @@ class HypervisorService:
         self._remote_transport_service = RemoteTransportService(self)
         self._task_execution_service = TaskExecutionService(self)
         self._task_lifecycle_service = TaskLifecycleService(self)
+        self._task_usage_accounting_service = TaskUsageAccountingService(self)
         self._endpoint_execution_context_service = EndpointExecutionContextService(self)
         self._allocation_lifecycle_service = AllocationLifecycleService(self)
         self._allocation_catalog_service = AllocationCatalogService(self)
@@ -1859,86 +1851,10 @@ class HypervisorService:
         bundle: BundleConfig,
         task: TaskRequest,
     ) -> None:
-        owner_id, allocation_id = self._wallet_usage_attribution_for_task(task)
-        result = self._task_results.get(task_id)
-        if not isinstance(result, dict):
-            return
-        usage_contract = self._provider_usage_contract_for_bundle(bundle)
-        usage = result.get("usage")
-        if not isinstance(usage, dict):
-            if owner_id is None:
-                return
-            if usage_contract.get("missing_usage_behavior") == "strict_accounting":
-                self._mark_task_wallet_accounting_blocked(
-                    task_id=task_id,
-                    bundle_id=bundle.bundle_id,
-                    owner_id=str(owner_id),
-                    reason="missing_provider_usage",
-                )
-                # Auto-hold the allocation for strict-accounting blocked tasks
-                if allocation_id is not None:
-                    self._wallet_strict_held_allocations.add(
-                        str(allocation_id)
-                    )
-            return
-        try:
-            measurement = WalletUsageMeasurement(**usage)
-        except ValidationError as error:
-            if owner_id is None:
-                return
-            self._record_wallet_usage_skipped(
-                task_id=task_id,
-                bundle_id=bundle.bundle_id,
-                owner_id=str(owner_id),
-                source=str(usage.get("source", "task_auto")),
-                reason="invalid_provider_usage_contract",
-                validation_errors=error.errors(),
-                strict_accounting=(
-                    usage_contract.get("missing_usage_behavior") == "strict_accounting"
-                ),
-            )
-            # Auto-hold the allocation for strict-accounting blocked tasks
-            if (
-                usage_contract.get("missing_usage_behavior") == "strict_accounting"
-                and allocation_id is not None
-            ):
-                self._wallet_strict_held_allocations.add(str(allocation_id))
-            return
-        usage_quote = self.quote_wallet_usage(
-            input_tokens=measurement.input_tokens,
-            output_tokens=measurement.output_tokens,
-            fixed_request_count=measurement.fixed_request_count,
-        )
-        session_charge_result = self._record_session_usage_charge_for_task(
+        self._task_usage_accounting_facade().auto_record_wallet_usage_for_task(
             task_id=task_id,
+            bundle=bundle,
             task=task,
-            amount_q=float(usage_quote["charges"]["total_q"]),
-        )
-        usage_report = self._attach_usage_report_to_task_result(
-            task_id=task_id,
-            task=task,
-            measurement=measurement,
-        )
-        self._record_session_usage_acknowledgement_for_task(
-            task_id=task_id,
-            task=task,
-            usage_report=usage_report,
-            session_charge_result=session_charge_result,
-        )
-        if owner_id is None:
-            return
-        self.record_wallet_usage(
-            owner_id=str(owner_id),
-            task_id=task_id,
-            allocation_id=allocation_id,
-            bundle_id=bundle.bundle_id,
-            workload_type=bundle.workload_type,
-            input_tokens=measurement.input_tokens,
-            output_tokens=measurement.output_tokens,
-            fixed_request_count=measurement.fixed_request_count,
-            measurement_kind=measurement.measurement_kind,
-            measurement_source=measurement.measurement_source,
-            source=str(usage.get("source", "task_auto")),
         )
 
     def _record_session_usage_charge_for_task(
@@ -1948,66 +1864,19 @@ class HypervisorService:
         task: TaskRequest,
         amount_q: float,
     ):
-        session_id = task.constraints.get("session_id")
-        if session_id is None:
-            return None
-        session_service = getattr(self, "session_service", None)
-        if session_service is None:
-            return None
-        try:
-            return session_service.record_usage_charge(
-                str(session_id),
-                amount_q=amount_q,
-            )
-        except ValueError as error:
-            result = self._task_results.get(task_id)
-            if isinstance(result, dict):
-                try:
-                    session = session_service.get_session(str(session_id)).session
-                except Exception:
-                    session = None
-                if session is not None:
-                    result["session_accounting"] = self._build_session_accounting_view(
-                        session
-                    )
-            self.record_event(
-                event_type="session.charge_blocked",
-                message="session usage charge blocked",
-                task_id=task_id,
-                bundle_id=self.selected_bundle_id(task_id),
-                details={
-                    "session_id": str(session_id),
-                    "charged_q": amount_q,
-                    "reason": str(error),
-                },
-            )
-            return None
+        return self._task_usage_accounting_facade().record_session_usage_charge_for_task(
+            task_id=task_id,
+            task=task,
+            amount_q=amount_q,
+        )
 
     def _provider_usage_contract_for_bundle(self, bundle: BundleConfig) -> dict:
-        plugin = self.plugins.get(bundle.plugin_id)
-        return plugin.usage_contract()
+        return self._task_usage_accounting_facade().provider_usage_contract_for_bundle(
+            bundle
+        )
 
     def _build_session_accounting_view(self, session) -> dict:
-        checkpoint_payload = dict(session.accounting_checkpoint or {})
-        checkpoint = SessionAccountingCheckpoint.model_validate(
-            checkpoint_payload
-            or {
-                "last_accepted_report_sequence": session.last_accepted_report_sequence,
-                "last_accepted_usage_charged_q": session.last_accepted_usage_charged_q,
-            }
-        )
-        acknowledgement_head = {
-            key: value
-            for key, value in dict(session.last_usage_acknowledgement_snapshot or {}).items()
-            if not str(key).startswith("_")
-        }
-        return {
-            "session_id": session.session_id,
-            "status": session.accounting_status,
-            "checkpoint": checkpoint.model_dump(mode="json"),
-            "report_head": dict(session.last_usage_report_snapshot or {}),
-            "acknowledgement_head": acknowledgement_head,
-        }
+        return self._task_usage_accounting_facade().build_session_accounting_view(session)
 
     def _attach_usage_report_to_task_result(
         self,
@@ -2016,74 +1885,11 @@ class HypervisorService:
         task: TaskRequest,
         measurement: WalletUsageMeasurement,
     ):
-        session_id = task.constraints.get("session_id")
-        endpoint_id = task.constraints.get("endpoint_id")
-        if session_id is None or endpoint_id is None:
-            return None
-        endpoint_service = getattr(self, "endpoint_service", None)
-        if endpoint_service is None:
-            return None
-        try:
-            endpoint = endpoint_service.get_endpoint(str(endpoint_id)).endpoint
-        except KeyError:
-            return None
-
-        contract = self.accounting_contract_for_endpoint(endpoint)
-        cumulative_usage = {
-            "input_tokens": measurement.input_tokens,
-            "output_tokens": measurement.output_tokens,
-            "fixed_request_count": measurement.fixed_request_count,
-        }
-        accounting_modes: dict[str, str] = {}
-        measurement_sources: dict[str, str] = {}
-        for item in contract["billable_units"]:
-            unit = str(item["unit"])
-            if unit in cumulative_usage:
-                accounting_modes[unit] = str(item["mode"])
-                measurement_sources[unit] = str(item["measurement_source"])
-        for unit in ("input_tokens", "output_tokens"):
-            if unit in cumulative_usage:
-                measurement_sources[unit] = measurement.measurement_source
-
-        sequence = 1
-        session_service = getattr(self, "session_service", None)
-        if session_service is not None:
-            try:
-                session = session_service.get_session(str(session_id)).session
-                sequence = max(1, int(session.request_count))
-            except Exception:
-                sequence = 1
-
-        report_payload = {
-            "session_id": str(session_id),
-            "endpoint_id": str(endpoint_id),
-            "task_id": task_id,
-            "sequence": sequence,
-            "cumulative_usage": cumulative_usage,
-            "measurement_sources": measurement_sources,
-        }
-        report_id = "usage-" + hashlib.sha256(
-            json.dumps(report_payload, sort_keys=True).encode("utf-8")
-        ).hexdigest()[:16]
-        report = UsageReport(
-            report_id=report_id,
-            report_version="0.1",
-            session_id=str(session_id),
-            endpoint_id=str(endpoint_id),
-            capability_id=endpoint.capabilities[0] if endpoint.capabilities else None,
-            pricing_version=str(contract["pricing_version"]),
-            accounting_contract_version=str(contract["contract_version"]),
-            accounting_modes=accounting_modes,
-            sequence=sequence,
-            cumulative_usage=cumulative_usage,
-            measurement_sources=measurement_sources,
-            created_at=datetime.now(UTC).isoformat(),
-            signature=f"local:{report_id}",
+        return self._task_usage_accounting_facade().attach_usage_report_to_task_result(
+            task_id=task_id,
+            task=task,
+            measurement=measurement,
         )
-        result = self._task_results.get(task_id)
-        if isinstance(result, dict):
-            result["usage_report"] = report.model_dump(mode="json")
-        return report.model_dump(mode="json")
 
     def _record_session_usage_acknowledgement_for_task(
         self,
@@ -2093,113 +1899,17 @@ class HypervisorService:
         usage_report: dict | None,
         session_charge_result,
     ) -> None:
-        session_id = task.constraints.get("session_id")
-        if session_id is None or usage_report is None or session_charge_result is None:
-            return
-        session_service = getattr(self, "session_service", None)
-        if session_service is None:
-            return
-        updated_session = session_service.record_usage_checkpoint(
-            str(session_id),
+        self._task_usage_accounting_facade().record_session_usage_acknowledgement_for_task(
+            task_id=task_id,
+            task=task,
             usage_report=usage_report,
-            accepted_charge_q=float(session_charge_result.deposit.consumed_q),
+            session_charge_result=session_charge_result,
         )
-        result = self._task_results.get(task_id)
-        if isinstance(result, dict):
-            result["usage_acknowledgement"] = {
-                    key: value
-                    for key, value in dict(
-                        updated_session.last_usage_acknowledgement_snapshot
-                    ).items()
-                    if not str(key).startswith("_")
-                }
-            result["session_accounting"] = self._build_session_accounting_view(
-                updated_session
-            )
 
     def accounting_contract_for_endpoint(self, endpoint) -> dict:
-        bundle = self._get_bundle(endpoint.bundle_id)
-        usage_contract = self._provider_usage_contract_for_bundle(bundle)
-        capability_id = endpoint.capabilities[0] if endpoint.capabilities else None
-        measurement_source = (
-            usage_contract.get("default_measurement_source")
-            or usage_contract.get("fallback_measurement_source")
-            or "provider_report"
+        return self._task_usage_accounting_facade().accounting_contract_for_endpoint(
+            endpoint
         )
-        pricing_version = f"pricing-{endpoint.endpoint_id}-{endpoint.configuration_hash[:8]}"
-        contract_version = f"acct-{endpoint.endpoint_id}-{endpoint.configuration_hash[:8]}"
-        pricing_policy_payload = json.dumps(
-            {
-                "endpoint_id": endpoint.endpoint_id,
-                "configuration_hash": endpoint.configuration_hash,
-                "pricing": endpoint.pricing.model_dump(mode="json"),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        pricing_policy_reference = (
-            f"sha256:{hashlib.sha256(pricing_policy_payload).hexdigest()}"
-        )
-
-        billable_units: list[AccountingUnitContract] = []
-        if endpoint.pricing.input_price is not None:
-            billable_units.append(
-                AccountingUnitContract(
-                    unit="input_tokens",
-                    mode="provider_metered",
-                    price=float(endpoint.pricing.input_price),
-                    measurement_source=str(measurement_source),
-                    verification_method="provider_report",
-                )
-            )
-        if endpoint.pricing.output_price is not None:
-            billable_units.append(
-                AccountingUnitContract(
-                    unit="output_tokens",
-                    mode="provider_metered",
-                    price=float(endpoint.pricing.output_price),
-                    measurement_source=str(measurement_source),
-                    verification_method="provider_report",
-                )
-            )
-        if endpoint.pricing.fixed_price is not None:
-            billable_units.append(
-                AccountingUnitContract(
-                    unit="request_fee",
-                    mode="fixed_price",
-                    price=float(endpoint.pricing.fixed_price),
-                    measurement_source="endpoint_policy",
-                    verification_method="fixed_contract",
-                )
-            )
-        if endpoint.session.idle_fee_per_minute > 0.0:
-            billable_units.append(
-                AccountingUnitContract(
-                    unit="idle_minutes",
-                    mode="observable",
-                    price=float(endpoint.session.idle_fee_per_minute),
-                    measurement_source="session_activity",
-                    verification_method="session_timeline",
-                    rounding="per_minute",
-                )
-            )
-
-        contract = AccountingContract(
-            contract_version=contract_version,
-            capability_id=capability_id,
-            pricing_version=pricing_version,
-            pricing_policy_reference=pricing_policy_reference,
-            billable_units=billable_units,
-            checkpoint_policy="per_request",
-            maximum_unreported_usage=float(endpoint.session.minimum_deposit),
-            maximum_request_charge=(
-                float(endpoint.session.recommended_deposit)
-                if endpoint.session.recommended_deposit is not None
-                else float(endpoint.session.minimum_deposit)
-            ),
-            failure_pricing_policy="reject_unpriced_usage",
-        )
-        return contract.model_dump(mode="json")
 
     def _mark_task_wallet_accounting_blocked(
         self,
@@ -2211,28 +1921,13 @@ class HypervisorService:
         source: str = "task_auto",
         validation_errors=None,
     ) -> None:
-        result = self._task_results.get(task_id)
-        if isinstance(result, dict):
-            result["wallet_accounting"] = {
-                "status": "unbillable",
-                "settlement_status": "blocked",
-                "reason": reason,
-            }
-        details = {
-            "owner_id": owner_id,
-            "source": source,
-            "billing_status": "unbillable",
-            "settlement_status": "blocked",
-            "reason": reason,
-        }
-        if validation_errors is not None:
-            details["validation_errors"] = validation_errors
-        self.record_event(
-            event_type="wallet.usage_skipped",
-            message="wallet usage skipped and settlement blocked by strict accounting",
+        self._task_usage_accounting_facade().mark_task_wallet_accounting_blocked(
             task_id=task_id,
             bundle_id=bundle_id,
-            details=details,
+            owner_id=owner_id,
+            reason=reason,
+            source=source,
+            validation_errors=validation_errors,
         )
 
     def _record_wallet_usage_skipped(
@@ -2246,54 +1941,21 @@ class HypervisorService:
         strict_accounting: bool,
         validation_errors=None,
     ) -> None:
-        if strict_accounting:
-            self._mark_task_wallet_accounting_blocked(
-                task_id=task_id,
-                bundle_id=bundle_id,
-                owner_id=owner_id,
-                source=source,
-                reason=reason,
-                validation_errors=validation_errors,
-            )
-            return
-        details = {
-            "owner_id": owner_id,
-            "source": source,
-        }
-        if validation_errors is not None:
-            details["validation_errors"] = validation_errors
-        self.record_event(
-            event_type="wallet.usage_skipped",
-            message="wallet usage skipped due to invalid provider usage contract",
+        self._task_usage_accounting_facade().record_wallet_usage_skipped(
             task_id=task_id,
             bundle_id=bundle_id,
-            details=details,
+            owner_id=owner_id,
+            source=source,
+            reason=reason,
+            strict_accounting=strict_accounting,
+            validation_errors=validation_errors,
         )
 
     def _wallet_usage_attribution_for_task(
         self,
         task: TaskRequest,
     ) -> tuple[str | None, str | None]:
-        owner_id = task.constraints.get("wallet_owner_id")
-        allocation_id = (
-            str(task.constraints["allocation_id"])
-            if "allocation_id" in task.constraints
-            else None
-        )
-        if owner_id is not None:
-            return str(owner_id), allocation_id
-        if allocation_id is None:
-            return None, None
-
-        allocation = self._allocations.get(allocation_id)
-        if allocation is None:
-            return None, allocation_id
-
-        request = allocation.get("request", {})
-        derived_owner_id = request.get("owner_id")
-        if derived_owner_id is None:
-            return None, allocation_id
-        return str(derived_owner_id), allocation_id
+        return self._task_usage_accounting_facade().wallet_usage_attribution_for_task(task)
 
     def _task_request_with_endpoint_context(self, request: TaskRequest) -> TaskRequest:
         return self._endpoint_execution_context_facade().task_request_with_endpoint_context(request)
@@ -2454,6 +2116,13 @@ class HypervisorService:
         if facade is None:
             facade = EndpointExecutionContextService(self)
             self._endpoint_execution_context_service = facade
+        return facade
+
+    def _task_usage_accounting_facade(self) -> TaskUsageAccountingService:
+        facade = getattr(self, "_task_usage_accounting_service", None)
+        if facade is None:
+            facade = TaskUsageAccountingService(self)
+            self._task_usage_accounting_service = facade
         return facade
 
     def _snapshot_state_facade(self) -> SnapshotStateService:
