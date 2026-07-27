@@ -8,9 +8,13 @@ Autonomous Intelligence Dispatch Network — a hypervisor for managing AI agent 
 ## Quick Start
 
 ```bash
-pip install -e ".[dev]"
-pytest
+uv sync --all-extras
+uv run pytest -q
 ```
+
+The checked-in `uv.lock` is the reproducible dependency resolution used by
+local development and CI. After changing `pyproject.toml`, regenerate it with
+`uv lock` and verify the result with `uv sync --all-extras --frozen`.
 
 ## CI Pipeline
 
