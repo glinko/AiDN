@@ -6,9 +6,11 @@ from uuid import uuid4
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
 from aidn_hypervisor.accounting.models import AccountingContract
 from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
+from aidn_hypervisor.accounting.vllm import build_vllm_usage_profile
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.runtime_protocol.adapters.llamacpp import LlamaCppOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.adapters.ollama import OllamaGenerateAdapter
+from aidn_hypervisor.runtime_protocol.adapters.vllm import VllmOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeExecuteRequest,
     RuntimeHello,
@@ -60,7 +62,7 @@ class ApprovedRuntimeDispatcher:
         binding = self.provider_inventory.store.get_runtime_binding(binding_id)
         if binding.status != "ready" or binding.operational_state != "READY":
             raise ApprovedRuntimeDispatchError("Runtime Binding is not ready")
-        if binding.adapter_id not in {"llamacpp-openai", "ollama-generate"}:
+        if binding.adapter_id not in {"llamacpp-openai", "ollama-generate", "vllm-openai"}:
             raise ApprovedRuntimeDispatchError(
                 f"Unsupported approved Runtime Adapter: {binding.adapter_id}"
             )
@@ -152,11 +154,11 @@ class ApprovedRuntimeDispatcher:
             request_deadline=request_deadline
             or (datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
         )
-        adapter_class = (
-            LlamaCppOpenAIAdapter
-            if binding.adapter_id == "llamacpp-openai"
-            else OllamaGenerateAdapter
-        )
+        adapter_class = {
+            "llamacpp-openai": LlamaCppOpenAIAdapter,
+            "ollama-generate": OllamaGenerateAdapter,
+            "vllm-openai": VllmOpenAIAdapter,
+        }[binding.adapter_id]
         adapter = adapter_class(
             endpoint=endpoint_url,
             model=deployment.provider_model_reference,
@@ -175,11 +177,18 @@ class ApprovedRuntimeDispatcher:
                 runtime_configuration_hash=binding.runtime_configuration_hash,
                 adapter_version=binding.adapter_version or "llamacpp-openai.v1",
             )
-        return build_ollama_usage_profile(
+        if binding.adapter_id == "ollama-generate":
+            return build_ollama_usage_profile(
+                runtime_id=binding.runtime_id,
+                runtime_generation=binding.runtime_generation,
+                runtime_configuration_hash=binding.runtime_configuration_hash,
+                adapter_version=binding.adapter_version or "ollama-generate.v1",
+            )
+        return build_vllm_usage_profile(
             runtime_id=binding.runtime_id,
             runtime_generation=binding.runtime_generation,
             runtime_configuration_hash=binding.runtime_configuration_hash,
-            adapter_version=binding.adapter_version or "ollama-generate.v1",
+            adapter_version=binding.adapter_version or "vllm-openai.v1",
         )
 
     @staticmethod

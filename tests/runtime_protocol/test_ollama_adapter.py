@@ -3,7 +3,13 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
-from aidn_hypervisor.runtime_protocol import OllamaGenerateAdapter, RuntimeExecuteRequest, canonical_hash
+from aidn_hypervisor.accounting.vllm import build_vllm_usage_profile
+from aidn_hypervisor.runtime_protocol import (
+    OllamaGenerateAdapter,
+    RuntimeExecuteRequest,
+    VllmOpenAIAdapter,
+    canonical_hash,
+)
 from aidn_hypervisor.runtime_protocol.approved_dispatch import ApprovedRuntimeDispatcher
 
 
@@ -125,3 +131,22 @@ def test_approved_dispatch_selects_ollama_usage_profile() -> None:
         runtime_generation=1,
         runtime_configuration_hash="runtime-config-1",
     ).profile_hash
+
+
+def test_vllm_adapter_preserves_openai_mapping_with_vllm_usage_provenance() -> None:
+    adapter = VllmOpenAIAdapter(
+        endpoint="http://provider",
+        model="qwen",
+        runtime_signature="runtime-signed",
+    )
+    dimensions = adapter._usage_dimensions({"prompt_tokens": 3, "completion_tokens": 2})
+
+    assert [item.source_reference.source_id for item in dimensions] == [
+        "vllm-v1-completions",
+        "vllm-v1-completions",
+    ]
+    assert build_vllm_usage_profile(
+        runtime_id="runtime-1",
+        runtime_generation=1,
+        runtime_configuration_hash="runtime-config-1",
+    ).adapter_version == "vllm-openai.v1"

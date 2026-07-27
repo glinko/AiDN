@@ -1,4 +1,8 @@
-from aidn_hypervisor.runtime_protocol.adapters import LlamaCppOpenAIAdapter, OllamaGenerateAdapter
+from aidn_hypervisor.runtime_protocol.adapters import (
+    LlamaCppOpenAIAdapter,
+    OllamaGenerateAdapter,
+    VllmOpenAIAdapter,
+)
 from aidn_hypervisor.runtime_protocol.approved_dispatch import (
     ApprovedRuntimeDispatcher,
     ApprovedRuntimeDispatchError,
@@ -96,6 +100,7 @@ __all__ = [
     "RuntimeProtocolConformanceHarness",
     "LlamaCppOpenAIAdapter",
     "OllamaGenerateAdapter",
+    "VllmOpenAIAdapter",
     "ApprovedRuntimeDispatchError",
     "ApprovedRuntimeDispatcher",
     "WindowsNamedPipeRuntimeClient",
