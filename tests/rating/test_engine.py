@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
 
 from aidn_hypervisor.rating.models import (
-    RatingConfig,
     RatingDimension,
 )
 from aidn_hypervisor.rating.engine import RatingEngine

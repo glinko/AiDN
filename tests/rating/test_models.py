@@ -9,7 +9,6 @@ from aidn_hypervisor.rating.models import (
     RatingDimension,
     RatingEvidence,
     RatingEvidenceType,
-    RatingDirection,
     DimensionScore,
     NodeRating,
     RatingConfig,

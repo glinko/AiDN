@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
 
 from aidn_hypervisor.rating.models import (
     DimensionScore,
