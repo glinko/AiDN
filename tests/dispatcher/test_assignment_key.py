@@ -11,7 +11,6 @@ import pytest
 
 from aidn_hypervisor.dispatcher import (
     DispatcherError,
-    DispatcherRoute,
     NetworkDispatcher,
     NetworkMessage,
     bind_validation_route,
@@ -20,17 +19,17 @@ from aidn_hypervisor.dispatcher import (
 from aidn_hypervisor.dispatcher.models import canonical_payload_bytes
 from aidn_hypervisor.dispatcher.routes import validation_route
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_dispatcher() -> NetworkDispatcher:
+def _make_dispatcher(*, clock=None) -> NetworkDispatcher:
     return NetworkDispatcher(
         network_id="aidn-test",
         chain_id="chain-test",
         network_revision="rev-1",
+        clock=clock,
     )
 
 
@@ -42,17 +41,26 @@ def _make_message(
     source_subject: dict | None = None,
     destination_subject: dict | None = None,
     expiration_delta: timedelta | None = None,
+    now: datetime | None = None,
 ) -> NetworkMessage:
     body = {"value": "ok"}
-    now = datetime.now(UTC)
-    src = source_subject if source_subject is not None else {
-        "subject_type": "VALIDATOR",
-        "subject_id": "validator-1",
-    }
-    dst = destination_subject if destination_subject is not None else {
-        "subject_type": "VALIDATION_TARGET",
-        "subject_id": "validation_handler",
-    }
+    now = now or datetime.now(UTC)
+    src = (
+        source_subject
+        if source_subject is not None
+        else {
+            "subject_type": "VALIDATOR",
+            "subject_id": "validator-1",
+        }
+    )
+    dst = (
+        destination_subject
+        if destination_subject is not None
+        else {
+            "subject_type": "VALIDATION_TARGET",
+            "subject_id": "validation_handler",
+        }
+    )
     return NetworkMessage(
         message_id=message_id,
         message_type="VALIDATION_REPORT_TRANSFER",
@@ -267,23 +275,22 @@ class TestExpiredAuthorization:
 
     def test_expired_message_rejected_at_drain(self) -> None:
         """A message that expires while queued is rejected on drain."""
-        dispatcher = _make_dispatcher()
+        current_time = datetime.now(UTC)
+        dispatcher = _make_dispatcher(clock=lambda: current_time)
         bind_validation_route(
             dispatcher,
             lambda payload: {"ok": True},
             route_generation=1,
         )
-        # Submit with a very short expiration
+        # Submit before expiration, then advance the dispatcher clock.
         msg = _make_message(
             message_id="soon-expired",
-            expiration_delta=timedelta(milliseconds=1),
+            expiration_delta=timedelta(seconds=1),
+            now=current_time,
         )
         record = dispatcher.submit(msg)
         assert record.delivery_state == "QUEUED"
-        # Force expiration by advancing the clock (simulate via re-submit)
-        import time
-
-        time.sleep(0.05)
+        current_time += timedelta(seconds=2)
         with pytest.raises(DispatcherError) as exc_info:
             dispatcher.drain_once()
         assert exc_info.value.code == "MESSAGE_EXPIRED"

@@ -10,11 +10,8 @@ Covers:
 
 from __future__ import annotations
 
-import os
 import socket
-import tempfile
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +24,6 @@ from aidn_hypervisor.dispatcher.models import (
     canonical_payload_hash,
 )
 from aidn_hypervisor.dispatcher.transport import (
-    MessageFramer,
     TransportGateway,
     TransportStatus,
 )
@@ -36,10 +32,16 @@ from aidn_hypervisor.dispatcher.transport.unix_socket import (
     UnixSocketTransport,
 )
 
+pytestmark = pytest.mark.skipif(
+    not hasattr(socket, "AF_UNIX"),
+    reason="Unix-domain sockets are unavailable on this platform",
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_message(**overrides: Any) -> NetworkMessage:
     """Build a valid NetworkMessage for testing."""
@@ -77,14 +79,15 @@ def socket_path(tmp_path: Path) -> str:
 @pytest.fixture
 def listener(socket_path: str) -> UnixSocketListener:
     """Create a bound UnixSocketListener (non-blocking accept)."""
-    l = UnixSocketListener(socket_path)
-    l.bind()
-    return l
+    socket_listener = UnixSocketListener(socket_path)
+    socket_listener.bind()
+    return socket_listener
 
 
 # ---------------------------------------------------------------------------
 # Protocol conformance
 # ---------------------------------------------------------------------------
+
 
 class TestUnixSocketProtocolConformance:
     def test_satisfies_transport_gateway(self) -> None:
@@ -100,6 +103,7 @@ class TestUnixSocketProtocolConformance:
 # Connection lifecycle
 # ---------------------------------------------------------------------------
 
+
 class TestConnectionLifecycle:
     def test_connect_disconnect(self, socket_path: str, listener: UnixSocketListener) -> None:
         t = UnixSocketTransport(socket_path, send_timeout=2.0, recv_timeout=2.0)
@@ -113,9 +117,7 @@ class TestConnectionLifecycle:
 
         listener.close()
 
-    def test_double_connect_is_idempotent(
-        self, socket_path: str, listener: UnixSocketListener
-    ) -> None:
+    def test_double_connect_is_idempotent(self, socket_path: str, listener: UnixSocketListener) -> None:
         t = UnixSocketTransport(socket_path, send_timeout=2.0, recv_timeout=2.0)
         t.connect()
         t.connect()  # should not raise
@@ -140,10 +142,9 @@ class TestConnectionLifecycle:
 # Send / receive round-trip
 # ---------------------------------------------------------------------------
 
+
 class TestIPCRoundTrip:
-    def test_single_message_round_trip(
-        self, socket_path: str, listener: UnixSocketListener
-    ) -> None:
+    def test_single_message_round_trip(self, socket_path: str, listener: UnixSocketListener) -> None:
         """Client sends a message, listener receives it."""
         msg = _make_message(message_id="rt-001")
 
@@ -170,9 +171,7 @@ class TestIPCRoundTrip:
         t.disconnect()
         listener.close()
 
-    def test_bidirectional_exchange(
-        self, socket_path: str, listener: UnixSocketListener
-    ) -> None:
+    def test_bidirectional_exchange(self, socket_path: str, listener: UnixSocketListener) -> None:
         """Both sides send and receive messages."""
         client_msg = _make_message(message_id="client-msg")
         server_msg = _make_message(message_id="server-msg", message_type="SERVER_REPLY")
@@ -201,9 +200,7 @@ class TestIPCRoundTrip:
         t.disconnect()
         listener.close()
 
-    def test_multiple_messages(
-        self, socket_path: str, listener: UnixSocketListener
-    ) -> None:
+    def test_multiple_messages(self, socket_path: str, listener: UnixSocketListener) -> None:
         """Send several messages in sequence."""
         msgs = [_make_message(message_id=f"seq-{i}") for i in range(5)]
 
@@ -232,6 +229,7 @@ class TestIPCRoundTrip:
 # ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------
+
 
 class TestErrorHandling:
     def test_connect_invalid_path(self) -> None:
@@ -277,9 +275,7 @@ class TestErrorHandling:
 
         listener.close()
 
-    def test_receive_after_peer_close(
-        self, socket_path: str, listener: UnixSocketListener
-    ) -> None:
+    def test_receive_after_peer_close(self, socket_path: str, listener: UnixSocketListener) -> None:
         """Receiving after the listener closes returns None and transitions status."""
         t = UnixSocketTransport(socket_path, send_timeout=2.0, recv_timeout=2.0)
 
@@ -303,10 +299,9 @@ class TestErrorHandling:
 # Sender callback integration
 # ---------------------------------------------------------------------------
 
+
 class TestSenderCallbackIntegration:
-    def test_make_sender_callback(
-        self, socket_path: str, listener: UnixSocketListener
-    ) -> None:
+    def test_make_sender_callback(self, socket_path: str, listener: UnixSocketListener) -> None:
         """The _make_sender_callback returns a callable compatible with register_remote_route."""
         t = UnixSocketTransport(socket_path, send_timeout=2.0, recv_timeout=2.0)
 

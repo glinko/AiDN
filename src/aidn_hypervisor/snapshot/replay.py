@@ -9,12 +9,12 @@ from __future__ import annotations
 import hashlib
 import time
 from abc import ABC, abstractmethod
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from pydantic import BaseModel, Field
 
-
 # ── Data models ───────────────────────────────────────────────────
+
 
 class ReplayBlock(BaseModel, frozen=True):
     """Single block to be replayed over the restored snapshot state."""
@@ -59,6 +59,7 @@ class ReplayResult(BaseModel, frozen=True):
 
 # ── Block source protocol ─────────────────────────────────────────
 
+
 class BlockSource(ABC):
     """Interface for fetching blocks and executing them against state."""
 
@@ -81,6 +82,7 @@ class BlockSource(ABC):
 
 # ── State hash helper ─────────────────────────────────────────────
 
+
 def _compute_state_hash(state: dict) -> str:
     """Deterministic hash of a state dict."""
     raw = str(sorted(state.items()))
@@ -88,6 +90,7 @@ def _compute_state_hash(state: dict) -> str:
 
 
 # ── BlockReplayer ─────────────────────────────────────────────────
+
 
 class BlockReplayer:
     """Replays finalized blocks over a restored snapshot state.
@@ -130,16 +133,20 @@ class BlockReplayer:
         initial_state: dict,
         callback: Callable[[int, str], None] | None,
     ) -> ReplayResult:
-        t0 = time.monotonic()
+        t0 = time.perf_counter()
         errors: list[str] = []
         state = dict(initial_state)
         count = 0
 
         # When start == target, snapshot is already at target — nothing to replay.
-        replay_range = range(
-            self._config.start_height,
-            self._config.target_height + 1,
-        ) if self._config.start_height < self._config.target_height else ()
+        replay_range = (
+            range(
+                self._config.start_height,
+                self._config.target_height + 1,
+            )
+            if self._config.start_height < self._config.target_height
+            else ()
+        )
 
         for height in replay_range:
             block = self._source.get_block(height)
@@ -157,10 +164,7 @@ class BlockReplayer:
                 # state_hash field matches the expected application_state_hash.
                 computed = state.get("state_hash", "")
                 if computed != actual_hash:
-                    errors.append(
-                        f"State hash mismatch at height {height}: "
-                        f"expected {actual_hash}, got {computed}"
-                    )
+                    errors.append(f"State hash mismatch at height {height}: expected {actual_hash}, got {computed}")
                     break
 
             count += 1
@@ -182,7 +186,7 @@ class BlockReplayer:
 
         end_height = self._config.start_height + count - 1 if count else self._config.start_height
         final_hash = state.get("state_hash", _compute_state_hash(state))
-        duration = time.monotonic() - t0
+        duration = time.perf_counter() - t0
 
         return ReplayResult(
             success=len(errors) == 0,
@@ -191,5 +195,5 @@ class BlockReplayer:
             blocks_replayed=count,
             final_state_hash=final_hash,
             errors=errors,
-            duration_seconds=round(duration, 6),
+            duration_seconds=duration,
         )

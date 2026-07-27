@@ -18,28 +18,18 @@ Key features
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import time
 import uuid
-from typing import Any, Awaitable, Callable
+from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from aidn_hypervisor.dispatcher.transport.abc import (
-    TransportGateway,
     TransportStatus,
-    MessageFramer,
 )
-
-from .messages import (
-    RegistryMessageType,
-    RegistryChannelClass,
-    RegistryPayload,
-)
-from .object_envelope import RegistryObjectEnvelope
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -170,10 +160,7 @@ class GrpcRegistryTransport:
             raise ConnectionError("Transport not connected")
 
         if len(message_data) > self._config.max_message_size_bytes:
-            raise ValueError(
-                f"Message size {len(message_data)} exceeds "
-                f"max {self._config.max_message_size_bytes}"
-            )
+            raise ValueError(f"Message size {len(message_data)} exceeds max {self._config.max_message_size_bytes}")
 
         self._send_buffer.append(message_data)
         self._state = self._state.model_copy(
@@ -221,15 +208,13 @@ class GrpcRegistryTransport:
         """Send keepalive ping."""
         if not self._is_connected:
             return
-        self._state = self._state.model_copy(
-            update={"last_keepalive_at": time.time()}
-        )
+        self._state = self._state.model_copy(update={"last_keepalive_at": time.time()})
 
     def is_keepalive_stale(self, threshold_seconds: int = 60) -> bool:
         """Check if keepalive is stale."""
         if not self._is_connected:
             return True
-        return (time.time() - self._state.last_keepalive_at) > threshold_seconds
+        return (time.time() - self._state.last_keepalive_at) >= threshold_seconds
 
     # -- buffer helpers -----------------------------------------------------
 
@@ -288,10 +273,7 @@ class GrpcRegistryStream:
 
     @property
     def is_active(self) -> bool:
-        return (
-            self._local.status == TransportStatus.CONNECTED
-            and self._remote.status == TransportStatus.CONNECTED
-        )
+        return self._local.status == TransportStatus.CONNECTED and self._remote.status == TransportStatus.CONNECTED
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +330,5 @@ class GrpcProtoRegistryMessage(BaseModel):
 
     def compute_hash(self) -> str:
         """Compute content hash for integrity verification."""
-        canonical = json.dumps(
-            self.payload, sort_keys=True, separators=(",", ":")
-        )
+        canonical = json.dumps(self.payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()

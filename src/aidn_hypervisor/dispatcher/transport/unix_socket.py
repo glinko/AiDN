@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import socket
 import threading
-import time
+from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
-from typing import Callable, Optional
 
 from aidn_hypervisor.dispatcher.models import NetworkMessage
 from aidn_hypervisor.dispatcher.transport.abc import (
@@ -23,10 +23,19 @@ from aidn_hypervisor.dispatcher.transport.abc import (
     TransportStatus,
 )
 
+UNIX_SOCKET_AVAILABLE = hasattr(socket, "AF_UNIX")
+
+
+def _require_unix_socket_support() -> None:
+    """Fail clearly on platforms that do not implement Unix-domain sockets."""
+    if not UNIX_SOCKET_AVAILABLE:
+        raise OSError("Unix-domain sockets are unavailable on this platform")
+
 
 # ---------------------------------------------------------------------------
 # UnixSocketTransport
 # ---------------------------------------------------------------------------
+
 
 class UnixSocketTransport(TransportGateway):
     """TransportGateway implementation over a Unix domain socket.
@@ -51,7 +60,7 @@ class UnixSocketTransport(TransportGateway):
         self._socket_path = socket_path
         self._send_timeout = send_timeout
         self._recv_timeout = recv_timeout
-        self._socket: Optional[socket.socket] = None
+        self._socket: socket.socket | None = None
         self._status = TransportStatus.DISCONNECTED
         self._lock = threading.Lock()
         self._recv_buffer: bytes = b""
@@ -61,6 +70,7 @@ class UnixSocketTransport(TransportGateway):
 
     def connect(self) -> None:
         """Create (if listening) or connect to the Unix socket at *socket_path*."""
+        _require_unix_socket_support()
         with self._lock:
             if self._status == TransportStatus.CONNECTED:
                 return
@@ -77,18 +87,14 @@ class UnixSocketTransport(TransportGateway):
                 if self._socket:
                     self._socket.close()
                     self._socket = None
-                raise ConnectionError(
-                    f"cannot connect to Unix socket {self._socket_path!r}: {exc}"
-                ) from exc
+                raise ConnectionError(f"cannot connect to Unix socket {self._socket_path!r}: {exc}") from exc
 
     def disconnect(self) -> None:
         """Gracefully close the Unix socket connection."""
         with self._lock:
             if self._socket is not None:
-                try:
+                with suppress(OSError):
                     self._socket.shutdown(socket.SHUT_RDWR)
-                except (OSError, Exception):
-                    pass
                 self._socket.close()
                 self._socket = None
             self._status = TransportStatus.DISCONNECTED
@@ -106,10 +112,7 @@ class UnixSocketTransport(TransportGateway):
             If the transport is not connected.
         """
         if self._status != TransportStatus.CONNECTED or self._socket is None:
-            raise ConnectionError(
-                "cannot send — transport is not connected "
-                f"(status={self._status.value})"
-            )
+            raise ConnectionError(f"cannot send — transport is not connected (status={self._status.value})")
 
         wire = MessageFramer.encode(message)
         try:
@@ -155,9 +158,7 @@ class UnixSocketTransport(TransportGateway):
         messages = MessageFramer.decode_stream(self._recv_buffer)
 
         # Remove consumed bytes from buffer
-        consumed = sum(
-            len(MessageFramer.encode(m)) for m in messages
-        )
+        consumed = sum(len(MessageFramer.encode(m)) for m in messages)
         self._recv_buffer = self._recv_buffer[consumed:]
 
         if not messages:
@@ -208,6 +209,7 @@ class UnixSocketTransport(TransportGateway):
 # UnixSocketListener — helper for the listening / server side
 # ---------------------------------------------------------------------------
 
+
 class UnixSocketListener:
     """Minimal listening wrapper for Unix domain sockets.
 
@@ -221,8 +223,8 @@ class UnixSocketListener:
     def __init__(self, socket_path: str, *, backlog: int = 5) -> None:
         self._socket_path = socket_path
         self._backlog = backlog
-        self._server: Optional[socket.socket] = None
-        self._client: Optional[socket.socket] = None
+        self._server: socket.socket | None = None
+        self._client: socket.socket | None = None
         self._status = TransportStatus.DISCONNECTED
         self._recv_buffer: bytes = b""
         self._pending_messages: list[NetworkMessage] = []
@@ -231,6 +233,7 @@ class UnixSocketListener:
 
     def bind(self) -> None:
         """Bind the server socket and start listening."""
+        _require_unix_socket_support()
         path = Path(self._socket_path)
         if path.exists():
             path.unlink()
@@ -250,7 +253,7 @@ class UnixSocketListener:
             self._client, _addr = self._server.accept()
             self._client.settimeout(5.0)
             self._status = TransportStatus.CONNECTED
-        except (OSError, socket.timeout) as exc:
+        except (TimeoutError, OSError) as exc:
             self._status = TransportStatus.ERROR
             raise ConnectionError(f"accept failed: {exc}") from exc
 
@@ -283,9 +286,7 @@ class UnixSocketListener:
     def send(self, message: NetworkMessage) -> bytes:
         """Send a framed message to the connected client."""
         if self._status != TransportStatus.CONNECTED or self._client is None:
-            raise ConnectionError(
-                f"cannot send — listener not connected (status={self._status.value})"
-            )
+            raise ConnectionError(f"cannot send — listener not connected (status={self._status.value})")
 
         wire = MessageFramer.encode(message)
         self._client.sendall(wire)
@@ -320,9 +321,7 @@ class UnixSocketListener:
         messages = MessageFramer.decode_stream(self._recv_buffer)
 
         # Remove consumed bytes from buffer
-        consumed = sum(
-            len(MessageFramer.encode(m)) for m in messages
-        )
+        consumed = sum(len(MessageFramer.encode(m)) for m in messages)
         self._recv_buffer = self._recv_buffer[consumed:]
 
         if not messages:

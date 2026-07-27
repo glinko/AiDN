@@ -35,6 +35,7 @@ class NetworkDispatcher:
         store: DispatcherStore | None = None,
         max_messages_per_second: int = 1000,
         safe_mode: bool = False,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         if maximum_queue_messages <= 0:
             raise ValueError("maximum_queue_messages must be positive")
@@ -57,6 +58,7 @@ class NetworkDispatcher:
         self._rate_limit_timestamps: deque[float] = deque()
         # Safe mode
         self._safe_mode = safe_mode
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     def register_local_route(
         self,
@@ -202,7 +204,11 @@ class NetworkDispatcher:
             )
             if effective_priority > 1:  # allow only CRITICAL_CONTROL(0) and HIGH(1)
                 rejected = record.model_copy(
-                    update={"delivery_state": "DELIVERY_FAILED", "completed_at": now, "last_error_code": "SAFE_MODE_REJECTED"}
+                    update={
+                        "delivery_state": "DELIVERY_FAILED",
+                        "completed_at": now,
+                        "last_error_code": "SAFE_MODE_REJECTED",
+                    }
                 )
                 self._delivery_records[message.message_id] = rejected
                 self._metrics.increment_rejected()
@@ -410,7 +416,7 @@ class NetworkDispatcher:
             )
 
     def _validate_expiration(self, message: NetworkMessage) -> None:
-        if datetime.fromisoformat(message.expiration) <= datetime.now(UTC):
+        if datetime.fromisoformat(message.expiration) <= self._current_time():
             raise DispatcherError("MESSAGE_EXPIRED", "expiration", "Message expired")
 
     def _resolve_and_authorize(self, message: NetworkMessage) -> DispatcherRoute:
@@ -576,9 +582,15 @@ class NetworkDispatcher:
         self._metrics.increment_dead_letter_count()
         self.store.flush()
 
-    @staticmethod
-    def _now() -> str:
-        return datetime.now(UTC).isoformat()
+    def _current_time(self) -> datetime:
+        """Return the dispatcher clock as an aware UTC timestamp."""
+        current_time = self._clock()
+        if current_time.tzinfo is None:
+            raise ValueError("dispatcher clock must return an aware datetime")
+        return current_time.astimezone(UTC)
+
+    def _now(self) -> str:
+        return self._current_time().isoformat()
 
     @staticmethod
     def _queue_priority(message: NetworkMessage) -> tuple[int, str, int]:
