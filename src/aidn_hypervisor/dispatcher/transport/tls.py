@@ -148,7 +148,7 @@ class TlsTransport(TcpTransport):
                 raise ConnectionError(f"TLS handshake failed: {exc}") from exc
             except AttributeError:
                 self._tls_established = False
-                raise ConnectionError("ssl module not available")
+                raise ConnectionError("ssl module not available") from None
 
     def disconnect(self) -> None:
         """Gracefully close the TLS (or plain) connection."""

@@ -218,7 +218,7 @@ class NetworkGateway:
 
     async def _send_keepalives(self) -> None:
         """Send keepalive probes to all active connections."""
-        for conn_id, identity in list(self._connections.items()):
+        for identity in list(self._connections.values()):
             if identity.state == "ESTABLISHED":
                 # TODO: send keepalive message
                 pass

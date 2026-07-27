@@ -352,4 +352,4 @@ class SnapshotProducer:
         except Exception as exc:
             raise SnapshotProducerError(
                 f"Local restoration verification failed: {exc}"
-            )
+            ) from exc

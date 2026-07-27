@@ -79,7 +79,7 @@ class TestMessageFramerRoundTrip:
         wire = MessageFramer.encode_batch(msgs)
         decoded = MessageFramer.decode_stream(wire)
         assert len(decoded) == 3
-        for original, restored in zip(msgs, decoded):
+        for original, restored in zip(msgs, decoded, strict=True):
             assert restored.message_id == original.message_id
             assert restored.message_type == original.message_type
 

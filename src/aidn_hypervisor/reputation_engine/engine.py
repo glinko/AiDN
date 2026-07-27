@@ -133,7 +133,7 @@ class ReputationEngine:
             return None
 
         dimension_scores = []
-        for dim, acc in profile.accumulators.items():
+        for acc in profile.accumulators.values():
             score = acc.to_score()
             dimension_scores.append({
                 "dimension": score.dimension,
