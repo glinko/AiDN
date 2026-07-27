@@ -57,3 +57,37 @@ outcome; it never claims a confirmed Provider stop for ordinary
 Unset `AIDN_LLAMACPP_LIVE` to skip the test. Do not put credentials in these
 environment variables; authenticated upstream support belongs to the scoped
 Secret Manager boundary.
+
+## vLLM attached-service profile
+
+vLLM runs as a separate Provider service. The Hypervisor attaches it through
+the `vllm` plugin and owns the Provider Instance, Model Deployment, Runtime
+Binding and Endpoint records; it does not manage the vLLM process lifecycle.
+
+Run the opt-in wire conformance smoke:
+
+```powershell
+$env:AIDN_VLLM_ENDPOINT = "http://provider-host:8000"
+$env:AIDN_VLLM_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
+uv run pytest -q tests/integration/test_vllm_live.py -o addopts=
+```
+
+Attach a reachable server to a running Hypervisor:
+
+```powershell
+$body = @{
+  plugin_id = "vllm"
+  display_name = "RTX 3090 vLLM"
+  configuration = @{ endpoint = "http://provider-host:8000" }
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method Post `
+  -Uri "http://hypervisor-host:8080/operators/provider-instances/attach" `
+  -ContentType "application/json" -Body $body
+```
+
+Then discover the returned Provider Instance models, create a Runtime Binding
+for the chosen deployment, and bind an Endpoint to that Runtime Binding. vLLM
+Usage is provider-authoritative per token dimension. The attach configuration
+must contain only the endpoint and scoped Secret Handle references; do not put
+tokens or credentials in the URL.
