@@ -1,6 +1,7 @@
 """Tests for ABCI models — abci_models.py."""
 
 import pytest
+from pydantic_core import ValidationError as PydanticCoreValidationError
 
 from aidn_hypervisor.consensus.abci_models import (
     ABCICommitResponse,
@@ -41,7 +42,7 @@ def test_abci_result_with_tags():
 
 def test_abci_result_frozen():
     result = ABCIResult(code="ok", log="test")
-    with pytest.raises(Exception):
+    with pytest.raises(PydanticCoreValidationError):
         result.code = "rejected"  # type: ignore
 
 

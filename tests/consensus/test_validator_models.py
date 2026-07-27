@@ -3,6 +3,8 @@
 import hashlib
 
 import pytest
+from pydantic import ValidationError
+from pydantic_core import ValidationError as PydanticCoreValidationError
 
 from aidn_hypervisor.consensus.validator import (
     ConsensusValidator,
@@ -75,7 +77,7 @@ def test_validator_is_eligible():
 
 def test_validator_cannot_modify():
     v = _make_validator()
-    with pytest.raises(Exception):  # FrozenInstanceError
+    with pytest.raises(PydanticCoreValidationError):
         v.stake = 999  # type: ignore
 
 
@@ -119,7 +121,7 @@ def test_stake_record_frozen():
         epoch=1,
         timestamp=_TS,
     )
-    with pytest.raises(Exception):
+    with pytest.raises(PydanticCoreValidationError):
         r.amount = 200  # type: ignore
 
 
@@ -167,7 +169,7 @@ def test_epoch_set_total_stake():
 def test_validator_min_stake():
     v = _make_validator(stake=0)
     assert v.stake == 0
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         _make_validator(stake=-1)
 
 

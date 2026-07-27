@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic_core import ValidationError
 
 from aidn_hypervisor.consensus.commitment import (
     StateCommitment,
@@ -32,7 +33,7 @@ def test_state_commitment_frozen() -> None:
         state_hash="abc123",
         timestamp="2025-01-01T00:00:00Z",
     )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         c.epoch = 1  # type: ignore
 
 
@@ -180,7 +181,7 @@ def test_commitment_record_frozen() -> None:
         timestamp="2025-01-01T00:00:00Z",
     )
     rec = svc.record_commitment(c, signature="s1", node_id="n1")
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         rec.verified = True  # type: ignore
 
 

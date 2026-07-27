@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic_core import ValidationError
 
 from aidn_hypervisor.consensus.snapshot import (
     SnapshotConsumer,
@@ -35,7 +36,7 @@ def test_snapshot_metadata_frozen() -> None:
         hash="abc",
         timestamp=1700000000,
     )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         m.height = 200  # type: ignore
 
 

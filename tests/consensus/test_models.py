@@ -3,6 +3,8 @@
 import json
 
 import pytest
+from pydantic import ValidationError
+from pydantic_core import ValidationError as PydanticCoreValidationError
 
 from aidn_hypervisor.consensus.models import (
     LedgerFeeClass,
@@ -88,16 +90,16 @@ def test_canonical_bytes_deterministic():
 
 def test_envelope_immutability():
     env = _make_envelope()
-    with pytest.raises(Exception):  # pydantic FrozenInstanceError
+    with pytest.raises(PydanticCoreValidationError):
         env.operation_type = "SESSION_OPEN"  # type: ignore
 
 
 # ── 5. sender_sequence validation ────────────────────────────────────
 
 def test_sender_sequence_ge_1():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         _make_envelope(sender_sequence=0)
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         _make_envelope(sender_sequence=-1)
     # valid
     _make_envelope(sender_sequence=1)

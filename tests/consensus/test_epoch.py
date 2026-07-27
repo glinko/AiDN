@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic_core import ValidationError
 
 from aidn_hypervisor.consensus.epoch import (
     EpochConfig,
@@ -30,7 +31,7 @@ def test_epoch_config_custom() -> None:
 
 def test_epoch_config_frozen() -> None:
     cfg = EpochConfig()
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         cfg.blocks_per_epoch = 50  # type: ignore
 
 
