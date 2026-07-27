@@ -141,6 +141,7 @@ class SettlementChargeComponent(BaseModel):
     fixed_amount_q_atoms: int | None = Field(default=None, ge=0)
     unit_price_q_atoms: int = Field(default=0, ge=0)
     unit_divisor: int = Field(default=1, ge=1)
+    source_value_scale: int = Field(default=1, ge=1)
     rounding: RoundingMode = "DOWN"
     required_authority: UsageAuthority | None = None
     unavailable_value_policy: UnavailableValuePolicy | Literal["DISPUTE_REVIEW"] = (
@@ -158,6 +159,8 @@ class SettlementChargeComponent(BaseModel):
                 raise ValueError("fixed component cannot require Usage authority")
         elif self.fixed_amount_q_atoms is not None:
             raise ValueError("variable component cannot also be fixed")
+        if self.dimension_id is None and self.source_value_scale != 1:
+            raise ValueError("fixed component cannot scale a Usage value")
         if (
             self.unavailable_value_policy == "FIXED_FALLBACK"
             and self.fallback_amount_q_atoms is None

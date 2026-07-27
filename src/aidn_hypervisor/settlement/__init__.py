@@ -1,3 +1,4 @@
+from aidn_hypervisor.settlement.accounting_terms import build_settlement_terms
 from aidn_hypervisor.settlement.models import (
     AtomicSettlementTransition,
     BillableComponentResult,
@@ -35,4 +36,5 @@ __all__ = [
     "SettlementInputSet",
     "TerminalChargePolicy",
     "canonical_hash",
+    "build_settlement_terms",
 ]

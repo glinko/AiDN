@@ -1,3 +1,5 @@
+from decimal import ROUND_DOWN, ROUND_HALF_EVEN, ROUND_UP, Decimal, InvalidOperation
+
 from aidn_hypervisor.settlement.models import (
     AtomicSettlementTransition,
     BillableComponentResult,
@@ -351,7 +353,12 @@ class SettlementEngine:
             component.unavailable_value_policy != "PARTIAL_CHARGE"
         ):
             return self._fallback_component(component, dimensions, "Usage is partial")
-        value = self._integer_value(dimension.value, component.dimension_id)
+        value = self._scaled_integer_value(
+            dimension.value,
+            component.dimension_id,
+            scale=component.source_value_scale,
+            rounding=component.rounding,
+        )
         charge = _round_ratio(
             value * component.unit_price_q_atoms,
             component.unit_divisor,
@@ -373,9 +380,11 @@ class SettlementEngine:
                 and fallback.authority in {"DETERMINISTIC_LOCAL", "OBSERVABLE_LOCAL"}
                 and fallback.billing_eligible
             ):
-                value = self._integer_value(
+                value = self._scaled_integer_value(
                     fallback.value,
                     component.fallback_dimension_id,
+                    scale=component.source_value_scale,
+                    rounding=component.rounding,
                 )
                 charge = _round_ratio(
                     value * component.unit_price_q_atoms,
@@ -387,13 +396,30 @@ class SettlementEngine:
             return 0, None, f"{reason}; no partial value available", True
         return 0, None, reason, True
 
-    def _integer_value(self, value, dimension_id):
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    def _scaled_integer_value(self, value, dimension_id, *, scale: int, rounding: str):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise SettlementError(
                 "SETTLEMENT_ACCOUNTING_FORMULA_INVALID",
-                f"Billable dimension must be a non-negative integer: {dimension_id}",
+                f"Billable dimension must be numeric: {dimension_id}",
             )
-        return value
+        try:
+            scaled = Decimal(str(value)) * Decimal(scale)
+        except (InvalidOperation, ValueError) as exc:
+            raise SettlementError(
+                "SETTLEMENT_ACCOUNTING_FORMULA_INVALID",
+                f"Billable dimension is invalid: {dimension_id}",
+            ) from exc
+        if scaled < 0:
+            raise SettlementError(
+                "SETTLEMENT_ACCOUNTING_FORMULA_INVALID",
+                f"Billable dimension must be non-negative: {dimension_id}",
+            )
+        decimal_rounding = {
+            "DOWN": ROUND_DOWN,
+            "UP": ROUND_UP,
+            "HALF_EVEN": ROUND_HALF_EVEN,
+        }[rounding]
+        return int(scaled.to_integral_value(rounding=decimal_rounding))
 
     def _terminal_policy(self, request, terms):
         policy = terms.terminal_policies.get(request.terminal_state)

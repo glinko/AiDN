@@ -13,6 +13,7 @@ from aidn_hypervisor.settlement import (
     SettlementDispute,
     SettlementEngine,
     SettlementError,
+    build_settlement_terms,
 )
 
 
@@ -99,6 +100,80 @@ def _metered_terms(**component_overrides) -> SettlementAccountingTerms:
         accounting_mode="provider_metered",
         components=[SettlementChargeComponent(**component)],
     )
+
+
+def test_settlement_normalizes_audio_seconds_to_integer_milliseconds() -> None:
+    terms = SettlementAccountingTerms(
+        accounting_contract_hash="sha256:contract-1",
+        accounting_mode="observable",
+        components=[
+            SettlementChargeComponent(
+                component_id="audio-seconds",
+                dimension_id="audio_input_seconds",
+                unit_price_q_atoms=400_000,
+                unit_divisor=1_000,
+                source_value_scale=1_000,
+                required_authority="OBSERVABLE_LOCAL",
+            )
+        ],
+    )
+    request = _request(
+        ceiling=10_000_000,
+        dimensions=[
+            UsageDimensionEvidence(
+                dimension_id="audio_input_seconds",
+                unit="second",
+                availability="AVAILABLE",
+                authority="OBSERVABLE_LOCAL",
+                value=12.5,
+                billing_eligible=True,
+            )
+        ],
+    )
+
+    record = SettlementEngine().evaluate_request(request, terms)
+
+    assert record.raw_calculated_charge_q_atoms == 5_000_000
+    assert record.billable_components[0].source_value == 12_500
+    assert record.billable_components[0].charge_q_atoms == 5_000_000
+
+
+def test_contract_terms_bridge_audio_seconds_to_canonical_q_atoms() -> None:
+    from aidn_hypervisor.accounting.models import AccountingContract, AccountingUnitContract
+
+    contract = AccountingContract(
+        contract_version="acct-v1",
+        pricing_version="price-v1",
+        checkpoint_policy="per_request",
+        billable_units=[
+            AccountingUnitContract(
+                unit="audio_input_seconds",
+                mode="observable",
+                price=0.4,
+                measurement_source="provider_response.duration",
+                verification_method="provider_response",
+                unavailable_value_policy="ZERO_VARIABLE_COMPONENT",
+            )
+        ],
+    )
+
+    terms = build_settlement_terms(contract)
+
+    assert terms.accounting_mode == "observable"
+    assert terms.terms_version == "settlement-terms.v2"
+    assert terms.components[0].model_dump(mode="json") == {
+        "component_id": "1:audio_input_seconds",
+        "dimension_id": "audio_input_seconds",
+        "fixed_amount_q_atoms": None,
+        "unit_price_q_atoms": 400_000,
+        "unit_divisor": 1_000,
+        "source_value_scale": 1_000,
+        "rounding": "DOWN",
+        "required_authority": None,
+        "unavailable_value_policy": "ZERO_VARIABLE_COMPONENT",
+        "fallback_amount_q_atoms": None,
+        "fallback_dimension_id": None,
+    }
 
 
 def test_funding_account_enforces_separate_reserve_conservation() -> None:

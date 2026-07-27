@@ -55,8 +55,11 @@ unsupported, not silently approximated.
 - Automatic bridge from the legacy float-Q Session API to canonical `q_atoms`
   Settlement. That bridge must be explicit, audited and hash-bound.
 - Variable audio-duration Settlement on the canonical `q_atoms` path. The
-  current `audio_input_seconds` unit is limited to legacy operator accounting
-  and fixed-price sessions remain the public paid-MVP profile.
+  Settlement Engine can now normalize declared decimal dimensions into integer
+  source units (audio seconds become milliseconds) and derive hash-bound terms
+  from an Accounting Contract, but no public variable-price Session profile
+  binds those terms yet. Fixed-price sessions remain the public paid-MVP
+  profile.
 
 ## Implementation Status
 
