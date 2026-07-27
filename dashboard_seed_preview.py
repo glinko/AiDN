@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from aidn_hypervisor.api import _registry_published_endpoint_summaries
 from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
@@ -143,7 +143,7 @@ def _seed_remote_registry(
     registry_service: RegistryService,
     remote_endpoint_service: RemoteEndpointService,
 ) -> None:
-    heartbeat = datetime.now(timezone.utc).isoformat()
+    heartbeat = datetime.now(UTC).isoformat()
     registry_service.upsert_node(_remote_registry_advertisement(heartbeat))
     remote_endpoint_service.attach_remote_endpoint(
         source_node_id="aurora-compute",
@@ -255,7 +255,7 @@ def _refresh_registry_projection(
     validation_service: ValidationService,
     registry_service: RegistryService,
 ) -> None:
-    heartbeat = datetime.now(timezone.utc).isoformat()
+    heartbeat = datetime.now(UTC).isoformat()
     local_advertisement = service.node_advertisement(heartbeat_at=heartbeat)
     local_advertisement["published_endpoints"] = _registry_published_endpoint_summaries(
         advertisement=local_advertisement,
@@ -304,7 +304,6 @@ def create_app():
         remote_endpoint_service=remote_endpoint_service,
         validation_service=validation_service,
     )
-    
     @app.middleware("http")
     async def refresh_seeded_registry(request, call_next):
         _refresh_registry_projection(
