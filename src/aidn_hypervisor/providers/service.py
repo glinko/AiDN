@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
+from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
+from aidn_hypervisor.accounting.proxy import build_proxy_opaque_usage_profile
+from aidn_hypervisor.accounting.vllm import build_vllm_usage_profile
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
 from aidn_hypervisor.plugins.host import (
     HmacPluginHostActivationProofVerifier,
@@ -1920,12 +1923,18 @@ class ProviderInventoryService:
             compatibility_bundle_id=compatibility_bundle_id,
             status=projection.get("status", "ready"),
         )
-        if binding.adapter_id == "llamacpp-openai":
-            profile = build_llamacpp_usage_profile(
+        profile_builder = {
+            "llamacpp-openai": build_llamacpp_usage_profile,
+            "ollama-generate": build_ollama_usage_profile,
+            "proxy-openai": build_proxy_opaque_usage_profile,
+            "vllm-openai": build_vllm_usage_profile,
+        }.get(binding.adapter_id)
+        if profile_builder is not None:
+            profile = profile_builder(
                 runtime_id=binding.runtime_id,
                 runtime_generation=binding.runtime_generation,
                 runtime_configuration_hash=binding.runtime_configuration_hash,
-                adapter_version=binding.adapter_version or "llamacpp-openai.v1",
+                adapter_version=binding.adapter_version or f"{binding.adapter_id}.v1",
             )
             binding_payload = binding.model_dump(mode="json")
             binding_payload.pop("runtime_configuration_hash", None)

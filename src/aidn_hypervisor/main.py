@@ -13,6 +13,7 @@ from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.ollama import OllamaPlugin
+from aidn_hypervisor.plugins.proxy_openai import ProxyOpenAIPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.plugins.vllm import VllmPlugin
 from aidn_hypervisor.plugins.whisper import WhisperPlugin
@@ -151,6 +152,7 @@ def _build_default_service(
     plugins = PluginRegistry()
     plugins.register(LlamaCppPlugin())
     plugins.register(OllamaPlugin())
+    plugins.register(ProxyOpenAIPlugin())
     plugins.register(VllmPlugin())
     plugins.register(WhisperPlugin())
     bundles = _default_bundle_registry(plugins).load(plugins)

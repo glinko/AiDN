@@ -1,6 +1,7 @@
 from aidn_hypervisor.runtime_protocol.adapters import (
     LlamaCppOpenAIAdapter,
     OllamaGenerateAdapter,
+    ProxyOpenAIAdapter,
     VllmOpenAIAdapter,
 )
 from aidn_hypervisor.runtime_protocol.approved_dispatch import (
@@ -100,6 +101,7 @@ __all__ = [
     "RuntimeProtocolConformanceHarness",
     "LlamaCppOpenAIAdapter",
     "OllamaGenerateAdapter",
+    "ProxyOpenAIAdapter",
     "VllmOpenAIAdapter",
     "ApprovedRuntimeDispatchError",
     "ApprovedRuntimeDispatcher",

@@ -161,13 +161,17 @@ class RuntimeProtocolBoundaryService:
         )
 
     # ------------------------------------------------------------------
-    # Approved llama.cpp runtime helpers
+    # Approved Runtime helpers
     # ------------------------------------------------------------------
 
-    def _uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:
-        return self._runtime_execution_facade().uses_approved_llamacpp_runtime(
+    def _uses_approved_runtime(self, endpoint_manifest) -> bool:
+        return self._runtime_execution_facade().uses_approved_runtime(
             endpoint_manifest
         )
+
+    def _uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:
+        """Compatibility alias while external callers migrate to generic dispatch."""
+        return self._uses_approved_runtime(endpoint_manifest)
 
     def _attempt_approved_runtime_task(
         self,

@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from aidn_hypervisor.runtime_protocol import (
     LlamaCppOpenAIAdapter,
+    ProxyOpenAIAdapter,
     RuntimeCancelRequest,
     RuntimeExecuteRequest,
     RuntimeRecoveryPlan,
@@ -40,6 +41,7 @@ class _Protocol:
             (),
             {
                 "results": {},
+                "requests": {},
                 "cancellation_results": {},
                 "usage_reports": {},
                 "recovery_results": {},
@@ -54,6 +56,7 @@ class _Protocol:
     def register_execute_request(self, connection_id, execution_request):
         self.connection_id = connection_id
         self.request = execution_request
+        self.store.requests[execution_request.request_id] = _RequestRecord()
 
     def record_request_accept(self, connection_id, acceptance):
         self.acceptances.append(acceptance)
@@ -85,6 +88,14 @@ class _Protocol:
     def record_runtime_stream_close(self, connection_id, close):
         self.store.stream_closes[close.stream_id] = close
         return close
+
+
+class _RequestRecord:
+    def __init__(self, runtime_request_handle: str | None = None) -> None:
+        self.runtime_request_handle = runtime_request_handle
+
+    def model_copy(self, *, update: dict):
+        return _RequestRecord(update.get("runtime_request_handle", self.runtime_request_handle))
 
 
 def _cancellation(request: RuntimeExecuteRequest) -> RuntimeCancelRequest:
@@ -258,3 +269,55 @@ def test_llamacpp_adapter_recovers_only_durable_terminal_evidence(monkeypatch) -
 
     assert recovered.request_results == {execution_request.request_id: "REDELIVERED_FINAL_RESULT"}
     assert recovered.remaining_conflicts == []
+
+
+def test_proxy_adapter_reports_opaque_usage_and_persists_upstream_operation(monkeypatch) -> None:
+    adapter = ProxyOpenAIAdapter(
+        endpoint="http://provider",
+        model="opaque-model",
+        runtime_signature="runtime-signed",
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_completion",
+        lambda _: {
+            "id": "operation-1",
+            "model": "opaque-model",
+            "choices": [{"text": "ok", "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 99, "completion_tokens": 42},
+        },
+    )
+    protocol = _Protocol()
+    request = _request()
+    adapter._operation_ids[request.request_id] = "operation-1"
+
+    result = adapter.execute(protocol, "connection-1", request)
+
+    assert result.terminal_state == "COMPLETED"
+    assert protocol.store.requests[request.request_id].runtime_request_handle == "operation-1"
+    assert [(item.dimension_id, item.availability) for item in protocol.usage_reports[0].dimensions] == [
+        ("input_tokens", "UNAVAILABLE"),
+        ("output_tokens", "UNAVAILABLE"),
+    ]
+
+
+def test_proxy_adapter_confirms_cancellation_only_from_upstream_operation(monkeypatch) -> None:
+    adapter = ProxyOpenAIAdapter(
+        endpoint="http://provider",
+        model="opaque-model",
+        runtime_signature="runtime-signed",
+    )
+    protocol = _Protocol()
+    request = _request()
+    adapter._operation_ids[request.request_id] = "operation-1"
+    monkeypatch.setattr(
+        adapter,
+        "_request_json",
+        lambda *_: {"status": "cancelled", "confirmed_stopped": True},
+    )
+
+    result = adapter.cancel(protocol, "connection-1", _cancellation(request))
+
+    assert result.cancellation_state == "CANCELLED"
+    assert result.output_stopped is True
+    assert result.provider_confirmed_stopped is True

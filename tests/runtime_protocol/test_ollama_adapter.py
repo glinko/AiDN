@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
+from aidn_hypervisor.accounting.proxy import build_proxy_opaque_usage_profile
 from aidn_hypervisor.accounting.vllm import build_vllm_usage_profile
 from aidn_hypervisor.runtime_protocol import (
     OllamaGenerateAdapter,
@@ -127,6 +128,24 @@ def test_approved_dispatch_selects_ollama_usage_profile() -> None:
 
     assert profile.adapter_version == "ollama-generate.v1"
     assert profile.profile_hash == build_ollama_usage_profile(
+        runtime_id="runtime-1",
+        runtime_generation=1,
+        runtime_configuration_hash="runtime-config-1",
+    ).profile_hash
+
+
+def test_approved_dispatch_selects_opaque_proxy_usage_profile() -> None:
+    binding = SimpleNamespace(
+        adapter_id="proxy-openai",
+        runtime_id="runtime-1",
+        runtime_generation=1,
+        runtime_configuration_hash="runtime-config-1",
+        adapter_version="proxy-openai.v1",
+    )
+
+    profile = ApprovedRuntimeDispatcher._usage_profile(binding)
+
+    assert profile.profile_hash == build_proxy_opaque_usage_profile(
         runtime_id="runtime-1",
         runtime_generation=1,
         runtime_configuration_hash="runtime-config-1",

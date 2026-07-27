@@ -46,7 +46,7 @@ class RuntimeExecutionService:
             return None
         return endpoint_service.get_endpoint(str(endpoint_id)).endpoint
 
-    def uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:
+    def uses_approved_runtime(self, endpoint_manifest) -> bool:
         if endpoint_manifest is None or endpoint_manifest.runtime_binding_id is None:
             return False
         try:
@@ -55,7 +55,16 @@ class RuntimeExecutionService:
             )
         except KeyError:
             return False
-        return binding.adapter_id == "llamacpp-openai"
+        return binding.adapter_id in {
+            "llamacpp-openai",
+            "ollama-generate",
+            "proxy-openai",
+            "vllm-openai",
+        }
+
+    def uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:
+        """Compatibility alias for callers not yet migrated to generic dispatch."""
+        return self.uses_approved_runtime(endpoint_manifest)
 
     def touch_task_session(self, request: TaskRequest) -> None:
         session_id = request.constraints.get("session_id")
@@ -286,7 +295,9 @@ class RuntimeExecutionService:
                 runtime_id=result.runtime_id,
                 details={
                     "runtime_request_id": result.request_id,
-                    "adapter": "llamacpp-openai",
+                    "adapter": self._host.provider_inventory.store.get_runtime_binding(
+                        endpoint_manifest.runtime_binding_id
+                    ).adapter_id,
                 },
             )
             self._host._auto_record_wallet_usage_for_task(

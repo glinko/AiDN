@@ -6,10 +6,12 @@ from uuid import uuid4
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
 from aidn_hypervisor.accounting.models import AccountingContract
 from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
+from aidn_hypervisor.accounting.proxy import build_proxy_opaque_usage_profile
 from aidn_hypervisor.accounting.vllm import build_vllm_usage_profile
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.runtime_protocol.adapters.llamacpp import LlamaCppOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.adapters.ollama import OllamaGenerateAdapter
+from aidn_hypervisor.runtime_protocol.adapters.proxy import ProxyOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.adapters.vllm import VllmOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeExecuteRequest,
@@ -62,7 +64,12 @@ class ApprovedRuntimeDispatcher:
         binding = self.provider_inventory.store.get_runtime_binding(binding_id)
         if binding.status != "ready" or binding.operational_state != "READY":
             raise ApprovedRuntimeDispatchError("Runtime Binding is not ready")
-        if binding.adapter_id not in {"llamacpp-openai", "ollama-generate", "vllm-openai"}:
+        if binding.adapter_id not in {
+            "llamacpp-openai",
+            "ollama-generate",
+            "proxy-openai",
+            "vllm-openai",
+        }:
             raise ApprovedRuntimeDispatchError(
                 f"Unsupported approved Runtime Adapter: {binding.adapter_id}"
             )
@@ -157,6 +164,7 @@ class ApprovedRuntimeDispatcher:
         adapter_class = {
             "llamacpp-openai": LlamaCppOpenAIAdapter,
             "ollama-generate": OllamaGenerateAdapter,
+            "proxy-openai": ProxyOpenAIAdapter,
             "vllm-openai": VllmOpenAIAdapter,
         }[binding.adapter_id]
         adapter = adapter_class(
@@ -183,6 +191,13 @@ class ApprovedRuntimeDispatcher:
                 runtime_generation=binding.runtime_generation,
                 runtime_configuration_hash=binding.runtime_configuration_hash,
                 adapter_version=binding.adapter_version or "ollama-generate.v1",
+            )
+        if binding.adapter_id == "proxy-openai":
+            return build_proxy_opaque_usage_profile(
+                runtime_id=binding.runtime_id,
+                runtime_generation=binding.runtime_generation,
+                runtime_configuration_hash=binding.runtime_configuration_hash,
+                adapter_version=binding.adapter_version or "proxy-openai.v1",
             )
         return build_vllm_usage_profile(
             runtime_id=binding.runtime_id,

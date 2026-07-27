@@ -31,7 +31,7 @@ class TaskExecutionService:
                 bundle,
                 endpoint_manifest,
             )
-        if self._host._runtime_boundary._uses_approved_llamacpp_runtime(endpoint_manifest):
+        if self._host._runtime_boundary._uses_approved_runtime(endpoint_manifest):
             return self._host._runtime_boundary._attempt_approved_runtime_task(
                 task_id,
                 task,
