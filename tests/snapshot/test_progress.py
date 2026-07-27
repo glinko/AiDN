@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.snapshot.progress import (
     SyncMetrics,
@@ -176,7 +177,7 @@ class TestSyncProgressModel:
             estimated_lag_blocks=None,
             updated_at="2025-01-01T00:00:00Z",
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             p.phase = SyncPhase.DOWNLOAD  # type: ignore
 
 
@@ -307,5 +308,5 @@ class TestSyncMetricsModel:
             snapshot_age_blocks=None,
             failure_count_by_version={},
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             m.production_success_count = 1  # type: ignore

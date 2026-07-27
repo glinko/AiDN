@@ -97,7 +97,7 @@ class TestGzipCompression:
     def test_gzip_invalid_data_raises(self):
         """Decompressing invalid gzip data raises an error."""
         handler = CompressionHandler()
-        with pytest.raises(Exception):
+        with pytest.raises(gzip.BadGzipFile):
             handler.decompress(b"not gzip data", CompressionAlgorithm.GZIP)
 
     def test_gzip_large_data(self):

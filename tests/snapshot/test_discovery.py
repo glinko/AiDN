@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.snapshot.discovery import (
     SnapshotAvailability,
@@ -127,7 +128,7 @@ class TestSnapshotAvailability:
 
     def test_availability_is_frozen(self):
         avail = _make_availability()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             avail.snapshot_id = "snap-002"  # type: ignore
 
     def test_availability_partial_coverage(self):

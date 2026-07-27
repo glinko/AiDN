@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.snapshot.replay import (
     BlockReplayer,
@@ -110,7 +111,7 @@ class TestReplayBlock:
 
     def test_block_is_frozen(self):
         b = _make_block(1)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             b.block_height = 2  # type: ignore
 
     def test_validator_set_hash_can_be_none(self):
@@ -277,7 +278,7 @@ class TestBlockReplayerBasic:
         cfg = ReplayConfig(start_height=1, target_height=1)
         replayer = BlockReplayer(cfg, source)
         result = replayer.replay(_make_state(0))
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             result.success = False  # type: ignore
 
     def test_replay_with_validator_hash_none_succeeds(self):

@@ -4,6 +4,7 @@ Full snapshot production pipeline with local restoration verification.
 """
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.snapshot.models import (
     CompressionAlgorithm,
@@ -81,7 +82,7 @@ class TestProducerConfig:
 
     def test_config_is_frozen(self):
         """Config is a frozen pydantic model."""
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             DEFAULT_CONFIG.chunk_size = 1
 
     def test_custom_config(self):
@@ -304,7 +305,7 @@ class TestProduceResult:
         """ProduceResult should be a frozen model."""
         producer = SnapshotProducer(DEFAULT_CONFIG, SIGNING_KEY)
         result = producer.produce(**_produce_kwargs())
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             result.content_hash = "tampered"
 
 

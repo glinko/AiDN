@@ -6,6 +6,7 @@ import hashlib
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.snapshot.models import (
     CompressionAlgorithm,
@@ -128,47 +129,47 @@ class TestSnapshotManifestCreation:
 
     def test_frozen(self):
         m = SnapshotManifest(**_make_manifest_kwargs())
-        with pytest.raises(Exception):  # pydantic FrozenInstanceError
+        with pytest.raises(ValidationError):
             m.snapshot_id = "changed"  # type: ignore
 
     def test_negative_block_height_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotManifest(**_make_manifest_kwargs({"block_height": -1}))
 
     def test_negative_content_size_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotManifest(
                 **_make_manifest_kwargs({"snapshot_content_size": -1})
             )
 
     def test_negative_chunk_count_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotManifest(**_make_manifest_kwargs({"chunk_count": -1}))
 
     def test_negative_chunk_size_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotManifest(**_make_manifest_kwargs({"chunk_size": -1}))
 
     def test_negative_state_schema_version_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotManifest(
                 **_make_manifest_kwargs({"state_schema_version": -1})
             )
 
     def test_negative_format_version_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotManifest(
                 **_make_manifest_kwargs({"snapshot_format_version": -1})
             )
 
     def test_negative_network_revision_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotManifest(
                 **_make_manifest_kwargs({"network_revision": -1})
             )
 
     def test_negative_epoch_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotManifest(**_make_manifest_kwargs({"epoch": -1}))
 
     def test_zero_block_height_allowed(self):
@@ -200,29 +201,29 @@ class TestSnapshotChunk:
 
     def test_frozen(self):
         c = SnapshotChunk(**self._chunk_kwargs())
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             c.chunk_index = 1  # type: ignore
 
     def test_negative_chunk_index_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotChunk(**self._chunk_kwargs({"chunk_index": -1}))
 
     def test_chunk_index_out_of_range_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotChunk(**self._chunk_kwargs({"chunk_index": 3}))
 
     def test_zero_total_chunks_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotChunk(**self._chunk_kwargs({"total_chunks": 0}))
 
     def test_negative_uncompressed_size_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotChunk(
                 **self._chunk_kwargs({"uncompressed_size": -1})
             )
 
     def test_negative_compressed_size_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             SnapshotChunk(**self._chunk_kwargs({"compressed_size": -1}))
 
     def test_chunk_index_last_valid(self):
@@ -253,7 +254,7 @@ class TestSnapshotIdentity:
             snapshot_format_version=1,
             snapshot_content_root="b" * 64,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             si.chain_id = "changed"  # type: ignore
 
     def test_snapshot_id_matches_compute(self):

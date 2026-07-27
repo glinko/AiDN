@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from pydantic import ValidationError
 
 from aidn_hypervisor.snapshot.trust_anchor import (
     CheckpointValidator,
@@ -74,7 +75,7 @@ class TestTrustAnchorCreation:
 
     def test_anchor_is_frozen(self):
         a = _make_anchor()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             a.network_id = "other"
 
     def test_all_sources(self):
