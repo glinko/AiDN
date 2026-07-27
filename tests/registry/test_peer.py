@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from pydantic import ValidationError
 
 from aidn_hypervisor.registry import (
     PeerAuthenticator,
@@ -12,6 +14,37 @@ from aidn_hypervisor.registry import (
     PeerState,
     RegistryPeer,
 )
+from aidn_hypervisor.registry.peer import peer_authentication_payload
+
+
+def _peer_key() -> tuple[Ed25519PrivateKey, str]:
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    return private_key, public_key
+
+
+def _peer_signature(
+    private_key: Ed25519PrivateKey,
+    *,
+    peer_id: str,
+    public_key: str,
+    nonce: str,
+    timestamp: float,
+) -> str:
+    return "ed25519:" + private_key.sign(
+        peer_authentication_payload(
+            peer_id=peer_id,
+            public_key=public_key,
+            nonce=nonce,
+            timestamp=timestamp,
+        )
+    ).hex()
+
+
+def _move_to_authenticating(manager: PeerManager, peer_id: str) -> None:
+    assert manager.transition(peer_id, PeerState.CONNECTING)
+    assert manager.transition(peer_id, PeerState.CONNECTED)
+    assert manager.transition(peer_id, PeerState.AUTHENTICATING)
 
 
 # ---------------------------------------------------------------------------
@@ -127,56 +160,171 @@ def test_peer_model_copy():
 
 def test_authenticator_register_key():
     auth = PeerAuthenticator()
-    auth.register_key("peer-1", "hash-abc")
-    assert auth._known_keys["peer-1"] == "hash-abc"
+    _private_key, public_key = _peer_key()
+    auth.register_key("peer-1", public_key)
+    assert auth._known_keys["peer-1"] == public_key
 
 
 def test_authenticate_valid():
     auth = PeerAuthenticator()
-    auth.register_key("peer-1", "hash-abc")
+    private_key, public_key = _peer_key()
+    auth.register_key("peer-1", public_key)
+    timestamp = time.time()
     result = auth.authenticate(
         peer_id="peer-1",
-        claimed_key_hash="hash-abc",
-        signature="sig-1",
+        claimed_public_key=public_key,
+        signature=_peer_signature(
+            private_key,
+            peer_id="peer-1",
+            public_key=public_key,
+            nonce="nonce-1",
+            timestamp=timestamp,
+        ),
         nonce="nonce-1",
+        timestamp=timestamp,
     )
     assert result is True
 
 
 def test_authenticate_unknown():
     auth = PeerAuthenticator()
+    private_key, public_key = _peer_key()
+    timestamp = time.time()
     result = auth.authenticate(
         peer_id="unknown-peer",
-        claimed_key_hash="hash-abc",
-        signature="sig-1",
+        claimed_public_key=public_key,
+        signature=_peer_signature(
+            private_key,
+            peer_id="unknown-peer",
+            public_key=public_key,
+            nonce="nonce-1",
+            timestamp=timestamp,
+        ),
         nonce="nonce-1",
+        timestamp=timestamp,
     )
     assert result is False
 
 
 def test_authenticate_wrong_key():
     auth = PeerAuthenticator()
-    auth.register_key("peer-1", "hash-abc")
+    _registered_private_key, registered_public_key = _peer_key()
+    private_key, public_key = _peer_key()
+    auth.register_key("peer-1", registered_public_key)
+    timestamp = time.time()
     result = auth.authenticate(
         peer_id="peer-1",
-        claimed_key_hash="hash-wrong",
-        signature="sig-1",
+        claimed_public_key=public_key,
+        signature=_peer_signature(
+            private_key,
+            peer_id="peer-1",
+            public_key=public_key,
+            nonce="nonce-1",
+            timestamp=timestamp,
+        ),
         nonce="nonce-1",
+        timestamp=timestamp,
     )
     assert result is False
 
 
 def test_is_authenticated():
     auth = PeerAuthenticator()
-    auth.register_key("peer-1", "hash-abc")
+    private_key, public_key = _peer_key()
+    auth.register_key("peer-1", public_key)
     assert auth.is_authenticated("peer-1") is False
+    timestamp = time.time()
     auth.authenticate(
         peer_id="peer-1",
-        claimed_key_hash="hash-abc",
-        signature="sig-1",
+        claimed_public_key=public_key,
+        signature=_peer_signature(
+            private_key,
+            peer_id="peer-1",
+            public_key=public_key,
+            nonce="nonce-1",
+            timestamp=timestamp,
+        ),
         nonce="nonce-1",
+        timestamp=timestamp,
     )
     assert auth.is_authenticated("peer-1") is True
+
+
+def test_authenticate_rejects_tampered_signature() -> None:
+    _private_key, public_key = _peer_key()
+    timestamp = 100.0
+    auth = PeerAuthenticator(clock=lambda: timestamp)
+    auth.register_key("peer-1", public_key)
+    assert auth.authenticate(
+        peer_id="peer-1",
+        claimed_public_key=public_key,
+        signature="ed25519:" + "00" * 64,
+        nonce="nonce-1",
+        timestamp=timestamp,
+    ) is False
+
+
+def test_authenticate_rejects_stale_or_replayed_challenge() -> None:
+    now = 100.0
+    auth = PeerAuthenticator(clock=lambda: now)
+    private_key, public_key = _peer_key()
+    auth.register_key("peer-1", public_key)
+    stale_timestamp = now - 61.0
+    assert auth.authenticate(
+        peer_id="peer-1",
+        claimed_public_key=public_key,
+        signature=_peer_signature(
+            private_key,
+            peer_id="peer-1",
+            public_key=public_key,
+            nonce="nonce-stale",
+            timestamp=stale_timestamp,
+        ),
+        nonce="nonce-stale",
+        timestamp=stale_timestamp,
+    ) is False
+
+    timestamp = now
+    signature = _peer_signature(
+        private_key,
+        peer_id="peer-1",
+        public_key=public_key,
+        nonce="nonce-once",
+        timestamp=timestamp,
+    )
+    assert auth.authenticate(
+        peer_id="peer-1",
+        claimed_public_key=public_key,
+        signature=signature,
+        nonce="nonce-once",
+        timestamp=timestamp,
+    ) is True
+    assert auth.authenticate(
+        peer_id="peer-1",
+        claimed_public_key=public_key,
+        signature=signature,
+        nonce="nonce-once",
+        timestamp=timestamp,
+    ) is False
+
+
+def test_authenticate_rejects_non_finite_timestamp() -> None:
+    auth = PeerAuthenticator(clock=lambda: 100.0)
+    private_key, public_key = _peer_key()
+    auth.register_key("peer-1", public_key)
+    assert auth.authenticate(
+        peer_id="peer-1",
+        claimed_public_key=public_key,
+        signature=_peer_signature(
+            private_key,
+            peer_id="peer-1",
+            public_key=public_key,
+            nonce="nonce-1",
+            timestamp=float("nan"),
+        ),
+        nonce="nonce-1",
+        timestamp=float("nan"),
+    ) is False
 
 
 # ---------------------------------------------------------------------------
@@ -273,32 +421,71 @@ def test_peer_disconnect():
 
 def test_peer_authenticate_success():
     auth = PeerAuthenticator()
-    auth.register_key("p1", "hash-abc")
+    private_key, public_key = _peer_key()
+    auth.register_key("p1", public_key)
     mgr = PeerManager(authenticator=auth)
     mgr.add_peer(RegistryPeer(peer_id="p1", node_id="n1", address="a:9000"))
+    _move_to_authenticating(mgr, "p1")
+    timestamp = time.time()
     ok = mgr.authenticate_peer(
         peer_id="p1",
-        claimed_key_hash="hash-abc",
-        signature="sig-1",
+        claimed_public_key=public_key,
+        signature=_peer_signature(
+            private_key,
+            peer_id="p1",
+            public_key=public_key,
+            nonce="nonce-1",
+            timestamp=timestamp,
+        ),
         nonce="nonce-1",
+        timestamp=timestamp,
     )
     assert ok is True
     assert auth.is_authenticated("p1") is True
+    assert mgr.get_peer("p1").state == PeerState.AUTHENTICATED
 
 
 def test_peer_authenticate_fail():
     auth = PeerAuthenticator()
-    auth.register_key("p1", "hash-abc")
+    _private_key, public_key = _peer_key()
+    auth.register_key("p1", public_key)
     mgr = PeerManager(authenticator=auth)
     mgr.add_peer(RegistryPeer(peer_id="p1", node_id="n1", address="a:9000"))
+    _move_to_authenticating(mgr, "p1")
+    timestamp = time.time()
     ok = mgr.authenticate_peer(
         peer_id="p1",
-        claimed_key_hash="hash-wrong",
-        signature="sig-1",
+        claimed_public_key=public_key,
+        signature="ed25519:" + "00" * 64,
         nonce="nonce-1",
+        timestamp=timestamp,
     )
     assert ok is False
     assert mgr.get_peer("p1").state == PeerState.FAILED
+
+
+def test_peer_manager_rejects_authentication_outside_handshake_state() -> None:
+    auth = PeerAuthenticator()
+    private_key, public_key = _peer_key()
+    auth.register_key("p1", public_key)
+    mgr = PeerManager(authenticator=auth)
+    mgr.add_peer(RegistryPeer(peer_id="p1", node_id="n1", address="a:9000"))
+    timestamp = time.time()
+
+    assert mgr.authenticate_peer(
+        peer_id="p1",
+        claimed_public_key=public_key,
+        signature=_peer_signature(
+            private_key,
+            peer_id="p1",
+            public_key=public_key,
+            nonce="nonce-1",
+            timestamp=timestamp,
+        ),
+        nonce="nonce-1",
+        timestamp=timestamp,
+    ) is False
+    assert auth.is_authenticated("p1") is False
 
 
 # ---------------------------------------------------------------------------
@@ -425,13 +612,13 @@ def test_peer_trust_score():
     )
     assert peer.trust_score == 0.8
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         RegistryPeer(
             peer_id="p1", node_id="n1", address="a:9000",
             trust_score=1.5,
         )
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         RegistryPeer(
             peer_id="p1", node_id="n1", address="a:9000",
             trust_score=-0.1,

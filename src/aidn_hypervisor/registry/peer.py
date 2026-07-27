@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import math
 import time
-from enum import Enum
+from collections.abc import Callable
+from enum import StrEnum
 from typing import Any
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, Field
 
 
-class PeerState(str, Enum):
+class PeerState(StrEnum):
     """Registry peer connection lifecycle (RFC-0061 §14)."""
 
     DISCOVERED = "discovered"
@@ -68,6 +73,24 @@ class RegistryPeer(BaseModel):
         )
 
 
+def peer_authentication_payload(
+    *, peer_id: str, public_key: str, nonce: str, timestamp: float
+) -> bytes:
+    """Return the canonical payload signed for one Registry peer handshake."""
+    return json.dumps(
+        {
+            "domain": "aidn.registry.peer-authentication.v1",
+            "nonce": nonce,
+            "peer_id": peer_id,
+            "public_key": public_key,
+            "timestamp": timestamp,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
 class PeerAuthenticator:
     """
     RFC-0061 §17 — Peer authentication.
@@ -75,38 +98,112 @@ class PeerAuthenticator:
     Verifies possession of Registry Service key and claimed Service ID.
     """
 
-    def __init__(self) -> None:
-        self._known_keys: dict[str, str] = {}  # peer_id → public_key_hash
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.time,
+        max_clock_skew_seconds: float = 60.0,
+        nonce_retention_seconds: float = 300.0,
+    ) -> None:
+        if max_clock_skew_seconds <= 0:
+            raise ValueError("max_clock_skew_seconds must be positive")
+        if nonce_retention_seconds < max_clock_skew_seconds:
+            raise ValueError("nonce_retention_seconds must cover clock skew")
+        self._clock = clock
+        self._max_clock_skew_seconds = max_clock_skew_seconds
+        self._nonce_retention_seconds = nonce_retention_seconds
+        self._known_keys: dict[str, str] = {}  # peer_id -> ed25519 public key
         self._authenticated: dict[str, float] = {}  # peer_id → timestamp
+        self._used_nonces: dict[tuple[str, str], float] = {}
 
-    def register_key(self, peer_id: str, public_key_hash: str) -> None:
-        self._known_keys[peer_id] = public_key_hash
+    def register_key(self, peer_id: str, public_key: str) -> None:
+        """Bind one Registry peer identity to an Ed25519 public key."""
+        self._validate_public_key(public_key)
+        self._known_keys[peer_id] = public_key
 
     def authenticate(
         self,
         *,
         peer_id: str,
-        claimed_key_hash: str,
+        claimed_public_key: str,
         signature: str,
         nonce: str,
+        timestamp: float,
     ) -> bool:
-        """
-        Authenticate a peer. In MVP, simplified: check key registration.
-        Real impl would verify signature over (nonce + peer_id + timestamp).
-        """
+        """Authenticate a fresh Ed25519-signed peer handshake."""
+        now = self._clock()
         expected = self._known_keys.get(peer_id)
-        if not expected:
+        if expected is None or expected != claimed_public_key:
             return False
-        if expected != claimed_key_hash:
+        if not nonce or len(nonce) > 256 or isinstance(timestamp, bool):
+            return False
+        if (
+            not isinstance(timestamp, (int, float))
+            or not math.isfinite(timestamp)
+            or abs(now - timestamp) > self._max_clock_skew_seconds
+        ):
             return False
 
-        # In production: verify crypto signature
-        # For MVP: registration = authenticated
-        self._authenticated[peer_id] = time.time()
+        self._prune_expired_nonces(now)
+        nonce_key = (peer_id, nonce)
+        if nonce_key in self._used_nonces:
+            return False
+        if not self._verify_signature(
+            public_key=claimed_public_key,
+            signature=signature,
+            payload=peer_authentication_payload(
+                peer_id=peer_id,
+                public_key=claimed_public_key,
+                nonce=nonce,
+                timestamp=timestamp,
+            ),
+        ):
+            return False
+
+        self._used_nonces[nonce_key] = now
+        self._authenticated[peer_id] = now
         return True
 
     def is_authenticated(self, peer_id: str) -> bool:
         return peer_id in self._authenticated
+
+    def revoke(self, peer_id: str) -> None:
+        """Remove an authentication grant when its peer connection fails."""
+        self._authenticated.pop(peer_id, None)
+
+    @staticmethod
+    def _validate_public_key(public_key: str) -> None:
+        if not public_key.startswith("ed25519:"):
+            raise ValueError("Registry peer key must use ed25519:<32-byte hex> form")
+        try:
+            Ed25519PublicKey.from_public_bytes(
+                bytes.fromhex(public_key.removeprefix("ed25519:"))
+            )
+        except ValueError as error:
+            raise ValueError("Registry peer key is invalid") from error
+
+    @classmethod
+    def _verify_signature(
+        cls, *, public_key: str, signature: str, payload: bytes
+    ) -> bool:
+        try:
+            cls._validate_public_key(public_key)
+            if not signature.startswith("ed25519:"):
+                return False
+            Ed25519PublicKey.from_public_bytes(
+                bytes.fromhex(public_key.removeprefix("ed25519:"))
+            ).verify(bytes.fromhex(signature.removeprefix("ed25519:")), payload)
+        except (InvalidSignature, ValueError):
+            return False
+        return True
+
+    def _prune_expired_nonces(self, now: float) -> None:
+        cutoff = now - self._nonce_retention_seconds
+        self._used_nonces = {
+            nonce_key: used_at
+            for nonce_key, used_at in self._used_nonces.items()
+            if used_at >= cutoff
+        }
 
 
 class PeerManager:
@@ -148,6 +245,7 @@ class PeerManager:
         peer = self._peers.get(peer_id)
         if not peer:
             return False
+        self._authenticator.revoke(peer_id)
         updated = peer.model_copy(update={"state": PeerState.FAILED})
         self._peers[peer_id] = updated
         return True
@@ -164,19 +262,26 @@ class PeerManager:
         self,
         *,
         peer_id: str,
-        claimed_key_hash: str,
+        claimed_public_key: str,
         signature: str,
         nonce: str,
+        timestamp: float,
     ) -> bool:
+        peer = self._peers.get(peer_id)
+        if peer is None:
+            return False
+        if peer.state != PeerState.AUTHENTICATING:
+            return False
         if not self._authenticator.authenticate(
             peer_id=peer_id,
-            claimed_key_hash=claimed_key_hash,
+            claimed_public_key=claimed_public_key,
             signature=signature,
             nonce=nonce,
+            timestamp=timestamp,
         ):
             self.fail_peer(peer_id)
             return False
-        return True
+        return self.transition(peer_id, PeerState.AUTHENTICATED)
 
     @staticmethod
     def _build_allowed_transitions() -> dict[PeerState, set[PeerState]]:
