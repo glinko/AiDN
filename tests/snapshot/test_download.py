@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Protocol, runtime_checkable
 
 import pytest
 
+from aidn_hypervisor.snapshot.chunking import MerkleTree
 from aidn_hypervisor.snapshot.download import (
+    ChunkTransferSource,
     DownloadConfig,
-    DownloadResult,
     DownloadSession,
     SnapshotDownloader,
-    ChunkTransferSource,
 )
 from aidn_hypervisor.snapshot.models import (
     CompressionAlgorithm,
@@ -22,16 +21,19 @@ from aidn_hypervisor.snapshot.models import (
     SnapshotType,
 )
 
-
 # ── Helpers ────────────────────────────────────────────────────────
+
 
 def _make_manifest(
     *,
     snapshot_id: str = "snap-001",
     chunk_count: int = 4,
     chunk_size: int = 1024,
-    chunk_root: str = "chunk-root-abc",
+    chunk_root: str | None = None,
 ) -> SnapshotManifest:
+    if chunk_root in (None, "chunk-root-abc"):
+        chunk_hash = hashlib.sha256(b"x" * chunk_size).hexdigest()
+        chunk_root = MerkleTree([chunk_hash] * chunk_count).root_hash()
     return SnapshotManifest(
         snapshot_id=snapshot_id,
         snapshot_type=SnapshotType.FULL_STATE,
@@ -166,6 +168,20 @@ class TestDownloadConfig:
         assert cfg.max_bandwidth_bytes_per_sec == 5_000_000
         assert cfg.max_retry_count == 5
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("max_concurrent_transfers", 0),
+            ("max_bandwidth_bytes_per_sec", 0),
+            ("max_retry_count", -1),
+            ("retry_delay_seconds", -1.0),
+            ("chunk_timeout_seconds", 0.0),
+        ],
+    )
+    def test_rejects_invalid_limits(self, field: str, value: int | float):
+        with pytest.raises(ValueError):
+            DownloadConfig(**{field: value})
+
 
 # ── SnapshotDownloader ────────────────────────────────────────────
 
@@ -192,6 +208,12 @@ class TestSnapshotDownloader:
         assert result.chunks_total == 4
         assert result.chunks_failed == []
 
+    def test_download_requires_manifest_snapshot_identity(self):
+        manifest = _make_manifest(snapshot_id="manifest-snapshot", chunk_count=1)
+
+        with pytest.raises(ValueError, match="snapshot_id must match"):
+            self._make_downloader().download("requested-snapshot", manifest, [])
+
     def test_multi_source_download(self):
         source = _build_full_source(total_chunks=4, providers=["prov-1", "prov-2", "prov-3"])
         manifest = _make_manifest(chunk_count=4, chunk_root="chunk-root-abc")
@@ -206,6 +228,27 @@ class TestSnapshotDownloader:
         downloader = self._make_downloader(source=source)
         result = downloader.download("snap-001", manifest, ["prov-1"])
         assert result.chunks_verified == 2
+
+    def test_download_rejects_chunk_from_another_snapshot(self):
+        source = _build_full_source(total_chunks=1, providers=["prov-1"])
+        source._chunks["snap-001"][0] = _make_chunk(snapshot_id="other-snapshot", chunk_index=0, total_chunks=1)
+        manifest = _make_manifest(chunk_count=1)
+
+        result = self._make_downloader(source=source).download("snap-001", manifest, ["prov-1"])
+
+        assert not result.success
+        assert result.chunks_failed == [0]
+
+    def test_download_rejects_valid_chunks_with_wrong_manifest_root(self):
+        source = _build_full_source(total_chunks=2, providers=["prov-1"])
+        manifest = _make_manifest(chunk_count=2, chunk_root="0" * 64)
+
+        result = self._make_downloader(source=source).download("snap-001", manifest, ["prov-1"])
+
+        assert not result.success
+        assert result.chunks_downloaded == 0
+        assert result.session.verified_chunk_bitmap == [False, False]
+        assert result.session.chunk_hashes == [None, None]
 
     def test_download_result_fields(self):
         source = _build_full_source(total_chunks=2, providers=["prov-1"])
@@ -243,8 +286,9 @@ class TestSnapshotDownloader:
 
     def test_download_resumption(self):
         source = _build_full_source(total_chunks=4, providers=["prov-1"])
-        manifest = _make_manifest(chunk_count=4, chunk_root="chunk-root-abc")
         downloader = self._make_downloader(source=source)
+        chunk_hash = hashlib.sha256(b"x" * 1024).hexdigest()
+        chunk_root = MerkleTree([chunk_hash] * 4).root_hash()
 
         # Create a partial session
         session = DownloadSession(
@@ -258,9 +302,32 @@ class TestSnapshotDownloader:
             total_bytes_downloaded=2048,
             started_at="2025-01-01T00:00:00Z",
             last_activity="2025-01-01T00:01:00Z",
+            chunk_hashes=[chunk_hash, chunk_hash, None, None],
+            expected_chunk_root=chunk_root,
         )
         result = downloader.resume(session, ["prov-1"])
-        assert result.chunks_downloaded >= 2
+        assert result.success
+        assert result.chunks_downloaded == 4
+
+    def test_resume_does_not_trust_legacy_completed_bitmap(self):
+        source = _build_full_source(total_chunks=1, providers=["prov-1"])
+        session = DownloadSession(
+            snapshot_id="snap-001",
+            manifest_hash="manifest-hash",
+            verified_chunk_bitmap=[True],
+            pending_chunks=[],
+            failed_chunks=[],
+            providers_used=["prov-1"],
+            temporary_files=[],
+            total_bytes_downloaded=1024,
+            started_at="2025-01-01T00:00:00Z",
+            last_activity="2025-01-01T00:01:00Z",
+        )
+
+        result = self._make_downloader(source=source).resume(session, ["prov-1"])
+
+        assert not result.success
+        assert result.session.verified_chunk_bitmap == [False]
 
     def test_session_bitmap_persisted(self):
         source = _build_full_source(total_chunks=4, providers=["prov-1"])
@@ -269,6 +336,8 @@ class TestSnapshotDownloader:
         result = downloader.download("snap-001", manifest, ["prov-1"])
         assert result.session is not None
         assert len(result.session.verified_chunk_bitmap) == 4
+        assert len(result.session.chunk_hashes) == 4
+        assert result.session.expected_chunk_root == manifest.chunk_root
 
     def test_backpressure_concurrency_limit(self):
         """Concurrency limit is respected — downloader doesn't exceed max_concurrent_transfers."""

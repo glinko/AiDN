@@ -7,17 +7,18 @@ ActivationState tracks the state machine for the activation process.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from copy import deepcopy
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from aidn_hypervisor.snapshot.staging import StagingStateStore
 
-
 # ── ActivationState ───────────────────────────────────────────────
 
-class ActivationState(str, Enum):
+
+class ActivationState(StrEnum):
     """State machine for atomic activation."""
 
     IDLE = "idle"
@@ -41,6 +42,7 @@ class ActivationState(str, Enum):
 
 # ── ActivationResult ──────────────────────────────────────────────
 
+
 @dataclass
 class ActivationResult:
     """Result of an activation operation."""
@@ -55,6 +57,7 @@ class ActivationResult:
 
 # ── ActivationRecord (frozen) ─────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class ActivationRecord:
     """Immutable record of a completed activation attempt."""
@@ -67,6 +70,7 @@ class ActivationRecord:
 
 
 # ── AtomicActivator ───────────────────────────────────────────────
+
 
 class AtomicActivator:
     """Atomic state switch per RFC-0062 §51.
@@ -84,6 +88,7 @@ class AtomicActivator:
         self._active_state_hash: str = ""
         self._previous_state_hash: str = ""
         self._staging_data: dict[str, Any] | None = None
+        self._active_state_data: dict[str, Any] | None = None
         self._previous_state_data: dict[str, Any] | None = None
         self._history: list[ActivationRecord] = []
 
@@ -97,9 +102,12 @@ class AtomicActivator:
         """Hash of currently active state."""
         return self._active_state_hash
 
-    def prepare(
-        self, staging: StagingStateStore, expected_state_hash: str
-    ) -> bool:
+    @property
+    def active_state_data(self) -> dict[str, Any] | None:
+        """A defensive copy of the active state for recovery integration."""
+        return deepcopy(self._active_state_data)
+
+    def prepare(self, staging: StagingStateStore, expected_state_hash: str) -> bool:
         """Verify staging and set state to READY.
 
         Args:
@@ -124,7 +132,9 @@ class AtomicActivator:
             return False
 
         # Capture staging data
-        self._staging_data = staging._get_raw()
+        # The staging store remains independently mutable until activation.
+        # Copy it here so the verified data is the data later activated.
+        self._staging_data = deepcopy(staging._get_raw())
 
         # Transition to READY
         self._state = ActivationState.READY
@@ -139,15 +149,15 @@ class AtomicActivator:
         4. Transition to ACTIVATED
         5. On failure: transition to FAILED, preserve old state
         """
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         snapshot_id = str(uuid.uuid4())
 
         # Validate state transition
         if self._state != ActivationState.READY:
-            error_msg = (
-                f"Cannot activate from state {self._state.value}. "
-                f"Expected READY."
-            )
+            error_msg = f"Cannot activate from state {self._state.value}. Expected READY."
+            # An invalid command must leave the active state recoverable.
+            self._previous_state_hash = self._active_state_hash
+            self._previous_state_data = deepcopy(self._active_state_data)
             self._state = ActivationState.FAILED
             return ActivationResult(
                 success=False,
@@ -164,15 +174,15 @@ class AtomicActivator:
         try:
             # Preserve previous state for rollback
             self._previous_state_hash = self._active_state_hash
-            self._previous_state_data = (
-                self._active_state_hash  # simplified: just store hash
-            )
+            self._previous_state_data = deepcopy(self._active_state_data)
 
-            # Atomic switch: swap active state reference
-            new_hash = self._staging_data and self._compute_hash_from_data(
-                self._staging_data
-            ) or ""
+            # Build the replacement before changing the active reference so a
+            # failure cannot leave a half-activated state behind.
+            new_state_data = deepcopy(self._staging_data)
+            new_hash = self._compute_hash_from_data(new_state_data)
 
+            # Atomic switch: replace both state data and its committed hash.
+            self._active_state_data = new_state_data
             self._active_state_hash = new_hash
 
             # Record in history
@@ -201,7 +211,9 @@ class AtomicActivator:
             )
 
         except Exception as e:
-            # On failure: preserve old state, transition to FAILED
+            # A hash alone cannot restore a previously active state.
+            self._active_state_hash = self._previous_state_hash
+            self._active_state_data = deepcopy(self._previous_state_data)
             self._state = ActivationState.FAILED
             return ActivationResult(
                 success=False,
@@ -217,9 +229,9 @@ class AtomicActivator:
         if self._state == ActivationState.IDLE:
             return  # Nothing to rollback
 
-        # Restore previous state
-        if self._previous_state_hash:
-            self._active_state_hash = self._previous_state_hash
+        # Restore previous state, including the actual state data.
+        self._active_state_hash = self._previous_state_hash
+        self._active_state_data = deepcopy(self._previous_state_data)
         self._previous_state_hash = ""
         self._previous_state_data = None
         self._staging_data = None
@@ -236,5 +248,6 @@ class AtomicActivator:
         """Compute hash from raw data dict (matching StagingStateStore)."""
         import hashlib
         import json
+
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

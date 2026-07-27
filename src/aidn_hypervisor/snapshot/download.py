@@ -8,14 +8,12 @@ from __future__ import annotations
 
 import hashlib
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
-from aidn_hypervisor.snapshot.chunking import ChunkVerifier, Chunker
+from aidn_hypervisor.snapshot.chunking import Chunker, MerkleTree
 from aidn_hypervisor.snapshot.models import SnapshotChunk, SnapshotManifest
-
 
 # ── Data Models ───────────────────────────────────────────────────
 
@@ -33,16 +31,18 @@ class DownloadSession(BaseModel, frozen=True):
     total_bytes_downloaded: int
     started_at: str
     last_activity: str
+    chunk_hashes: list[str | None] = Field(default_factory=list)
+    expected_chunk_root: str = ""
 
 
 class DownloadConfig(BaseModel, frozen=True):
     """Download behaviour configuration."""
 
-    max_concurrent_transfers: int = 4
-    max_bandwidth_bytes_per_sec: int = 10_485_760
-    max_retry_count: int = 3
-    retry_delay_seconds: float = 2.0
-    chunk_timeout_seconds: float = 30.0
+    max_concurrent_transfers: int = Field(default=4, ge=1)
+    max_bandwidth_bytes_per_sec: int = Field(default=10_485_760, ge=1)
+    max_retry_count: int = Field(default=3, ge=0)
+    retry_delay_seconds: float = Field(default=2.0, ge=0)
+    chunk_timeout_seconds: float = Field(default=30.0, gt=0)
 
 
 class DownloadResult(BaseModel, frozen=True):
@@ -92,6 +92,7 @@ class ChunkTransferSource(ABC):
 
 # ── Download Planner ──────────────────────────────────────────────
 
+
 class DownloadPlanner:
     """Map chunks to providers with round-robin diversity (§42)."""
 
@@ -111,7 +112,7 @@ class DownloadPlanner:
 
         for chunk_idx in range(total_chunks):
             candidates = []
-            for p_idx, prov in enumerate(providers):
+            for prov in providers:
                 if chunk_idx in available_chunks.get(prov, []):
                     candidates.append(prov)
 
@@ -154,6 +155,45 @@ class SnapshotDownloader:
         """Verify a single chunk's integrity."""
         return self._chunker.verify_chunk(chunk)
 
+    def _chunk_matches_manifest(
+        self,
+        chunk: SnapshotChunk,
+        manifest: SnapshotManifest,
+        expected_index: int,
+    ) -> bool:
+        """Verify that a valid chunk also belongs to this exact manifest."""
+        return (
+            chunk.snapshot_id == manifest.snapshot_id
+            and chunk.chunk_index == expected_index
+            and chunk.total_chunks == manifest.chunk_count
+            and chunk.compressed_size == len(chunk.payload)
+            and self._verify_chunk(chunk)
+        )
+
+    @staticmethod
+    def _verified_root(
+        bitmap: list[bool],
+        chunk_hashes: list[str | None],
+        expected_chunk_root: str,
+    ) -> bool:
+        """Return whether all verified chunks produce the manifest Merkle root."""
+        if not expected_chunk_root or not all(bitmap):
+            return False
+        if len(chunk_hashes) != len(bitmap) or any(chunk_hash is None for chunk_hash in chunk_hashes):
+            return False
+        hashes = [chunk_hash for chunk_hash in chunk_hashes if chunk_hash]
+        return MerkleTree(hashes).root_hash() == expected_chunk_root
+
+    @staticmethod
+    def _invalidate_unproven_chunks(
+        bitmap: list[bool],
+        chunk_hashes: list[str | None],
+    ) -> list[int]:
+        """Invalidate a set whose individual chunks do not form the manifest."""
+        bitmap[:] = [False] * len(bitmap)
+        chunk_hashes[:] = [None] * len(chunk_hashes)
+        return list(range(len(bitmap)))
+
     def download(
         self,
         snapshot_id: str,
@@ -161,11 +201,17 @@ class SnapshotDownloader:
         providers: list[str],
     ) -> DownloadResult:
         """Full download pipeline per §41."""
-        now = datetime.now(timezone.utc).isoformat()
+        if snapshot_id != manifest.snapshot_id:
+            raise ValueError("snapshot_id must match the manifest")
+        if manifest.chunk_count < 1:
+            raise ValueError("manifest chunk_count must be positive")
+
+        now = datetime.now(UTC).isoformat()
         total = manifest.chunk_count
 
         # Initial session state
         bitmap: list[bool] = [False] * total
+        chunk_hashes: list[str | None] = [None] * total
         pending: list[int] = list(range(total))
         failed: list[int] = []
         total_bytes = 0
@@ -195,14 +241,15 @@ class SnapshotDownloader:
                     if not self._source.is_provider_available(prov):
                         continue
 
-                    for attempt in range(self._config.max_retry_count + 1):
+                    for _attempt in range(self._config.max_retry_count + 1):
                         chunk = self._source.get_chunk(snapshot_id, chunk_idx, prov)
                         if chunk is None:
                             continue
 
                         # Verify chunk integrity
-                        if self._verify_chunk(chunk):
+                        if self._chunk_matches_manifest(chunk, manifest, chunk_idx):
                             bitmap[chunk_idx] = True
+                            chunk_hashes[chunk_idx] = chunk.chunk_hash
                             total_bytes += chunk.compressed_size
                             downloaded = True
                             break
@@ -219,9 +266,11 @@ class SnapshotDownloader:
         still_pending = [i for i in pending if not bitmap[i]]
 
         # Compute manifest hash
-        manifest_hash = hashlib.sha256(
-            manifest.model_dump_json().encode()
-        ).hexdigest()
+        manifest_hash = hashlib.sha256(manifest.model_dump_json().encode()).hexdigest()
+
+        if not failed and not self._verified_root(bitmap, chunk_hashes, manifest.chunk_root):
+            failed = self._invalidate_unproven_chunks(bitmap, chunk_hashes)
+            still_pending = list(range(total))
 
         success = len(failed) == 0
         verified_count = sum(1 for b in bitmap if b)
@@ -237,6 +286,8 @@ class SnapshotDownloader:
             total_bytes_downloaded=total_bytes,
             started_at=now,
             last_activity=now,
+            chunk_hashes=chunk_hashes,
+            expected_chunk_root=manifest.chunk_root,
         )
 
         return DownloadResult(
@@ -257,18 +308,27 @@ class SnapshotDownloader:
         providers: list[str],
     ) -> DownloadResult:
         """Resume a download from a saved session (§43)."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         total = len(session.verified_chunk_bitmap)
+        if total < 1:
+            raise ValueError("download session must contain at least one chunk")
         bitmap = list(session.verified_chunk_bitmap)
+        chunk_hashes = list(session.chunk_hashes)
+        if len(chunk_hashes) != total:
+            # Legacy sessions cannot prove the chunks recorded before restart.
+            chunk_hashes = [None] * total
+            bitmap = [False] * total
         failed = list(session.failed_chunks)
         total_bytes = session.total_bytes_downloaded
 
         # Only download missing/failed chunks
         # Include failed chunks for retry with new providers
-        needed = [
-            i for i in range(total)
-            if not bitmap[i]
-        ]
+        needed = [i for i in range(total) if not bitmap[i] or chunk_hashes[i] is None]
+
+        if not needed:
+            # Re-read completed chunks during resume because this MVP session
+            # persists hashes, not the chunk payloads required for restoration.
+            needed = list(range(total))
 
         if not needed:
             # Nothing to download — return current state
@@ -287,9 +347,7 @@ class SnapshotDownloader:
         # Build provider inventory
         available: dict[str, list[int]] = {}
         for prov in providers:
-            available[prov] = self._source.get_provider_inventory(
-                session.snapshot_id, prov
-            )
+            available[prov] = self._source.get_provider_inventory(session.snapshot_id, prov)
 
         plan = DownloadPlanner.plan(total, providers, available)
         concurrency = self._config.max_concurrent_transfers
@@ -307,15 +365,20 @@ class SnapshotDownloader:
                     if not self._source.is_provider_available(prov):
                         continue
 
-                    for attempt in range(self._config.max_retry_count + 1):
-                        chunk = self._source.get_chunk(
-                            session.snapshot_id, chunk_idx, prov
-                        )
+                    for _attempt in range(self._config.max_retry_count + 1):
+                        chunk = self._source.get_chunk(session.snapshot_id, chunk_idx, prov)
                         if chunk is None:
                             continue
 
-                        if self._verify_chunk(chunk):
+                        if (
+                            chunk.snapshot_id == session.snapshot_id
+                            and chunk.chunk_index == chunk_idx
+                            and chunk.total_chunks == total
+                            and chunk.compressed_size == len(chunk.payload)
+                            and self._verify_chunk(chunk)
+                        ):
                             bitmap[chunk_idx] = True
+                            chunk_hashes[chunk_idx] = chunk.chunk_hash
                             total_bytes += chunk.compressed_size
                             downloaded = True
                             break
@@ -330,6 +393,10 @@ class SnapshotDownloader:
 
         still_pending = [i for i in range(total) if not bitmap[i]]
 
+        if not failed and not self._verified_root(bitmap, chunk_hashes, session.expected_chunk_root):
+            failed = self._invalidate_unproven_chunks(bitmap, chunk_hashes)
+            still_pending = list(range(total))
+
         updated_session = DownloadSession(
             snapshot_id=session.snapshot_id,
             manifest_hash=session.manifest_hash,
@@ -341,6 +408,8 @@ class SnapshotDownloader:
             total_bytes_downloaded=total_bytes,
             started_at=session.started_at,
             last_activity=now,
+            chunk_hashes=chunk_hashes,
+            expected_chunk_root=session.expected_chunk_root,
         )
 
         verified_count = sum(1 for b in bitmap if b)

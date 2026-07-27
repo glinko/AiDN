@@ -3,34 +3,40 @@
 Atomic activation with state machine, rollback, and crash recovery.
 """
 
-import pytest
-from datetime import datetime, timezone
-
-from aidn_hypervisor.snapshot.staging import StagingStateStore
 from aidn_hypervisor.snapshot.activation import (
-    AtomicActivator,
-    ActivationState,
-    ActivationResult,
     ActivationRecord,
+    ActivationResult,
+    ActivationState,
+    AtomicActivator,
 )
-
+from aidn_hypervisor.snapshot.staging import StagingStateStore
 
 # ── Helpers ────────────────────────────────────────────────────────
+
 
 def _make_staging_with_data() -> StagingStateStore:
     """Create a staging store with sample data."""
     store = StagingStateStore()
-    store.load_namespace("wallets", {
-        "w1": {"balance": 100, "locked": 10, "seq": 5},
-        "w2": {"balance": 200, "locked": 0, "seq": 3},
-    })
-    store.load_namespace("hypervisors", {
-        "h1": {"status": "running"},
-    })
-    store.load_namespace("protocol_parameters", {
-        "max_block_size": 1_000_000,
-        "version": 1,
-    })
+    store.load_namespace(
+        "wallets",
+        {
+            "w1": {"balance": 100, "locked": 10, "seq": 5},
+            "w2": {"balance": 200, "locked": 0, "seq": 3},
+        },
+    )
+    store.load_namespace(
+        "hypervisors",
+        {
+            "h1": {"status": "running"},
+        },
+    )
+    store.load_namespace(
+        "protocol_parameters",
+        {
+            "max_block_size": 1_000_000,
+            "version": 1,
+        },
+    )
     return store
 
 
@@ -41,8 +47,8 @@ def _compute_hash(store: StagingStateStore) -> str:
 
 # ── ActivationState enum ──────────────────────────────────────────
 
-class TestActivationStateEnum:
 
+class TestActivationStateEnum:
     def test_all_states_present(self):
         states = [s.value for s in ActivationState]
         assert "idle" in states
@@ -58,8 +64,8 @@ class TestActivationStateEnum:
 
 # ── AtomicActivator init ──────────────────────────────────────────
 
-class TestAtomicActivatorInit:
 
+class TestAtomicActivatorInit:
     def test_starts_in_idle(self):
         activator = AtomicActivator()
         assert activator.state == ActivationState.IDLE
@@ -75,8 +81,8 @@ class TestAtomicActivatorInit:
 
 # ── AtomicActivator prepare ───────────────────────────────────────
 
-class TestAtomicActivatorPrepare:
 
+class TestAtomicActivatorPrepare:
     def test_prepare_sets_ready(self):
         activator = AtomicActivator()
         store = _make_staging_with_data()
@@ -110,8 +116,8 @@ class TestAtomicActivatorPrepare:
 
 # ── AtomicActivator activate ──────────────────────────────────────
 
-class TestAtomicActivatorActivate:
 
+class TestAtomicActivatorActivate:
     def test_activate_switches_state(self):
         activator = AtomicActivator()
         store = _make_staging_with_data()
@@ -167,8 +173,8 @@ class TestAtomicActivatorActivate:
 
 # ── AtomicActivator rollback ──────────────────────────────────────
 
-class TestAtomicActivatorRollback:
 
+class TestAtomicActivatorRollback:
     def test_rollback_restores_previous_state(self):
         activator = AtomicActivator()
         store = _make_staging_with_data()
@@ -185,11 +191,38 @@ class TestAtomicActivatorRollback:
         activator.rollback()  # Should not raise
         assert activator.state == ActivationState.IDLE
 
+    def test_rollback_restores_previous_active_data(self):
+        activator = AtomicActivator()
+        first = _make_staging_with_data()
+        first_hash = _compute_hash(first)
+        activator.prepare(first, first_hash)
+        activator.activate()
+        first_active_data = activator.active_state_data
+
+        second = _make_staging_with_data()
+        second.load_namespace("wallets", {"new": {"balance": 300}})
+        activator.prepare(second, _compute_hash(second))
+        activator.activate()
+        activator.rollback()
+
+        assert activator.active_state_data == first_active_data
+        assert activator.active_state_hash == first_hash
+
+    def test_prepare_copies_verified_staging_data(self):
+        activator = AtomicActivator()
+        store = _make_staging_with_data()
+        activator.prepare(store, _compute_hash(store))
+        store.load_namespace("wallets", {"changed": {"balance": 0}})
+
+        activator.activate()
+
+        assert activator.active_state_data["wallets"]["w1"]["balance"] == 100
+
 
 # ── AtomicActivator failure ───────────────────────────────────────
 
-class TestAtomicActivatorFailure:
 
+class TestAtomicActivatorFailure:
     def test_activate_failure_triggers_failed_state(self):
         activator = AtomicActivator()
         # Don't prepare — activate without valid staging
@@ -208,15 +241,15 @@ class TestAtomicActivatorFailure:
 
         # Simulate failure by trying to activate without re-prepare
         activator._state = ActivationState.ACTIVATING
-        result = activator.activate()
+        activator.activate()
         # Old state should be preserved
         assert activator.active_state_hash == old_hash
 
 
 # ── AtomicActivator multiple activations ──────────────────────────
 
-class TestAtomicActivatorMultipleActivations:
 
+class TestAtomicActivatorMultipleActivations:
     def test_multiple_activations_tracked(self):
         activator = AtomicActivator()
 
@@ -255,8 +288,8 @@ class TestAtomicActivatorMultipleActivations:
 
 # ── ActivationResult model ────────────────────────────────────────
 
-class TestActivationResult:
 
+class TestActivationResult:
     def test_success_result(self):
         r = ActivationResult(
             success=True,
@@ -284,8 +317,8 @@ class TestActivationResult:
 
 # ── ActivationRecord model ────────────────────────────────────────
 
-class TestActivationRecord:
 
+class TestActivationRecord:
     def test_frozen_behavior(self):
         record = ActivationRecord(
             previous_state_hash="prev",
