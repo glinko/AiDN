@@ -7,11 +7,14 @@ with verification, retry, backpressure, and session persistence.
 from __future__ import annotations
 
 import hashlib
+import tempfile
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
+from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from aidn_hypervisor.snapshot.chunk_store import FileSnapshotChunkStore, SnapshotChunkStore
 from aidn_hypervisor.snapshot.chunking import Chunker, MerkleTree
 from aidn_hypervisor.snapshot.models import SnapshotChunk, SnapshotManifest
 
@@ -32,6 +35,7 @@ class DownloadSession(BaseModel, frozen=True):
     started_at: str
     last_activity: str
     chunk_hashes: list[str | None] = Field(default_factory=list)
+    chunk_storage_keys: list[str | None] = Field(default_factory=list)
     expected_chunk_root: str = ""
 
 
@@ -146,10 +150,12 @@ class SnapshotDownloader:
         self,
         config: DownloadConfig,
         transfer_source: ChunkTransferSource,
+        chunk_store: SnapshotChunkStore | None = None,
     ) -> None:
         self._config = config
         self._source = transfer_source
         self._chunker = Chunker()
+        self._chunk_store = chunk_store or FileSnapshotChunkStore(Path(tempfile.gettempdir()) / "aidn-snapshot-chunks")
 
     def _verify_chunk(self, chunk: SnapshotChunk) -> bool:
         """Verify a single chunk's integrity."""
@@ -188,11 +194,67 @@ class SnapshotDownloader:
     def _invalidate_unproven_chunks(
         bitmap: list[bool],
         chunk_hashes: list[str | None],
+        chunk_storage_keys: list[str | None],
     ) -> list[int]:
         """Invalidate a set whose individual chunks do not form the manifest."""
         bitmap[:] = [False] * len(bitmap)
         chunk_hashes[:] = [None] * len(chunk_hashes)
+        chunk_storage_keys[:] = [None] * len(chunk_storage_keys)
         return list(range(len(bitmap)))
+
+    def _stored_chunk_is_valid(
+        self,
+        key: str | None,
+        *,
+        snapshot_id: str,
+        chunk_index: int,
+        total_chunks: int,
+        expected_hash: str | None,
+    ) -> bool:
+        """Check that a session key resolves to exactly its verified chunk."""
+        if key is None or expected_hash is None:
+            return False
+        chunk = self._chunk_store.get(key)
+        return (
+            chunk is not None
+            and chunk.snapshot_id == snapshot_id
+            and chunk.chunk_index == chunk_index
+            and chunk.total_chunks == total_chunks
+            and chunk.chunk_hash == expected_hash
+            and chunk.compressed_size == len(chunk.payload)
+            and self._verify_chunk(chunk)
+        )
+
+    def load_verified_chunks(self, session: DownloadSession) -> list[SnapshotChunk]:
+        """Load and revalidate the complete persisted chunk set for activation."""
+        total = len(session.verified_chunk_bitmap)
+        if (
+            total < 1
+            or len(session.chunk_hashes) != total
+            or len(session.chunk_storage_keys) != total
+            or not self._verified_root(
+                session.verified_chunk_bitmap,
+                session.chunk_hashes,
+                session.expected_chunk_root,
+            )
+        ):
+            raise ValueError("download session does not prove a complete chunk set")
+
+        chunks: list[SnapshotChunk] = []
+        for index, (chunk_hash, key) in enumerate(zip(session.chunk_hashes, session.chunk_storage_keys, strict=True)):
+            if not self._stored_chunk_is_valid(
+                key,
+                snapshot_id=session.snapshot_id,
+                chunk_index=index,
+                total_chunks=total,
+                expected_hash=chunk_hash,
+            ):
+                raise ValueError(f"verified chunk {index} is unavailable or invalid")
+            chunk = self._chunk_store.get(key)
+            if chunk is None:  # Defensive: validation above already loaded it.
+                raise ValueError(f"verified chunk {index} disappeared during load")
+            chunks.append(chunk)
+        return chunks
 
     def download(
         self,
@@ -212,6 +274,7 @@ class SnapshotDownloader:
         # Initial session state
         bitmap: list[bool] = [False] * total
         chunk_hashes: list[str | None] = [None] * total
+        chunk_storage_keys: list[str | None] = [None] * total
         pending: list[int] = list(range(total))
         failed: list[int] = []
         total_bytes = 0
@@ -248,8 +311,13 @@ class SnapshotDownloader:
 
                         # Verify chunk integrity
                         if self._chunk_matches_manifest(chunk, manifest, chunk_idx):
+                            try:
+                                storage_key = self._chunk_store.put(chunk)
+                            except OSError:
+                                continue
                             bitmap[chunk_idx] = True
                             chunk_hashes[chunk_idx] = chunk.chunk_hash
+                            chunk_storage_keys[chunk_idx] = storage_key
                             total_bytes += chunk.compressed_size
                             downloaded = True
                             break
@@ -269,7 +337,7 @@ class SnapshotDownloader:
         manifest_hash = hashlib.sha256(manifest.model_dump_json().encode()).hexdigest()
 
         if not failed and not self._verified_root(bitmap, chunk_hashes, manifest.chunk_root):
-            failed = self._invalidate_unproven_chunks(bitmap, chunk_hashes)
+            failed = self._invalidate_unproven_chunks(bitmap, chunk_hashes, chunk_storage_keys)
             still_pending = list(range(total))
 
         success = len(failed) == 0
@@ -287,6 +355,7 @@ class SnapshotDownloader:
             started_at=now,
             last_activity=now,
             chunk_hashes=chunk_hashes,
+            chunk_storage_keys=chunk_storage_keys,
             expected_chunk_root=manifest.chunk_root,
         )
 
@@ -314,21 +383,44 @@ class SnapshotDownloader:
             raise ValueError("download session must contain at least one chunk")
         bitmap = list(session.verified_chunk_bitmap)
         chunk_hashes = list(session.chunk_hashes)
-        if len(chunk_hashes) != total:
+        chunk_storage_keys = list(session.chunk_storage_keys)
+        if len(chunk_hashes) != total or len(chunk_storage_keys) != total:
             # Legacy sessions cannot prove the chunks recorded before restart.
             chunk_hashes = [None] * total
+            chunk_storage_keys = [None] * total
             bitmap = [False] * total
+        else:
+            # A persisted bitmap is trustworthy only when the locally stored
+            # payload still matches the exact session commitment.
+            for index in range(total):
+                if bitmap[index] and self._stored_chunk_is_valid(
+                    chunk_storage_keys[index],
+                    snapshot_id=session.snapshot_id,
+                    chunk_index=index,
+                    total_chunks=total,
+                    expected_hash=chunk_hashes[index],
+                ):
+                    continue
+                bitmap[index] = False
+                chunk_hashes[index] = None
+                chunk_storage_keys[index] = None
         failed = list(session.failed_chunks)
         total_bytes = session.total_bytes_downloaded
 
         # Only download missing/failed chunks
         # Include failed chunks for retry with new providers
-        needed = [i for i in range(total) if not bitmap[i] or chunk_hashes[i] is None]
-
-        if not needed:
-            # Re-read completed chunks during resume because this MVP session
-            # persists hashes, not the chunk payloads required for restoration.
-            needed = list(range(total))
+        needed = [
+            index
+            for index in range(total)
+            if not bitmap[index]
+            or not self._stored_chunk_is_valid(
+                chunk_storage_keys[index],
+                snapshot_id=session.snapshot_id,
+                chunk_index=index,
+                total_chunks=total,
+                expected_hash=chunk_hashes[index],
+            )
+        ]
 
         if not needed:
             # Nothing to download — return current state
@@ -377,8 +469,13 @@ class SnapshotDownloader:
                             and chunk.compressed_size == len(chunk.payload)
                             and self._verify_chunk(chunk)
                         ):
+                            try:
+                                storage_key = self._chunk_store.put(chunk)
+                            except OSError:
+                                continue
                             bitmap[chunk_idx] = True
                             chunk_hashes[chunk_idx] = chunk.chunk_hash
+                            chunk_storage_keys[chunk_idx] = storage_key
                             total_bytes += chunk.compressed_size
                             downloaded = True
                             break
@@ -394,7 +491,7 @@ class SnapshotDownloader:
         still_pending = [i for i in range(total) if not bitmap[i]]
 
         if not failed and not self._verified_root(bitmap, chunk_hashes, session.expected_chunk_root):
-            failed = self._invalidate_unproven_chunks(bitmap, chunk_hashes)
+            failed = self._invalidate_unproven_chunks(bitmap, chunk_hashes, chunk_storage_keys)
             still_pending = list(range(total))
 
         updated_session = DownloadSession(
@@ -409,6 +506,7 @@ class SnapshotDownloader:
             started_at=session.started_at,
             last_activity=now,
             chunk_hashes=chunk_hashes,
+            chunk_storage_keys=chunk_storage_keys,
             expected_chunk_root=session.expected_chunk_root,
         )
 

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 import pytest
 
+from aidn_hypervisor.snapshot.chunk_store import FileSnapshotChunkStore
 from aidn_hypervisor.snapshot.chunking import MerkleTree
 from aidn_hypervisor.snapshot.download import (
     ChunkTransferSource,
@@ -192,10 +194,12 @@ class TestSnapshotDownloader:
         *,
         config: DownloadConfig | None = None,
         source: ChunkTransferSource | None = None,
+        chunk_store: FileSnapshotChunkStore | None = None,
     ) -> SnapshotDownloader:
         return SnapshotDownloader(
             config=config or DownloadConfig(),
             transfer_source=source or MockTransferSource(),
+            chunk_store=chunk_store,
         )
 
     def test_download_all_chunks_single_provider(self):
@@ -338,6 +342,36 @@ class TestSnapshotDownloader:
         assert len(result.session.verified_chunk_bitmap) == 4
         assert len(result.session.chunk_hashes) == 4
         assert result.session.expected_chunk_root == manifest.chunk_root
+
+    def test_resume_uses_persisted_verified_chunks_after_restart(self, tmp_path: Path):
+        source = _build_full_source(total_chunks=2, providers=["prov-1"])
+        manifest = _make_manifest(chunk_count=2, chunk_root="chunk-root-abc")
+        store = FileSnapshotChunkStore(tmp_path / "chunks")
+        initial = self._make_downloader(source=source, chunk_store=store).download("snap-001", manifest, ["prov-1"])
+        assert initial.success
+        calls_before_resume = dict(source._call_count)
+
+        source._always_fail.add("prov-1")
+        restarted = self._make_downloader(source=source, chunk_store=store)
+        resumed = restarted.resume(initial.session, ["prov-1"])
+
+        assert resumed.success
+        assert source._call_count == calls_before_resume
+        chunks = restarted.load_verified_chunks(resumed.session)
+        assert [chunk.payload for chunk in chunks] == [b"x" * 1024, b"x" * 1024]
+
+    def test_load_verified_chunks_rejects_missing_persisted_payload(self, tmp_path: Path):
+        source = _build_full_source(total_chunks=1, providers=["prov-1"])
+        manifest = _make_manifest(chunk_count=1)
+        store = FileSnapshotChunkStore(tmp_path / "chunks")
+        downloader = self._make_downloader(source=source, chunk_store=store)
+        result = downloader.download("snap-001", manifest, ["prov-1"])
+        key = result.session.chunk_storage_keys[0]
+        assert key is not None
+        (tmp_path / "chunks" / key).unlink()
+
+        with pytest.raises(ValueError, match="unavailable or invalid"):
+            downloader.load_verified_chunks(result.session)
 
     def test_backpressure_concurrency_limit(self):
         """Concurrency limit is respected — downloader doesn't exceed max_concurrent_transfers."""

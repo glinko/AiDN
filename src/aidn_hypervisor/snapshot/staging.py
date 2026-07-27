@@ -5,18 +5,17 @@ Staging state never overwrites active state directly.
 
 from __future__ import annotations
 
-import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from aidn_hypervisor.snapshot.encoding import (
-    PortableSnapshotEncoder,
     STATE_NAMESPACES,
+    PortableSnapshotEncoder,
 )
 
-
 # ── RestorationResult ─────────────────────────────────────────────
+
 
 @dataclass
 class RestorationResult:
@@ -30,6 +29,7 @@ class RestorationResult:
 
 
 # ── StagingStateStore ─────────────────────────────────────────────
+
 
 class StagingStateStore:
     """In-memory staging store for snapshot state data.
@@ -55,9 +55,8 @@ class StagingStateStore:
         return list(self._namespaces.keys())
 
     def calculate_state_hash(self) -> str:
-        """SHA-256 of canonical JSON of all staging data (sorted keys, compact)."""
-        canonical = json.dumps(self._namespaces, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        """Hash staging state with the producer's canonical representation."""
+        return PortableSnapshotEncoder().compute_content_hash(self._namespaces)
 
     def clear(self) -> None:
         """Wipe staging store (for restart after crash per §86)."""
@@ -97,6 +96,7 @@ class StagingStateStore:
 
 # ── StateRestorer ─────────────────────────────────────────────────
 
+
 class StateRestorer:
     """Restores snapshot state into staging.
 
@@ -127,9 +127,7 @@ class StateRestorer:
 
             # Step 3: Load protocol metadata first
             if "protocol_parameters" in decoded:
-                self._staging.load_namespace(
-                    "protocol_parameters", decoded["protocol_parameters"]
-                )
+                self._staging.load_namespace("protocol_parameters", decoded["protocol_parameters"])
 
             # Step 4: Load namespaces in defined order
             namespaces_loaded: list[str] = []
@@ -160,11 +158,11 @@ class StateRestorer:
             )
 
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            raise ValueError(f"Decode error: {e}")
+            raise ValueError(f"Decode error: {e}") from e
         except ValueError:
             raise
         except Exception as e:
-            raise ValueError(f"Restoration failed: {e}")
+            raise ValueError(f"Restoration failed: {e}") from e
 
     def restore_partial(self, namespace: str, data: dict) -> None:
         """Load single namespace (for partial repair per §58)."""
@@ -178,12 +176,8 @@ class StateRestorer:
         hypervisors = self._staging.get_namespace("hypervisors") or {}
         if isinstance(hypervisors, dict):
             for h_id, h_data in hypervisors.items():
-                if isinstance(h_data, dict) and "wallet" in h_data:
-                    if h_data["wallet"] not in wallet_ids:
-                        raise ValueError(
-                            f"Hypervisor {h_id} references missing wallet "
-                            f"{h_data['wallet']}"
-                        )
+                if isinstance(h_data, dict) and "wallet" in h_data and h_data["wallet"] not in wallet_ids:
+                    raise ValueError(f"Hypervisor {h_id} references missing wallet {h_data['wallet']}")
 
         services = self._staging.get_namespace("services") or {}
         if isinstance(services, dict):
@@ -191,16 +185,10 @@ class StateRestorer:
                 if isinstance(s_data, dict) and "hypervisor" in s_data:
                     hyp_ids = set(hypervisors.keys()) if isinstance(hypervisors, dict) else set()
                     if s_data["hypervisor"] not in hyp_ids:
-                        raise ValueError(
-                            f"Service {s_id} references missing hypervisor "
-                            f"{s_data['hypervisor']}"
-                        )
+                        raise ValueError(f"Service {s_id} references missing hypervisor {s_data['hypervisor']}")
 
         stakes = self._staging.get_namespace("stakes") or []
         if isinstance(stakes, list):
             for stake in stakes:
-                if isinstance(stake, dict) and "wallet" in stake:
-                    if stake["wallet"] not in wallet_ids:
-                        raise ValueError(
-                            f"Stake references missing wallet {stake['wallet']}"
-                        )
+                if isinstance(stake, dict) and "wallet" in stake and stake["wallet"] not in wallet_ids:
+                    raise ValueError(f"Stake references missing wallet {stake['wallet']}")

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from aidn_hypervisor.snapshot.encoding import PortableSnapshotEncoder
 from aidn_hypervisor.snapshot.staging import StagingStateStore
 
 # ── ActivationState ───────────────────────────────────────────────
@@ -245,9 +246,5 @@ class AtomicActivator:
 
     @staticmethod
     def _compute_hash_from_data(data: dict[str, Any]) -> str:
-        """Compute hash from raw data dict (matching StagingStateStore)."""
-        import hashlib
-        import json
-
-        canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        """Compute the same canonical state hash used by producer and staging."""
+        return PortableSnapshotEncoder().compute_content_hash(data)

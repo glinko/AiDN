@@ -49,6 +49,10 @@ from aidn_hypervisor.snapshot.download import (
     DownloadSession,
     SnapshotDownloader,
 )
+from aidn_hypervisor.snapshot.chunk_store import (
+    FileSnapshotChunkStore,
+    SnapshotChunkStore,
+)
 from aidn_hypervisor.snapshot.staging import (
     RestorationResult,
     StateRestorer,
@@ -66,6 +70,10 @@ from aidn_hypervisor.snapshot.activation import (
     ActivationResult,
     ActivationState,
     AtomicActivator,
+)
+from aidn_hypervisor.snapshot.orchestrator import (
+    SnapshotApplyResult,
+    SnapshotOrchestrator,
 )
 from aidn_hypervisor.snapshot.replay import (
     BlockReplayer,
@@ -94,6 +102,7 @@ __all__ = [
     "DownloadPlanner",
     "DownloadResult",
     "DownloadSession",
+    "FileSnapshotChunkStore",
     "ManifestBuilder",
     "ManifestVerifier",
     "MerkleTree",
@@ -102,6 +111,7 @@ __all__ = [
     "SnapshotAvailability",
     "SnapshotCandidate",
     "SnapshotChunk",
+    "SnapshotChunkStore",
     "SnapshotDiscovery",
     "SnapshotDownloader",
     "SnapshotEncoding",
@@ -111,6 +121,8 @@ __all__ = [
     "SnapshotProducerConfig",
     "SnapshotProducerError",
     "SnapshotRegistrySource",
+    "SnapshotApplyResult",
+    "SnapshotOrchestrator",
     "SnapshotSelector",
     "SnapshotType",
     "STATE_NAMESPACES",
