@@ -1,5 +1,5 @@
 import json
-from urllib import error, request
+from urllib import error, parse, request
 
 from aidn_hypervisor.plugins.base import ProviderPlugin
 
@@ -23,9 +23,43 @@ class OllamaPlugin(ProviderPlugin):
     def describe(self) -> dict:
         return {
             "plugin_id": self.plugin_id,
+            "plugin_version": "0.1.0",
+            "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
+            "supported_aidn_capabilities": ["llm.chat"],
             "workload_types": ["llm_text"],
             "usage_contract": self.usage_contract(),
         }
+
+    def attach_existing_provider(self, configuration: dict) -> dict:
+        endpoint = str(configuration.get("endpoint") or configuration.get("base_url") or "").rstrip("/")
+        parsed = parse.urlparse(endpoint)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+            raise ValueError("Ollama endpoint must be an absolute credential-free HTTP URL")
+        return {
+            "configuration": {**configuration, "endpoint": endpoint},
+            "connection_mode": "attached",
+            "operational_state": "ready",
+        }
+
+    def discover_models(self, provider_instance: dict) -> list[dict]:
+        configuration = provider_instance.get("configuration") or {}
+        endpoint = str(configuration.get("endpoint") or self._default_endpoint).rstrip("/")
+        models = self._request_json("GET", f"{endpoint}/api/tags").get("models")
+        if not isinstance(models, list):
+            raise ValueError("Ollama model discovery returned invalid data")
+        return [
+            {
+                "provider_model_reference": item["model"],
+                "operator_display_name": item.get("name", item["model"]),
+                "metadata_sources": {"provider": "ollama-api-tags"},
+                "capability_bindings": ["llm.chat"],
+                "operational_state": "ready",
+            }
+            for item in models
+            if isinstance(item, dict)
+            and isinstance(item.get("model"), str)
+            and item["model"]
+        ]
 
     def validate_bundle(self, bundle_config) -> None:
         if bundle_config.workload_type != "llm_text":

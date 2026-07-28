@@ -96,6 +96,20 @@ Usage is provider-authoritative per token dimension. The attach configuration
 must contain only the endpoint and scoped Secret Handle references; do not put
 tokens or credentials in the URL.
 
+## Ollama attached-service profile
+
+Ollama remains an attached service: the Hypervisor discovers models and
+executes the native `/api/generate` contract but does not manage the daemon.
+
+```powershell
+$env:AIDN_OLLAMA_ENDPOINT = "http://provider-host:11434"
+$env:AIDN_OLLAMA_MODEL = "qwen2.5:0.5b"
+uv run pytest -q tests/integration/test_ollama_live.py -o addopts=
+```
+
+The opt-in smoke verifies attach, model discovery, Health, native execution
+and provider-reported prompt/evaluation token Usage.
+
 The paid-session check uses the attached vLLM Runtime Binding to publish a
 public Endpoint, open a Consumer-signed fixed-price Session, execute one
 Request, retain terminal Result and Usage evidence, restart the local
