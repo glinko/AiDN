@@ -27,11 +27,21 @@ class SettlementApplicationService:
         after_sequence: int | None = None,
         limit: int = 100,
     ) -> dict:
-        return self._host._ledger_operation_service.export_operations(
+        payload = self._host._ledger_operation_service.export_operations(
             after_operation_id=after_operation_id,
             after_sequence=after_sequence,
             limit=limit,
         )
+        payload["items"] = [
+            {
+                **operation,
+                "finality": self._host.ledger_operation_finality(
+                    operation["operation_id"]
+                ),
+            }
+            for operation in payload["items"]
+        ]
+        return payload
 
     def wallet_next_operation_sequence(self, wallet_id: str) -> int:
         return self._host._ledger_operation_service.wallet_next_sequence(wallet_id)
