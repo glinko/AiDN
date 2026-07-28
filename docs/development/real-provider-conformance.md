@@ -121,14 +121,16 @@ second Provider request or Endpoint payment.
 
 ## Shared launcher
 
-`tools/run-live-provider-conformance.ps1` validates the selected profile's
-required environment variables and runs exactly one live test file using the
-repository's standard pytest import configuration but without coverage. It
-accepts `llamacpp`, `vllm` or `ollama`.
+`tools/run-live-provider-conformance.ps1` delegates to the cross-platform
+`tools/run_live_provider_conformance.py` launcher. Both validate the selected
+profile's required environment variables and run exactly one live test file
+using the repository's standard pytest import configuration but without
+coverage. They accept `llamacpp`, `vllm` or `ollama`.
 It never starts, stops or reconfigures a Provider and does not accept
 credentials as command-line arguments.
 
-The GitHub Actions integration job remains opt-in and intentionally has no
-Provider endpoint configured. Run live conformance from an operator-controlled
-host, or configure a separate self-hosted runner with the required endpoint and
-model environment variables.
+GitHub Actions manual dispatch accepts `live_provider`, `live_endpoint` and
+`live_model`. Selecting `none` runs no live job. Any provider selection runs on
+`self-hosted`, validates the supplied endpoint/model, and fails rather than
+silently skipping when they are missing. The endpoint must be reachable from
+that runner; no credentials are accepted as workflow inputs.

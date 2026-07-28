@@ -5,6 +5,25 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      live_provider:
+        description: Real provider profile to run on a self-hosted runner
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - llamacpp
+          - vllm
+          - ollama
+      live_endpoint:
+        description: Credential-free endpoint URL reachable from the runner
+        required: false
+        type: string
+      live_model:
+        description: Provider model identifier
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -50,9 +69,16 @@ jobs:
         run: uv run pytest -q -m "not integration" --disable-warnings --cov-fail-under=70
 
   integration:
-    name: Opt-in integration tests
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    name: Live ${{ inputs.live_provider }} conformance
+    if: github.event_name == 'workflow_dispatch' && inputs.live_provider != 'none'
+    runs-on: self-hosted
+    env:
+      AIDN_LLAMACPP_ENDPOINT: ${{ inputs.live_provider == 'llamacpp' && inputs.live_endpoint || '' }}
+      AIDN_LLAMACPP_MODEL: ${{ inputs.live_provider == 'llamacpp' && inputs.live_model || '' }}
+      AIDN_VLLM_ENDPOINT: ${{ inputs.live_provider == 'vllm' && inputs.live_endpoint || '' }}
+      AIDN_VLLM_MODEL: ${{ inputs.live_provider == 'vllm' && inputs.live_model || '' }}
+      AIDN_OLLAMA_ENDPOINT: ${{ inputs.live_provider == 'ollama' && inputs.live_endpoint || '' }}
+      AIDN_OLLAMA_MODEL: ${{ inputs.live_provider == 'ollama' && inputs.live_model || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -63,7 +89,7 @@ jobs:
           enable-cache: true
       - name: Install development dependencies
         run: uv sync --all-extras --frozen
-      - name: Run configured integration tests
-        env:
-          AIDN_RUN_INTEGRATION: "1"
-        run: uv run pytest -q -m integration --disable-warnings
+      - name: Run selected live-provider profile
+        run: >-
+          uv run python tools/run_live_provider_conformance.py
+          --provider "${{ inputs.live_provider }}"
