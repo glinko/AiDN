@@ -127,7 +127,20 @@ class ProviderInstallationService:
         )
 
     def import_provider_plugin_registry_objects(self, records: list[dict]) -> list[dict]:
+        revoked_release_ids = {
+            payload["release_id"]
+            for record in records
+            if isinstance((payload := record.get("payload")), dict)
+            and payload.get("release_status") == "REVOKED"
+            and isinstance(payload.get("release_id"), str)
+        }
+        affected_installed_plugin_ids = [
+            installed_plugin.installed_plugin_id
+            for installed_plugin in self._host.provider_inventory.list_installed_plugins()
+            if installed_plugin.release_id in revoked_release_ids
+        ]
         releases = self._host.provider_inventory.import_plugin_release_registry_objects(records)
+        self._stop_revoked_plugin_host_processes(affected_installed_plugin_ids)
         self._host._persist_state()
         return [release.model_dump(mode="json") for release in releases]
 

@@ -4551,6 +4551,69 @@ def test_provider_plugin_release_revoke_blocks_future_installation() -> None:
     assert "revoked" in blocked.json()["detail"]
 
 
+def test_peer_plugin_release_revoke_stops_local_host_and_is_monotonic() -> None:
+    source = _service()
+    target = _service(use_process_manager=True)
+    manifest = source.plugins.get("fake-managed").plugin_manifest()
+    source_release = source.register_provider_plugin_release(manifest=manifest)
+    stale_available_records = source.provider_plugin_registry_objects()
+    target_release = target.import_provider_plugin_registry_objects(
+        stale_available_records
+    )[0]
+    assert target_release["release_id"] == source_release["release_id"]
+
+    target.provider_inventory.store.save_plugin_release(
+        target.provider_inventory.store.get_plugin_release(
+            target_release["release_id"]
+        ).model_copy(
+            update={
+                "package_verification_status": "VERIFIED",
+                "package_verification_mode": "ED25519",
+                "trusted_publisher": True,
+            }
+        )
+    )
+    target.import_provider_plugin_registry_objects(stale_available_records)
+    trusted_local_release = target.provider_inventory.store.get_plugin_release(
+        target_release["release_id"]
+    )
+    assert trusted_local_release.package_verification_status == "VERIFIED"
+    assert trusted_local_release.trusted_publisher is True
+
+    installed = target.install_provider_plugin_release(
+        release_id=target_release["release_id"],
+        granted_permissions=target_release["declared_permissions"],
+        installation_source="LEGACY_BUILTIN",
+    )
+    runtime = target.start_plugin_host_process(
+        installed_plugin_id=installed["installed_plugin_id"], command=["fake-plugin-host"]
+    )
+    credential_key_id = target.provider_inventory.store.get_installed_plugin(
+        installed["installed_plugin_id"]
+    ).activation_credential_key_id
+    assert credential_key_id is not None
+
+    source.revoke_provider_plugin_release(
+        release_id=source_release["release_id"], reason="peer security revoke"
+    )
+    imported = target.import_provider_plugin_registry_objects(
+        source.provider_plugin_registry_objects()
+    )
+
+    assert imported[0]["release_status"] == "REVOKED"
+    assert target.provider_inventory.store.get_installed_plugin(
+        installed["installed_plugin_id"]
+    ).state == "REVOKED"
+    assert target.provider_inventory.plugin_host_activation_credentials.get(credential_key_id) is None
+    assert target.list_runtimes() == []
+    assert runtime.runtime_id not in [item.runtime_id for item in target.list_runtimes()]
+
+    target.import_provider_plugin_registry_objects(stale_available_records)
+    assert target.provider_inventory.store.get_plugin_release(
+        target_release["release_id"]
+    ).release_status == "REVOKED"
+
+
 def test_plugin_host_status_route_returns_sanitized_observability() -> None:
     service = _service()
     client = TestClient(build_app(service=service))

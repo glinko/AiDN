@@ -170,7 +170,7 @@ class ProviderInventoryService:
             )
             if record.get("object_id") != expected_object_id:
                 raise ValueError("plugin release registry object identity mismatch")
-            release = PluginRelease(
+            incoming_release = PluginRelease(
                 release_id=payload["release_id"],
                 plugin_id=payload["plugin_id"],
                 plugin_version=payload["plugin_version"],
@@ -188,9 +188,38 @@ class ProviderInventoryService:
                 trusted_publisher=False,
                 published_at=payload["published_at"],
             )
+            try:
+                existing_release = self.store.get_plugin_release(incoming_release.release_id)
+            except KeyError:
+                existing_release = None
+            release = self._merge_imported_plugin_release(
+                existing_release=existing_release,
+                incoming_release=incoming_release,
+            )
             self.store.save_plugin_release(release)
+            if release.release_status == "REVOKED":
+                self._revoke_installed_plugins_for_release(release.release_id)
             imported.append(release)
         return imported
+
+    @staticmethod
+    def _merge_imported_plugin_release(
+        *,
+        existing_release: PluginRelease | None,
+        incoming_release: PluginRelease,
+    ) -> PluginRelease:
+        """Keep local execution trust and never downgrade a local security revoke."""
+        if existing_release is None:
+            return incoming_release
+        if existing_release.release_status == "REVOKED":
+            return existing_release
+        return incoming_release.model_copy(
+            update={
+                "package_verification_status": existing_release.package_verification_status,
+                "package_verification_mode": existing_release.package_verification_mode,
+                "trusted_publisher": existing_release.trusted_publisher,
+            }
+        )
 
     def plugin_host_local_ingress(self) -> PluginHostLocalIpcIngress:
         """Expose only identity-bound manifest and validation controls to a Plugin Host."""
@@ -378,10 +407,16 @@ class ProviderInventoryService:
             }
         )
         self.store.save_plugin_release(revoked)
+        revoked_installed_plugin_ids, revoked_connection_count = (
+            self._revoke_installed_plugins_for_release(release_id)
+        )
+        return revoked, revoked_installed_plugin_ids, revoked_connection_count
+
+    def _revoke_installed_plugins_for_release(self, release_id: str) -> tuple[list[str], int]:
         revoked_installed_plugin_ids: list[str] = []
         revoked_connection_count = 0
         for installed in self.store.list_installed_plugins():
-            if installed.release_id != release_id:
+            if installed.release_id != release_id or installed.state == "REVOKED":
                 continue
             if installed.activation_credential_key_id is not None:
                 self.plugin_host_activation_credentials.remove(
@@ -400,7 +435,7 @@ class ProviderInventoryService:
                 )
             )
             revoked_installed_plugin_ids.append(installed.installed_plugin_id)
-        return revoked, revoked_installed_plugin_ids, revoked_connection_count
+        return revoked_installed_plugin_ids, revoked_connection_count
 
     def install_plugin_release(
         self,
