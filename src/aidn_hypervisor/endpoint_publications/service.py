@@ -6,6 +6,10 @@ from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
 )
+from aidn_hypervisor.endpoint_publications.signing import (
+    public_key_for_private_key,
+    sign_publication_payload,
+)
 
 
 class EndpointPublicationReadinessError(ValueError):
@@ -28,6 +32,7 @@ class EndpointPublicationService:
         *,
         endpoint_id: str,
         owner_wallet: str,
+        owner_public_key: str | None = None,
         node_id: str,
         wallet_private_key: str,
     ) -> PublishedEndpointConfiguration:
@@ -35,6 +40,7 @@ class EndpointPublicationService:
         readiness = self.publication_readiness(
             endpoint_id=endpoint_id,
             owner_wallet=owner_wallet,
+            owner_public_key=owner_public_key,
             node_id=node_id,
             wallet_private_key=wallet_private_key,
         )
@@ -61,6 +67,7 @@ class EndpointPublicationService:
             publication_id=f"pub-{uuid4().hex[:12]}",
             endpoint_id=endpoint_id,
             owner_wallet=owner_wallet,
+            owner_public_key=owner_public_key,
             node_id=node_id,
             configuration_hash=configuration_hash,
             previous_configuration_hash=(
@@ -80,8 +87,17 @@ class EndpointPublicationService:
             published_at=datetime.now(UTC).isoformat(),
             sequence=sequence,
             status="published",
-            wallet_signature=f"sig-{configuration_hash[:16]}-{wallet_private_key[:8]}",
+            wallet_signature="",
         )
+        if owner_public_key is not None:
+            record.wallet_signature = sign_publication_payload(
+                private_key=wallet_private_key,
+                payload=record.signed_payload(),
+            )
+        else:
+            # Legacy local callers remain readable, but their records are not
+            # cryptographically publishable outside this Hypervisor.
+            record.wallet_signature = f"legacy-unverified:{configuration_hash[:16]}"
         self._record_advertisement_publish(
             record,
             previous_publication_id=(
@@ -108,6 +124,7 @@ class EndpointPublicationService:
         *,
         endpoint_id: str,
         owner_wallet: str | None = None,
+        owner_public_key: str | None = None,
         node_id: str | None = None,
         wallet_private_key: str | None = None,
     ) -> dict:
@@ -170,6 +187,17 @@ class EndpointPublicationService:
                 "ENDPOINT_PUBLICATION_SIGNATURE_REQUIRED",
                 "A wallet signing key is required for endpoint publication.",
             )
+        if owner_public_key is not None and wallet_private_key is not None:
+            try:
+                derived_public_key = public_key_for_private_key(wallet_private_key)
+            except ValueError as error:
+                block("ENDPOINT_PUBLICATION_SIGNATURE_INVALID", str(error))
+            else:
+                if owner_public_key != derived_public_key:
+                    block(
+                        "ENDPOINT_PUBLICATION_SIGNER_MISMATCH",
+                        "The signing key does not belong to the Endpoint owner wallet.",
+                    )
         if manifest.publication.visibility == "private" and manifest.publication.accepts_external_requests:
             block(
                 "ENDPOINT_PUBLICATION_POLICY_CONFLICT",
@@ -218,6 +246,8 @@ class EndpointPublicationService:
                     "signing_key_present": (
                         wallet_private_key is None or bool(wallet_private_key.strip())
                     ),
+                    "owner_public_key": owner_public_key,
+                    "cryptographic_signature": owner_public_key is not None,
                 },
                 "publication": {
                     "visibility": manifest.publication.visibility,

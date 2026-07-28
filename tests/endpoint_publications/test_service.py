@@ -9,6 +9,10 @@ from aidn_hypervisor.endpoint_publications.service import (
     EndpointPublicationReadinessError,
     EndpointPublicationService,
 )
+from aidn_hypervisor.endpoint_publications.signing import (
+    public_key_for_private_key,
+    verify_publication_signature,
+)
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
@@ -132,6 +136,53 @@ def test_publish_configuration_creates_signed_current_record() -> None:
     assert record.session == created.endpoint.session.model_dump(mode="json")
     assert record.status == "published"
     assert record.wallet_signature
+
+
+def test_publish_configuration_uses_verifiable_owner_wallet_signature() -> None:
+    endpoint_service = EndpointService(EndpointStore())
+    created = _create_endpoint(endpoint_service)
+    service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    private_key = "ed25519:" + "11" * 32
+    public_key = public_key_for_private_key(private_key)
+
+    record = service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet="wallet-1",
+        owner_public_key=public_key,
+        node_id="node-1",
+        wallet_private_key=private_key,
+    )
+
+    assert record.owner_public_key == public_key
+    assert record.wallet_signature.startswith("ed25519:")
+    verify_publication_signature(
+        public_key=public_key,
+        signature=record.wallet_signature,
+        payload=record.signed_payload(),
+    )
+
+
+def test_publication_readiness_rejects_signer_not_owned_by_wallet() -> None:
+    endpoint_service = EndpointService(EndpointStore())
+    created = _create_endpoint(endpoint_service)
+    service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+
+    readiness = service.publication_readiness(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet="wallet-1",
+        owner_public_key=public_key_for_private_key("ed25519:" + "22" * 32),
+        node_id="node-1",
+        wallet_private_key="ed25519:" + "11" * 32,
+    )
+
+    assert readiness["ready"] is False
+    assert readiness["blockers"][0]["code"] == "ENDPOINT_PUBLICATION_SIGNER_MISMATCH"
 
 
 def test_publication_readiness_blocks_conflicting_external_policy() -> None:

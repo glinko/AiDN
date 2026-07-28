@@ -5449,7 +5449,8 @@ def test_owner_wallet_bootstrap_create_endpoint_returns_owner_state() -> None:
     assert body["wallet"]["configured"] is True
     assert body["wallet"]["label"] == "Primary Wallet"
     assert body["wallet"]["wallet_id"].startswith("wallet-")
-    assert body["private_key"].startswith("sk-")
+    assert body["private_key"].startswith("ed25519:")
+    assert body["wallet"]["public_key"].startswith("ed25519:")
 
 
 def test_operator_dashboard_requests_endpoint_returns_grouped_payload() -> None:

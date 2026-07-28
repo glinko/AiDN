@@ -1807,6 +1807,7 @@ def build_api_router(
             record = endpoint_publication_service.publish_configuration(
                 endpoint_id=endpoint_id,
                 owner_wallet=wallet["wallet_id"],
+                owner_public_key=wallet["public_key"],
                 node_id=service.node_id,
                 wallet_private_key=service.owner_wallet_private_key(),
             )

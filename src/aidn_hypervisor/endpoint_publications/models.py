@@ -40,6 +40,7 @@ class PublishedEndpointConfiguration(BaseModel):
     publication_id: str
     endpoint_id: str
     owner_wallet: str
+    owner_public_key: str | None = None
     node_id: str
     configuration_hash: str
     previous_configuration_hash: str | None = None

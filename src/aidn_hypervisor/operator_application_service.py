@@ -3,7 +3,14 @@ from __future__ import annotations
 import hashlib
 from copy import deepcopy
 from datetime import UTC, datetime
-from uuid import uuid4
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+    PublicFormat,
+)
 
 
 class OperatorApplicationService:
@@ -68,12 +75,36 @@ class OperatorApplicationService:
         if mode == "import" and not private_key:
             raise ValueError("Private key is required for wallet import")
 
-        resolved_private_key = private_key or f"sk-{uuid4().hex}{uuid4().hex}"
-        digest = hashlib.sha256(resolved_private_key.encode("utf-8")).hexdigest()
+        if private_key is None:
+            private_key_object = Ed25519PrivateKey.generate()
+            resolved_private_key = "ed25519:" + private_key_object.private_bytes(
+                Encoding.Raw,
+                PrivateFormat.Raw,
+                NoEncryption(),
+            ).hex()
+        else:
+            if not private_key.startswith("ed25519:"):
+                raise ValueError(
+                    "Owner wallet private key must use ed25519:<32-byte hex>"
+                )
+            try:
+                private_key_object = Ed25519PrivateKey.from_private_bytes(
+                    bytes.fromhex(private_key.removeprefix("ed25519:"))
+                )
+            except ValueError as error:
+                raise ValueError(
+                    "Owner wallet private key must use ed25519:<32-byte hex>"
+                ) from error
+            resolved_private_key = private_key
+        public_key = "ed25519:" + private_key_object.public_key().public_bytes(
+            Encoding.Raw,
+            PublicFormat.Raw,
+        ).hex()
+        digest = hashlib.sha256(public_key.encode("utf-8")).hexdigest()
         created_at = datetime.now(UTC).isoformat()
         self._host._owner_wallet = {
             "wallet_id": f"wallet-{digest[:12]}",
-            "public_key": f"pk-{digest[:24]}",
+            "public_key": public_key,
             "private_key": resolved_private_key,
             "label": label,
             "created_at": created_at,
