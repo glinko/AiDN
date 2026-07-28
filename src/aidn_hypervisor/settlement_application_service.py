@@ -8,7 +8,17 @@ class SettlementApplicationService:
         self._host = host
 
     def list_ledger_operations(self, *, limit: int | None = None) -> list[dict]:
-        return self._host._ledger_operation_service.list_operations(limit=limit)
+        return [
+            {
+                **operation,
+                "finality": self._host.ledger_operation_finality(
+                    operation["operation_id"]
+                ),
+            }
+            for operation in self._host._ledger_operation_service.list_operations(
+                limit=limit
+            )
+        ]
 
     def export_ledger_operations(
         self,

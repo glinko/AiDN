@@ -151,6 +151,7 @@ class HypervisorService:
         plugin_package_store: PluginPackageStore | None = None,
         runtime_protocol_store=None,
         registry_service: RegistryService | None = None,
+        consensus_service=None,
     ) -> None:
         self.queue = queue
         self.scheduler = scheduler
@@ -168,6 +169,7 @@ class HypervisorService:
             package_store=plugin_package_store,
         )
         self.registry_service = registry_service
+        self.consensus_service = consensus_service
         self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
             state_store
         )
@@ -321,6 +323,20 @@ class HypervisorService:
 
     def list_ledger_operations(self, *, limit: int | None = None) -> list[dict]:
         return self._settlement_application_facade().list_ledger_operations(limit=limit)
+
+    def ledger_operation_finality(self, operation_id: str) -> dict:
+        consensus = self.consensus_service
+        if consensus is None or not getattr(consensus, "is_enabled", False):
+            return {"status": "local_only", "consensus_finalized": False}
+        submission = consensus.get_submission(operation_id)
+        if submission is None:
+            return {"status": "not_submitted", "consensus_finalized": False}
+        status = submission.status.value
+        return {
+            "status": "consensus_finalized" if status == "finalized" else status,
+            "consensus_finalized": status == "finalized",
+            "block_height": submission.block_height,
+        }
 
     @property
     def ledger_operation_service(self) -> LedgerOperationService:
