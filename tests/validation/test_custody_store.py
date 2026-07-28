@@ -130,6 +130,10 @@ def test_validation_service_writes_custody_object_when_configured(tmp_path) -> N
     assert outcome.custody_object.report_size == report_size
     assert service.store.get_report_custody_object(report_hash) == outcome.custody_object
     assert service.get_custody_report_body(report_hash)["endpoint_id"] == "ep-1"
+    metadata = service.report_custody_metadata(report_id=outcome.report.report_id)
+    assert metadata["commitment"]["report_hash"] == report_hash
+    assert metadata["custody_object"] == outcome.custody_object.model_dump(mode="json")
+    assert metadata["custody_state"] is None
 
 
 def test_custody_metadata_survives_file_state_restore(tmp_path) -> None:

@@ -1560,6 +1560,27 @@ def build_api_router(
         result = session_application_service.sweep_idle_sessions(now=current_time)
         return _ok(result["payload"])
 
+    @router.get("/operators/validation/reports/{report_id}/custody")
+    async def operator_validation_report_custody(report_id: str) -> JSONResponse:
+        if validation_service is None:
+            return _error(503, "validation_unavailable", "Validation service is not configured")
+        try:
+            return _ok(validation_service.report_custody_metadata(report_id=report_id))
+        except KeyError:
+            return _error(404, "validation_report_not_found", f"Unknown validation report: {report_id}")
+
+    @router.post("/operators/validation/reports/{report_id}/custody/check")
+    async def operator_check_validation_report_custody(report_id: str) -> JSONResponse:
+        if validation_service is None:
+            return _error(503, "validation_unavailable", "Validation service is not configured")
+        try:
+            state = validation_service.check_report_custody(report_id=report_id)
+        except KeyError:
+            return _error(404, "validation_report_not_found", f"Unknown validation report: {report_id}")
+        except ValueError as error:
+            return _error(409, "validation_custody_unavailable", str(error))
+        return _ok({"custody_state": state.model_dump(mode="json")})
+
     @router.get("/api/v1/sessions")
     async def list_sessions() -> JSONResponse:
         if session_application_service is None:

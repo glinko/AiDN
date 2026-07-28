@@ -1029,6 +1029,55 @@ class ValidationService:
             raise ValueError("Validation report custody store is not configured")
         return self.custody_store.read_report_body(report_hash)
 
+    def report_custody_metadata(self, *, report_id: str) -> dict:
+        """Return operator-visible custody metadata without exposing report bytes."""
+        report = self.store.get_report(report_id)
+        commitment = self.store.get_report_commitment(report_id)
+        custody_object = next(
+            (
+                item
+                for item in self.store.list_report_custody_objects()
+                if item.report_hash == commitment.report_hash
+            ),
+            None,
+        )
+        custody_state = next(
+            (
+                item
+                for item in self.store.list_report_custody_states()
+                if item.report_hash == commitment.report_hash
+            ),
+            None,
+        )
+        receipts = [
+            item
+            for item in self.store.list_report_storage_receipts()
+            if item.report_hash == commitment.report_hash
+        ]
+        failures = [
+            item
+            for item in self.store.list_report_storage_failures()
+            if item.report_hash == commitment.report_hash
+        ]
+        return {
+            "report_id": report.report_id,
+            "endpoint_id": report.endpoint_id,
+            "configuration_hash": report.configuration_hash,
+            "commitment": commitment.model_dump(mode="json"),
+            "custody_object": (
+                custody_object.model_dump(mode="json")
+                if custody_object is not None
+                else None
+            ),
+            "custody_state": (
+                custody_state.model_dump(mode="json")
+                if custody_state is not None
+                else None
+            ),
+            "storage_receipts": [item.model_dump(mode="json") for item in receipts],
+            "storage_failures": [item.model_dump(mode="json") for item in failures],
+        }
+
     def build_report_transfer_envelope(
         self,
         *,

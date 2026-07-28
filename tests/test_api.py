@@ -50,6 +50,7 @@ from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.models import ProxySessionBinding
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
+from aidn_hypervisor.validation.custody_store import ValidationReportCustodyStore
 from aidn_hypervisor.validation.service import ValidationService
 from aidn_hypervisor.validation.store import ValidationStore
 from aidn_hypervisor.wallet_identity import (
@@ -7716,6 +7717,52 @@ def test_endpoint_validation_history_endpoint_returns_reports_and_assignments() 
     assert response.json()["data"]["requests"][0]["request_id"] == requested.request.request_id
     assert len(response.json()["data"]["assignments"]) == 1
     assert len(response.json()["data"]["authorizations"]) == 1
+
+
+def test_operator_validation_custody_routes_return_metadata_and_integrity_state(tmp_path) -> None:
+    validation_service = ValidationService(
+        ValidationStore(),
+        custody_store=ValidationReportCustodyStore(tmp_path / "custody"),
+    )
+    requested = validation_service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    validation_service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = validation_service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+    client = TestClient(build_app(service=_service(), validation_service=validation_service))
+
+    metadata = client.get(
+        f"/operators/validation/reports/{outcome.report.report_id}/custody"
+    )
+    checked = client.post(
+        f"/operators/validation/reports/{outcome.report.report_id}/custody/check"
+    )
+
+    assert metadata.status_code == 200
+    assert metadata.json()["data"]["commitment"]["report_hash"] == outcome.commitment.report_hash
+    assert "report" not in metadata.json()["data"]
+    assert checked.status_code == 200
+    assert checked.json()["data"]["custody_state"]["status"] == "available"
 
 
 def test_create_validation_epoch_endpoint_returns_assignments_and_authorizations() -> None:
