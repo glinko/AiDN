@@ -5,7 +5,13 @@ from aidn_hypervisor.runtime_protocol.models import RuntimeUsageDimension
 
 
 class VllmOpenAIAdapter(LlamaCppOpenAIAdapter):
-    """Use the shared OpenAI wire mapping with vLLM-specific Usage provenance."""
+    """Use the shared OpenAI mapping with vLLM-specific Usage provenance.
+
+    The standard completion API does not expose a portable operation handle, so
+    inherited cancellation and in-flight recovery deliberately remain
+    best-effort. Confirmed stop requires an adapter for a Provider-specific
+    operation API.
+    """
 
     adapter_label = "vllm"
 

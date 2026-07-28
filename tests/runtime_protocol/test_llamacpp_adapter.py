@@ -1,11 +1,15 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from aidn_hypervisor.runtime_protocol import (
     LlamaCppOpenAIAdapter,
+    OllamaGenerateAdapter,
     ProxyOpenAIAdapter,
     RuntimeCancelRequest,
     RuntimeExecuteRequest,
     RuntimeRecoveryPlan,
+    VllmOpenAIAdapter,
     canonical_hash,
 )
 
@@ -214,8 +218,14 @@ def test_llamacpp_adapter_maps_sse_events_to_ordered_stream_evidence(monkeypatch
     }
 
 
-def test_llamacpp_adapter_reports_unconfirmed_best_effort_cancellation() -> None:
-    adapter = LlamaCppOpenAIAdapter(
+@pytest.mark.parametrize(
+    "adapter_class",
+    [LlamaCppOpenAIAdapter, OllamaGenerateAdapter, VllmOpenAIAdapter],
+)
+def test_native_adapters_report_unconfirmed_best_effort_cancellation(
+    adapter_class,
+) -> None:
+    adapter = adapter_class(
         endpoint="http://provider",
         model="qwen",
         runtime_signature="runtime-signed",
@@ -231,6 +241,43 @@ def test_llamacpp_adapter_reports_unconfirmed_best_effort_cancellation() -> None
     assert result.provider_confirmed_stopped is False
     assert result.side_effect_state == "UNKNOWN"
     assert adapter.cancel(protocol, "connection-1", cancellation) == result
+
+
+@pytest.mark.parametrize(
+    "adapter_class",
+    [LlamaCppOpenAIAdapter, OllamaGenerateAdapter, VllmOpenAIAdapter],
+)
+def test_native_adapters_do_not_recover_inflight_execution_without_operation_handle(
+    adapter_class,
+) -> None:
+    adapter = adapter_class(
+        endpoint="http://provider",
+        model="qwen",
+        runtime_signature="runtime-signed",
+    )
+    protocol = _Protocol()
+    request = _request()
+    protocol.register_execute_request("connection-1", request)
+
+    state = adapter.recovery_state(protocol, request, instance_id="restarted")
+    result = adapter.apply_recovery_plan(
+        protocol,
+        "connection-2",
+        RuntimeRecoveryPlan(
+            runtime_id=request.runtime_id,
+            runtime_generation=request.runtime_generation,
+            route_generation=request.route_generation,
+            plan_id=f"native-plan-{adapter.adapter_label}",
+            request_directives={request.request_id: "CONTINUE_EXISTING_EXECUTION"},
+            issued_at=datetime.now(UTC).isoformat(),
+        ),
+    )
+
+    assert state.recoverable_requests == []
+    assert result.request_results == {}
+    assert result.remaining_conflicts == [
+        f"{request.request_id}:ACTIVE_EXECUTION_UNRECOVERABLE"
+    ]
 
 
 def test_llamacpp_adapter_recovers_only_durable_terminal_evidence(monkeypatch) -> None:
