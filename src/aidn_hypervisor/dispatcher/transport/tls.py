@@ -178,6 +178,11 @@ class TlsTransport(TcpTransport):
         """Whether the connection is actually encrypted with TLS."""
         return self._tls_established
 
+    @property
+    def peer_verified(self) -> bool:
+        """Whether the established TLS session verified the remote certificate."""
+        return self._tls_established and self._verify
+
     # -- messaging (inherited from TcpTransport) ----------------------------
     # send() / receive() work unchanged because they operate on self._socket
     # which is now an ssl.SSLSocket (same sendall/recv interface).

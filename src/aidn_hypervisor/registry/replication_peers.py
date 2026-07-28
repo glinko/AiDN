@@ -31,6 +31,11 @@ class RegistryReplicationPeerController:
         self._configured_public_keys: dict[str, str] = {}
         self.reload_configured_peers()
 
+    @property
+    def replicator(self) -> RegistryReplicator:
+        """Strict replicator controlled by this peer-identity lifecycle."""
+        return self._replicator
+
     def reload_configured_peers(self) -> int:
         """Reload local peer approval records and revoke changed identities."""
         configured = {

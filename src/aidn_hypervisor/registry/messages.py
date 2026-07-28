@@ -9,11 +9,15 @@ RFC-0042 §50-§131 compliance for message envelope structure.
 
 from __future__ import annotations
 
-import hashlib
 import time
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from aidn_hypervisor.dispatcher.models import (
+    canonical_payload_bytes,
+    canonical_payload_hash,
+)
 
 
 class RegistryMessageType(str):
@@ -50,6 +54,10 @@ class RegistryPayload(BaseModel, frozen=True):
     created_at: float = Field(default_factory=time.time)
     sequence_number: int = 0
     payload_version: str = "1.0"
+
+    # Registry inventory payloads may contain Bloom-filter bytes. Encode them
+    # deterministically before they enter the outer canonical NetworkMessage.
+    model_config = ConfigDict(ser_json_bytes="base64", val_json_bytes="base64")
 
 
 class InventoryRequestPayload(RegistryPayload):
@@ -180,8 +188,9 @@ class RegistryMessageBuilder:
         """
         self._sequence_counter += 1
         now = time.time()
-        payload_bytes = payload.model_dump_json().encode("utf-8")
-        payload_hash = f"sha256:{hashlib.sha256(payload_bytes).hexdigest()}"
+        registry_payload = payload.model_dump(mode="json")
+        outer_payload = {"registry_payload": registry_payload}
+        payload_bytes = canonical_payload_bytes(outer_payload)
 
         dest = destination_node_id or payload.destination_node_id or "broadcast"
 
@@ -192,8 +201,8 @@ class RegistryMessageBuilder:
             "network_id": self._network_id,
             "chain_id": self._chain_id,
             "network_revision": self._network_revision,
-            "channel_id": f"registry:{channel_class}",
-            "channel_class": channel_class,
+            "channel_id": self._channel_id(channel_class),
+            "channel_class": "REGISTRY",
             "source_subject": {
                 "subject_type": "registry_node",
                 "subject_id": self._node_id,
@@ -208,14 +217,23 @@ class RegistryMessageBuilder:
             "created_at": str(now),
             "expiration": str(now + expiration_seconds),
             "hop_limit": 2,
-            "payload_hash": payload_hash,
+            "payload_hash": canonical_payload_hash(outer_payload),
             "payload_length": len(payload_bytes),
             "payload_encoding": "CANONICAL_JSON",
-            "payload": {
-                "registry_payload": payload.model_dump(),
-                "raw_bytes": payload_bytes.decode("utf-8", errors="replace"),
-            },
+            "payload": outer_payload,
         }
+
+    @staticmethod
+    def _channel_id(channel_class: str) -> str:
+        channel_ids = {
+            RegistryChannelClass.REGISTRY_REPLICATION: "registry:replication",
+            RegistryChannelClass.REGISTRY_DISCOVERY: "registry:discovery",
+            RegistryChannelClass.REGISTRY_CONTROL: "registry:control",
+        }
+        try:
+            return channel_ids[channel_class]
+        except KeyError as error:
+            raise ValueError(f"Unsupported Registry channel class: {channel_class}") from error
 
     def build_inventory_request(
         self,

@@ -296,7 +296,7 @@ class TestInventoryRequest:
         )
         reg_payload = msg["payload"]["registry_payload"]
         assert reg_payload["requested_object_types"] == ["reputation_profile"]
-        assert reg_payload["epoch_range"] == (1, 10)
+        assert reg_payload["epoch_range"] == [1, 10]
 
     def test_handle_inventory_request(self):
         store = _make_store()

@@ -7,6 +7,7 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
+from aidn_hypervisor.dispatcher.models import NetworkMessage
 from aidn_hypervisor.registry.messages import (
     AnnouncementPayload,
     BloomFilterPayload,
@@ -408,6 +409,17 @@ class TestBuildMessage:
         assert len(hex_part) == 64
         int(hex_part, 16)  # valid hex
 
+    def test_build_message_validates_as_network_envelope(self) -> None:
+        """Registry messages must be transferable through TransportGateway."""
+        message = RegistryMessageBuilder(node_id="node-a").build_inventory_request(
+            destination_node_id="node-b"
+        )
+
+        parsed = NetworkMessage.model_validate(message)
+
+        assert parsed.channel_class == "REGISTRY"
+        assert parsed.channel_id == "registry:replication"
+
     def test_sequence_counter_increments(self) -> None:
         """Sequence counter increments with each build."""
         b = RegistryMessageBuilder(node_id="node-a")
@@ -466,8 +478,9 @@ class TestBuildMessage:
             channel_class=RegistryChannelClass.REGISTRY_DISCOVERY,
             destination_node_id="node-b",
         )
-        assert msg["channel_class"] == RegistryChannelClass.REGISTRY_DISCOVERY
-        assert RegistryChannelClass.REGISTRY_DISCOVERY in msg["channel_id"]
+        assert msg["channel_class"] == "REGISTRY"
+        assert msg["channel_id"] == "registry:discovery"
+        assert msg["channel_id"] == "registry:discovery"
 
     def test_build_message_source_subject(self) -> None:
         """Source subject type is registry_node."""
@@ -498,7 +511,8 @@ class TestFullMessageFlow:
         assert msg["message_type"] == RegistryMessageType.INVENTORY_REQUEST
         assert msg["network_id"] == "aidn"
         assert msg["chain_id"] == "main"
-        assert msg["channel_class"] == RegistryChannelClass.REGISTRY_REPLICATION
+        assert msg["channel_class"] == "REGISTRY"
+        assert msg["channel_id"] == "registry:replication"
 
         # Verify payload roundtrip
         payload_data = msg["payload"]["registry_payload"]
@@ -509,7 +523,7 @@ class TestFullMessageFlow:
         assert payload_data["destination_node_id"] == "node-b"
 
         # Verify raw_bytes present
-        assert "raw_bytes" in msg["payload"]
+        assert "registry_payload" in msg["payload"]
 
         # Verify payload_length is positive
         assert msg["payload_length"] > 0
