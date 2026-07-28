@@ -2134,6 +2134,12 @@ def build_api_router(
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @router.get("/registry/wallet-identities/sync-state")
+    async def wallet_identity_sync_state(limit: int = 500) -> dict:
+        if registry_service is None:
+            raise HTTPException(status_code=503, detail="Registry service is not configured")
+        return registry_service.export_wallet_identity_sync_state(limit=limit)
+
     @router.post("/operators/wallet/bootstrap/create")
     async def create_owner_wallet(
         request: WalletBootstrapCreateRequest,
@@ -2198,6 +2204,13 @@ def build_api_router(
             owner_identity = registry_service.resolve_wallet_identity(
                 publication.owner_wallet
             )
+            if owner_identity is None:
+                registry_service.sync_wallet_identity_from_peer(
+                    peer_base_url=node["base_url"], limit=50
+                )
+                owner_identity = registry_service.resolve_wallet_identity(
+                    publication.owner_wallet
+                )
             if owner_identity is None:
                 raise ValueError("Remote Endpoint owner wallet identity is not registered")
             if publication.owner_public_key != owner_identity["public_key"]:
