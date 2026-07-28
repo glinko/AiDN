@@ -896,6 +896,18 @@ class RegistryService:
         ).hexdigest()
         if source.get("state_hash") != state_hash:
             raise ValueError("Peer wallet identity sync state hash does not match")
+        source_identity_present = any(
+            item.get("object_type") == "wallet_identity"
+            and isinstance(item.get("payload"), dict)
+            and item["payload"].get("wallet_id") == source.get("owner_wallet_id")
+            and item["payload"].get("public_key") == source.get("public_key")
+            for item in list(sync_state.get("objects") or [])
+            if isinstance(item, dict)
+        )
+        if not source_identity_present:
+            raise ValueError(
+                "Peer wallet identity sync source owner identity is missing or mismatched"
+            )
         try:
             verify_wallet_identity_sync_envelope(
                 node_id=source["node_id"],

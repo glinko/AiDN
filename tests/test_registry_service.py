@@ -2197,7 +2197,12 @@ def test_registry_service_requires_valid_signed_peer_envelope(monkeypatch) -> No
                 "wallet-consumer",
                 public_key="ed25519:" + "11" * 32,
                 registration_nonce="nonce-a",
-            )
+            ),
+            _wallet_identity_object(
+                "wallet-peer",
+                public_key=public_key,
+                registration_nonce="peer-nonce",
+            ),
         ],
         "conflicts": [],
     }
@@ -2244,7 +2249,7 @@ def test_registry_service_requires_valid_signed_peer_envelope(monkeypatch) -> No
         expected_owner_wallet_id="wallet-peer",
     )
 
-    assert result["imported_object_count"] == 1
+    assert result["imported_object_count"] == 2
     payload["source"]["node_id"] = "node-other"
     with pytest.raises(ValueError, match="node_id does not match"):
         service.sync_wallet_identity_from_peer(
