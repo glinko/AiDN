@@ -2200,6 +2200,29 @@ def test_registry_service_sync_wallet_identity_from_peer_rejects_invalid_peer(
         service.sync_wallet_identity_from_peer(peer_base_url="https://peer-a.example")
 
 
+@pytest.mark.parametrize(
+    "peer_base_url",
+    [
+        "",
+        "ftp://peer-a.example",
+        "https://user:secret@peer-a.example",
+        "https://peer-a.example/registry",
+        "https://peer-a.example?limit=1",
+        "https://peer-a.example#fragment",
+        "https://peer-a.example:99999",
+    ],
+)
+def test_registry_service_rejects_unsafe_wallet_identity_peer_urls(
+    peer_base_url: str,
+) -> None:
+    service = RegistryService()
+
+    with pytest.raises(ValueError, match="peer_base_url"):
+        service.upsert_wallet_identity_peer(peer_base_url=peer_base_url)
+    with pytest.raises(ValueError, match="peer_base_url"):
+        service.sync_wallet_identity_from_peer(peer_base_url=peer_base_url)
+
+
 def test_registry_service_persists_wallet_identity_peer_config_and_sync_state(
     tmp_path: Path,
     monkeypatch,

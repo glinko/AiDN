@@ -38,6 +38,22 @@ _REQUIRED_REGISTRY_OBJECT_FIELDS = (
     "payload_encoding",
     "source_reference",
 )
+
+
+def _normalize_peer_base_url(peer_base_url: str) -> str:
+    parsed = urllib_parse.urlsplit(peer_base_url.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("peer_base_url must be an absolute HTTP URL")
+    if parsed.username or parsed.password:
+        raise ValueError("peer_base_url must not include credentials")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise ValueError("peer_base_url must not include a path, query, or fragment")
+    try:
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            raise ValueError("peer_base_url port is invalid")
+    except ValueError as error:
+        raise ValueError("peer_base_url port is invalid") from error
+    return urllib_parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 _WALLET_IDENTITY_NETWORK_OBJECT_TYPES = {
     "wallet_identity",
     "wallet_identity_resolution_proposal",
@@ -148,9 +164,7 @@ class RegistryService:
         peer_base_url: str,
         enabled: bool = True,
     ) -> dict:
-        normalized_base_url = peer_base_url.rstrip("/")
-        if not normalized_base_url:
-            raise ValueError("peer_base_url must not be empty")
+        normalized_base_url = _normalize_peer_base_url(peer_base_url)
         existing = deepcopy(self._wallet_identity_peers.get(normalized_base_url) or {})
         now = datetime.now(UTC).isoformat()
         record = {
@@ -816,7 +830,7 @@ class RegistryService:
         limit: int = 500,
         timeout_seconds: int = 10,
     ) -> dict:
-        normalized_base_url = peer_base_url.rstrip("/")
+        normalized_base_url = _normalize_peer_base_url(peer_base_url)
         request = urllib_request.Request(
             f"{normalized_base_url}/registry/wallet-identities/sync-state?limit={int(limit)}",
             method="GET",
