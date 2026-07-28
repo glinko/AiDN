@@ -157,10 +157,12 @@ def test_live_vllm_public_paid_session_settles_after_restart(tmp_path) -> None:
     endpoint_id = endpoint["endpoint_id"]
     hypervisor.credit_wallet_q_atoms(wallet_id="vllm-live-consumer", amount_q_atoms=1000)
     consumer_key = Ed25519PrivateKey.generate()
-    operator_key = Ed25519PrivateKey.generate()
+    owner_key = Ed25519PrivateKey.from_private_bytes(
+        bytes.fromhex(hypervisor.owner_wallet_private_key().removeprefix("ed25519:"))
+    )
     for wallet_id, key, nonce in [
         ("vllm-live-consumer", consumer_key, "vllm-live-consumer-registration"),
-        (owner_wallet_id, operator_key, "vllm-live-operator-registration"),
+        (owner_wallet_id, owner_key, "vllm-live-operator-registration"),
     ]:
         public_key = f"ed25519:{key.public_key().public_bytes_raw().hex()}"
         signature = key.sign(

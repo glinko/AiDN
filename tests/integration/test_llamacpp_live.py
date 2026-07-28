@@ -361,10 +361,12 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles_after_restart(tm
     endpoint_id = created_endpoint["endpoint_id"]
     hypervisor.credit_wallet_q_atoms(wallet_id="live-consumer-wallet", amount_q_atoms=1000)
     consumer_key = Ed25519PrivateKey.generate()
-    operator_key = Ed25519PrivateKey.generate()
+    owner_key = Ed25519PrivateKey.from_private_bytes(
+        bytes.fromhex(hypervisor.owner_wallet_private_key().removeprefix("ed25519:"))
+    )
     for wallet_id, key, nonce in [
         ("live-consumer-wallet", consumer_key, "live-consumer-registration"),
-        (owner_wallet_id, operator_key, "live-operator-registration"),
+        (owner_wallet_id, owner_key, "live-operator-registration"),
     ]:
         public_key = f"ed25519:{key.public_key().public_bytes_raw().hex()}"
         signature = key.sign(wallet_identity_registration_payload(
