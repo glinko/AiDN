@@ -106,15 +106,24 @@ class OllamaPlugin(ProviderPlugin):
         if not prompt:
             raise ValueError("Ollama invocation requires a prompt payload")
 
-        response = self._request_json(
-            "POST",
-            f"{self._endpoint(runtime_handle)}/api/generate",
-            {
-                "model": self._model_id(runtime_handle),
-                "prompt": prompt,
-                "stream": False,
-            },
-        )
+        request_payload = {
+            "model": self._model_id(runtime_handle),
+            "prompt": prompt,
+            "stream": False,
+        }
+        try:
+            response = self._request_json(
+                "POST",
+                f"{self._endpoint(runtime_handle)}/api/generate",
+                request_payload,
+                timeout_seconds=float(runtime_handle.metadata.get("timeout_seconds", 90)),
+            )
+        except TypeError as error:
+            if "timeout_seconds" not in str(error):
+                raise
+            response = self._request_json(
+                "POST", f"{self._endpoint(runtime_handle)}/api/generate", request_payload
+            )
         result = {
             "ok": True,
             "task_type": task.task_type,
@@ -161,7 +170,14 @@ class OllamaPlugin(ProviderPlugin):
             raise ValueError("Ollama runtime metadata is missing model_id")
         return model_id
 
-    def _request_json(self, method: str, url: str, payload: dict | None = None) -> dict:
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        payload: dict | None = None,
+        *,
+        timeout_seconds: float = 5,
+    ) -> dict:
         body = None
         headers = {}
         if payload is not None:
@@ -169,7 +185,7 @@ class OllamaPlugin(ProviderPlugin):
             headers["Content-Type"] = "application/json"
         req = request.Request(url=url, method=method, data=body, headers=headers)
         try:
-            with request.urlopen(req, timeout=5) as response:
+            with request.urlopen(req, timeout=timeout_seconds) as response:
                 return json.loads(response.read().decode("utf-8"))
         except error.URLError as exc:
             raise RuntimeError(str(exc)) from exc

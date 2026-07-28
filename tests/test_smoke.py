@@ -60,6 +60,9 @@ def test_default_app_exposes_builtin_plugins() -> None:
         },
         {
             "plugin_id": "ollama",
+            "plugin_version": "0.1.0",
+            "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
+            "supported_aidn_capabilities": ["llm.chat"],
             "workload_types": ["llm_text"],
             "usage_contract": {
                 "supports_exact": True,

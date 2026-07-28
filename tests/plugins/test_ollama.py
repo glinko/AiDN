@@ -31,9 +31,17 @@ class StubOllamaPlugin(OllamaPlugin):
         self.invoke_payload = invoke_payload
         self.raise_error = raise_error
         self.calls: list[tuple[str, str, dict | None]] = []
+        self.request_kwargs: list[dict] = []
 
-    def _request_json(self, method: str, url: str, payload: dict | None = None) -> dict:
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        payload: dict | None = None,
+        **_kwargs,
+    ) -> dict:
         self.calls.append((method, url, payload))
+        self.request_kwargs.append(dict(_kwargs))
         if self.raise_error is not None:
             raise self.raise_error
         if url.endswith("/api/tags"):
@@ -213,6 +221,7 @@ def test_ollama_plugin_invoke_posts_prompt_and_returns_normalized_payload() -> N
             "eval_count": 12,
         },
     }
+    assert plugin.request_kwargs[-1] == {"timeout_seconds": 90.0}
 
 
 def test_ollama_plugin_invoke_requires_prompt_payload() -> None:
@@ -239,3 +248,22 @@ def test_ollama_partial_usage_does_not_invent_unknown_tokens() -> None:
         "measurement_kind": "estimated",
         "measurement_source": "provider_api_partial",
     }
+
+
+def test_ollama_plugin_invoke_uses_runtime_execution_timeout() -> None:
+    plugin = StubOllamaPlugin(invoke_payload={"response": "ok", "done": True})
+    runtime = RuntimeHandle(
+        runtime_id="rt-1",
+        command=["ollama", "serve"],
+        status="running",
+        bundle_id="phi4-ollama",
+        metadata={
+            "endpoint": "http://127.0.0.1:11434",
+            "model_id": "phi4",
+            "timeout_seconds": 37,
+        },
+    )
+
+    plugin.invoke(TaskRequest(task_type="llm_text.generate", payload={"prompt": "Hi"}), runtime)
+
+    assert plugin.request_kwargs[-1] == {"timeout_seconds": 37.0}
