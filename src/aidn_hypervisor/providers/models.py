@@ -55,6 +55,7 @@ InstalledPluginState = Literal[
     "DISABLED",
     "DEGRADED",
     "SECURITY_BLOCKED",
+    "REVOKED",
     "REMOVED",
 ]
 InstalledPluginSource = Literal["PACKAGE", "LEGACY_BUILTIN"]

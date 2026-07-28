@@ -177,11 +177,40 @@ class ProviderInstallationService:
         return release.model_dump(mode="json")
 
     def revoke_provider_plugin_release(self, *, release_id: str, reason: str) -> dict:
-        release = self._host.provider_inventory.revoke_plugin_release(
-            release_id=release_id, reason=reason
+        release, revoked_installed_plugin_ids, revoked_connection_count = (
+            self._host.provider_inventory.revoke_plugin_release(
+                release_id=release_id, reason=reason
+            )
+        )
+        terminated_runtime_ids = self._stop_revoked_plugin_host_processes(
+            revoked_installed_plugin_ids
         )
         self._host._persist_state()
-        return release.model_dump(mode="json")
+        return {
+            **release.model_dump(mode="json"),
+            "revoked_installed_plugin_ids": revoked_installed_plugin_ids,
+            "revoked_connection_count": revoked_connection_count,
+            "terminated_runtime_ids": terminated_runtime_ids,
+        }
+
+    def _stop_revoked_plugin_host_processes(
+        self, installed_plugin_ids: list[str]
+    ) -> list[str]:
+        if not installed_plugin_ids or not hasattr(self._host.runtimes, "stop_runtime"):
+            return []
+        installed_plugin_id_set = set(installed_plugin_ids)
+        runtimes = self._host.runtimes.list_runtimes()
+        stopped_runtime_ids: list[str] = []
+        for runtime in runtimes:
+            if (
+                runtime.metadata.get("component") != "plugin_host"
+                or runtime.metadata.get("installed_plugin_id")
+                not in installed_plugin_id_set
+            ):
+                continue
+            self._host.runtimes.stop_runtime(runtime.runtime_id)
+            stopped_runtime_ids.append(runtime.runtime_id)
+        return stopped_runtime_ids
 
     def acquire_provider_plugin_package(self, *, release_id: str) -> str:
         package_digest = self._host.provider_inventory.acquire_plugin_package(release_id=release_id)
@@ -237,7 +266,10 @@ class ProviderInstallationService:
             package_store = self._host.provider_inventory.package_store
             if package_store is None or not package_store.has(release.package_digest):
                 raise ValueError("verified plugin package is required before Host launch")
-        return self._host.runtimes.start_runtime(
+        self._host.provider_inventory.provision_plugin_host_activation_credential(
+            installed_plugin_id=installed_plugin_id
+        )
+        runtime = self._host.runtimes.start_runtime(
             {
                 "launch_mode": "managed_process",
                 "command": command,
@@ -252,6 +284,8 @@ class ProviderInstallationService:
                 ),
             }
         )
+        self._host._persist_state()
+        return runtime
 
     def start_windows_plugin_host_listener(self, *, address: str, authkey: bytes):
         listener = WindowsNamedPipePluginHostListener(

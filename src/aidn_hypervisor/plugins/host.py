@@ -114,6 +114,17 @@ class PluginHostConnectionStore:
     def remove(self, connection_id: str) -> None:
         self._connections.pop(connection_id, None)
 
+    def remove_for_installed_plugin(self, installed_plugin_id: str) -> int:
+        """Invalidate every live control connection for one local installation."""
+        connection_ids = [
+            connection_id
+            for connection_id, connection in self._connections.items()
+            if connection.installed_plugin_id == installed_plugin_id
+        ]
+        for connection_id in connection_ids:
+            self.remove(connection_id)
+        return len(connection_ids)
+
     def snapshot(self) -> list[dict]:
         return [item.model_dump(mode="json") for item in self._connections.values()]
 

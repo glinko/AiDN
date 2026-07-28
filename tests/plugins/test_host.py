@@ -10,6 +10,7 @@ from aidn_hypervisor.plugins.host import (
     PluginHostAuthenticationError,
     PluginHostAuthenticator,
     PluginHostConnectionStore,
+    PluginHostConnection,
     PluginHostHandshakeService,
     PluginHostHello,
     PluginHostIdentity,
@@ -62,6 +63,30 @@ def test_plugin_host_authenticator_accepts_exact_installation_identity() -> None
     )
 
     assert PluginHostAuthenticator(lambda _: installed).authenticate(identity) == installed
+
+
+def test_plugin_host_connection_store_removes_only_one_plugin_installation() -> None:
+    store = PluginHostConnectionStore()
+    connection = PluginHostConnection(
+        plugin_host_connection_id="phc-revoked",
+        installed_plugin_id="installed-revoked",
+        plugin_id="aidn.provider.fake",
+        installation_generation=1,
+        activation_credential_key_id="credential-revoked",
+        established_at="2026-07-28T00:00:00Z",
+    )
+    other_connection = connection.model_copy(
+        update={
+            "plugin_host_connection_id": "phc-active",
+            "installed_plugin_id": "installed-active",
+        }
+    )
+    store.save(connection)
+    store.save(other_connection)
+
+    assert store.remove_for_installed_plugin("installed-revoked") == 1
+    assert store.get("phc-revoked") is None
+    assert store.get("phc-active") == other_connection
 
 
 def test_plugin_host_handshake_requires_activation_proof() -> None:

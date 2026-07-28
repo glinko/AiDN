@@ -4504,12 +4504,27 @@ def test_provider_plugin_release_routes_record_local_installation_without_execut
 
 
 def test_provider_plugin_release_revoke_blocks_future_installation() -> None:
-    service = _service()
+    service = _service(use_process_manager=True)
     client = TestClient(build_app(service=service))
     release = client.post(
         "/operators/provider-plugin-releases",
         json={"manifest": service.plugins.get("fake-managed").plugin_manifest()},
     ).json()
+
+    installed = client.post(
+        f"/operators/provider-plugin-releases/{release['release_id']}/install",
+        json={
+            "granted_permissions": release["declared_permissions"],
+            "installation_source": "LEGACY_BUILTIN",
+        },
+    ).json()
+    runtime = service.start_plugin_host_process(
+        installed_plugin_id=installed["installed_plugin_id"], command=["fake-plugin-host"]
+    )
+    credential_key_id = service.provider_inventory.store.get_installed_plugin(
+        installed["installed_plugin_id"]
+    ).activation_credential_key_id
+    assert credential_key_id is not None
 
     revoked = client.post(
         f"/operators/provider-plugin-releases/{release['release_id']}/revoke",
@@ -4519,6 +4534,15 @@ def test_provider_plugin_release_revoke_blocks_future_installation() -> None:
     assert revoked.status_code == 200
     assert revoked.json()["release_status"] == "REVOKED"
     assert revoked.json()["revocation_reason"] == "critical vulnerability"
+    assert revoked.json()["revoked_installed_plugin_ids"] == [
+        installed["installed_plugin_id"]
+    ]
+    assert revoked.json()["terminated_runtime_ids"] == [runtime.runtime_id]
+    assert service.provider_inventory.store.get_installed_plugin(
+        installed["installed_plugin_id"]
+    ).state == "REVOKED"
+    assert service.provider_inventory.plugin_host_activation_credentials.get(credential_key_id) is None
+    assert service.list_runtimes() == []
     blocked = client.post(
         f"/operators/provider-plugin-releases/{release['release_id']}/install",
         json={"granted_permissions": release["declared_permissions"]},

@@ -362,14 +362,14 @@ class ProviderInventoryService:
         self.store.save_plugin_release(release)
         return release
 
-    def revoke_plugin_release(self, *, release_id: str, reason: str) -> PluginRelease:
+    def revoke_plugin_release(self, *, release_id: str, reason: str) -> tuple[PluginRelease, list[str], int]:
         if not reason.strip():
             raise ValueError("plugin release revocation reason must not be blank")
         release = self.store.get_plugin_release(release_id)
         if release.release_status == "REVOKED":
             if release.revocation_reason != reason:
                 raise ValueError("plugin release revocation reason is immutable")
-            return release
+            return release, [], 0
         revoked = release.model_copy(
             update={
                 "release_status": "REVOKED",
@@ -378,7 +378,29 @@ class ProviderInventoryService:
             }
         )
         self.store.save_plugin_release(revoked)
-        return revoked
+        revoked_installed_plugin_ids: list[str] = []
+        revoked_connection_count = 0
+        for installed in self.store.list_installed_plugins():
+            if installed.release_id != release_id:
+                continue
+            if installed.activation_credential_key_id is not None:
+                self.plugin_host_activation_credentials.remove(
+                    installed.activation_credential_key_id
+                )
+            revoked_connection_count += self.plugin_host_connection_store.remove_for_installed_plugin(
+                installed.installed_plugin_id
+            )
+            self.store.save_installed_plugin(
+                installed.model_copy(
+                    update={
+                        "state": "REVOKED",
+                        "activation_credential_key_id": None,
+                        "activated_at": None,
+                    }
+                )
+            )
+            revoked_installed_plugin_ids.append(installed.installed_plugin_id)
+        return revoked, revoked_installed_plugin_ids, revoked_connection_count
 
     def install_plugin_release(
         self,
