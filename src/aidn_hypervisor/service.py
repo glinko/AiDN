@@ -7,6 +7,7 @@ from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
 from aidn_hypervisor.allocation_catalog_service import AllocationCatalogService
 from aidn_hypervisor.allocation_lifecycle_service import AllocationLifecycleService
 from aidn_hypervisor.bundle_runtime_policy_service import BundleRuntimePolicyService
+from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
 from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, TaskRequest
 from aidn_hypervisor.economics.models import (
     EpochRewardPoolShares,
@@ -152,6 +153,7 @@ class HypervisorService:
         runtime_protocol_store=None,
         registry_service: RegistryService | None = None,
         consensus_service=None,
+        consensus_finality_source=None,
     ) -> None:
         self.queue = queue
         self.scheduler = scheduler
@@ -170,6 +172,9 @@ class HypervisorService:
         )
         self.registry_service = registry_service
         self.consensus_service = consensus_service
+        self.consensus_finality_source = consensus_finality_source
+        if registry_service is not None and consensus_finality_source is not None:
+            registry_service.bind_consensus_finality_source(consensus_finality_source)
         self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
             state_store
         )
@@ -325,17 +330,42 @@ class HypervisorService:
         return self._settlement_application_facade().list_ledger_operations(limit=limit)
 
     def ledger_operation_finality(self, operation_id: str) -> dict:
+        finality_source = self.consensus_finality_source
+        if finality_source is not None:
+            try:
+                evidence = finality_source.finality_evidence(operation_id)
+            except Exception:
+                evidence = None
+            if (
+                isinstance(evidence, ConsensusFinalityEvidence)
+                and evidence.operation_id == operation_id
+            ):
+                return {
+                    "status": "consensus_finalized",
+                    "consensus_finalized": True,
+                    "block_height": evidence.block_height,
+                    "finality_evidence": evidence.model_dump(),
+                }
         consensus = self.consensus_service
         if consensus is None or not getattr(consensus, "is_enabled", False):
-            return {"status": "local_only", "consensus_finalized": False}
+            return {
+                "status": "local_only",
+                "consensus_finalized": False,
+                "finality_evidence": None,
+            }
         submission = consensus.get_submission(operation_id)
         if submission is None:
-            return {"status": "not_submitted", "consensus_finalized": False}
+            return {
+                "status": "not_submitted",
+                "consensus_finalized": False,
+                "finality_evidence": None,
+            }
         status = submission.status.value
         return {
-            "status": "consensus_finalized" if status == "finalized" else status,
-            "consensus_finalized": status == "finalized",
+            "status": "locally_observed_finalized" if status == "finalized" else status,
+            "consensus_finalized": False,
             "block_height": submission.block_height,
+            "finality_evidence": None,
         }
 
     @property

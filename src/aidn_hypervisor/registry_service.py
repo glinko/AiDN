@@ -9,6 +9,7 @@ from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
+from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
 from aidn_hypervisor.registry.peer import PeerAuthenticator
 from aidn_hypervisor.registry_models import (
     RegistryCompletenessIntegrity,
@@ -25,6 +26,7 @@ from aidn_hypervisor.registry_models import (
 )
 
 if TYPE_CHECKING:
+    from aidn_hypervisor.consensus.finality import ConsensusFinalitySource
     from aidn_hypervisor.ledger.service import LedgerOperationService
 
 _REGISTRY_OBJECT_SNAPSHOT_SCHEMA_VERSION = "registry-object-store.v1"
@@ -88,6 +90,7 @@ class RegistryService:
         stale_grace_seconds: int = 30,
         snapshot_path: str | Path | None = None,
         ledger_operation_service: "LedgerOperationService | None" = None,
+        consensus_finality_source: "ConsensusFinalitySource | None" = None,
         wallet_identity_peer_transport: WalletIdentityPeerTransport | None = None,
     ) -> None:
         self.stale_grace_seconds = stale_grace_seconds
@@ -103,6 +106,7 @@ class RegistryService:
             RegistryWalletIdentityGovernancePolicy().model_dump(mode="json")
         )
         self._ledger_operation_service = ledger_operation_service
+        self._consensus_finality_source = consensus_finality_source
         self._wallet_identity_peer_transport = (
             wallet_identity_peer_transport or WalletIdentityPeerTransport()
         )
@@ -122,6 +126,18 @@ class RegistryService:
             raise ValueError("Registry already has a different Ledger operation service")
         self._ledger_operation_service = ledger_operation_service
         self._rebuild_wallet_identity_resolution_state()
+
+    def bind_consensus_finality_source(
+        self,
+        consensus_finality_source: "ConsensusFinalitySource",
+    ) -> None:
+        """Attach the verified network finality source used by Registry reports."""
+        if (
+            self._consensus_finality_source is not None
+            and self._consensus_finality_source is not consensus_finality_source
+        ):
+            raise ValueError("Registry already has a different consensus finality source")
+        self._consensus_finality_source = consensus_finality_source
 
     def upsert_node(self, payload: RegistryNodeAdvertisement) -> dict:
         self._validate_wallet_identity_objects(
@@ -440,6 +456,7 @@ class RegistryService:
         matching_peer_count = sum(
             1 for item in peer_results if item["status"] == "matching"
         )
+        finality = self._consensus_finality_summary(local_summary["operation_id"])
         return {
             "report_version": "wallet-identity-governance-peer-proof-report.v1",
             "certificate_id": certificate_id,
@@ -456,11 +473,39 @@ class RegistryService:
                 1 for item in peer_results if item["status"] == "unavailable"
             ),
             "peer_results": peer_results,
-            "consensus_finality": False,
-            "finality_note": (
-                "Peer agreement verifies matching local Ledger evidence only; "
-                "it does not establish consensus finality."
-            ),
+            **finality,
+        }
+
+    def _consensus_finality_summary(self, operation_id: str) -> dict:
+        """Return only independently verified network finality, never local state."""
+        if self._consensus_finality_source is None:
+            return {
+                "consensus_finality": False,
+                "finality_evidence": None,
+                "finality_note": (
+                    "Peer agreement verifies matching local Ledger evidence only; "
+                    "no verified network finality source is configured."
+                ),
+            }
+        try:
+            evidence = self._consensus_finality_source.finality_evidence(operation_id)
+        except Exception:
+            evidence = None
+        if (
+            not isinstance(evidence, ConsensusFinalityEvidence)
+            or evidence.operation_id != operation_id
+        ):
+            return {
+                "consensus_finality": False,
+                "finality_evidence": None,
+                "finality_note": (
+                    "No verified network finality evidence is available for this operation."
+                ),
+            }
+        return {
+            "consensus_finality": True,
+            "finality_evidence": evidence.model_dump(),
+            "finality_note": "Verified network finality evidence is available.",
         }
 
     def revoke_wallet_identity_governance_certificate(

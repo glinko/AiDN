@@ -5,6 +5,11 @@ from aidn_hypervisor.consensus.admission import (
     AdmissionResult,
     AdmissionValidator,
 )
+from aidn_hypervisor.consensus.finality import (
+    ConsensusFinalityEvidence,
+    ConsensusFinalitySource,
+    VerifiedConsensusFinalitySource,
+)
 from aidn_hypervisor.consensus.models import (
     LedgerFeeClass,
     LedgerOperationEnvelope,
@@ -19,4 +24,7 @@ __all__ = [
     "OperationType",
     "AdmissionResult",
     "AdmissionValidator",
+    "ConsensusFinalityEvidence",
+    "ConsensusFinalitySource",
+    "VerifiedConsensusFinalitySource",
 ]

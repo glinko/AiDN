@@ -273,14 +273,20 @@ Immediate priorities:
     Operators can retrieve local Ledger proofs for both certificates and
     revocations and compare their deterministic commitment subjects with each
     configured Registry peer. Peer reports reject malformed records and
-    classify matching, mismatched, unavailable and invalid observations, while explicitly reporting
-    `consensus_finality: false`. Network consensus-finality verification and
-    broader network governance remain required before a public multi-node
-    authority claim.
+    classify matching, mismatched, unavailable and invalid observations. Registry
+    and Hypervisor read models now have a fail-closed verified-finality source
+    boundary: local `ConsensusService` submission state is exposed only as
+    `locally_observed_finalized`, while `consensus_finalized: true` requires
+    exact operation-bound evidence returned by an independently verified source.
+    The production CometBFT commit/inclusion verifier and ABCI-backed canonical
+    state remain required before a public multi-node authority claim.
 1. Complete production Registry peer transport operation. The Replicator now has an opt-in fail-closed Ed25519 handshake gate with nonce replay protection for inbound and outbound exchange; operator-managed peer keys persist in the Registry snapshot, survive restart, and key rotation or disablement revokes the active replication session. A transport session now requires verified TLS, owns the outer message sequence, carries the signed handshake and resets authorization on reconnect. A bounded outbound reconnect supervisor now retries only approved peers, requires a fresh handshake after every new transport, and backs off on connection, frame or handshake-timeout failure. Bounded Plugin Release object transfer, Registry reconciliation and revocation projection also exist. A multi-peer listener and a network-finality source remain required before making network-wide directory claims.
 2. Replace the temporary `UNSANDBOXED_HOST` package profile with actual sandbox/container lifecycle and Secret Manager-backed activation-secret persistence before enabling shell, container, download or package-manager executors. `SANDBOX_REQUIRED` remains fail-closed.
 3. Bind Endpoint Configuration publications to a real Ed25519 owner-wallet signature. New owner wallets and API publications use a verifiable signature over the complete published record; public paid Session admission requires the signature to match the canonical owner identity. Public Registry advertisements carry that proof only for external-facing Endpoints, and Remote Endpoint attachment verifies the proof, summary binding and synchronized owner identity before creating a Proxy target. When the owner identity is absent locally, Remote attach performs a bounded root-only HTTP(S) peer sync and requires a hash-bound Ed25519 envelope matching the expected Registry node, operator and owner wallet before importing it. Legacy local records remain readable but are explicitly unverified. Authenticated Registry replication and peer transport authentication remain pending.
-4. Extend the M7 read model from locally observed consensus submissions to a verified finalized-ledger source; current `consensus_finalized` state is advisory until ABCI application state and CometBFT proofs are implemented.
+4. Connect the M7 verified-finality boundary to a production CometBFT
+   commit/inclusion verifier and ABCI-backed canonical state. The boundary now
+   fails closed and rejects local submission state as finality, but no live
+   network proof adapter exists yet.
 
 ## Milestones
 
@@ -520,7 +526,8 @@ Order of work right now:
 
 1. Add a production multi-peer Registry listener and automatic reconnect/backoff loop around the persistent authenticated transport session; verified TLS, signed handshake, key-rotation revocation, reconnect invalidation, object exchange and local untrusted metadata import are implemented.
 2. Replace in-process Plugin Host handlers with isolated package-backed processes and Secret Manager-backed activation credential delivery.
-3. Introduce the M7 finalized consensus boundary without reintroducing local mutable economic authority.
+3. Connect the fail-closed M7 finalized-consensus boundary to a production
+   CometBFT commit/inclusion verifier and ABCI-backed canonical state.
 
 ## Source Documents
 

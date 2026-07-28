@@ -23,6 +23,13 @@ class HypervisorIntegrationService:
         validation_service=None,
     ) -> None:
         self._host.registry_service = registry_service
+        if (
+            registry_service is not None
+            and self._host.consensus_finality_source is not None
+        ):
+            registry_service.bind_consensus_finality_source(
+                self._host.consensus_finality_source
+            )
         self._host.endpoint_service = endpoint_service
         self._host.endpoint_publication_service = endpoint_publication_service
         self._host.remote_endpoint_service = remote_endpoint_service

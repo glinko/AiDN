@@ -8,6 +8,7 @@ from urllib import error as urllib_error
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
 from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import (
@@ -3224,3 +3225,30 @@ def test_registry_service_get_registry_object_returns_deep_copied_payload() -> N
     fresh = service.get_registry_object("sha256:stored-copy", include_payload=True)
 
     assert fresh["payload"] == {"feature_flags": ["streaming"]}
+
+
+def test_registry_finality_summary_requires_verified_exact_operation_evidence() -> None:
+    evidence = ConsensusFinalityEvidence(
+        operation_id="operation-final",
+        chain_id="aidn-testnet-1",
+        block_height=17,
+        block_id="block-17",
+        app_hash="app-hash-17",
+        commit_hash="commit-hash-17",
+        finalized_at="2030-01-01T00:00:00Z",
+        verifier_id="test-cometbft-verifier",
+    )
+
+    class FinalitySource:
+        def finality_evidence(self, operation_id: str):
+            return evidence
+
+    service = RegistryService(consensus_finality_source=FinalitySource())
+
+    finalized = service._consensus_finality_summary("operation-final")
+    mismatched = service._consensus_finality_summary("operation-other")
+
+    assert finalized["consensus_finality"] is True
+    assert finalized["finality_evidence"]["block_height"] == 17
+    assert mismatched["consensus_finality"] is False
+    assert mismatched["finality_evidence"] is None
