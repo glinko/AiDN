@@ -136,6 +136,55 @@ def test_validation_service_writes_custody_object_when_configured(tmp_path) -> N
     assert metadata["custody_state"] is None
 
 
+def test_public_custody_summary_is_aggregate_and_scope_bound(tmp_path) -> None:
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    service = ValidationService(ValidationStore(), custody_store=custody)
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+                "capability_profiles": ["llm_text"],
+                "contribution_q": 500.0,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+
+    before_check = service.custody_summary("ep-1", configuration_hash="cfg-1")
+    service.check_report_custody(report_id=outcome.report.report_id)
+    after_check = service.custody_summary("ep-1", configuration_hash="cfg-1")
+
+    assert before_check["custody_status"] == "not_checked"
+    assert after_check == {
+        "custody_status": "available",
+        "report_count": 1,
+        "checked_report_count": 1,
+        "available_report_count": 1,
+        "attention_report_count": 0,
+        "latest_checked_at": after_check["latest_checked_at"],
+    }
+    assert after_check["latest_checked_at"] is not None
+    assert "report_hash" not in after_check
+    assert service.custody_summary("ep-1", configuration_hash="cfg-other")[
+        "custody_status"
+    ] == "not_reported"
+
+
 def test_custody_metadata_survives_file_state_restore(tmp_path) -> None:
     state_store = FileStateStore(tmp_path / "state.json")
     custody = ValidationReportCustodyStore(tmp_path / "custody")

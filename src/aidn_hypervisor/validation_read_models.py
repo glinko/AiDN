@@ -77,6 +77,20 @@ def validation_summary_for(
     )
 
 
+def custody_summary_for(
+    validation_service,
+    *,
+    endpoint_id: str,
+    configuration_hash: str | None,
+) -> dict | None:
+    if validation_service is None or configuration_hash is None:
+        return None
+    return validation_service.custody_summary(
+        endpoint_id,
+        configuration_hash=configuration_hash,
+    )
+
+
 def response_validation_snapshot(snapshot) -> dict:
     payload = expanded_validation_summary(snapshot.model_dump(mode="json"))
     payload["validation_status"] = compat_validation_status_from_certification_status(

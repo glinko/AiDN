@@ -151,6 +151,7 @@ def _local_candidate_from_advertisement(advertisement: dict, bundle: dict) -> di
 def _aggregate_market_trust(published_endpoints: list[dict]) -> dict:
     validation_by_status: dict[str, int] = {}
     publication_by_status: dict[str, int] = {}
+    custody_by_status: dict[str, int] = {}
     certified_count = 0
     certified_with_issues_count = 0
     validated_count = 0
@@ -158,18 +159,25 @@ def _aggregate_market_trust(published_endpoints: list[dict]) -> dict:
     attention_count = 0
     in_sync_count = 0
     drift_count = 0
+    custody_available_count = 0
+    custody_attention_count = 0
+    custody_unverified_count = 0
 
     for item in published_endpoints:
         validation_summary = item.get("published_validation_summary", {}) or {}
         certification_status = validation_summary.get("certification_status")
         validation_status = validation_summary.get("validation_status", "unknown")
         publication_status = item.get("publication_sync_status") or "unknown"
+        custody_status = (item.get("published_custody_summary") or {}).get(
+            "custody_status", "unknown"
+        )
         validation_by_status[validation_status] = (
             validation_by_status.get(validation_status, 0) + 1
         )
         publication_by_status[publication_status] = (
             publication_by_status.get(publication_status, 0) + 1
         )
+        custody_by_status[custody_status] = custody_by_status.get(custody_status, 0) + 1
 
         if certification_status == "certified":
             certified_count += 1
@@ -199,6 +207,13 @@ def _aggregate_market_trust(published_endpoints: list[dict]) -> dict:
         }:
             drift_count += 1
 
+        if custody_status == "available":
+            custody_available_count += 1
+        elif custody_status in {"attention_required", "partially_checked"}:
+            custody_attention_count += 1
+        elif custody_status in {"not_reported", "not_checked", "unknown"}:
+            custody_unverified_count += 1
+
     return {
         "total_endpoints": len(published_endpoints),
         "certified_count": certified_count,
@@ -208,8 +223,12 @@ def _aggregate_market_trust(published_endpoints: list[dict]) -> dict:
         "attention_count": attention_count,
         "in_sync_count": in_sync_count,
         "drift_count": drift_count,
+        "custody_available_count": custody_available_count,
+        "custody_attention_count": custody_attention_count,
+        "custody_unverified_count": custody_unverified_count,
         "validation_by_status": validation_by_status,
         "publication_by_status": publication_by_status,
+        "custody_by_status": custody_by_status,
     }
 
 

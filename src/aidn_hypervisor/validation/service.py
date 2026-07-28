@@ -1078,6 +1078,55 @@ class ValidationService:
             "storage_failures": [item.model_dump(mode="json") for item in failures],
         }
 
+    def custody_summary(
+        self,
+        endpoint_id: str,
+        *,
+        configuration_hash: str | None = None,
+    ) -> dict:
+        """Return a public-safe aggregate custody view for one Endpoint scope."""
+        reports = [
+            item
+            for item in self.store.list_reports_for_endpoint(endpoint_id)
+            if configuration_hash is None or item.configuration_hash == configuration_hash
+        ]
+        states = [
+            item
+            for item in self.store.list_report_custody_states()
+            if item.endpoint_id == endpoint_id
+            and (
+                configuration_hash is None
+                or item.configuration_hash == configuration_hash
+            )
+        ]
+        status_counts: dict[str, int] = {}
+        for state in states:
+            status_counts[state.status] = status_counts.get(state.status, 0) + 1
+
+        checked_report_count = len(states)
+        available_report_count = status_counts.get("available", 0)
+        attention_report_count = checked_report_count - available_report_count
+        if not reports:
+            custody_status = "not_reported"
+        elif not states:
+            custody_status = "not_checked"
+        elif checked_report_count < len(reports):
+            custody_status = "partially_checked"
+        elif attention_report_count:
+            custody_status = "attention_required"
+        else:
+            custody_status = "available"
+
+        checked_at = [item.last_checked_at for item in states if item.last_checked_at]
+        return {
+            "custody_status": custody_status,
+            "report_count": len(reports),
+            "checked_report_count": checked_report_count,
+            "available_report_count": available_report_count,
+            "attention_report_count": attention_report_count,
+            "latest_checked_at": max(checked_at) if checked_at else None,
+        }
+
     def build_report_transfer_envelope(
         self,
         *,

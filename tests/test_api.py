@@ -8664,6 +8664,14 @@ def test_operator_dashboard_market_payload_includes_trust_summary() -> None:
                         "validation_status": "validated",
                         "configuration_hash": "cfg-remote-a",
                     },
+                    "published_custody_summary": {
+                        "custody_status": "available",
+                        "report_count": 1,
+                        "checked_report_count": 1,
+                        "available_report_count": 1,
+                        "attention_report_count": 0,
+                        "latest_checked_at": "2026-06-30T00:00:00+00:00",
+                    },
                 },
                 {
                     "endpoint_id": "ep-remote-b",
@@ -8680,6 +8688,14 @@ def test_operator_dashboard_market_payload_includes_trust_summary() -> None:
                         "validation_status": "superseded",
                         "configuration_hash": "cfg-remote-b",
                     },
+                    "published_custody_summary": {
+                        "custody_status": "attention_required",
+                        "report_count": 1,
+                        "checked_report_count": 1,
+                        "available_report_count": 0,
+                        "attention_report_count": 1,
+                        "latest_checked_at": "2026-06-30T00:00:00+00:00",
+                    },
                 },
             ],
         )
@@ -8695,6 +8711,9 @@ def test_operator_dashboard_market_payload_includes_trust_summary() -> None:
     assert item["trust_summary"]["attention_count"] == 1
     assert item["trust_summary"]["in_sync_count"] == 1
     assert item["trust_summary"]["drift_count"] == 1
+    assert item["trust_summary"]["custody_available_count"] == 1
+    assert item["trust_summary"]["custody_attention_count"] == 1
+    assert item["trust_summary"]["custody_unverified_count"] == 0
 
 
 def test_operator_dashboard_market_payload_includes_certification_counts() -> None:

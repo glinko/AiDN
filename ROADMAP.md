@@ -277,9 +277,8 @@ Immediate priorities:
     broader network governance remain required before a public multi-node
     authority claim.
 1. Add Provider-specific cancellation confirmation and in-flight recovery fault scenarios for native APIs where they are available; retain explicit uncertainty for Ollama and standard OpenAI-compatible completion APIs.
-2. Add Validation Report availability challenges, custody grace periods and marketplace freshness warnings on top of the existing content-addressed custody store and signed receipts.
-3. Replicate Registry `plugin` Directory records, including source trust and release revocation state, through the peer synchronization path.
-4. Replace the in-process Plugin Host handlers with isolated package-backed process lifecycle and Secret Manager-backed activation-secret delivery before enabling shell, container, download or package-manager executors.
+2. Replicate Registry `plugin` Directory records, including source trust and release revocation state, through the peer synchronization path.
+3. Replace the in-process Plugin Host handlers with isolated package-backed process lifecycle and Secret Manager-backed activation-secret delivery before enabling shell, container, download or package-manager executors.
 5. Expand Endpoint readiness beyond draft admission into publish-time checks for pricing, validation policy, visibility, Session limits and signed-publication compatibility.
 
 ## Milestones
@@ -411,7 +410,7 @@ Checkpoints:
 - [x] Endpoint-origin Validation Report custody with signed Storage Receipts
 - [x] Compact canonical Validation Commitments with deterministic Certification inputs in local persistence and ledger projections
 - [x] Report availability challenges, custody grace periods, and retention Reputation
-- [ ] Marketplace report-custody freshness and warning surfaces
+- [x] Marketplace report-custody freshness and warning surfaces
 
 Exit criteria:
 - nodes and validated Endpoints are ranked by structured signals instead of static preference only;
@@ -518,11 +517,10 @@ Exit criteria:
 
 Order of work right now:
 
-1. Surface report-custody freshness and warnings in Marketplace and endpoint discovery, completing the remaining M5 operator visibility gap.
-2. Add provider-native cancellation and in-flight recovery fault profiles where upstream operation handles exist; preserve explicit uncertainty where they do not.
-3. Replicate signed Plugin Directory releases, trust state and revocations through registry peer synchronization.
-4. Replace in-process Plugin Host handlers with isolated package-backed processes and Secret Manager-backed activation credential delivery.
-5. Introduce the M7 finalized consensus boundary without reintroducing local mutable economic authority.
+1. Add provider-native cancellation and in-flight recovery fault profiles where upstream operation handles exist; preserve explicit uncertainty where they do not.
+2. Replicate signed Plugin Directory releases, trust state and revocations through registry peer synchronization.
+3. Replace in-process Plugin Host handlers with isolated package-backed processes and Secret Manager-backed activation credential delivery.
+4. Introduce the M7 finalized consensus boundary without reintroducing local mutable economic authority.
 
 ## Source Documents
 

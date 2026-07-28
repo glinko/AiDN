@@ -61,6 +61,7 @@ from aidn_hypervisor.validation_read_models import (
     build_validation_maintenance_payload,
     build_validation_report_payload,
     build_validation_request_payload,
+    custody_summary_for,
     validation_summary_for,
 )
 from aidn_hypervisor.wallet_models import (
@@ -391,6 +392,18 @@ def _registry_published_endpoint_summaries(
             configuration_hash=published_endpoint_configuration_hash,
         )
         item["live_validation_summary"] = item.get("live_validation_summary") or validation_summary_for(
+            validation_service,
+            endpoint_id=item["endpoint_id"],
+            configuration_hash=live_configuration_hash,
+        )
+        item["published_custody_summary"] = item.get(
+            "published_custody_summary"
+        ) or custody_summary_for(
+            validation_service,
+            endpoint_id=item["endpoint_id"],
+            configuration_hash=published_endpoint_configuration_hash,
+        )
+        item["live_custody_summary"] = item.get("live_custody_summary") or custody_summary_for(
             validation_service,
             endpoint_id=item["endpoint_id"],
             configuration_hash=live_configuration_hash,

@@ -794,6 +794,10 @@ def build_operator_remote_endpoints_payload(
                         "live_validation_summary": endpoint.get(
                             "live_validation_summary"
                         ),
+                        "published_custody_summary": endpoint.get(
+                            "published_custody_summary"
+                        ),
+                        "live_custody_summary": endpoint.get("live_custody_summary"),
                         "already_attached": (
                             (node["node_id"], endpoint["endpoint_id"]) in attached_keys
                         ),

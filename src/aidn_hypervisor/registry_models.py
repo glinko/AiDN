@@ -64,6 +64,8 @@ class RegistryPublishedEndpointSummary(BaseModel):
     publication_sync_status: str | None = None
     published_validation_summary: dict | None = None
     live_validation_summary: dict | None = None
+    published_custody_summary: dict | None = None
+    live_custody_summary: dict | None = None
 
 
 class RegistryNodeAdvertisement(BaseModel):

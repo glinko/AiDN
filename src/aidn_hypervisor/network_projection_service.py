@@ -71,6 +71,14 @@ class NetworkProjectionService:
                     endpoint_id=record.endpoint_id,
                     configuration_hash=record.configuration_hash,
                 ),
+                published_custody_summary=self.custody_summary_for(
+                    endpoint_id=record.endpoint_id,
+                    configuration_hash=record.configuration_hash,
+                ),
+                live_custody_summary=self.custody_summary_for(
+                    endpoint_id=record.endpoint_id,
+                    configuration_hash=record.configuration_hash,
+                ),
             )
             for record in current_publication_records
         ]
@@ -203,6 +211,20 @@ class NetworkProjectionService:
             ) != "uncertified":
                 return fallback
         return summary
+
+    def custody_summary_for(
+        self,
+        *,
+        endpoint_id: str,
+        configuration_hash: str | None,
+    ) -> dict | None:
+        validation_service = getattr(self._host, "validation_service", None)
+        if validation_service is None or configuration_hash is None:
+            return None
+        return validation_service.custody_summary(
+            endpoint_id,
+            configuration_hash=configuration_hash,
+        )
 
     def operational_reputation_stats(self) -> dict[str, int]:
         successful_tasks = 0
