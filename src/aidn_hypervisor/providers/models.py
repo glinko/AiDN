@@ -1,5 +1,6 @@
 import hashlib
 import json
+from pathlib import PurePosixPath
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -215,6 +216,39 @@ class PluginSandboxPolicy(BaseModel):
         if value is None:
             return None
         return _require_non_empty(value)
+
+
+class PluginHostEntrypoint(BaseModel):
+    """A signed, package-relative Python entrypoint for a Plugin Host."""
+
+    entrypoint_path: str
+    arguments: list[str] = Field(default_factory=list)
+
+    @field_validator("entrypoint_path")
+    @classmethod
+    def _entrypoint_path_is_safe(cls, value: str) -> str:
+        value = _require_non_empty(value)
+        if "\\" in value or "\x00" in value:
+            raise ValueError("Plugin Host entrypoint path must be a safe POSIX relative path")
+        path = PurePosixPath(value)
+        if (
+            path.is_absolute()
+            or not path.parts
+            or any(part in {"", ".", ".."} for part in path.parts)
+            or path.suffix != ".py"
+        ):
+            raise ValueError("Plugin Host entrypoint path must reference a relative Python file")
+        return path.as_posix()
+
+    @field_validator("arguments")
+    @classmethod
+    def _arguments_are_safe(cls, value: list[str]) -> list[str]:
+        if len(value) > 64:
+            raise ValueError("Plugin Host entrypoint accepts at most 64 arguments")
+        for argument in value:
+            if not isinstance(argument, str) or not argument or "\x00" in argument:
+                raise ValueError("Plugin Host entrypoint arguments must be non-empty text")
+        return list(value)
 
 
 class ExecutorSandboxCapabilities(BaseModel):
@@ -608,6 +642,7 @@ class ProviderPluginManifest(BaseModel):
     supported_aidn_capabilities: list[str] = Field(default_factory=list)
     trust_status: PluginTrustStatus = "UNREVIEWED"
     sandbox_policy: PluginSandboxPolicy = Field(default_factory=PluginSandboxPolicy)
+    host_entrypoint: PluginHostEntrypoint | None = None
     source_repository: str | None = None
     license: str | None = None
     supported_platforms: list[str] = Field(default_factory=list)
@@ -669,6 +704,8 @@ class PluginRelease(BaseModel):
     package_verification_status: PluginPackageVerificationStatus = "UNVERIFIED"
     package_verification_mode: PluginPackageVerificationMode = "NONE"
     trusted_publisher: bool = False
+    host_entrypoint: PluginHostEntrypoint | None = None
+    host_execution_mode: PluginSandboxExecutionMode = "RECORDED_ONLY"
     published_at: str
 
     @field_validator(

@@ -2,6 +2,7 @@ import base64
 import hashlib
 import io
 import json
+import sys
 import zipfile
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -40,7 +41,10 @@ from aidn_hypervisor.provider_installation_service import PluginDirectoryPeerTra
 from aidn_hypervisor.providers.executor import (
     ControlledFilesystemProviderInstallationExecutor,
 )
-from aidn_hypervisor.providers.package_store import PluginPackageStore
+from aidn_hypervisor.providers.package_store import (
+    FilesystemPluginPackageStore,
+    PluginPackageStore,
+)
 from aidn_hypervisor.providers.package_verification import compute_manifest_hash
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
@@ -4576,10 +4580,15 @@ def test_package_plugin_host_rejects_operator_supplied_launch_command() -> None:
         granted_permissions=release["declared_permissions"],
     )
 
-    with pytest.raises(ValueError, match="package-derived Plugin Host lifecycle"):
+    with pytest.raises(ValueError, match="operator-supplied command"):
         service.start_plugin_host_process(
             installed_plugin_id=installed["installed_plugin_id"],
             command=["untrusted-package-host"],
+        )
+
+    with pytest.raises(ValueError, match="trusted signed release"):
+        service.start_plugin_host_process(
+            installed_plugin_id=installed["installed_plugin_id"],
         )
 
     persisted = service.provider_inventory.store.get_installed_plugin(
@@ -4587,6 +4596,81 @@ def test_package_plugin_host_rejects_operator_supplied_launch_command() -> None:
     )
     assert persisted.activation_credential_key_id is None
     assert service.list_runtimes() == []
+
+
+def test_package_plugin_host_uses_verified_signed_entrypoint(tmp_path) -> None:
+    package_bytes = _zip_bytes(
+        {"plugin_host.py": b"import sys\nprint(' '.join(sys.argv[1:]))\n"}
+    )
+    package_digest = f"sha256:{hashlib.sha256(package_bytes).hexdigest()}"
+    package_store = FilesystemPluginPackageStore(tmp_path / "packages")
+    package_store.stage(package_bytes=package_bytes, expected_digest=package_digest)
+    service = _service(use_process_manager=True, plugin_package_store=package_store)
+
+    class _PackageHostPlugin(FakeManagedPlugin):
+        def describe(self) -> dict:
+            description = super().describe()
+            description["package_digest"] = package_digest
+            description["sandbox_policy"] = {
+                **description["sandbox_policy"],
+                "execution_mode": "UNSANDBOXED_HOST",
+                "notes": "Explicitly approved temporary host execution profile.",
+            }
+            description["host_entrypoint"] = {
+                "entrypoint_path": "plugin_host.py",
+                "arguments": ["--from-signed-package"],
+            }
+            return description
+
+    release = service.register_provider_plugin_release(
+        manifest=_PackageHostPlugin().plugin_manifest()
+    )
+    assert release["package_verification_status"] == "VERIFIED"
+    installed = service.install_provider_plugin_release(
+        release_id=release["release_id"],
+        granted_permissions=release["declared_permissions"],
+    )
+
+    runtime = service.start_plugin_host_process(
+        installed_plugin_id=installed["installed_plugin_id"],
+    )
+
+    assert runtime.command[0] == sys.executable
+    assert runtime.command[1].endswith("plugin_host.py")
+    assert runtime.command[2:] == ["--from-signed-package"]
+    assert runtime.metadata["package_digest"] == package_digest
+    assert runtime.metadata["package_execution_mode"] == "UNSANDBOXED_HOST"
+
+
+def test_plugin_release_replication_preserves_host_descriptor_without_trust() -> None:
+    source = _service()
+    package_digest = "sha256:" + "a" * 64
+
+    class _ReplicatedPackageHostPlugin(FakeManagedPlugin):
+        def describe(self) -> dict:
+            description = super().describe()
+            description["package_digest"] = package_digest
+            description["sandbox_policy"] = {
+                **description["sandbox_policy"],
+                "execution_mode": "UNSANDBOXED_HOST",
+            }
+            description["host_entrypoint"] = {"entrypoint_path": "runtime/host.py"}
+            return description
+
+    release = source.register_provider_plugin_release(
+        manifest=_ReplicatedPackageHostPlugin().plugin_manifest()
+    )
+    target = _service()
+
+    imported = target.import_provider_plugin_registry_objects(
+        source.provider_plugin_registry_objects()
+    )[0]
+
+    assert imported["release_id"] == release["release_id"]
+    assert imported["host_entrypoint"] == {"entrypoint_path": "runtime/host.py", "arguments": []}
+    assert imported["host_execution_mode"] == "UNSANDBOXED_HOST"
+    assert imported["package_verification_status"] == "UNVERIFIED"
+    assert imported["trusted_publisher"] is False
 
 
 def test_peer_plugin_release_revoke_stops_local_host_and_is_monotonic() -> None:

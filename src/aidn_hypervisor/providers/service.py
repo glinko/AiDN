@@ -1,6 +1,7 @@
 import hashlib
 import json
 import secrets
+import sys
 from copy import deepcopy
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -49,7 +50,11 @@ from aidn_hypervisor.providers.models import (
     RuntimeBinding,
     SelectedSecretHandle,
 )
-from aidn_hypervisor.providers.package_store import HttpsPluginPackageAcquirer, PluginPackageStore
+from aidn_hypervisor.providers.package_store import (
+    FilesystemPluginPackageStore,
+    HttpsPluginPackageAcquirer,
+    PluginPackageStore,
+)
 from aidn_hypervisor.providers.package_verification import (
     DEFAULT_TRUSTED_PUBLISHER_KEYS,
     verify_plugin_manifest_package,
@@ -126,6 +131,12 @@ class ProviderInventoryService:
                 "package_verification_status": release.package_verification_status,
                 "package_verification_mode": release.package_verification_mode,
                 "trusted_publisher": release.trusted_publisher,
+                "host_entrypoint": (
+                    release.host_entrypoint.model_dump(mode="json")
+                    if release.host_entrypoint is not None
+                    else None
+                ),
+                "host_execution_mode": release.host_execution_mode,
                 "published_at": release.published_at,
             }
             payload_hash = _canonical_hash(payload)
@@ -186,6 +197,8 @@ class ProviderInventoryService:
                 package_verification_status="UNVERIFIED",
                 package_verification_mode="NONE",
                 trusted_publisher=False,
+                host_entrypoint=payload.get("host_entrypoint"),
+                host_execution_mode=payload.get("host_execution_mode", "RECORDED_ONLY"),
                 published_at=payload["published_at"],
             )
             try:
@@ -386,10 +399,48 @@ class ProviderInventoryService:
             package_verification_status=package_verification.status,
             package_verification_mode=package_verification.verification_mode,
             trusted_publisher=package_verification.trusted_publisher,
+            host_entrypoint=manifest.host_entrypoint,
+            host_execution_mode=manifest.sandbox_policy.execution_mode,
             published_at=_now_iso(),
         )
         self.store.save_plugin_release(release)
         return release
+
+    def package_host_launch_spec(self, *, installed_plugin_id: str) -> dict:
+        """Build the only allowed launch command for a verified package release."""
+        installed = self.store.get_installed_plugin(installed_plugin_id)
+        if installed.installation_source != "PACKAGE":
+            raise ValueError("package Plugin Host launch requires a PACKAGE installation")
+        release = self.store.get_plugin_release(installed.release_id)
+        if release.release_status in {"SECURITY_BLOCKED", "REVOKED"}:
+            raise ValueError("Plugin Host release is not eligible for launch")
+        if release.package_verification_status != "VERIFIED" or not release.trusted_publisher:
+            raise ValueError("package Plugin Host launch requires a trusted signed release")
+        if release.host_entrypoint is None:
+            raise ValueError("package Plugin Host release does not declare a signed entrypoint")
+        if release.host_execution_mode != "UNSANDBOXED_HOST":
+            raise ValueError(
+                "package Plugin Host launch requires UNSANDBOXED_HOST until sandbox execution is available"
+            )
+        if not isinstance(self.package_store, FilesystemPluginPackageStore):
+            raise ValueError("package Plugin Host launch requires durable filesystem package storage")
+        entrypoint = self.package_store.materialize_python_host(
+            package_digest=release.package_digest,
+            entrypoint_path=release.host_entrypoint.entrypoint_path,
+        )
+        return {
+            "command": [
+                sys.executable,
+                str(entrypoint),
+                *release.host_entrypoint.arguments,
+            ],
+            "working_directory": str(entrypoint.parent),
+            "metadata": {
+                "package_digest": release.package_digest,
+                "package_entrypoint": release.host_entrypoint.entrypoint_path,
+                "package_execution_mode": release.host_execution_mode,
+            },
+        }
 
     def revoke_plugin_release(self, *, release_id: str, reason: str) -> tuple[PluginRelease, list[str], int]:
         if not reason.strip():

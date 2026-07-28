@@ -2,8 +2,12 @@
 
 import hashlib
 import os
+import shutil
+import stat
 import tempfile
-from pathlib import Path
+import zipfile
+from io import BytesIO
+from pathlib import Path, PurePosixPath
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -55,8 +59,18 @@ class PluginPackageStore:
 class FilesystemPluginPackageStore:
     """Durable content-addressed package bytes under one operator-controlled root."""
 
-    def __init__(self, root: Path | str) -> None:
+    def __init__(
+        self,
+        root: Path | str,
+        *,
+        maximum_archive_entries: int = 1024,
+        maximum_expanded_bytes: int = 256 * 1024 * 1024,
+    ) -> None:
+        if maximum_archive_entries <= 0 or maximum_expanded_bytes <= 0:
+            raise ValueError("plugin package archive limits must be positive")
         self.root = Path(root)
+        self.maximum_archive_entries = maximum_archive_entries
+        self.maximum_expanded_bytes = maximum_expanded_bytes
 
     def _path_for(self, package_digest: str) -> Path:
         digest = _validated_package_digest(package_digest)
@@ -97,6 +111,104 @@ class FilesystemPluginPackageStore:
         package_bytes = package_path.read_bytes()
         _verified_digest(package_bytes, package_digest)
         return package_bytes
+
+    def materialize_python_host(self, *, package_digest: str, entrypoint_path: str) -> Path:
+        """Extract one verified ZIP package into a verified, content-addressed runtime tree."""
+        entrypoint = _validated_python_entrypoint(entrypoint_path)
+        package_bytes = self.read(package_digest)
+        members = self._archive_members(package_bytes)
+        if entrypoint not in members:
+            raise ValueError("Plugin Host entrypoint is not present in the verified package")
+
+        digest = _validated_package_digest(package_digest)
+        runtime_root = self.root / "runtime"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        destination = runtime_root / digest
+        if destination.exists():
+            self._verify_materialized_tree(destination=destination, members=members)
+            return destination.joinpath(*PurePosixPath(entrypoint).parts)
+
+        temporary = Path(tempfile.mkdtemp(prefix=f".{digest}.", dir=runtime_root))
+        try:
+            for relative_path, content in members.items():
+                target = temporary.joinpath(*PurePosixPath(relative_path).parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+            self._verify_materialized_tree(destination=temporary, members=members)
+            try:
+                temporary.rename(destination)
+            except FileExistsError:
+                self._verify_materialized_tree(destination=destination, members=members)
+            return destination.joinpath(*PurePosixPath(entrypoint).parts)
+        finally:
+            if temporary.exists():
+                shutil.rmtree(temporary)
+
+    def _archive_members(self, package_bytes: bytes) -> dict[str, bytes]:
+        try:
+            archive = zipfile.ZipFile(BytesIO(package_bytes))
+        except zipfile.BadZipFile as exc:
+            raise ValueError("Plugin Host package must be a ZIP archive") from exc
+        with archive:
+            infos = archive.infolist()
+            if len(infos) > self.maximum_archive_entries:
+                raise ValueError("Plugin Host package exceeds the archive entry limit")
+            members: dict[str, bytes] = {}
+            total_size = 0
+            for info in infos:
+                relative_path = _validated_archive_path(info.filename)
+                mode = info.external_attr >> 16
+                if stat.S_ISLNK(mode):
+                    raise ValueError("Plugin Host packages must not contain symbolic links")
+                if info.is_dir():
+                    continue
+                if relative_path in members:
+                    raise ValueError("Plugin Host package contains duplicate archive paths")
+                total_size += info.file_size
+                if total_size > self.maximum_expanded_bytes:
+                    raise ValueError("Plugin Host package exceeds the expanded size limit")
+                members[relative_path] = archive.read(info)
+        if not members:
+            raise ValueError("Plugin Host package must contain files")
+        return members
+
+    @staticmethod
+    def _verify_materialized_tree(*, destination: Path, members: dict[str, bytes]) -> None:
+        if not destination.is_dir() or destination.is_symlink():
+            raise ValueError("Plugin Host runtime tree is invalid")
+        actual_paths: set[str] = set()
+        for root, directories, files in os.walk(destination, followlinks=False):
+            root_path = Path(root)
+            for directory in directories:
+                if (root_path / directory).is_symlink():
+                    raise ValueError("Plugin Host runtime tree contains symbolic links")
+            for filename in files:
+                candidate = root_path / filename
+                if candidate.is_symlink():
+                    raise ValueError("Plugin Host runtime tree contains symbolic links")
+                relative_path = candidate.relative_to(destination).as_posix()
+                actual_paths.add(relative_path)
+                expected_content = members.get(relative_path)
+                if expected_content is None or candidate.read_bytes() != expected_content:
+                    raise ValueError("Plugin Host runtime tree does not match the verified package")
+        if actual_paths != set(members):
+            raise ValueError("Plugin Host runtime tree does not match the verified package")
+
+
+def _validated_archive_path(value: str) -> str:
+    if not value or "\\" in value or "\x00" in value:
+        raise ValueError("Plugin Host package contains an unsafe archive path")
+    path = PurePosixPath(value)
+    if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError("Plugin Host package contains an unsafe archive path")
+    return path.as_posix()
+
+
+def _validated_python_entrypoint(value: str) -> str:
+    path = _validated_archive_path(value)
+    if not path.endswith(".py"):
+        raise ValueError("Plugin Host entrypoint must reference a Python file")
+    return path
 
 
 class _RejectRedirect(urllib_request.HTTPRedirectHandler):

@@ -40,6 +40,7 @@ class ProviderProcessManager:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env={**os.environ, **launch_spec.get("environment", {})},
+                cwd=launch_spec.get("working_directory"),
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             self._processes[runtime_id] = process

@@ -31,6 +31,8 @@ class InMemoryProviderInventoryStore:
             or current.publisher != release.publisher
             or current.declared_permissions != release.declared_permissions
             or current.source_reference != release.source_reference
+            or current.host_entrypoint != release.host_entrypoint
+            or current.host_execution_mode != release.host_execution_mode
             or current.published_at != release.published_at
         ):
             raise ValueError("plugin release identity fields are immutable")

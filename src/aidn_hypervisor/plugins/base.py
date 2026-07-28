@@ -97,6 +97,7 @@ class ProviderPlugin(ABC):
             supported_aidn_capabilities=supported_aidn_capabilities,
             trust_status=description.get("trust_status", "UNREVIEWED"),
             sandbox_policy=description.get("sandbox_policy", {}),
+            host_entrypoint=description.get("host_entrypoint"),
             source_repository=description.get("source_repository"),
             license=description.get("license"),
             supported_platforms=description.get("supported_platforms", []),

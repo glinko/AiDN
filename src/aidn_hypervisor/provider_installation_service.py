@@ -441,10 +441,8 @@ class ProviderInstallationService:
         self,
         *,
         installed_plugin_id: str,
-        command: list[str],
+        command: list[str] | None = None,
     ):
-        if not command or not all(isinstance(item, str) and item for item in command):
-            raise ValueError("Plugin Host command is required")
         installed = self._host.provider_inventory.store.get_installed_plugin(
             installed_plugin_id
         )
@@ -454,14 +452,18 @@ class ProviderInstallationService:
         if release.release_status in {"SECURITY_BLOCKED", "REVOKED"}:
             raise ValueError("Plugin Host release is not eligible for launch")
         if installed.installation_source == "PACKAGE":
-            # A verified package blob is not an executable trust boundary. Until
-            # the package declares a signed entrypoint and runs in an isolated
-            # package lifecycle, an operator-provided command must not turn it
-            # into arbitrary host-process execution.
-            raise ValueError(
-                "package-derived Plugin Host lifecycle is not implemented; "
-                "PACKAGE installations cannot launch an operator-supplied command"
+            if command is not None:
+                raise ValueError(
+                    "PACKAGE installations cannot launch an operator-supplied command"
+                )
+            package_launch_spec = self._host.provider_inventory.package_host_launch_spec(
+                installed_plugin_id=installed_plugin_id
             )
+            command = package_launch_spec["command"]
+        elif not command or not all(isinstance(item, str) and item for item in command):
+            raise ValueError("Plugin Host command is required")
+        else:
+            package_launch_spec = {}
         self._host.provider_inventory.provision_plugin_host_activation_credential(
             installed_plugin_id=installed_plugin_id
         )
@@ -474,7 +476,9 @@ class ProviderInstallationService:
                     "installed_plugin_id": installed.installed_plugin_id,
                     "plugin_id": installed.plugin_id,
                     "installation_generation": str(installed.installation_generation),
+                    **package_launch_spec.get("metadata", {}),
                 },
+                "working_directory": package_launch_spec.get("working_directory"),
                 "environment": self.plugin_host_launch_environment(
                     installed_plugin_id=installed_plugin_id
                 ),

@@ -3,6 +3,7 @@ from aidn_hypervisor.providers.models import (
     ModelArtifact,
     ModelArtifactSet,
     ModelDeployment,
+    PluginHostEntrypoint,
     PluginRelease,
     ProviderInstance,
     ProviderPluginManifest,
@@ -20,6 +21,7 @@ from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 __all__ = [
     "ProviderPluginManifest",
+    "PluginHostEntrypoint",
     "PluginRelease",
     "InstalledPlugin",
     "ProviderInstance",
