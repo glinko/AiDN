@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from urllib import error as urllib_error
+from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
 from aidn_hypervisor.plugins.host import PluginHostJsonWireAdapter
@@ -9,11 +10,42 @@ from aidn_hypervisor.plugins.host_named_pipe import WindowsNamedPipePluginHostLi
 from aidn_hypervisor.plugins.host_unix_socket import UnixSocketPluginHostListener
 
 
+class _RejectPluginDirectoryPeerRedirects(urllib_request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
+class PluginDirectoryPeerTransport:
+    """Fetch public directory metadata without following a peer redirect."""
+
+    def fetch(self, request, *, timeout_seconds: int):
+        return urllib_request.build_opener(_RejectPluginDirectoryPeerRedirects()).open(
+            request, timeout=timeout_seconds
+        )
+
+
+def _normalize_plugin_directory_peer_base_url(peer_base_url: str) -> str:
+    parsed = urllib_parse.urlsplit(peer_base_url.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("peer_base_url must be an absolute HTTP URL")
+    if parsed.username or parsed.password:
+        raise ValueError("peer_base_url must not include credentials")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise ValueError("peer_base_url must not include a path, query, or fragment")
+    try:
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            raise ValueError("peer_base_url port is invalid")
+    except ValueError as error:
+        raise ValueError("peer_base_url port is invalid") from error
+    return urllib_parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
 class ProviderInstallationService:
     """Provider/plugin installation and plugin-host orchestration."""
 
     def __init__(self, host) -> None:
         self._host = host
+        self._default_plugin_directory_peer_transport = PluginDirectoryPeerTransport()
 
     def attach_provider_instance(
         self,
@@ -151,13 +183,15 @@ class ProviderInstallationService:
         limit: int = 500,
         timeout_seconds: int = 10,
     ) -> dict:
-        base_url = peer_base_url.rstrip("/")
+        base_url = _normalize_plugin_directory_peer_base_url(peer_base_url)
         request = urllib_request.Request(
             f"{base_url}/operators/registry/objects?namespace=plugin&include_payload=true&limit={int(limit)}",
             method="GET",
         )
         try:
-            with urllib_request.urlopen(request, timeout=timeout_seconds) as response:
+            with self._plugin_directory_peer_transport().fetch(
+                request, timeout_seconds=timeout_seconds
+            ) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (urllib_error.URLError, TimeoutError, json.JSONDecodeError) as error:
             raise ValueError(
@@ -167,6 +201,13 @@ class ProviderInstallationService:
             raise ValueError(f"Peer plugin directory response from {peer_base_url} is invalid")
         items = self.import_provider_plugin_registry_objects(payload["objects"])
         return {"peer_base_url": base_url, "imported_release_count": len(items), "items": items}
+
+    def _plugin_directory_peer_transport(self):
+        return getattr(
+            self._host,
+            "_plugin_directory_peer_transport",
+            self._default_plugin_directory_peer_transport,
+        )
 
     def list_installed_provider_plugins(self) -> list[dict]:
         return [

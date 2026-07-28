@@ -1,5 +1,6 @@
 import base64
 import io
+import json
 import zipfile
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -34,6 +35,7 @@ from aidn_hypervisor.model_store import FileModelStore
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager, RuntimeHandle
+from aidn_hypervisor.provider_installation_service import PluginDirectoryPeerTransport
 from aidn_hypervisor.providers.executor import (
     ControlledFilesystemProviderInstallationExecutor,
 )
@@ -4612,6 +4614,69 @@ def test_peer_plugin_release_revoke_stops_local_host_and_is_monotonic() -> None:
     assert target.provider_inventory.store.get_plugin_release(
         target_release["release_id"]
     ).release_status == "REVOKED"
+
+
+def test_plugin_directory_peer_sync_uses_scoped_transport_and_safe_url() -> None:
+    source = _service()
+    source.register_provider_plugin_release(
+        manifest=source.plugins.get("fake-managed").plugin_manifest()
+    )
+    target = _service()
+    captured: dict[str, object] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"objects": source.provider_plugin_registry_objects()}
+            ).encode("utf-8")
+
+    class _Transport:
+        def fetch(self, request, *, timeout_seconds: int):
+            captured["url"] = request.full_url
+            captured["timeout_seconds"] = timeout_seconds
+            return _Response()
+
+    target._plugin_directory_peer_transport = _Transport()
+    result = target.sync_provider_plugin_directory_from_peer(
+        peer_base_url="https://peer.example/"
+    )
+
+    assert result["peer_base_url"] == "https://peer.example"
+    assert result["imported_release_count"] == 1
+    assert captured["url"] == (
+        "https://peer.example/operators/registry/objects?"
+        "namespace=plugin&include_payload=true&limit=500"
+    )
+    assert captured["timeout_seconds"] == 10
+    with pytest.raises(ValueError, match="peer_base_url"):
+        target.sync_provider_plugin_directory_from_peer(
+            peer_base_url="https://user:pass@peer.example/path"
+        )
+
+
+def test_plugin_directory_peer_transport_rejects_redirects(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _Opener:
+        def open(self, request, *, timeout):
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return "response"
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.provider_installation_service.urllib_request.build_opener",
+        lambda handler: captured.setdefault("handler", handler) and _Opener(),
+    )
+
+    assert PluginDirectoryPeerTransport().fetch(object(), timeout_seconds=7) == "response"
+    assert captured["handler"].redirect_request(None, None, 302, None, None, None) is None
+    assert captured["timeout"] == 7
 
 
 def test_plugin_host_status_route_returns_sanitized_observability() -> None:
