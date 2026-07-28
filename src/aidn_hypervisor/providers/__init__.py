@@ -13,6 +13,7 @@ from aidn_hypervisor.providers.models import (
 )
 from aidn_hypervisor.providers.package_store import (
     FilesystemPluginPackageStore,
+    HttpsPluginPackageAcquirer,
     PluginPackageStore,
 )
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
@@ -32,4 +33,5 @@ __all__ = [
     "InMemoryProviderInventoryStore",
     "PluginPackageStore",
     "FilesystemPluginPackageStore",
+    "HttpsPluginPackageAcquirer",
 ]

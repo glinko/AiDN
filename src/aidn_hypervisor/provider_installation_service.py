@@ -143,6 +143,11 @@ class ProviderInstallationService:
         self._host._persist_state()
         return release.model_dump(mode="json")
 
+    def acquire_provider_plugin_package(self, *, release_id: str) -> str:
+        package_digest = self._host.provider_inventory.acquire_plugin_package(release_id=release_id)
+        self._host._persist_state()
+        return package_digest
+
     def install_provider_plugin_release(
         self,
         *,

@@ -49,7 +49,7 @@ from aidn_hypervisor.providers.models import (
     RuntimeBinding,
     SelectedSecretHandle,
 )
-from aidn_hypervisor.providers.package_store import PluginPackageStore
+from aidn_hypervisor.providers.package_store import HttpsPluginPackageAcquirer, PluginPackageStore
 from aidn_hypervisor.providers.package_verification import (
     DEFAULT_TRUSTED_PUBLISHER_KEYS,
     verify_plugin_manifest_package,
@@ -80,6 +80,7 @@ class ProviderInventoryService:
         installation_executor: ProviderInstallationExecutor | None = None,
         trusted_publisher_keys: dict[str, list[str]] | None = None,
         package_store: PluginPackageStore | None = None,
+        package_acquirer: HttpsPluginPackageAcquirer | None = None,
         plugin_host_connections: list[dict] | None = None,
     ) -> None:
         self.plugins = plugins
@@ -91,6 +92,7 @@ class ProviderInventoryService:
             trusted_publisher_keys or DEFAULT_TRUSTED_PUBLISHER_KEYS
         )
         self.package_store = package_store
+        self.package_acquirer = package_acquirer or HttpsPluginPackageAcquirer()
         self.plugin_host_activation_credentials = PluginHostActivationCredentialStore()
         self.plugin_host_connection_store = PluginHostConnectionStore(plugin_host_connections)
         self._runtime_binding_projections: dict[str, dict] = {}
@@ -231,6 +233,24 @@ class ProviderInventoryService:
             expected_digest=expected_digest,
         )
 
+    def acquire_plugin_package(self, *, release_id: str) -> str:
+        """Fetch only a signed, trusted release into the verified package store."""
+        if self.package_store is None:
+            raise ValueError("Plugin package store is not configured")
+        release = self.store.get_plugin_release(release_id)
+        if (
+            release.package_verification_status != "VERIFIED"
+            or not release.trusted_publisher
+        ):
+            raise ValueError("plugin package acquisition requires a trusted signed release")
+        if release.source_reference is None:
+            raise ValueError("plugin release does not declare a package source")
+        return self.package_acquirer.acquire_and_stage(
+            package_store=self.package_store,
+            source_reference=release.source_reference,
+            expected_digest=release.package_digest,
+        )
+
     def register_plugin_release(
         self,
         *,
@@ -270,6 +290,9 @@ class ProviderInventoryService:
             ],
             release_status=release_status,
             source_reference=source_reference,
+            package_verification_status=package_verification.status,
+            package_verification_mode=package_verification.verification_mode,
+            trusted_publisher=package_verification.trusted_publisher,
             published_at=_now_iso(),
         )
         self.store.save_plugin_release(release)

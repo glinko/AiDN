@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.host import (
@@ -23,12 +24,17 @@ from aidn_hypervisor.providers.models import (
     ProviderInstallationApproval,
     ProviderInstallationExecutionResult,
     ProviderInstallationJob,
+    ProviderPluginManifest,
 )
 from aidn_hypervisor.providers.package_store import (
     FilesystemPluginPackageStore,
+    HttpsPluginPackageAcquirer,
     PluginPackageStore,
 )
-from aidn_hypervisor.providers.package_verification import compute_manifest_hash
+from aidn_hypervisor.providers.package_verification import (
+    compute_manifest_hash,
+    package_signature_payload,
+)
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
@@ -183,6 +189,102 @@ def test_plugin_package_store_rejects_digest_mismatch() -> None:
 
     with pytest.raises(ValueError, match="digest does not match"):
         store.stage(package_bytes=b"package", expected_digest="sha256:" + "0" * 64)
+
+
+class _PackageResponse:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+        self._offset = 0
+        self.headers = {"Content-Length": str(len(body))}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self, size: int) -> bytes:
+        chunk = self._body[self._offset : self._offset + size]
+        self._offset += len(chunk)
+        return chunk
+
+
+def _trusted_signed_manifest(
+    *, package_bytes: bytes, private_key: Ed25519PrivateKey
+) -> tuple[dict, dict[str, list[str]]]:
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    manifest = {
+        **_registry().get("fake-managed").plugin_manifest(),
+        "publisher": "Trusted Test Publisher",
+        "package_digest": f"sha256:{hashlib.sha256(package_bytes).hexdigest()}",
+        "publisher_public_key": public_key,
+        "publisher_signature": None,
+    }
+    manifest["manifest_hash"] = compute_manifest_hash(manifest)
+    signed_manifest = ProviderPluginManifest.model_validate(manifest)
+    manifest["publisher_signature"] = "ed25519:" + private_key.sign(
+        package_signature_payload(signed_manifest, manifest_hash=manifest["manifest_hash"])
+    ).hex()
+    return manifest, {"Trusted Test Publisher": [public_key]}
+
+
+def test_provider_service_acquires_trusted_signed_package_from_https_source(monkeypatch) -> None:
+    package_bytes = b"trusted package bytes"
+    manifest, trusted_keys = _trusted_signed_manifest(
+        package_bytes=package_bytes,
+        private_key=Ed25519PrivateKey.generate(),
+    )
+    acquirer = HttpsPluginPackageAcquirer()
+    monkeypatch.setattr(acquirer, "_open", lambda _: _PackageResponse(package_bytes))
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        package_store=PluginPackageStore(),
+        package_acquirer=acquirer,
+        trusted_publisher_keys=trusted_keys,
+    )
+    release = service.register_plugin_release(
+        manifest_payload=manifest,
+        source_reference="https://packages.example/fake-managed.package",
+    )
+
+    acquired = service.acquire_plugin_package(release_id=release.release_id)
+
+    assert acquired == manifest["package_digest"]
+    assert service.package_store.read(acquired) == package_bytes
+
+
+def test_provider_service_blocks_untrusted_release_before_package_download() -> None:
+    package_bytes = b"untrusted package bytes"
+    manifest = {
+        **_registry().get("fake-managed").plugin_manifest(),
+        "package_digest": f"sha256:{hashlib.sha256(package_bytes).hexdigest()}",
+        "publisher_signature": None,
+    }
+    manifest["manifest_hash"] = compute_manifest_hash(manifest)
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+        package_store=PluginPackageStore(),
+    )
+    release = service.register_plugin_release(
+        manifest_payload=manifest,
+        source_reference="https://packages.example/untrusted.package",
+    )
+
+    with pytest.raises(ValueError, match="trusted signed release"):
+        service.acquire_plugin_package(release_id=release.release_id)
+
+
+def test_https_plugin_package_acquirer_rejects_non_https_and_oversized_payload(monkeypatch) -> None:
+    acquirer = HttpsPluginPackageAcquirer(maximum_package_bytes=4)
+
+    with pytest.raises(ValueError, match="credential-free HTTPS"):
+        acquirer.acquire("http://packages.example/package")
+
+    monkeypatch.setattr(acquirer, "_open", lambda _: _PackageResponse(b"oversized"))
+    with pytest.raises(ValueError, match="maximum size"):
+        acquirer.acquire("https://packages.example/package")
 
 
 def test_filesystem_plugin_package_store_survives_reconstruction_and_rejects_tampering(

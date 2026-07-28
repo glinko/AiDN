@@ -663,6 +663,9 @@ class PluginRelease(BaseModel):
     declared_permissions: list[str] = Field(default_factory=list)
     release_status: PluginReleaseStatus = "AVAILABLE"
     source_reference: str | None = None
+    package_verification_status: PluginPackageVerificationStatus = "UNVERIFIED"
+    package_verification_mode: PluginPackageVerificationMode = "NONE"
+    trusted_publisher: bool = False
     published_at: str
 
     @field_validator(

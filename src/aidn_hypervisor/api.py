@@ -1174,6 +1174,18 @@ def build_api_router(
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @router.post("/operators/provider-plugin-releases/{release_id}/acquire")
+    async def acquire_provider_plugin_package(release_id: str) -> dict:
+        try:
+            return {"package_digest": service.acquire_provider_plugin_package(release_id=release_id)}
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown plugin release: {error.args[0]}",
+            ) from error
+        except (RuntimeError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @router.post("/operators/provider-plugins/{plugin_id}/installation-plan")
     async def build_provider_installation_plan(
         plugin_id: str,

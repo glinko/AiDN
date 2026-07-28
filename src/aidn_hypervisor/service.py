@@ -1229,6 +1229,11 @@ class HypervisorService:
             installation_source=installation_source,
         )
 
+    def acquire_provider_plugin_package(self, *, release_id: str) -> str:
+        return self._provider_installation_facade().acquire_provider_plugin_package(
+            release_id=release_id
+        )
+
     def list_provider_installation_jobs(self) -> list[dict]:
         return self._provider_installation_facade().list_provider_installation_jobs()
 
