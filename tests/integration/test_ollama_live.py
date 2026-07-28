@@ -13,10 +13,13 @@ from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 OLLAMA_ENDPOINT = os.getenv("AIDN_OLLAMA_ENDPOINT")
 OLLAMA_MODEL = os.getenv("AIDN_OLLAMA_MODEL")
-pytestmark = pytest.mark.skipif(
-    not OLLAMA_ENDPOINT or not OLLAMA_MODEL,
-    reason="set AIDN_OLLAMA_ENDPOINT and AIDN_OLLAMA_MODEL to run live Ollama smoke",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not OLLAMA_ENDPOINT or not OLLAMA_MODEL,
+        reason="set AIDN_OLLAMA_ENDPOINT and AIDN_OLLAMA_MODEL to run live Ollama smoke",
+    ),
+]
 
 
 def test_live_ollama_attach_discovery_and_execution() -> None:

@@ -35,10 +35,13 @@ from aidn_hypervisor.wallet_identity import (
 
 VLLM_ENDPOINT = os.getenv("AIDN_VLLM_ENDPOINT")
 VLLM_MODEL = os.getenv("AIDN_VLLM_MODEL")
-pytestmark = pytest.mark.skipif(
-    not VLLM_ENDPOINT or not VLLM_MODEL,
-    reason="set AIDN_VLLM_ENDPOINT and AIDN_VLLM_MODEL to run live vLLM smoke",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not VLLM_ENDPOINT or not VLLM_MODEL,
+        reason="set AIDN_VLLM_ENDPOINT and AIDN_VLLM_MODEL to run live vLLM smoke",
+    ),
+]
 
 
 def _request() -> RuntimeExecuteRequest:

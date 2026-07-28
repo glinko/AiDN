@@ -18,7 +18,7 @@ Run from PowerShell:
 $env:AIDN_LLAMACPP_LIVE = "1"
 $env:AIDN_LLAMACPP_ENDPOINT = "http://provider-host:9000"
 $env:AIDN_LLAMACPP_MODEL = "provider-model-id"
-python -m pytest -q tests/integration/test_llamacpp_live.py
+.\tools\run-live-provider-conformance.ps1 -Provider llamacpp
 ```
 
 The profile sends short completions. It verifies Health, model discovery,
@@ -77,7 +77,7 @@ Run the opt-in provider and paid-session smoke:
 ```powershell
 $env:AIDN_VLLM_ENDPOINT = "http://provider-host:8000"
 $env:AIDN_VLLM_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
-uv run pytest -q tests/integration/test_vllm_live.py -o addopts=
+.\tools\run-live-provider-conformance.ps1 -Provider vllm
 ```
 
 Attach a reachable server to a running Hypervisor:
@@ -108,15 +108,28 @@ executes the native `/api/generate` contract but does not manage the daemon.
 ```powershell
 $env:AIDN_OLLAMA_ENDPOINT = "http://provider-host:11434"
 $env:AIDN_OLLAMA_MODEL = "qwen2.5:0.5b"
-uv run pytest -q tests/integration/test_ollama_live.py -o addopts=
+.\tools\run-live-provider-conformance.ps1 -Provider ollama
 ```
 
 The opt-in smoke verifies attach, model discovery, Health, native execution
 and provider-reported prompt/evaluation token Usage.
 
-The paid-session check uses the attached vLLM Runtime Binding to publish a
-public Endpoint, open a Consumer-signed fixed-price Session, execute one
-Request, retain terminal Result and Usage evidence, restart the local
-Hypervisor from its file store, and cooperatively finalize the original
-Settlement. It verifies that recovery does not create a second provider
-execution or Endpoint payment.
+The current Ollama profile covers native attach, model discovery, Health and
+execution. The broader public paid-session, persistence and Settlement smoke
+is covered by the llama.cpp and vLLM profiles. Ollama is intentionally kept as
+a separate native-protocol conformance profile until its approved Runtime
+Binding path is exercised end-to-end.
+
+## Shared launcher
+
+`tools/run-live-provider-conformance.ps1` validates the selected profile's
+required environment variables and runs exactly one live test file using the
+repository's standard pytest import configuration but without coverage. It
+accepts `llamacpp`, `vllm` or `ollama`.
+It never starts, stops or reconfigures a Provider and does not accept
+credentials as command-line arguments.
+
+The GitHub Actions integration job remains opt-in and intentionally has no
+Provider endpoint configured. Run live conformance from an operator-controlled
+host, or configure a separate self-hosted runner with the required endpoint and
+model environment variables.
