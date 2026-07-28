@@ -448,7 +448,9 @@ def test_open_public_mvp_fixed_price_session_requires_wallet_bound_authorization
         },
     )
 
-    operator_key = Ed25519PrivateKey.generate()
+    operator_key = Ed25519PrivateKey.from_private_bytes(
+        bytes.fromhex(hypervisor.owner_wallet_private_key().removeprefix("ed25519:"))
+    )
     operator_public_key = (
         f"ed25519:{operator_key.public_key().public_bytes_raw().hex()}"
     )
@@ -712,7 +714,9 @@ def test_open_public_mvp_fixed_price_session_rejects_revoked_endpoint() -> None:
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
     consumer_key = Ed25519PrivateKey.generate()
-    operator_key = Ed25519PrivateKey.generate()
+    operator_key = Ed25519PrivateKey.from_private_bytes(
+        bytes.fromhex(hypervisor.owner_wallet_private_key().removeprefix("ed25519:"))
+    )
     consumer_public_key = (
         f"ed25519:{consumer_key.public_key().public_bytes_raw().hex()}"
     )
@@ -824,7 +828,9 @@ def test_open_public_mvp_fixed_price_session_rejects_drifted_publication() -> No
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
     consumer_key = Ed25519PrivateKey.generate()
-    operator_key = Ed25519PrivateKey.generate()
+    operator_key = Ed25519PrivateKey.from_private_bytes(
+        bytes.fromhex(hypervisor.owner_wallet_private_key().removeprefix("ed25519:"))
+    )
     consumer_public_key = (
         f"ed25519:{consumer_key.public_key().public_bytes_raw().hex()}"
     )
@@ -943,7 +949,9 @@ def test_open_public_mvp_fixed_price_session_accepts_registry_backed_wallet_iden
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
     consumer_key = Ed25519PrivateKey.generate()
-    operator_key = Ed25519PrivateKey.generate()
+    operator_key = Ed25519PrivateKey.from_private_bytes(
+        bytes.fromhex(hypervisor.owner_wallet_private_key().removeprefix("ed25519:"))
+    )
     consumer_public_key = (
         f"ed25519:{consumer_key.public_key().public_bytes_raw().hex()}"
     )

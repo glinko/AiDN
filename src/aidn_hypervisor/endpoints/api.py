@@ -8,6 +8,7 @@ from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
 )
+from aidn_hypervisor.endpoint_publications.signing import verify_publication_signature
 from aidn_hypervisor.endpoints.endpoint_application_service import (
     EndpointApplicationService,
     RemoteEndpointNotFoundError,
@@ -136,6 +137,29 @@ def build_endpoint_router(
         )
         if current_publication is None:
             return "Public MVP Session requires a currently published Endpoint configuration"
+        if not current_publication.owner_public_key:
+            return (
+                "Public MVP Session requires a cryptographically signed Endpoint "
+                "configuration"
+            )
+        owner_identity = hypervisor_service.resolve_wallet_identity(
+            current_publication.owner_wallet
+        )
+        if owner_identity is None:
+            return "Public MVP Session requires a registered Endpoint owner wallet identity"
+        if owner_identity["public_key"] != current_publication.owner_public_key:
+            return (
+                "Public MVP Session rejects an Endpoint publication whose signing key "
+                "does not match the owner wallet identity"
+            )
+        try:
+            verify_publication_signature(
+                public_key=current_publication.owner_public_key,
+                signature=current_publication.wallet_signature,
+                payload=current_publication.signed_payload(),
+            )
+        except ValueError:
+            return "Public MVP Session rejects an invalid Endpoint publication signature"
         local_publication_configuration_hash = _local_publication_configuration_hash(
             endpoint
         )
