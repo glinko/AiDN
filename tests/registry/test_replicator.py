@@ -5,8 +5,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from aidn_hypervisor.registry import ImmutableObjectStore, RegistryObjectEnvelope
 from aidn_hypervisor.registry.messages import RegistryMessageType
+from aidn_hypervisor.registry.peer import peer_authentication_payload
 from aidn_hypervisor.registry.replicator import (
     RegistryReplicator,
     ReplicationState,
@@ -225,6 +229,49 @@ class TestPeerState:
         assert len(states) == 3
         ids = {s.peer_id for s in states}
         assert ids == {"peer-a", "peer-b", "peer-c"}
+
+    def test_strict_peer_authentication_gates_replication_messages(self):
+        private_key = Ed25519PrivateKey.generate()
+        public_key = "ed25519:" + private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        ).hex()
+        replicator = RegistryReplicator(
+            node_id="node-target",
+            require_authenticated_peers=True,
+        )
+        message = {
+            "payload": {
+                "registry_payload": {
+                    "registry_message_type": RegistryMessageType.INVENTORY_REQUEST,
+                }
+            }
+        }
+
+        assert replicator.process_incoming_message(peer_id="node-source", message=message) is None
+        assert replicator.get_peer_state("node-source").error == "peer_authentication_required"
+
+        timestamp = time.time()
+        replicator.register_peer_identity(peer_id="node-source", public_key=public_key)
+        assert replicator.authenticate_peer(
+            peer_id="node-source",
+            claimed_public_key=public_key,
+            signature="ed25519:"
+            + private_key.sign(
+                peer_authentication_payload(
+                    peer_id="node-source",
+                    public_key=public_key,
+                    nonce="handshake-1",
+                    timestamp=timestamp,
+                )
+            ).hex(),
+            nonce="handshake-1",
+            timestamp=timestamp,
+        ) is True
+        assert replicator.process_incoming_message(peer_id="node-source", message=message)
+
+        replicator.revoke_peer_authentication("node-source")
+        assert replicator.process_incoming_message(peer_id="node-source", message=message) is None
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ from .messages import (
     RegistryMessageType,
 )
 from .object_envelope import RegistryObjectEnvelope
+from .peer import PeerAuthenticator
 from .replication import ReplicationEngine
 from .routes import create_default_registry_channels
 from .storage import ImmutableObjectStore
@@ -76,6 +77,8 @@ class RegistryReplicator:
         chain_id: str = "main",
         network_revision: str = "1.0",
         maximum_inventory_object_ids: int = 500,
+        peer_authenticator: PeerAuthenticator | None = None,
+        require_authenticated_peers: bool = False,
     ):
         if maximum_inventory_object_ids < 1:
             raise ValueError("maximum_inventory_object_ids must be at least one")
@@ -96,6 +99,10 @@ class RegistryReplicator:
         self._outbox: list[dict] = []
         self._callbacks: list[Callable] = []
         self._maximum_inventory_object_ids = maximum_inventory_object_ids
+        self._require_authenticated_peers = require_authenticated_peers
+        self._peer_authenticator = peer_authenticator or (
+            PeerAuthenticator() if require_authenticated_peers else None
+        )
 
     @property
     def store(self) -> ImmutableObjectStore:
@@ -135,6 +142,42 @@ class RegistryReplicator:
         if handler not in handlers:
             handlers.append(handler)
 
+    def register_peer_identity(self, *, peer_id: str, public_key: str) -> None:
+        """Bind a Registry peer identifier to its expected Ed25519 public key."""
+        if self._peer_authenticator is None:
+            self._peer_authenticator = PeerAuthenticator()
+        self._peer_authenticator.register_key(peer_id, public_key)
+
+    def authenticate_peer(
+        self,
+        *,
+        peer_id: str,
+        claimed_public_key: str,
+        signature: str,
+        nonce: str,
+        timestamp: float,
+    ) -> bool:
+        """Authorize a peer only after a fresh signed Registry handshake."""
+        if self._peer_authenticator is None:
+            return False
+        if not self._peer_authenticator.authenticate(
+            peer_id=peer_id,
+            claimed_public_key=claimed_public_key,
+            signature=signature,
+            nonce=nonce,
+            timestamp=timestamp,
+        ):
+            state = self.get_or_create_peer_state(peer_id)
+            state.error = "peer_authentication_failed"
+            return False
+        return self.on_peer_connected(peer_id)
+
+    def revoke_peer_authentication(self, peer_id: str) -> None:
+        """Drop an authenticated connection after key rotation or transport loss."""
+        if self._peer_authenticator is not None:
+            self._peer_authenticator.revoke(peer_id)
+        self.on_peer_disconnected(peer_id)
+
     def _emit_event(self, event_type: str, **kwargs: Any) -> None:
         """Emit a replication event to all callbacks."""
         for cb in self._callbacks:
@@ -151,21 +194,42 @@ class RegistryReplicator:
             self._peer_states[peer_id] = ReplicationState(peer_id=peer_id)
         return self._peer_states[peer_id]
 
-    def on_peer_connected(self, peer_id: str) -> None:
+    def on_peer_connected(self, peer_id: str) -> bool:
         """Handle peer connection event."""
         state = self.get_or_create_peer_state(peer_id)
+        if not self._peer_is_authorized(peer_id):
+            state.connected = False
+            state.error = "peer_authentication_required"
+            self._emit_event("peer_connection_rejected", peer_id=peer_id)
+            return False
         state.connected = True
+        state.error = None
         state.last_activity_at = time.time()
         self._channel_manager.authorize_peer(
             "registry:replication", peer_id
         )
         self._emit_event("peer_connected", peer_id=peer_id)
+        return True
 
     def on_peer_disconnected(self, peer_id: str) -> None:
         """Handle peer disconnection event."""
         state = self.get_or_create_peer_state(peer_id)
         state.connected = False
         self._emit_event("peer_disconnected", peer_id=peer_id)
+
+    def _peer_is_authorized(self, peer_id: str) -> bool:
+        return not self._require_authenticated_peers or (
+            self._peer_authenticator is not None
+            and self._peer_authenticator.is_authenticated(peer_id)
+        )
+
+    def _reject_unauthenticated_peer(self, peer_id: str) -> bool:
+        if self._peer_is_authorized(peer_id):
+            return False
+        state = self.get_or_create_peer_state(peer_id)
+        state.error = "peer_authentication_required"
+        self._emit_event("peer_message_rejected", peer_id=peer_id)
+        return True
 
     # -- inventory -------------------------------------------------------
 
@@ -177,6 +241,8 @@ class RegistryReplicator:
         epoch_range: tuple[int, int] = (0, 0),
     ) -> dict:
         """Build an inventory request message for a peer."""
+        if self._reject_unauthenticated_peer(peer_id):
+            raise ValueError("Registry peer authentication is required")
         state = self.get_or_create_peer_state(peer_id)
         state.last_activity_at = time.time()
 
@@ -298,6 +364,8 @@ class RegistryReplicator:
         include_payload: bool = True,
     ) -> dict:
         """Build an object request for specific objects."""
+        if self._reject_unauthenticated_peer(peer_id):
+            raise ValueError("Registry peer authentication is required")
         if len(object_ids) > self._maximum_inventory_object_ids:
             raise ValueError("object request exceeds the configured object limit")
         state = self.get_or_create_peer_state(peer_id)
@@ -499,6 +567,8 @@ class RegistryReplicator:
         """
         Process an incoming registry message and return a response if needed.
         """
+        if self._reject_unauthenticated_peer(peer_id):
+            return None
         payload_data = message.get("payload", {})
         registry_payload = payload_data.get("registry_payload", {})
         msg_type = registry_payload.get("registry_message_type", "")
@@ -554,7 +624,8 @@ class RegistryReplicator:
         sync_mode: str = "initial",
     ) -> None:
         """Start synchronization with a peer."""
-        self.on_peer_connected(peer_id)
+        if not self.on_peer_connected(peer_id):
+            return
 
         mode_map = {
             "initial": SyncMode.INITIAL,
