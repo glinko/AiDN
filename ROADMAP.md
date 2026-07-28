@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-07-19`
+Last updated: `2026-07-28`
 
 This is the main public roadmap for the repository.
 
@@ -397,20 +397,20 @@ Goal: publish trust, validation, and quality signals for node selection.
 Status: `In progress`
 
 Checkpoints:
-- [ ] Rating model for nodes
-- [ ] Core metrics:
+- [x] Rating model for nodes
+- [x] Core metrics:
   - uptime
   - success rate
   - latency
   - operator reliability
   - dispute or penalty history
-- [ ] Registry publication of rating data
-- [ ] Selection policy that can combine price and rating
-- [ ] Validation Bond, Validator Reward, and Maintenance Validation contract
-- [ ] Validator qualification and deterministic selection policy
-- [ ] Endpoint-origin Validation Report custody with signed Storage Receipts
+- [x] Registry publication of rating data
+- [x] Selection policy that can combine price and rating
+- [x] Validation Bond, Validator Reward, and Maintenance Validation contract
+- [x] Validator qualification and deterministic selection policy
+- [x] Endpoint-origin Validation Report custody with signed Storage Receipts
 - [x] Compact canonical Validation Commitments with deterministic Certification inputs in local persistence and ledger projections
-- [ ] Report availability challenges, custody grace periods, and retention Reputation
+- [x] Report availability challenges, custody grace periods, and retention Reputation
 - [ ] Marketplace report-custody freshness and warning surfaces
 
 Exit criteria:
@@ -422,14 +422,14 @@ Exit criteria:
 
 Goal: let nodes advertise and execute whether they can download and host custom models.
 
-Status: `Planned`
+Status: `Complete`
 
 Checkpoints:
-- [ ] Operator model install workflow
-- [ ] Node flag `can_host_custom_model`
-- [ ] Install job lifecycle
-- [ ] Bundle creation from installed artifacts
-- [ ] Registry publication of onboarding capability
+- [x] Operator model install workflow
+- [x] Node flag `can_host_custom_model`
+- [x] Install job lifecycle
+- [x] Bundle creation from installed artifacts
+- [x] Registry publication of onboarding capability
 
 Exit criteria:
 - a node can explicitly declare whether it accepts custom model onboarding;
@@ -518,31 +518,11 @@ Exit criteria:
 
 Order of work right now:
 
-1. Close the operator bootstrap loop from `install -> wallet ownership -> provider attach -> model/bundle setup -> first endpoint publish`
-2. Make endpoint management the primary operator object, including privacy mode, publication mode, and validation as separate actions
-3. Finish migrating the operator shell onto the endpoint-first trust layer, so publish/proof/sync state are first-class controls across `Home`, `Endpoints`, and later marketplace flows
-4. Expand Endpoint readiness beyond draft admission into publish-time checks for pricing, validation policy, visibility, Session limits and signed-publication compatibility
-5. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
-6. Finish the remaining `M3/M4` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
-7. Define `M5` rating, validation economics, and `M6` custom model onboarding contracts around the endpoint-centric operator experience
-8. Add minimal governance/authorization certificates for quorum-finalized wallet-identity network changes, so registry authority can travel as signed network evidence instead of only local policy state
-9. Introduce the `M7` consensus boundary cleanly, so future ledger, epoch, validator, and registry work land on finalized protocol state instead of local-only mutation
-10. Build the `M9` network transport layer to enable distributed registry replication and peer-to-peer synchronization
-11. Implement `M10` snapshot and state sync protocol for decentralized node bootstrapping (DONE)
-
-## Immediate Priorities
-
-Order of work right now:
-
-1. Close the operator bootstrap loop from `install -> wallet ownership -> provider attach -> model/bundle setup -> first endpoint publish`
-2. Make endpoint management the primary operator object, including privacy mode, publication mode, and validation as separate actions
-3. Finish migrating the operator shell onto the endpoint-first trust layer, so publish/proof/sync state are first-class controls across `Home`, `Endpoints`, and later marketplace flows
-4. Expand Endpoint readiness beyond draft admission into publish-time checks for pricing, validation policy, visibility, Session limits and signed-publication compatibility
-5. Expand the dashboard into full `Providers / Bundles / Endpoints / Remote Endpoints / Marketplace / MCP` workflows instead of only telemetry and market visibility
-6. Finish the remaining `M3/M4` accounting decisions in a way that supports the operator journey and the future `UX-0002` session/payment flow instead of leaking settlement complexity into first-run UX
-7. Define `M5` rating, validation economics, and `M6` custom model onboarding contracts around the endpoint-centric operator experience
-8. Add minimal governance/authorization certificates for quorum-finalized wallet-identity network changes, so registry authority can travel as signed network evidence instead of only local policy state
-9. Introduce the `M7` consensus boundary cleanly, so future ledger, epoch, validator, and registry work land on finalized protocol state instead of local-only mutation
+1. Surface report-custody freshness and warnings in Marketplace and endpoint discovery, completing the remaining M5 operator visibility gap.
+2. Add provider-native cancellation and in-flight recovery fault profiles where upstream operation handles exist; preserve explicit uncertainty where they do not.
+3. Replicate signed Plugin Directory releases, trust state and revocations through registry peer synchronization.
+4. Replace in-process Plugin Host handlers with isolated package-backed processes and Secret Manager-backed activation credential delivery.
+5. Introduce the M7 finalized consensus boundary without reintroducing local mutable economic authority.
 
 ## Source Documents
 
