@@ -267,6 +267,73 @@ def verify_wallet_identity_sync_envelope(**payload: str) -> None:
     )
 
 
+def plugin_directory_sync_envelope_payload(
+    *,
+    node_id: str,
+    operator_id: str,
+    owner_wallet_id: str,
+    public_key: str,
+    state_hash: str,
+) -> bytes:
+    return json.dumps(
+        {
+            "domain": "aidn.plugin-directory.sync-envelope.v1",
+            "node_id": node_id,
+            "operator_id": operator_id,
+            "owner_wallet_id": owner_wallet_id,
+            "public_key": public_key,
+            "state_hash": state_hash,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def sign_plugin_directory_sync_envelope(
+    *,
+    private_key: str,
+    node_id: str,
+    operator_id: str,
+    owner_wallet_id: str,
+    public_key: str,
+    state_hash: str,
+) -> str:
+    if not private_key.startswith("ed25519:"):
+        raise ValueError("Plugin directory sync requires an Ed25519 private key")
+    try:
+        key = Ed25519PrivateKey.from_private_bytes(
+            bytes.fromhex(private_key.removeprefix("ed25519:"))
+        )
+    except ValueError as error:
+        raise ValueError("Plugin directory sync private key is invalid") from error
+    return "ed25519:" + key.sign(
+        plugin_directory_sync_envelope_payload(
+            node_id=node_id,
+            operator_id=operator_id,
+            owner_wallet_id=owner_wallet_id,
+            public_key=public_key,
+            state_hash=state_hash,
+        )
+    ).hex()
+
+
+def verify_plugin_directory_sync_envelope(**payload: str) -> None:
+    _verify_ed25519_signature(
+        public_key=payload["public_key"],
+        signature=payload["signature"],
+        payload=plugin_directory_sync_envelope_payload(
+            node_id=payload["node_id"],
+            operator_id=payload["operator_id"],
+            owner_wallet_id=payload["owner_wallet_id"],
+            public_key=payload["public_key"],
+            state_hash=payload["state_hash"],
+        ),
+        required_message="Plugin directory sync requires an Ed25519 signature",
+        invalid_message="Plugin directory sync signature is invalid",
+    )
+
+
 def wallet_identity_governance_certificate_payload(
     *,
     certificate_id: str,

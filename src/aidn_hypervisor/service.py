@@ -1224,10 +1224,23 @@ class HypervisorService:
         *,
         peer_base_url: str,
         limit: int = 500,
+        expected_node_id: str | None = None,
+        expected_operator_id: str | None = None,
+        expected_owner_wallet_id: str | None = None,
+        expected_public_key: str | None = None,
     ) -> dict:
         return self._provider_installation_facade().sync_provider_plugin_directory_from_peer(
             peer_base_url=peer_base_url,
             limit=limit,
+            expected_node_id=expected_node_id,
+            expected_operator_id=expected_operator_id,
+            expected_owner_wallet_id=expected_owner_wallet_id,
+            expected_public_key=expected_public_key,
+        )
+
+    def provider_plugin_directory_sync_state(self, *, limit: int = 500) -> dict:
+        return self._provider_installation_facade().provider_plugin_directory_sync_state(
+            limit=limit
         )
 
     def list_installed_provider_plugins(self) -> list[dict]:

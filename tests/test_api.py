@@ -4650,8 +4650,7 @@ def test_plugin_directory_peer_sync_uses_scoped_transport_and_safe_url() -> None
     assert result["peer_base_url"] == "https://peer.example"
     assert result["imported_release_count"] == 1
     assert captured["url"] == (
-        "https://peer.example/operators/registry/objects?"
-        "namespace=plugin&include_payload=true&limit=500"
+        "https://peer.example/operators/provider-plugin-releases/sync-state?limit=500"
     )
     assert captured["timeout_seconds"] == 10
     with pytest.raises(ValueError, match="peer_base_url"):
@@ -4677,6 +4676,71 @@ def test_plugin_directory_peer_transport_rejects_redirects(monkeypatch) -> None:
     assert PluginDirectoryPeerTransport().fetch(object(), timeout_seconds=7) == "response"
     assert captured["handler"].redirect_request(None, None, 302, None, None, None) is None
     assert captured["timeout"] == 7
+
+
+def test_plugin_directory_peer_sync_verifies_signed_owner_envelope() -> None:
+    source = _service()
+    source.node_id = "node-source"
+    source.operator_id = "operator-source"
+    source.register_provider_plugin_release(
+        manifest=source.plugins.get("fake-managed").plugin_manifest()
+    )
+    source.configure_owner_wallet(mode="create", label="Source")
+    owner = source.owner_wallet_state()
+    export_response = TestClient(build_app(service=source)).get(
+        "/operators/provider-plugin-releases/sync-state"
+    )
+    assert export_response.status_code == 200
+    envelope = export_response.json()
+
+    class _Response:
+        def __init__(self, payload: dict) -> None:
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def read(self):
+            return json.dumps(self.payload).encode("utf-8")
+
+    class _Transport:
+        def __init__(self, payload: dict) -> None:
+            self.payload = payload
+
+        def fetch(self, request, *, timeout_seconds: int):
+            return _Response(self.payload)
+
+    target = _service()
+    target._plugin_directory_peer_transport = _Transport(envelope)
+    result = target.sync_provider_plugin_directory_from_peer(
+        peer_base_url="https://peer.example",
+        expected_node_id=source.node_id,
+        expected_operator_id=source.operator_id,
+        expected_owner_wallet_id=owner["wallet_id"],
+        expected_public_key=owner["public_key"],
+    )
+
+    assert result["authenticated"] is True
+    assert result["imported_release_count"] == 1
+
+    envelope["sync_state"]["objects"] = []
+    target._plugin_directory_peer_transport = _Transport(envelope)
+    with pytest.raises(ValueError, match="state hash"):
+        target.sync_provider_plugin_directory_from_peer(
+            peer_base_url="https://peer.example",
+            expected_node_id=source.node_id,
+            expected_operator_id=source.operator_id,
+            expected_owner_wallet_id=owner["wallet_id"],
+            expected_public_key=owner["public_key"],
+        )
+    with pytest.raises(ValueError, match="expected source identity is incomplete"):
+        target.sync_provider_plugin_directory_from_peer(
+            peer_base_url="https://peer.example",
+            expected_node_id=source.node_id,
+        )
 
 
 def test_plugin_host_status_route_returns_sanitized_observability() -> None:

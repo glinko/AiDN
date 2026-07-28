@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
@@ -153,6 +154,9 @@ class ProviderInstallationService:
     def provider_plugin_registry_objects(self) -> list[dict]:
         return self._host.provider_inventory.plugin_release_registry_objects()
 
+    def provider_plugin_directory_sync_state(self, *, limit: int = 500) -> dict:
+        return {"objects": self.provider_plugin_registry_objects()[:limit]}
+
     def publish_provider_plugin_releases_to_registry(self, registry_service) -> list[dict]:
         return registry_service.ingest_registry_objects(
             self.provider_plugin_registry_objects()
@@ -182,10 +186,25 @@ class ProviderInstallationService:
         peer_base_url: str,
         limit: int = 500,
         timeout_seconds: int = 10,
+        expected_node_id: str | None = None,
+        expected_operator_id: str | None = None,
+        expected_owner_wallet_id: str | None = None,
+        expected_public_key: str | None = None,
     ) -> dict:
         base_url = _normalize_plugin_directory_peer_base_url(peer_base_url)
+        expected_identity_values = (
+            expected_node_id,
+            expected_operator_id,
+            expected_owner_wallet_id,
+            expected_public_key,
+        )
+        if any(value is not None for value in expected_identity_values) and not all(
+            value is not None for value in expected_identity_values
+        ):
+            raise ValueError("Peer plugin directory expected source identity is incomplete")
+        authenticated = all(value is not None for value in expected_identity_values)
         request = urllib_request.Request(
-            f"{base_url}/operators/registry/objects?namespace=plugin&include_payload=true&limit={int(limit)}",
+            f"{base_url}/operators/provider-plugin-releases/sync-state?limit={int(limit)}",
             method="GET",
         )
         try:
@@ -197,10 +216,72 @@ class ProviderInstallationService:
             raise ValueError(
                 f"Failed to sync plugin directory from peer {peer_base_url}"
             ) from error
-        if not isinstance(payload, dict) or not isinstance(payload.get("objects"), list):
+        if not isinstance(payload, dict):
+            raise ValueError(f"Peer plugin directory response from {peer_base_url} is invalid")
+        if not isinstance(payload.get("objects"), list) and not authenticated:
+            raise ValueError(f"Peer plugin directory response from {peer_base_url} is invalid")
+        if authenticated:
+            payload = self._verified_plugin_directory_peer_sync_envelope(
+                payload=payload,
+                expected_node_id=expected_node_id,
+                expected_operator_id=expected_operator_id,
+                expected_owner_wallet_id=expected_owner_wallet_id,
+                expected_public_key=expected_public_key,
+            )
+        if not isinstance(payload.get("objects"), list):
             raise ValueError(f"Peer plugin directory response from {peer_base_url} is invalid")
         items = self.import_provider_plugin_registry_objects(payload["objects"])
-        return {"peer_base_url": base_url, "imported_release_count": len(items), "items": items}
+        return {
+            "peer_base_url": base_url,
+            "authenticated": authenticated,
+            "imported_release_count": len(items),
+            "items": items,
+        }
+
+    @staticmethod
+    def _verified_plugin_directory_peer_sync_envelope(
+        *,
+        payload: dict,
+        expected_node_id: str,
+        expected_operator_id: str | None,
+        expected_owner_wallet_id: str | None,
+        expected_public_key: str | None,
+    ) -> dict:
+        from aidn_hypervisor.wallet_identity import verify_plugin_directory_sync_envelope
+
+        sync_state = payload.get("sync_state")
+        source = payload.get("source")
+        signature = payload.get("signature")
+        if not isinstance(sync_state, dict) or not isinstance(source, dict):
+            raise ValueError("Peer plugin directory sync envelope is required")
+        expected_source = {
+            "node_id": expected_node_id,
+            "operator_id": expected_operator_id,
+            "owner_wallet_id": expected_owner_wallet_id,
+            "public_key": expected_public_key,
+        }
+        for field, expected_value in expected_source.items():
+            if expected_value is None:
+                raise ValueError("Peer plugin directory expected source identity is incomplete")
+            if source.get(field) != expected_value:
+                raise ValueError(f"Peer plugin directory sync {field} does not match")
+        state_hash = "sha256:" + hashlib.sha256(
+            json.dumps(sync_state, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        if source.get("state_hash") != state_hash:
+            raise ValueError("Peer plugin directory sync state hash does not match")
+        try:
+            verify_plugin_directory_sync_envelope(
+                node_id=source["node_id"],
+                operator_id=source["operator_id"],
+                owner_wallet_id=source["owner_wallet_id"],
+                public_key=source["public_key"],
+                state_hash=source["state_hash"],
+                signature=signature,
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("Peer plugin directory sync signature is invalid") from error
+        return sync_state
 
     def _plugin_directory_peer_transport(self):
         return getattr(

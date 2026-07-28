@@ -68,7 +68,10 @@ from aidn_hypervisor.validation_read_models import (
     custody_summary_for,
     validation_summary_for,
 )
-from aidn_hypervisor.wallet_identity import sign_wallet_identity_sync_envelope
+from aidn_hypervisor.wallet_identity import (
+    sign_plugin_directory_sync_envelope,
+    sign_wallet_identity_sync_envelope,
+)
 from aidn_hypervisor.wallet_models import (
     WalletAllocationCorrectionRequest,
     WalletAllocationDisputeRequest,
@@ -191,6 +194,10 @@ class SyncProviderPluginDirectoryFromPeerRequest(BaseModel):
 
     peer_base_url: str = Field(min_length=1)
     limit: int = Field(default=500, ge=1, le=5000)
+    expected_node_id: str | None = Field(default=None, min_length=1)
+    expected_operator_id: str | None = Field(default=None, min_length=1)
+    expected_owner_wallet_id: str | None = Field(default=None, min_length=1)
+    expected_public_key: str | None = Field(default=None, min_length=1)
 
 
 class ApplyProviderInstallationApprovalRequest(BaseModel):
@@ -1250,6 +1257,10 @@ def build_api_router(
             return service.sync_provider_plugin_directory_from_peer(
                 peer_base_url=payload.peer_base_url,
                 limit=payload.limit,
+                expected_node_id=payload.expected_node_id,
+                expected_operator_id=payload.expected_operator_id,
+                expected_owner_wallet_id=payload.expected_owner_wallet_id,
+                expected_public_key=payload.expected_public_key,
             )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
@@ -2188,6 +2199,35 @@ def build_api_router(
             "sync_state": state,
             "source": envelope,
             "signature": sign_wallet_identity_sync_envelope(
+                private_key=service.owner_wallet_private_key(), **envelope
+            ),
+        }
+
+    @router.get("/operators/provider-plugin-releases/sync-state")
+    async def provider_plugin_directory_sync_state(limit: int = 500) -> dict:
+        state = service.provider_plugin_directory_sync_state(limit=limit)
+        owner = service.owner_wallet_state()
+        if not owner["configured"]:
+            return state
+        state_hash = "sha256:" + hashlib.sha256(
+            json.dumps(
+                state,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        envelope = {
+            "node_id": service.node_id,
+            "operator_id": service.operator_id,
+            "owner_wallet_id": owner["wallet_id"],
+            "public_key": owner["public_key"],
+            "state_hash": state_hash,
+        }
+        return {
+            "sync_state": state,
+            "source": envelope,
+            "signature": sign_plugin_directory_sync_envelope(
                 private_key=service.owner_wallet_private_key(), **envelope
             ),
         }
