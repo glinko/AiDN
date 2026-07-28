@@ -148,6 +148,52 @@ def test_plugin_release_registry_projection_is_public_and_deterministic() -> Non
     assert "activation_credential_key_id" not in records[0]["payload"]
 
 
+def test_plugin_release_registry_import_is_hash_bound_and_not_package_trusted() -> None:
+    registry = _registry()
+    source = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    release = source.register_plugin_release(
+        manifest_payload=registry.get("fake-managed").plugin_manifest(),
+        source_reference="https://plugins.example/fake-managed.zip",
+    )
+    target = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+        package_store=PluginPackageStore(),
+    )
+
+    imported = target.import_plugin_release_registry_objects(
+        source.plugin_release_registry_objects()
+    )
+
+    assert imported == [target.store.get_plugin_release(release.release_id)]
+    assert imported[0].trust_status == release.trust_status
+    assert imported[0].package_verification_status == "UNVERIFIED"
+    assert imported[0].trusted_publisher is False
+    with pytest.raises(ValueError, match="trusted signed release"):
+        target.acquire_plugin_package(release_id=release.release_id)
+
+
+def test_plugin_release_registry_import_rejects_tampered_payload() -> None:
+    registry = _registry()
+    source = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    source.register_plugin_release(manifest_payload=registry.get("fake-managed").plugin_manifest())
+    record = source.plugin_release_registry_objects()[0]
+    record["payload"]["release_status"] = "REVOKED"
+    target = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    with pytest.raises(ValueError, match="payload hash mismatch"):
+        target.import_plugin_release_registry_objects([record])
+
+
 def test_package_install_requires_verified_content_addressed_payload() -> None:
     registry = _registry()
     package_store = PluginPackageStore()

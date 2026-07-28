@@ -169,6 +169,19 @@ class InstallProviderPluginReleaseRequest(BaseModel):
     installation_source: Literal["PACKAGE", "LEGACY_BUILTIN"] = "PACKAGE"
 
 
+class ImportProviderPluginRegistryObjectsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    records: list[dict] = Field(default_factory=list)
+
+
+class SyncProviderPluginDirectoryFromPeerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    peer_base_url: str = Field(min_length=1)
+    limit: int = Field(default=500, ge=1, le=5000)
+
+
 class ApplyProviderInstallationApprovalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1184,6 +1197,31 @@ def build_api_router(
                 status_code=404,
                 detail=f"Unknown plugin release: {error.args[0]}",
             ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-plugin-releases/import-registry")
+    async def import_provider_plugin_registry_objects(
+        payload: ImportProviderPluginRegistryObjectsRequest,
+    ) -> dict:
+        try:
+            return {
+                "items": service.import_provider_plugin_registry_objects(
+                    payload.records
+                )
+            }
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-plugin-releases/sync-from-peer")
+    async def sync_provider_plugin_directory_from_peer(
+        payload: SyncProviderPluginDirectoryFromPeerRequest,
+    ) -> dict:
+        try:
+            return service.sync_provider_plugin_directory_from_peer(
+                peer_base_url=payload.peer_base_url,
+                limit=payload.limit,
+            )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 

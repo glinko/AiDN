@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+from urllib import error as urllib_error
+from urllib import request as urllib_request
+
 from aidn_hypervisor.plugins.host import PluginHostJsonWireAdapter
 from aidn_hypervisor.plugins.host_named_pipe import WindowsNamedPipePluginHostListener
 from aidn_hypervisor.plugins.host_unix_socket import UnixSocketPluginHostListener
@@ -121,6 +125,35 @@ class ProviderInstallationService:
         return registry_service.ingest_registry_objects(
             self.provider_plugin_registry_objects()
         )
+
+    def import_provider_plugin_registry_objects(self, records: list[dict]) -> list[dict]:
+        releases = self._host.provider_inventory.import_plugin_release_registry_objects(records)
+        self._host._persist_state()
+        return [release.model_dump(mode="json") for release in releases]
+
+    def sync_provider_plugin_directory_from_peer(
+        self,
+        *,
+        peer_base_url: str,
+        limit: int = 500,
+        timeout_seconds: int = 10,
+    ) -> dict:
+        base_url = peer_base_url.rstrip("/")
+        request = urllib_request.Request(
+            f"{base_url}/operators/registry/objects?namespace=plugin&include_payload=true&limit={int(limit)}",
+            method="GET",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=timeout_seconds) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (urllib_error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise ValueError(
+                f"Failed to sync plugin directory from peer {peer_base_url}"
+            ) from error
+        if not isinstance(payload, dict) or not isinstance(payload.get("objects"), list):
+            raise ValueError(f"Peer plugin directory response from {peer_base_url} is invalid")
+        items = self.import_provider_plugin_registry_objects(payload["objects"])
+        return {"peer_base_url": base_url, "imported_release_count": len(items), "items": items}
 
     def list_installed_provider_plugins(self) -> list[dict]:
         return [

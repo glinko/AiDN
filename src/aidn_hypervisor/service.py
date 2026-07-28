@@ -1200,6 +1200,20 @@ class HypervisorService:
             registry_service
         )
 
+    def import_provider_plugin_registry_objects(self, records: list[dict]) -> list[dict]:
+        return self._provider_installation_facade().import_provider_plugin_registry_objects(records)
+
+    def sync_provider_plugin_directory_from_peer(
+        self,
+        *,
+        peer_base_url: str,
+        limit: int = 500,
+    ) -> dict:
+        return self._provider_installation_facade().sync_provider_plugin_directory_from_peer(
+            peer_base_url=peer_base_url,
+            limit=limit,
+        )
+
     def list_installed_provider_plugins(self) -> list[dict]:
         return self._provider_installation_facade().list_installed_provider_plugins()
 

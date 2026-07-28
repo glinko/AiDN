@@ -121,6 +121,9 @@ class ProviderInventoryService:
                 "declared_permissions": list(release.declared_permissions),
                 "release_status": release.release_status,
                 "source_reference": release.source_reference,
+                "package_verification_status": release.package_verification_status,
+                "package_verification_mode": release.package_verification_mode,
+                "trusted_publisher": release.trusted_publisher,
                 "published_at": release.published_at,
             }
             payload_hash = _canonical_hash(payload)
@@ -143,6 +146,47 @@ class ProviderInventoryService:
                 }
             )
         return records
+
+    def import_plugin_release_registry_objects(self, records: list[dict]) -> list[PluginRelease]:
+        """Import hash-bound directory metadata without inheriting package trust."""
+        imported: list[PluginRelease] = []
+        for record in records:
+            if record.get("object_type") != "plugin_release" or record.get("namespace") != "plugin":
+                raise ValueError("registry object is not a plugin release")
+            payload = record.get("payload")
+            if not isinstance(payload, dict):
+                raise ValueError("plugin release registry object has no payload")
+            payload_hash = _canonical_hash(payload)
+            if record.get("payload_hash") != payload_hash:
+                raise ValueError("plugin release registry payload hash mismatch")
+            expected_object_id = _canonical_hash(
+                {
+                    "object_type": "plugin_release",
+                    "object_version": "plugin-release.v1",
+                    "payload_hash": payload_hash,
+                }
+            )
+            if record.get("object_id") != expected_object_id:
+                raise ValueError("plugin release registry object identity mismatch")
+            release = PluginRelease(
+                release_id=payload["release_id"],
+                plugin_id=payload["plugin_id"],
+                plugin_version=payload["plugin_version"],
+                manifest_hash=payload["manifest_hash"],
+                package_digest=payload["package_digest"],
+                publisher=payload["publisher"],
+                trust_status=payload["trust_status"],
+                declared_permissions=payload.get("declared_permissions", []),
+                release_status=payload.get("release_status", "AVAILABLE"),
+                source_reference=payload.get("source_reference"),
+                package_verification_status="UNVERIFIED",
+                package_verification_mode="NONE",
+                trusted_publisher=False,
+                published_at=payload["published_at"],
+            )
+            self.store.save_plugin_release(release)
+            imported.append(release)
+        return imported
 
     def plugin_host_local_ingress(self) -> PluginHostLocalIpcIngress:
         """Expose only identity-bound manifest and validation controls to a Plugin Host."""
