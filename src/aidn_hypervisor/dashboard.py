@@ -34,13 +34,24 @@ def build_market_payload(*, service, registry_service) -> dict:
         return payload
 
     discovery = registry_service.discover(RegistryDiscoveryQuery())
-    nodes_by_id = {node["node_id"]: node for node in discovery["nodes"]}
+    own_advertisement = service.node_advertisement()
+    own_node_id = own_advertisement["node_id"]
+    # Registry replication is eventually consistent. Prefer this Hypervisor's
+    # current advertisement so its published endpoints are usable immediately.
+    nodes_by_id = {
+        node["node_id"]: node
+        for node in discovery["nodes"]
+        if node["node_id"] != own_node_id
+    }
+    nodes_by_id[own_node_id] = own_advertisement
     candidates = []
     for candidate in discovery["candidates"]:
+        if candidate["node_id"] == own_node_id:
+            continue
         enriched = dict(candidate)
         node = nodes_by_id.get(enriched["node_id"], {})
         enriched["origin"] = (
-            "own" if enriched["node_id"] == service.node_id else "external"
+            "own" if enriched["node_id"] == own_node_id else "external"
         )
         enriched["reputation"] = _reputation_block(enriched)
         enriched["published_endpoint_count"] = len(node.get("published_endpoints", []))
@@ -48,9 +59,19 @@ def build_market_payload(*, service, registry_service) -> dict:
             node.get("published_endpoints", [])
         )
         candidates.append(enriched)
+    candidates.extend(
+        _local_candidate_from_advertisement(own_advertisement, bundle)
+        for bundle in own_advertisement["bundles"]
+    )
     canonical_candidates = []
     canonical_market_nodes: dict[str, dict] = {}
-    for node in registry_service.list_nodes():
+    registry_nodes = {
+        node["node_id"]: node
+        for node in registry_service.list_nodes()
+        if node["node_id"] != own_node_id
+    }
+    registry_nodes[own_node_id] = own_advertisement
+    for node in registry_nodes.values():
         if node["status"] != "ready":
             continue
         node_candidates = _canonical_candidates_from_node(node)
@@ -61,12 +82,19 @@ def build_market_payload(*, service, registry_service) -> dict:
             canonical_candidates.append(
                 {
                     **candidate,
-                    "origin": "own" if candidate["node_id"] == service.node_id else "external",
+                    "origin": "own" if candidate["node_id"] == own_node_id else "external",
                 }
             )
+    market_nodes = [
+        {
+            **node,
+            "origin": "own" if node["node_id"] == own_node_id else "external",
+        }
+        for node in nodes_by_id.values()
+    ]
     payload = {
         "query": discovery["query"],
-        "nodes": discovery["nodes"],
+        "nodes": market_nodes,
         "candidates": sorted(candidates, key=_market_candidate_sort_key),
         "canonical_candidates": sorted(
             canonical_candidates,

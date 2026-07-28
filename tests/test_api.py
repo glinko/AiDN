@@ -2266,6 +2266,7 @@ def test_operator_dashboard_market_endpoint_includes_published_endpoint_counts()
     external = next(item for item in response.json()["candidates"] if item["node_id"] == "node-external")
     assert own["published_endpoint_count"] == 1
     assert external["published_endpoint_count"] == 1
+    assert response.json()["recommended_action"]["action"] == "configure_remote_route"
 
 
 def test_operator_dashboard_market_endpoint_includes_canonical_candidates() -> None:
@@ -4124,10 +4125,8 @@ def test_operator_dashboard_home_route_uses_operator_view_payload(
 
     assert response.status_code == 200
     assert response.json() == expected_payload
-    assert captured["market_args"] == {
-        "service": hypervisor,
-        "registry_service": None,
-    }
+    assert captured["market_args"]["service"] is hypervisor
+    assert isinstance(captured["market_args"]["registry_service"], RegistryService)
     assert captured["view_args"]["service"] is hypervisor
     assert captured["view_args"]["market_candidates"] == [
         {"bundle_id": "whisper-a"},

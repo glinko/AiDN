@@ -67,11 +67,18 @@ def build_app(
     resolved_registry_service.bind_ledger_operation_service(
         resolved_service.ledger_operation_service
     )
-    resolved_endpoint_service = endpoint_service or _build_default_endpoint_service(
-        state_store=state_store
+    bound_endpoint_publication_service = getattr(
+        resolved_service, "endpoint_publication_service", None
+    )
+    resolved_endpoint_service = (
+        endpoint_service
+        or getattr(resolved_service, "endpoint_service", None)
+        or getattr(bound_endpoint_publication_service, "endpoint_service", None)
+        or _build_default_endpoint_service(state_store=state_store)
     )
     resolved_endpoint_publication_service = (
         endpoint_publication_service
+        or bound_endpoint_publication_service
         or _build_default_endpoint_publication_service(
             state_store=state_store,
             endpoint_service=resolved_endpoint_service,
