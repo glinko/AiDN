@@ -145,6 +145,41 @@ class OllamaPlugin(ProviderPlugin):
             "device_affinity": "cpu",
         }
 
+    def create_runtime_binding(
+        self,
+        *,
+        model_deployment: dict,
+        capability_id: str,
+        capability_version: str,
+        capability_definition_hash: str,
+    ) -> dict:
+        """Project native Ollama generation onto the approved Runtime surface."""
+        return {
+            "model_deployment_id": model_deployment["model_deployment_id"],
+            "provider_instance_id": model_deployment["provider_instance_id"],
+            "capability_id": capability_id,
+            "capability_version": capability_version,
+            "capability_definition_hash": capability_definition_hash,
+            "adapter_id": "ollama-generate",
+            "adapter_version": "ollama-generate.v1",
+            "supported_features": ["streaming", "cancellation"],
+            "supported_modalities": ["text"],
+            "supported_accounting_modes": [
+                "provider_metered",
+                "fixed_price",
+                "observable",
+            ],
+            "compatibility_bundle": {
+                "plugin_id": self.plugin_id,
+                "provider_type": "ollama",
+                "workload_type": "llm_text",
+                "model_id": model_deployment["provider_model_reference"],
+                "launch_mode": "attached_service",
+                "device_affinity": "cpu",
+            },
+            "status": "ready",
+        }
+
     def retry_policy(self) -> dict:
         return dict(self._retry_policy)
 

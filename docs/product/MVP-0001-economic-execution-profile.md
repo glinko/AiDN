@@ -163,6 +163,11 @@ Implemented now:
   as Provider-authoritative Usage, records delivered stream bytes locally and
   retains best-effort cancellation semantics when no upstream operation handle
   exists.
+- The same public fixed-price execution, restart and cooperative Settlement
+  boundary is covered against an attached live Ollama Runtime Binding. The
+  compatibility projection explicitly maps the `llm.chat` Capability to the
+  legacy `llm_text` scheduler workload, so approved native Runtime execution
+  cannot be rejected before dispatch because of a Capability/workload mismatch.
 - A Session may bind a Consumer Ed25519 authorization key. For such Sessions,
   cooperative Settlement accepts only a signature over the exact Settlement
   identity, input root, amounts and acceptance time.

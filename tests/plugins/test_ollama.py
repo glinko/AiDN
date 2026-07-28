@@ -224,6 +224,30 @@ def test_ollama_plugin_invoke_posts_prompt_and_returns_normalized_payload() -> N
     assert plugin.request_kwargs[-1] == {"timeout_seconds": 90.0}
 
 
+def test_ollama_plugin_projects_approved_runtime_binding() -> None:
+    binding = OllamaPlugin().create_runtime_binding(
+        model_deployment={
+            "model_deployment_id": "deployment-1",
+            "provider_instance_id": "provider-1",
+            "provider_model_reference": "qwen2.5:0.5b",
+        },
+        capability_id="llm.chat",
+        capability_version="1.0",
+        capability_definition_hash="capability-hash",
+    )
+
+    assert binding["adapter_id"] == "ollama-generate"
+    assert binding["adapter_version"] == "ollama-generate.v1"
+    assert binding["compatibility_bundle"] == {
+        "plugin_id": "ollama",
+        "provider_type": "ollama",
+        "workload_type": "llm_text",
+        "model_id": "qwen2.5:0.5b",
+        "launch_mode": "attached_service",
+        "device_affinity": "cpu",
+    }
+
+
 def test_ollama_plugin_invoke_requires_prompt_payload() -> None:
     plugin = StubOllamaPlugin()
     runtime = RuntimeHandle(

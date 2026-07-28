@@ -112,13 +112,12 @@ $env:AIDN_OLLAMA_MODEL = "qwen2.5:0.5b"
 ```
 
 The opt-in smoke verifies attach, model discovery, Health, native execution
-and provider-reported prompt/evaluation token Usage.
-
-The current Ollama profile covers native attach, model discovery, Health and
-execution. The broader public paid-session, persistence and Settlement smoke
-is covered by the llama.cpp and vLLM profiles. Ollama is intentionally kept as
-a separate native-protocol conformance profile until its approved Runtime
-Binding path is exercised end-to-end.
+and provider-reported prompt/evaluation token Usage. It also runs the public
+fixed-price Session path through the approved `ollama-generate` Runtime
+Binding: signed Endpoint publication, Consumer authorization, escrow lock,
+Runtime execution, durable restart and signed cooperative Settlement. The
+restored Hypervisor must finalize the existing execution evidence without a
+second Provider request or Endpoint payment.
 
 ## Shared launcher
 
