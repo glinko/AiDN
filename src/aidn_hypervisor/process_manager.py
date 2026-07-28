@@ -1,3 +1,4 @@
+import os
 import subprocess
 from dataclasses import dataclass, field
 
@@ -38,6 +39,7 @@ class ProviderProcessManager:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env={**os.environ, **launch_spec.get("environment", {})},
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             self._processes[runtime_id] = process

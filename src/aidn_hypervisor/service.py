@@ -1260,6 +1260,12 @@ class HypervisorService:
             installed_plugin_id=installed_plugin_id
         )
 
+    def start_plugin_host_process(self, *, installed_plugin_id: str, command: list[str]):
+        return self._provider_installation_facade().start_plugin_host_process(
+            installed_plugin_id=installed_plugin_id,
+            command=command,
+        )
+
     def start_windows_plugin_host_listener(self, *, address: str, authkey: bytes):
         return self._provider_installation_facade().start_windows_plugin_host_listener(
             address=address,

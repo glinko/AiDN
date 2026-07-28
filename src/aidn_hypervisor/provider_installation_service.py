@@ -210,6 +210,42 @@ class ProviderInstallationService:
             installed_plugin_id=installed_plugin_id
         )
 
+    def start_plugin_host_process(
+        self,
+        *,
+        installed_plugin_id: str,
+        command: list[str],
+    ):
+        if not command or not all(isinstance(item, str) and item for item in command):
+            raise ValueError("Plugin Host command is required")
+        installed = self._host.provider_inventory.store.get_installed_plugin(
+            installed_plugin_id
+        )
+        release = self._host.provider_inventory.store.get_plugin_release(
+            installed.release_id
+        )
+        if release.release_status in {"SECURITY_BLOCKED", "REVOKED"}:
+            raise ValueError("Plugin Host release is not eligible for launch")
+        if installed.installation_source == "PACKAGE":
+            package_store = self._host.provider_inventory.package_store
+            if package_store is None or not package_store.has(release.package_digest):
+                raise ValueError("verified plugin package is required before Host launch")
+        return self._host.runtimes.start_runtime(
+            {
+                "launch_mode": "managed_process",
+                "command": command,
+                "metadata": {
+                    "component": "plugin_host",
+                    "installed_plugin_id": installed.installed_plugin_id,
+                    "plugin_id": installed.plugin_id,
+                    "installation_generation": str(installed.installation_generation),
+                },
+                "environment": self.plugin_host_launch_environment(
+                    installed_plugin_id=installed_plugin_id
+                ),
+            }
+        )
+
     def start_windows_plugin_host_listener(self, *, address: str, authkey: bytes):
         listener = WindowsNamedPipePluginHostListener(
             address=address,
