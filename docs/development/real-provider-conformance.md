@@ -68,6 +68,10 @@ vLLM runs as a separate Provider service. The Hypervisor attaches it through
 the `vllm` plugin and owns the Provider Instance, Model Deployment, Runtime
 Binding and Endpoint records; it does not manage the vLLM process lifecycle.
 
+Discovery and Health use short probes. Runtime execution defaults to a 90-second
+request timeout, configurable through Runtime metadata as `timeout_seconds`, so
+model warm-up is not mistaken for an unavailable attached service.
+
 Run the opt-in provider and paid-session smoke:
 
 ```powershell

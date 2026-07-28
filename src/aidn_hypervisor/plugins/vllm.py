@@ -106,11 +106,26 @@ class VllmPlugin(ProviderPlugin):
         prompt = task.payload.get("prompt")
         if not isinstance(prompt, str) or not prompt:
             raise ValueError("vLLM invocation requires a prompt payload")
-        response = self._request_json(
-            "POST",
-            f"{self._endpoint(runtime_handle)}/v1/completions",
-            {"model": self._model_id(runtime_handle), "prompt": prompt, "max_tokens": 64},
-        )
+        request_payload = {
+            "model": self._model_id(runtime_handle),
+            "prompt": prompt,
+            "max_tokens": 64,
+        }
+        try:
+            response = self._request_json(
+                "POST",
+                f"{self._endpoint(runtime_handle)}/v1/completions",
+                request_payload,
+                timeout_seconds=float(runtime_handle.metadata.get("timeout_seconds", 90)),
+            )
+        except TypeError as error:
+            # Keep test and transitional adapters that implement the legacy
+            # helper signature working while the plugin contract is upgraded.
+            if "timeout_seconds" not in str(error):
+                raise
+            response = self._request_json(
+                "POST", f"{self._endpoint(runtime_handle)}/v1/completions", request_payload
+            )
         choice = (response.get("choices") or [{}])[0]
         return {
             "ok": True,
@@ -178,12 +193,19 @@ class VllmPlugin(ProviderPlugin):
             raise ValueError("vLLM runtime metadata is missing model_id")
         return str(model_id)
 
-    def _request_json(self, method: str, url: str, payload: dict | None = None) -> dict:
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        payload: dict | None = None,
+        *,
+        timeout_seconds: float = 5,
+    ) -> dict:
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
         headers = {"Content-Type": "application/json"} if data is not None else {}
         try:
             with request.urlopen(
-                request.Request(url, method=method, data=data, headers=headers), timeout=5
+                request.Request(url, method=method, data=data, headers=headers), timeout=timeout_seconds
             ) as response:
                 return json.loads(response.read().decode("utf-8"))
         except error.URLError as exc:

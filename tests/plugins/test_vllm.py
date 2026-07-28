@@ -2,6 +2,24 @@ import pytest
 
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile, TaskRequest
 from aidn_hypervisor.plugins.vllm import VllmPlugin
+from aidn_hypervisor.process_manager import RuntimeHandle
+
+
+class StubVllmPlugin(VllmPlugin):
+    def __init__(self) -> None:
+        self.request_kwargs: list[dict] = []
+
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        payload: dict | None = None,
+        **kwargs,
+    ) -> dict:
+        self.request_kwargs.append(dict(kwargs))
+        if url.endswith("/v1/completions"):
+            return {"model": "qwen", "choices": [{"text": "ok"}], "usage": {}}
+        return {"data": []}
 
 
 def _bundle() -> BundleConfig:
@@ -56,3 +74,23 @@ def test_vllm_partial_usage_does_not_invent_unknown_tokens() -> None:
         "measurement_kind": "estimated",
         "measurement_source": "provider_api_partial",
     }
+
+
+def test_vllm_plugin_invoke_uses_runtime_execution_timeout() -> None:
+    plugin = StubVllmPlugin()
+    runtime = RuntimeHandle(
+        runtime_id="rt-1",
+        command=["vllm", "serve"],
+        status="running",
+        bundle_id="qwen-vllm",
+        metadata={
+            "endpoint": "http://127.0.0.1:8000",
+            "model_id": "qwen",
+            "timeout_seconds": 37,
+        },
+    )
+
+    result = plugin.invoke(TaskRequest(task_type="llm_text.generate", payload={"prompt": "Hi"}), runtime)
+
+    assert result["output_text"] == "ok"
+    assert plugin.request_kwargs == [{"timeout_seconds": 37.0}]
