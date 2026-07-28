@@ -398,9 +398,14 @@ class ProviderInstallationService:
         if release.release_status in {"SECURITY_BLOCKED", "REVOKED"}:
             raise ValueError("Plugin Host release is not eligible for launch")
         if installed.installation_source == "PACKAGE":
-            package_store = self._host.provider_inventory.package_store
-            if package_store is None or not package_store.has(release.package_digest):
-                raise ValueError("verified plugin package is required before Host launch")
+            # A verified package blob is not an executable trust boundary. Until
+            # the package declares a signed entrypoint and runs in an isolated
+            # package lifecycle, an operator-provided command must not turn it
+            # into arbitrary host-process execution.
+            raise ValueError(
+                "package-derived Plugin Host lifecycle is not implemented; "
+                "PACKAGE installations cannot launch an operator-supplied command"
+            )
         self._host.provider_inventory.provision_plugin_host_activation_credential(
             installed_plugin_id=installed_plugin_id
         )

@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import json
 import zipfile
@@ -39,6 +40,8 @@ from aidn_hypervisor.provider_installation_service import PluginDirectoryPeerTra
 from aidn_hypervisor.providers.executor import (
     ControlledFilesystemProviderInstallationExecutor,
 )
+from aidn_hypervisor.providers.package_store import PluginPackageStore
+from aidn_hypervisor.providers.package_verification import compute_manifest_hash
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.queue import InMemoryTaskQueue
@@ -105,6 +108,7 @@ def _service(
     bundle_registry=None,
     whisper_endpoint: str | None = None,
     model_store=None,
+    plugin_package_store: PluginPackageStore | None = None,
 ) -> HypervisorService:
     plugins = PluginRegistry()
     plugins.register(FakeManagedPlugin())
@@ -156,6 +160,7 @@ def _service(
         runtimes=runtimes,
         bundle_registry=bundle_registry,
         model_store=model_store,
+        plugin_package_store=plugin_package_store,
     )
 
 
@@ -4551,6 +4556,37 @@ def test_provider_plugin_release_revoke_blocks_future_installation() -> None:
     )
     assert blocked.status_code == 409
     assert "revoked" in blocked.json()["detail"]
+
+
+def test_package_plugin_host_rejects_operator_supplied_launch_command() -> None:
+    package_bytes = b"verified-package-without-an-executable-entrypoint"
+    package_digest = f"sha256:{hashlib.sha256(package_bytes).hexdigest()}"
+    package_store = PluginPackageStore()
+    package_store.stage(package_bytes=package_bytes, expected_digest=package_digest)
+    service = _service(use_process_manager=True, plugin_package_store=package_store)
+    manifest = service.plugins.get("fake-managed").plugin_manifest()
+    manifest["package_digest"] = package_digest
+    manifest["publisher_public_key"] = None
+    manifest["publisher_signature"] = None
+    manifest["manifest_hash"] = None
+    manifest["manifest_hash"] = compute_manifest_hash(manifest)
+    release = service.register_provider_plugin_release(manifest=manifest)
+    installed = service.install_provider_plugin_release(
+        release_id=release["release_id"],
+        granted_permissions=release["declared_permissions"],
+    )
+
+    with pytest.raises(ValueError, match="package-derived Plugin Host lifecycle"):
+        service.start_plugin_host_process(
+            installed_plugin_id=installed["installed_plugin_id"],
+            command=["untrusted-package-host"],
+        )
+
+    persisted = service.provider_inventory.store.get_installed_plugin(
+        installed["installed_plugin_id"]
+    )
+    assert persisted.activation_credential_key_id is None
+    assert service.list_runtimes() == []
 
 
 def test_peer_plugin_release_revoke_stops_local_host_and_is_monotonic() -> None:
