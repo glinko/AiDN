@@ -120,6 +120,8 @@ class ProviderInventoryService:
                 "trust_status": release.trust_status,
                 "declared_permissions": list(release.declared_permissions),
                 "release_status": release.release_status,
+                "revocation_reason": release.revocation_reason,
+                "revoked_at": release.revoked_at,
                 "source_reference": release.source_reference,
                 "package_verification_status": release.package_verification_status,
                 "package_verification_mode": release.package_verification_mode,
@@ -178,6 +180,8 @@ class ProviderInventoryService:
                 trust_status=payload["trust_status"],
                 declared_permissions=payload.get("declared_permissions", []),
                 release_status=payload.get("release_status", "AVAILABLE"),
+                revocation_reason=payload.get("revocation_reason"),
+                revoked_at=payload.get("revoked_at"),
                 source_reference=payload.get("source_reference"),
                 package_verification_status="UNVERIFIED",
                 package_verification_mode="NONE",
@@ -357,6 +361,24 @@ class ProviderInventoryService:
         )
         self.store.save_plugin_release(release)
         return release
+
+    def revoke_plugin_release(self, *, release_id: str, reason: str) -> PluginRelease:
+        if not reason.strip():
+            raise ValueError("plugin release revocation reason must not be blank")
+        release = self.store.get_plugin_release(release_id)
+        if release.release_status == "REVOKED":
+            if release.revocation_reason != reason:
+                raise ValueError("plugin release revocation reason is immutable")
+            return release
+        revoked = release.model_copy(
+            update={
+                "release_status": "REVOKED",
+                "revocation_reason": reason,
+                "revoked_at": _now_iso(),
+            }
+        )
+        self.store.save_plugin_release(revoked)
+        return revoked
 
     def install_plugin_release(
         self,

@@ -4503,6 +4503,30 @@ def test_provider_plugin_release_routes_record_local_installation_without_execut
     assert client.get("/operators/installed-provider-plugins").json()["items"] == [installed_plugin]
 
 
+def test_provider_plugin_release_revoke_blocks_future_installation() -> None:
+    service = _service()
+    client = TestClient(build_app(service=service))
+    release = client.post(
+        "/operators/provider-plugin-releases",
+        json={"manifest": service.plugins.get("fake-managed").plugin_manifest()},
+    ).json()
+
+    revoked = client.post(
+        f"/operators/provider-plugin-releases/{release['release_id']}/revoke",
+        json={"reason": "critical vulnerability"},
+    )
+
+    assert revoked.status_code == 200
+    assert revoked.json()["release_status"] == "REVOKED"
+    assert revoked.json()["revocation_reason"] == "critical vulnerability"
+    blocked = client.post(
+        f"/operators/provider-plugin-releases/{release['release_id']}/install",
+        json={"granted_permissions": release["declared_permissions"]},
+    )
+    assert blocked.status_code == 409
+    assert "revoked" in blocked.json()["detail"]
+
+
 def test_plugin_host_status_route_returns_sanitized_observability() -> None:
     service = _service()
     client = TestClient(build_app(service=service))

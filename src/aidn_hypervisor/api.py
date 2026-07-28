@@ -174,6 +174,12 @@ class InstallProviderPluginReleaseRequest(BaseModel):
     installation_source: Literal["PACKAGE", "LEGACY_BUILTIN"] = "PACKAGE"
 
 
+class RevokeProviderPluginReleaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=500)
+
+
 class ImportProviderPluginRegistryObjectsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1196,6 +1202,24 @@ def build_api_router(
                 release_id=release_id,
                 granted_permissions=payload.granted_permissions,
                 installation_source=payload.installation_source,
+            )
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown plugin release: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/provider-plugin-releases/{release_id}/revoke")
+    async def revoke_provider_plugin_release(
+        release_id: str,
+        payload: RevokeProviderPluginReleaseRequest,
+    ) -> dict:
+        try:
+            return service.revoke_provider_plugin_release(
+                release_id=release_id,
+                reason=payload.reason,
             )
         except KeyError as error:
             raise HTTPException(

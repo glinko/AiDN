@@ -662,6 +662,8 @@ class PluginRelease(BaseModel):
     trust_status: PluginTrustStatus
     declared_permissions: list[str] = Field(default_factory=list)
     release_status: PluginReleaseStatus = "AVAILABLE"
+    revocation_reason: str | None = None
+    revoked_at: str | None = None
     source_reference: str | None = None
     package_verification_status: PluginPackageVerificationStatus = "UNVERIFIED"
     package_verification_mode: PluginPackageVerificationMode = "NONE"

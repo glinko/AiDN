@@ -1246,6 +1246,11 @@ class HypervisorService:
             release_status=release_status,
         )
 
+    def revoke_provider_plugin_release(self, *, release_id: str, reason: str) -> dict:
+        return self._provider_installation_facade().revoke_provider_plugin_release(
+            release_id=release_id, reason=reason
+        )
+
     def install_provider_plugin_release(
         self,
         *,
