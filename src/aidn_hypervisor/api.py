@@ -19,12 +19,14 @@ from aidn_hypervisor.domain.models import (
 )
 from aidn_hypervisor.domain.types import TaskStatus
 from aidn_hypervisor.endpoint_publications.models import (
+    PublishedEndpointConfiguration,
     canonical_configuration_payload,
     configuration_hash_for_publication,
 )
 from aidn_hypervisor.endpoint_publications.service import (
     EndpointPublicationReadinessError,
 )
+from aidn_hypervisor.endpoint_publications.signing import verify_publication_signature
 from aidn_hypervisor.operator_views import (
     build_operator_bundles_payload,
     build_operator_endpoints_payload,
@@ -2189,6 +2191,42 @@ def build_api_router(
                 "remote_endpoint_not_found",
                 f"unknown published endpoint: {request.endpoint_id}",
             )
+        try:
+            publication = PublishedEndpointConfiguration.model_validate(
+                discovered.get("signed_publication")
+            )
+            owner_identity = registry_service.resolve_wallet_identity(
+                publication.owner_wallet
+            )
+            if owner_identity is None:
+                raise ValueError("Remote Endpoint owner wallet identity is not registered")
+            if publication.owner_public_key != owner_identity["public_key"]:
+                raise ValueError(
+                    "Remote Endpoint publication key does not match the owner wallet identity"
+                )
+            verify_publication_signature(
+                public_key=publication.owner_public_key,
+                signature=publication.wallet_signature,
+                payload=publication.signed_payload(),
+            )
+            if (
+                publication.status != "published"
+                or publication.endpoint_id != discovered["endpoint_id"]
+                or publication.owner_wallet != discovered["owner_wallet"]
+                or publication.node_id != node["node_id"]
+                or publication.publication_id != discovered["current_publication_id"]
+                or publication.configuration_hash
+                != discovered["current_configuration_hash"]
+            ):
+                raise ValueError(
+                    "Remote Endpoint publication proof does not match the Registry summary"
+                )
+        except (TypeError, ValueError) as error:
+            return _error(
+                status.HTTP_409_CONFLICT,
+                "remote_endpoint_publication_unverified",
+                str(error),
+            )
         attached = remote_endpoint_service.attach_remote_endpoint(
             source_node_id=node["node_id"],
             source_endpoint_id=discovered["endpoint_id"],
@@ -2202,6 +2240,7 @@ def build_api_router(
             operator_id=node["operator_id"],
             pricing=node["pricing"],
             rating=node["rating"],
+            session_policy=publication.session,
             alias=request.alias,
             routing_mode=request.routing_mode,
         )

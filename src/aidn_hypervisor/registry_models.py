@@ -61,6 +61,7 @@ class RegistryPublishedEndpointSummary(BaseModel):
     status: str
     visibility: str
     model_class: str
+    signed_publication: dict | None = None
     publication_sync_status: str | None = None
     published_validation_summary: dict | None = None
     live_validation_summary: dict | None = None

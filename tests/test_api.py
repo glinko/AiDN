@@ -2704,7 +2704,7 @@ def test_operator_dashboard_remote_endpoints_route_returns_discovered_and_attach
     assert body["discovered"][0]["already_attached"] is True
 
 
-def test_attach_remote_endpoint_route_persists_preferred_catalogue_entry() -> None:
+def test_attach_remote_endpoint_route_rejects_unverified_publication() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     registry = RegistryService()
     registry.upsert_node(
@@ -2760,12 +2760,9 @@ def test_attach_remote_endpoint_route_persists_preferred_catalogue_entry() -> No
         json={"node_id": "node-external", "endpoint_id": "ep-remote", "alias": "Primary Remote"},
     )
 
-    assert response.status_code == 201
-    body = response.json()["data"]["remote_endpoint"]
-    assert body["source_node_id"] == "node-external"
-    assert body["source_endpoint_id"] == "ep-remote"
-    assert body["alias"] == "Primary Remote"
-    assert remote_endpoint_service.list_remote_endpoints()[0].source_endpoint_id == "ep-remote"
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "remote_endpoint_publication_unverified"
+    assert remote_endpoint_service.list_remote_endpoints() == []
 
 
 def test_detach_remote_endpoint_route_removes_preferred_catalogue_entry() -> None:

@@ -59,6 +59,7 @@ class NetworkProjectionService:
                 status=record.status,
                 visibility=record.publication.get("visibility", "private"),
                 model_class=record.model_class,
+                signed_publication=record.model_dump(mode="json"),
                 publication_sync_status=self.publication_sync_status(
                     local_configuration_hash=record.configuration_hash,
                     published_configuration_hash=record.configuration_hash,
