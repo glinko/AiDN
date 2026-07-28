@@ -296,6 +296,17 @@ class TlsListener:
             self._status = TransportStatus.ERROR
             raise ConnectionError(f"TLS accept failed: {exc}") from exc
 
+    def accept_transport(self) -> TlsAcceptedTransport:
+        """Accept one mTLS client as an independent transport connection."""
+        if self._raw_server is None:
+            raise RuntimeError("call bind() before accept_transport()")
+        try:
+            client = self._raw_server.accept()[0]
+            client.settimeout(5.0)
+        except (OSError, ssl.SSLError) as exc:
+            raise ConnectionError(f"TLS accept failed: {exc}") from exc
+        return TlsAcceptedTransport(client, peer_verified=self._verify_client)
+
     def close(self) -> None:
         """Shut down the listener and close all sockets."""
         if self._client is not None:
@@ -378,3 +389,67 @@ class TlsListener:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+
+class TlsAcceptedTransport:
+    """One accepted TLS connection, independent from the listener's legacy client."""
+
+    def __init__(self, client: ssl.SSLSocket, *, peer_verified: bool) -> None:
+        self._client = client
+        self._peer_verified = peer_verified
+        self._status = TransportStatus.CONNECTED
+        self._recv_buffer = b""
+        self._pending_messages: list[NetworkMessage] = []
+
+    def connect(self) -> None:
+        if self._status != TransportStatus.CONNECTED:
+            raise ConnectionError("accepted TLS transport cannot reconnect")
+
+    def disconnect(self) -> None:
+        if self._status == TransportStatus.DISCONNECTED:
+            return
+        try:
+            self._client.close()
+        finally:
+            self._status = TransportStatus.DISCONNECTED
+
+    @property
+    def status(self) -> TransportStatus:
+        return self._status
+
+    @property
+    def tls_established(self) -> bool:
+        return self._status == TransportStatus.CONNECTED
+
+    @property
+    def peer_verified(self) -> bool:
+        return self.tls_established and self._peer_verified
+
+    def send(self, message: NetworkMessage) -> bytes:
+        if self._status != TransportStatus.CONNECTED:
+            raise ConnectionError("accepted TLS transport is disconnected")
+        wire = MessageFramer.encode(message)
+        self._client.sendall(wire)
+        return wire
+
+    def receive(self) -> NetworkMessage | None:
+        if self._status != TransportStatus.CONNECTED:
+            return None
+        if self._pending_messages:
+            return self._pending_messages.pop(0)
+        try:
+            data = self._client.recv(65536)
+        except (OSError, ssl.SSLError):
+            self._status = TransportStatus.ERROR
+            return None
+        if not data:
+            self._status = TransportStatus.DISCONNECTED
+            return None
+        self._recv_buffer += data
+        messages = MessageFramer.decode_stream(self._recv_buffer)
+        consumed = sum(len(MessageFramer.encode(message)) for message in messages)
+        self._recv_buffer = self._recv_buffer[consumed:]
+        if not messages:
+            return None
+        self._pending_messages = messages[1:]
+        return messages[0]
