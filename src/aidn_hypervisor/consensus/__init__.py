@@ -5,6 +5,13 @@ from aidn_hypervisor.consensus.admission import (
     AdmissionResult,
     AdmissionValidator,
 )
+from aidn_hypervisor.consensus.cometbft import (
+    CometBftProofVerifier,
+    CometBftRpcFinalitySource,
+    CometBftRpcTransport,
+    HttpCometBftRpcTransport,
+    cometbft_transaction_hash,
+)
 from aidn_hypervisor.consensus.finality import (
     ConsensusFinalityEvidence,
     ConsensusFinalitySource,
@@ -27,4 +34,9 @@ __all__ = [
     "ConsensusFinalityEvidence",
     "ConsensusFinalitySource",
     "VerifiedConsensusFinalitySource",
+    "CometBftProofVerifier",
+    "CometBftRpcFinalitySource",
+    "CometBftRpcTransport",
+    "HttpCometBftRpcTransport",
+    "cometbft_transaction_hash",
 ]

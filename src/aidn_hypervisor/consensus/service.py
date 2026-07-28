@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from enum import Enum
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
+from aidn_hypervisor.consensus.cometbft import cometbft_transaction_hash
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 
 
@@ -52,6 +53,7 @@ class SubmissionRecord:
     included_at: float | None = None
     finalized_at: float | None = None
     block_height: int | None = None
+    transaction_hash: str | None = None
     retry_count: int = 0
     error: str | None = None
 
@@ -110,6 +112,8 @@ class ConsensusService:
         For non-validators: sends to CometBFT mempool.
         For validators: includes in next proposal.
         """
+        transaction_bytes = self._serialize_envelope(envelope)
+        transaction_hash = cometbft_transaction_hash(transaction_bytes)
         if not self.is_enabled:
             # Local processing — no consensus
             record = SubmissionRecord(
@@ -117,6 +121,7 @@ class ConsensusService:
                 status=SubmissionStatus.FINALIZED,
                 submitted_at=self._time_now(),
                 finalized_at=self._time_now(),
+                transaction_hash=transaction_hash,
             )
             self._submissions[envelope.operation_id] = record
             self._finalized_operation_ids.add(envelope.operation_id)
@@ -128,14 +133,14 @@ class ConsensusService:
             operation_id=envelope.operation_id,
             status=SubmissionStatus.PENDING,
             submitted_at=self._time_now(),
+            transaction_hash=transaction_hash,
         )
         self._submissions[envelope.operation_id] = record
         self._total_submitted += 1
 
         # Simulate admission
         if self.abci:
-            tx_bytes = json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
-            result = self.abci.process_proposal_transaction(tx_bytes)
+            result = self.abci.process_proposal_transaction(transaction_bytes)
 
             if result.code == "ok":
                 record.status = SubmissionStatus.ADMITTED
@@ -150,6 +155,11 @@ class ConsensusService:
     def get_submission(self, operation_id: str) -> SubmissionRecord | None:
         """Get submission tracking record."""
         return self._submissions.get(operation_id)
+
+    def transaction_hash_for_operation(self, operation_id: str) -> str | None:
+        """Return the exact transaction hash submitted for one operation."""
+        record = self._submissions.get(operation_id)
+        return record.transaction_hash if record is not None else None
 
     def list_submissions(
         self,
@@ -230,6 +240,11 @@ class ConsensusService:
                         operation_id=op_id,
                         status=SubmissionStatus.PENDING,
                         submitted_at=self._time_now(),
+                        transaction_hash=cometbft_transaction_hash(tx_data),
+                    )
+                else:
+                    self._submissions[op_id].transaction_hash = cometbft_transaction_hash(
+                        tx_data
                     )
                 self.mark_included(op_id, block_height)
                 self.mark_finalized(op_id, block_height)
@@ -361,3 +376,6 @@ class ConsensusService:
     def _parse_envelope(self, tx_data: bytes) -> LedgerOperationEnvelope:
         obj = json.loads(tx_data)
         return LedgerOperationEnvelope.model_validate(obj)
+
+    def _serialize_envelope(self, envelope: LedgerOperationEnvelope) -> bytes:
+        return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")

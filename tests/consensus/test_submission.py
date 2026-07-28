@@ -4,6 +4,7 @@ import json
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.admission import AdmissionValidator
+from aidn_hypervisor.consensus.cometbft import cometbft_transaction_hash
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.service import (
     ConsensusMode,
@@ -72,6 +73,19 @@ def test_submit_without_abci():
     env = _make_envelope()
     rec = svc.submit_operation(env)
     assert rec.status == SubmissionStatus.PENDING
+
+
+def test_submission_retains_exact_transaction_hash_for_finality_lookup():
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    svc = ConsensusService(cfg)
+    env = _make_envelope()
+
+    svc.submit_operation(env)
+
+    expected_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    assert svc.transaction_hash_for_operation(env.operation_id) == cometbft_transaction_hash(
+        expected_bytes
+    )
 
 
 # ---- resubmit ----
