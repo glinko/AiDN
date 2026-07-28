@@ -1,4 +1,6 @@
 import base64
+import hashlib
+import json
 from collections.abc import Iterable
 from datetime import datetime
 from typing import Literal
@@ -66,6 +68,7 @@ from aidn_hypervisor.validation_read_models import (
     custody_summary_for,
     validation_summary_for,
 )
+from aidn_hypervisor.wallet_identity import sign_wallet_identity_sync_envelope
 from aidn_hypervisor.wallet_models import (
     WalletAllocationCorrectionRequest,
     WalletAllocationDisputeRequest,
@@ -2138,7 +2141,32 @@ def build_api_router(
     async def wallet_identity_sync_state(limit: int = 500) -> dict:
         if registry_service is None:
             raise HTTPException(status_code=503, detail="Registry service is not configured")
-        return registry_service.export_wallet_identity_sync_state(limit=limit)
+        state = registry_service.export_wallet_identity_sync_state(limit=limit)
+        owner = service.owner_wallet_state()
+        if not owner["configured"]:
+            return state
+        state_hash = "sha256:" + hashlib.sha256(
+            json.dumps(
+                state,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        envelope = {
+            "node_id": service.node_id,
+            "operator_id": service.operator_id,
+            "owner_wallet_id": owner["wallet_id"],
+            "public_key": owner["public_key"],
+            "state_hash": state_hash,
+        }
+        return {
+            "sync_state": state,
+            "source": envelope,
+            "signature": sign_wallet_identity_sync_envelope(
+                private_key=service.owner_wallet_private_key(), **envelope
+            ),
+        }
 
     @router.post("/operators/wallet/bootstrap/create")
     async def create_owner_wallet(
@@ -2206,7 +2234,11 @@ def build_api_router(
             )
             if owner_identity is None:
                 registry_service.sync_wallet_identity_from_peer(
-                    peer_base_url=node["base_url"], limit=50
+                    peer_base_url=node["base_url"],
+                    limit=50,
+                    expected_node_id=node["node_id"],
+                    expected_operator_id=node["operator_id"],
+                    expected_owner_wallet_id=node.get("owner_wallet_id"),
                 )
                 owner_identity = registry_service.resolve_wallet_identity(
                     publication.owner_wallet

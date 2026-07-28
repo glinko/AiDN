@@ -1,3 +1,4 @@
+import hashlib
 import json
 import warnings
 from datetime import datetime
@@ -11,6 +12,7 @@ from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.wallet_identity import (
+    sign_wallet_identity_sync_envelope,
     wallet_identity_governance_revocation_id,
     wallet_identity_governance_revocation_payload,
     wallet_identity_quorum_approval_payload,
@@ -2183,6 +2185,72 @@ def test_registry_service_syncs_wallet_identity_from_peer(monkeypatch) -> None:
     assert service.resolve_wallet_identity("wallet-consumer")["public_key"] == (
         "ed25519:" + "11" * 32
     )
+
+
+def test_registry_service_requires_valid_signed_peer_envelope(monkeypatch) -> None:
+    service = RegistryService()
+    private_key = Ed25519PrivateKey.generate()
+    public_key = "ed25519:" + private_key.public_key().public_bytes_raw().hex()
+    sync_state = {
+        "objects": [
+            _wallet_identity_object(
+                "wallet-consumer",
+                public_key="ed25519:" + "11" * 32,
+                registration_nonce="nonce-a",
+            )
+        ],
+        "conflicts": [],
+    }
+    state_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            sync_state, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+        ).encode("utf-8")
+    ).hexdigest()
+    source = {
+        "node_id": "node-peer",
+        "operator_id": "operator-peer",
+        "owner_wallet_id": "wallet-peer",
+        "public_key": public_key,
+        "state_hash": state_hash,
+    }
+    payload = {
+        "sync_state": sync_state,
+        "source": source,
+        "signature": sign_wallet_identity_sync_envelope(
+            private_key="ed25519:" + private_key.private_bytes_raw().hex(),
+            **source,
+        ),
+    }
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.urlopen",
+        lambda request, timeout=10: _Response(),
+    )
+
+    result = service.sync_wallet_identity_from_peer(
+        peer_base_url="https://peer.example",
+        expected_node_id="node-peer",
+        expected_operator_id="operator-peer",
+        expected_owner_wallet_id="wallet-peer",
+    )
+
+    assert result["imported_object_count"] == 1
+    payload["source"]["node_id"] = "node-other"
+    with pytest.raises(ValueError, match="node_id does not match"):
+        service.sync_wallet_identity_from_peer(
+            peer_base_url="https://peer.example",
+            expected_node_id="node-peer",
+        )
 
 
 def test_registry_service_sync_wallet_identity_from_peer_rejects_invalid_peer(

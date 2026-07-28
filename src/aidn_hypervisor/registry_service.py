@@ -829,6 +829,9 @@ class RegistryService:
         peer_base_url: str,
         limit: int = 500,
         timeout_seconds: int = 10,
+        expected_node_id: str | None = None,
+        expected_operator_id: str | None = None,
+        expected_owner_wallet_id: str | None = None,
     ) -> dict:
         normalized_base_url = _normalize_peer_base_url(peer_base_url)
         request = urllib_request.Request(
@@ -846,12 +849,65 @@ class RegistryService:
             raise ValueError(
                 f"Peer wallet identity sync response from {peer_base_url} is invalid"
             )
+        if expected_node_id is not None:
+            payload = self._verified_wallet_identity_peer_sync_envelope(
+                payload=payload,
+                expected_node_id=expected_node_id,
+                expected_operator_id=expected_operator_id,
+                expected_owner_wallet_id=expected_owner_wallet_id,
+            )
         result = self.import_wallet_identity_sync_state(
             objects=list(payload.get("objects") or []),
             conflicts=list(payload.get("conflicts") or []),
         )
         result["peer_base_url"] = normalized_base_url
         return result
+
+    @staticmethod
+    def _verified_wallet_identity_peer_sync_envelope(
+        *,
+        payload: dict,
+        expected_node_id: str,
+        expected_operator_id: str | None,
+        expected_owner_wallet_id: str | None,
+    ) -> dict:
+        from aidn_hypervisor.wallet_identity import verify_wallet_identity_sync_envelope
+
+        sync_state = payload.get("sync_state")
+        source = payload.get("source")
+        signature = payload.get("signature")
+        if not isinstance(sync_state, dict) or not isinstance(source, dict):
+            raise ValueError("Peer wallet identity sync envelope is required")
+        required_source = {
+            "node_id": expected_node_id,
+            "operator_id": expected_operator_id,
+            "owner_wallet_id": expected_owner_wallet_id,
+        }
+        for field, expected_value in required_source.items():
+            if expected_value is not None and source.get(field) != expected_value:
+                raise ValueError(f"Peer wallet identity sync {field} does not match")
+        state_hash = "sha256:" + hashlib.sha256(
+            json.dumps(
+                sync_state,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        if source.get("state_hash") != state_hash:
+            raise ValueError("Peer wallet identity sync state hash does not match")
+        try:
+            verify_wallet_identity_sync_envelope(
+                node_id=source["node_id"],
+                operator_id=source["operator_id"],
+                owner_wallet_id=source["owner_wallet_id"],
+                public_key=source["public_key"],
+                state_hash=source["state_hash"],
+                signature=signature,
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("Peer wallet identity sync signature is invalid") from error
+        return sync_state
 
     def repair_wallet_identity_peers(
         self,

@@ -3,7 +3,10 @@ import json
 from datetime import UTC, datetime
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 from pydantic import BaseModel, Field
 
 
@@ -194,6 +197,73 @@ def verify_wallet_identity_quorum_approval(
         ),
         required_message="Wallet-identity quorum approval requires an Ed25519 signature",
         invalid_message="Wallet-identity quorum approval signature is invalid",
+    )
+
+
+def wallet_identity_sync_envelope_payload(
+    *,
+    node_id: str,
+    operator_id: str,
+    owner_wallet_id: str,
+    public_key: str,
+    state_hash: str,
+) -> bytes:
+    return json.dumps(
+        {
+            "domain": "aidn.wallet-identity.sync-envelope.v1",
+            "node_id": node_id,
+            "operator_id": operator_id,
+            "owner_wallet_id": owner_wallet_id,
+            "public_key": public_key,
+            "state_hash": state_hash,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def sign_wallet_identity_sync_envelope(
+    *,
+    private_key: str,
+    node_id: str,
+    operator_id: str,
+    owner_wallet_id: str,
+    public_key: str,
+    state_hash: str,
+) -> str:
+    if not private_key.startswith("ed25519:"):
+        raise ValueError("Wallet identity sync requires an Ed25519 private key")
+    try:
+        key = Ed25519PrivateKey.from_private_bytes(
+            bytes.fromhex(private_key.removeprefix("ed25519:"))
+        )
+    except ValueError as error:
+        raise ValueError("Wallet identity sync private key is invalid") from error
+    return "ed25519:" + key.sign(
+        wallet_identity_sync_envelope_payload(
+            node_id=node_id,
+            operator_id=operator_id,
+            owner_wallet_id=owner_wallet_id,
+            public_key=public_key,
+            state_hash=state_hash,
+        )
+    ).hex()
+
+
+def verify_wallet_identity_sync_envelope(**payload: str) -> None:
+    _verify_ed25519_signature(
+        public_key=payload["public_key"],
+        signature=payload["signature"],
+        payload=wallet_identity_sync_envelope_payload(
+            node_id=payload["node_id"],
+            operator_id=payload["operator_id"],
+            owner_wallet_id=payload["owner_wallet_id"],
+            public_key=payload["public_key"],
+            state_hash=payload["state_hash"],
+        ),
+        required_message="Wallet identity sync requires an Ed25519 signature",
+        invalid_message="Wallet identity sync signature is invalid",
     )
 
 
