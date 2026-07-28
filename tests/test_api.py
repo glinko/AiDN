@@ -2765,6 +2765,15 @@ def test_attach_remote_endpoint_route_rejects_unverified_publication() -> None:
     assert remote_endpoint_service.list_remote_endpoints() == []
 
 
+def test_default_app_exposes_registry_identity_sync_state() -> None:
+    client = TestClient(build_app())
+
+    response = client.get("/registry/wallet-identities/sync-state")
+
+    assert response.status_code == 200
+    assert response.json() == {"objects": [], "conflicts": []}
+
+
 def test_attach_remote_endpoint_route_accepts_verified_publication() -> None:
     source_registry = RegistryService()
     source_hypervisor = HypervisorService(
