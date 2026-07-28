@@ -2766,9 +2766,11 @@ def test_attach_remote_endpoint_route_rejects_unverified_publication() -> None:
 
 
 def test_attach_remote_endpoint_route_accepts_verified_publication() -> None:
-    registry = RegistryService()
-    hypervisor = HypervisorService(
-        queue=InMemoryTaskQueue(), scheduler=Scheduler(), registry_service=registry
+    source_registry = RegistryService()
+    source_hypervisor = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        registry_service=source_registry,
     )
     owner_key = Ed25519PrivateKey.generate()
     owner_public_key = f"ed25519:{owner_key.public_key().public_bytes_raw().hex()}"
@@ -2779,11 +2781,19 @@ def test_attach_remote_endpoint_route_accepts_verified_publication() -> None:
             registration_nonce="remote-owner-registration",
         )
     ).hex()
-    hypervisor.register_wallet_identity(
+    source_hypervisor.register_wallet_identity(
         wallet_id="wallet-remote",
         public_key=owner_public_key,
         registration_nonce="remote-owner-registration",
         signature=f"ed25519:{owner_signature}",
+    )
+    registry = RegistryService()
+    sync_result = registry.import_wallet_identity_sync_state(
+        **source_registry.export_wallet_identity_sync_state()
+    )
+    assert sync_result["imported_object_count"] == 1
+    hypervisor = HypervisorService(
+        queue=InMemoryTaskQueue(), scheduler=Scheduler(), registry_service=registry
     )
     source_endpoints = EndpointService(EndpointStore())
     source_publications = EndpointPublicationService(
