@@ -2765,6 +2765,90 @@ def test_attach_remote_endpoint_route_rejects_unverified_publication() -> None:
     assert remote_endpoint_service.list_remote_endpoints() == []
 
 
+def test_attach_remote_endpoint_route_accepts_verified_publication() -> None:
+    registry = RegistryService()
+    hypervisor = HypervisorService(
+        queue=InMemoryTaskQueue(), scheduler=Scheduler(), registry_service=registry
+    )
+    owner_key = Ed25519PrivateKey.generate()
+    owner_public_key = f"ed25519:{owner_key.public_key().public_bytes_raw().hex()}"
+    owner_signature = owner_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id="wallet-remote",
+            public_key=owner_public_key,
+            registration_nonce="remote-owner-registration",
+        )
+    ).hex()
+    hypervisor.register_wallet_identity(
+        wallet_id="wallet-remote",
+        public_key=owner_public_key,
+        registration_nonce="remote-owner-registration",
+        signature=f"ed25519:{owner_signature}",
+    )
+    source_endpoints = EndpointService(EndpointStore())
+    source_publications = EndpointPublicationService(
+        store=EndpointPublicationStore(), endpoint_service=source_endpoints
+    )
+    endpoint = source_endpoints.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-remote",
+            bundle_id="bundle-remote",
+            bundle_hash="bundle-hash-remote",
+            display_name="Verified Remote",
+            model_class="llm_text",
+            capabilities=["llm.chat"],
+            publication={
+                "visibility": "public",
+                "discoverable": True,
+                "accepts_external_requests": True,
+            },
+        )
+    ).endpoint
+    publication = source_publications.publish_configuration(
+        endpoint_id=endpoint.endpoint_id,
+        owner_wallet="wallet-remote",
+        owner_public_key=owner_public_key,
+        node_id="node-external",
+        wallet_private_key="ed25519:" + owner_key.private_bytes_raw().hex(),
+    )
+    registry.upsert_node(
+        RegistryNodeAdvertisement(
+            node_id="node-external", operator_id="operator-b", base_url="https://remote.example",
+            heartbeat_at=datetime.now(UTC).isoformat(),
+            resources={
+                "total": {"cpu": 1.0, "ram_mb": 1, "vram_mb": 0},
+                "free": {"cpu": 1.0, "ram_mb": 1, "vram_mb": 0},
+            },
+            providers=["fake"], can_host_custom_model=True,
+            pricing={"unit": "q_per_1kk_tokens", "input": 9, "output": 15},
+            rating={"score": 0.97, "tier": "A", "updated_at": "2026-06-20T11:55:00Z"}, bundles=[],
+            published_endpoints=[{
+                "endpoint_id": endpoint.endpoint_id, "owner_wallet": "wallet-remote", "node_id": "node-external",
+                "current_publication_id": publication.publication_id,
+                "current_configuration_hash": publication.configuration_hash,
+                "published_at": publication.published_at, "status": "published", "visibility": "public",
+                "model_class": "llm_text", "signed_publication": publication.model_dump(mode="json"),
+            }],
+        )
+    )
+    remote_endpoints = RemoteEndpointService(RemoteEndpointStore())
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            registry_service=registry,
+            remote_endpoint_service=remote_endpoints,
+        )
+    )
+
+    response = client.post(
+        "/operators/remote-endpoints/attach",
+        json={"node_id": "node-external", "endpoint_id": endpoint.endpoint_id},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["data"]["remote_endpoint"]["source_publication_id"] == publication.publication_id
+
+
 def test_detach_remote_endpoint_route_removes_preferred_catalogue_entry() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     remote_endpoint_service = RemoteEndpointService(RemoteEndpointStore())
