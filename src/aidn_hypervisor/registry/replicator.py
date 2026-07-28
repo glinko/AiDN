@@ -120,6 +120,11 @@ class RegistryReplicator:
     def channel_manager(self) -> RegistryChannelManager:
         return self._channel_manager
 
+    @property
+    def requires_authenticated_peers(self) -> bool:
+        """Whether replication traffic is gated by a signed peer handshake."""
+        return self._require_authenticated_peers
+
     # -- handler / callback registration ---------------------------------
 
     def register_handler(

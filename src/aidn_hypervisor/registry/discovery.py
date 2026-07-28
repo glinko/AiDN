@@ -131,11 +131,18 @@ class RegistryPeerDiscovery:
             self._discovered_peers[peer_id] = updated
             return updated
 
+        strict_authentication = bool(
+            self._replicator and self._replicator.requires_authenticated_peers
+        )
         peer = RegistryPeer(
             peer_id=peer_id,
             node_id=self._node_id,
             address=address,
-            state=PeerState.CONNECTED if self._config.auto_connect else PeerState.CONNECTING,
+            state=(
+                PeerState.CONNECTING
+                if strict_authentication or not self._config.auto_connect
+                else PeerState.CONNECTED
+            ),
             last_seen_at=time.time(),
             inventory_summary=peer_info or {},
         )
@@ -153,13 +160,17 @@ class RegistryPeerDiscovery:
 
         # Auto-connect if configured
         if self._config.auto_connect and self._replicator:
-            self._replicator.on_peer_connected(peer_id)
-            self._emit_event(
-                PeerDiscoveryEvent(
-                    event_type="peer_connected",
-                    peer_id=peer_id,
+            if self._replicator.on_peer_connected(peer_id):
+                if peer.state != PeerState.CONNECTED:
+                    peer = peer.model_copy(update={"state": PeerState.CONNECTED})
+                    self._discovered_peers[peer_id] = peer
+                    self._peer_manager.transition(peer_id, PeerState.CONNECTED)
+                self._emit_event(
+                    PeerDiscoveryEvent(
+                        event_type="peer_connected",
+                        peer_id=peer_id,
+                    )
                 )
-            )
 
         return peer
 

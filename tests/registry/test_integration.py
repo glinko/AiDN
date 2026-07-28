@@ -20,6 +20,7 @@ from aidn_hypervisor.registry.discovery import (
 )
 from aidn_hypervisor.registry.inventory import BloomFilter, InventoryExchange
 from aidn_hypervisor.registry.object_envelope import RegistryObjectEnvelope
+from aidn_hypervisor.registry.peer import PeerState
 from aidn_hypervisor.registry.replicator import RegistryReplicator
 from aidn_hypervisor.registry.storage import ImmutableObjectStore
 from aidn_hypervisor.registry.verification import (
@@ -415,6 +416,24 @@ class TestDiscoveryIntegration:
         state = replicator.get_peer_state("node_b")
         assert state is not None
         assert state.connected
+
+    def test_strict_discovery_does_not_mark_unauthenticated_peer_connected(self):
+        replicator = RegistryReplicator(
+            node_id="node_a",
+            require_authenticated_peers=True,
+        )
+        discovery = RegistryPeerDiscovery(
+            node_id="node_a",
+            replicator=replicator,
+            config=DiscoveryConfig(auto_connect=True),
+        )
+
+        peer = discovery.discover_peer(peer_id="node_b", address="localhost:50051")
+
+        assert peer is not None
+        assert peer.state == PeerState.CONNECTING
+        assert discovery.get_connected_peers() == []
+        assert replicator.get_peer_state("node_b").connected is False
 
     def test_auto_sync_controller(self):
         """Auto-sync triggers sync for all connected peers."""

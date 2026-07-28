@@ -179,6 +179,18 @@ class RegistryWalletIdentityPeerConfig(BaseModel):
     last_import_result: dict | None = None
 
 
+class RegistryReplicationPeerConfig(BaseModel):
+    """Locally approved identity for strict Registry replication."""
+
+    peer_id: str = Field(min_length=1, max_length=256)
+    public_key: str = Field(min_length=1, max_length=256)
+    enabled: bool = True
+    added_at: str | None = None
+    updated_at: str | None = None
+    last_authenticated_at: str | None = None
+    last_authentication_error: str | None = None
+
+
 class RegistryWalletIdentityPeerRepairRequest(BaseModel):
     limit: int = Field(default=500, ge=1, le=5000)
 

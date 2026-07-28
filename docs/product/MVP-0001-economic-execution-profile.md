@@ -189,9 +189,11 @@ Still required before public paid-MVP launch:
    envelopes and project replicated `plugin_release` metadata into the local
    Plugin Directory; its opt-in strict mode requires a fresh Ed25519 peer
    handshake and rejects replayed nonces. Those releases remain locally
-   `UNVERIFIED` and cannot install or launch code. Persistent peer-key
-   authorization, reconnect lifecycle and a network-finality source are still
-   required before treating that object exchange as a public directory authority.
+   `UNVERIFIED` and cannot install or launch code. Operator-managed peer-key
+   authorization is persisted locally, and a key rotation or disablement
+   revokes an active replication session. Real transport reconnect lifecycle
+   and a network-finality source are still required before treating that object
+   exchange as a public directory authority.
 
 1. Replicate canonical `wallet_identity` objects into authoritative network
    state before multi-node paid launch, so a public `wallet_id` cannot mean

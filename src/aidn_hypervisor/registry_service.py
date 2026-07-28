@@ -9,6 +9,7 @@ from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
+from aidn_hypervisor.registry.peer import PeerAuthenticator
 from aidn_hypervisor.registry_models import (
     RegistryCompletenessIntegrity,
     RegistryCompletenessIssue,
@@ -18,6 +19,7 @@ from aidn_hypervisor.registry_models import (
     RegistryLocalCompletenessSummary,
     RegistryNodeAdvertisement,
     RegistryObjectQuery,
+    RegistryReplicationPeerConfig,
     RegistryWalletIdentityGovernancePolicy,
     RegistryWalletIdentityPeerConfig,
 )
@@ -93,6 +95,7 @@ class RegistryService:
         self._registry_objects: dict[str, dict] = {}
         self._conflicts: dict[str, dict] = {}
         self._wallet_identity_peers: dict[str, dict] = {}
+        self._replication_peers: dict[str, dict] = {}
         self._wallet_identity_resolutions: dict[str, dict] = {}
         self._wallet_identity_resolution_proposals: dict[str, dict] = {}
         self._wallet_identity_governance_revocations: dict[str, dict] = {}
@@ -203,6 +206,72 @@ class RegistryService:
             deepcopy(self._wallet_identity_peers[peer_base_url])
             for peer_base_url in sorted(self._wallet_identity_peers)
         ]
+
+    def upsert_replication_peer(
+        self,
+        *,
+        peer_id: str,
+        public_key: str,
+        enabled: bool = True,
+    ) -> dict:
+        """Locally approve one Registry replication identity.
+
+        Discovery data is intentionally not accepted here: a peer must be
+        configured by the operator before strict replication can authenticate it.
+        """
+        normalized_peer_id = str(peer_id).strip()
+        if not normalized_peer_id:
+            raise ValueError("peer_id is required")
+        normalized_public_key = str(public_key).strip()
+        PeerAuthenticator().register_key(normalized_peer_id, normalized_public_key)
+
+        existing = deepcopy(self._replication_peers.get(normalized_peer_id) or {})
+        now = datetime.now(UTC).isoformat()
+        key_changed = existing.get("public_key") not in {None, normalized_public_key}
+        record = {
+            "peer_id": normalized_peer_id,
+            "public_key": normalized_public_key,
+            "enabled": bool(enabled),
+            "added_at": existing.get("added_at") or now,
+            "updated_at": now,
+            "last_authenticated_at": None
+            if key_changed or not enabled
+            else existing.get("last_authenticated_at"),
+            "last_authentication_error": None
+            if key_changed or not enabled
+            else existing.get("last_authentication_error"),
+        }
+        self._replication_peers[normalized_peer_id] = record
+        self._persist_registry_object_snapshot()
+        return deepcopy(record)
+
+    def list_replication_peers(self) -> list[dict]:
+        """Return operator-managed Registry replication peer identities."""
+        return [
+            deepcopy(self._replication_peers[peer_id])
+            for peer_id in sorted(self._replication_peers)
+        ]
+
+    def record_replication_peer_authentication(
+        self,
+        *,
+        peer_id: str,
+        authenticated: bool,
+        error: str | None = None,
+    ) -> dict:
+        """Persist handshake outcome without ever accepting a new peer key."""
+        record = self._replication_peers.get(peer_id)
+        if record is None:
+            raise ValueError("Registry replication peer is not configured")
+        updated = deepcopy(record)
+        if authenticated:
+            updated["last_authenticated_at"] = datetime.now(UTC).isoformat()
+            updated["last_authentication_error"] = None
+        else:
+            updated["last_authentication_error"] = error or "authentication_failed"
+        self._replication_peers[peer_id] = updated
+        self._persist_registry_object_snapshot()
+        return deepcopy(updated)
 
     def list_wallet_identity_resolutions(self) -> list[dict]:
         return [
@@ -2532,6 +2601,9 @@ class RegistryService:
         wallet_identity_peers = snapshot.get("wallet_identity_peers", [])
         if not isinstance(wallet_identity_peers, list):
             raise ValueError("Registry object snapshot wallet_identity_peers must be a list")
+        replication_peers = snapshot.get("replication_peers", [])
+        if not isinstance(replication_peers, list):
+            raise ValueError("Registry object snapshot replication_peers must be a list")
         wallet_identity_resolutions = snapshot.get("wallet_identity_resolutions", [])
         if not isinstance(wallet_identity_resolutions, list):
             raise ValueError(
@@ -2597,6 +2669,21 @@ class RegistryService:
             self._wallet_identity_peers[model.peer_base_url.rstrip("/")] = model.model_dump(
                 mode="json"
             )
+        for index, peer in enumerate(replication_peers):
+            if not isinstance(peer, dict):
+                raise ValueError(
+                    "Registry object snapshot contains invalid replication peer entry "
+                    f"at index {index}"
+                )
+            model = RegistryReplicationPeerConfig.model_validate(peer)
+            try:
+                PeerAuthenticator().register_key(model.peer_id, model.public_key)
+            except ValueError as exc:
+                raise ValueError(
+                    "Registry object snapshot contains invalid replication peer entry "
+                    f"at index {index}"
+                ) from exc
+            self._replication_peers[model.peer_id] = model.model_dump(mode="json")
         for index, resolution in enumerate(wallet_identity_resolutions):
             if not isinstance(resolution, dict):
                 raise ValueError(
@@ -2648,6 +2735,10 @@ class RegistryService:
             "wallet_identity_peers": [
                 deepcopy(self._wallet_identity_peers[peer_base_url])
                 for peer_base_url in sorted(self._wallet_identity_peers)
+            ],
+            "replication_peers": [
+                deepcopy(self._replication_peers[peer_id])
+                for peer_id in sorted(self._replication_peers)
             ],
             "wallet_identity_resolutions": [
                 deepcopy(self._wallet_identity_resolutions[wallet_id])
