@@ -225,7 +225,7 @@ class ProviderInventoryService:
         *,
         installed_plugin_id: str,
     ) -> dict:
-        """Rotate an install generation and return its one-time Host launch secret."""
+        """Rotate an install generation and retain its ephemeral Host secret."""
         activation_secret = secrets.token_bytes(32)
         credential_key_id = "sha256:" + hashlib.sha256(activation_secret).hexdigest()
         installed = self.advance_installed_plugin_generation(
@@ -241,7 +241,23 @@ class ProviderInventoryService:
             "plugin_id": installed.plugin_id,
             "installation_generation": installed.installation_generation,
             "activation_credential_key_id": credential_key_id,
-            "activation_secret": activation_secret,
+        }
+
+    def plugin_host_launch_environment(self, *, installed_plugin_id: str) -> dict[str, str]:
+        """Build the private child-process environment for one authorized Host."""
+        installed = self.store.get_installed_plugin(installed_plugin_id)
+        credential_key_id = installed.activation_credential_key_id
+        if credential_key_id is None:
+            raise ValueError("Plugin Host activation credential is not provisioned")
+        activation_secret = self.plugin_host_activation_credentials.get(credential_key_id)
+        if activation_secret is None:
+            raise ValueError("Plugin Host activation credential is unavailable")
+        return {
+            "AIDN_PLUGIN_HOST_INSTALLED_PLUGIN_ID": installed.installed_plugin_id,
+            "AIDN_PLUGIN_HOST_PLUGIN_ID": installed.plugin_id,
+            "AIDN_PLUGIN_HOST_INSTALLATION_GENERATION": str(installed.installation_generation),
+            "AIDN_PLUGIN_HOST_ACTIVATION_CREDENTIAL_KEY_ID": credential_key_id,
+            "AIDN_PLUGIN_HOST_ACTIVATION_SECRET": activation_secret.hex(),
         }
 
     def _host_discover_models(self, plugin_id: str, provider_instance_id: str) -> list[dict]:

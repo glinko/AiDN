@@ -205,6 +205,11 @@ class ProviderInstallationService:
     def plugin_host_local_ingress(self):
         return self._host.provider_inventory.plugin_host_local_ingress()
 
+    def plugin_host_launch_environment(self, *, installed_plugin_id: str) -> dict[str, str]:
+        return self._host.provider_inventory.plugin_host_launch_environment(
+            installed_plugin_id=installed_plugin_id
+        )
+
     def start_windows_plugin_host_listener(self, *, address: str, authkey: bytes):
         listener = WindowsNamedPipePluginHostListener(
             address=address,

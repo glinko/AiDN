@@ -364,6 +364,10 @@ def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:
     )
     installed = service.store.get_installed_plugin(installed.installed_plugin_id)
     assert "activation_secret" not in installed.model_dump(mode="json")
+    assert "activation_secret" not in activation
+    launch_environment = service.plugin_host_launch_environment(
+        installed_plugin_id=installed.installed_plugin_id
+    )
     identity = PluginHostIdentity(
         installed_plugin_id=installed.installed_plugin_id,
         plugin_id=installed.plugin_id,
@@ -374,7 +378,9 @@ def test_provider_service_builds_install_scoped_plugin_host_ingress() -> None:
         **identity.model_dump(),
         host_nonce="nonce",
         activation_proof=build_plugin_host_activation_proof(
-            activation_secret=activation["activation_secret"],
+            activation_secret=bytes.fromhex(
+                launch_environment["AIDN_PLUGIN_HOST_ACTIVATION_SECRET"]
+            ),
             identity=identity,
             host_nonce="nonce",
         ),

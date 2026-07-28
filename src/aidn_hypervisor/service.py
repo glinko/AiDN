@@ -1255,6 +1255,11 @@ class HypervisorService:
         """Return the install-scoped Plugin Host control ingress for local transports."""
         return self._provider_installation_facade().plugin_host_local_ingress()
 
+    def plugin_host_launch_environment(self, *, installed_plugin_id: str) -> dict[str, str]:
+        return self._provider_installation_facade().plugin_host_launch_environment(
+            installed_plugin_id=installed_plugin_id
+        )
+
     def start_windows_plugin_host_listener(self, *, address: str, authkey: bytes):
         return self._provider_installation_facade().start_windows_plugin_host_listener(
             address=address,
