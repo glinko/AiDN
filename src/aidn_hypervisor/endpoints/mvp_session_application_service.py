@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from decimal import Decimal, InvalidOperation
 
 from aidn_hypervisor.domain.models import TaskRequest
 from aidn_hypervisor.endpoints.mvp_session_read_models import (
@@ -14,6 +15,9 @@ from aidn_hypervisor.settlement.models import SessionSettlementAcceptance
 
 class MvpPaidSmokeEvidenceMissingError(KeyError):
     """Raised when paid smoke execution completed without required runtime evidence."""
+
+
+Q_ATOMS_PER_Q = Decimal("1000000")
 
 
 class MvpSessionApplicationService:
@@ -41,6 +45,22 @@ class MvpSessionApplicationService:
         except KeyError:
             return None
 
+    @staticmethod
+    def _public_fixed_price_q_atoms(endpoint) -> int:
+        """Return the exact atom price committed by a public MVP Endpoint."""
+        fixed_price = endpoint.pricing.fixed_price
+        if fixed_price is None:
+            raise ValueError(
+                "Public MVP Session requires an Endpoint fixed_price in the published configuration"
+            )
+        try:
+            q_atoms = Decimal(str(fixed_price)) * Q_ATOMS_PER_Q
+        except (InvalidOperation, ValueError) as error:
+            raise ValueError("Endpoint fixed_price is not a valid Q amount") from error
+        if q_atoms != q_atoms.to_integral_value():
+            raise ValueError("Endpoint fixed_price must be expressible in whole q_atoms")
+        return int(q_atoms)
+
     def open_fixed_price_session(
         self,
         *,
@@ -62,6 +82,11 @@ class MvpSessionApplicationService:
             guard_error = guard(endpoint)
             if guard_error is not None:
                 raise ValueError(guard_error)
+            advertised_fixed_price_q_atoms = self._public_fixed_price_q_atoms(endpoint)
+            if fixed_price_q_atoms != advertised_fixed_price_q_atoms:
+                raise ValueError(
+                    "Public MVP Session fixed price must match the published Endpoint configuration"
+                )
         accounting_contract = self._accounting_contract_for_endpoint(endpoint)
         session, deposit, funding = self._hypervisor_service.open_mvp_fixed_price_session(
             session_service=self._session_service,

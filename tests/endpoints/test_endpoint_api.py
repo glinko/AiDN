@@ -421,7 +421,7 @@ def test_open_public_mvp_fixed_price_session_requires_wallet_bound_authorization
                 "discoverable": True,
                 "accepts_external_requests": True,
             },
-            "pricing": {"billing_unit": "request", "fixed_price": 1.0},
+            "pricing": {"billing_unit": "request", "fixed_price": 0.0009},
         },
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
@@ -515,6 +515,36 @@ def test_open_public_mvp_fixed_price_session_requires_wallet_bound_authorization
     assert body["data"]["session"]["endpoint_payment_beneficiary"] == operator_wallet_id
     assert body["data"]["funding"]["funding_state"] == "LOCKED"
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
+
+    mismatched_nonce = "public-session-price-mismatch"
+    mismatched_signature = consumer_key.sign(
+        session_open_authorization_payload(
+            wallet_id="wallet-consumer",
+            endpoint_id=endpoint["endpoint_id"],
+            endpoint_configuration_hash=endpoint["configuration_hash"],
+            deposit_q_atoms=1_000,
+            fixed_price_q_atoms=901,
+            network_fee_reserve_q_atoms=99,
+            nonce=mismatched_nonce,
+            expires_at=expires_at,
+        )
+    ).hex()
+    mismatched = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/public-mvp-sessions",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 901,
+            "network_fee_reserve_q_atoms": 99,
+            "consumer_authorization": {
+                "nonce": mismatched_nonce,
+                "expires_at": expires_at,
+                "signature": f"ed25519:{mismatched_signature}",
+            },
+        },
+    )
+    assert mismatched.status_code == 409
+    assert "fixed price must match" in mismatched.json()["error"]["message"]
 
 
 def test_open_public_mvp_fixed_price_session_returns_endpoint_not_found() -> None:
@@ -677,7 +707,7 @@ def test_open_public_mvp_fixed_price_session_rejects_revoked_endpoint() -> None:
                 "discoverable": True,
                 "accepts_external_requests": True,
             },
-            "pricing": {"billing_unit": "request", "fixed_price": 1.0},
+            "pricing": {"billing_unit": "request", "fixed_price": 0.0009},
         },
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
@@ -789,7 +819,7 @@ def test_open_public_mvp_fixed_price_session_rejects_drifted_publication() -> No
                 "discoverable": True,
                 "accepts_external_requests": True,
             },
-            "pricing": {"billing_unit": "request", "fixed_price": 1.0},
+            "pricing": {"billing_unit": "request", "fixed_price": 0.0009},
         },
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
@@ -908,7 +938,7 @@ def test_open_public_mvp_fixed_price_session_accepts_registry_backed_wallet_iden
                 "discoverable": True,
                 "accepts_external_requests": True,
             },
-            "pricing": {"billing_unit": "request", "fixed_price": 1.0},
+            "pricing": {"billing_unit": "request", "fixed_price": 0.0009},
         },
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)

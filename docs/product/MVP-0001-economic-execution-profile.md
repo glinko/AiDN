@@ -141,6 +141,11 @@ Implemented now:
   authorization bound to the Endpoint configuration, a currently published
   external-facing Endpoint configuration in `in_sync` state, and a registered
   Endpoint Payment Beneficiary identity before escrow can be locked.
+- The public fixed-price Session amount is derived from the published Endpoint
+  `fixed_price` in whole `q_atoms`. A Session request with a different amount,
+  an absent fixed price or a price that cannot be represented in `q_atoms` is
+  rejected before escrow lock; the Consumer signature cannot override the
+  published commercial terms.
 - The integration suite now covers one real public paid path against a live
   `llama.cpp` runtime: signed Endpoint publication, public Session open,
   Runtime execution, Final Usage, restart recovery from durable state, signed
