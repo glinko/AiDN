@@ -69,6 +69,8 @@ class InventoryResponsePayload(RegistryPayload):
     latest_epoch: int = 0
     bloom_filter_data: bytes | None = None
     inventory_root_hash: str = ""
+    object_ids: list[str] = Field(default_factory=list)
+    inventory_truncated: bool = False
 
 
 class ObjectRequestPayload(RegistryPayload):

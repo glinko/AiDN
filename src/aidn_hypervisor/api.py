@@ -1249,6 +1249,16 @@ def build_api_router(
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @router.post("/operators/provider-plugin-releases/reconcile-registry")
+    async def reconcile_provider_plugin_releases_from_registry(limit: int = 500) -> dict:
+        try:
+            return service.reconcile_provider_plugin_releases_from_registry(
+                _effective_registry_service(),
+                limit=limit,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @router.post("/operators/provider-plugin-releases/sync-from-peer")
     async def sync_provider_plugin_directory_from_peer(
         payload: SyncProviderPluginDirectoryFromPeerRequest,

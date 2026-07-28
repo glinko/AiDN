@@ -98,6 +98,8 @@ def legacy_record_to_envelope(record: dict) -> RegistryObjectEnvelope:
     computed_hash = _compute_content_hash(payload)
     computed_size = _compute_content_size(payload)
     supplied_hash = record.get(LEGACY_HASH_FIELD)
+    if isinstance(supplied_hash, str) and supplied_hash.startswith("sha256:"):
+        supplied_hash = supplied_hash.removeprefix("sha256:")
     supplied_size = record.get("content_size")
     if supplied_hash is not None and supplied_hash != computed_hash:
         raise ValueError("legacy registry record payload hash does not match payload")
@@ -107,6 +109,7 @@ def legacy_record_to_envelope(record: dict) -> RegistryObjectEnvelope:
     envelope = RegistryObjectEnvelope(
         object_id=str(record.get("object_id", "")),
         object_type=object_type,
+        namespace=str(record.get(LEGACY_NAMESPACE_FIELD, "default")),
         object_version=_resolve_object_version(record.get("object_version", "1.0")),
         content_hash=computed_hash,
         content_size=computed_size,
@@ -123,7 +126,7 @@ def legacy_record_to_envelope(record: dict) -> RegistryObjectEnvelope:
 def envelope_to_legacy_record(
     envelope: RegistryObjectEnvelope,
     *,
-    namespace: str = "default",
+    namespace: str | None = None,
     source_node_id: str | None = None,
 ) -> dict:
     """
@@ -137,7 +140,7 @@ def envelope_to_legacy_record(
         "object_version": envelope.object_version.value
         if hasattr(envelope.object_version, "value")
         else str(envelope.object_version),
-        "namespace": namespace,
+        "namespace": namespace or envelope.namespace,
         "payload_hash": envelope.content_hash,
         "payload_encoding": envelope.payload_encoding,
         "source_reference": (envelope.parent_references[0] if envelope.parent_references else None),
@@ -223,7 +226,7 @@ class RegistryServiceAdapter:
     def sync_to_legacy(
         self,
         *,
-        namespace: str = "default",
+        namespace: str | None = None,
         source_node_id: str | None = None,
     ) -> int:
         """

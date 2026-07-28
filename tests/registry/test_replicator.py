@@ -330,6 +330,41 @@ class TestObjectRequest:
         assert reg["total_requested"] == 2
         assert "obj-missing" in reg["missing_ids"]
 
+    def test_inventory_response_requests_missing_objects(self):
+        source_store = _make_store()
+        source_store.put(_make_envelope(object_id="obj-1"))
+        source = _make_replicator(node_id="node-source", store=source_store)
+        target = _make_replicator(node_id="node-target")
+
+        inventory_request = target.build_inventory_request("node-source")
+        inventory_response = source.process_incoming_message(
+            peer_id="node-target", message=inventory_request
+        )
+
+        object_request = target.process_incoming_message(
+            peer_id="node-source", message=inventory_response
+        )
+
+        assert object_request is not None
+        assert object_request["payload"]["registry_payload"]["object_ids"] == ["obj-1"]
+        assert target.get_peer_state("node-source").inventory_exchanged is True
+
+    def test_object_response_stores_verified_objects(self):
+        source_store = _make_store()
+        source_store.put(_make_envelope(object_id="obj-1"))
+        source = _make_replicator(node_id="node-source", store=source_store)
+        target = _make_replicator(node_id="node-target")
+
+        request = target.build_object_request("node-source", ["obj-1"])
+        response = source.process_incoming_message(peer_id="node-target", message=request)
+
+        assert response is not None
+        assert target.process_incoming_message(peer_id="node-source", message=response) is None
+        assert target.store.has("obj-1")
+        state = target.get_peer_state("node-source")
+        assert state is not None
+        assert state.objects_transferred == 1
+
 
 # ---------------------------------------------------------------------------
 # Announcements

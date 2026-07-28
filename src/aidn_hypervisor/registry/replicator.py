@@ -23,6 +23,7 @@ from .messages import (
     RegistryMessageBuilder,
     RegistryMessageType,
 )
+from .object_envelope import RegistryObjectEnvelope
 from .replication import ReplicationEngine
 from .routes import create_default_registry_channels
 from .storage import ImmutableObjectStore
@@ -74,7 +75,10 @@ class RegistryReplicator:
         network_id: str = "aidn",
         chain_id: str = "main",
         network_revision: str = "1.0",
+        maximum_inventory_object_ids: int = 500,
     ):
+        if maximum_inventory_object_ids < 1:
+            raise ValueError("maximum_inventory_object_ids must be at least one")
         self._node_id = node_id
         self._store = store or ImmutableObjectStore()
         self._engine = ReplicationEngine(self._store)
@@ -88,8 +92,10 @@ class RegistryReplicator:
         )
         self._peer_states: dict[str, ReplicationState] = {}
         self._message_handlers: dict[str, Callable] = {}
+        self._object_handlers: dict[str, list[Callable]] = {}
         self._outbox: list[dict] = []
         self._callbacks: list[Callable] = []
+        self._maximum_inventory_object_ids = maximum_inventory_object_ids
 
     @property
     def store(self) -> ImmutableObjectStore:
@@ -120,6 +126,14 @@ class RegistryReplicator:
     def register_callback(self, callback: Callable) -> None:
         """Register a callback for replication events."""
         self._callbacks.append(callback)
+
+    def register_object_handler(self, object_type: str, handler: Callable) -> None:
+        """Run a local projection after a verified object is stored."""
+        if not object_type:
+            raise ValueError("object_type is required")
+        handlers = self._object_handlers.setdefault(object_type, [])
+        if handler not in handlers:
+            handlers.append(handler)
 
     def _emit_event(self, event_type: str, **kwargs: Any) -> None:
         """Emit a replication event to all callbacks."""
@@ -190,6 +204,19 @@ class RegistryReplicator:
         state.last_activity_at = time.time()
 
         stats = self._store.stats()
+        request_payload = message.get("payload", {}).get("registry_payload", {})
+        requested_types = set(request_payload.get("requested_object_types") or [])
+        object_ids = [
+            object_id
+            for object_id in self._store.all_ids()
+            if not requested_types
+            or (
+                (envelope := self._store.get(object_id)) is not None
+                and envelope.object_type in requested_types
+            )
+        ]
+        inventory_truncated = len(object_ids) > self._maximum_inventory_object_ids
+        object_ids = object_ids[: self._maximum_inventory_object_ids]
 
         # Build bloom filter
         bloom = BloomFilter(
@@ -216,11 +243,50 @@ class RegistryReplicator:
                     sort_keys=True,
                 ).encode()
             ).hexdigest(),
+            object_ids=object_ids,
+            inventory_truncated=inventory_truncated,
         )
 
         msg = self._builder.build(response, destination_node_id=peer_id)
         self._outbox.append(msg)
         return msg
+
+    def handle_inventory_response(
+        self,
+        *,
+        peer_id: str,
+        inventory: dict,
+    ) -> dict | None:
+        """Request verified objects advertised by a peer's bounded inventory."""
+        state = self.get_or_create_peer_state(peer_id)
+        try:
+            payload = InventoryResponsePayload.model_validate(inventory)
+        except ValueError:
+            state.error = "inventory_response_invalid"
+            return None
+        if payload.source_node_id and payload.source_node_id != peer_id:
+            state.error = "inventory_source_mismatch"
+            return None
+        if len(payload.object_ids) > self._maximum_inventory_object_ids:
+            state.error = "inventory_object_ids_exceeded"
+            return None
+        object_ids = list(dict.fromkeys(payload.object_ids))
+        if len(object_ids) != len(payload.object_ids) or any(not object_id for object_id in object_ids):
+            state.error = "inventory_object_ids_invalid"
+            return None
+        missing_ids = [object_id for object_id in object_ids if not self._store.has(object_id)]
+        state.inventory_exchanged = True
+        state.objects_pending = len(missing_ids)
+        self._emit_event(
+            "inventory_received",
+            peer_id=peer_id,
+            object_count=payload.object_count,
+            advertised_object_count=len(object_ids),
+            inventory_truncated=payload.inventory_truncated,
+        )
+        if not missing_ids:
+            return None
+        return self.build_object_request(peer_id, missing_ids)
 
     # -- object requests -------------------------------------------------
 
@@ -232,6 +298,8 @@ class RegistryReplicator:
         include_payload: bool = True,
     ) -> dict:
         """Build an object request for specific objects."""
+        if len(object_ids) > self._maximum_inventory_object_ids:
+            raise ValueError("object request exceeds the configured object limit")
         state = self.get_or_create_peer_state(peer_id)
         state.last_activity_at = time.time()
         state.objects_pending = len(object_ids)
@@ -259,6 +327,9 @@ class RegistryReplicator:
         """Handle an incoming object request."""
         state = self.get_or_create_peer_state(peer_id)
         state.last_activity_at = time.time()
+        if len(object_ids) > self._maximum_inventory_object_ids:
+            state.error = "object_request_limit_exceeded"
+            return None
 
         delivered = []
         missing = []
@@ -286,6 +357,66 @@ class RegistryReplicator:
         state.objects_pending = len(missing)
 
         return msg
+
+    def handle_object_response(
+        self,
+        *,
+        peer_id: str,
+        response: dict,
+    ) -> dict:
+        """Validate and store received objects before applying local projections."""
+        state = self.get_or_create_peer_state(peer_id)
+        result = {"stored": 0, "duplicates": 0, "invalid": 0, "handler_errors": 0}
+        try:
+            payload = ObjectResponsePayload.model_validate(response)
+        except ValueError:
+            state.error = "object_response_invalid"
+            result["invalid"] = 1
+            return result
+        if payload.source_node_id and payload.source_node_id != peer_id:
+            state.error = "object_response_source_mismatch"
+            result["invalid"] = len(payload.objects)
+            return result
+        if len(payload.objects) > self._maximum_inventory_object_ids:
+            state.error = "object_response_limit_exceeded"
+            result["invalid"] = len(payload.objects)
+            return result
+        for raw_object in payload.objects:
+            try:
+                envelope = RegistryObjectEnvelope.model_validate(raw_object)
+                if not envelope.verify_integrity():
+                    raise ValueError("envelope integrity check failed")
+                existing = self._store.get(envelope.object_id)
+                if existing is not None:
+                    if existing != envelope:
+                        raise ValueError("object identity conflicts with local object")
+                    result["duplicates"] += 1
+                    continue
+                if not self._store.put(envelope):
+                    raise ValueError("object storage rejected envelope")
+            except (TypeError, ValueError):
+                result["invalid"] += 1
+                continue
+            result["stored"] += 1
+            state.objects_transferred += 1
+            state.bytes_transferred += envelope.content_size
+            for handler in self._object_handlers.get(envelope.object_type, []):
+                try:
+                    handler(peer_id, envelope)
+                except Exception:
+                    result["handler_errors"] += 1
+            self._emit_event(
+                "object_received",
+                peer_id=peer_id,
+                object_id=envelope.object_id,
+                object_type=envelope.object_type,
+            )
+        state.objects_pending = max(0, state.objects_pending - result["stored"])
+        if result["invalid"]:
+            state.error = "object_response_contains_invalid_objects"
+        elif result["handler_errors"]:
+            state.error = "object_response_handler_failed"
+        return result
 
     # -- announcements ---------------------------------------------------
 
@@ -386,6 +517,13 @@ class RegistryReplicator:
                 object_ids=obj_ids,
                 include_payload=include,
             )
+
+        elif msg_type == RegistryMessageType.INVENTORY_RESPONSE:
+            return self.handle_inventory_response(peer_id=peer_id, inventory=registry_payload)
+
+        elif msg_type == RegistryMessageType.OBJECT_RESPONSE:
+            self.handle_object_response(peer_id=peer_id, response=registry_payload)
+            return None
 
         elif msg_type == RegistryMessageType.ANNOUNCEMENT:
             self.handle_announcement(peer_id=peer_id, announcement=registry_payload)

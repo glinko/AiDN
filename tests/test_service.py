@@ -4118,6 +4118,83 @@ def test_hypervisor_publishes_plugin_release_registry_objects() -> None:
     assert registry.get_registry_object(stored[0]["object_id"], include_payload=True)["payload"] == stored[0]["payload"]
 
 
+def test_hypervisor_reconciles_plugin_releases_from_local_registry() -> None:
+    from aidn_hypervisor.registry_service import RegistryService
+
+    source = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=_registry(),
+    )
+    target = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=_registry(),
+    )
+    release = source.register_provider_plugin_release(
+        manifest=source.plugins.get("fake-managed").plugin_manifest(),
+        source_reference="registry://plugins/fake-managed",
+    )
+    registry = RegistryService()
+    source.publish_provider_plugin_releases_to_registry(registry)
+
+    reconciled = target.reconcile_provider_plugin_releases_from_registry(registry)
+
+    assert reconciled["registry_record_count"] == 1
+    assert reconciled["imported_release_count"] == 1
+    imported = reconciled["items"][0]
+    assert imported["release_id"] == release["release_id"]
+    assert imported["package_verification_status"] == "UNVERIFIED"
+    assert imported["trusted_publisher"] is False
+
+
+def test_replicated_plugin_release_imports_metadata_without_package_trust() -> None:
+    from aidn_hypervisor.registry.bridge import RegistryServiceAdapter
+    from aidn_hypervisor.registry.replicator import RegistryReplicator
+    from aidn_hypervisor.registry_service import RegistryService
+
+    source = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=_registry(),
+    )
+    target = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=_registry(),
+    )
+    release = source.register_provider_plugin_release(
+        manifest=source.plugins.get("fake-managed").plugin_manifest(),
+        source_reference="registry://plugins/fake-managed",
+    )
+    source_registry = RegistryService()
+    source.publish_provider_plugin_releases_to_registry(source_registry)
+    source_adapter = RegistryServiceAdapter(legacy_service=source_registry)
+    assert source_adapter.sync_from_legacy(object_type="plugin_release") == 1
+    source_replicator = RegistryReplicator(
+        node_id="node-source",
+        store=source_adapter.store,
+    )
+    target_replicator = RegistryReplicator(node_id="node-target")
+    target.bind_provider_plugin_directory_replication(target_replicator)
+
+    request = target_replicator.build_object_request(
+        "node-source",
+        [source.provider_plugin_registry_objects()[0]["object_id"]],
+    )
+    response = source_replicator.process_incoming_message(
+        peer_id="node-target",
+        message=request,
+    )
+    assert response is not None
+    target_replicator.process_incoming_message(peer_id="node-source", message=response)
+
+    imported = target.list_provider_plugin_releases()
+    assert [item["release_id"] for item in imported] == [release["release_id"]]
+    assert imported[0]["package_verification_status"] == "UNVERIFIED"
+    assert imported[0]["trusted_publisher"] is False
+
+
 def test_service_executes_transcription_task_via_whisper_plugin() -> None:
     registry = PluginRegistry()
     plugin = StubWhisperPlugin()

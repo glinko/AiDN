@@ -180,6 +180,62 @@ class ProviderInstallationService:
         self._host._persist_state()
         return [release.model_dump(mode="json") for release in releases]
 
+    def reconcile_provider_plugin_releases_from_registry(
+        self,
+        registry_service,
+        *,
+        limit: int = 500,
+    ) -> dict:
+        """Import Plugin Release metadata already available in the local Registry."""
+        if not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500")
+        records = registry_service.list_registry_objects(
+            {
+                "object_type": "plugin_release",
+                "namespace": "plugin",
+                "include_payload": True,
+                "limit": limit,
+            }
+        )
+        items = self.import_provider_plugin_registry_objects(records)
+        return {
+            "registry_record_count": len(records),
+            "imported_release_count": len(items),
+            "items": items,
+        }
+
+    def bind_provider_plugin_directory_replication(self, registry_replicator) -> None:
+        """Project verified replicated Plugin Release objects into the local directory."""
+        register_object_handler = getattr(registry_replicator, "register_object_handler", None)
+        if not callable(register_object_handler):
+            raise ValueError("registry_replicator does not support object handlers")
+        register_object_handler("plugin_release", self._import_replicated_plugin_release)
+
+    def _import_replicated_plugin_release(self, _peer_id: str, envelope) -> None:
+        if envelope.namespace != "plugin":
+            raise ValueError("replicated plugin release has an invalid namespace")
+        if envelope.payload_encoding != "canonical_json":
+            raise ValueError("replicated plugin release has an invalid payload encoding")
+        source_reference = (
+            envelope.parent_references[0]
+            if envelope.parent_references
+            else envelope.payload.get("source_reference")
+        )
+        self.import_provider_plugin_registry_objects(
+            [
+                {
+                    "object_id": envelope.object_id,
+                    "object_type": envelope.object_type,
+                    "object_version": "plugin-release.v1",
+                    "namespace": envelope.namespace,
+                    "payload_hash": f"sha256:{envelope.content_hash}",
+                    "payload_encoding": envelope.payload_encoding,
+                    "source_reference": source_reference,
+                    "payload": envelope.payload,
+                }
+            ]
+        )
+
     def sync_provider_plugin_directory_from_peer(
         self,
         *,

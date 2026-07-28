@@ -49,6 +49,7 @@ class RegistryObjectEnvelope(BaseModel, frozen=True):
 
     object_id: str
     object_type: str
+    namespace: str = "default"
     object_version: ObjectVersion = ObjectVersion.V1
     protocol_version: str = "1.0.0"
     content_hash: str = ""  # SHA-256 of payload
@@ -70,6 +71,7 @@ class RegistryObjectEnvelope(BaseModel, frozen=True):
         object_type: str,
         payload: dict[str, Any],
         object_id: str | None = None,
+        namespace: str = "default",
         created_epoch: int | None = None,
         created_block_height: int | None = None,
         ledger_commitment: LedgerCommitmentClass | None = None,
@@ -88,6 +90,7 @@ class RegistryObjectEnvelope(BaseModel, frozen=True):
         return cls(
             object_id=object_id,
             object_type=object_type,
+            namespace=namespace,
             content_hash=content_hash,
             content_size=content_size,
             created_epoch=created_epoch,

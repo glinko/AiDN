@@ -4714,6 +4714,24 @@ def test_plugin_directory_peer_transport_rejects_redirects(monkeypatch) -> None:
     assert captured["timeout"] == 7
 
 
+def test_provider_plugin_registry_reconcile_route_imports_local_registry_objects() -> None:
+    source = _service()
+    target = _service()
+    release = source.register_provider_plugin_release(
+        manifest=source.plugins.get("fake-managed").plugin_manifest()
+    )
+    registry = RegistryService()
+    source.publish_provider_plugin_releases_to_registry(registry)
+    client = TestClient(build_app(service=target, registry_service=registry))
+
+    response = client.post("/operators/provider-plugin-releases/reconcile-registry")
+
+    assert response.status_code == 200
+    assert response.json()["registry_record_count"] == 1
+    assert response.json()["imported_release_count"] == 1
+    assert response.json()["items"][0]["release_id"] == release["release_id"]
+
+
 def test_plugin_directory_peer_sync_verifies_signed_owner_envelope() -> None:
     source = _service()
     source.node_id = "node-source"

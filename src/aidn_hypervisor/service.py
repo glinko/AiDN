@@ -1219,6 +1219,22 @@ class HypervisorService:
     def import_provider_plugin_registry_objects(self, records: list[dict]) -> list[dict]:
         return self._provider_installation_facade().import_provider_plugin_registry_objects(records)
 
+    def reconcile_provider_plugin_releases_from_registry(
+        self,
+        registry_service,
+        *,
+        limit: int = 500,
+    ) -> dict:
+        return self._provider_installation_facade().reconcile_provider_plugin_releases_from_registry(
+            registry_service,
+            limit=limit,
+        )
+
+    def bind_provider_plugin_directory_replication(self, registry_replicator) -> None:
+        self._provider_installation_facade().bind_provider_plugin_directory_replication(
+            registry_replicator
+        )
+
     def sync_provider_plugin_directory_from_peer(
         self,
         *,

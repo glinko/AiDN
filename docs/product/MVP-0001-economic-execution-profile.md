@@ -184,6 +184,14 @@ Implemented now:
 
 Still required before public paid-MVP launch:
 
+0. Bind Registry peer transport to durable authenticated peer identity. The local
+   Replicator can retrieve bounded inventories, validate immutable object
+   envelopes and project replicated `plugin_release` metadata into the local
+   Plugin Directory; those releases remain locally `UNVERIFIED` and cannot
+   install or launch code. Persistent peer authorization, reconnect lifecycle
+   and a network-finality source are still required before treating that object
+   exchange as a public directory authority.
+
 1. Replicate canonical `wallet_identity` objects into authoritative network
    state before multi-node paid launch, so a public `wallet_id` cannot mean
    different keys on different Hypervisors after cross-node sync; local
