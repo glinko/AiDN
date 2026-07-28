@@ -278,7 +278,7 @@ Immediate priorities:
     authority claim.
 1. Promote the bounded Plugin Directory peer pull into the authenticated Registry replication controller, including revocation propagation and explicit local trust decisions.
 2. Replace operator-supplied Plugin Host commands with package-derived isolated process lifecycle and Secret Manager-backed activation-secret delivery before enabling shell, container, download or package-manager executors.
-3. Bind Endpoint Configuration publications to a real Ed25519 owner-wallet signature. New owner wallets and API publications now use a verifiable signature over the complete published record; legacy local records remain readable but are explicitly unverified. Next, resolve the owner key from canonical wallet identity on peer import and reject legacy signatures from public network advertisements.
+3. Bind Endpoint Configuration publications to a real Ed25519 owner-wallet signature. New owner wallets and API publications use a verifiable signature over the complete published record; public paid Session admission requires the signature to match the canonical owner identity. Public Registry advertisements carry that proof only for external-facing Endpoints, and Remote Endpoint attachment verifies the proof, summary binding and synchronized owner identity before creating a Proxy target. Legacy local records remain readable but are explicitly unverified. Automatic identity-sync orchestration before Remote attach remains pending.
 4. Extend the M7 read model from locally observed consensus submissions to a verified finalized-ledger source; current `consensus_finalized` state is advisory until ABCI application state and CometBFT proofs are implemented.
 
 ## Milestones
