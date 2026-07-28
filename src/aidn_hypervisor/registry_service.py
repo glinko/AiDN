@@ -65,6 +65,20 @@ _WALLET_IDENTITY_NETWORK_OBJECT_TYPES = {
 _ALLOWED_WALLET_IDENTITY_VOTER_STATUSES = {"ready", "stale"}
 
 
+class _RejectPeerRedirects(urllib_request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
+class WalletIdentityPeerTransport:
+    """Fetch wallet identity sync state without following peer redirects."""
+
+    def fetch(self, request, *, timeout_seconds: int):
+        return urllib_request.build_opener(_RejectPeerRedirects()).open(
+            request, timeout=timeout_seconds
+        )
+
+
 class RegistryService:
     def __init__(
         self,
@@ -72,6 +86,7 @@ class RegistryService:
         stale_grace_seconds: int = 30,
         snapshot_path: str | Path | None = None,
         ledger_operation_service: "LedgerOperationService | None" = None,
+        wallet_identity_peer_transport: WalletIdentityPeerTransport | None = None,
     ) -> None:
         self.stale_grace_seconds = stale_grace_seconds
         self._nodes: dict[str, dict] = {}
@@ -85,6 +100,9 @@ class RegistryService:
             RegistryWalletIdentityGovernancePolicy().model_dump(mode="json")
         )
         self._ledger_operation_service = ledger_operation_service
+        self._wallet_identity_peer_transport = (
+            wallet_identity_peer_transport or WalletIdentityPeerTransport()
+        )
         self._snapshot_path = Path(snapshot_path) if snapshot_path is not None else None
         self._loading_registry_object_snapshot = True
         try:
@@ -839,7 +857,9 @@ class RegistryService:
             method="GET",
         )
         try:
-            with urllib_request.urlopen(request, timeout=timeout_seconds) as response:
+            with self._wallet_identity_peer_transport.fetch(
+                request, timeout_seconds=timeout_seconds
+            ) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (urllib_error.URLError, TimeoutError, json.JSONDecodeError) as error:
             raise ValueError(

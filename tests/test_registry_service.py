@@ -10,7 +10,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
-from aidn_hypervisor.registry_service import RegistryService
+from aidn_hypervisor.registry_service import (
+    RegistryService,
+    WalletIdentityPeerTransport,
+)
 from aidn_hypervisor.wallet_identity import (
     sign_wallet_identity_sync_envelope,
     wallet_identity_governance_revocation_id,
@@ -2175,6 +2178,11 @@ def test_registry_service_syncs_wallet_identity_from_peer(monkeypatch) -> None:
         "aidn_hypervisor.registry_service.urllib_request.urlopen",
         lambda request, timeout=10: _Response(),
     )
+    monkeypatch.setattr(
+        service._wallet_identity_peer_transport,
+        "fetch",
+        lambda request, timeout_seconds=10: _Response(),
+    )
 
     result = service.sync_wallet_identity_from_peer(
         peer_base_url="https://peer-a.example/"
@@ -2185,6 +2193,29 @@ def test_registry_service_syncs_wallet_identity_from_peer(monkeypatch) -> None:
     assert service.resolve_wallet_identity("wallet-consumer")["public_key"] == (
         "ed25519:" + "11" * 32
     )
+
+
+def test_wallet_identity_peer_transport_rejects_redirects(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _Opener:
+        def open(self, request, *, timeout):
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return "response"
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.registry_service.urllib_request.build_opener",
+        lambda handler: captured.setdefault("handler", handler) and _Opener(),
+    )
+
+    response = WalletIdentityPeerTransport().fetch(
+        object(), timeout_seconds=7
+    )
+
+    assert response == "response"
+    assert captured["handler"].redirect_request(None, None, 302, None, None, None) is None
+    assert captured["timeout"] == 7
 
 
 def test_registry_service_requires_valid_signed_peer_envelope(monkeypatch) -> None:
@@ -2240,6 +2271,11 @@ def test_registry_service_requires_valid_signed_peer_envelope(monkeypatch) -> No
     monkeypatch.setattr(
         "aidn_hypervisor.registry_service.urllib_request.urlopen",
         lambda request, timeout=10: _Response(),
+    )
+    monkeypatch.setattr(
+        service._wallet_identity_peer_transport,
+        "fetch",
+        lambda request, timeout_seconds=10: _Response(),
     )
 
     result = service.sync_wallet_identity_from_peer(
@@ -2328,6 +2364,11 @@ def test_registry_service_persists_wallet_identity_peer_config_and_sync_state(
         "aidn_hypervisor.registry_service.urllib_request.urlopen",
         lambda request, timeout=10: _Response(),
     )
+    monkeypatch.setattr(
+        service._wallet_identity_peer_transport,
+        "fetch",
+        lambda request, timeout_seconds=10: _Response(),
+    )
 
     result = service.repair_wallet_identity_peers()
 
@@ -2365,6 +2406,13 @@ def test_registry_service_repair_wallet_identity_peers_tracks_errors_and_skips_d
     monkeypatch.setattr(
         "aidn_hypervisor.registry_service.urllib_request.urlopen",
         lambda request, timeout=10: (_ for _ in ()).throw(
+            urllib_error.URLError("peer unavailable")
+        ),
+    )
+    monkeypatch.setattr(
+        service._wallet_identity_peer_transport,
+        "fetch",
+        lambda request, timeout_seconds=10: (_ for _ in ()).throw(
             urllib_error.URLError("peer unavailable")
         ),
     )
@@ -2441,6 +2489,11 @@ def test_registry_service_discover_and_repair_wallet_identity_peers(
     monkeypatch.setattr(
         "aidn_hypervisor.registry_service.urllib_request.urlopen",
         lambda request, timeout=10: _Response(),
+    )
+    monkeypatch.setattr(
+        service._wallet_identity_peer_transport,
+        "fetch",
+        lambda request, timeout_seconds=10: _Response(),
     )
 
     result = service.discover_and_repair_wallet_identity_peers(

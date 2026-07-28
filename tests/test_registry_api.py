@@ -337,6 +337,11 @@ def test_registry_wallet_identity_sync_from_peer_endpoint_pulls_remote_state(
         "aidn_hypervisor.registry_service.urllib_request.urlopen",
         lambda request, timeout=10: _Response(),
     )
+    monkeypatch.setattr(
+        service._wallet_identity_peer_transport,
+        "fetch",
+        lambda request, timeout_seconds=10: _Response(),
+    )
 
     response = client.post(
         "/registry/wallet-identities/sync-from-peer",
@@ -409,6 +414,11 @@ def test_registry_wallet_identity_repair_endpoint_runs_known_peers(
     monkeypatch.setattr(
         "aidn_hypervisor.registry_service.urllib_request.urlopen",
         lambda request, timeout=10: _Response(),
+    )
+    monkeypatch.setattr(
+        service._wallet_identity_peer_transport,
+        "fetch",
+        lambda request, timeout_seconds=10: _Response(),
     )
 
     response = client.post(
@@ -506,6 +516,11 @@ def test_registry_wallet_identity_discover_peers_endpoint_can_repair_after_disco
     monkeypatch.setattr(
         "aidn_hypervisor.registry_service.urllib_request.urlopen",
         lambda request, timeout=10: _Response(),
+    )
+    monkeypatch.setattr(
+        service._wallet_identity_peer_transport,
+        "fetch",
+        lambda request, timeout_seconds=10: _Response(),
     )
 
     response = client.post(
