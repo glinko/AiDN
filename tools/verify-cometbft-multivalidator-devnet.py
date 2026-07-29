@@ -50,7 +50,12 @@ def _status(endpoint: str) -> tuple[int, str]:
     return height, app_hash
 
 
-def _wait_for_height(endpoint: str, *, greater_than: int, timeout_seconds: int = 45) -> tuple[int, str]:
+def _wait_for_height(
+    endpoint: str,
+    *,
+    greater_than: int,
+    timeout_seconds: int,
+) -> tuple[int, str]:
     deadline = time.monotonic() + timeout_seconds
     last_error: Exception | None = None
     while time.monotonic() < deadline:
@@ -99,8 +104,13 @@ def _submit_transaction(endpoint: str, transaction: bytes) -> str:
     return expected_hash
 
 
-def _wait_for_transaction(endpoint: str, transaction_hash: str) -> dict[str, Any]:
-    deadline = time.monotonic() + 45
+def _wait_for_transaction(
+    endpoint: str,
+    transaction_hash: str,
+    *,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
@@ -140,17 +150,37 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rpc-url", default="http://127.0.0.1:26657")
     parser.add_argument("--restart-container", default="aidn-comet-3")
+    parser.add_argument(
+        "--commit-timeout-seconds",
+        type=int,
+        default=120,
+        help="Maximum wait for transaction inclusion and indexing (default: 120).",
+    )
+    parser.add_argument(
+        "--height-timeout-seconds",
+        type=int,
+        default=120,
+        help="Maximum wait for a post-commit or post-restart height (default: 120).",
+    )
     parser.add_argument("--skip-restart", action="store_true")
     args = parser.parse_args()
+    if args.commit_timeout_seconds <= 0 or args.height_timeout_seconds <= 0:
+        raise ValueError("acceptance timeouts must be positive")
     endpoint = args.rpc_url.rstrip("/")
 
     before_height, before_app_hash = _status(endpoint)
     transaction_hash = _submit_transaction(endpoint, _transaction_bytes())
-    transaction = _wait_for_transaction(endpoint, transaction_hash)
+    transaction = _wait_for_transaction(
+        endpoint,
+        transaction_hash,
+        timeout_seconds=args.commit_timeout_seconds,
+    )
     transaction_height = _verify_transaction_proof(endpoint, transaction_hash, transaction)
 
     verified_height, verified_app_hash = _wait_for_height(
-        endpoint, greater_than=max(before_height, transaction_height)
+        endpoint,
+        greater_than=max(before_height, transaction_height),
+        timeout_seconds=args.height_timeout_seconds,
     )
     if verified_app_hash == before_app_hash:
         # This only documents that the block including the Registry update was
@@ -160,7 +190,9 @@ def main() -> None:
     if not args.skip_restart:
         subprocess.run(["docker", "restart", args.restart_container], check=True)
         restarted_height, restarted_app_hash = _wait_for_height(
-            endpoint, greater_than=verified_height
+            endpoint,
+            greater_than=verified_height,
+            timeout_seconds=args.height_timeout_seconds,
         )
         if restarted_app_hash != verified_app_hash:
             raise RuntimeError("Application hash changed after validator restart")
