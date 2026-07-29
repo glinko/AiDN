@@ -80,6 +80,20 @@ def _make_certificate(common_name: str, *, ca_key, ca_certificate) -> tuple[byte
         )
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=True,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
             x509.SubjectKeyIdentifier.from_public_key(private_key.public_key()),
             critical=False,
         )
@@ -174,6 +188,20 @@ def run_server(*, state_dir: Path, port: int) -> None:
         .not_valid_before(datetime.now(UTC) - timedelta(minutes=1))
         .not_valid_after(datetime.now(UTC) + timedelta(hours=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
         .add_extension(
             x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
             critical=False,
