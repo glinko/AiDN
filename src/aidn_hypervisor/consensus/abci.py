@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -99,6 +100,8 @@ class AIDNABCIApplication:
         genesis_time: str | None = None,
         genesis_accounts: dict[str, int] | None = None,
         state_store: ABCIStateStore | None = None,
+        restore_state_from_store: bool = True,
+        state_checkpoint_callback: Callable[[], None] | None = None,
     ):
         self.ledger = ledger_service
         self.mempool = ABCIMempool()
@@ -111,9 +114,14 @@ class AIDNABCIApplication:
         self._app_hash = b""
         self._commitments: dict[int, ABCICanonicalCommitment] = {}
         self._state_store = state_store
+        self._state_checkpoint_callback = state_checkpoint_callback
         self._restored_from_store = False
 
-        persisted_snapshot = state_store.load_current() if state_store is not None else None
+        persisted_snapshot = (
+            state_store.load_current()
+            if state_store is not None and restore_state_from_store
+            else None
+        )
         if persisted_snapshot is not None:
             if genesis_accounts:
                 raise ValueError("genesis accounts cannot be applied over durable ABCI state")
@@ -129,6 +137,31 @@ class AIDNABCIApplication:
                 )
         if not self._restored_from_store:
             self._app_hash = self._compute_state_hash()
+
+    def restore_durable_state_if_matching_ledger(self) -> bool:
+        """Restore ABCI metadata only when its Ledger root already matches.
+
+        Hypervisor persistence owns the complete local service snapshot while
+        ABCI persistence owns the consensus height and a Ledger projection.
+        Starting a validator must never let the narrower ABCI snapshot silently
+        overwrite a newer or different Hypervisor Ledger.
+        """
+        if self._state_store is None:
+            raise ABCIStateStoreError("durable ABCI state is disabled")
+        snapshot = self._state_store.load_current()
+        if snapshot is None:
+            return False
+        expected_hash = self._snapshot_app_hash(snapshot)
+        actual_hash = self._compute_state_hash()
+        if expected_hash != actual_hash:
+            raise ABCIStateStoreError(
+                "durable ABCI state does not match the restored Hypervisor Ledger"
+            )
+        result = self.apply_snapshot(snapshot)
+        if result.code != "ok":
+            raise ABCIStateStoreError(result.log or "could not restore durable ABCI state")
+        self._restored_from_store = True
+        return True
 
     def _compute_initial_hash(self) -> bytes:
         return hashlib.sha256(b"AiDN-genesis").digest()
@@ -329,6 +362,11 @@ class AIDNABCIApplication:
             rollback = self.apply_snapshot(previous_snapshot)
             self._admission.restore_state(previous_admission_state)
             rollback_note = "" if rollback.code == "ok" else "; rollback failed"
+            if rollback.code == "ok":
+                try:
+                    self._persist_abci_state()
+                except ABCIStateStoreError:
+                    rollback_note += "; durable rollback failed"
             failure = ABCIResult(
                 code="internal",
                 log=f"durable state persistence failed: {error}{rollback_note}",
@@ -470,7 +508,7 @@ class AIDNABCIApplication:
         if self._last_block_height < 0:
             raise ValueError("snapshot height is invalid")
         self._last_block_hash = bytes.fromhex(snapshot["last_block_hash"])
-        self._app_hash = bytes.fromhex(snapshot["app_hash"])
+        self._app_hash = self._snapshot_app_hash(snapshot)
         if len(self._last_block_hash) != 32 or len(self._app_hash) != 32:
             raise ValueError("snapshot hash length is invalid")
         self._genesis_time = snapshot.get("genesis_time", self._genesis_time)
@@ -523,7 +561,12 @@ class AIDNABCIApplication:
             try:
                 self._persist_durable_state()
             except ABCIStateStoreError:
-                self.apply_snapshot(previous_snapshot)
+                rollback = self.apply_snapshot(previous_snapshot)
+                if rollback.code == "ok":
+                    try:
+                        self._persist_abci_state()
+                    except ABCIStateStoreError:
+                        pass
                 return "abort"
             self._restored_from_store = True
             return "accept"
@@ -532,6 +575,16 @@ class AIDNABCIApplication:
             return "retry_snapshot"
 
     def _persist_durable_state(self) -> None:
+        self._persist_abci_state()
+        if self._state_checkpoint_callback is not None:
+            try:
+                self._state_checkpoint_callback()
+            except Exception as error:
+                raise ABCIStateStoreError(
+                    "Hypervisor state checkpoint failed after ABCI persistence"
+                ) from error
+
+    def _persist_abci_state(self) -> None:
         if self._state_store is not None:
             self._state_store.persist(self.prepare_snapshot())
 
@@ -587,3 +640,10 @@ class AIDNABCIApplication:
         }
         canonical = json.dumps(state, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).digest()
+
+    @staticmethod
+    def _snapshot_app_hash(snapshot: dict) -> bytes:
+        try:
+            return bytes.fromhex(str(snapshot["app_hash"]))
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("snapshot application hash is invalid") from error

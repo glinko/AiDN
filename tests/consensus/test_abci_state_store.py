@@ -68,6 +68,31 @@ def test_persistence_failure_rolls_back_block_state(tmp_path, monkeypatch) -> No
     assert application.commitment_at(1) is None
 
 
+def test_hypervisor_checkpoint_failure_restores_durable_abci_snapshot(tmp_path) -> None:
+    store = ABCIStateStore(tmp_path / "abci")
+
+    def fail_checkpoint() -> None:
+        raise OSError("hypervisor disk full")
+
+    application = AIDNABCIApplication(
+        ledger_service=LedgerOperationService(),
+        admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
+        state_store=store,
+        state_checkpoint_callback=fail_checkpoint,
+    )
+    result = application.finalize_block(
+        block_height=1,
+        block_hash=b"z" * 32,
+        txs=[],
+    )
+
+    assert result.code == "internal"
+    assert application.info().last_block_height == 0
+    durable_snapshot = store.load_current()
+    assert durable_snapshot is not None
+    assert durable_snapshot["last_block_height"] == 0
+
+
 def test_state_sync_import_validates_hash_and_restores_state(tmp_path) -> None:
     source_store = ABCIStateStore(tmp_path / "source", chunk_size=64)
     source = _app(source_store)

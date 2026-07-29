@@ -1,9 +1,15 @@
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from aidn_hypervisor.api import build_api_router
 from aidn_hypervisor.bundle_registry import FileBundleRegistry
+from aidn_hypervisor.consensus.service import (
+    ConsensusMode,
+    ConsensusService,
+    ConsensusServiceConfig,
+)
 from aidn_hypervisor.domain.models import NodeCapacity
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
@@ -44,18 +50,8 @@ def build_app(
     remote_endpoint_service: RemoteEndpointService | None = None,
     session_service: SessionService | None = None,
     validation_service: ValidationService | None = None,
+    consensus_service: ConsensusService | None = None,
 ) -> FastAPI:
-    app = FastAPI(
-        title="AiDN Hypervisor",
-        docs_url=None,
-        redoc_url=None,
-        openapi_url=None,
-    )
-
-    @app.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
-
     state_store = _default_state_store()
     resolved_registry_service = registry_service or _build_default_registry_service(
         state_store=state_store
@@ -107,6 +103,50 @@ def build_app(
         session_service=resolved_session_service,
         validation_service=resolved_validation_service,
     )
+    resolved_consensus_service = consensus_service or getattr(
+        resolved_service, "consensus_service", None
+    )
+    if resolved_consensus_service is None:
+        resolved_consensus_service = _build_default_consensus_service(
+            hypervisor_service=resolved_service,
+            state_store=state_store,
+        )
+    elif (
+        getattr(resolved_service, "consensus_service", None) not in {
+            None,
+            resolved_consensus_service,
+        }
+    ):
+        raise ValueError("Hypervisor is already bound to another ConsensusService")
+    if resolved_consensus_service is not None:
+        resolved_service.consensus_service = resolved_consensus_service
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if (
+            resolved_consensus_service is not None
+            and resolved_consensus_service.is_validator
+        ):
+            resolved_consensus_service.start_validator_abci_server()
+        try:
+            yield
+        finally:
+            if resolved_consensus_service is not None:
+                resolved_consensus_service.stop_validator_abci_server()
+
+    app = FastAPI(
+        title="AiDN Hypervisor",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+    )
+    app.state.hypervisor_service = resolved_service
+    app.state.consensus_service = resolved_consensus_service
+
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
 
     app.include_router(
         build_api_router(
@@ -263,6 +303,46 @@ def _default_state_store() -> FileStateStore | None:
     if not state_path:
         return None
     return FileStateStore(state_path)
+
+
+def _build_default_consensus_service(
+    *,
+    hypervisor_service: HypervisorService,
+    state_store: FileStateStore | None,
+) -> ConsensusService | None:
+    raw_mode = os.getenv("AIDN_CONSENSUS_MODE", ConsensusMode.DISABLED.value).lower()
+    try:
+        mode = ConsensusMode(raw_mode)
+    except ValueError as error:
+        raise ValueError("AIDN_CONSENSUS_MODE must be disabled, non_validator, or validator") from error
+    if mode == ConsensusMode.DISABLED:
+        return None
+
+    config = ConsensusServiceConfig(
+        node_id=os.getenv("AIDN_CONSENSUS_NODE_ID", hypervisor_service.node_id),
+        mode=mode,
+        cometbft_endpoint=os.getenv("AIDN_COMETBFT_ENDPOINT", "tcp://localhost:26657"),
+        validator_pubkey=os.getenv("AIDN_CONSENSUS_VALIDATOR_PUBKEY", ""),
+        chain_id=os.getenv("AIDN_COMETBFT_CHAIN_ID", "aidn-localnet-1"),
+        abci_state_path=os.getenv("AIDN_COMETBFT_ABCI_STATE_PATH"),
+        abci_listen_host=os.getenv("AIDN_COMETBFT_ABCI_HOST", "127.0.0.1"),
+        abci_listen_port=int(os.getenv("AIDN_COMETBFT_ABCI_PORT", "26658")),
+    )
+    consensus = ConsensusService(config)
+    if mode != ConsensusMode.VALIDATOR:
+        return consensus
+    if state_store is None:
+        raise ValueError("validator mode requires AIDN_HYPERVISOR_STATE_PATH")
+    if not config.abci_state_path:
+        raise ValueError("validator mode requires AIDN_COMETBFT_ABCI_STATE_PATH")
+
+    consensus.bootstrap_validator_abci(
+        ledger_service=hypervisor_service.ledger_operation_service,
+        restore_state_from_store=False,
+        state_checkpoint_callback=hypervisor_service._persist_state,
+    )
+    consensus.restore_validator_abci_state_if_matching_ledger()
+    return consensus
 
 
 def _default_bundle_registry(plugins: PluginRegistry) -> FileBundleRegistry:

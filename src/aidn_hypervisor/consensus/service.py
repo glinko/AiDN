@@ -214,6 +214,8 @@ class ConsensusService:
         *,
         ledger_service,
         admission_validator: AdmissionValidator | None = None,
+        restore_state_from_store: bool = False,
+        state_checkpoint_callback: Callable[[], None] | None = None,
     ) -> AIDNABCIApplication:
         """Create the only durable ABCI app allowed for this validator service.
 
@@ -234,8 +236,16 @@ class ConsensusService:
             ledger_service=ledger_service,
             admission_validator=admission_validator,
             state_store=ABCIStateStore(self.config.abci_state_path),
+            restore_state_from_store=restore_state_from_store,
+            state_checkpoint_callback=state_checkpoint_callback,
         )
         return self.abci
+
+    def restore_validator_abci_state_if_matching_ledger(self) -> bool:
+        """Complete a Hypervisor-first validator restart without state takeover."""
+        if self.abci is None:
+            raise ValueError("bootstrap validator ABCI before restoring its durable state")
+        return self.abci.restore_durable_state_if_matching_ledger()
 
     def start_validator_abci_server(self):
         """Start the local CometBFT ABCI socket after durable bootstrap."""
