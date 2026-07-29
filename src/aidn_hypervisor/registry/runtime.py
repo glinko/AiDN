@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from .listener import RegistryReplicationTlsListener
@@ -34,6 +35,7 @@ class RegistryReplicationRuntime:
         reconnect_supervisor: RegistryReplicationReconnectSupervisor | None = None,
         poll_interval_seconds: float = 0.1,
         maximum_recorded_errors: int = 100,
+        cleanup: Callable[[], None] | None = None,
     ) -> None:
         if listener is None and reconnect_supervisor is None:
             raise ValueError("Registry replication runtime requires a listener or reconnect supervisor")
@@ -45,6 +47,7 @@ class RegistryReplicationRuntime:
         self._reconnect_supervisor = reconnect_supervisor
         self._poll_interval_seconds = poll_interval_seconds
         self._maximum_recorded_errors = maximum_recorded_errors
+        self._cleanup = cleanup
         self._stop_event = threading.Event()
         self._lock = threading.RLock()
         self._threads: list[threading.Thread] = []
@@ -53,6 +56,7 @@ class RegistryReplicationRuntime:
             maxlen=maximum_recorded_errors
         )
         self._running = False
+        self._cleanup_called = False
 
     @property
     def is_running(self) -> bool:
@@ -62,21 +66,31 @@ class RegistryReplicationRuntime:
     def start(self) -> None:
         """Bind configured inbound transport and start bounded worker loops."""
         with self._lock:
+            if self._cleanup_called:
+                raise RuntimeError("Registry replication runtime cannot restart after cleanup")
             if self._running:
                 return
             self._stop_event.clear()
-            if self._listener is not None:
-                self._listener.bind()
-            self._running = True
-            if self._listener is not None:
-                self._start_worker("registry-replication-accept", self._accept_loop)
-            if self._reconnect_supervisor is not None:
-                self._start_worker("registry-replication-outbound", self._outbound_loop)
-                for peer_id in self._reconnect_supervisor.peer_ids:
-                    self._start_worker(
-                        f"registry-replication-receive-{peer_id}",
-                        lambda peer_id=peer_id: self._outbound_receive_loop(peer_id),
-                    )
+            try:
+                if self._listener is not None:
+                    self._listener.bind()
+                self._running = True
+                if self._listener is not None:
+                    self._start_worker("registry-replication-accept", self._accept_loop)
+                if self._reconnect_supervisor is not None:
+                    self._start_worker("registry-replication-outbound", self._outbound_loop)
+                    for peer_id in self._reconnect_supervisor.peer_ids:
+                        self._start_worker(
+                            f"registry-replication-receive-{peer_id}",
+                            lambda peer_id=peer_id: self._outbound_receive_loop(peer_id),
+                        )
+            except Exception:
+                self._running = False
+                self._stop_event.set()
+                if self._listener is not None:
+                    self._listener.close()
+                self._run_cleanup()
+                raise
 
     def stop(self, *, join_timeout_seconds: float = 6.0) -> None:
         """Stop workers, invalidate auth state, and close the listener."""
@@ -84,6 +98,7 @@ class RegistryReplicationRuntime:
             raise ValueError("Registry replication join timeout must be positive")
         with self._lock:
             if not self._running:
+                self._run_cleanup()
                 return
             self._running = False
             self._stop_event.set()
@@ -97,6 +112,7 @@ class RegistryReplicationRuntime:
         with self._lock:
             self._threads.clear()
             self._inbound_workers.clear()
+        self._run_cleanup()
 
     def status(self) -> dict:
         """Return bounded operator diagnostics without exposing transport secrets."""
@@ -207,3 +223,11 @@ class RegistryReplicationRuntime:
                     message=str(error),
                 )
             )
+
+    def _run_cleanup(self) -> None:
+        if self._cleanup is None:
+            return
+        if self._cleanup_called:
+            return
+        self._cleanup_called = True
+        self._cleanup()

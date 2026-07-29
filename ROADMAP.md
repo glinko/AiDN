@@ -567,7 +567,7 @@ Exit criteria:
 
 Order of work right now:
 
-1. Add operator deployment configuration and managed certificate/signing-key storage for the explicitly injected Registry replication runtime; then validate replication against an independently operated peer.
+1. Operator deployment configuration and encrypted local Secret Manager-backed certificate/signing-key handles now compose the explicitly injected Registry replication runtime. Validate replication against an independently operated peer next.
 2. Replace the temporary `UNSANDBOXED_HOST` package profile with isolated package-backed processes and Secret Manager-backed activation credential delivery.
 3. Establish trusted remote-snapshot anchoring and an independently operated multi-validator testnet before making public network-finality claims.
 

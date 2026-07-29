@@ -16,6 +16,15 @@ from .completeness import (
     CompletenessScore,
     CompletenessTracker,
 )
+from .deployment import (
+    RegistryReplicationDeploymentConfig,
+    RegistryReplicationListenerConfig,
+    RegistryReplicationOutboundPeerConfig,
+    RegistryReplicationTlsSecretConfig,
+    build_registry_replication_runtime,
+    load_file_secret_manager_from_environment,
+    load_registry_replication_deployment_config,
+)
 from .discovery import (
     AutoSyncController,
     DiscoveryConfig,
@@ -174,4 +183,11 @@ __all__ = [
     # runtime
     "RegistryReplicationRuntime",
     "RegistryReplicationRuntimeError",
+    "RegistryReplicationDeploymentConfig",
+    "RegistryReplicationListenerConfig",
+    "RegistryReplicationOutboundPeerConfig",
+    "RegistryReplicationTlsSecretConfig",
+    "build_registry_replication_runtime",
+    "load_file_secret_manager_from_environment",
+    "load_registry_replication_deployment_config",
 ]

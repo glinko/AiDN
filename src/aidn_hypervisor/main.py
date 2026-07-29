@@ -1,5 +1,6 @@
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -25,6 +26,11 @@ from aidn_hypervisor.plugins.vllm import VllmPlugin
 from aidn_hypervisor.plugins.whisper import WhisperPlugin
 from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.queue import InMemoryTaskQueue
+from aidn_hypervisor.registry.deployment import (
+    build_registry_replication_runtime,
+    load_file_secret_manager_from_environment,
+    load_registry_replication_deployment_config,
+)
 from aidn_hypervisor.registry.runtime import RegistryReplicationRuntime
 from aidn_hypervisor.registry_api import build_registry_router
 from aidn_hypervisor.registry_service import RegistryService
@@ -122,11 +128,17 @@ def build_app(
         raise ValueError("Hypervisor is already bound to another ConsensusService")
     if resolved_consensus_service is not None:
         resolved_service.consensus_service = resolved_consensus_service
+    resolved_registry_replication_runtime = (
+        registry_replication_runtime
+        or _build_default_registry_replication_runtime(
+            registry_service=resolved_registry_service
+        )
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        if registry_replication_runtime is not None:
-            registry_replication_runtime.start()
+        if resolved_registry_replication_runtime is not None:
+            resolved_registry_replication_runtime.start()
         if (
             resolved_consensus_service is not None
             and resolved_consensus_service.is_validator
@@ -137,8 +149,8 @@ def build_app(
         finally:
             if resolved_consensus_service is not None:
                 resolved_consensus_service.stop_validator_abci_server()
-            if registry_replication_runtime is not None:
-                registry_replication_runtime.stop()
+            if resolved_registry_replication_runtime is not None:
+                resolved_registry_replication_runtime.stop()
 
     app = FastAPI(
         title="AiDN Hypervisor",
@@ -149,7 +161,7 @@ def build_app(
     )
     app.state.hypervisor_service = resolved_service
     app.state.consensus_service = resolved_consensus_service
-    app.state.registry_replication_runtime = registry_replication_runtime
+    app.state.registry_replication_runtime = resolved_registry_replication_runtime
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -264,6 +276,26 @@ def _build_default_registry_service(
         return RegistryService()
     registry_snapshot_path = state_store.path.parent / "registry-objects.json"
     return RegistryService(snapshot_path=registry_snapshot_path)
+
+
+def _build_default_registry_replication_runtime(
+    *,
+    registry_service: RegistryService,
+) -> RegistryReplicationRuntime | None:
+    config_path = os.getenv("AIDN_REGISTRY_REPLICATION_CONFIG")
+    if not config_path:
+        return None
+    secret_manager = load_file_secret_manager_from_environment()
+    if secret_manager is None:
+        raise ValueError(
+            "Registry replication configuration requires the local Secret Manager"
+        )
+    config = load_registry_replication_deployment_config(Path(config_path))
+    return build_registry_replication_runtime(
+        config=config,
+        registry_service=registry_service,
+        secret_manager=secret_manager,
+    )
 
 
 def _build_default_session_service(
