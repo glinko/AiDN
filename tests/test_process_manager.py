@@ -1,4 +1,5 @@
 import sys
+import time
 
 from aidn_hypervisor.process_manager import ProviderProcessManager
 
@@ -93,3 +94,25 @@ def test_start_runtime_with_subprocesses_enabled_does_not_spawn_attached_service
 
     assert "pid" not in handle.metadata
     assert handle.runtime_id not in manager._processes
+
+
+def test_managed_process_cleans_private_launch_files_after_exit(tmp_path) -> None:
+    secret_directory = tmp_path / "secret-directory"
+    secret_directory.mkdir()
+    secret_file = secret_directory / "activation-secret"
+    secret_file.write_text("secret", encoding="ascii")
+    manager = ProviderProcessManager(enable_subprocesses=True)
+
+    manager.start_runtime(
+        {
+            "command": [sys.executable, "-c", "pass"],
+            "launch_mode": "managed_process",
+            "cleanup_paths": [secret_file, secret_directory],
+        }
+    )
+
+    deadline = time.monotonic() + 2
+    while secret_directory.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not secret_file.exists()
+    assert not secret_directory.exists()

@@ -14,7 +14,16 @@ from aidn_hypervisor.plugins.container import DockerPluginHostLauncher
 from aidn_hypervisor.providers.models import PluginHostEntrypoint, PluginSandboxPolicy
 
 _HOST_CODE = """import json, os, socket
-result = {"uid": os.geteuid(), "secret_present": bool(os.getenv("AIDN_PLUGIN_HOST_ACTIVATION_SECRET"))}
+secret_path = os.getenv("AIDN_PLUGIN_HOST_ACTIVATION_SECRET_FILE")
+try:
+    secret_file_present = bool(secret_path) and open(secret_path, encoding="ascii").read().strip() == "616363657074616e63652d736563726574"
+except OSError:
+    secret_file_present = False
+result = {
+    "uid": os.geteuid(),
+    "secret_env_absent": not bool(os.getenv("AIDN_PLUGIN_HOST_ACTIVATION_SECRET")),
+    "secret_file_present": secret_file_present,
+}
 try:
     open("/opt/aidn/plugin/host-write-probe", "w").write("blocked")
     result["package_write_blocked"] = False
@@ -36,12 +45,19 @@ def main() -> None:
     launcher = DockerPluginHostLauncher(image=args.image)
     if not launcher.is_available():
         raise RuntimeError("Docker is required for Plugin Host container acceptance")
-    with tempfile.TemporaryDirectory(prefix="aidn-plugin-host-acceptance-") as directory:
+    with (
+        tempfile.TemporaryDirectory(prefix="aidn-plugin-host-acceptance-") as directory,
+        tempfile.TemporaryDirectory(prefix="aidn-plugin-host-secret-") as secret_directory,
+    ):
         package_root = Path(directory)
         host = package_root / "host.py"
         host.write_text(_HOST_CODE, encoding="utf-8")
         os.chmod(package_root, 0o755)
         os.chmod(host, 0o444)
+        secret_file = Path(secret_directory) / "activation-secret"
+        secret_file.write_text("616363657074616e63652d736563726574", encoding="ascii")
+        os.chmod(secret_directory, 0o700)
+        os.chmod(secret_file, 0o444)
         spec = launcher.build_launch_spec(
             package_root=package_root,
             entrypoint=PluginHostEntrypoint(entrypoint_path="host.py"),
@@ -51,6 +67,7 @@ def main() -> None:
                 network_scope="NONE",
                 secret_scope="DECLARED_HANDLES_ONLY",
             ),
+            activation_secret_file=secret_file,
         )
         environment = {
             **os.environ,
@@ -58,7 +75,6 @@ def main() -> None:
             "AIDN_PLUGIN_HOST_PLUGIN_ID": "aidn.acceptance.plugin",
             "AIDN_PLUGIN_HOST_INSTALLATION_GENERATION": "1",
             "AIDN_PLUGIN_HOST_ACTIVATION_CREDENTIAL_KEY_ID": "sha256:acceptance",
-            "AIDN_PLUGIN_HOST_ACTIVATION_SECRET": "acceptance-secret",
         }
         completed = subprocess.run(
             spec["command"],
@@ -72,7 +88,8 @@ def main() -> None:
     if result != {
         "network_blocked": True,
         "package_write_blocked": True,
-        "secret_present": True,
+        "secret_env_absent": True,
+        "secret_file_present": True,
         "uid": 65534,
     }:
         raise RuntimeError(f"Plugin Host container boundary failed: {result}")

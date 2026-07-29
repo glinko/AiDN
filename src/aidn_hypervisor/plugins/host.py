@@ -3,7 +3,9 @@
 import hashlib
 import hmac
 import json
+import os
 from collections.abc import Callable
+from pathlib import Path
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -14,6 +16,38 @@ from aidn_hypervisor.secrets import FileSecretManager, SecretManagerError
 
 class PluginHostAuthenticationError(ValueError):
     """Raised when a Plugin Host identity is no longer authorized locally."""
+
+
+def load_plugin_host_activation_secret(
+    environment: dict[str, str] | None = None,
+) -> bytes:
+    """Load a Host activation secret without exposing it in package Host argv/env.
+
+    Sandboxed package Hosts receive a hex-encoded secret through a read-only
+    file mount. Legacy managed Hosts retain the explicit environment fallback
+    while their launch path remains transitional.
+    """
+    values = os.environ if environment is None else environment
+    encoded_secret = values.get("AIDN_PLUGIN_HOST_ACTIVATION_SECRET")
+    secret_file = values.get("AIDN_PLUGIN_HOST_ACTIVATION_SECRET_FILE")
+    if encoded_secret and secret_file:
+        raise PluginHostAuthenticationError("Plugin Host activation secret source is ambiguous")
+    if secret_file:
+        try:
+            encoded_secret = Path(secret_file).read_text(encoding="ascii").strip()
+        except OSError as error:
+            raise PluginHostAuthenticationError(
+                "Plugin Host activation secret file is unavailable"
+            ) from error
+    if not encoded_secret:
+        raise PluginHostAuthenticationError("Plugin Host activation secret is unavailable")
+    try:
+        secret = bytes.fromhex(encoded_secret)
+    except ValueError as error:
+        raise PluginHostAuthenticationError("Plugin Host activation secret is invalid") from error
+    if not secret:
+        raise PluginHostAuthenticationError("Plugin Host activation secret is invalid")
+    return secret
 
 
 class PluginHostIdentity(BaseModel):

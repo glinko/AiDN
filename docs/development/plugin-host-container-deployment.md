@@ -17,12 +17,18 @@ Only `filesystem_scope: NONE`, `network_scope: NONE` and
 is rejected before `docker run` is invoked.
 
 Activation credentials can use the configured File Secret Manager and are
-never returned by the Hypervisor API or Plugin Host status views. The Docker
-backend currently forwards the credential as a process environment variable
-to the container because the Host handshake needs it. A privileged Docker or
-host operator can inspect such a process and remains a trusted local boundary.
-Do not treat this as protection from the local operator; secret-file delivery
-is required before supporting less-trusted local administration.
+never returned by the Hypervisor API or Plugin Host status views. For a
+package-backed Host, the Hypervisor materializes a hex-encoded secret in a
+private short-lived directory and bind-mounts that file read-only at
+`AIDN_PLUGIN_HOST_ACTIVATION_SECRET_FILE`. The raw secret is not placed in the
+Docker command environment. The runtime removes the file and its private
+directory when the managed Host exits or is stopped.
+
+A privileged Docker daemon or host operator can still inspect the bind-mounted
+source and remains a trusted local boundary. This protects against ordinary
+container environment inspection, not against a hostile local administrator.
+Legacy built-in Hosts retain the explicit environment delivery path while that
+transitional non-package execution mode remains supported.
 
 Run the real acceptance check on a Docker-capable operator host:
 

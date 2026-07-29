@@ -451,15 +451,15 @@ class ProviderInstallationService:
         )
         if release.release_status in {"SECURITY_BLOCKED", "REVOKED"}:
             raise ValueError("Plugin Host release is not eligible for launch")
+        cleanup_paths: tuple = ()
         if installed.installation_source == "PACKAGE":
             if command is not None:
                 raise ValueError(
                     "PACKAGE installations cannot launch an operator-supplied command"
                 )
-            package_launch_spec = self._host.provider_inventory.package_host_launch_spec(
+            self._host.provider_inventory.validate_package_host_launch(
                 installed_plugin_id=installed_plugin_id
             )
-            command = package_launch_spec["command"]
         elif not command or not all(isinstance(item, str) and item for item in command):
             raise ValueError("Plugin Host command is required")
         else:
@@ -467,23 +467,52 @@ class ProviderInstallationService:
         self._host.provider_inventory.provision_plugin_host_activation_credential(
             installed_plugin_id=installed_plugin_id
         )
-        runtime = self._host.runtimes.start_runtime(
-            {
-                "launch_mode": "managed_process",
-                "command": command,
-                "metadata": {
-                    "component": "plugin_host",
-                    "installed_plugin_id": installed.installed_plugin_id,
-                    "plugin_id": installed.plugin_id,
-                    "installation_generation": str(installed.installation_generation),
-                    **package_launch_spec.get("metadata", {}),
-                },
-                "working_directory": package_launch_spec.get("working_directory"),
-                "environment": self.plugin_host_launch_environment(
-                    installed_plugin_id=installed_plugin_id
-                ),
-            }
+        installed = self._host.provider_inventory.store.get_installed_plugin(
+            installed_plugin_id
         )
+        if installed.installation_source == "PACKAGE":
+            secret_file, cleanup_paths = (
+                self._host.provider_inventory.create_plugin_host_activation_secret_file(
+                    installed_plugin_id=installed_plugin_id
+                )
+            )
+            package_launch_spec = self._host.provider_inventory.package_host_launch_spec(
+                installed_plugin_id=installed_plugin_id,
+                activation_secret_file=secret_file,
+            )
+            command = package_launch_spec["command"]
+            environment = self.plugin_host_launch_environment(
+                installed_plugin_id=installed_plugin_id
+            )
+            environment.pop("AIDN_PLUGIN_HOST_ACTIVATION_SECRET", None)
+        else:
+            environment = self.plugin_host_launch_environment(
+                installed_plugin_id=installed_plugin_id
+            )
+        try:
+            runtime = self._host.runtimes.start_runtime(
+                {
+                    "launch_mode": "managed_process",
+                    "command": command,
+                    "metadata": {
+                        "component": "plugin_host",
+                        "installed_plugin_id": installed.installed_plugin_id,
+                        "plugin_id": installed.plugin_id,
+                        "installation_generation": str(installed.installation_generation),
+                        **package_launch_spec.get("metadata", {}),
+                    },
+                    "working_directory": package_launch_spec.get("working_directory"),
+                    "environment": environment,
+                    "cleanup_paths": cleanup_paths,
+                }
+            )
+        except Exception:
+            for path in cleanup_paths:
+                try:
+                    path.unlink(missing_ok=True)
+                except IsADirectoryError:
+                    path.rmdir()
+            raise
         self._host._persist_state()
         return runtime
 

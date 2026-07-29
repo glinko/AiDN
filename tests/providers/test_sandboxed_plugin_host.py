@@ -74,10 +74,17 @@ def test_verified_package_host_uses_docker_for_sandbox_required_policy(tmp_path)
             image="aidn-plugin-host:test"
         ),
     )
+    secret_file = tmp_path / "activation-secret"
+    secret_file.write_text("a" * 64, encoding="ascii")
+    secret_file.chmod(0o444)
 
-    spec = service.package_host_launch_spec(installed_plugin_id="installed-1")
+    spec = service.package_host_launch_spec(
+        installed_plugin_id="installed-1",
+        activation_secret_file=secret_file,
+    )
 
     assert spec["command"][:3] == ["docker", "run", "--rm"]
     assert spec["command"][spec["command"].index("--network") + 1] == "none"
     assert spec["command"][-3:] == ["python", "/opt/aidn/plugin/runtime/host.py", "--serve"]
     assert spec["metadata"]["package_execution_mode"] == "SANDBOX_REQUIRED"
+    assert spec["metadata"]["activation_secret_delivery"] == "READ_ONLY_FILE"

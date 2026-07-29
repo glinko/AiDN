@@ -1,8 +1,11 @@
 import hashlib
 import json
+import os
 import secrets
+import tempfile
 from copy import deepcopy
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
@@ -319,6 +322,40 @@ class ProviderInventoryService:
             "AIDN_PLUGIN_HOST_ACTIVATION_SECRET": activation_secret.hex(),
         }
 
+    def create_plugin_host_activation_secret_file(
+        self,
+        *,
+        installed_plugin_id: str,
+    ) -> tuple[Path, tuple[Path, Path]]:
+        """Materialize one package Host secret in a private, short-lived directory."""
+        installed = self.store.get_installed_plugin(installed_plugin_id)
+        credential_key_id = installed.activation_credential_key_id
+        if credential_key_id is None:
+            raise ValueError("Plugin Host activation credential is not provisioned")
+        activation_secret = self.plugin_host_activation_credentials.get(credential_key_id)
+        if activation_secret is None:
+            raise ValueError("Plugin Host activation credential is unavailable")
+        secret_directory = Path(tempfile.mkdtemp(prefix="aidn-plugin-host-secret-"))
+        try:
+            os.chmod(secret_directory, 0o700)
+            secret_file = secret_directory / "activation-secret"
+            descriptor = os.open(
+                secret_file,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o444,
+            )
+            with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+                handle.write(activation_secret.hex())
+            os.chmod(secret_file, 0o444)
+        except Exception:
+            try:
+                secret_file.unlink(missing_ok=True)
+            except UnboundLocalError:
+                pass
+            secret_directory.rmdir()
+            raise
+        return secret_file, (secret_file, secret_directory)
+
     def _host_discover_models(self, plugin_id: str, provider_instance_id: str) -> list[dict]:
         instance = self.store.get_provider_instance(provider_instance_id)
         if instance.plugin_id != plugin_id:
@@ -420,8 +457,8 @@ class ProviderInventoryService:
         self.store.save_plugin_release(release)
         return release
 
-    def package_host_launch_spec(self, *, installed_plugin_id: str) -> dict:
-        """Build the only allowed launch command for a verified package release."""
+    def _package_host_entrypoint(self, *, installed_plugin_id: str) -> tuple[PluginRelease, Path]:
+        """Validate package Host eligibility and return its verified entrypoint."""
         installed = self.store.get_installed_plugin(installed_plugin_id)
         if installed.installation_source != "PACKAGE":
             raise ValueError("package Plugin Host launch requires a PACKAGE installation")
@@ -442,11 +479,28 @@ class ProviderInventoryService:
         )
         if not self.plugin_host_container_launcher.is_available():
             raise ValueError("package Plugin Host container runtime is unavailable")
+        return release, entrypoint
+
+    def validate_package_host_launch(self, *, installed_plugin_id: str) -> None:
+        """Fail before credential provisioning when a package Host cannot launch."""
+        self._package_host_entrypoint(installed_plugin_id=installed_plugin_id)
+
+    def package_host_launch_spec(
+        self,
+        *,
+        installed_plugin_id: str,
+        activation_secret_file: Path,
+    ) -> dict:
+        """Build the only allowed launch command for a verified package release."""
+        release, entrypoint = self._package_host_entrypoint(
+            installed_plugin_id=installed_plugin_id
+        )
         entrypoint_depth = len(release.host_entrypoint.entrypoint_path.split("/"))
         launch_spec = self.plugin_host_container_launcher.build_launch_spec(
             package_root=entrypoint.parents[entrypoint_depth - 1],
             entrypoint=release.host_entrypoint,
             sandbox_policy=release.host_sandbox_policy,
+            activation_secret_file=activation_secret_file,
         )
         launch_spec["metadata"].update(
             {

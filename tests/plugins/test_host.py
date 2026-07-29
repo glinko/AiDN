@@ -18,6 +18,7 @@ from aidn_hypervisor.plugins.host import (
     PluginHostLocalIpcIngress,
     SecretManagerPluginHostActivationCredentialStore,
     build_plugin_host_activation_proof,
+    load_plugin_host_activation_secret,
 )
 from aidn_hypervisor.plugins.host_named_pipe import (
     WindowsNamedPipePluginHostClient,
@@ -83,6 +84,15 @@ def test_secret_manager_activation_credentials_survive_store_reconstruction(tmp_
     assert reconstructed.get(credential_key_id) == b"activation"
     reconstructed.remove(credential_key_id)
     assert reconstructed.get(credential_key_id) is None
+
+
+def test_plugin_host_loads_activation_secret_from_read_only_file(tmp_path) -> None:
+    secret_file = tmp_path / "activation-secret"
+    secret_file.write_text("ab" * 32, encoding="ascii")
+
+    assert load_plugin_host_activation_secret(
+        {"AIDN_PLUGIN_HOST_ACTIVATION_SECRET_FILE": str(secret_file)}
+    ) == bytes.fromhex("ab" * 32)
 
 
 def test_plugin_host_connection_store_removes_only_one_plugin_installation() -> None:
