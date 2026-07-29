@@ -85,7 +85,10 @@ class AIDNABCISocketServer:
 
     def _serve_connection(self, connection: socket.socket) -> None:
         with connection:
-            connection.settimeout(10)
+            # CometBFT holds several dedicated ABCI channels open, including
+            # an idle snapshot channel. A read timeout would turn normal idle
+            # time into EOF and halt the validator.
+            connection.settimeout(None)
             while not self._stopped.is_set():
                 try:
                     request = _read_frame(connection, self.maximum_message_size)
