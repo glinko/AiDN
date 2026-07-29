@@ -32,13 +32,13 @@ from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.secrets import FileSecretManager
 
 
-def _wait_until(predicate, *, timeout_seconds: float) -> None:
+def _wait_until(predicate, *, timeout_seconds: float, failure_message: str | None = None) -> None:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         if predicate():
             return
         time.sleep(0.02)
-    raise RuntimeError("acceptance condition was not reached before timeout")
+    raise RuntimeError(failure_message or "acceptance condition was not reached before timeout")
 
 
 def _encode(value: bytes) -> str:
@@ -218,21 +218,33 @@ def run_server(*, state_dir: Path, port: int) -> None:
     runtime.start()
     print(json.dumps({"status": "ready", "bundle": str(bundle_path), "port": port}), flush=True)
     stopping = False
+    status_requested = False
 
     def stop_handler(_signal, _frame) -> None:
         nonlocal stopping
         stopping = True
 
+    def status_handler(_signal, _frame) -> None:
+        nonlocal status_requested
+        status_requested = True
+
     signal.signal(signal.SIGTERM, stop_handler)
     signal.signal(signal.SIGINT, stop_handler)
+    if hasattr(signal, "SIGUSR1"):
+        signal.signal(signal.SIGUSR1, status_handler)
     try:
         while not stopping:
+            if status_requested:
+                status_requested = False
+                print(json.dumps({"status": runtime.status()}, sort_keys=True), flush=True)
             time.sleep(0.2)
     finally:
         runtime.stop()
 
 
-def run_client(*, bundle_path: Path, host: str, state_dir: Path, timeout_seconds: float) -> dict:
+def run_client(
+    *, bundle_path: Path, host: str, port: int, state_dir: Path, timeout_seconds: float
+) -> dict:
     bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
     material = {key: _decode(value) for key, value in bundle["client_material"].items()}
     secrets = _store_from_material(state_dir, "client", material)
@@ -241,7 +253,7 @@ def run_client(*, bundle_path: Path, host: str, state_dir: Path, timeout_seconds
         peer_id="registry-server", public_key=str(bundle["server_public_key"])
     )
     runtime = build_registry_replication_runtime(
-        config=_client_config(host, int(bundle["port"])),
+        config=_client_config(host, port),
         registry_service=registry,
         secret_manager=secrets,
     )
@@ -252,6 +264,10 @@ def run_client(*, bundle_path: Path, host: str, state_dir: Path, timeout_seconds
         _wait_until(
             lambda: runtime.status()["outbound_peers"][0]["authenticated"],
             timeout_seconds=timeout_seconds,
+            failure_message=(
+                "Registry peer authentication did not complete: "
+                + json.dumps(runtime.status(), sort_keys=True)
+            ),
         )
         runtime.replicator.build_inventory_request("registry-server")
         _wait_until(
@@ -284,6 +300,7 @@ def main() -> None:
     result = run_client(
         bundle_path=args.bundle,
         host=args.host,
+        port=args.port,
         state_dir=args.state_dir,
         timeout_seconds=args.timeout,
     )
