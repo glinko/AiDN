@@ -313,6 +313,12 @@ Immediate priorities:
    extensions to the AiDN application. A separate single-validator CometBFT
    run completed the real socket handshake, accepted and finalized an AiDN
    operation, and committed the resulting application root in the block header.
+   A controlled four-validator CometBFT v0.38.19 devnet now additionally
+   proves external transaction admission, `/tx?prove=true` Merkle inclusion,
+   one-validator restart and continued quorum without application-hash
+   regression; the reproducible command is documented in
+   `docs/development/cometbft-multivalidator-acceptance-drill.md` and is an
+   opt-in release-verification workflow gate.
    The production finality factory still requires an operator-approved trusted
    checkpoint and exact local ABCI commitment. The ABCI application now
    atomically persists canonical JSON state after each finalized block, restores
@@ -321,9 +327,9 @@ Immediate priorities:
    The local validator proposal bridge also propagates per-transaction ABCI
    outcomes and never marks a rejected or non-durably-finalized operation as
    `FINALIZED`.
-   Upstream multi-validator testnet coverage, remote-snapshot trust anchoring
-   and operational backup/restore drills remain required before public
-   network-finality claims.
+   Remote-snapshot trust anchoring and a public, independently operated
+   multi-validator testnet remain required before public network-finality
+   claims.
 
 ## Milestones
 

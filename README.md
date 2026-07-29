@@ -18,12 +18,15 @@ local development and CI. After changing `pyproject.toml`, regenerate it with
 
 ## CI Pipeline
 
+The regular pipeline also has a blocking package gate after lint and tests.
+
 Three-stage pipeline: **quality baseline** → **tests** → **opt-in integration**.
 
 | Stage | Jobs | Blocking |
 |-------|------|----------|
 | Quality baseline | formatting and legacy Ruff findings are reported | non-blocking baseline |
 | Tests | hermetic non-integration suite with coverage | yes |
+| Package | build wheel/sdist and verify isolated wheel installation | yes |
 | Integration | real provider and network checks via manual dispatch | configured environment only |
 
 ## Release Verification
@@ -40,3 +43,4 @@ four-validator CometBFT drill is Docker-backed and intentionally opt-in.
 - [Terms](01_TERMS.md)
 - [Architecture](02_ARCHITECTURE.md)
 - [Roadmap](ROADMAP.md)
+- [Four-validator CometBFT acceptance drill](docs/development/cometbft-multivalidator-acceptance-drill.md)
