@@ -31,6 +31,17 @@ _TIMESTAMP_RE = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2})T(?P<time>\d{2}:\d{2}:\d{2})"
     r"(?:\.(?P<fraction>\d{1,9}))?(?P<zone>Z|[+-]\d{2}:\d{2})$"
 )
+_FIELD_MODULUS = 2**255 - 19
+_GROUP_ORDER = 2**252 + 27742317777372353535851937790883648493
+_CURVE_D = (-121665 * pow(121666, -1, _FIELD_MODULUS)) % _FIELD_MODULUS
+_SQRT_MINUS_ONE = pow(2, (_FIELD_MODULUS - 1) // 4, _FIELD_MODULUS)
+_BASE_POINT = (
+    15112221349535400772501151409588531511454012693041857206046113283949847762202,
+    46316835694926478169428394003475163141307993866256225615783033603165251855960,
+    1,
+    54540073986314346303334804872803995183948520591839304199672539262089086139639,
+)
+_IDENTITY_POINT = (0, 1, 1, 0)
 
 
 def cometbft_validator_set_from_rpc(validators: list[Mapping[str, object]]) -> CometBftValidatorSet:
@@ -152,11 +163,102 @@ class StrictCometBftEd25519Backend:
                 public_key = _validator_public_key(validator)
                 if _address_for_public_key(public_key) != address:
                     return set()
-                Ed25519PublicKey.from_public_bytes(public_key).verify(raw_signature, sign_bytes)
+                self._verify_signature(raw_signature, public_key, sign_bytes)
                 signers.add(address)
             return signers
         except (InvalidSignature, OverflowError, struct.error, TypeError, ValueError, KeyError):
             return set()
+
+    def _verify_signature(self, signature: bytes, public_key: bytes, message: bytes) -> None:
+        Ed25519PublicKey.from_public_bytes(public_key).verify(signature, message)
+
+
+class Zip215CometBftEd25519Backend(StrictCometBftEd25519Backend):
+    """CometBFT backend using ZIP-215's consensus-safe Ed25519 equation.
+
+    ZIP-215 verifies ``[8][S]B = [8]R + [8][k]A`` and accepts valid points
+    with non-canonical encodings.  That is intentionally distinct from the
+    strict RFC-8032 verifier used by :class:`StrictCometBftEd25519Backend`.
+    """
+
+    def _verify_signature(self, signature: bytes, public_key: bytes, message: bytes) -> None:
+        if not zip215_verify(signature=signature, public_key=public_key, message=message):
+            raise InvalidSignature("ZIP-215 verification failed")
+
+
+def zip215_verify(*, signature: bytes, public_key: bytes, message: bytes) -> bool:
+    """Verify an Ed25519 signature under ZIP-215's exact cofactored rule."""
+    if len(signature) != 64 or len(public_key) != 32:
+        return False
+    try:
+        point_r = _decode_zip215_point(signature[:32])
+        point_a = _decode_zip215_point(public_key)
+        scalar_s = int.from_bytes(signature[32:], "little")
+        if scalar_s >= _GROUP_ORDER:
+            return False
+        scalar_k = int.from_bytes(
+            hashlib.sha512(signature[:32] + public_key + message).digest(), "little"
+        ) % _GROUP_ORDER
+        left = _scalar_multiply(_scalar_multiply(_BASE_POINT, scalar_s), 8)
+        right = _scalar_multiply(_point_add(point_r, _scalar_multiply(point_a, scalar_k)), 8)
+        return _points_equal(left, right)
+    except (ArithmeticError, ValueError):
+        return False
+
+
+def _decode_zip215_point(encoded: bytes) -> tuple[int, int, int, int]:
+    encoded_value = int.from_bytes(encoded, "little")
+    sign = encoded_value >> 255
+    y = (encoded_value & ((1 << 255) - 1)) % _FIELD_MODULUS
+    y_squared = y * y % _FIELD_MODULUS
+    numerator = (y_squared - 1) % _FIELD_MODULUS
+    denominator = (_CURVE_D * y_squared + 1) % _FIELD_MODULUS
+    x_squared = numerator * pow(denominator, -1, _FIELD_MODULUS) % _FIELD_MODULUS
+    x = pow(x_squared, (_FIELD_MODULUS + 3) // 8, _FIELD_MODULUS)
+    if x * x % _FIELD_MODULUS != x_squared:
+        x = x * _SQRT_MINUS_ONE % _FIELD_MODULUS
+    if x * x % _FIELD_MODULUS != x_squared:
+        raise ValueError("encoded point is not on Ed25519")
+    if x & 1 != sign:
+        x = (-x) % _FIELD_MODULUS
+    return x, y, 1, x * y % _FIELD_MODULUS
+
+
+def _point_add(
+    first: tuple[int, int, int, int], second: tuple[int, int, int, int]
+) -> tuple[int, int, int, int]:
+    first_x, first_y, first_z, first_t = first
+    second_x, second_y, second_z, second_t = second
+    a = (first_y - first_x) * (second_y - second_x) % _FIELD_MODULUS
+    b = (first_y + first_x) * (second_y + second_x) % _FIELD_MODULUS
+    c = 2 * _CURVE_D * first_t * second_t % _FIELD_MODULUS
+    d = 2 * first_z * second_z % _FIELD_MODULUS
+    e = (b - a) % _FIELD_MODULUS
+    f = (d - c) % _FIELD_MODULUS
+    g = (d + c) % _FIELD_MODULUS
+    h = (b + a) % _FIELD_MODULUS
+    return e * f % _FIELD_MODULUS, g * h % _FIELD_MODULUS, f * g % _FIELD_MODULUS, e * h % _FIELD_MODULUS
+
+
+def _scalar_multiply(point: tuple[int, int, int, int], scalar: int) -> tuple[int, int, int, int]:
+    result = _IDENTITY_POINT
+    addend = point
+    while scalar:
+        if scalar & 1:
+            result = _point_add(result, addend)
+        addend = _point_add(addend, addend)
+        scalar >>= 1
+    return result
+
+
+def _points_equal(
+    first: tuple[int, int, int, int], second: tuple[int, int, int, int]
+) -> bool:
+    return (
+        first[0] * second[2] - second[0] * first[2]
+    ) % _FIELD_MODULUS == 0 and (
+        first[1] * second[2] - second[1] * first[2]
+    ) % _FIELD_MODULUS == 0
 
 
 def _simple_validator_bytes(validator: CometBftValidator) -> bytes:

@@ -74,6 +74,7 @@ def test_prepare_snapshot_contains_state(app):
     assert "last_block_height" in snapshot
     assert "last_block_hash" in snapshot
     assert "app_hash" in snapshot
+    assert "commitments" in snapshot
     assert "ledger_operations" in snapshot
     assert "wallet_sequences" in snapshot
     assert "settlement_state" in snapshot

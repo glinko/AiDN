@@ -288,18 +288,20 @@ Immediate priorities:
     transitions, non-adjacent trusted-set overlap and atomic trusted-checkpoint
     rotation. A strict Ed25519 backend now produces CometBFT v0.38 protobuf
     `VoteSignBytes`, exact `SimpleValidator` Merkle roots and validates RPC
-    precommits against derived validator addresses. It deliberately fails closed
-    for unsupported keys and retains a ZIP-215-compatible verifier as a public
-    network compatibility requirement. ABCI-backed canonical state also remains
-    required before a public multi-node authority claim.
+    precommits against derived validator addresses. The standard and ZIP-215
+    Ed25519 variants are both available; unsupported keys still fail closed.
+    `ABCICommittedFinalitySource` now admits external light-client evidence only
+    when the local ABCI commitment has the same height, block hash and app hash.
+    Production CometBFT transport and state-sync operation remain required
+    before a public multi-node authority claim.
 1. Complete production Registry peer transport operation. The Replicator now has an opt-in fail-closed Ed25519 handshake gate with nonce replay protection for inbound and outbound exchange; operator-managed peer keys persist in the Registry snapshot, survive restart, and key rotation or disablement revokes the active replication session. A transport session now requires verified TLS, owns the outer message sequence, carries the signed handshake and resets authorization on reconnect. A bounded outbound reconnect supervisor now retries only approved peers, requires a fresh handshake after every new transport, and backs off on connection, frame or handshake-timeout failure. Bounded Plugin Release object transfer, Registry reconciliation and revocation projection also exist. The multi-peer listener and fail-closed finality-source boundary now exist; a production CometBFT light-client verifier remains required before making network-wide directory claims.
 2. Replace the temporary `UNSANDBOXED_HOST` package profile with actual sandbox/container lifecycle and Secret Manager-backed activation-secret persistence before enabling shell, container, download or package-manager executors. `SANDBOX_REQUIRED` remains fail-closed.
 3. Bind Endpoint Configuration publications to a real Ed25519 owner-wallet signature. New owner wallets and API publications use a verifiable signature over the complete published record; public paid Session admission requires the signature to match the canonical owner identity. Public Registry advertisements carry that proof only for external-facing Endpoints, and Remote Endpoint attachment verifies the proof, summary binding and synchronized owner identity before creating a Proxy target. When the owner identity is absent locally, Remote attach performs a bounded root-only HTTP(S) peer sync and requires a hash-bound Ed25519 envelope matching the expected Registry node, operator and owner wallet before importing it. Legacy local records remain readable but are explicitly unverified. Authenticated Registry replication and peer transport authentication remain pending.
-4. Replace the strict Ed25519 verifier with a CometBFT ZIP-215-compatible
-   verifier, validate it against upstream vectors and connect verified
-   light-client state to the ABCI-backed canonical Ledger. RPC evidence,
-   checkpoint rotation, trusted transitions and standard protobuf/hash handling
-   now fail closed, but must not yet be represented as public network finality.
+4. Integrate the verified light client with a production CometBFT node and
+   paginated validator-set retrieval, then validate the complete transport path
+   against an upstream testnet. ZIP-215 verification, canonical protobuf/hash
+   handling and local ABCI commitment binding now fail closed, but must not yet
+   be represented as public network finality.
 
 ## Milestones
 

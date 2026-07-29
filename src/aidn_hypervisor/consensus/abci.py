@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,6 +15,19 @@ from aidn_hypervisor.consensus.abci_models import (
 )
 from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+
+
+@dataclass(frozen=True)
+class ABCICanonicalCommitment:
+    """The local ABCI state commitment for one finalized CometBFT height."""
+
+    height: int
+    block_hash: str
+    app_hash: str
+
+    def __post_init__(self) -> None:
+        if self.height < 1 or len(self.block_hash) != 64 or len(self.app_hash) != 64:
+            raise ValueError("ABCI canonical commitment is invalid")
 
 
 class ABCIMempool:
@@ -89,6 +103,7 @@ class AIDNABCIApplication:
         self._last_block_height = 0
         self._last_block_hash = b"\x00" * 32
         self._app_hash = self._compute_initial_hash()
+        self._commitments: dict[int, ABCICanonicalCommitment] = {}
 
         # Genesis funding
         if genesis_accounts:
@@ -218,6 +233,11 @@ class AIDNABCIApplication:
         self._last_block_height = block_height
         self._last_block_hash = block_hash
         self._app_hash = self._compute_state_hash()
+        self._commitments[block_height] = ABCICanonicalCommitment(
+            height=block_height,
+            block_hash=block_hash.hex().upper(),
+            app_hash=self._app_hash.hex().upper(),
+        )
 
         # Clear mempool of included txs
         for tx_data in txs:
@@ -252,6 +272,10 @@ class AIDNABCIApplication:
             data=app_hash,
             version=str(self._last_block_height),
         )
+
+    def commitment_at(self, height: int) -> ABCICanonicalCommitment | None:
+        """Return an immutable local commitment for an exact finalized height."""
+        return self._commitments.get(height)
 
     # ---- Queries ----
 
@@ -303,6 +327,7 @@ class AIDNABCIApplication:
             "last_block_height": self._last_block_height,
             "last_block_hash": self._last_block_hash.hex(),
             "app_hash": self._app_hash.hex(),
+            "commitments": [asdict(commitment) for commitment in self._commitments.values()],
             "ledger_operations": self.ledger.snapshot_operations(),
             "wallet_sequences": self.ledger.snapshot_wallet_sequences(),
             "settlement_state": self.ledger.snapshot_settlement_state(),
@@ -329,6 +354,10 @@ class AIDNABCIApplication:
             self._last_block_hash = bytes.fromhex(snapshot["last_block_hash"])
             self._app_hash = bytes.fromhex(snapshot["app_hash"])
             self._genesis_time = snapshot.get("genesis_time", self._genesis_time)
+            self._commitments = {
+                commitment["height"]: ABCICanonicalCommitment(**commitment)
+                for commitment in snapshot.get("commitments", [])
+            }
 
             return ABCIResult(
                 code="ok",

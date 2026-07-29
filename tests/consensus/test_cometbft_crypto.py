@@ -10,8 +10,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aidn_hypervisor.consensus.cometbft_crypto import (
     StrictCometBftEd25519Backend,
+    Zip215CometBftEd25519Backend,
     cometbft_validator_set_from_rpc,
     cometbft_vote_sign_bytes,
+    zip215_verify,
 )
 from aidn_hypervisor.consensus.light_client import (
     CometBftValidator,
@@ -180,6 +182,55 @@ def test_backend_rejects_any_invalid_or_duplicate_commit_signature():
         block_height=11,
         block_id="A" * 64,
     )
+
+
+def test_zip215_accepts_noncanonical_identity_encoding_that_strict_ed25519_rejects():
+    identity_encoding = (2**255 - 18).to_bytes(32, "little")
+    signature = identity_encoding + b"\x00" * 32
+
+    assert zip215_verify(
+        signature=signature,
+        public_key=identity_encoding,
+        message=b"consensus test",
+    )
+
+    validator = CometBftValidator(
+        address=hashlib.sha256(identity_encoding).digest()[:20].hex().upper(),
+        public_key=f"ed25519:{base64.b64encode(identity_encoding).decode('ascii')}",
+        voting_power=1,
+    )
+    validator_set = CometBftValidatorSet((validator,))
+    block_id = _block_id()
+    signed_header = {
+        "commit": {
+            "height": "11",
+            "round": "0",
+            "block_id": block_id,
+            "signatures": [
+                {
+                    "block_id_flag": 2,
+                    "validator_address": validator.address,
+                    "timestamp": "2030-01-01T00:00:00Z",
+                    "signature": base64.b64encode(signature).decode("ascii"),
+                }
+            ],
+        }
+    }
+
+    assert not StrictCometBftEd25519Backend().verified_signer_addresses(
+        signed_header=signed_header,
+        validator_set=validator_set,
+        chain_id="aidn-testnet-1",
+        block_height=11,
+        block_id="A" * 64,
+    )
+    assert Zip215CometBftEd25519Backend().verified_signer_addresses(
+        signed_header=signed_header,
+        validator_set=validator_set,
+        chain_id="aidn-testnet-1",
+        block_height=11,
+        block_id="A" * 64,
+    ) == {validator.address}
 
 
 def test_rpc_validator_conversion_rejects_non_ed25519_keys():
