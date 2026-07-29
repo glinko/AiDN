@@ -212,8 +212,14 @@ class AIDNABCIApplication:
         """
         return self.check_transaction(tx_data)
 
-    def check_transaction(self, tx_data: bytes) -> ABCIResult:
-        """Validate and admit one transaction through the ABCI mempool path."""
+    def check_transaction(self, tx_data: bytes, *, recheck: bool = False) -> ABCIResult:
+        """Validate one transaction, admitting it only during the initial CheckTx.
+
+        CometBFT replays transactions retained in its own mempool after a
+        committed block.  Recheck must not turn an already admitted local
+        transaction into a duplicate rejection, or CometBFT will evict it
+        before a proposer can include it.
+        """
         try:
             envelope = self._parse_envelope(tx_data)
         except Exception as e:
@@ -232,6 +238,12 @@ class AIDNABCIApplication:
                     ABCITag(key="operation_id", value=envelope.operation_id),
                     ABCITag(key="reason", value=admission.reason or "unknown"),
                 ],
+            )
+
+        if recheck:
+            return ABCIResult(
+                code="ok",
+                tags=[ABCITag(key="operation_id", value=envelope.operation_id)],
             )
 
         # Add to mempool

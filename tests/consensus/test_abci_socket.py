@@ -75,6 +75,13 @@ def test_abci_socket_handles_real_v038_request_lifecycle():
             check = _request(connection, 8, _bytes_field(1, tx))
             assert _field_values(check, 1) == [0]
 
+            rechecked = _request(
+                connection,
+                8,
+                _fields(_bytes_field(1, tx), _varint_field(2, 1)),
+            )
+            assert _field_values(rechecked, 1) == [0]
+
             prepared = _request(
                 connection,
                 16,

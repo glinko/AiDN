@@ -132,7 +132,13 @@ class AIDNABCISocketServer:
                     raise ABCIWireError(initialized.log or "ABCI chain initialization failed")
                 return _response("init_chain", _bytes_field(3, self.application.commit().data))
             if kind == "check_tx":
-                result = self.application.check_transaction(_bytes_field_value(payload, 1))
+                check_tx_type = _int_field(payload, 2, default=0)
+                if check_tx_type not in {0, 1}:
+                    raise ABCIWireError("ABCI CheckTx type is invalid")
+                result = self.application.check_transaction(
+                    _bytes_field_value(payload, 1),
+                    recheck=check_tx_type == 1,
+                )
                 return _response("check_tx", _result_message(result))
             if kind == "query":
                 query = self.application.query(

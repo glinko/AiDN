@@ -105,6 +105,16 @@ def test_process_duplicate_in_mempool(app):
     assert r2.code == "duplicate"
 
 
+def test_recheck_does_not_evict_an_already_admitted_transaction(app):
+    data = tx_bytes(make_envelope())
+    assert app.check_transaction(data).code == "ok"
+
+    result = app.check_transaction(data, recheck=True)
+
+    assert result.code == "ok"
+    assert app.mempool.size() == 1
+
+
 def test_process_tx_wrong_sequence_rejected(app):
     env = make_envelope(
         sender_wallet="w1",
