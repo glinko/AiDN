@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -2850,7 +2851,7 @@ def test_service_register_model_install_job_tracks_requested_artifact(tmp_path) 
     assert job["source_url"].endswith(".gguf")
     assert job["requested_by"] == "operator-a"
     assert job["last_error"] is None
-    assert job["target_path"].endswith("llama.cpp\\phi-4-mini.gguf")
+    assert Path(job["target_path"]).parts[-2:] == ("llama.cpp", "phi-4-mini.gguf")
 
 
 def test_service_process_model_installs_materializes_artifact_and_marks_job_completed(

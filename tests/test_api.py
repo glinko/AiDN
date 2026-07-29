@@ -6,6 +6,7 @@ import sys
 import zipfile
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -9935,7 +9936,10 @@ def test_operator_model_install_endpoint_queues_install_job(tmp_path) -> None:
     assert response.status_code == 202
     assert response.json()["status"] == "queued"
     assert response.json()["provider_type"] == "llama.cpp"
-    assert response.json()["target_path"].endswith("llama.cpp\\phi-4-mini.gguf")
+    assert Path(response.json()["target_path"]).parts[-2:] == (
+        "llama.cpp",
+        "phi-4-mini.gguf",
+    )
 
 
 def test_operator_model_install_list_endpoint_returns_queued_jobs(tmp_path) -> None:

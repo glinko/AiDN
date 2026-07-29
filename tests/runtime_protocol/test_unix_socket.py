@@ -1,6 +1,5 @@
 import os
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 
 import pytest
 
@@ -45,7 +44,9 @@ def _message() -> NetworkMessage:
 def test_unix_socket_routes_json_network_messages(tmp_path) -> None:
     received: list[NetworkMessage] = []
     listener = UnixSocketRuntimeListener(
-        address=str(tmp_path / f"aidn-runtime-{uuid4().hex}.sock"),
+        # Linux limits AF_UNIX paths to about 108 bytes. pytest's temporary
+        # directory can already be long, so keep the socket basename bounded.
+        address=str(tmp_path / "runtime.sock"),
         ingress=lambda message: received.append(message) or {"accepted": message.message_id},
     )
     listener.start()

@@ -351,6 +351,7 @@ def test_plugin_host_json_wire_adapter_is_bounded_and_fail_closed() -> None:
     assert oversized == {"ok": False, "error": "MESSAGE_TOO_LARGE"}
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows Named Pipe transport only")
 def test_windows_named_pipe_plugin_host_routes_hello() -> None:
     installed = _installed_plugin()
     ingress = PluginHostLocalIpcIngress(
