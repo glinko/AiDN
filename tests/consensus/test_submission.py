@@ -12,6 +12,7 @@ from aidn_hypervisor.consensus.service import (
     ConsensusServiceConfig,
     SubmissionStatus,
 )
+from aidn_hypervisor.consensus.state_store import ABCIStateStore, ABCIStateStoreError
 from aidn_hypervisor.ledger.service import LedgerOperationService
 
 # ---- helpers ----
@@ -88,13 +89,24 @@ def test_submission_retains_exact_transaction_hash_for_finality_lookup():
     )
 
 
+def _make_finalizable_envelope(**kw) -> LedgerOperationEnvelope:
+    defaults = {
+        "operation_type": "REGISTRY_UPSERT",
+        "origin_type": "protocol",
+        "created_at": "2025-01-01T00:00:00Z",
+        "payload": {"test": True},
+    }
+    defaults.update(kw)
+    return LedgerOperationEnvelope(**defaults)
+
+
 # ---- resubmit ----
 
 
 def test_resubmit_pending():
     cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
     svc = ConsensusService(cfg)
-    env = _make_envelope()
+    env = _make_finalizable_envelope()
     svc.submit_operation(env)
     count = svc.resubmit_pending()
     assert count == 1
@@ -106,7 +118,7 @@ def test_resubmit_pending():
 def test_resubmit_max_retries():
     cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
     svc = ConsensusService(cfg)
-    env = _make_envelope()
+    env = _make_finalizable_envelope()
     svc.submit_operation(env)
     # resubmit 4 times with max_retries=3 → only 3 succeed
     svc.resubmit_pending(max_retries=3)
@@ -155,7 +167,7 @@ def test_propose_block_validator():
         validator_pubkey="pk-v",
     )
     svc = ConsensusService(cfg, abci_app=abci)
-    env = _make_envelope()
+    env = _make_finalizable_envelope()
     tx_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
     result = svc.propose_block(
         txs=[tx_bytes],
@@ -164,6 +176,7 @@ def test_propose_block_validator():
     )
     assert result["block_height"] == 1
     assert result["code"] == "ok"
+    assert result["executed"] == 1
 
 
 def test_propose_block_non_validator_error():
@@ -228,10 +241,54 @@ def test_block_proposal_marks_txs_finalized():
         validator_pubkey="pk-v",
     )
     svc = ConsensusService(cfg, abci_app=abci)
-    env = _make_envelope()
+    env = _make_finalizable_envelope()
     tx_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
     svc.propose_block(txs=[tx_bytes], block_height=1, block_hash=b"\x01" * 32)
     assert svc.is_finalized(env.operation_id)
+
+
+def test_block_proposal_does_not_finalize_rejected_transaction():
+    abci = _make_abci()
+    svc = ConsensusService(
+        ConsensusServiceConfig(mode=ConsensusMode.VALIDATOR, validator_pubkey="pk-v"),
+        abci_app=abci,
+    )
+    expired = _make_envelope(expires_at="2025-01-01T00:00:00Z")
+    transaction = json.dumps(expired.model_dump(mode="json")).encode("utf-8")
+
+    result = svc.propose_block(txs=[transaction], block_height=1, block_hash=b"x" * 32)
+
+    assert result["code"] == "ok"
+    assert result["executed"] == 0
+    assert svc.is_finalized(expired.operation_id) is False
+    assert svc.get_submission(expired.operation_id).status == SubmissionStatus.FAILED
+
+
+def test_block_proposal_failure_does_not_mark_operation_finalized(tmp_path, monkeypatch):
+    store = ABCIStateStore(tmp_path / "abci")
+    abci = AIDNABCIApplication(
+        ledger_service=LedgerOperationService(),
+        admission_validator=AdmissionValidator(current_time="2025-01-02T00:00:00Z"),
+        state_store=store,
+    )
+    monkeypatch.setattr(
+        store,
+        "persist",
+        lambda state: (_ for _ in ()).throw(ABCIStateStoreError("disk full")),
+    )
+    svc = ConsensusService(
+        ConsensusServiceConfig(mode=ConsensusMode.VALIDATOR, validator_pubkey="pk-v"),
+        abci_app=abci,
+    )
+    envelope = _make_finalizable_envelope()
+    transaction = json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
+
+    result = svc.propose_block(txs=[transaction], block_height=1, block_hash=b"y" * 32)
+
+    assert result["code"] == "internal"
+    assert result["app_hash"] == ""
+    assert svc.is_finalized(envelope.operation_id) is False
+    assert svc.get_submission(envelope.operation_id).status == SubmissionStatus.FAILED
 
 
 # ---- block proposal increments counter ----
@@ -244,7 +301,7 @@ def test_block_proposal_increments_counter():
         validator_pubkey="pk-v",
     )
     svc = ConsensusService(cfg, abci_app=abci)
-    env = _make_envelope()
+    env = _make_finalizable_envelope()
     tx_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
     svc.propose_block(txs=[tx_bytes], block_height=1, block_hash=b"\x01" * 32)
     assert svc._blocks_proposed == 1

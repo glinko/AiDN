@@ -280,7 +280,7 @@ class ConsensusService:
         if not self.abci:
             return {"error": "no ABCI application"}
 
-        result = self.abci.finalize_block(
+        result, transaction_results = self.abci.finalize_block_with_results(
             block_height=block_height,
             block_hash=block_hash,
             txs=txs,
@@ -290,25 +290,34 @@ class ConsensusService:
         self._blocks_proposed += 1
         self._participation_count += 1
 
-        # Mark included txs as included
-        for tx_data in txs:
+        if result.code != "ok":
+            for tx_data in txs:
+                self._mark_proposal_transaction_failed(
+                    tx_data,
+                    block_height=block_height,
+                    error=result.log or "ABCI block finalization failed",
+                )
+            return {
+                "block_height": block_height,
+                "executed": 0,
+                "app_hash": "",
+                "code": result.code,
+            }
+
+        for tx_data, transaction_result in zip(txs, transaction_results, strict=True):
             try:
                 envelope = self._parse_envelope(tx_data)
                 op_id = envelope.operation_id
-                # Create submission record if it doesn't exist
-                if op_id not in self._submissions:
-                    self._submissions[op_id] = SubmissionRecord(
-                        operation_id=op_id,
-                        status=SubmissionStatus.PENDING,
-                        submitted_at=self._time_now(),
-                        transaction_hash=cometbft_transaction_hash(tx_data),
-                    )
+                self._ensure_submission_record(op_id, tx_data)
+                if transaction_result.code == "ok":
+                    self.mark_included(op_id, block_height)
+                    self.mark_finalized(op_id, block_height)
                 else:
-                    self._submissions[op_id].transaction_hash = cometbft_transaction_hash(
-                        tx_data
+                    self._mark_proposal_transaction_failed(
+                        tx_data,
+                        block_height=block_height,
+                        error=transaction_result.log or transaction_result.code,
                     )
-                self.mark_included(op_id, block_height)
-                self.mark_finalized(op_id, block_height)
             except Exception:
                 pass
 
@@ -317,7 +326,7 @@ class ConsensusService:
 
         return {
             "block_height": block_height,
-            "executed": int(result.tags[0].value) if result.tags else 0,
+            "executed": sum(1 for item in transaction_results if item.code == "ok"),
             "app_hash": commit.data.hex() if commit.data else "",
             "code": result.code,
         }
@@ -437,6 +446,40 @@ class ConsensusService:
     def _parse_envelope(self, tx_data: bytes) -> LedgerOperationEnvelope:
         obj = json.loads(tx_data)
         return LedgerOperationEnvelope.model_validate(obj)
+
+    def _ensure_submission_record(self, operation_id: str, tx_data: bytes) -> SubmissionRecord:
+        record = self._submissions.get(operation_id)
+        if record is None:
+            record = SubmissionRecord(
+                operation_id=operation_id,
+                status=SubmissionStatus.PENDING,
+                submitted_at=self._time_now(),
+                transaction_hash=cometbft_transaction_hash(tx_data),
+            )
+            self._submissions[operation_id] = record
+        else:
+            record.transaction_hash = cometbft_transaction_hash(tx_data)
+        return record
+
+    def _mark_proposal_transaction_failed(
+        self,
+        tx_data: bytes,
+        *,
+        block_height: int,
+        error: str,
+    ) -> None:
+        try:
+            envelope = self._parse_envelope(tx_data)
+        except Exception:
+            return
+        record = self._ensure_submission_record(envelope.operation_id, tx_data)
+        if record.status == SubmissionStatus.FINALIZED:
+            return
+        if record.status != SubmissionStatus.FAILED:
+            self._total_failed += 1
+        record.status = SubmissionStatus.FAILED
+        record.error = error
+        record.block_height = block_height
 
     def _serialize_envelope(self, envelope: LedgerOperationEnvelope) -> bytes:
         return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")

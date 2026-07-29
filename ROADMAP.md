@@ -318,6 +318,9 @@ Immediate priorities:
    atomically persists canonical JSON state after each finalized block, restores
    it fail-closed on restart, retains bounded hash-verified State Sync chunks,
    and serves/offers/applies those chunks through the v0.38 socket protocol.
+   The local validator proposal bridge also propagates per-transaction ABCI
+   outcomes and never marks a rejected or non-durably-finalized operation as
+   `FINALIZED`.
    Upstream multi-validator testnet coverage, remote-snapshot trust anchoring
    and operational backup/restore drills remain required before public
    network-finality claims.
