@@ -115,7 +115,11 @@ class TcpTransport(TransportGateway):
         wire = MessageFramer.encode(message)
         try:
             with self._lock:
+                if self._status != TransportStatus.CONNECTED or self._socket is None:
+                    raise ConnectionError("cannot send - transport is not connected")
                 self._socket.sendall(wire)
+        except ConnectionError:
+            raise
         except (OSError, BrokenPipeError) as exc:
             self._status = TransportStatus.ERROR
             raise ConnectionError(f"send failed: {exc}") from exc
@@ -142,6 +146,8 @@ class TcpTransport(TransportGateway):
         try:
             with self._lock:
                 data = self._socket.recv(65536)
+        except TimeoutError:
+            return None
         except (OSError, ConnectionResetError):
             self._status = TransportStatus.ERROR
             return None

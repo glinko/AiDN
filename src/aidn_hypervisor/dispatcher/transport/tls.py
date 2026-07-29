@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import socket
 import ssl
+import threading
 
 from aidn_hypervisor.dispatcher.models import NetworkMessage
 from aidn_hypervisor.dispatcher.transport.abc import (
@@ -303,6 +304,8 @@ class TlsListener:
         try:
             client = self._raw_server.accept()[0]
             client.settimeout(5.0)
+        except TimeoutError as exc:
+            raise TimeoutError("TLS accept timed out") from exc
         except (OSError, ssl.SSLError) as exc:
             raise ConnectionError(f"TLS accept failed: {exc}") from exc
         return TlsAcceptedTransport(client, peer_verified=self._verify_client)
@@ -400,18 +403,20 @@ class TlsAcceptedTransport:
         self._status = TransportStatus.CONNECTED
         self._recv_buffer = b""
         self._pending_messages: list[NetworkMessage] = []
+        self._lock = threading.RLock()
 
     def connect(self) -> None:
         if self._status != TransportStatus.CONNECTED:
             raise ConnectionError("accepted TLS transport cannot reconnect")
 
     def disconnect(self) -> None:
-        if self._status == TransportStatus.DISCONNECTED:
-            return
-        try:
-            self._client.close()
-        finally:
-            self._status = TransportStatus.DISCONNECTED
+        with self._lock:
+            if self._status == TransportStatus.DISCONNECTED:
+                return
+            try:
+                self._client.close()
+            finally:
+                self._status = TransportStatus.DISCONNECTED
 
     @property
     def status(self) -> TransportStatus:
@@ -426,19 +431,29 @@ class TlsAcceptedTransport:
         return self.tls_established and self._peer_verified
 
     def send(self, message: NetworkMessage) -> bytes:
-        if self._status != TransportStatus.CONNECTED:
-            raise ConnectionError("accepted TLS transport is disconnected")
         wire = MessageFramer.encode(message)
-        self._client.sendall(wire)
+        try:
+            with self._lock:
+                if self._status != TransportStatus.CONNECTED:
+                    raise ConnectionError("accepted TLS transport is disconnected")
+                self._client.sendall(wire)
+        except ConnectionError:
+            raise
+        except (OSError, ssl.SSLError) as exc:
+            self._status = TransportStatus.ERROR
+            raise ConnectionError(f"accepted TLS send failed: {exc}") from exc
         return wire
 
     def receive(self) -> NetworkMessage | None:
-        if self._status != TransportStatus.CONNECTED:
-            return None
-        if self._pending_messages:
-            return self._pending_messages.pop(0)
         try:
-            data = self._client.recv(65536)
+            with self._lock:
+                if self._status != TransportStatus.CONNECTED:
+                    return None
+                if self._pending_messages:
+                    return self._pending_messages.pop(0)
+                data = self._client.recv(65536)
+        except TimeoutError:
+            return None
         except (OSError, ssl.SSLError):
             self._status = TransportStatus.ERROR
             return None

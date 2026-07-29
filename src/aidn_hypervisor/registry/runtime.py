@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from .listener import RegistryReplicationTlsListener
 from .reconnect import RegistryReplicationReconnectSupervisor
+from .replicator import RegistryReplicator
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class RegistryReplicationRuntime:
         poll_interval_seconds: float = 0.1,
         maximum_recorded_errors: int = 100,
         cleanup: Callable[[], None] | None = None,
+        replicator: RegistryReplicator | None = None,
     ) -> None:
         if listener is None and reconnect_supervisor is None:
             raise ValueError("Registry replication runtime requires a listener or reconnect supervisor")
@@ -48,6 +50,7 @@ class RegistryReplicationRuntime:
         self._poll_interval_seconds = poll_interval_seconds
         self._maximum_recorded_errors = maximum_recorded_errors
         self._cleanup = cleanup
+        self._replicator = replicator
         self._stop_event = threading.Event()
         self._lock = threading.RLock()
         self._threads: list[threading.Thread] = []
@@ -62,6 +65,11 @@ class RegistryReplicationRuntime:
     def is_running(self) -> bool:
         with self._lock:
             return self._running
+
+    @property
+    def replicator(self) -> RegistryReplicator | None:
+        """The local replicator, exposed for operator health and acceptance work."""
+        return self._replicator
 
     def start(self) -> None:
         """Bind configured inbound transport and start bounded worker loops."""
@@ -149,6 +157,8 @@ class RegistryReplicationRuntime:
         while not self._stop_event.is_set():
             try:
                 peer_id = self._listener.accept_once()
+            except TimeoutError:
+                continue
             except (ConnectionError, OSError, PermissionError, ValueError) as exc:
                 if not self._stop_event.is_set():
                     self._record_error("listener", None, exc)
@@ -174,7 +184,9 @@ class RegistryReplicationRuntime:
             while not self._stop_event.is_set():
                 result = self._listener.receive_once(peer_id=peer_id)
                 if result is None:
-                    return
+                    if not self._listener.peer_transport_connected(peer_id=peer_id):
+                        return
+                    self._stop_event.wait(self._poll_interval_seconds)
         except (ConnectionError, OSError, PermissionError, ValueError, KeyError) as exc:
             if not self._stop_event.is_set():
                 self._record_error("inbound_receive", peer_id, exc)

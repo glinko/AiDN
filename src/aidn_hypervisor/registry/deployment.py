@@ -217,6 +217,7 @@ def build_registry_replication_runtime(
             reconnect_supervisor=supervisor,
             poll_interval_seconds=config.poll_interval_seconds,
             cleanup=materializer.close,
+            replicator=replicator,
         )
     except Exception:
         materializer.close()

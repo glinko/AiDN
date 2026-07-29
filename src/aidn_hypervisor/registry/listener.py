@@ -136,6 +136,12 @@ class RegistryReplicationTlsListener:
         if session is not None:
             session.disconnect()
 
+    def peer_transport_connected(self, *, peer_id: str) -> bool:
+        """Distinguish an idle receive timeout from a closed inbound transport."""
+        with self._lock:
+            session = self._sessions.get(peer_id)
+        return bool(session and session.is_transport_connected)
+
     def active_peer_ids(self) -> list[str]:
         with self._lock:
             return sorted(self._sessions)
