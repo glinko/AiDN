@@ -13,7 +13,6 @@ from pathlib import Path
 from aidn_hypervisor.plugins.container import DockerPluginHostLauncher
 from aidn_hypervisor.providers.models import PluginHostEntrypoint, PluginSandboxPolicy
 
-
 _HOST_CODE = """import json, os, socket
 result = {"uid": os.geteuid(), "secret_present": bool(os.getenv("AIDN_PLUGIN_HOST_ACTIVATION_SECRET"))}
 try:
