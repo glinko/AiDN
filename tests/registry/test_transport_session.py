@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 
 import pytest
@@ -183,6 +184,36 @@ def test_transport_session_rejects_stale_transport_sequence() -> None:
     assert session_b.receive_once() == {"event": "peer_handshake", "authenticated": True}
     assert session_a.receive_once() == {"event": "peer_handshake", "authenticated": True}
     with pytest.raises(ValueError, match="sequence is stale"):
+        session_b.receive_once()
+
+
+def test_transport_session_rejects_expired_or_relayed_frames() -> None:
+    session_a, session_b, signer_a, signer_b, key_a, key_b, transport_a, transport_b = (
+        _session_pair()
+    )
+    handshake_a = session_a.send_handshake(local_public_key=key_a, signer=signer_a)
+    handshake_b = session_b.send_handshake(local_public_key=key_b, signer=signer_b)
+    transport_b.incoming.append(handshake_a)
+    transport_a.incoming.append(handshake_b)
+    assert session_b.receive_once() == {"event": "peer_handshake", "authenticated": True}
+    assert session_a.receive_once() == {"event": "peer_handshake", "authenticated": True}
+
+    expired = handshake_a.model_copy(
+        update={
+            "source_sequence": 2,
+            "created_at": str(time.time() - 20),
+            "expiration": str(time.time() - 10),
+        }
+    )
+    transport_b.incoming.append(expired)
+    with pytest.raises(ValueError, match="message is expired"):
+        session_b.receive_once()
+
+    relayed = handshake_a.model_copy(
+        update={"source_sequence": 3, "hop_limit": 2}
+    )
+    transport_b.incoming.append(relayed)
+    with pytest.raises(ValueError, match="direct one-hop"):
         session_b.receive_once()
 
 

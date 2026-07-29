@@ -26,6 +26,14 @@ Three-stage pipeline: **quality baseline** → **tests** → **opt-in integratio
 | Tests | hermetic non-integration suite with coverage | yes |
 | Integration | real provider and network checks via manual dispatch | configured environment only |
 
+## Release Verification
+
+The regular CI build includes a distribution gate: it builds both wheel and
+source archives, installs the wheel outside the checkout, and uploads
+`SHA256SUMS` with the artifacts. The manual `Release verification` workflow
+reruns the locked hermetic suite before producing those artifacts. Its optional
+four-validator CometBFT drill is Docker-backed and intentionally opt-in.
+
 ## Docs
 
 - [Vision](00_VISION.md)

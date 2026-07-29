@@ -6,6 +6,7 @@ import secrets
 import time
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from aidn_hypervisor.dispatcher.models import (
@@ -178,6 +179,10 @@ class RegistryReplicationTransportSession:
             message = message.model_copy(
                 update={
                     "source_sequence": self._outbound_sequence,
+                    # RegistryMessageBuilder is also used for local queueing,
+                    # where zero means "not routed yet". Network transport is
+                    # always peer-to-peer and must carry its explicit boundary.
+                    "hop_limit": 1,
                     "authentication": {
                         "transport": "TLS",
                         "peer_authentication": "ed25519",
@@ -228,6 +233,14 @@ class RegistryReplicationTransportSession:
             raise ValueError("Registry replication network revision mismatch")
         if message.channel_class != "REGISTRY" or message.channel_id != "registry:replication":
             raise ValueError("Registry replication channel is invalid")
+        if message.hop_limit != 1:
+            raise ValueError("Registry replication requires a direct one-hop message")
+        expiration = self._parse_message_time(message.expiration, field="expiration")
+        created_at = self._parse_message_time(message.created_at, field="created_at")
+        if created_at > expiration:
+            raise ValueError("Registry replication message lifetime is invalid")
+        if expiration < self._clock():
+            raise ValueError("Registry replication message is expired")
         if (
             message.source_subject.subject_type != "registry_node"
             or message.source_subject.subject_id != self._peer_id
@@ -238,3 +251,18 @@ class RegistryReplicationTransportSession:
         if message.source_sequence <= self._last_inbound_sequence:
             raise ValueError("Registry replication transport sequence is stale")
         self._last_inbound_sequence = message.source_sequence
+
+    @staticmethod
+    def _parse_message_time(value: str, *, field: str) -> float:
+        """Accept the shared envelope's epoch or RFC 3339 time representation."""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            pass
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (AttributeError, ValueError) as exc:
+            raise ValueError(f"Registry replication {field} is invalid") from exc
+        if parsed.tzinfo is None:
+            raise ValueError(f"Registry replication {field} must include a timezone")
+        return parsed.astimezone(UTC).timestamp()

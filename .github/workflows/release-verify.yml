@@ -1,0 +1,73 @@
+name: Release verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_consensus_drill:
+        description: Run the Docker-backed four-validator CometBFT drill
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-verify-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-artifact:
+    name: Reproducible package verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Verify locked dependencies
+        run: uv sync --all-extras --frozen
+      - name: Run hermetic release regression suite
+        run: uv run pytest -q -m "not integration" --disable-warnings --cov-fail-under=70
+      - name: Build distributions
+        run: uv build
+      - name: Verify isolated wheel installation
+        run: |
+          python -m venv /tmp/aidn-release-verify
+          /tmp/aidn-release-verify/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/aidn-release-verify/bin/python -c 'from aidn_hypervisor.main import build_app; assert build_app().title == "AiDN Hypervisor"'
+      - name: Emit immutable artifact digests
+        run: sha256sum dist/* > dist/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-verification-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+
+  consensus-drill:
+    name: Four-validator CometBFT drill
+    if: inputs.run_consensus_drill
+    needs: release-artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start and verify isolated validator network
+        run: |
+          chmod +x tools/run-cometbft-multivalidator-devnet.sh
+          tools/run-cometbft-multivalidator-devnet.sh "${RUNNER_TEMP}/aidn-cometbft-state"
+          python tools/verify-cometbft-multivalidator-devnet.py
+      - name: Preserve validator diagnostics on failure
+        if: failure()
+        run: |
+          docker ps -a
+          docker logs aidn-comet-0 --tail 160 || true
+          docker logs aidn-abci-0 --tail 160 || true
+      - name: Clean up isolated validator network
+        if: always()
+        run: |
+          for i in 0 1 2 3; do docker rm -f "aidn-comet-$i" "aidn-abci-$i" || true; done
+          docker network rm aidn-cometbft-devnet || true
