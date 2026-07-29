@@ -567,7 +567,7 @@ Exit criteria:
 
 Order of work right now:
 
-1. Operator deployment configuration and encrypted local Secret Manager-backed certificate/signing-key handles now compose the explicitly injected Registry replication runtime. Validate replication against an independently operated peer next.
+1. Operator deployment configuration and encrypted local Secret Manager-backed certificate/signing-key handles now compose the explicitly injected Registry replication runtime. The automated acceptance test proves real mTLS, signed peer authentication, inventory exchange and object transfer between distinct local secret stores, and fixed timeout/sequence/concurrent-close defects. Cross-host validation with an independently operated peer remains required before a directory trust claim.
 2. Replace the temporary `UNSANDBOXED_HOST` package profile with isolated package-backed processes and Secret Manager-backed activation credential delivery.
 3. Establish trusted remote-snapshot anchoring and an independently operated multi-validator testnet before making public network-finality claims.
 
