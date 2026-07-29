@@ -32,6 +32,7 @@ docker run --rm --user 0 --entrypoint /bin/sh -v "$ROOT/testnet:/work" "$IMAGE" 
 for i in 0 1 2 3; do
   mkdir -p "$ROOT/state/node-$i"
   sed -i "s#^proxy_app = .*#proxy_app = \"tcp://aidn-abci-$i:26658\"#" "$ROOT/testnet/node$i/config/config.toml"
+  sed -i 's#^laddr = "tcp://127.0.0.1:26657"#laddr = "tcp://0.0.0.0:26657"#' "$ROOT/testnet/node$i/config/config.toml"
   docker rm -f "aidn-abci-$i" "aidn-comet-$i" >/dev/null 2>&1 || true
   docker run -d --name "aidn-abci-$i" --network "$NETWORK" \
     -e AIDN_HYPERVISOR_STATE_PATH=/state/hypervisor.json \
