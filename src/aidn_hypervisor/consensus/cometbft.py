@@ -16,7 +16,13 @@ from typing import Protocol
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
+from aidn_hypervisor.consensus.cometbft_crypto import cometbft_validator_set_from_rpc
 from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
+from aidn_hypervisor.consensus.light_client import (
+    CometBftLightClient,
+    CometBftLightClientProofVerifier,
+    CometBftValidatorSet,
+)
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 
 
@@ -133,6 +139,125 @@ class HttpCometBftRpcTransport:
             raise ValueError("CometBFT RPC response is invalid")
         return decoded
 
+
+class CometBftRpcValidatorSetProvider:
+    """Load complete, canonically ordered CometBFT validator sets over RPC.
+
+    A partially fetched set cannot be used for validator-hash or voting-power
+    checks.  The provider therefore verifies every page's declared height and
+    total before returning a typed validator set.
+    """
+
+    def __init__(
+        self,
+        *,
+        transport: CometBftRpcTransport,
+        timeout_seconds: int = 10,
+        per_page: int = 100,
+        maximum_validators: int = 10_000,
+    ) -> None:
+        if timeout_seconds < 1:
+            raise ValueError("CometBFT timeout_seconds must be positive")
+        if not 1 <= per_page <= 100:
+            raise ValueError("CometBFT per_page must be between 1 and 100")
+        if maximum_validators < per_page:
+            raise ValueError("CometBFT maximum_validators is too small")
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+        self._per_page = per_page
+        self._maximum_validators = maximum_validators
+
+    def validator_sets_for_height(
+        self, height: int
+    ) -> tuple[CometBftValidatorSet, CometBftValidatorSet]:
+        """Return the current and next set committed by one header height."""
+        if height < 1:
+            raise ValueError("CometBFT validator height must be positive")
+        return self.validator_set_at(height), self.validator_set_at(height + 1)
+
+    def validator_set_at(self, height: int) -> CometBftValidatorSet:
+        """Fetch every page for one exact height before constructing the set."""
+        if height < 1:
+            raise ValueError("CometBFT validator height must be positive")
+        validators: list[dict[str, object]] = []
+        expected_total: int | None = None
+        page = 1
+        while True:
+            response = self._rpc_result(
+                self._transport.get(
+                    "/validators",
+                    params={
+                        "height": str(height),
+                        "page": str(page),
+                        "per_page": str(self._per_page),
+                    },
+                    timeout_seconds=self._timeout_seconds,
+                )
+            )
+            if _positive_height(response.get("block_height")) != height:
+                raise ValueError("CometBFT validator page height does not match")
+            total = self._nonnegative_int(response.get("total"), "validator total")
+            count = self._nonnegative_int(response.get("count"), "validator count")
+            page_validators = response.get("validators")
+            if not isinstance(page_validators, list) or len(page_validators) != count:
+                raise ValueError("CometBFT validator page count is invalid")
+            if total < 1 or total > self._maximum_validators:
+                raise ValueError("CometBFT validator total is outside the configured limit")
+            if expected_total is None:
+                expected_total = total
+            elif total != expected_total:
+                raise ValueError("CometBFT validator total changed during pagination")
+            if count == 0 or len(validators) + count > total:
+                raise ValueError("CometBFT validator pagination is incomplete")
+            if not all(isinstance(validator, dict) for validator in page_validators):
+                raise ValueError("CometBFT validator page contains an invalid record")
+            validators.extend(page_validators)
+            if len(validators) == total:
+                return cometbft_validator_set_from_rpc(validators)
+            page += 1
+
+    def _rpc_result(self, response: dict) -> dict:
+        if response.get("error") not in {None, ""}:
+            raise ValueError("CometBFT RPC returned an error")
+        result = response.get("result", response)
+        if not isinstance(result, dict):
+            raise ValueError("CometBFT RPC result is invalid")
+        return result
+
+    def _nonnegative_int(self, value: object, field_name: str) -> int:
+        try:
+            result = int(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"CometBFT {field_name} is invalid") from error
+        if result < 0:
+            raise ValueError(f"CometBFT {field_name} is invalid")
+        return result
+
+
+class CometBftRpcLightClientProofVerifier(CometBftLightClientProofVerifier):
+    """Production wiring for one light client and bounded RPC validator paging."""
+
+    def __init__(
+        self,
+        *,
+        light_client: CometBftLightClient,
+        transport: CometBftRpcTransport,
+        verify_transaction_inclusion: Callable[[dict, str, int, str], bool],
+        timeout_seconds: int = 10,
+        per_page: int = 100,
+        maximum_validators: int = 10_000,
+    ) -> None:
+        self.validator_set_provider = CometBftRpcValidatorSetProvider(
+            transport=transport,
+            timeout_seconds=timeout_seconds,
+            per_page=per_page,
+            maximum_validators=maximum_validators,
+        )
+        super().__init__(
+            light_client=light_client,
+            validator_sets_for_height=self.validator_set_provider.validator_sets_for_height,
+            verify_transaction_inclusion=verify_transaction_inclusion,
+        )
 
 class CometBftRpcFinalitySource:
     """Resolve operation finality using CometBFT ``/tx`` and ``/commit`` RPCs.

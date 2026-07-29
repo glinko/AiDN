@@ -5,6 +5,7 @@ import pytest
 
 from aidn_hypervisor.consensus.cometbft import (
     CometBftRpcFinalitySource,
+    CometBftRpcValidatorSetProvider,
     HttpCometBftRpcTransport,
     cometbft_transaction_hash,
 )
@@ -40,6 +41,35 @@ class AcceptingProofVerifier:
     def verify_commit(self, **kwargs) -> bool:
         self.commit_calls.append(kwargs)
         return self.accept_commit
+
+
+class ValidatorPagingTransport:
+    def __init__(self, pages: dict[tuple[str, str], dict]) -> None:
+        self.pages = pages
+        self.calls: list[tuple[str, dict[str, str]]] = []
+
+    def get(self, path: str, *, params: dict[str, str], timeout_seconds: int) -> dict:
+        self.calls.append((path, params))
+        return self.pages[(params["height"], params["page"])]
+
+
+def _validator(address: str) -> dict:
+    return {
+        "address": address,
+        "pub_key": {"type": "tendermint/PubKeyEd25519", "value": base64.b64encode(b"x" * 32).decode("ascii")},
+        "voting_power": "1",
+    }
+
+
+def _validator_page(*, height: int, total: int, validators: list[dict]) -> dict:
+    return {
+        "result": {
+            "block_height": str(height),
+            "total": str(total),
+            "count": str(len(validators)),
+            "validators": validators,
+        }
+    }
 
 
 def _responses(*, transaction_bytes: bytes, transaction_hash: str) -> tuple[dict, dict]:
@@ -161,3 +191,38 @@ def test_http_cometbft_transport_rejects_unsafe_endpoint_configuration():
         HttpCometBftRpcTransport("https://token@example.test")
     with pytest.raises(ValueError, match="path"):
         HttpCometBftRpcTransport("https://example.test/rpc")
+
+
+def test_validator_set_provider_fetches_every_page_for_current_and_next_sets():
+    first = [_validator("A" * 40), _validator("B" * 40)]
+    second = [_validator("C" * 40)]
+    next_first = [_validator("D" * 40), _validator("E" * 40)]
+    next_second = [_validator("F" * 40)]
+    transport = ValidatorPagingTransport(
+        {
+            ("11", "1"): _validator_page(height=11, total=3, validators=first),
+            ("11", "2"): _validator_page(height=11, total=3, validators=second),
+            ("12", "1"): _validator_page(height=12, total=3, validators=next_first),
+            ("12", "2"): _validator_page(height=12, total=3, validators=next_second),
+        }
+    )
+    provider = CometBftRpcValidatorSetProvider(transport=transport, per_page=2)
+
+    current, next_set = provider.validator_sets_for_height(11)
+
+    assert [validator.address for validator in current.validators] == ["A" * 40, "B" * 40, "C" * 40]
+    assert [validator.address for validator in next_set.validators] == ["D" * 40, "E" * 40, "F" * 40]
+    assert len(transport.calls) == 4
+
+
+def test_validator_set_provider_rejects_changed_total_during_pagination():
+    transport = ValidatorPagingTransport(
+        {
+            ("11", "1"): _validator_page(height=11, total=3, validators=[_validator("A" * 40)]),
+            ("11", "2"): _validator_page(height=11, total=2, validators=[_validator("B" * 40)]),
+        }
+    )
+    provider = CometBftRpcValidatorSetProvider(transport=transport, per_page=1)
+
+    with pytest.raises(ValueError, match="changed"):
+        provider.validator_set_at(11)

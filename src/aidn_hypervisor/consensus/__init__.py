@@ -10,7 +10,9 @@ from aidn_hypervisor.consensus.admission import (
 from aidn_hypervisor.consensus.cometbft import (
     CometBftProofVerifier,
     CometBftRpcFinalitySource,
+    CometBftRpcLightClientProofVerifier,
     CometBftRpcTransport,
+    CometBftRpcValidatorSetProvider,
     HttpCometBftRpcTransport,
     cometbft_transaction_hash,
 )
@@ -56,7 +58,9 @@ __all__ = [
     "VerifiedConsensusFinalitySource",
     "CometBftProofVerifier",
     "CometBftRpcFinalitySource",
+    "CometBftRpcLightClientProofVerifier",
     "CometBftRpcTransport",
+    "CometBftRpcValidatorSetProvider",
     "HttpCometBftRpcTransport",
     "cometbft_transaction_hash",
     "StrictCometBftEd25519Backend",
