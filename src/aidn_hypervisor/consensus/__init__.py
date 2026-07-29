@@ -12,6 +12,11 @@ from aidn_hypervisor.consensus.cometbft import (
     HttpCometBftRpcTransport,
     cometbft_transaction_hash,
 )
+from aidn_hypervisor.consensus.cometbft_crypto import (
+    StrictCometBftEd25519Backend,
+    cometbft_validator_set_from_rpc,
+    cometbft_vote_sign_bytes,
+)
 from aidn_hypervisor.consensus.finality import (
     ConsensusFinalityEvidence,
     ConsensusFinalitySource,
@@ -47,6 +52,9 @@ __all__ = [
     "CometBftRpcTransport",
     "HttpCometBftRpcTransport",
     "cometbft_transaction_hash",
+    "StrictCometBftEd25519Backend",
+    "cometbft_validator_set_from_rpc",
+    "cometbft_vote_sign_bytes",
     "CometBftCryptographicBackend",
     "CometBftLightClient",
     "CometBftLightClientProofVerifier",
