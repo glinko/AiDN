@@ -67,6 +67,17 @@ def test_finality_evidence_rejects_incomplete_or_unsupported_records():
         )
 
 
+def test_finality_evidence_permits_empty_cometbft_app_hash():
+    evidence = ConsensusFinalityEvidence(
+        **{
+            **_evidence().model_dump(),
+            "app_hash": "",
+        }
+    )
+
+    assert evidence.app_hash == ""
+
+
 def test_hypervisor_reports_local_consensus_state_without_claiming_finality():
     consensus = ConsensusService(ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR))
     envelope = LedgerOperationEnvelope(

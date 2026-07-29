@@ -229,6 +229,21 @@ def test_backend_rejects_any_invalid_or_duplicate_commit_signature():
     )
 
 
+def test_zip215_accepts_a_standard_ed25519_signature():
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    message = b"standard-ed25519-signature"
+
+    assert zip215_verify(
+        signature=private_key.sign(message),
+        public_key=public_key,
+        message=message,
+    )
+
+
 def test_zip215_accepts_noncanonical_identity_encoding_that_strict_ed25519_rejects():
     identity_encoding = (2**255 - 18).to_bytes(32, "little")
     signature = identity_encoding + b"\x00" * 32

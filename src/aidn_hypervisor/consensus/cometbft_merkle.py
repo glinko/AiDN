@@ -48,14 +48,14 @@ def verify_cometbft_transaction_inclusion(
         index = _nonnegative_int(proof.get("index"))
         if index >= total:
             return False
-        leaf_hash = _decode_hash(proof.get("leaf_hash"))
+        leaf_hash = _decode_proof_hash(proof.get("leaf_hash"))
         expected_leaf_hash = _leaf_hash(normalized_transaction_hash)
         if leaf_hash != expected_leaf_hash:
             return False
         aunts_value = proof.get("aunts")
         if not isinstance(aunts_value, list) or len(aunts_value) > _MAX_AUNTS:
             return False
-        aunts = [_decode_hash(aunt) for aunt in aunts_value]
+        aunts = [_decode_proof_hash(aunt) for aunt in aunts_value]
         root_hash = _compute_root(index=index, total=total, leaf_hash=leaf_hash, aunts=aunts)
         return root_hash == committed_data_hash
     except (TypeError, ValueError):
@@ -80,6 +80,19 @@ def _decode_hash(value: object) -> bytes:
         raise ValueError("CometBFT hash is invalid") from error
     if len(decoded) != _HASH_LENGTH:
         raise ValueError("CometBFT hash is invalid")
+    return decoded
+
+
+def _decode_proof_hash(value: object) -> bytes:
+    """Decode a Merkle-proof hash from CometBFT RPC's base64 bytes field."""
+    if not isinstance(value, str):
+        raise ValueError("CometBFT proof hash is invalid")
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except ValueError as error:
+        raise ValueError("CometBFT proof hash is invalid") from error
+    if len(decoded) != _HASH_LENGTH:
+        raise ValueError("CometBFT proof hash is invalid")
     return decoded
 
 

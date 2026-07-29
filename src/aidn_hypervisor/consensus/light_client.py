@@ -70,16 +70,17 @@ class TrustedCometBftCheckpoint:
     next_validator_set_hash: str
 
     def __post_init__(self) -> None:
-        required_fields = (
+        required_nonempty_fields = (
             self.chain_id,
             self.block_id,
-            self.app_hash,
             self.header_time,
             self.validator_set_hash,
             self.next_validator_set_hash,
         )
-        if any(not field.strip() for field in required_fields):
+        if any(not field.strip() for field in required_nonempty_fields):
             raise ValueError("Trusted CometBFT checkpoint has an empty required field")
+        if not isinstance(self.app_hash, str):
+            raise ValueError("Trusted CometBFT checkpoint app_hash is invalid")
         if self.height < 1:
             raise ValueError("Trusted CometBFT checkpoint height must be positive")
 
@@ -281,11 +282,11 @@ class CometBftLightClientProofVerifier:
         try:
             return bool(
                 self._verify_transaction_inclusion(
-                    transaction_result,
-                    transaction_hash,
-                    block_height,
-                    block_id,
-                    data_hash,
+                    transaction_result=transaction_result,
+                    transaction_hash=transaction_hash,
+                    block_height=block_height,
+                    block_id=block_id,
+                    data_hash=data_hash,
                 )
             )
         except Exception:

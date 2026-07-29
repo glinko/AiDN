@@ -301,15 +301,17 @@ Immediate priorities:
 2. Replace the temporary `UNSANDBOXED_HOST` package profile with actual sandbox/container lifecycle and Secret Manager-backed activation-secret persistence before enabling shell, container, download or package-manager executors. `SANDBOX_REQUIRED` remains fail-closed.
 3. Bind Endpoint Configuration publications to a real Ed25519 owner-wallet signature. New owner wallets and API publications use a verifiable signature over the complete published record; public paid Session admission requires the signature to match the canonical owner identity. Public Registry advertisements carry that proof only for external-facing Endpoints, and Remote Endpoint attachment verifies the proof, summary binding and synchronized owner identity before creating a Proxy target. When the owner identity is absent locally, Remote attach performs a bounded root-only HTTP(S) peer sync and requires a hash-bound Ed25519 envelope matching the expected Registry node, operator and owner wallet before importing it. Legacy local records remain readable but are explicitly unverified. Authenticated Registry replication and peer transport authentication remain pending.
 4. Validate the complete RPC/light-client/ABCI path against an upstream
-   testnet. Canonical CometBFT v0.38 Header hashing now binds every ordered
-   header field, including `data_hash`, to the validator-precommitted
-   `block_id`; `/tx?prove=true` verifies raw transaction bytes, transaction
-   hash, leaf, branch and the resulting header-committed root. The production
-   finality factory requires an operator-approved trusted checkpoint and binds
-   strict RPC/light-client verification to the local ABCI commitment. ZIP-215
-   verification, paginated validator sets and canonical protobuf/hash handling
-   now fail closed, but must not yet be represented as public network finality
-   until live testnet coverage is complete.
+   testnet. A controlled CometBFT v0.38.0 single-validator devnet now proves
+   the full external proof path for an actual `LedgerOperationEnvelope`:
+   `/tx?prove=true` transaction binding, base64 TxProof branches, committed
+   `data_hash`, canonical header `block_id`, ZIP-215 precommit verification and
+   checkpoint transition all succeed. That compatibility run corrected four
+   real RPC-boundary defects: omitted zero-valued `version.app`, empty initial
+   `app_hash`, base64 proof hashes, and the ZIP-215 base-point coordinate.
+   The production finality factory still requires an operator-approved trusted
+   checkpoint and exact local ABCI commitment. Upstream multi-validator testnet
+   coverage and a real AiDN ABCI socket transport remain required before public
+   network-finality claims.
 
 ## Milestones
 

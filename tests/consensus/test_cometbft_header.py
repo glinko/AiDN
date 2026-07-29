@@ -31,6 +31,13 @@ def test_cometbft_header_hash_matches_v038_canonical_field_merkle_vector():
     assert cometbft_header_hash(_header()) == "863FCECB84185D31CEBC5D5DE0C0BA7B7778337ABF78D857EA461D68196EA0E4"
 
 
+def test_cometbft_header_hash_defaults_omitted_zero_app_version():
+    header = _header()
+    header["version"].pop("app")
+
+    assert cometbft_header_hash(header) == cometbft_header_hash(_header())
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

@@ -119,6 +119,24 @@ def _client(*, now: datetime | None = None) -> tuple[CometBftLightClient, TestCr
     )
 
 
+def test_trusted_checkpoint_permits_empty_cometbft_app_hash():
+    backend = TestCryptographyBackend()
+    validators = _validator_set(("validator-a", 1))
+
+    checkpoint = TrustedCometBftCheckpoint(
+        chain_id="aidn-testnet-1",
+        height=1,
+        block_id="block-1",
+        app_hash="",
+        header_time="2030-01-01T00:00:00Z",
+        validator_set=validators,
+        validator_set_hash=backend.validator_set_hash(validators),
+        next_validator_set_hash=backend.validator_set_hash(validators),
+    )
+
+    assert checkpoint.app_hash == ""
+
+
 def test_light_client_accepts_adjacent_two_thirds_commit_and_rotates_checkpoint():
     client, backend = _client()
     validators = client.trusted_checkpoint.validator_set
@@ -261,10 +279,10 @@ def test_light_client_proof_verifier_bridges_commit_and_transaction_validation()
     verifier = CometBftLightClientProofVerifier(
         light_client=client,
         validator_sets_for_height=lambda height: (validators, validators),
-        verify_transaction_inclusion=lambda result, tx_hash, height, block_id, data_hash: (
-            result["proof"] == {"ops": []}
-            and tx_hash == "A" * 64
-            and height == 11
+        verify_transaction_inclusion=lambda transaction_result, transaction_hash, block_height, block_id, data_hash: (
+            transaction_result["proof"] == {"ops": []}
+            and transaction_hash == "A" * 64
+            and block_height == 11
             and block_id == _block_id(signed_header)
             and data_hash == "data-11"
         ),

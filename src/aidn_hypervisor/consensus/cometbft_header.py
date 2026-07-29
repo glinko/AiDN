@@ -24,7 +24,8 @@ def cometbft_header_hash(header: Mapping[str, object]) -> str:
     """
     version = _mapping(header.get("version"), "header version")
     block_version = _nonnegative_int(version.get("block"), "block version")
-    app_version = _nonnegative_int(version.get("app"), "app version")
+    # CometBFT RPC omits protobuf scalar fields at their zero value.
+    app_version = _nonnegative_int(version.get("app", 0), "app version")
     chain_id = _string(header.get("chain_id"), "header chain_id")
     height = _positive_int(header.get("height"), "header height")
     timestamp = _protobuf_timestamp(_string(header.get("time"), "header time"))

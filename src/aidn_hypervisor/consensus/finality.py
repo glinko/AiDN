@@ -32,13 +32,14 @@ class ConsensusFinalityEvidence:
             "operation_id": self.operation_id,
             "chain_id": self.chain_id,
             "block_id": self.block_id,
-            "app_hash": self.app_hash,
             "commit_hash": self.commit_hash,
             "finalized_at": self.finalized_at,
             "verifier_id": self.verifier_id,
         }
         if any(not value.strip() for value in required_text.values()):
             raise ValueError("Consensus finality evidence has an empty required field")
+        if not isinstance(self.app_hash, str):
+            raise ValueError("Consensus finality evidence app_hash is invalid")
         if self.block_height < 1:
             raise ValueError("Consensus finality evidence block_height must be positive")
         if self.proof_version != "consensus-finality-evidence.v1":

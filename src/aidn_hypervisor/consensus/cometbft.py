@@ -53,6 +53,13 @@ def _normalise_hash(value: object) -> str:
     return normalized
 
 
+def _normalise_app_hash(value: object) -> str:
+    """Normalize a CometBFT AppHash, including the valid empty initial root."""
+    if value == "":
+        return ""
+    return _normalise_hash(value)
+
+
 def _positive_height(value: object) -> int:
     try:
         height = int(value)
@@ -343,7 +350,7 @@ class CometBftRpcFinalitySource:
             if _positive_height(header.get("height")) != block_height:
                 return None
             block_id = self._block_id(commit)
-            app_hash = _normalise_hash(header.get("app_hash"))
+            app_hash = _normalise_app_hash(header.get("app_hash"))
             data_hash = _normalise_hash(header.get("data_hash"))
             finalized_at = header.get("time")
             if not isinstance(finalized_at, str) or not finalized_at.strip():

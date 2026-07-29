@@ -30,8 +30,8 @@ def _proof_for_first_transaction() -> tuple[dict, str]:
             "proof": {
                 "total": "2",
                 "index": "0",
-                "leaf_hash": _leaf_hash(transaction).hex().upper(),
-                "aunts": [_leaf_hash(sibling).hex().upper()],
+                "leaf_hash": base64.b64encode(_leaf_hash(transaction)).decode("ascii"),
+                "aunts": [base64.b64encode(_leaf_hash(sibling)).decode("ascii")],
             },
         },
     }
