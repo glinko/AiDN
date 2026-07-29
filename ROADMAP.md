@@ -300,11 +300,15 @@ Immediate priorities:
 1. Complete production Registry peer transport operation. The Replicator now has an opt-in fail-closed Ed25519 handshake gate with nonce replay protection for inbound and outbound exchange; operator-managed peer keys persist in the Registry snapshot, survive restart, and key rotation or disablement revokes the active replication session. A transport session now requires verified TLS, owns the outer message sequence, carries the signed handshake and resets authorization on reconnect. A bounded outbound reconnect supervisor now retries only approved peers, requires a fresh handshake after every new transport, and backs off on connection, frame or handshake-timeout failure. Bounded Plugin Release object transfer, Registry reconciliation and revocation projection also exist. The multi-peer listener and fail-closed finality-source boundary now exist; a production CometBFT light-client verifier remains required before making network-wide directory claims.
 2. Replace the temporary `UNSANDBOXED_HOST` package profile with actual sandbox/container lifecycle and Secret Manager-backed activation-secret persistence before enabling shell, container, download or package-manager executors. `SANDBOX_REQUIRED` remains fail-closed.
 3. Bind Endpoint Configuration publications to a real Ed25519 owner-wallet signature. New owner wallets and API publications use a verifiable signature over the complete published record; public paid Session admission requires the signature to match the canonical owner identity. Public Registry advertisements carry that proof only for external-facing Endpoints, and Remote Endpoint attachment verifies the proof, summary binding and synchronized owner identity before creating a Proxy target. When the owner identity is absent locally, Remote attach performs a bounded root-only HTTP(S) peer sync and requires a hash-bound Ed25519 envelope matching the expected Registry node, operator and owner wallet before importing it. Legacy local records remain readable but are explicitly unverified. Authenticated Registry replication and peer transport authentication remain pending.
-4. Bind `/tx?prove=true` verification to the committed header `data_hash`, then
-   validate the complete RPC/light-client/ABCI path against an upstream testnet.
-   ZIP-215 verification, paginated validator sets, canonical protobuf/hash
-   handling and local ABCI commitment binding now fail closed, but must not yet
-   be represented as public network finality.
+4. Implement canonical CometBFT Header-to-BlockID hashing, then validate the
+   complete RPC/light-client/ABCI path against an upstream testnet.
+   `/tx?prove=true` now verifies the raw transaction, transaction hash, leaf,
+   branch and root against the RPC header `data_hash`; that header field must
+   still be cryptographically bound to the signed `block_id` before it can be
+   treated as committed. The production light-client adapter uses the strict
+   transaction verifier by default. ZIP-215 verification, paginated validator
+   sets, canonical protobuf/hash handling and local ABCI commitment binding now
+   fail closed, but must not yet be represented as public network finality.
 
 ## Milestones
 

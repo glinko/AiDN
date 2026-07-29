@@ -91,6 +91,7 @@ def _responses(*, transaction_bytes: bytes, transaction_hash: str) -> tuple[dict
                         "chain_id": "aidn-testnet-1",
                         "height": "11",
                         "app_hash": "A" * 64,
+                        "data_hash": "C" * 64,
                         "time": "2030-01-01T00:00:00Z",
                     },
                     "commit": {"block_id": {"hash": "B" * 64}},
@@ -147,6 +148,7 @@ def test_cometbft_finality_source_requires_verified_transaction_and_commit_proof
         ("/commit", {"height": "11"}),
     ]
     assert verifier.transaction_calls[0]["transaction_hash"] == transport.calls[0][1]["hash"][2:]
+    assert verifier.transaction_calls[0]["data_hash"] == "C" * 64
     assert verifier.commit_calls[0]["chain_id"] == "aidn-testnet-1"
 
 

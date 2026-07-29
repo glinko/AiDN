@@ -217,11 +217,12 @@ def test_light_client_proof_verifier_bridges_commit_and_transaction_validation()
     verifier = CometBftLightClientProofVerifier(
         light_client=client,
         validator_sets_for_height=lambda height: (validators, validators),
-        verify_transaction_inclusion=lambda result, tx_hash, height, block_id: (
+        verify_transaction_inclusion=lambda result, tx_hash, height, block_id, data_hash: (
             result["proof"] == {"ops": []}
             and tx_hash == "A" * 64
             and height == 11
             and block_id == "block-11"
+            and data_hash == "data-11"
         ),
     )
 
@@ -230,6 +231,7 @@ def test_light_client_proof_verifier_bridges_commit_and_transaction_validation()
         transaction_hash="A" * 64,
         block_height=11,
         block_id="block-11",
+        data_hash="data-11",
     )
     assert verifier.verify_commit(
         signed_header=signed_header,

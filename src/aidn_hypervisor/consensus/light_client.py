@@ -258,7 +258,7 @@ class CometBftLightClientProofVerifier:
         *,
         light_client: CometBftLightClient,
         validator_sets_for_height: Callable[[int], tuple[CometBftValidatorSet, CometBftValidatorSet]],
-        verify_transaction_inclusion: Callable[[dict, str, int, str], bool],
+        verify_transaction_inclusion: Callable[[dict, str, int, str, str], bool],
     ) -> None:
         self._light_client = light_client
         self._validator_sets_for_height = validator_sets_for_height
@@ -271,6 +271,7 @@ class CometBftLightClientProofVerifier:
         transaction_hash: str,
         block_height: int,
         block_id: str,
+        data_hash: str,
     ) -> bool:
         try:
             return bool(
@@ -279,6 +280,7 @@ class CometBftLightClientProofVerifier:
                     transaction_hash,
                     block_height,
                     block_id,
+                    data_hash,
                 )
             )
         except Exception:

@@ -17,6 +17,9 @@ from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
 from aidn_hypervisor.consensus.cometbft_crypto import cometbft_validator_set_from_rpc
+from aidn_hypervisor.consensus.cometbft_merkle import (
+    verify_cometbft_transaction_inclusion,
+)
 from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
 from aidn_hypervisor.consensus.light_client import (
     CometBftLightClient,
@@ -82,6 +85,7 @@ class CometBftProofVerifier(Protocol):
         transaction_hash: str,
         block_height: int,
         block_id: str,
+        data_hash: str,
     ) -> bool:
         """Validate the transaction inclusion proof against the committed block."""
 
@@ -242,7 +246,8 @@ class CometBftRpcLightClientProofVerifier(CometBftLightClientProofVerifier):
         *,
         light_client: CometBftLightClient,
         transport: CometBftRpcTransport,
-        verify_transaction_inclusion: Callable[[dict, str, int, str], bool],
+        verify_transaction_inclusion: Callable[[dict, str, int, str, str], bool]
+        | None = None,
         timeout_seconds: int = 10,
         per_page: int = 100,
         maximum_validators: int = 10_000,
@@ -256,7 +261,9 @@ class CometBftRpcLightClientProofVerifier(CometBftLightClientProofVerifier):
         super().__init__(
             light_client=light_client,
             validator_sets_for_height=self.validator_set_provider.validator_sets_for_height,
-            verify_transaction_inclusion=verify_transaction_inclusion,
+            verify_transaction_inclusion=(
+                verify_transaction_inclusion or verify_cometbft_transaction_inclusion
+            ),
         )
 
 class CometBftRpcFinalitySource:
@@ -337,6 +344,7 @@ class CometBftRpcFinalitySource:
                 return None
             block_id = self._block_id(commit)
             app_hash = _normalise_hash(header.get("app_hash"))
+            data_hash = _normalise_hash(header.get("data_hash"))
             finalized_at = header.get("time")
             if not isinstance(finalized_at, str) or not finalized_at.strip():
                 return None
@@ -345,6 +353,7 @@ class CometBftRpcFinalitySource:
                 transaction_hash=transaction_hash,
                 block_height=block_height,
                 block_id=block_id,
+                data_hash=data_hash,
             ):
                 return None
             if not self._proof_verifier.verify_commit(
