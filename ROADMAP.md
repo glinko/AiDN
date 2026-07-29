@@ -313,10 +313,12 @@ Immediate priorities:
    extensions to the AiDN application. A separate single-validator CometBFT
    run completed the real socket handshake, accepted and finalized an AiDN
    operation, and committed the resulting application root in the block header.
-   A controlled four-validator CometBFT v0.38.19 devnet now additionally
-   proves external transaction admission, `/tx?prove=true` Merkle inclusion,
-   one-validator restart and continued quorum without application-hash
-   regression; the reproducible command is documented in
+   A controlled four-validator CometBFT v0.38.19 devnet passed the complete
+   external transaction admission, `/tx?prove=true` Merkle inclusion,
+   one-validator restart and continued-quorum check without application-hash
+   regression on `aa1b1bb`. This drill also found and corrected an actual
+   `CheckTx(RECHECK)` bug that could make CometBFT evict a valid transaction
+   before proposal. The reproducible command is documented in
    `docs/development/cometbft-multivalidator-acceptance-drill.md` and is an
    opt-in release-verification workflow gate.
    The production finality factory still requires an operator-approved trusted
@@ -572,7 +574,7 @@ Order of work right now:
 
 1. Operator deployment configuration and encrypted local Secret Manager-backed certificate/signing-key handles now compose the explicitly injected Registry replication runtime. Automated local acceptance proves real mTLS, signed peer authentication, inventory exchange and object transfer between distinct local secret stores, and fixed timeout/sequence/concurrent-close defects. A host-separated Windows-to-Linux acceptance harness now proves the same flow over an SSH-forwarded mTLS connection with independently generated test credentials. A peer owned by an independent operator remains required before a directory trust claim.
 2. Obtain independent-operator Registry peer evidence before allowing directory trust claims; the host-separated acceptance harness is ready.
-3. Run signed remote-snapshot anchoring against an independently operated multi-validator testnet before making public network-finality claims.
+3. Deploy signed remote-snapshot anchoring against an independently operated multi-validator testnet before making public network-finality claims. The controlled four-validator RPC/Merkle/restart drill is now passing; it is not independent-operator evidence.
 4. Extend Plugin Host isolation only with enforceable secret-file delivery, declared egress controls and scoped writable data; unsupported policies remain blocked.
 
 ## Source Documents
