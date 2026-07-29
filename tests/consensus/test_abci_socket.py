@@ -145,3 +145,56 @@ def test_abci_socket_exposes_durable_state_sync_snapshots(tmp_path):
             assert _field_values(chunk, 1)[0]
     finally:
         server.stop()
+
+
+def test_abci_socket_applies_verified_state_sync_snapshot(tmp_path):
+    source_store = ABCIStateStore(tmp_path / "source", chunk_size=64)
+    source = _application(source_store)
+    source.finalize_block(block_height=1, block_hash=b"T" * 32, txs=[])
+    snapshot = source.list_state_snapshots()[0]
+    destination = _application(ABCIStateStore(tmp_path / "destination", chunk_size=64))
+    server = AIDNABCISocketServer(application=destination, port=0)
+    server.start()
+
+    try:
+        with socket.create_connection(("127.0.0.1", server.port), timeout=2) as connection:
+            offered = _request(
+                connection,
+                13,
+                _fields(
+                    _message_field(
+                        1,
+                        _fields(
+                            _varint_field(1, snapshot.height),
+                            _varint_field(2, snapshot.format),
+                            _varint_field(3, snapshot.chunks),
+                            _bytes_field(4, snapshot.hash),
+                        ),
+                    ),
+                    _bytes_field(2, snapshot.app_hash),
+                ),
+            )
+            assert _field_values(offered, 1) == [1]
+
+            for index in range(snapshot.chunks):
+                applied = _request(
+                    connection,
+                    15,
+                    _fields(
+                        _varint_field(1, index),
+                        _bytes_field(
+                            2,
+                            source.load_state_snapshot_chunk(
+                                height=snapshot.height,
+                                format=snapshot.format,
+                                chunk=index,
+                            ),
+                        ),
+                    ),
+                )
+                assert _field_values(applied, 1) == [1]
+    finally:
+        server.stop()
+
+    assert destination.info().last_block_height == 1
+    assert destination.info().last_block_app_hash == source.info().last_block_app_hash
