@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from typing import Protocol
 
@@ -75,19 +76,23 @@ class RegistryReplicationTlsListener:
         self._peer_controller = peer_controller
         self._maximum_active_peers = maximum_active_peers
         self._sessions: dict[str, RegistryReplicationTransportSession] = {}
+        self._lock = threading.RLock()
 
     def bind(self) -> None:
         self._acceptor.bind()
 
     def close(self) -> None:
-        for session in self._sessions.values():
+        with self._lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+        for session in sessions:
             session.disconnect()
-        self._sessions.clear()
         self._acceptor.close()
 
     def accept_once(self) -> str:
-        if len(self._sessions) >= self._maximum_active_peers:
-            raise ConnectionError("Registry replication peer limit reached")
+        with self._lock:
+            if len(self._sessions) >= self._maximum_active_peers:
+                raise ConnectionError("Registry replication peer limit reached")
         transport = self._acceptor.accept_transport()
         if not transport.tls_established or not transport.peer_verified:
             transport.disconnect()
@@ -100,9 +105,10 @@ class RegistryReplicationTlsListener:
             transport.disconnect()
             raise ValueError("Registry replication first message must be a peer handshake")
         peer_id = first_message.source_subject.subject_id
-        if peer_id in self._sessions:
-            transport.disconnect()
-            raise ConnectionError("Registry replication peer already has an active session")
+        with self._lock:
+            if peer_id in self._sessions:
+                transport.disconnect()
+                raise ConnectionError("Registry replication peer already has an active session")
         session = RegistryReplicationTransportSession(
             local_peer_id=self._local_peer_id,
             peer_id=peer_id,
@@ -114,11 +120,22 @@ class RegistryReplicationTlsListener:
             session.disconnect()
             raise PermissionError("Registry replication peer handshake was rejected")
         session.send_handshake(local_public_key=self._local_public_key, signer=self._signer)
-        self._sessions[peer_id] = session
+        with self._lock:
+            self._sessions[peer_id] = session
         return peer_id
 
     def receive_once(self, *, peer_id: str) -> dict | None:
-        return self._sessions[peer_id].receive_once()
+        with self._lock:
+            session = self._sessions[peer_id]
+        return session.receive_once()
+
+    def disconnect_peer(self, *, peer_id: str) -> None:
+        """Close one inbound peer without affecting other accepted links."""
+        with self._lock:
+            session = self._sessions.pop(peer_id, None)
+        if session is not None:
+            session.disconnect()
 
     def active_peer_ids(self) -> list[str]:
-        return sorted(self._sessions)
+        with self._lock:
+            return sorted(self._sessions)

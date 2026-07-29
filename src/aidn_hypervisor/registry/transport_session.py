@@ -70,6 +70,11 @@ class RegistryReplicationTransportSession:
         return bool(state and state.connected)
 
     @property
+    def is_transport_connected(self) -> bool:
+        """Whether the physical transport is still available for this session."""
+        return self._transport.status == TransportStatus.CONNECTED
+
+    @property
     def replicator(self):
         """The strict Registry replicator bound to this transport session."""
         return self._peer_controller.replicator

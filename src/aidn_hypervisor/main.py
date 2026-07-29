@@ -25,6 +25,7 @@ from aidn_hypervisor.plugins.vllm import VllmPlugin
 from aidn_hypervisor.plugins.whisper import WhisperPlugin
 from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.queue import InMemoryTaskQueue
+from aidn_hypervisor.registry.runtime import RegistryReplicationRuntime
 from aidn_hypervisor.registry_api import build_registry_router
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointService
@@ -51,6 +52,7 @@ def build_app(
     session_service: SessionService | None = None,
     validation_service: ValidationService | None = None,
     consensus_service: ConsensusService | None = None,
+    registry_replication_runtime: RegistryReplicationRuntime | None = None,
 ) -> FastAPI:
     state_store = _default_state_store()
     resolved_registry_service = registry_service or _build_default_registry_service(
@@ -123,6 +125,8 @@ def build_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        if registry_replication_runtime is not None:
+            registry_replication_runtime.start()
         if (
             resolved_consensus_service is not None
             and resolved_consensus_service.is_validator
@@ -133,6 +137,8 @@ def build_app(
         finally:
             if resolved_consensus_service is not None:
                 resolved_consensus_service.stop_validator_abci_server()
+            if registry_replication_runtime is not None:
+                registry_replication_runtime.stop()
 
     app = FastAPI(
         title="AiDN Hypervisor",
@@ -143,6 +149,7 @@ def build_app(
     )
     app.state.hypervisor_service = resolved_service
     app.state.consensus_service = resolved_consensus_service
+    app.state.registry_replication_runtime = registry_replication_runtime
 
     @app.get("/health")
     async def health() -> dict[str, str]:

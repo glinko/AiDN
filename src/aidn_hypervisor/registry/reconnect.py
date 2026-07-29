@@ -12,6 +12,9 @@ class _ReplicationSession(Protocol):
     @property
     def is_authenticated(self) -> bool: ...
 
+    @property
+    def is_transport_connected(self) -> bool: ...
+
     def reconnect(self) -> None: ...
 
     def disconnect(self) -> None: ...
@@ -24,6 +27,8 @@ class _ReplicationSession(Protocol):
     ) -> object: ...
 
     def receive_once(self) -> dict | None: ...
+
+    def flush_outbox(self) -> int: ...
 
 
 @dataclass
@@ -112,9 +117,37 @@ class RegistryReplicationReconnectSupervisor:
             session.disconnect()
             self._record_failure(state, now, str(exc))
             raise
+        if result is None and not session.is_transport_connected:
+            session.disconnect()
+            self._record_failure(state, now, "transport_closed")
+            return None
         if session.is_authenticated:
             self._mark_authenticated(state)
         return result
+
+    @property
+    def peer_ids(self) -> list[str]:
+        """Configured outbound peers in deterministic order."""
+        return sorted(self._sessions)
+
+    def flush_authenticated_outboxes(self) -> dict[str, int]:
+        """Transmit locally queued objects only after peer authentication."""
+        flushed: dict[str, int] = {}
+        for peer_id in self.peer_ids:
+            session = self._sessions[peer_id]
+            if not session.is_authenticated:
+                continue
+            try:
+                flushed[peer_id] = session.flush_outbox()
+            except (ConnectionError, OSError, PermissionError, ValueError) as exc:
+                session.disconnect()
+                self._record_failure(self._states[peer_id], self._clock(), str(exc))
+        return flushed
+
+    def disconnect_all(self) -> None:
+        """Invalidate all authenticated sessions during process shutdown."""
+        for peer_id in self.peer_ids:
+            self._sessions[peer_id].disconnect()
 
     def status(self) -> list[dict]:
         return [

@@ -1,18 +1,41 @@
-from .messages import (
-    RegistryChannelClass,
-    RegistryMessageType,
-    RegistryPayload,
-    RegistryMessageBuilder,
+from .anti_entropy import (
+    AntiEntropyEngine,
+    AntiEntropyRound,
+)
+from .bridge import (
+    RegistryServiceAdapter,
+    envelope_to_legacy_record,
+    legacy_record_to_envelope,
 )
 from .channel import (
+    DEFAULT_REGISTRY_CHANNELS,
     RegistryChannelConfig,
     RegistryChannelManager,
-    DEFAULT_REGISTRY_CHANNELS,
 )
-from .routes import (
-    create_default_registry_channels,
-    build_registry_route,
-    build_registry_broadcast_route,
+from .completeness import (
+    CompletenessScore,
+    CompletenessTracker,
+)
+from .discovery import (
+    AutoSyncController,
+    DiscoveryConfig,
+    PeerDiscoveryEvent,
+    RegistryPeerDiscovery,
+)
+from .grpc_proto_spec import PROTO_SPEC
+from .grpc_transport import (
+    GrpcConnectionState,
+    GrpcProtoRegistryMessage,
+    GrpcRegistryStream,
+    GrpcRegistryTransport,
+    GrpcTransportConfig,
+)
+from .manifest import InventoryRoot, SegmentManifest
+from .messages import (
+    RegistryChannelClass,
+    RegistryMessageBuilder,
+    RegistryMessageType,
+    RegistryPayload,
 )
 from .object_envelope import (
     LedgerCommitmentClass,
@@ -20,25 +43,38 @@ from .object_envelope import (
     ObjectVersion,
     RegistryObjectEnvelope,
 )
-from .storage import ImmutableObjectStore, StorageStats
-from .manifest import InventoryRoot, SegmentManifest
 from .peer import PeerAuthenticator, PeerManager, PeerState, RegistryPeer
+from .profile import (
+    RegistryClass,
+    RegistryProfileService,
+    RequiredRegistryProfile,
+)
 from .protocol import (
     NegotiationResult,
     ProtocolNegotiator,
     ProtocolVersion,
     RegistryStatus,
 )
-from .profile import (
-    RegistryClass,
-    RegistryProfileService,
-    RequiredRegistryProfile,
-)
 from .replication import (
     ReplicationEngine,
     TransferProgress,
     TransferState,
 )
+from .rewards import (
+    ParticipantLedger,
+    PenaltyEntry,
+    RewardConfig,
+    RewardEngine,
+    RewardEntry,
+    SettlementResult,
+)
+from .routes import (
+    build_registry_broadcast_route,
+    build_registry_route,
+    create_default_registry_channels,
+)
+from .runtime import RegistryReplicationRuntime, RegistryReplicationRuntimeError
+from .storage import ImmutableObjectStore, StorageStats
 from .sync import (
     SyncController,
     SyncMode,
@@ -50,41 +86,6 @@ from .verification import (
     ObjectVerifier,
     VerificationBatchResult,
     VerificationResult,
-)
-from .anti_entropy import (
-    AntiEntropyEngine,
-    AntiEntropyRound,
-)
-from .completeness import (
-    CompletenessScore,
-    CompletenessTracker,
-)
-from .rewards import (
-    ParticipantLedger,
-    PenaltyEntry,
-    RewardConfig,
-    RewardEngine,
-    RewardEntry,
-    SettlementResult,
-)
-from .bridge import (
-    RegistryServiceAdapter,
-    envelope_to_legacy_record,
-    legacy_record_to_envelope,
-)
-from .grpc_transport import (
-    GrpcConnectionState,
-    GrpcProtoRegistryMessage,
-    GrpcRegistryStream,
-    GrpcRegistryTransport,
-    GrpcTransportConfig,
-)
-from .grpc_proto_spec import PROTO_SPEC
-from .discovery import (
-    AutoSyncController,
-    DiscoveryConfig,
-    PeerDiscoveryEvent,
-    RegistryPeerDiscovery,
 )
 
 __all__ = [
@@ -170,4 +171,7 @@ __all__ = [
     "DiscoveryConfig",
     "PeerDiscoveryEvent",
     "RegistryPeerDiscovery",
+    # runtime
+    "RegistryReplicationRuntime",
+    "RegistryReplicationRuntimeError",
 ]

@@ -6,6 +6,18 @@ from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
 from aidn_hypervisor.main import build_app, build_registry_app
 
 
+class _RegistryReplicationRuntime:
+    def __init__(self) -> None:
+        self.started = False
+        self.stopped = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
 def test_health_endpoint_returns_ok() -> None:
     client = TestClient(build_app())
 
@@ -22,6 +34,17 @@ def test_registry_app_health_endpoint_returns_ok() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_app_lifecycle_manages_an_explicit_registry_replication_runtime() -> None:
+    runtime = _RegistryReplicationRuntime()
+    app = build_app(registry_replication_runtime=runtime)  # type: ignore[arg-type]
+
+    with TestClient(app):
+        assert runtime.started is True
+        assert runtime.stopped is False
+
+    assert runtime.stopped is True
 
 
 @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])

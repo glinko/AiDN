@@ -84,3 +84,22 @@ def test_listener_rejects_unverified_tls_peer() -> None:
     with pytest.raises(ConnectionError, match="verified mTLS"):
         listener.accept_once()
     assert transport.status == TransportStatus.DISCONNECTED
+
+
+def test_listener_disconnects_only_the_requested_peer() -> None:
+    class _Session:
+        def __init__(self) -> None:
+            self.disconnected = False
+
+        def disconnect(self) -> None:
+            self.disconnected = True
+
+    transport = _Transport()
+    listener, _, _ = _listener(transport)
+    session = _Session()
+    listener._sessions["registry-b"] = session  # type: ignore[assignment]
+
+    listener.disconnect_peer(peer_id="registry-b")
+
+    assert listener.active_peer_ids() == []
+    assert session.disconnected is True
