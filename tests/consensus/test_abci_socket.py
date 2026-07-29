@@ -18,13 +18,15 @@ from aidn_hypervisor.consensus.abci_socket import (
 )
 from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+from aidn_hypervisor.consensus.state_store import ABCIStateStore
 from aidn_hypervisor.ledger.service import LedgerOperationService
 
 
-def _application() -> AIDNABCIApplication:
+def _application(state_store: ABCIStateStore | None = None) -> AIDNABCIApplication:
     return AIDNABCIApplication(
         ledger_service=LedgerOperationService(),
         admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
+        state_store=state_store,
     )
 
 
@@ -109,5 +111,37 @@ def test_abci_socket_returns_exception_for_unknown_request():
             response = _read_frame(connection, 1_048_576)
             fields = _fields_value(response)
             assert fields[0][0] == 1
+    finally:
+        server.stop()
+
+
+def test_abci_socket_exposes_durable_state_sync_snapshots(tmp_path):
+    application = _application(ABCIStateStore(tmp_path / "abci", chunk_size=64))
+    application.finalize_block(block_height=1, block_hash=b"S" * 32, txs=[])
+    server = AIDNABCISocketServer(application=application, port=0)
+    server.start()
+
+    try:
+        with socket.create_connection(("127.0.0.1", server.port), timeout=2) as connection:
+            listed = _request(connection, 12)
+            snapshots = _field_values(listed, 1)
+            assert len(snapshots) == 1
+            assert isinstance(snapshots[0], bytes)
+            snapshot = snapshots[0]
+            height = _field_values(snapshot, 1)[0]
+            format_value = _field_values(snapshot, 2)[0]
+            assert height == 1
+            assert format_value == 1
+
+            chunk = _request(
+                connection,
+                14,
+                _fields(
+                    _varint_field(1, height),
+                    _varint_field(2, format_value),
+                    _varint_field(3, 0),
+                ),
+            )
+            assert _field_values(chunk, 1)[0]
     finally:
         server.stop()

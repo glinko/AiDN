@@ -9,6 +9,7 @@ from threading import Event, RLock, Thread
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.abci_models import ABCIResult
+from aidn_hypervisor.consensus.state_store import ABCIStateSnapshot, ABCIStateStoreError
 
 
 class ABCIWireError(ValueError):
@@ -120,10 +121,12 @@ class AIDNABCISocketServer:
                 )
             if kind == "init_chain":
                 initial_height = _int_field(payload, 6, default=0)
-                self.application.init_chain(
+                initialized = self.application.init_chain(
                     genesis_time=_timestamp_field(payload, 1),
                     initial_height=initial_height,
                 )
+                if initialized.code != "ok":
+                    raise ABCIWireError(initialized.log or "ABCI chain initialization failed")
                 return _response("init_chain", _bytes_field(3, self.application.commit().data))
             if kind == "check_tx":
                 result = self.application.check_transaction(_bytes_field_value(payload, 1))
@@ -173,19 +176,42 @@ class AIDNABCISocketServer:
                 self.application.commit()
                 return _response("commit", b"")
             if kind == "list_snapshots":
-                return _response("list_snapshots", b"")
+                snapshots = (
+                    _message_field(
+                        1,
+                        _fields(
+                            _varint_field(1, snapshot.height),
+                            _varint_field(2, snapshot.format),
+                            _varint_field(3, snapshot.chunks),
+                            _bytes_field(4, snapshot.hash),
+                        ),
+                    )
+                    for snapshot in self.application.list_state_snapshots()
+                )
+                return _response("list_snapshots", _fields(*snapshots))
             if kind == "offer_snapshot":
-                return _response("offer_snapshot", _varint_field(1, 3))
+                offered = _snapshot_from_offer(payload)
+                status = self.application.offer_state_snapshot(offered)
+                return _response("offer_snapshot", _varint_field(1, _OFFER_SNAPSHOT_STATUS[status]))
             if kind == "load_snapshot_chunk":
-                return _response("load_snapshot_chunk", b"")
+                chunk = self.application.load_state_snapshot_chunk(
+                    height=_int_field(payload, 1),
+                    format=_int_field(payload, 2),
+                    chunk=_int_field(payload, 3),
+                )
+                return _response("load_snapshot_chunk", _bytes_field(1, chunk))
             if kind == "apply_snapshot_chunk":
-                return _response("apply_snapshot_chunk", _varint_field(1, 2))
+                status = self.application.apply_state_snapshot_chunk(
+                    index=_int_field(payload, 1),
+                    chunk=_bytes_field_value(payload, 2),
+                )
+                return _response("apply_snapshot_chunk", _varint_field(1, _APPLY_SNAPSHOT_STATUS[status]))
             if kind == "extend_vote":
                 return _response("extend_vote", b"")
             if kind == "verify_vote_extension":
                 return _response("verify_vote_extension", _varint_field(1, 1))
             raise ABCIWireError("unsupported ABCI request")
-        except (ABCIWireError, ValueError, TypeError) as error:
+        except (ABCIStateStoreError, ABCIWireError, ValueError, TypeError) as error:
             return _response("exception", _string(1, str(error)))
 
 
@@ -203,10 +229,24 @@ _RESPONSE_FIELDS = {
     "finalize_block": 21,
 }
 _CODE = {"ok": 0, "rejected": 1, "invalid": 2, "duplicate": 3, "expired": 4, "sequence": 5, "internal": 6}
+_OFFER_SNAPSHOT_STATUS = {"accept": 1, "abort": 2, "reject": 3}
+_APPLY_SNAPSHOT_STATUS = {"accept": 1, "abort": 2, "retry_snapshot": 4, "reject_snapshot": 5}
 
 
 def _response(kind: str, payload: bytes) -> bytes:
     return _message_field(_RESPONSE_FIELDS[kind], payload)
+
+
+def _snapshot_from_offer(payload: bytes) -> ABCIStateSnapshot:
+    """Decode v0.38 RequestOfferSnapshot's snapshot plus the committed app hash."""
+    snapshot_payload = _bytes_field_value(payload, 1)
+    return ABCIStateSnapshot(
+        height=_int_field(snapshot_payload, 1),
+        format=_int_field(snapshot_payload, 2),
+        chunks=_int_field(snapshot_payload, 3),
+        hash=_bytes_field_value(snapshot_payload, 4),
+        app_hash=_bytes_field_value(payload, 2),
+    )
 
 
 def _result_message(result: ABCIResult) -> bytes:

@@ -314,9 +314,13 @@ Immediate priorities:
    run completed the real socket handshake, accepted and finalized an AiDN
    operation, and committed the resulting application root in the block header.
    The production finality factory still requires an operator-approved trusted
-   checkpoint and exact local ABCI commitment. Upstream multi-validator testnet
-   coverage, durable ABCI state storage and snapshot transport remain required
-   before public network-finality claims.
+   checkpoint and exact local ABCI commitment. The ABCI application now
+   atomically persists canonical JSON state after each finalized block, restores
+   it fail-closed on restart, retains bounded hash-verified State Sync chunks,
+   and serves/offers/applies those chunks through the v0.38 socket protocol.
+   Upstream multi-validator testnet coverage, remote-snapshot trust anchoring
+   and operational backup/restore drills remain required before public
+   network-finality claims.
 
 ## Milestones
 

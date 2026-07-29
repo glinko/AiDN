@@ -15,6 +15,11 @@ from aidn_hypervisor.consensus.abci_models import (
 )
 from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+from aidn_hypervisor.consensus.state_store import (
+    ABCIStateSnapshot,
+    ABCIStateStore,
+    ABCIStateStoreError,
+)
 
 
 @dataclass(frozen=True)
@@ -93,6 +98,7 @@ class AIDNABCIApplication:
         admission_validator: AdmissionValidator | None = None,
         genesis_time: str | None = None,
         genesis_accounts: dict[str, int] | None = None,
+        state_store: ABCIStateStore | None = None,
     ):
         self.ledger = ledger_service
         self.mempool = ABCIMempool()
@@ -102,16 +108,27 @@ class AIDNABCIApplication:
         self._genesis_time = genesis_time or datetime.now(UTC).isoformat()
         self._last_block_height = 0
         self._last_block_hash = b"\x00" * 32
-        self._app_hash = self._compute_initial_hash()
+        self._app_hash = b""
         self._commitments: dict[int, ABCICanonicalCommitment] = {}
+        self._state_store = state_store
+        self._restored_from_store = False
 
-        # Genesis funding
-        if genesis_accounts:
+        persisted_snapshot = state_store.load_current() if state_store is not None else None
+        if persisted_snapshot is not None:
+            if genesis_accounts:
+                raise ValueError("genesis accounts cannot be applied over durable ABCI state")
+            result = self.apply_snapshot(persisted_snapshot)
+            if result.code != "ok":
+                raise ABCIStateStoreError(result.log or "could not restore durable ABCI state")
+            self._restored_from_store = True
+        elif genesis_accounts:
             for wallet_id, amount in genesis_accounts.items():
                 ledger_service.credit_wallet_q_atoms(
                     wallet_id=wallet_id,
                     amount_q_atoms=amount,
                 )
+        if not self._restored_from_store:
+            self._app_hash = self._compute_state_hash()
 
     def _compute_initial_hash(self) -> bytes:
         return hashlib.sha256(b"AiDN-genesis").digest()
@@ -135,9 +152,14 @@ class AIDNABCIApplication:
         initial_height: int = 0,
     ) -> ABCIResult:
         """Initialize chain from genesis state."""
+        if self._restored_from_store:
+            return ABCIResult(
+                code="rejected",
+                log="durable ABCI state is already initialized",
+            )
         self._genesis_time = genesis_time or self._genesis_time
         self._last_block_height = initial_height
-        self._app_hash = self._compute_initial_hash()
+        self._app_hash = self._compute_state_hash()
 
         return ABCIResult(
             code="ok",
@@ -272,6 +294,8 @@ class AIDNABCIApplication:
         time: str | None = None,
     ) -> tuple[ABCIResult, list[ABCIResult]]:
         """Finalize a block and retain one deterministic result per input tx."""
+        previous_snapshot = self.prepare_snapshot()
+        previous_admission_state = self._admission.snapshot_state()
         executed: list[ABCIResult] = []
         rejected: list[ABCIResult] = []
         tx_results: list[ABCIResult] = []
@@ -296,6 +320,20 @@ class AIDNABCIApplication:
             block_hash=block_hash.hex().upper(),
             app_hash=self._app_hash.hex().upper(),
         )
+
+        try:
+            self._persist_durable_state()
+        except ABCIStateStoreError as error:
+            # Never acknowledge a block whose application state cannot survive
+            # a restart.  Restore the pre-block state before returning failure.
+            rollback = self.apply_snapshot(previous_snapshot)
+            self._admission.restore_state(previous_admission_state)
+            rollback_note = "" if rollback.code == "ok" else "; rollback failed"
+            failure = ABCIResult(
+                code="internal",
+                log=f"durable state persistence failed: {error}{rollback_note}",
+            )
+            return failure, [failure for _ in txs]
 
         # Clear mempool of included txs
         for tx_data in txs:
@@ -384,7 +422,7 @@ class AIDNABCIApplication:
             "genesis_time": self._genesis_time,
             "last_block_height": self._last_block_height,
             "last_block_hash": self._last_block_hash.hex(),
-            "app_hash": self._app_hash.hex(),
+            "app_hash": self._compute_state_hash().hex(),
             "commitments": [asdict(commitment) for commitment in self._commitments.values()],
             "ledger_operations": self.ledger.snapshot_operations(),
             "wallet_sequences": self.ledger.snapshot_wallet_sequences(),
@@ -392,30 +430,10 @@ class AIDNABCIApplication:
         }
 
     def apply_snapshot(self, snapshot: dict) -> ABCIResult:
-        """Restore application state from snapshot."""
+        """Atomically restore application state from a verified snapshot."""
+        previous_snapshot = self.prepare_snapshot()
         try:
-            settlement_state = snapshot.get("settlement_state", {})
-            # Restore ledger state
-            self.ledger.restore(
-                operations=snapshot.get("ledger_operations", []),
-                wallet_sequences=snapshot.get("wallet_sequences", {}),
-                wallet_q_atom_balances=settlement_state.get("wallet_q_atom_balances"),
-                session_funding_accounts=settlement_state.get("session_funding_accounts"),
-                settlement_proposals=settlement_state.get("settlement_proposals"),
-                settlement_acceptances=settlement_state.get("settlement_acceptances"),
-                settlement_transition_hashes=settlement_state.get(
-                    "settlement_transition_hashes"
-                ),
-            )
-
-            self._last_block_height = snapshot["last_block_height"]
-            self._last_block_hash = bytes.fromhex(snapshot["last_block_hash"])
-            self._app_hash = bytes.fromhex(snapshot["app_hash"])
-            self._genesis_time = snapshot.get("genesis_time", self._genesis_time)
-            self._commitments = {
-                commitment["height"]: ABCICanonicalCommitment(**commitment)
-                for commitment in snapshot.get("commitments", [])
-            }
+            self._apply_snapshot_unchecked(snapshot)
 
             return ABCIResult(
                 code="ok",
@@ -425,10 +443,97 @@ class AIDNABCIApplication:
                 ],
             )
         except Exception as e:
+            try:
+                self._apply_snapshot_unchecked(previous_snapshot)
+            except Exception:
+                pass
             return ABCIResult(
                 code="internal",
                 log=f"snapshot restore failed: {e}",
             )
+
+    def _apply_snapshot_unchecked(self, snapshot: dict) -> None:
+        """Apply a parsed snapshot; caller owns rollback when validation fails."""
+        if int(snapshot["app_version"]) != self.APP_VERSION:
+            raise ValueError("snapshot application version is unsupported")
+        settlement_state = snapshot.get("settlement_state", {})
+        self.ledger.restore(
+            operations=snapshot.get("ledger_operations", []),
+            wallet_sequences=snapshot.get("wallet_sequences", {}),
+            wallet_q_atom_balances=settlement_state.get("wallet_q_atom_balances"),
+            session_funding_accounts=settlement_state.get("session_funding_accounts"),
+            settlement_proposals=settlement_state.get("settlement_proposals"),
+            settlement_acceptances=settlement_state.get("settlement_acceptances"),
+            settlement_transition_hashes=settlement_state.get("settlement_transition_hashes"),
+        )
+        self._last_block_height = int(snapshot["last_block_height"])
+        if self._last_block_height < 0:
+            raise ValueError("snapshot height is invalid")
+        self._last_block_hash = bytes.fromhex(snapshot["last_block_hash"])
+        self._app_hash = bytes.fromhex(snapshot["app_hash"])
+        if len(self._last_block_hash) != 32 or len(self._app_hash) != 32:
+            raise ValueError("snapshot hash length is invalid")
+        self._genesis_time = snapshot.get("genesis_time", self._genesis_time)
+        self._commitments = {
+            commitment["height"]: ABCICanonicalCommitment(**commitment)
+            for commitment in snapshot.get("commitments", [])
+        }
+        if self._compute_state_hash() != self._app_hash:
+            raise ValueError("snapshot application hash does not match state")
+
+    # ---- State Sync ----
+
+    def list_state_snapshots(self) -> list[ABCIStateSnapshot]:
+        """Return retained snapshots that CometBFT may offer to a syncing peer."""
+        return self._state_store.list_snapshots() if self._state_store is not None else []
+
+    def offer_state_snapshot(self, metadata: ABCIStateSnapshot) -> str:
+        """Validate an incoming snapshot offer without changing application state."""
+        if self._state_store is None:
+            return "abort"
+        if metadata.height <= self._last_block_height:
+            return "reject"
+        return "accept" if self._state_store.offer_import(metadata) else "reject"
+
+    def load_state_snapshot_chunk(self, *, height: int, format: int, chunk: int) -> bytes:
+        """Load a retained local State Sync chunk."""
+        if self._state_store is None:
+            raise ABCIStateStoreError("durable ABCI state is disabled")
+        return self._state_store.load_snapshot_chunk(height=height, format=format, chunk=chunk)
+
+    def apply_state_snapshot_chunk(self, *, index: int, chunk: bytes) -> str:
+        """Apply an incoming State Sync chunk only after complete verification."""
+        if self._state_store is None:
+            return "abort"
+        previous_snapshot = self.prepare_snapshot()
+        try:
+            imported = self._state_store.add_import_chunk(index=index, payload=chunk)
+            if imported is None:
+                return "accept"
+            metadata, snapshot = imported
+            try:
+                imported_app_hash = bytes.fromhex(str(snapshot.get("app_hash", "")))
+            except ValueError:
+                return "reject_snapshot"
+            if imported_app_hash != metadata.app_hash:
+                return "reject_snapshot"
+            result = self.apply_snapshot(snapshot)
+            if result.code != "ok":
+                return "reject_snapshot"
+            try:
+                self._persist_durable_state()
+            except ABCIStateStoreError:
+                self.apply_snapshot(previous_snapshot)
+                return "abort"
+            self._restored_from_store = True
+            return "accept"
+        except ABCIStateStoreError:
+            self._state_store.abort_import()
+            return "retry_snapshot"
+
+    def _persist_durable_state(self) -> None:
+        if self._state_store is not None:
+            self._state_store.persist(self.prepare_snapshot())
 
     # ---- Internal helpers ----
 
@@ -476,9 +581,9 @@ class AIDNABCIApplication:
     def _compute_state_hash(self) -> bytes:
         """Compute deterministic hash of current application state."""
         state = {
-            "operations_count": len(self.ledger._operations),
-            "wallets": dict(self.ledger._wallet_q_atom_balances),
-            "sequences": dict(self.ledger._wallet_next_sequences),
+            "operations": self.ledger.snapshot_operations(),
+            "wallet_sequences": self.ledger.snapshot_wallet_sequences(),
+            "settlement_state": self.ledger.snapshot_settlement_state(),
         }
         canonical = json.dumps(state, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).digest()

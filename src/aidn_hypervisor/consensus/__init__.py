@@ -45,6 +45,11 @@ from aidn_hypervisor.consensus.light_client import (
     CometBftValidatorSet,
     TrustedCometBftCheckpoint,
 )
+from aidn_hypervisor.consensus.state_store import (
+    ABCIStateSnapshot,
+    ABCIStateStore,
+    ABCIStateStoreError,
+)
 from aidn_hypervisor.consensus.models import (
     LedgerFeeClass,
     LedgerOperationEnvelope,
@@ -64,6 +69,9 @@ __all__ = [
     "ABCIWireError",
     "AIDNABCISocketServer",
     "AIDNABCIApplication",
+    "ABCIStateSnapshot",
+    "ABCIStateStore",
+    "ABCIStateStoreError",
     "ConsensusFinalityEvidence",
     "ConsensusFinalitySource",
     "VerifiedConsensusFinalitySource",

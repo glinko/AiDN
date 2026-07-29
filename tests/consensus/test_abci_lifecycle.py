@@ -92,6 +92,8 @@ def test_apply_snapshot_restores_state(ledger, app):
 
 
 def test_apply_snapshot_invalid_fails(ledger, app):
+    previous_height = app.info().last_block_height
+    previous_hash = app.info().last_block_app_hash
     bad_snapshot = {
         "last_block_height": "not_an_int",
         "last_block_hash": "invalid_hex",
@@ -100,6 +102,8 @@ def test_apply_snapshot_invalid_fails(ledger, app):
     result = app.apply_snapshot(bad_snapshot)
     assert result.code == "internal"
     assert "snapshot restore failed" in result.log
+    assert app.info().last_block_height == previous_height
+    assert app.info().last_block_app_hash == previous_hash
 
 
 def test_query_app_hash(app):
