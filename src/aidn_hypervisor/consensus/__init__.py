@@ -3,6 +3,7 @@
 
 from aidn_hypervisor.consensus.abci import ABCICanonicalCommitment, AIDNABCIApplication
 from aidn_hypervisor.consensus.abci_finality import ABCICommittedFinalitySource
+from aidn_hypervisor.consensus.abci_socket import ABCIWireError, AIDNABCISocketServer
 from aidn_hypervisor.consensus.admission import (
     AdmissionResult,
     AdmissionValidator,
@@ -60,6 +61,8 @@ __all__ = [
     "AdmissionValidator",
     "ABCICanonicalCommitment",
     "ABCICommittedFinalitySource",
+    "ABCIWireError",
+    "AIDNABCISocketServer",
     "AIDNABCIApplication",
     "ConsensusFinalityEvidence",
     "ConsensusFinalitySource",

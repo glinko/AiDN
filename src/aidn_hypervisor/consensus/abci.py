@@ -155,6 +155,10 @@ class AIDNABCIApplication:
         RFC-0047 §10 — Admission validation for proposed transactions.
         Returns ACCEPT or REJECT with reason.
         """
+        return self.check_transaction(tx_data)
+
+    def check_transaction(self, tx_data: bytes) -> ABCIResult:
+        """Validate and admit one transaction through the ABCI mempool path."""
         try:
             envelope = self._parse_envelope(tx_data)
         except Exception as e:
@@ -189,6 +193,41 @@ class AIDNABCIApplication:
             tags=[ABCITag(key="operation_id", value=envelope.operation_id)],
         )
 
+    def prepare_proposal(self, txs: list[bytes], *, maximum_bytes: int) -> list[bytes]:
+        """Select deterministic, valid transactions without mutating mempool state."""
+        selected: list[bytes] = []
+        selected_ids: set[str] = set()
+        total_bytes = 0
+        for tx_data in txs:
+            try:
+                envelope = self._parse_envelope(tx_data)
+                if envelope.operation_id in selected_ids or not self._admission.validate(envelope).admitted:
+                    continue
+            except Exception:
+                continue
+            if maximum_bytes > 0 and total_bytes + len(tx_data) > maximum_bytes:
+                continue
+            selected.append(tx_data)
+            selected_ids.add(envelope.operation_id)
+            total_bytes += len(tx_data)
+        return selected
+
+    def process_proposal(self, txs: list[bytes]) -> ABCIResult:
+        """Validate a proposed block without changing application state."""
+        operation_ids: set[str] = set()
+        for tx_data in txs:
+            try:
+                envelope = self._parse_envelope(tx_data)
+            except Exception as error:
+                return ABCIResult(code="invalid", log=f"parse error: {error}")
+            if envelope.operation_id in operation_ids:
+                return ABCIResult(code="duplicate", log="duplicate operation in proposal")
+            operation_ids.add(envelope.operation_id)
+            admission = self._admission.validate(envelope)
+            if not admission.admitted:
+                return ABCIResult(code="rejected", log=admission.reason or "admission failed")
+        return ABCIResult(code="ok")
+
     def reject_proposal_transaction(self, tx_data: bytes) -> ABCIResult:
         """Explicitly reject a transaction."""
         try:
@@ -216,12 +255,31 @@ class AIDNABCIApplication:
         Execute all transactions in order, apply state transitions,
         emit events.
         """
-        executed = []
-        rejected = []
+        result, _ = self.finalize_block_with_results(
+            block_height=block_height,
+            block_hash=block_hash,
+            txs=txs,
+            time=time,
+        )
+        return result
+
+    def finalize_block_with_results(
+        self,
+        *,
+        block_height: int,
+        block_hash: bytes,
+        txs: list[bytes],
+        time: str | None = None,
+    ) -> tuple[ABCIResult, list[ABCIResult]]:
+        """Finalize a block and retain one deterministic result per input tx."""
+        executed: list[ABCIResult] = []
+        rejected: list[ABCIResult] = []
+        tx_results: list[ABCIResult] = []
         events = []
 
         for tx_data in txs:
             result = self._execute_one(tx_data)
+            tx_results.append(result)
             if result.code == "ok":
                 executed.append(result)
                 if result.tags:
@@ -261,7 +319,7 @@ class AIDNABCIApplication:
                 ABCITag(key="executed", value=str(len(executed))),
                 ABCITag(key="rejected", value=str(len(rejected))),
             ],
-        )
+        ), tx_results
 
     def commit(self) -> ABCICommitResponse:
         """RFC-0047 §16 — State commitment after block finalization."""

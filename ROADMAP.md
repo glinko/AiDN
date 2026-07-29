@@ -308,10 +308,15 @@ Immediate priorities:
    checkpoint transition all succeed. That compatibility run corrected four
    real RPC-boundary defects: omitted zero-valued `version.app`, empty initial
    `app_hash`, base64 proof hashes, and the ZIP-215 base-point coordinate.
+   A bounded v0.38 TCP ABCI socket server now translates `Info`, `CheckTx`,
+   proposal processing, `FinalizeBlock`, `Commit`, queries, snapshots and vote
+   extensions to the AiDN application. A separate single-validator CometBFT
+   run completed the real socket handshake, accepted and finalized an AiDN
+   operation, and committed the resulting application root in the block header.
    The production finality factory still requires an operator-approved trusted
    checkpoint and exact local ABCI commitment. Upstream multi-validator testnet
-   coverage and a real AiDN ABCI socket transport remain required before public
-   network-finality claims.
+   coverage, durable ABCI state storage and snapshot transport remain required
+   before public network-finality claims.
 
 ## Milestones
 
