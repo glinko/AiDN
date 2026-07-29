@@ -175,6 +175,9 @@ def build_registry_replication_runtime(
                 signer=signer,
                 peer_controller=controller,
                 maximum_active_peers=config.listener.maximum_active_peers,
+                network_id=config.network_id,
+                chain_id=config.chain_id,
+                network_revision=config.network_revision,
             )
         sessions = {}
         approved_peer_ids = {

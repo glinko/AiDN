@@ -66,8 +66,18 @@ class RegistryReplicationTlsListener:
         signer: Callable[[bytes], str],
         peer_controller: RegistryReplicationPeerController,
         maximum_active_peers: int = 32,
+        network_id: str = "aidn",
+        chain_id: str = "main",
+        network_revision: str = "1.0",
     ) -> None:
-        if not local_peer_id or not local_public_key or maximum_active_peers <= 0:
+        if (
+            not local_peer_id
+            or not local_public_key
+            or maximum_active_peers <= 0
+            or not network_id
+            or not chain_id
+            or not network_revision
+        ):
             raise ValueError("Registry replication listener configuration is invalid")
         self._acceptor = acceptor
         self._local_peer_id = local_peer_id
@@ -75,6 +85,9 @@ class RegistryReplicationTlsListener:
         self._signer = signer
         self._peer_controller = peer_controller
         self._maximum_active_peers = maximum_active_peers
+        self._network_id = network_id
+        self._chain_id = chain_id
+        self._network_revision = network_revision
         self._sessions: dict[str, RegistryReplicationTransportSession] = {}
         self._lock = threading.RLock()
 
@@ -114,6 +127,9 @@ class RegistryReplicationTlsListener:
             peer_id=peer_id,
             transport=_PrefetchedTransport(transport, first_message),
             peer_controller=self._peer_controller,
+            network_id=self._network_id,
+            chain_id=self._chain_id,
+            network_revision=self._network_revision,
         )
         result = session.receive_once()
         if result != {"event": "peer_handshake", "authenticated": True}:
