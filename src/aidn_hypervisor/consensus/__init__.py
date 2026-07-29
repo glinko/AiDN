@@ -17,6 +17,14 @@ from aidn_hypervisor.consensus.finality import (
     ConsensusFinalitySource,
     VerifiedConsensusFinalitySource,
 )
+from aidn_hypervisor.consensus.light_client import (
+    CometBftCryptographicBackend,
+    CometBftLightClient,
+    CometBftLightClientProofVerifier,
+    CometBftValidator,
+    CometBftValidatorSet,
+    TrustedCometBftCheckpoint,
+)
 from aidn_hypervisor.consensus.models import (
     LedgerFeeClass,
     LedgerOperationEnvelope,
@@ -39,4 +47,10 @@ __all__ = [
     "CometBftRpcTransport",
     "HttpCometBftRpcTransport",
     "cometbft_transaction_hash",
+    "CometBftCryptographicBackend",
+    "CometBftLightClient",
+    "CometBftLightClientProofVerifier",
+    "CometBftValidator",
+    "CometBftValidatorSet",
+    "TrustedCometBftCheckpoint",
 ]

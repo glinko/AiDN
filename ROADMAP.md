@@ -283,15 +283,20 @@ Immediate priorities:
     answer unless a caller-provided trusted verifier validates both the
     transaction-inclusion proof and the validator commit. `ConsensusService`
     retains the exact submitted transaction hash for that lookup. A production
-    light-client verifier, trusted checkpoint rotation and ABCI-backed canonical
-    state remain required before a public multi-node authority claim.
+    checkpoint-bound light-client state machine now enforces trust-period
+    expiry, `>2/3` commit power, validator-set/header binding, adjacent
+    transitions, non-adjacent trusted-set overlap and atomic trusted-checkpoint
+    rotation. It requires a compatible backend to verify CometBFT protobuf
+    SignBytes and validator-set hashes. That production backend and ABCI-backed
+    canonical state remain required before a public multi-node authority claim.
 1. Complete production Registry peer transport operation. The Replicator now has an opt-in fail-closed Ed25519 handshake gate with nonce replay protection for inbound and outbound exchange; operator-managed peer keys persist in the Registry snapshot, survive restart, and key rotation or disablement revokes the active replication session. A transport session now requires verified TLS, owns the outer message sequence, carries the signed handshake and resets authorization on reconnect. A bounded outbound reconnect supervisor now retries only approved peers, requires a fresh handshake after every new transport, and backs off on connection, frame or handshake-timeout failure. Bounded Plugin Release object transfer, Registry reconciliation and revocation projection also exist. The multi-peer listener and fail-closed finality-source boundary now exist; a production CometBFT light-client verifier remains required before making network-wide directory claims.
 2. Replace the temporary `UNSANDBOXED_HOST` package profile with actual sandbox/container lifecycle and Secret Manager-backed activation-secret persistence before enabling shell, container, download or package-manager executors. `SANDBOX_REQUIRED` remains fail-closed.
 3. Bind Endpoint Configuration publications to a real Ed25519 owner-wallet signature. New owner wallets and API publications use a verifiable signature over the complete published record; public paid Session admission requires the signature to match the canonical owner identity. Public Registry advertisements carry that proof only for external-facing Endpoints, and Remote Endpoint attachment verifies the proof, summary binding and synchronized owner identity before creating a Proxy target. When the owner identity is absent locally, Remote attach performs a bounded root-only HTTP(S) peer sync and requires a hash-bound Ed25519 envelope matching the expected Registry node, operator and owner wallet before importing it. Legacy local records remain readable but are explicitly unverified. Authenticated Registry replication and peer transport authentication remain pending.
-4. Implement the production CometBFT light-client verifier, trusted checkpoint
-   rotation and ABCI-backed canonical state. The RPC adapter and finality
-   boundary now fail closed, but delegate cryptographic commit and inclusion
-   verification to the still-missing trusted verifier.
+4. Implement the production CometBFT protobuf SignBytes and validator-set hash
+   backend, then connect verified light-client state to the ABCI-backed
+   canonical Ledger. RPC evidence, checkpoint rotation and trust-transition
+   policy now fail closed, but delegate those cryptographic primitives to the
+   still-missing compatible backend.
 
 ## Milestones
 
@@ -531,8 +536,8 @@ Order of work right now:
 
 1. Add a production multi-peer Registry listener and automatic reconnect/backoff loop around the persistent authenticated transport session; verified TLS, signed handshake, key-rotation revocation, reconnect invalidation, object exchange and local untrusted metadata import are implemented.
 2. Replace in-process Plugin Host handlers with isolated package-backed processes and Secret Manager-backed activation credential delivery.
-3. Implement the trusted CometBFT light-client verifier and connect its
-   verified state to the ABCI-backed canonical Ledger.
+3. Implement the CometBFT protobuf SignBytes and validator-set hash backend,
+   then connect verified light-client state to the ABCI-backed canonical Ledger.
 
 ## Source Documents
 
