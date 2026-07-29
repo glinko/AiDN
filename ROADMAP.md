@@ -305,10 +305,11 @@ Immediate priorities:
    header field, including `data_hash`, to the validator-precommitted
    `block_id`; `/tx?prove=true` verifies raw transaction bytes, transaction
    hash, leaf, branch and the resulting header-committed root. The production
-   light-client adapter uses the strict verifier by default. ZIP-215
-   verification, paginated validator sets, canonical protobuf/hash handling and
-   local ABCI commitment binding now fail closed, but must not yet be represented
-   as public network finality until live testnet coverage is complete.
+   finality factory requires an operator-approved trusted checkpoint and binds
+   strict RPC/light-client verification to the local ABCI commitment. ZIP-215
+   verification, paginated validator sets and canonical protobuf/hash handling
+   now fail closed, but must not yet be represented as public network finality
+   until live testnet coverage is complete.
 
 ## Milestones
 
