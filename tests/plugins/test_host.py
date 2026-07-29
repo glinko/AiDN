@@ -16,6 +16,7 @@ from aidn_hypervisor.plugins.host import (
     PluginHostIdentity,
     PluginHostJsonWireAdapter,
     PluginHostLocalIpcIngress,
+    SecretManagerPluginHostActivationCredentialStore,
     build_plugin_host_activation_proof,
 )
 from aidn_hypervisor.plugins.host_named_pipe import (
@@ -24,6 +25,7 @@ from aidn_hypervisor.plugins.host_named_pipe import (
 )
 from aidn_hypervisor.plugins.host_unix_socket import UnixSocketPluginHostListener
 from aidn_hypervisor.providers.models import InstalledPlugin
+from aidn_hypervisor.secrets import FileSecretManager
 
 
 def _installed_plugin() -> InstalledPlugin:
@@ -63,6 +65,24 @@ def test_plugin_host_authenticator_accepts_exact_installation_identity() -> None
     )
 
     assert PluginHostAuthenticator(lambda _: installed).authenticate(identity) == installed
+
+
+def test_secret_manager_activation_credentials_survive_store_reconstruction(tmp_path) -> None:
+    secret_path = tmp_path / "operator-secrets.json"
+    master_key = b"p" * 32
+    credential_key_id = "sha256:" + "c" * 64
+    credentials = SecretManagerPluginHostActivationCredentialStore(
+        FileSecretManager(path=secret_path, master_key=master_key)
+    )
+
+    credentials.save(credential_key_id=credential_key_id, activation_secret=b"activation")
+
+    reconstructed = SecretManagerPluginHostActivationCredentialStore(
+        FileSecretManager(path=secret_path, master_key=master_key)
+    )
+    assert reconstructed.get(credential_key_id) == b"activation"
+    reconstructed.remove(credential_key_id)
+    assert reconstructed.get(credential_key_id) is None
 
 
 def test_plugin_host_connection_store_removes_only_one_plugin_installation() -> None:

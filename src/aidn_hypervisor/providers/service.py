@@ -1,7 +1,6 @@
 import hashlib
 import json
 import secrets
-import sys
 from copy import deepcopy
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -11,6 +10,7 @@ from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
 from aidn_hypervisor.accounting.proxy import build_proxy_opaque_usage_profile
 from aidn_hypervisor.accounting.vllm import build_vllm_usage_profile
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
+from aidn_hypervisor.plugins.container import DockerPluginHostLauncher
 from aidn_hypervisor.plugins.host import (
     HmacPluginHostActivationProofVerifier,
     PluginHostActivationCredentialStore,
@@ -18,6 +18,7 @@ from aidn_hypervisor.plugins.host import (
     PluginHostConnectionStore,
     PluginHostHandshakeService,
     PluginHostLocalIpcIngress,
+    SecretManagerPluginHostActivationCredentialStore,
 )
 from aidn_hypervisor.providers.executor import (
     ProviderInstallationExecutor,
@@ -60,6 +61,7 @@ from aidn_hypervisor.providers.package_verification import (
     verify_plugin_manifest_package,
 )
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
+from aidn_hypervisor.secrets import FileSecretManager
 
 
 def _canonical_hash(value: dict) -> str:
@@ -87,6 +89,8 @@ class ProviderInventoryService:
         package_store: PluginPackageStore | None = None,
         package_acquirer: HttpsPluginPackageAcquirer | None = None,
         plugin_host_connections: list[dict] | None = None,
+        plugin_host_secret_manager: FileSecretManager | None = None,
+        plugin_host_container_launcher: DockerPluginHostLauncher | None = None,
     ) -> None:
         self.plugins = plugins
         self.store = store
@@ -98,7 +102,14 @@ class ProviderInventoryService:
         )
         self.package_store = package_store
         self.package_acquirer = package_acquirer or HttpsPluginPackageAcquirer()
-        self.plugin_host_activation_credentials = PluginHostActivationCredentialStore()
+        self.plugin_host_activation_credentials = (
+            SecretManagerPluginHostActivationCredentialStore(plugin_host_secret_manager)
+            if plugin_host_secret_manager is not None
+            else PluginHostActivationCredentialStore()
+        )
+        self.plugin_host_container_launcher = (
+            plugin_host_container_launcher or DockerPluginHostLauncher()
+        )
         self.plugin_host_connection_store = PluginHostConnectionStore(plugin_host_connections)
         self._runtime_binding_projections: dict[str, dict] = {}
 
@@ -137,6 +148,7 @@ class ProviderInventoryService:
                     else None
                 ),
                 "host_execution_mode": release.host_execution_mode,
+                "host_sandbox_policy": release.host_sandbox_policy.model_dump(mode="json"),
                 "published_at": release.published_at,
             }
             payload_hash = _canonical_hash(payload)
@@ -199,6 +211,7 @@ class ProviderInventoryService:
                 trusted_publisher=False,
                 host_entrypoint=payload.get("host_entrypoint"),
                 host_execution_mode=payload.get("host_execution_mode", "RECORDED_ONLY"),
+                host_sandbox_policy=payload.get("host_sandbox_policy", {}),
                 published_at=payload["published_at"],
             )
             try:
@@ -401,6 +414,7 @@ class ProviderInventoryService:
             trusted_publisher=package_verification.trusted_publisher,
             host_entrypoint=manifest.host_entrypoint,
             host_execution_mode=manifest.sandbox_policy.execution_mode,
+            host_sandbox_policy=manifest.sandbox_policy,
             published_at=_now_iso(),
         )
         self.store.save_plugin_release(release)
@@ -418,29 +432,29 @@ class ProviderInventoryService:
             raise ValueError("package Plugin Host launch requires a trusted signed release")
         if release.host_entrypoint is None:
             raise ValueError("package Plugin Host release does not declare a signed entrypoint")
-        if release.host_execution_mode != "UNSANDBOXED_HOST":
-            raise ValueError(
-                "package Plugin Host launch requires UNSANDBOXED_HOST until sandbox execution is available"
-            )
+        if release.host_execution_mode != "SANDBOX_REQUIRED":
+            raise ValueError("package Plugin Host launch requires SANDBOX_REQUIRED")
         if not isinstance(self.package_store, FilesystemPluginPackageStore):
             raise ValueError("package Plugin Host launch requires durable filesystem package storage")
         entrypoint = self.package_store.materialize_python_host(
             package_digest=release.package_digest,
             entrypoint_path=release.host_entrypoint.entrypoint_path,
         )
-        return {
-            "command": [
-                sys.executable,
-                str(entrypoint),
-                *release.host_entrypoint.arguments,
-            ],
-            "working_directory": str(entrypoint.parent),
-            "metadata": {
+        if not self.plugin_host_container_launcher.is_available():
+            raise ValueError("package Plugin Host container runtime is unavailable")
+        entrypoint_depth = len(release.host_entrypoint.entrypoint_path.split("/"))
+        launch_spec = self.plugin_host_container_launcher.build_launch_spec(
+            package_root=entrypoint.parents[entrypoint_depth - 1],
+            entrypoint=release.host_entrypoint,
+            sandbox_policy=release.host_sandbox_policy,
+        )
+        launch_spec["metadata"].update(
+            {
                 "package_digest": release.package_digest,
                 "package_entrypoint": release.host_entrypoint.entrypoint_path,
-                "package_execution_mode": release.host_execution_mode,
-            },
-        }
+            }
+        )
+        return launch_spec
 
     def revoke_plugin_release(self, *, release_id: str, reason: str) -> tuple[PluginRelease, list[str], int]:
         if not reason.strip():

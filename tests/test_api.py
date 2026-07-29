@@ -2,7 +2,6 @@ import base64
 import hashlib
 import io
 import json
-import sys
 import zipfile
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -4599,7 +4598,7 @@ def test_package_plugin_host_rejects_operator_supplied_launch_command() -> None:
     assert service.list_runtimes() == []
 
 
-def test_package_plugin_host_uses_verified_signed_entrypoint(tmp_path) -> None:
+def test_package_plugin_host_rejects_legacy_unsandboxed_execution(tmp_path) -> None:
     package_bytes = _zip_bytes(
         {"plugin_host.py": b"import sys\nprint(' '.join(sys.argv[1:]))\n"}
     )
@@ -4632,15 +4631,10 @@ def test_package_plugin_host_uses_verified_signed_entrypoint(tmp_path) -> None:
         granted_permissions=release["declared_permissions"],
     )
 
-    runtime = service.start_plugin_host_process(
-        installed_plugin_id=installed["installed_plugin_id"],
-    )
-
-    assert runtime.command[0] == sys.executable
-    assert runtime.command[1].endswith("plugin_host.py")
-    assert runtime.command[2:] == ["--from-signed-package"]
-    assert runtime.metadata["package_digest"] == package_digest
-    assert runtime.metadata["package_execution_mode"] == "UNSANDBOXED_HOST"
+    with pytest.raises(ValueError, match="requires SANDBOX_REQUIRED"):
+        service.start_plugin_host_process(
+            installed_plugin_id=installed["installed_plugin_id"],
+        )
 
 
 def test_plugin_release_replication_preserves_host_descriptor_without_trust() -> None:

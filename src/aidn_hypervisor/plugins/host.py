@@ -9,6 +9,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from aidn_hypervisor.providers.models import InstalledPlugin
+from aidn_hypervisor.secrets import FileSecretManager, SecretManagerError
 
 
 class PluginHostAuthenticationError(ValueError):
@@ -67,6 +68,33 @@ class PluginHostActivationCredentialStore:
 
     def remove(self, credential_key_id: str) -> None:
         self._secrets.pop(credential_key_id, None)
+
+
+class SecretManagerPluginHostActivationCredentialStore:
+    """Persist install-scoped Host credentials through the operator Secret Manager."""
+
+    def __init__(self, secret_manager: FileSecretManager) -> None:
+        self._secret_manager = secret_manager
+
+    @staticmethod
+    def _handle(credential_key_id: str) -> str:
+        if not credential_key_id:
+            raise ValueError("Plugin Host credential key ID is required")
+        return f"secret://plugin-host-activation/{credential_key_id}"
+
+    def save(self, *, credential_key_id: str, activation_secret: bytes) -> None:
+        self._secret_manager.put(
+            handle=self._handle(credential_key_id), value=activation_secret
+        )
+
+    def get(self, credential_key_id: str) -> bytes | None:
+        try:
+            return self._secret_manager.get(self._handle(credential_key_id))
+        except SecretManagerError:
+            return None
+
+    def remove(self, credential_key_id: str) -> None:
+        self._secret_manager.remove(handle=self._handle(credential_key_id))
 
 
 class HmacPluginHostActivationProofVerifier:

@@ -150,6 +150,7 @@ class HypervisorService:
         epoch_reward_pool_shares: dict | None = None,
         provider_inventory=None,
         plugin_package_store: PluginPackageStore | None = None,
+        plugin_host_secret_manager=None,
         runtime_protocol_store=None,
         registry_service: RegistryService | None = None,
         consensus_service=None,
@@ -169,6 +170,7 @@ class HypervisorService:
             plugins=self.plugins,
             store=InMemoryProviderInventoryStore(),
             package_store=plugin_package_store,
+            plugin_host_secret_manager=plugin_host_secret_manager,
         )
         self.registry_service = registry_service
         self.consensus_service = consensus_service

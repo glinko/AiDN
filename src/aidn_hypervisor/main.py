@@ -222,6 +222,7 @@ def _build_default_service(
     plugins.register(VllmPlugin())
     plugins.register(WhisperPlugin())
     bundles = _default_bundle_registry(plugins).load(plugins)
+    plugin_host_secret_manager = load_file_secret_manager_from_environment()
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
@@ -232,6 +233,7 @@ def _build_default_service(
         state_store=state_store,
         bundle_registry=_default_bundle_registry(plugins),
         registry_service=registry_service,
+        plugin_host_secret_manager=plugin_host_secret_manager,
     )
     if state_store is not None:
         service.restore_state(state_store.load())

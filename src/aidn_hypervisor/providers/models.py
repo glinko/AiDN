@@ -706,6 +706,7 @@ class PluginRelease(BaseModel):
     trusted_publisher: bool = False
     host_entrypoint: PluginHostEntrypoint | None = None
     host_execution_mode: PluginSandboxExecutionMode = "RECORDED_ONLY"
+    host_sandbox_policy: PluginSandboxPolicy = Field(default_factory=PluginSandboxPolicy)
     published_at: str
 
     @field_validator(
