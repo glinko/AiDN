@@ -73,3 +73,27 @@ temporary mode-0600 TLS files materialized for `ssl.SSLContext`.
 
 Start the Hypervisor normally. Its lifespan starts the configured replication
 runtime and stops it before process exit. Inspect `app.state.registry_replication_runtime.status()` or the operator runtime view for outbound authentication and sanitized errors. The next acceptance step is to run the same configuration against an independently operated peer; do not treat two processes owned by one operator as independent trust evidence.
+
+## Host-Separated Acceptance Harness
+
+`tools/registry_replication_peer_acceptance.py` creates disposable mTLS and
+Ed25519 material, starts a test-only Registry peer, and verifies signed peer
+authentication, inventory exchange and immutable object transfer. It is useful
+for validating a Linux peer from another host without exposing an operator key:
+
+```bash
+# On the peer host.
+PYTHONPATH=src python tools/registry_replication_peer_acceptance.py server \
+  --state-dir /tmp/aidn-registry-acceptance --port 9443
+
+# Transfer client-bootstrap.json only through an authenticated operator channel,
+# then run on the other host. SSH forwarding may be used when the peer binds
+# loopback only.
+PYTHONPATH=src python tools/registry_replication_peer_acceptance.py client \
+  --state-dir /tmp/aidn-registry-client \
+  --bundle client-bootstrap.json --host 127.0.0.1 --port 19443
+```
+
+The harness is not an operator deployment and its bootstrap bundle is test-only.
+It proves transport interoperability, not independent ownership or production
+directory trust.
