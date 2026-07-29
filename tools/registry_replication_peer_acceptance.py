@@ -49,7 +49,9 @@ def _decode(value: str) -> bytes:
     return base64.b64decode(value.encode("ascii"), validate=True)
 
 
-def _make_certificate(common_name: str, *, ca_key, ca_certificate) -> tuple[bytes, bytes]:
+def _make_certificate(
+    common_name: str, *, ca_key, ca_certificate, subject_hosts: list[str]
+) -> tuple[bytes, bytes]:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
     certificate = (
@@ -62,10 +64,8 @@ def _make_certificate(common_name: str, *, ca_key, ca_certificate) -> tuple[byte
         .not_valid_after(datetime.now(UTC) + timedelta(hours=1))
         .add_extension(
             x509.SubjectAlternativeName(
-                [
-                    x509.DNSName(common_name),
-                    x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
-                ]
+                [x509.DNSName(common_name)]
+                + [x509.IPAddress(ipaddress.ip_address(host)) for host in subject_hosts]
             ),
             critical=False,
         )
@@ -145,12 +145,12 @@ def _tls(prefix: str) -> dict[str, str]:
     }
 
 
-def _server_config(port: int) -> RegistryReplicationDeploymentConfig:
+def _server_config(host: str, port: int) -> RegistryReplicationDeploymentConfig:
     return RegistryReplicationDeploymentConfig.model_validate(
         {
             "local_peer_id": "registry-server",
             "signing_key_handle": "secret://acceptance/server/signing-key",
-            "listener": {"host": "127.0.0.1", "port": port, "tls": _tls("server")},
+            "listener": {"host": host, "port": port, "tls": _tls("server")},
             "poll_interval_seconds": 0.01,
         }
     )
@@ -174,7 +174,7 @@ def _client_config(host: str, port: int) -> RegistryReplicationDeploymentConfig:
     )
 
 
-def run_server(*, state_dir: Path, port: int) -> None:
+def run_server(*, state_dir: Path, host: str, port: int) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(state_dir, 0o700)
     ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -210,10 +210,10 @@ def run_server(*, state_dir: Path, port: int) -> None:
     )
     ca = ca_certificate.public_bytes(serialization.Encoding.PEM)
     server_certificate, server_private_key = _make_certificate(
-        "registry-server", ca_key=ca_key, ca_certificate=ca_certificate
+        "registry-server", ca_key=ca_key, ca_certificate=ca_certificate, subject_hosts=[host]
     )
     client_certificate, client_private_key = _make_certificate(
-        "registry-client", ca_key=ca_key, ca_certificate=ca_certificate
+        "registry-client", ca_key=ca_key, ca_certificate=ca_certificate, subject_hosts=["127.0.0.1"]
     )
     server_signing_key, server_public_key = _new_identity()
     client_signing_key, client_public_key = _new_identity()
@@ -230,7 +230,7 @@ def run_server(*, state_dir: Path, port: int) -> None:
     registry = RegistryService()
     registry.upsert_replication_peer(peer_id="registry-client", public_key=client_public_key)
     runtime = build_registry_replication_runtime(
-        config=_server_config(port), registry_service=registry, secret_manager=server_secrets
+        config=_server_config(host, port), registry_service=registry, secret_manager=server_secrets
     )
     assert runtime.replicator is not None
     object_id = "cross-host-registry-acceptance"
@@ -334,7 +334,7 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=15)
     args = parser.parse_args()
     if args.role == "server":
-        run_server(state_dir=args.state_dir, port=args.port)
+        run_server(state_dir=args.state_dir, host=args.host, port=args.port)
         return
     if args.bundle is None:
         parser.error("client role requires --bundle")
