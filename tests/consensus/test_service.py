@@ -257,3 +257,46 @@ def test_config_defaults():
     assert cfg.chain_id == "aidn-localnet-1"
     assert cfg.gas_limit == 1_000_000
     assert cfg.max_retries == 3
+
+
+def test_validator_abci_bootstrap_requires_validator_mode_and_durable_path(tmp_path):
+    service = ConsensusService(ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR))
+    with pytest.raises(ValueError, match="only validator"):
+        service.bootstrap_validator_abci(ledger_service=LedgerOperationService())
+
+    validator = ConsensusService(ConsensusServiceConfig(mode=ConsensusMode.VALIDATOR))
+    with pytest.raises(ValueError, match="durable state path"):
+        validator.bootstrap_validator_abci(ledger_service=LedgerOperationService())
+
+    ledger = LedgerOperationService()
+    configured = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.VALIDATOR,
+            abci_state_path=str(tmp_path / "abci"),
+            abci_listen_port=0,
+        )
+    )
+    application = configured.bootstrap_validator_abci(ledger_service=ledger)
+    assert application.ledger is ledger
+    assert configured.bootstrap_validator_abci(ledger_service=ledger) is application
+    with pytest.raises(ValueError, match="another Ledger"):
+        configured.bootstrap_validator_abci(ledger_service=LedgerOperationService())
+
+
+def test_validator_abci_server_lifecycle(tmp_path):
+    service = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.VALIDATOR,
+            abci_state_path=str(tmp_path / "abci"),
+            abci_listen_port=0,
+        )
+    )
+    with pytest.raises(ValueError, match="bootstrap"):
+        service.start_validator_abci_server()
+
+    service.bootstrap_validator_abci(ledger_service=LedgerOperationService())
+    server = service.start_validator_abci_server()
+    assert server.is_running
+    assert service.start_validator_abci_server() is server
+    service.stop_validator_abci_server()
+    assert not server.is_running

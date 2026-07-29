@@ -10,8 +10,10 @@ from datetime import UTC, datetime
 from enum import Enum
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
+from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.cometbft import cometbft_transaction_hash
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+from aidn_hypervisor.consensus.state_store import ABCIStateStore
 
 
 class ConsensusMode(str, Enum):
@@ -41,6 +43,10 @@ class ConsensusServiceConfig:
     submission_timeout_seconds: float = 30.0
     retry_interval_seconds: float = 5.0
     max_retries: int = 3
+    abci_state_path: str | None = None
+    abci_listen_host: str = "127.0.0.1"
+    abci_listen_port: int = 26658
+    abci_maximum_message_size: int = 1_048_576
 
 
 @dataclass
@@ -78,6 +84,7 @@ class ConsensusService:
     ):
         self.config = config
         self.abci = abci_app
+        self._abci_socket_server = None
         self._time_now = time_now or time.monotonic
 
         # Submission tracking
@@ -199,6 +206,60 @@ class ConsensusService:
     def is_finalized(self, operation_id: str) -> bool:
         """Check if an operation has been finalized."""
         return operation_id in self._finalized_operation_ids
+
+    # ---- Validator ABCI bootstrap ----
+
+    def bootstrap_validator_abci(
+        self,
+        *,
+        ledger_service,
+        admission_validator: AdmissionValidator | None = None,
+    ) -> AIDNABCIApplication:
+        """Create the only durable ABCI app allowed for this validator service.
+
+        The caller supplies the canonical Ledger service explicitly.  This
+        avoids silently creating a second local Ledger alongside Hypervisor
+        state, which would make a restart appear healthy while diverging from
+        CometBFT's application root.
+        """
+        if not self.is_validator:
+            raise ValueError("only validator consensus services may host ABCI")
+        if self.abci is not None:
+            if self.abci.ledger is not ledger_service:
+                raise ValueError("validator ABCI is already bound to another Ledger service")
+            return self.abci
+        if not self.config.abci_state_path:
+            raise ValueError("validator ABCI requires an explicit durable state path")
+        self.abci = AIDNABCIApplication(
+            ledger_service=ledger_service,
+            admission_validator=admission_validator,
+            state_store=ABCIStateStore(self.config.abci_state_path),
+        )
+        return self.abci
+
+    def start_validator_abci_server(self):
+        """Start the local CometBFT ABCI socket after durable bootstrap."""
+        if self.abci is None:
+            raise ValueError("bootstrap validator ABCI before starting its socket server")
+        if self._abci_socket_server is not None and self._abci_socket_server.is_running:
+            return self._abci_socket_server
+        from aidn_hypervisor.consensus.abci_socket import AIDNABCISocketServer
+
+        server = AIDNABCISocketServer(
+            application=self.abci,
+            host=self.config.abci_listen_host,
+            port=self.config.abci_listen_port,
+            maximum_message_size=self.config.abci_maximum_message_size,
+        )
+        server.start()
+        self._abci_socket_server = server
+        return server
+
+    def stop_validator_abci_server(self) -> None:
+        """Stop the locally owned ABCI socket without changing durable state."""
+        if self._abci_socket_server is not None:
+            self._abci_socket_server.stop()
+            self._abci_socket_server = None
 
     # ---- Validator duties ----
 
