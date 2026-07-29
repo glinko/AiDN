@@ -23,6 +23,7 @@ from aidn_hypervisor.consensus.cometbft_crypto import (
     cometbft_vote_sign_bytes,
     zip215_verify,
 )
+from aidn_hypervisor.consensus.cometbft_header import cometbft_header_hash
 from aidn_hypervisor.consensus.cometbft_merkle import (
     verify_cometbft_transaction_inclusion,
 )
@@ -72,6 +73,7 @@ __all__ = [
     "cometbft_vote_sign_bytes",
     "zip215_verify",
     "verify_cometbft_transaction_inclusion",
+    "cometbft_header_hash",
     "CometBftCryptographicBackend",
     "CometBftLightClient",
     "CometBftLightClientProofVerifier",

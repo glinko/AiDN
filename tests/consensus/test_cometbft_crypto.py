@@ -136,6 +136,51 @@ def test_backend_hashes_rpc_validator_set_and_verifies_signed_precommits():
     ) == {validator.address for validator in validator_set.validators}
 
 
+def test_backend_accepts_the_cometbft_rpc_block_id_parts_field():
+    private_key = Ed25519PrivateKey.generate()
+    validator = _validator(private_key, 1)
+    validator_set = CometBftValidatorSet((validator,))
+    backend = StrictCometBftEd25519Backend()
+    block_id = {
+        "hash": "A" * 64,
+        "parts": {"total": "1", "hash": "B" * 64},
+    }
+    timestamp = "2030-01-01T00:00:00Z"
+    signature = base64.b64encode(
+        private_key.sign(
+            cometbft_vote_sign_bytes(
+                chain_id="aidn-testnet-1",
+                height=11,
+                round_number=0,
+                block_id=block_id,
+                timestamp=timestamp,
+            )
+        )
+    ).decode("ascii")
+
+    assert backend.verified_signer_addresses(
+        signed_header={
+            "commit": {
+                "height": "11",
+                "round": "0",
+                "block_id": block_id,
+                "signatures": [
+                    {
+                        "block_id_flag": 2,
+                        "validator_address": validator.address,
+                        "timestamp": timestamp,
+                        "signature": signature,
+                    }
+                ],
+            }
+        },
+        validator_set=validator_set,
+        chain_id="aidn-testnet-1",
+        block_height=11,
+        block_id="A" * 64,
+    ) == {validator.address}
+
+
 def test_backend_rejects_any_invalid_or_duplicate_commit_signature():
     private_keys = [Ed25519PrivateKey.generate() for _ in range(2)]
     validator_set = CometBftValidatorSet(tuple(_validator(key, 5) for key in private_keys))

@@ -2,6 +2,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
+from aidn_hypervisor.consensus.cometbft_header import cometbft_header_hash
 from aidn_hypervisor.consensus.light_client import (
     CometBftLightClient,
     CometBftLightClientProofVerifier,
@@ -9,6 +10,10 @@ from aidn_hypervisor.consensus.light_client import (
     CometBftValidatorSet,
     TrustedCometBftCheckpoint,
 )
+
+
+def _hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest().upper()
 
 
 class TestCryptographyBackend:
@@ -50,25 +55,44 @@ def _signed_header(
     validator_set: CometBftValidatorSet,
     next_validator_set: CometBftValidatorSet,
     height: int,
-    block_id: str,
     app_hash: str,
     timestamp: str,
     verified_signers: list[str],
 ) -> dict:
-    return {
-        "header": {
-            "chain_id": "aidn-testnet-1",
-            "height": str(height),
-            "app_hash": app_hash,
-            "time": timestamp,
-            "validators_hash": backend.validator_set_hash(validator_set),
-            "next_validators_hash": backend.validator_set_hash(next_validator_set),
+    header = {
+        "version": {"block": "11", "app": "0"},
+        "chain_id": "aidn-testnet-1",
+        "height": str(height),
+        "time": timestamp,
+        "last_block_id": {
+            "hash": _hash(f"last-block-{height}"),
+            "parts": {"total": "1", "hash": _hash(f"last-parts-{height}")},
         },
+        "last_commit_hash": _hash(f"last-commit-{height}"),
+        "data_hash": _hash(f"data-{height}"),
+        "validators_hash": backend.validator_set_hash(validator_set),
+        "next_validators_hash": backend.validator_set_hash(next_validator_set),
+        "consensus_hash": _hash(f"consensus-{height}"),
+        "app_hash": app_hash,
+        "last_results_hash": _hash(f"last-results-{height}"),
+        "evidence_hash": _hash(f"evidence-{height}"),
+        "proposer_address": _hash(f"proposer-{height}")[:40],
+    }
+    block_id = cometbft_header_hash(header)
+    return {
+        "header": header,
         "commit": {
-            "block_id": {"hash": block_id},
+            "block_id": {
+                "hash": block_id,
+                "parts": {"total": "1", "hash": _hash(f"parts-{height}")},
+            },
             "verified_signers": verified_signers,
         },
     }
+
+
+def _block_id(signed_header: dict) -> str:
+    return signed_header["commit"]["block_id"]["hash"]
 
 
 def _client(*, now: datetime | None = None) -> tuple[CometBftLightClient, TestCryptographyBackend]:
@@ -78,7 +102,7 @@ def _client(*, now: datetime | None = None) -> tuple[CometBftLightClient, TestCr
         chain_id="aidn-testnet-1",
         height=10,
         block_id="block-10",
-        app_hash="app-10",
+        app_hash=_hash("app-10"),
         header_time="2030-01-01T00:00:00Z",
         validator_set=validators,
         validator_set_hash=backend.validator_set_hash(validators),
@@ -104,8 +128,7 @@ def test_light_client_accepts_adjacent_two_thirds_commit_and_rotates_checkpoint(
         validator_set=validators,
         next_validator_set=next_validators,
         height=11,
-        block_id="block-11",
-        app_hash="app-11",
+        app_hash=_hash("app-11"),
         timestamp="2030-01-01T00:01:00Z",
         verified_signers=["validator-a", "validator-b"],
     )
@@ -116,8 +139,8 @@ def test_light_client_accepts_adjacent_two_thirds_commit_and_rotates_checkpoint(
         next_validator_set=next_validators,
         chain_id="aidn-testnet-1",
         block_height=11,
-        block_id="block-11",
-        app_hash="app-11",
+        block_id=_block_id(signed_header),
+        app_hash=_hash("app-11"),
     )
     assert client.trusted_checkpoint.height == 11
     assert client.trusted_checkpoint.next_validator_set_hash == backend.validator_set_hash(
@@ -133,8 +156,7 @@ def test_light_client_rejects_commit_without_two_thirds_voting_power():
         validator_set=validators,
         next_validator_set=validators,
         height=11,
-        block_id="block-11",
-        app_hash="app-11",
+        app_hash=_hash("app-11"),
         timestamp="2030-01-01T00:01:00Z",
         verified_signers=["validator-a"],
     )
@@ -145,8 +167,8 @@ def test_light_client_rejects_commit_without_two_thirds_voting_power():
         next_validator_set=validators,
         chain_id="aidn-testnet-1",
         block_height=11,
-        block_id="block-11",
-        app_hash="app-11",
+        block_id=_block_id(signed_header),
+        app_hash=_hash("app-11"),
     )
     assert client.trusted_checkpoint.height == 10
 
@@ -159,8 +181,7 @@ def test_light_client_requires_trusted_validator_overlap_for_skipped_height():
         validator_set=replacement_validators,
         next_validator_set=replacement_validators,
         height=12,
-        block_id="block-12",
-        app_hash="app-12",
+        app_hash=_hash("app-12"),
         timestamp="2030-01-01T00:02:00Z",
         verified_signers=["validator-d"],
     )
@@ -171,8 +192,8 @@ def test_light_client_requires_trusted_validator_overlap_for_skipped_height():
         next_validator_set=replacement_validators,
         chain_id="aidn-testnet-1",
         block_height=12,
-        block_id="block-12",
-        app_hash="app-12",
+        block_id=_block_id(signed_header),
+        app_hash=_hash("app-12"),
     )
 
 
@@ -184,8 +205,7 @@ def test_light_client_rejects_transition_after_trusted_checkpoint_expires():
         validator_set=validators,
         next_validator_set=validators,
         height=11,
-        block_id="block-11",
-        app_hash="app-11",
+        app_hash=_hash("app-11"),
         timestamp="2030-01-01T00:01:00Z",
         verified_signers=["validator-a", "validator-b"],
     )
@@ -196,8 +216,33 @@ def test_light_client_rejects_transition_after_trusted_checkpoint_expires():
         next_validator_set=validators,
         chain_id="aidn-testnet-1",
         block_height=11,
-        block_id="block-11",
-        app_hash="app-11",
+        block_id=_block_id(signed_header),
+        app_hash=_hash("app-11"),
+    )
+
+
+def test_light_client_rejects_header_tampering_after_the_block_id_was_precommitted():
+    client, backend = _client()
+    validators = client.trusted_checkpoint.validator_set
+    signed_header = _signed_header(
+        backend=backend,
+        validator_set=validators,
+        next_validator_set=validators,
+        height=11,
+        app_hash=_hash("app-11"),
+        timestamp="2030-01-01T00:01:00Z",
+        verified_signers=["validator-a", "validator-b"],
+    )
+    signed_header["header"]["data_hash"] = _hash("tampered-data")
+
+    assert not client.verify_and_trust(
+        signed_header=signed_header,
+        validator_set=validators,
+        next_validator_set=validators,
+        chain_id="aidn-testnet-1",
+        block_height=11,
+        block_id=_block_id(signed_header),
+        app_hash=_hash("app-11"),
     )
 
 
@@ -209,8 +254,7 @@ def test_light_client_proof_verifier_bridges_commit_and_transaction_validation()
         validator_set=validators,
         next_validator_set=validators,
         height=11,
-        block_id="block-11",
-        app_hash="app-11",
+        app_hash=_hash("app-11"),
         timestamp="2030-01-01T00:01:00Z",
         verified_signers=["validator-a", "validator-b"],
     )
@@ -221,7 +265,7 @@ def test_light_client_proof_verifier_bridges_commit_and_transaction_validation()
             result["proof"] == {"ops": []}
             and tx_hash == "A" * 64
             and height == 11
-            and block_id == "block-11"
+            and block_id == _block_id(signed_header)
             and data_hash == "data-11"
         ),
     )
@@ -230,13 +274,13 @@ def test_light_client_proof_verifier_bridges_commit_and_transaction_validation()
         transaction_result={"proof": {"ops": []}},
         transaction_hash="A" * 64,
         block_height=11,
-        block_id="block-11",
+        block_id=_block_id(signed_header),
         data_hash="data-11",
     )
     assert verifier.verify_commit(
         signed_header=signed_header,
         chain_id="aidn-testnet-1",
         block_height=11,
-        block_id="block-11",
-        app_hash="app-11",
+        block_id=_block_id(signed_header),
+        app_hash=_hash("app-11"),
     )

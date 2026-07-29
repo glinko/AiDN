@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+from aidn_hypervisor.consensus.cometbft_header import cometbft_header_hash
+
 
 @dataclass(frozen=True)
 class CometBftValidator:
@@ -207,8 +209,11 @@ class CometBftLightClient:
         if header.get("app_hash") != app_hash:
             raise ValueError("CometBFT signed header app hash is invalid")
         commit_block_id = commit.get("block_id")
-        if not isinstance(commit_block_id, dict) or commit_block_id.get("hash") != block_id:
+        commit_hash = commit_block_id.get("hash") if isinstance(commit_block_id, dict) else None
+        if not isinstance(commit_hash, str) or commit_hash.upper() != block_id.upper():
             raise ValueError("CometBFT commit block binding is invalid")
+        if cometbft_header_hash(header) != block_id.upper():
+            raise ValueError("CometBFT header does not match the committed block ID")
         validator_hash = self._cryptography.validator_set_hash(validator_set)
         next_validator_hash = self._cryptography.validator_set_hash(next_validator_set)
         if header.get("validators_hash") != validator_hash:

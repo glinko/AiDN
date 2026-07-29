@@ -273,7 +273,9 @@ def _simple_validator_bytes(validator: CometBftValidator) -> bytes:
 
 def _canonical_block_id(block_id: Mapping[str, object]) -> bytes:
     block_hash = _decode_hex(_required_string(block_id.get("hash"), "block hash"), 32)
-    part_set_header = block_id.get("part_set_header")
+    part_set_header = block_id.get("parts", block_id.get("part_set_header"))
+    if "parts" in block_id and "part_set_header" in block_id:
+        raise ValueError("CometBFT block ID parts are ambiguous")
     if not isinstance(part_set_header, Mapping):
         raise ValueError("CometBFT block part set header is missing")
     total = _parse_nonnegative_int(part_set_header.get("total"), "part set total")
