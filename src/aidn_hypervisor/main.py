@@ -41,6 +41,10 @@ from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
+from aidn_hypervisor.snapshot.deployment import (
+    RemoteTrustAnchorRuntime,
+    load_remote_trust_anchor_deployment_config,
+)
 from aidn_hypervisor.validation.custody_signing import (
     Ed25519ValidationReportCustodySigner,
 )
@@ -59,6 +63,7 @@ def build_app(
     validation_service: ValidationService | None = None,
     consensus_service: ConsensusService | None = None,
     registry_replication_runtime: RegistryReplicationRuntime | None = None,
+    remote_trust_anchor_runtime: RemoteTrustAnchorRuntime | None = None,
 ) -> FastAPI:
     state_store = _default_state_store()
     resolved_registry_service = registry_service or _build_default_registry_service(
@@ -134,9 +139,14 @@ def build_app(
             registry_service=resolved_registry_service
         )
     )
+    resolved_remote_trust_anchor_runtime = (
+        remote_trust_anchor_runtime or _build_default_remote_trust_anchor_runtime()
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        if resolved_remote_trust_anchor_runtime is not None:
+            resolved_remote_trust_anchor_runtime.refresh()
         if resolved_registry_replication_runtime is not None:
             resolved_registry_replication_runtime.start()
         if (
@@ -162,6 +172,7 @@ def build_app(
     app.state.hypervisor_service = resolved_service
     app.state.consensus_service = resolved_consensus_service
     app.state.registry_replication_runtime = resolved_registry_replication_runtime
+    app.state.remote_trust_anchor_runtime = resolved_remote_trust_anchor_runtime
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -297,6 +308,15 @@ def _build_default_registry_replication_runtime(
         config=config,
         registry_service=registry_service,
         secret_manager=secret_manager,
+    )
+
+
+def _build_default_remote_trust_anchor_runtime() -> RemoteTrustAnchorRuntime | None:
+    config_path = os.getenv("AIDN_REMOTE_TRUST_ANCHOR_CONFIG")
+    if not config_path:
+        return None
+    return RemoteTrustAnchorRuntime(
+        config=load_remote_trust_anchor_deployment_config(Path(config_path))
     )
 
 

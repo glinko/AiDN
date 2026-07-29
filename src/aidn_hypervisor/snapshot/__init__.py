@@ -12,6 +12,11 @@ from aidn_hypervisor.snapshot.chunk_store import (
 )
 from aidn_hypervisor.snapshot.chunking import Chunker, ChunkVerifier, MerkleTree
 from aidn_hypervisor.snapshot.compression import CompressionHandler
+from aidn_hypervisor.snapshot.deployment import (
+    RemoteTrustAnchorDeploymentConfig,
+    RemoteTrustAnchorRuntime,
+    load_remote_trust_anchor_deployment_config,
+)
 from aidn_hypervisor.snapshot.discovery import (
     SnapshotAvailability,
     SnapshotCandidate,
@@ -81,8 +86,15 @@ from aidn_hypervisor.snapshot.sync_mode import (
 from aidn_hypervisor.snapshot.trust_anchor import (
     CheckpointValidationResult,
     CheckpointValidator,
+    PersistentTrustAnchorStore,
+    RemoteTrustAnchorClient,
+    SignedTrustAnchor,
     TrustAnchor,
+    TrustAnchorError,
     TrustAnchorStore,
+    TrustedAnchorSyncAdvisor,
+    sign_trust_anchor,
+    verify_signed_trust_anchor,
 )
 from aidn_hypervisor.snapshot.verification import (
     InvariantChecker,
@@ -95,6 +107,12 @@ from aidn_hypervisor.snapshot.verification import (
 __all__ = [
     "CheckpointValidationResult",
     "CheckpointValidator",
+    "PersistentTrustAnchorStore",
+    "RemoteTrustAnchorClient",
+    "RemoteTrustAnchorDeploymentConfig",
+    "RemoteTrustAnchorRuntime",
+    "load_remote_trust_anchor_deployment_config",
+    "SignedTrustAnchor",
     "ChunkTransferSource",
     "Chunker",
     "ChunkVerifier",
@@ -145,8 +163,12 @@ __all__ = [
     "StagingStateStore",
     "VerificationResult",
     "TrustAnchor",
+    "TrustAnchorError",
     "TrustAnchorStore",
+    "TrustedAnchorSyncAdvisor",
     "compute_snapshot_id",
+    "sign_trust_anchor",
+    "verify_signed_trust_anchor",
     # replay
     "BlockReplayer",
     "BlockSource",

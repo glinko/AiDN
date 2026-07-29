@@ -5,12 +5,19 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import ValidationError
 
+from aidn_hypervisor.snapshot.sync_mode import SyncModeConfig, SyncModeSelector
 from aidn_hypervisor.snapshot.trust_anchor import (
     CheckpointValidator,
+    PersistentTrustAnchorStore,
     TrustAnchor,
+    TrustAnchorError,
     TrustAnchorStore,
+    TrustedAnchorSyncAdvisor,
+    sign_trust_anchor,
 )
 
 # ── helpers ────────────────────────────────────────────────────────
@@ -54,6 +61,20 @@ def _make_anchor(
         created_at=created_at or _now_iso(),
         expires_at=expires_at,
     )
+
+
+def _signer() -> tuple[bytes, dict[str, str]]:
+    private_key = Ed25519PrivateKey.generate()
+    raw_private_key = private_key.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption(),
+    )
+    public_key = "ed25519:" + private_key.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    ).hex()
+    return raw_private_key, {"test-authority": public_key}
 
 
 # ── TrustAnchor creation ───────────────────────────────────────────
@@ -170,6 +191,109 @@ class TestTrustAnchorStore:
         assert store.count() == 1
 
 
+class TestPersistentTrustAnchorStore:
+    def test_persists_a_verified_anchor(self, tmp_path):
+        private_key, keyring = _signer()
+        envelope = sign_trust_anchor(
+            anchor=_make_anchor(source="remote_signed"),
+            signer_id="test-authority",
+            issued_at=_now_iso(),
+            private_key=private_key,
+        )
+        path = tmp_path / "trust-anchors.json"
+        store = PersistentTrustAnchorStore(path=path, trusted_signers=keyring)
+        store.add(envelope)
+
+        restored = PersistentTrustAnchorStore(path=path, trusted_signers=keyring)
+        assert restored.latest() == envelope
+
+    def test_rejects_unknown_or_tampered_signer(self, tmp_path):
+        private_key, _ = _signer()
+        envelope = sign_trust_anchor(
+            anchor=_make_anchor(source="remote_signed"),
+            signer_id="test-authority",
+            issued_at=_now_iso(),
+            private_key=private_key,
+        )
+        store = PersistentTrustAnchorStore(
+            path=tmp_path / "trust-anchors.json", trusted_signers={"other": "ed25519:" + "00" * 32}
+        )
+
+        with pytest.raises(TrustAnchorError, match="not locally trusted"):
+            store.add(envelope)
+
+    def test_rejects_conflicting_anchor_at_the_same_height(self, tmp_path):
+        private_key, keyring = _signer()
+        store = PersistentTrustAnchorStore(path=tmp_path / "trust-anchors.json", trusted_signers=keyring)
+        store.add(
+            sign_trust_anchor(
+                anchor=_make_anchor(source="remote_signed"),
+                signer_id="test-authority",
+                issued_at=_now_iso(),
+                private_key=private_key,
+            )
+        )
+        conflicting = sign_trust_anchor(
+            anchor=_make_anchor(source="remote_signed", application_state_hash="different"),
+            signer_id="test-authority",
+            issued_at=_now_iso(),
+            private_key=private_key,
+        )
+
+        with pytest.raises(TrustAnchorError, match="conflicting trust anchor"):
+            store.add(conflicting)
+
+    def test_advisor_rejects_revision_or_chain_mismatch(self, tmp_path):
+        private_key, keyring = _signer()
+        store = PersistentTrustAnchorStore(path=tmp_path / "trust-anchors.json", trusted_signers=keyring)
+        store.add(
+            sign_trust_anchor(
+                anchor=_make_anchor(source="remote_signed", network_revision=2),
+                signer_id="test-authority",
+                issued_at=_now_iso(),
+                private_key=private_key,
+            )
+        )
+        advisor = TrustedAnchorSyncAdvisor(
+            store=store,
+            validator=CheckpointValidator(),
+            expected_network_id="aidn-mainnet",
+            expected_chain_id="aidn-chain-1",
+            expected_network_revision=1,
+        )
+
+        assert advisor.eligibility(current_height=100_100, current_time=_now_iso()) == (False, 0)
+
+    def test_advisor_enables_checkpoint_sync_only_for_verified_anchor(self, tmp_path):
+        private_key, keyring = _signer()
+        store = PersistentTrustAnchorStore(path=tmp_path / "trust-anchors.json", trusted_signers=keyring)
+        store.add(
+            sign_trust_anchor(
+                anchor=_make_anchor(source="remote_signed"),
+                signer_id="test-authority",
+                issued_at=_now_iso(),
+                private_key=private_key,
+            )
+        )
+        advisor = TrustedAnchorSyncAdvisor(
+            store=store,
+            validator=CheckpointValidator(),
+            expected_network_id="aidn-mainnet",
+            expected_chain_id="aidn-chain-1",
+            expected_network_revision=1,
+        )
+
+        config = advisor.apply_to_sync_mode_config(
+            SyncModeConfig(has_local_state=False),
+            current_height=100_100,
+            current_time=_now_iso(),
+        )
+
+        assert config.trust_anchor_valid is True
+        assert config.trust_anchor_height == 100_000
+        assert SyncModeSelector(config).select().recommended_snapshot_height == 100_000
+
+
 # ── CheckpointValidator ───────────────────────────────────────────
 
 class TestCheckpointValidator:
@@ -198,6 +322,13 @@ class TestCheckpointValidator:
         result = v.validate(a, current_height=100_000, current_time=_now_iso())
         assert result.valid is False
         assert any("age" in r.lower() for r in result.reasons)
+
+    def test_validate_explicitly_expired_anchor(self):
+        v = self._validator()
+        a = _make_anchor(expires_at=_past_iso())
+        result = v.validate(a, current_height=100_500, current_time=_now_iso())
+        assert result.valid is False
+        assert any("expiry" in reason for reason in result.reasons)
 
     def test_validate_empty_block_hash(self):
         v = self._validator()
@@ -255,6 +386,11 @@ class TestCheckpointValidator:
         old_time = (datetime.now(UTC) - timedelta(days=31)).isoformat()
         v = self._validator()
         a = _make_anchor(created_at=old_time)
+        assert v.is_within_trust_period(a, current_height=100_000, current_time=_now_iso()) is False
+
+    def test_is_within_trust_period_false_by_explicit_expiry(self):
+        v = self._validator()
+        a = _make_anchor(expires_at=_past_iso())
         assert v.is_within_trust_period(a, current_height=100_000, current_time=_now_iso()) is False
 
     def test_long_range_attack_old_checkpoint_rejected(self):

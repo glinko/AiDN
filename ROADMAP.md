@@ -327,9 +327,12 @@ Immediate priorities:
    The local validator proposal bridge also propagates per-transaction ABCI
    outcomes and never marks a rejected or non-durably-finalized operation as
    `FINALIZED`.
-   Remote-snapshot trust anchoring and a public, independently operated
-   multi-validator testnet remain required before public network-finality
-   claims.
+   Signed remote-snapshot trust anchoring is now available through an opt-in
+   HTTPS deployment configuration: anchors are Ed25519-verified against an
+   operator keyring before durable storage and are projected into checkpoint
+   sync only after identity, revision, age and explicit-expiry checks pass.
+   A public, independently operated multi-validator testnet remains required
+   before public network-finality claims.
 
 ## Milestones
 
@@ -569,7 +572,7 @@ Order of work right now:
 
 1. Operator deployment configuration and encrypted local Secret Manager-backed certificate/signing-key handles now compose the explicitly injected Registry replication runtime. Automated local acceptance proves real mTLS, signed peer authentication, inventory exchange and object transfer between distinct local secret stores, and fixed timeout/sequence/concurrent-close defects. A host-separated Windows-to-Linux acceptance harness now proves the same flow over an SSH-forwarded mTLS connection with independently generated test credentials. A peer owned by an independent operator remains required before a directory trust claim.
 2. Obtain independent-operator Registry peer evidence before allowing directory trust claims; the host-separated acceptance harness is ready.
-3. Add remote-snapshot trust anchoring and run it against an independently operated multi-validator testnet before making public network-finality claims.
+3. Run signed remote-snapshot anchoring against an independently operated multi-validator testnet before making public network-finality claims.
 4. Extend Plugin Host isolation only with enforceable secret-file delivery, declared egress controls and scoped writable data; unsupported policies remain blocked.
 
 ## Source Documents
