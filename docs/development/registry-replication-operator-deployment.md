@@ -74,6 +74,28 @@ temporary mode-0600 TLS files materialized for `ssl.SSLContext`.
 Start the Hypervisor normally. Its lifespan starts the configured replication
 runtime and stops it before process exit. Inspect `app.state.registry_replication_runtime.status()` or the operator runtime view for outbound authentication and sanitized errors. The next acceptance step is to run the same configuration against an independently operated peer; do not treat two processes owned by one operator as independent trust evidence.
 
+Use the production verifier against the Hypervisor's actual persistent Registry
+snapshot and secret handles. It starts the configured runtime temporarily,
+requires every selected outbound peer to complete mTLS plus the strict signed
+handshake, sends an inventory request, and optionally requires one immutable
+object to arrive from the peer:
+
+```bash
+export AIDN_SECRET_MANAGER_PATH=/var/lib/aidn/secrets.json
+export AIDN_SECRET_MANAGER_MASTER_KEY="$(cat /run/secrets/aidn-secret-manager-key-base64)"
+PYTHONPATH=src python tools/verify_registry_replication_deployment.py \
+  --config /etc/aidn/registry-replication.json \
+  --registry-snapshot /var/lib/aidn/registry-objects.json \
+  --peer-id registry-west-1 \
+  --required-object-id known-public-object-id
+```
+
+The JSON output is technical evidence only. It intentionally reports
+`ownership_evidence.status=NOT_PROVEN_BY_PROTOCOL`: Ed25519 and mTLS prove the
+approved peer identity, but cannot prove that two signing keys are operated by
+different organizations. Preserve an operator attestation and the independent
+peer's deployment evidence before enabling a directory-trust claim.
+
 ## Host-Separated Acceptance Harness
 
 `tools/registry_replication_peer_acceptance.py` creates disposable mTLS and

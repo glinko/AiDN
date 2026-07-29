@@ -199,6 +199,13 @@ class RegistryReplicator:
             self._peer_states[peer_id] = ReplicationState(peer_id=peer_id)
         return self._peer_states[peer_id]
 
+    def list_peer_states(self) -> list[ReplicationState]:
+        """Return a stable, read-only view of observed peer replication state."""
+        return [
+            self._peer_states[peer_id].model_copy(deep=True)
+            for peer_id in sorted(self._peer_states)
+        ]
+
     def on_peer_connected(self, peer_id: str) -> bool:
         """Handle peer connection event."""
         state = self.get_or_create_peer_state(peer_id)

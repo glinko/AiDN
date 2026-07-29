@@ -4,6 +4,7 @@ import time
 from collections.abc import Callable
 
 from aidn_hypervisor.registry.reconnect import RegistryReplicationReconnectSupervisor
+from aidn_hypervisor.registry.replicator import RegistryReplicator
 from aidn_hypervisor.registry.runtime import RegistryReplicationRuntime
 
 
@@ -80,9 +81,33 @@ def test_runtime_reconnects_flushes_and_stops_outbound_peer() -> None:
 
     assert runtime.is_running is True
     assert runtime.status()["outbound_peers"][0]["authenticated"] is True
+    assert runtime.status()["replication_peers"] == []
 
     runtime.stop()
 
     assert runtime.is_running is False
     assert session.reconnect_count == 1
     assert session.disconnect_count >= 1
+
+
+def test_runtime_status_exposes_sanitized_replication_peer_state() -> None:
+    session = _Session()
+    supervisor = RegistryReplicationReconnectSupervisor(
+        sessions={"registry-b": session},
+        local_public_key="ed25519:local",
+        signer=lambda _: "ed25519:signature",
+    )
+    replicator = RegistryReplicator(node_id="registry-local")
+    replicator.on_peer_connected("registry-b")
+    runtime = RegistryReplicationRuntime(
+        reconnect_supervisor=supervisor,
+        replicator=replicator,
+        poll_interval_seconds=0.01,
+    )
+
+    state = runtime.status()["replication_peers"]
+    assert len(state) == 1
+    assert state[0]["peer_id"] == "registry-b"
+    assert state[0]["connected"] is True
+    assert state[0]["inventory_exchanged"] is False
+    assert state[0]["last_activity_at"] > 0

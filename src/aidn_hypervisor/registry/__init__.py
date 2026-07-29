@@ -1,3 +1,7 @@
+from .acceptance import (
+    RegistryReplicationAcceptanceError,
+    verify_registry_replication_acceptance,
+)
 from .anti_entropy import (
     AntiEntropyEngine,
     AntiEntropyRound,
@@ -183,6 +187,8 @@ __all__ = [
     # runtime
     "RegistryReplicationRuntime",
     "RegistryReplicationRuntimeError",
+    "RegistryReplicationAcceptanceError",
+    "verify_registry_replication_acceptance",
     "RegistryReplicationDeploymentConfig",
     "RegistryReplicationListenerConfig",
     "RegistryReplicationOutboundPeerConfig",

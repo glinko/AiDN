@@ -144,6 +144,11 @@ class RegistryReplicationRuntime:
                 if self._reconnect_supervisor is not None
                 else []
             ),
+            "replication_peers": (
+                [state.model_dump(mode="json") for state in self._replicator.list_peer_states()]
+                if self._replicator is not None
+                else []
+            ),
             "recent_errors": errors,
         }
 
