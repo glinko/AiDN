@@ -247,6 +247,9 @@ def build_registry_router(service: RegistryService) -> APIRouter:
             return service.sync_wallet_identity_from_peer(
                 peer_base_url=request.peer_base_url,
                 limit=request.limit,
+                expected_node_id=request.expected_node_id,
+                expected_operator_id=request.expected_operator_id,
+                expected_owner_wallet_id=request.expected_owner_wallet_id,
             )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

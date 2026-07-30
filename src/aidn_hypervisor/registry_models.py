@@ -167,6 +167,9 @@ class RegistryWalletIdentitySyncImportRequest(BaseModel):
 class RegistryWalletIdentityPeerSyncRequest(BaseModel):
     peer_base_url: str
     limit: int = Field(default=500, ge=1, le=5000)
+    expected_node_id: str | None = None
+    expected_operator_id: str | None = None
+    expected_owner_wallet_id: str | None = None
 
 
 class RegistryWalletIdentityPeerConfig(BaseModel):

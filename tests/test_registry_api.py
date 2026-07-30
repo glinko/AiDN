@@ -356,6 +356,45 @@ def test_registry_wallet_identity_sync_from_peer_endpoint_pulls_remote_state(
     )
 
 
+def test_registry_wallet_identity_sync_from_peer_endpoint_verifies_expected_peer(
+    monkeypatch,
+) -> None:
+    service = RegistryService()
+    client = TestClient(build_registry_app(service=service))
+    captured: dict[str, object] = {}
+
+    def sync_wallet_identity_from_peer(**kwargs) -> dict:
+        captured.update(kwargs)
+        return {"imported_object_count": 1}
+
+    monkeypatch.setattr(
+        service,
+        "sync_wallet_identity_from_peer",
+        sync_wallet_identity_from_peer,
+    )
+
+    response = client.post(
+        "/registry/wallet-identities/sync-from-peer",
+        json={
+            "peer_base_url": "https://peer-a.example/",
+            "limit": 321,
+            "expected_node_id": "node-peer-a",
+            "expected_operator_id": "operator-peer-a",
+            "expected_owner_wallet_id": "wallet-peer-a",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"imported_object_count": 1}
+    assert captured == {
+        "peer_base_url": "https://peer-a.example/",
+        "limit": 321,
+        "expected_node_id": "node-peer-a",
+        "expected_operator_id": "operator-peer-a",
+        "expected_owner_wallet_id": "wallet-peer-a",
+    }
+
+
 def test_registry_wallet_identity_peer_endpoints_store_and_list_peers() -> None:
     service = RegistryService()
     client = TestClient(build_registry_app(service=service))
