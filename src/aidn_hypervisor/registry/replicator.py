@@ -140,7 +140,11 @@ class RegistryReplicator:
         self._callbacks.append(callback)
 
     def register_object_handler(self, object_type: str, handler: Callable) -> None:
-        """Run a local projection after a verified object is stored."""
+        """Run a local projection after a verified object is stored.
+
+        ``*`` registers a projection for every object type. Deployment uses it
+        to durably project verified replicated envelopes into RegistryService.
+        """
         if not object_type:
             raise ValueError("object_type is required")
         handlers = self._object_handlers.setdefault(object_type, [])
@@ -480,7 +484,11 @@ class RegistryReplicator:
             result["stored"] += 1
             state.objects_transferred += 1
             state.bytes_transferred += envelope.content_size
-            for handler in self._object_handlers.get(envelope.object_type, []):
+            handlers = [
+                *self._object_handlers.get(envelope.object_type, []),
+                *self._object_handlers.get("*", []),
+            ]
+            for handler in handlers:
                 try:
                     handler(peer_id, envelope)
                 except Exception:

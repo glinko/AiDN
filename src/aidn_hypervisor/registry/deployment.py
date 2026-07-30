@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from aidn_hypervisor.dispatcher.transport.tls import TlsListener, TlsTransport
 from aidn_hypervisor.secrets import FileSecretManager, SecretManagerError
 
+from .bridge import RegistryServiceAdapter, envelope_to_legacy_record
 from .listener import RegistryReplicationTlsListener
 from .reconnect import RegistryReplicationReconnectSupervisor
 from .replication_peers import RegistryReplicationPeerController
@@ -150,10 +151,25 @@ def build_registry_replication_runtime(
         signer, local_public_key = _ed25519_signer(
             secret_manager.get(config.signing_key_handle)
         )
+        registry_adapter = RegistryServiceAdapter(legacy_service=registry_service)
+        registry_adapter.sync_from_legacy()
         replicator = RegistryReplicator(
             node_id=config.local_peer_id,
+            store=registry_adapter.store,
+            network_id=config.network_id,
+            chain_id=config.chain_id,
+            network_revision=config.network_revision,
             require_authenticated_peers=True,
         )
+
+        def persist_replicated_object(peer_id, envelope) -> None:
+            registry_service.upsert_registry_object(
+                envelope_to_legacy_record(envelope, source_node_id=peer_id)
+            )
+
+        # The in-memory replication store is an execution cache. Persist every
+        # newly verified inbound object before reporting the replication cycle.
+        replicator.register_object_handler("*", persist_replicated_object)
         controller = RegistryReplicationPeerController(
             registry_service=registry_service,
             replicator=replicator,

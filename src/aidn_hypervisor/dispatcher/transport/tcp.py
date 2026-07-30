@@ -136,44 +136,53 @@ class TcpTransport(TransportGateway):
         multiple messages delivered in a single ``recv()`` are queued
         and returned one at a time across subsequent calls.
         """
-        if self._status != TransportStatus.CONNECTED or self._socket is None:
-            return None
+        with self._lock:
+            if self._status != TransportStatus.CONNECTED or self._socket is None:
+                return None
 
-        # Drain any previously buffered messages first
-        if self._pending_messages:
-            return self._pending_messages.pop(0)
+            # Drain any previously buffered messages first.
+            if self._pending_messages:
+                return self._pending_messages.pop(0)
+            socket = self._socket
 
         try:
-            with self._lock:
-                data = self._socket.recv(65536)
+            # Do not hold the transport lock while waiting for inbound bytes.
+            # Registry replication reads and writes from separate workers; a
+            # blocking read must not prevent the outbox from being flushed.
+            data = socket.recv(65536)
         except TimeoutError:
             return None
         except (OSError, ConnectionResetError):
-            self._status = TransportStatus.ERROR
+            with self._lock:
+                if self._socket is socket:
+                    self._status = TransportStatus.ERROR
             return None
 
         if not data:
             # Peer closed the connection
-            self._status = TransportStatus.DISCONNECTED
+            with self._lock:
+                if self._socket is socket:
+                    self._status = TransportStatus.DISCONNECTED
             return None
 
-        # Append to buffer and decode all complete frames
-        self._recv_buffer += data
-        messages = MessageFramer.decode_stream(self._recv_buffer)
+        with self._lock:
+            if self._socket is not socket or self._status != TransportStatus.CONNECTED:
+                return None
+            # Append to buffer and decode all complete frames.
+            self._recv_buffer += data
+            messages = MessageFramer.decode_stream(self._recv_buffer)
 
-        # Remove consumed bytes from buffer
-        consumed = sum(
-            len(MessageFramer.encode(m)) for m in messages
-        )
-        self._recv_buffer = self._recv_buffer[consumed:]
+            # Remove consumed bytes from buffer.
+            consumed = sum(len(MessageFramer.encode(m)) for m in messages)
+            self._recv_buffer = self._recv_buffer[consumed:]
 
-        if not messages:
-            return None
+            if not messages:
+                return None
 
-        # Return first, queue the rest
-        first = messages[0]
-        self._pending_messages = messages[1:]
-        return first
+            # Return first, queue the rest.
+            first = messages[0]
+            self._pending_messages = messages[1:]
+            return first
 
     # -- state --------------------------------------------------------------
 

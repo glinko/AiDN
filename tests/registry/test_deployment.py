@@ -86,6 +86,43 @@ def test_deployment_runtime_uses_secret_handles_and_cleans_material(tmp_path) ->
     assert len(signing_key) == 32
 
 
+def test_deployment_runtime_projects_registry_objects_and_uses_configured_network(tmp_path) -> None:
+    manager, _ = _secret_manager(tmp_path)
+    registry = RegistryService()
+    registry.upsert_replication_peer(peer_id="registry-b", public_key=_remote_public_key())
+    registry.upsert_registry_object(
+        {
+            "object_id": "persisted-object",
+            "object_type": "advertisement",
+            "object_version": "1.0",
+            "namespace": "controlled-lan",
+            "payload": {"endpoint_id": "endpoint-a"},
+        }
+    )
+    config_payload = _config().model_dump(mode="json")
+    config_payload.update(
+        {
+            "network_id": "aidn-controlled-lan",
+            "chain_id": "registry-lab-v1",
+            "network_revision": "2.0",
+        }
+    )
+
+    runtime = build_registry_replication_runtime(
+        config=RegistryReplicationDeploymentConfig.model_validate(config_payload),
+        registry_service=registry,
+        secret_manager=manager,
+    )
+
+    assert runtime.replicator is not None
+    assert runtime.replicator.store.has("persisted-object")
+    builder = runtime.replicator._builder
+    assert builder._network_id == "aidn-controlled-lan"
+    assert builder._chain_id == "registry-lab-v1"
+    assert builder._network_revision == "2.0"
+    runtime.stop()
+
+
 def test_deployment_config_rejects_duplicate_outbound_peer_ids() -> None:
     payload = _config().model_dump(mode="json")
     payload["outbound_peers"].append(payload["outbound_peers"][0])

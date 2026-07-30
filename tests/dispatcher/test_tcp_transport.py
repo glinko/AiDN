@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 import pytest
@@ -232,6 +233,46 @@ class TestTcpRoundTrip:
             assert received.message_id == msg.message_id
 
         t.disconnect()
+        listener.close()
+
+    def test_send_is_not_blocked_by_a_concurrent_receive(
+        self, listener: TcpListener, bound_port: int
+    ) -> None:
+        """A receive worker must not delay outbox writes until its timeout."""
+        accepted = threading.Event()
+
+        def _accept() -> None:
+            listener.accept()
+            accepted.set()
+
+        accept_thread = threading.Thread(target=_accept, daemon=True)
+        accept_thread.start()
+        transport = TcpTransport(
+            "127.0.0.1", bound_port, send_timeout=2.0, recv_timeout=1.0
+        )
+        transport.connect()
+        assert accepted.wait(timeout=2)
+
+        receive_started = threading.Event()
+
+        def _receive() -> None:
+            receive_started.set()
+            transport.receive()
+
+        receive_thread = threading.Thread(target=_receive, daemon=True)
+        receive_thread.start()
+        assert receive_started.wait(timeout=1)
+        time.sleep(0.05)
+
+        started_at = time.monotonic()
+        transport.send(_make_message(message_id="concurrent-send"))
+        assert time.monotonic() - started_at < 0.5
+        received = listener.receive()
+        assert received is not None
+        assert received.message_id == "concurrent-send"
+
+        receive_thread.join(timeout=2)
+        transport.disconnect()
         listener.close()
 
 

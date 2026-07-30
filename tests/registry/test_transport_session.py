@@ -172,6 +172,24 @@ def test_transport_session_authenticates_and_requires_new_handshake_after_reconn
         session_a.flush_outbox()
 
 
+def test_transport_session_resets_envelope_sequences_on_reconnect() -> None:
+    session_a, session_b, signer_a, signer_b, key_a, key_b, transport_a, transport_b = (
+        _session_pair()
+    )
+    transport_b.incoming.append(session_a.send_handshake(local_public_key=key_a, signer=signer_a))
+    transport_a.incoming.append(session_b.send_handshake(local_public_key=key_b, signer=signer_b))
+    assert session_b.receive_once() == {"event": "peer_handshake", "authenticated": True}
+    assert session_a.receive_once() == {"event": "peer_handshake", "authenticated": True}
+
+    session_a.reconnect()
+    session_b.reconnect()
+    renewed_handshake = session_a.send_handshake(local_public_key=key_a, signer=signer_a)
+
+    assert renewed_handshake.source_sequence == 1
+    transport_b.incoming.append(renewed_handshake)
+    assert session_b.receive_once() == {"event": "peer_handshake", "authenticated": True}
+
+
 def test_transport_session_rejects_stale_transport_sequence() -> None:
     session_a, session_b, signer_a, signer_b, key_a, key_b, transport_a, transport_b = (
         _session_pair()

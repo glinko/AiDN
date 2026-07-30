@@ -156,6 +156,29 @@ class TestHandlerRegistration:
         r.start_sync(peer_id="peer-1", target_epoch=10, sync_mode="initial")
         assert any(e[0] == "sync_started" for e in events)
 
+    def test_wildcard_object_handler_runs_for_all_verified_object_types(self):
+        replicator = _make_replicator()
+        received: list[tuple[str, str]] = []
+        replicator.register_object_handler(
+            "*", lambda peer_id, envelope: received.append((peer_id, envelope.object_id))
+        )
+        envelope = _make_envelope(object_id="replicated-advertisement", object_type="advertisement")
+
+        result = replicator.handle_object_response(
+            peer_id="peer-1",
+            response={
+                "source_node_id": "peer-1",
+                "destination_node_id": "node-a",
+                "objects": [envelope.model_dump(mode="json")],
+                "missing_ids": [],
+                "total_requested": 1,
+                "total_delivered": 1,
+            },
+        )
+
+        assert result == {"stored": 1, "duplicates": 0, "invalid": 0, "handler_errors": 0}
+        assert received == [("peer-1", "replicated-advertisement")]
+
 
 # ---------------------------------------------------------------------------
 # Peer state management

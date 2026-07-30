@@ -102,6 +102,12 @@ class RegistryReplicationTransportSession:
         """Replace the transport session; caller must send a fresh handshake."""
         with self._lock:
             self.disconnect()
+            # Envelope sequences are scoped to one physical transport session.
+            # A peer that also reconnects starts its new handshake at sequence
+            # one, so retaining the previous connection's high-water mark would
+            # reject a valid authenticated reconnection as a replay.
+            self._outbound_sequence = 0
+            self._last_inbound_sequence = -1
             self.connect()
 
     def send_handshake(

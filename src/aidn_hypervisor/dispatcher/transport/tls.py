@@ -445,26 +445,36 @@ class TlsAcceptedTransport:
         return wire
 
     def receive(self) -> NetworkMessage | None:
+        with self._lock:
+            if self._status != TransportStatus.CONNECTED:
+                return None
+            if self._pending_messages:
+                return self._pending_messages.pop(0)
+            client = self._client
         try:
-            with self._lock:
-                if self._status != TransportStatus.CONNECTED:
-                    return None
-                if self._pending_messages:
-                    return self._pending_messages.pop(0)
-                data = self._client.recv(65536)
+            # The inbound worker must not hold the lock while it waits: send
+            # uses the same transport from the outbound replication worker.
+            data = client.recv(65536)
         except TimeoutError:
             return None
         except (OSError, ssl.SSLError):
-            self._status = TransportStatus.ERROR
+            with self._lock:
+                if self._client is client:
+                    self._status = TransportStatus.ERROR
             return None
         if not data:
-            self._status = TransportStatus.DISCONNECTED
+            with self._lock:
+                if self._client is client:
+                    self._status = TransportStatus.DISCONNECTED
             return None
-        self._recv_buffer += data
-        messages = MessageFramer.decode_stream(self._recv_buffer)
-        consumed = sum(len(MessageFramer.encode(message)) for message in messages)
-        self._recv_buffer = self._recv_buffer[consumed:]
-        if not messages:
-            return None
-        self._pending_messages = messages[1:]
-        return messages[0]
+        with self._lock:
+            if self._client is not client or self._status != TransportStatus.CONNECTED:
+                return None
+            self._recv_buffer += data
+            messages = MessageFramer.decode_stream(self._recv_buffer)
+            consumed = sum(len(MessageFramer.encode(message)) for message in messages)
+            self._recv_buffer = self._recv_buffer[consumed:]
+            if not messages:
+                return None
+            self._pending_messages = messages[1:]
+            return messages[0]
