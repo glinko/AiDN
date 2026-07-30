@@ -193,10 +193,13 @@ Still required before public paid-MVP launch:
    authorization is persisted locally, and a key rotation or disablement
    revokes an active replication session. The bound transport session requires
    verified TLS, carries the signed handshake, owns outer-message sequencing
-   and requires a fresh handshake after reconnect. A production multi-peer
-   listener, automatic reconnect/backoff lifecycle and a network-finality
-   source are still required before treating that object exchange as a public
-   directory authority.
+   and requires a fresh handshake after reconnect. The multi-peer listener and
+   bounded reconnect/backoff lifecycle are implemented. A controlled two-host
+   Linux deployment has verified durable immutable-object replication followed
+   by forced server restart, fresh mTLS and Ed25519 authentication, and a
+   second inventory exchange. Independent-operator deployment evidence and a
+   network-finality source remain required before treating object exchange as
+   a public directory authority.
 
 1. Replicate canonical `wallet_identity` objects into authoritative network
    state before multi-node paid launch, so a public `wallet_id` cannot mean
