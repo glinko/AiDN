@@ -2786,6 +2786,49 @@ def test_default_app_exposes_registry_identity_sync_state() -> None:
     assert response.json() == {"objects": [], "conflicts": []}
 
 
+def test_hypervisor_app_exposes_registry_wallet_identity_import() -> None:
+    source_registry = RegistryService()
+    source_service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        registry_service=source_registry,
+    )
+    private_key = Ed25519PrivateKey.generate()
+    public_key = f"ed25519:{private_key.public_key().public_bytes_raw().hex()}"
+    signature = private_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id="wallet-replicated",
+            public_key=public_key,
+            registration_nonce="replication-import",
+        )
+    ).hex()
+    source_service.register_wallet_identity(
+        wallet_id="wallet-replicated",
+        public_key=public_key,
+        registration_nonce="replication-import",
+        signature=f"ed25519:{signature}",
+    )
+    target_registry = RegistryService()
+    target_service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        registry_service=target_registry,
+    )
+    client = TestClient(build_app(service=target_service, registry_service=target_registry))
+
+    response = client.post(
+        "/registry/wallet-identities/import",
+        json=source_registry.export_wallet_identity_sync_state(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["imported_object_count"] == 1
+    identity = target_registry.resolve_wallet_identity("wallet-replicated")
+    assert identity is not None
+    assert identity["wallet_id"] == "wallet-replicated"
+    assert identity["public_key"] == public_key
+
+
 def test_attach_remote_endpoint_route_accepts_verified_publication() -> None:
     source_registry = RegistryService()
     source_hypervisor = HypervisorService(

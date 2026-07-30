@@ -199,6 +199,10 @@ def build_app(
             validation_service=resolved_validation_service,
         )
     )
+    # Keep Registry mutation and repair APIs available on the Hypervisor
+    # process. The API router is registered first so its signed wallet-identity
+    # export remains the handler for the overlapping read-only route.
+    app.include_router(build_registry_router(resolved_registry_service))
 
     return app
 
