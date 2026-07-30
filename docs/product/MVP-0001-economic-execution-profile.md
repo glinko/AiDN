@@ -207,9 +207,16 @@ Still required before public paid-MVP launch:
    uniqueness, conflict rejection, known-peer repair, registry-node inventory
    bootstrap, bounded peer sync, operator reconciliation visibility, local
    conflict resolution, quorum-backed resolution proposals and replicated
-   quorum state objects now exist. Proposal and approval votes now require
-   Ed25519 signatures verified against the registered wallet identity bound to
-   each voting node's `operator_id`, and quorum admission now derives the
+   quorum state objects now exist. The composed Hypervisor exposes a peer-pull
+   control path that can require the expected remote node, operator and owner
+   wallet identities; when those expectations are supplied, it accepts only a
+   hash-bound Ed25519 sync envelope and rejects mismatches before importing
+   any object. A controlled two-host deployment has exercised both the signed
+   import and a rejected mismatched-node attempt. This is transport evidence,
+   not network-finality or independent-operator evidence. Proposal and
+   approval votes now require Ed25519 signatures verified against the
+   registered wallet identity for each voting node's `operator_id`, and
+   quorum admission now derives the
    authoritative voter set from the source nodes currently advertising the
    chosen binding. Each authoritative voter node must also advertise
    `owner_wallet_id`, and that owner wallet identity must resolve to the same

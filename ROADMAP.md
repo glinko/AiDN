@@ -243,6 +243,14 @@ Immediate priorities:
    transfer wallet identity objects plus known conflict evidence, including a
    peer-initiated pull sync call. Known peers can now be durably configured and
    repaired through one bounded automated pass with per-peer sync status, and
+   the composed Hypervisor peer-pull control path can now require expected
+   remote node, operator and owner-wallet identities. When present, those
+   values require a hash-bound Ed25519 envelope and reject a mismatch before
+   any import; a controlled two-host deployment has verified successful signed
+   import and fail-closed node mismatch rejection. This is not independent
+   authority or consensus-finality evidence. Registry node advertisements can
+   now bootstrap that inventory while excluding the local node. Operators can
+   also inspect a bounded wallet
    registry node advertisements can now bootstrap that inventory while
    excluding the local node. Operators can also inspect a bounded wallet
    identity reconciliation report instead of raw object/conflict state and can
