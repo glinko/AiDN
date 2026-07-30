@@ -175,6 +175,9 @@ class RegistryWalletIdentityPeerSyncRequest(BaseModel):
 class RegistryWalletIdentityPeerConfig(BaseModel):
     peer_base_url: str
     enabled: bool = True
+    expected_node_id: str | None = None
+    expected_operator_id: str | None = None
+    expected_owner_wallet_id: str | None = None
     added_at: str | None = None
     last_sync_at: str | None = None
     last_sync_status: str | None = None

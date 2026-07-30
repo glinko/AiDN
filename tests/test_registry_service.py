@@ -2432,6 +2432,69 @@ def test_registry_service_repair_wallet_identity_peers_tracks_errors_and_skips_d
     assert peers[1]["last_sync_status"] is None
 
 
+def test_registry_service_repair_wallet_identity_peers_uses_configured_identity_pins(
+    monkeypatch,
+) -> None:
+    service = RegistryService()
+    service.upsert_wallet_identity_peer(
+        peer_base_url="https://peer-a.example/",
+        expected_node_id="node-peer-a",
+        expected_operator_id="operator-peer-a",
+        expected_owner_wallet_id="wallet-peer-a",
+    )
+    captured: dict[str, object] = {}
+
+    def sync_wallet_identity_from_peer(**kwargs) -> dict:
+        captured.update(kwargs)
+        return {"imported_object_count": 1}
+
+    monkeypatch.setattr(
+        service,
+        "sync_wallet_identity_from_peer",
+        sync_wallet_identity_from_peer,
+    )
+
+    result = service.repair_wallet_identity_peers(limit=321, timeout_seconds=7)
+
+    assert result["success_count"] == 1
+    assert captured == {
+        "peer_base_url": "https://peer-a.example",
+        "limit": 321,
+        "timeout_seconds": 7,
+        "expected_node_id": "node-peer-a",
+        "expected_operator_id": "operator-peer-a",
+        "expected_owner_wallet_id": "wallet-peer-a",
+    }
+
+
+def test_registry_service_persists_wallet_identity_peer_identity_pins(
+    tmp_path: Path,
+) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(snapshot_path=snapshot_path)
+    service.upsert_wallet_identity_peer(
+        peer_base_url="https://peer-a.example/",
+        expected_node_id="node-peer-a",
+        expected_operator_id="operator-peer-a",
+        expected_owner_wallet_id="wallet-peer-a",
+    )
+
+    restarted = RegistryService(snapshot_path=snapshot_path)
+
+    assert restarted.list_wallet_identity_peers()[0] == {
+        "peer_base_url": "https://peer-a.example",
+        "enabled": True,
+        "expected_node_id": "node-peer-a",
+        "expected_operator_id": "operator-peer-a",
+        "expected_owner_wallet_id": "wallet-peer-a",
+        "added_at": restarted.list_wallet_identity_peers()[0]["added_at"],
+        "last_sync_at": None,
+        "last_sync_status": None,
+        "last_sync_error": None,
+        "last_import_result": None,
+    }
+
+
 def test_registry_service_discovers_wallet_identity_peers_from_nodes(
     monkeypatch,
 ) -> None:
@@ -2439,7 +2502,13 @@ def test_registry_service_discovers_wallet_identity_peers_from_nodes(
     monkeypatch.setattr("aidn_hypervisor.registry_service.time.time", lambda: ready_time)
     service = RegistryService()
     service.upsert_node(_node("node-local", heartbeat_at="2026-07-05T14:00:00+00:00"))
-    service.upsert_node(_node("node-remote-a", heartbeat_at="2026-07-05T14:00:00+00:00"))
+    service.upsert_node(
+        _node(
+            "node-remote-a",
+            owner_wallet_id="wallet-remote-a",
+            heartbeat_at="2026-07-05T14:00:00+00:00",
+        )
+    )
     service.upsert_node(_node("node-remote-b", heartbeat_at="2026-07-05T14:00:00+00:00"))
 
     result = service.discover_wallet_identity_peers_from_nodes(
@@ -2456,6 +2525,13 @@ def test_registry_service_discovers_wallet_identity_peers_from_nodes(
         "https://node-remote-a.example",
         "https://node-remote-b.example",
     ]
+    assert service.list_wallet_identity_peers()[0]["expected_node_id"] == "node-remote-a"
+    assert service.list_wallet_identity_peers()[0]["expected_operator_id"] == (
+        "node-remote-a-operator"
+    )
+    assert service.list_wallet_identity_peers()[0]["expected_owner_wallet_id"] == (
+        "wallet-remote-a"
+    )
 
 
 def test_registry_service_discover_and_repair_wallet_identity_peers(

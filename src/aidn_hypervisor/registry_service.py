@@ -200,6 +200,9 @@ class RegistryService:
         *,
         peer_base_url: str,
         enabled: bool = True,
+        expected_node_id: str | None = None,
+        expected_operator_id: str | None = None,
+        expected_owner_wallet_id: str | None = None,
     ) -> dict:
         normalized_base_url = _normalize_peer_base_url(peer_base_url)
         existing = deepcopy(self._wallet_identity_peers.get(normalized_base_url) or {})
@@ -213,6 +216,14 @@ class RegistryService:
             "last_sync_error": existing.get("last_sync_error"),
             "last_import_result": deepcopy(existing.get("last_import_result")),
         }
+        for field, requested_value in {
+            "expected_node_id": expected_node_id,
+            "expected_operator_id": expected_operator_id,
+            "expected_owner_wallet_id": expected_owner_wallet_id,
+        }.items():
+            resolved_value = requested_value or existing.get(field)
+            if resolved_value is not None:
+                record[field] = resolved_value
         self._wallet_identity_peers[normalized_base_url] = record
         self._persist_registry_object_snapshot()
         return deepcopy(record)
@@ -881,6 +892,7 @@ class RegistryService:
                 "peer_base_url": base_url,
                 "node_id": node.get("node_id"),
                 "operator_id": node.get("operator_id"),
+                "owner_wallet_id": node.get("owner_wallet_id"),
                 "status": node.get("status"),
                 "already_registered": bool(existing_peer),
                 "enabled": existing_peer.get("enabled", True),
@@ -889,7 +901,18 @@ class RegistryService:
             }
             candidates.append(candidate)
             if auto_register and not existing_peer:
-                self.upsert_wallet_identity_peer(peer_base_url=base_url, enabled=True)
+                peer_identity_pins = {}
+                if node.get("owner_wallet_id"):
+                    peer_identity_pins = {
+                        "expected_node_id": node.get("node_id"),
+                        "expected_operator_id": node.get("operator_id"),
+                        "expected_owner_wallet_id": node.get("owner_wallet_id"),
+                    }
+                self.upsert_wallet_identity_peer(
+                    peer_base_url=base_url,
+                    enabled=True,
+                    **peer_identity_pins,
+                )
                 registered_count += 1
 
         return {
@@ -1071,6 +1094,9 @@ class RegistryService:
                     peer_base_url=peer_base_url,
                     limit=limit,
                     timeout_seconds=timeout_seconds,
+                    expected_node_id=peer.get("expected_node_id"),
+                    expected_operator_id=peer.get("expected_operator_id"),
+                    expected_owner_wallet_id=peer.get("expected_owner_wallet_id"),
                 )
             except ValueError as error:
                 peer["last_sync_at"] = datetime.now(UTC).isoformat()
@@ -2711,9 +2737,15 @@ class RegistryService:
                     f"at index {index}"
                 )
             model = RegistryWalletIdentityPeerConfig.model_validate(peer)
-            self._wallet_identity_peers[model.peer_base_url.rstrip("/")] = model.model_dump(
-                mode="json"
-            )
+            record = model.model_dump(mode="json")
+            for field in (
+                "expected_node_id",
+                "expected_operator_id",
+                "expected_owner_wallet_id",
+            ):
+                if record[field] is None:
+                    record.pop(field)
+            self._wallet_identity_peers[model.peer_base_url.rstrip("/")] = record
         for index, peer in enumerate(replication_peers):
             if not isinstance(peer, dict):
                 raise ValueError(
