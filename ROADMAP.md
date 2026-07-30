@@ -248,8 +248,11 @@ Immediate priorities:
    values require a hash-bound Ed25519 envelope and reject a mismatch before
    any import; a controlled two-host deployment has verified successful signed
    import and fail-closed node mismatch rejection. This is not independent
-   authority or consensus-finality evidence. Registry node advertisements can
-   now bootstrap that inventory while excluding the local node. Operators can
+   authority or consensus-finality evidence. Persisted configured peers now
+   forward their pins during automated repair; unpinned peers remain a local
+   compatibility path, not a public directory authority. Registry node
+   advertisements can now bootstrap that inventory while excluding the local
+   node. Operators can
    also inspect a bounded wallet
    registry node advertisements can now bootstrap that inventory while
    excluding the local node. Operators can also inspect a bounded wallet

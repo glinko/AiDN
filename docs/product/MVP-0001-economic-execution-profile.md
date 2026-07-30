@@ -213,7 +213,10 @@ Still required before public paid-MVP launch:
    hash-bound Ed25519 sync envelope and rejects mismatches before importing
    any object. A controlled two-host deployment has exercised both the signed
    import and a rejected mismatched-node attempt. This is transport evidence,
-   not network-finality or independent-operator evidence. Proposal and
+   not network-finality or independent-operator evidence. Configured peers
+   persist those identity pins and use them during automated repair. Unpinned
+   peers remain a local compatibility path and SHALL NOT establish public
+   directory authority. Proposal and
    approval votes now require Ed25519 signatures verified against the
    registered wallet identity for each voting node's `operator_id`, and
    quorum admission now derives the
