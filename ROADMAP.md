@@ -598,7 +598,7 @@ Order of work right now:
 This work is intentionally outside the functional MVP. It must not alter current Endpoint economics, escrow, or Validator rewards until its independent Governance and tokenomics decisions are approved.
 
 1. Implement [RFC-0068](./docs/product/RFC-0068-development-contribution-accounting-and-attribution-protocol.md) in a non-emitting evidence mode: eligible repositories, protected-branch merge verification, Contributor Identity, signed Wallet binding, contribution attestations, ECU/CU calculation, contributor groups, role allocation, challenge windows, and maturity records.
-2. Approve [ECO-0007](./docs/product/ECO-0007-development-reward-pool-and-distribution-policy.md) before any development-reward transfer. It owns the Development Pool budget, Q conversion, caps, vesting, carryover, and treatment of unclaimed or cancelled rewards; its current placeholder intentionally sets none of those parameters.
+2. Approve [ECO-0007](./docs/product/ECO-0007-development-reward-pool-and-distribution-policy.md) before any development-reward transfer. It is now a draft policy that defines the Development Pool budget source, Q conversion, caps, vesting, carryover, and treatment of unclaimed or cancelled rewards; activation still requires Governance approval and economic simulation.
 3. Only after both documents are approved, add the corresponding Ledger operations, deterministic epoch distribution, auditable commitments, and a capped rollout. Forge data remains evidence, not a payment authority.
 
 ## Source Documents
