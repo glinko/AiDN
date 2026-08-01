@@ -19,3 +19,16 @@ def test_cross_host_registry_smoke_is_explicitly_test_only() -> None:
     assert "--host 127.0.0.1" in script
     assert "test-only disposable identities" in script
     assert ".venv/bin/python" in script
+
+
+def test_systemd_replication_installer_keeps_master_key_out_of_unit() -> None:
+    script = Path("tools/install-registry-testnet-systemd.sh").read_text(encoding="utf-8")
+
+    assert "--root and --repo are required" in script
+    assert "master-key.b64" in script
+    assert "AIDN_SECRET_MANAGER_MASTER_KEY" in script
+    assert "ReadWritePaths=$root" in script
+    assert "ProtectHome=read-only" in script
+    assert "sudo install -o root -g root -m 0644" in script
+    assert "refusing to replace running replication process" in script
+    assert "EnvironmentFile" not in script
