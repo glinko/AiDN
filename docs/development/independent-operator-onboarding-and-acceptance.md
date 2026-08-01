@@ -27,6 +27,22 @@ uv run pytest -q
 
 Use an immutable release tag or reviewed commit rather than an unreviewed branch for acceptance evidence. Record `git rev-parse HEAD` in the evidence package.
 
+### One-command Ubuntu bootstrap
+
+For a fresh Ubuntu 24.04+ host, the following downloads the current bootstrap, installs its OS and Python dependencies, clones AiDN, creates a secret-free operator workspace, and starts the Hypervisor on `127.0.0.1:8766`:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/glinko/AiDN/main/tools/bootstrap-independent-operator-ubuntu.sh | bash -s -- --peer-id operator-example-1
+```
+
+It prompts for `sudo` only to install Ubuntu packages. It emits the checked-out commit and writes `/home/<user>/.local/share/aidn/bootstrap-state.json`. For acceptance evidence, pin a reviewed tag or commit:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/glinko/AiDN/<reviewed-ref>/tools/bootstrap-independent-operator-ubuntu.sh | bash -s -- --peer-id operator-example-1 --ref <reviewed-ref>
+```
+
+The bootstrap intentionally starts a loopback-only API with Registry replication disabled. It does not publish an Endpoint, open public ports, create Wallet/Registry/TLS keys, or make a directory-trust claim. Continue with the mutual approval steps below before configuring replication.
+
 ## 3. Create the Operator Workspace
 
 Run this on the independent operator's host:
