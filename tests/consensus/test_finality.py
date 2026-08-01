@@ -2,6 +2,7 @@ import pytest
 
 from aidn_hypervisor.consensus.finality import (
     ConsensusFinalityEvidence,
+    QuorumConsensusFinalitySource,
     VerifiedConsensusFinalitySource,
 )
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
@@ -76,6 +77,74 @@ def test_finality_evidence_permits_empty_cometbft_app_hash():
     )
 
     assert evidence.app_hash == ""
+
+
+def test_quorum_finality_source_requires_matching_evidence_from_configured_sources():
+    evidence = _evidence()
+
+    class Source:
+        def __init__(self, value):
+            self.value = value
+
+        def finality_evidence(self, operation_id: str):
+            return self.value
+
+    source = QuorumConsensusFinalitySource(
+        sources=[Source(evidence), Source(evidence), Source(None)],
+        quorum=2,
+        source_ids=["rpc-a", "rpc-b", "rpc-c"],
+    )
+
+    assert source.finality_evidence("operation-1") == evidence
+
+
+def test_quorum_finality_source_fails_closed_without_matching_quorum():
+    first = _evidence()
+    second = ConsensusFinalityEvidence(
+        **{**first.model_dump(), "block_id": "different-block"}
+    )
+
+    class Source:
+        def __init__(self, value):
+            self.value = value
+
+        def finality_evidence(self, operation_id: str):
+            return self.value
+
+    source = QuorumConsensusFinalitySource(
+        sources=[Source(first), Source(second), Source(None)],
+        quorum=2,
+        source_ids=["rpc-a", "rpc-b", "rpc-c"],
+    )
+
+    assert source.finality_evidence("operation-1") is None
+
+
+def test_quorum_finality_source_fails_closed_on_an_ambiguous_tie():
+    first = _evidence()
+    second = ConsensusFinalityEvidence(
+        **{**first.model_dump(), "block_id": "different-block"}
+    )
+
+    class Source:
+        def __init__(self, value):
+            self.value = value
+
+        def finality_evidence(self, operation_id: str):
+            return self.value
+
+    source = QuorumConsensusFinalitySource(
+        sources=[Source(first), Source(first), Source(second), Source(second)],
+        quorum=2,
+        source_ids=["rpc-a", "rpc-b", "rpc-c", "rpc-d"],
+    )
+
+    assert source.finality_evidence("operation-1") is None
+
+
+def test_quorum_finality_source_rejects_invalid_configuration():
+    with pytest.raises(ValueError, match="at least two"):
+        QuorumConsensusFinalitySource(sources=[], quorum=1)
 
 
 def test_hypervisor_reports_local_consensus_state_without_claiming_finality():

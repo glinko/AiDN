@@ -8,7 +8,8 @@ the adapter is absent, unavailable, or returns mismatched evidence.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections import defaultdict
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from typing import Protocol, runtime_checkable
 
@@ -83,3 +84,75 @@ class VerifiedConsensusFinalitySource:
             return evidence if self._verify(evidence) else None
         except Exception:
             return None
+
+
+class QuorumConsensusFinalitySource:
+    """Require matching finality evidence from a bounded source quorum.
+
+    Source identities are configuration labels, not proof of organizational
+    independence. The class only establishes that the configured verifiers
+    independently returned the same operation-bound evidence.
+    """
+
+    def __init__(
+        self,
+        *,
+        sources: Sequence[ConsensusFinalitySource],
+        quorum: int,
+        source_ids: Sequence[str] | None = None,
+    ) -> None:
+        if len(sources) < 2:
+            raise ValueError("finality quorum requires at least two sources")
+        if not 1 <= quorum <= len(sources):
+            raise ValueError("finality quorum must be within the source count")
+        resolved_ids = tuple(source_ids or (f"source-{index}" for index in range(len(sources))))
+        if len(resolved_ids) != len(sources) or any(not value.strip() for value in resolved_ids):
+            raise ValueError("finality source IDs must match sources and be non-empty")
+        if len(set(resolved_ids)) != len(resolved_ids):
+            raise ValueError("finality source IDs must be unique")
+        self._sources = tuple(sources)
+        self._quorum = quorum
+        self._source_ids = resolved_ids
+
+    @property
+    def quorum(self) -> int:
+        return self._quorum
+
+    @property
+    def source_count(self) -> int:
+        return len(self._sources)
+
+    def finality_evidence(self, operation_id: str) -> ConsensusFinalityEvidence | None:
+        evidence_groups: dict[tuple[object, ...], list[ConsensusFinalityEvidence]] = defaultdict(list)
+        for source in self._sources:
+            try:
+                evidence = source.finality_evidence(operation_id)
+            except Exception:
+                evidence = None
+            if evidence is None or evidence.operation_id != operation_id:
+                continue
+            evidence_groups[self._fingerprint(evidence)].append(evidence)
+
+        winning_count = max(
+            (len(group) for group in evidence_groups.values()),
+            default=0,
+        )
+        winning_groups = [
+            group for group in evidence_groups.values() if len(group) == winning_count
+        ]
+        if winning_count < self._quorum or len(winning_groups) != 1:
+            return None
+        return winning_groups[0][0]
+
+    @staticmethod
+    def _fingerprint(evidence: ConsensusFinalityEvidence) -> tuple[object, ...]:
+        return (
+            evidence.operation_id,
+            evidence.chain_id,
+            evidence.block_height,
+            evidence.block_id,
+            evidence.app_hash,
+            evidence.commit_hash,
+            evidence.finalized_at,
+            evidence.proof_version,
+        )

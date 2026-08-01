@@ -26,7 +26,9 @@ from aidn_hypervisor.consensus.cometbft_crypto import (
 )
 from aidn_hypervisor.consensus.cometbft_finality import (
     CometBftFinalityConfig,
+    CometBftMultiRpcFinalityConfig,
     build_cometbft_finality_source,
+    build_cometbft_multi_rpc_finality_source,
 )
 from aidn_hypervisor.consensus.cometbft_header import cometbft_header_hash
 from aidn_hypervisor.consensus.cometbft_merkle import (
@@ -35,6 +37,7 @@ from aidn_hypervisor.consensus.cometbft_merkle import (
 from aidn_hypervisor.consensus.finality import (
     ConsensusFinalityEvidence,
     ConsensusFinalitySource,
+    QuorumConsensusFinalitySource,
     VerifiedConsensusFinalitySource,
 )
 from aidn_hypervisor.consensus.light_client import (
@@ -74,6 +77,7 @@ __all__ = [
     "ABCIStateStoreError",
     "ConsensusFinalityEvidence",
     "ConsensusFinalitySource",
+    "QuorumConsensusFinalitySource",
     "VerifiedConsensusFinalitySource",
     "CometBftProofVerifier",
     "CometBftRpcFinalitySource",
@@ -90,7 +94,9 @@ __all__ = [
     "verify_cometbft_transaction_inclusion",
     "cometbft_header_hash",
     "CometBftFinalityConfig",
+    "CometBftMultiRpcFinalityConfig",
     "build_cometbft_finality_source",
+    "build_cometbft_multi_rpc_finality_source",
     "CometBftCryptographicBackend",
     "CometBftLightClient",
     "CometBftLightClientProofVerifier",

@@ -9,8 +9,11 @@ from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.cometbft_crypto import Zip215CometBftEd25519Backend
 from aidn_hypervisor.consensus.cometbft_finality import (
     CometBftFinalityConfig,
+    CometBftMultiRpcFinalityConfig,
     build_cometbft_finality_source,
+    build_cometbft_multi_rpc_finality_source,
 )
+from aidn_hypervisor.consensus.finality import QuorumConsensusFinalitySource
 from aidn_hypervisor.consensus.light_client import (
     CometBftValidator,
     CometBftValidatorSet,
@@ -83,3 +86,44 @@ def test_finality_wiring_composes_strict_rpc_verification_with_local_abci_commit
 
     assert source.finality_evidence("unknown-operation") is None
     assert isinstance(source._source._proof_verifier._light_client._cryptography, Zip215CometBftEd25519Backend)
+
+
+def test_multi_rpc_finality_wiring_requires_agreement_and_local_abci_commitment():
+    config = CometBftMultiRpcFinalityConfig(
+        rpc_endpoints=("https://consensus-a.example", "https://consensus-b.example"),
+        minimum_agreement=2,
+        chain_id="aidn-testnet-1",
+        verifier_id="operator-checkpoint-quorum",
+        trusted_checkpoint=_trusted_checkpoint(),
+        trust_period_seconds=3600,
+    )
+    source = build_cometbft_multi_rpc_finality_source(
+        config=config,
+        transaction_hash_for_operation=lambda operation_id: None,
+        abci_application=AIDNABCIApplication(ledger_service=LedgerOperationService()),
+        transports=[NoCallTransport(), NoCallTransport()],
+    )
+
+    assert source.finality_evidence("unknown-operation") is None
+    assert isinstance(source._source, QuorumConsensusFinalitySource)
+    assert source._source.quorum == 2
+    assert source._source.source_count == 2
+
+
+def test_multi_rpc_finality_wiring_rejects_insufficient_transport_count():
+    config = CometBftMultiRpcFinalityConfig(
+        rpc_endpoints=("https://consensus-a.example", "https://consensus-b.example"),
+        minimum_agreement=2,
+        chain_id="aidn-testnet-1",
+        verifier_id="operator-checkpoint-quorum",
+        trusted_checkpoint=_trusted_checkpoint(),
+        trust_period_seconds=3600,
+    )
+
+    with pytest.raises(ValueError, match="match endpoint count"):
+        build_cometbft_multi_rpc_finality_source(
+            config=config,
+            transaction_hash_for_operation=lambda operation_id: None,
+            abci_application=AIDNABCIApplication(ledger_service=LedgerOperationService()),
+            transports=[NoCallTransport()],
+        )
