@@ -182,6 +182,22 @@ Implemented now:
 - Snapshot persistence and replay-safe Ledger operation records for that
   canonical economic path.
 
+## Functional Controlled-Testnet Acceptance
+
+As of 2026-08-01, the functional `MVP-0001` controlled-testnet gate is
+accepted. The acceptance covers signed wallet-identity synchronization with
+pinned peer expectations, live execution against llama.cpp, vLLM and Ollama,
+final Usage reporting, cooperative fixed-price Settlement, and the
+provider-specific restart/recovery tests that assert no duplicate execution
+or payment. See the [acceptance report](../development/mvp-acceptance-2026-08-01.md).
+
+The project also accepts `hv-node10` as an independent operator for this MVP
+by explicit project policy. This closes the MVP test gate without changing
+protocol evidence: verifiers continue to report
+`ownership_evidence: NOT_PROVEN_BY_PROTOCOL`. Public directory authority,
+public multi-validator finality and production economic deployment remain
+post-MVP claims.
+
 Still required before public paid-MVP launch:
 
 0. Bind Registry peer transport to durable authenticated peer identity. The local
