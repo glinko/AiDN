@@ -178,6 +178,14 @@ def build_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/registry/replication/status")
+    async def registry_replication_status() -> dict:
+        """Expose sanitized replication lifecycle diagnostics to operators."""
+        runtime = app.state.registry_replication_runtime
+        if runtime is None:
+            return {"enabled": False, "running": False}
+        return {"enabled": True, **runtime.status()}
+
     app.include_router(
         build_api_router(
             resolved_service,
