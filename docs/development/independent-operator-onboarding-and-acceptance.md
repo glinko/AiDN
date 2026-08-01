@@ -127,6 +127,8 @@ uv run python tools/prepare-registry-replication-identity.py add-peer \
 
 Before starting a replication-enabled Hypervisor, set `AIDN_REGISTRY_REPLICATION_CONFIG`, `AIDN_SECRET_MANAGER_PATH`, and a locally injected `AIDN_SECRET_MANAGER_MASTER_KEY` from `master-key.b64`. Keep the key file mode `0600`; the generated testnet directory is separate from the running Hypervisor's existing state. Use port `9444` only after opening that TCP port between the two approved hosts and reviewing the firewall rule.
 
+For the controlled LAN acceptance profile used on `2026-08-01`, `hv-node10` (`192.168.88.126`) and `node4` (`192.168.88.127`) used separate encrypted Secret Manager stores, dedicated Hypervisor API port `8767`, and Registry replication port `9444`. Mutual peer approval, authenticated `last_authenticated_at` records, `/health` responses, and transfer of the immutable object `sha256:operator-acceptance-20260801` were observed. This proves transport and object-replication behavior only; it does not prove independent operator ownership. The listener permits one active transport session per peer identity, so a second verifier must run against a dedicated listener or after the existing session is stopped.
+
 Before production configuration, test TCP reachability and mTLS policy through the disposable harness in [registry-replication-operator-deployment.md](./registry-replication-operator-deployment.md). The harness bootstrap bundle is test-only and must not be reused as a production identity.
 
 ## 6. Technical Acceptance Evidence
