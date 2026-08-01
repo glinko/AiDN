@@ -591,6 +591,16 @@ Order of work right now:
 3. Deploy signed remote-snapshot anchoring against an independently operated multi-validator testnet before making public network-finality claims. The controlled four-validator RPC/Merkle/restart drill is now passing; it is not independent-operator evidence. A controlled LAN deployment has now also proven one CometBFT v0.38.19 validator and one AiDN ABCI process on each of four distinct Ubuntu hosts: all four nodes reached the same height and application hash, each held three P2P peers, and the external transaction/Merkle/restart drill passed while one physical validator restarted. The controlled-LAN verifier now gates further drills on four private RPC views, unique validator identities, P2P quorum, synchronized height and one application hash; its output explicitly excludes independent-ownership claims. A separate read-only external-testnet verifier now requires at least two HTTPS RPC views, an operator-provided trusted checkpoint and one exact finalized operation; it cryptographically checks the transaction, Merkle proof and validator transition before rejecting divergent endpoint evidence. Independent validator ownership still requires out-of-band operator evidence.
 4. Extend Plugin Host isolation only with enforceable declared egress controls and scoped writable data; unsupported policies remain blocked.
 
+## Post-MVP Protocol Work
+
+### Development contribution accounting and rewards
+
+This work is intentionally outside the functional MVP. It must not alter current Endpoint economics, escrow, or Validator rewards until its independent Governance and tokenomics decisions are approved.
+
+1. Implement [RFC-0068](./docs/product/RFC-0068-development-contribution-accounting-and-attribution-protocol.md) in a non-emitting evidence mode: eligible repositories, protected-branch merge verification, Contributor Identity, signed Wallet binding, contribution attestations, ECU/CU calculation, contributor groups, role allocation, challenge windows, and maturity records.
+2. Approve [ECO-0007](./docs/product/ECO-0007-development-reward-pool-and-distribution-policy.md) before any development-reward transfer. It owns the Development Pool budget, Q conversion, caps, vesting, carryover, and treatment of unclaimed or cancelled rewards; its current placeholder intentionally sets none of those parameters.
+3. Only after both documents are approved, add the corresponding Ledger operations, deterministic epoch distribution, auditable commitments, and a capped rollout. Forge data remains evidence, not a payment authority.
+
 ## Source Documents
 
 - Vision: [00_VISION.md](./00_VISION.md)
@@ -601,6 +611,7 @@ Order of work right now:
 - Protocol service reward distribution: [docs/product/ECO-0004-protocol-service-reward-distribution.md](./docs/product/ECO-0004-protocol-service-reward-distribution.md)
 - Emission, recycling, and epoch reward allocation: [docs/product/ECO-0005-q-emission-recycling-and-epoch-reward-allocation.md](./docs/product/ECO-0005-q-emission-recycling-and-epoch-reward-allocation.md)
 - Consensus economics and validator eligibility: [docs/product/ECO-0006-consensus-economics-and-validator-eligibility.md](./docs/product/ECO-0006-consensus-economics-and-validator-eligibility.md)
+- Development reward pool and distribution: [docs/product/ECO-0007-development-reward-pool-and-distribution-policy.md](./docs/product/ECO-0007-development-reward-pool-and-distribution-policy.md)
 - Wallet and identity: [docs/product/RFC-0016-wallet-and-identity.md](./docs/product/RFC-0016-wallet-and-identity.md)
 - Validation economics: [docs/product/ECO-0003-validation-economics.md](./docs/product/ECO-0003-validation-economics.md)
 - Validation escrow system: [docs/product/RFC-0035-validation-escrow-system.md](./docs/product/RFC-0035-validation-escrow-system.md)
@@ -619,6 +630,7 @@ Order of work right now:
 - CometBFT consensus integration: [docs/product/RFC-0047-cometbft-consensus-integration.md](./docs/product/RFC-0047-cometbft-consensus-integration.md)
 - Validation report specification: [docs/product/RFC-0057-validation-report-specification.md](./docs/product/RFC-0057-validation-report-specification.md)
 - Participant eligibility and Sybil resistance: [docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md](./docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md)
+- Development contribution accounting and attribution: [docs/product/RFC-0068-development-contribution-accounting-and-attribution-protocol.md](./docs/product/RFC-0068-development-contribution-accounting-and-attribution-protocol.md)
 - M5 validation bond and escrow design: [docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md](./docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md)
 - Current hypervisor execution plan: [docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md](./docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md)
 - Network architecture spec: [docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md](./docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md)
