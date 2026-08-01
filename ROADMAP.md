@@ -658,6 +658,7 @@ This work is intentionally outside the functional MVP. It must not alter current
 
 - Registry replication now starts inventory exchange automatically after every authenticated inbound or outbound connection, scopes outbox flushing to the intended peer, and exposes sanitized runtime diagnostics at `GET /registry/replication/status`.
 - The controlled LAN profile was extended to `hv-node10` (`192.168.88.126`) and `node3-independent` (`192.168.88.128`) with one outbound initiator, bidirectional object convergence, and restart/re-authentication evidence. Snapshot persistence is serialized to prevent concurrent peer handlers from racing on the shared temporary file. This remains technical evidence under one operator context, not proof of organizational independence.
+- MVP acceptance policy (2026-08-01): the project explicitly accepts `hv-node10` (`192.168.88.126`) as an independent operator for the functional controlled-testnet MVP. This closes the MVP operator-independence gate and waives additional external-operator testing for MVP. It does not change protocol verification: reports continue to use `ownership_evidence: NOT_PROVEN_BY_PROTOCOL`, and public directory trust or public multi-validator finality still require separate evidence and Governance approval. See [MVP Operator Independence Assumption](./docs/development/mvp-operator-independence-assumption.md).
 
 ## Maintenance Rule
 

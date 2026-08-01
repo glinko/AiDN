@@ -2,6 +2,14 @@
 
 This guide lets an independent operator deploy an AiDN Hypervisor, mutually approve one Registry peer, and produce technical acceptance evidence. It does **not** grant public directory trust or prove independent organizational ownership. Those are separate human/Governance decisions.
 
+For the functional MVP controlled testnet, the project has explicitly accepted
+`hv-node10` (`192.168.88.126`) as an independent operator by out-of-band
+project declaration. This closes the MVP acceptance gate without changing the
+protocol verifier or its evidence semantics. The verifier intentionally keeps
+reporting `ownership_evidence: NOT_PROVEN_BY_PROTOCOL`; that value records the
+cryptographic evidence boundary, while the MVP declaration is an administrative
+testnet assumption. See [MVP Operator Independence Assumption](./mvp-operator-independence-assumption.md).
+
 ## 1. Safety Boundary
 
 Do not send any of the following to another operator or repository:
@@ -144,7 +152,7 @@ For the controlled LAN acceptance profile used on `2026-08-01`, `hv-node10` (`19
 
 For a persistent two-node profile, avoid symmetric outbound configuration for the same peer. Keep the peer approved and listening on both sides, but configure one side as the outbound initiator; inventory requests are generated automatically on authenticated inbound and outbound connections, so object exchange remains bidirectional over that single transport session. The read-only `GET /registry/replication/status` endpoint exposes authenticated peers, inventory state, transfer counters, and sanitized runtime errors.
 
-The extended controlled profile used `hv-node10` (`192.168.88.126`) as the outbound initiator and `node3-independent` (`192.168.88.128`) as the listener-only peer. Both unique immutable acceptance objects converged on both snapshots, and a subsequent `hv-node10` systemd restart re-authenticated without losing either object. This is technical peer evidence only; the hosts still share one test operator context and do not prove organizational independence.
+The extended controlled profile used `hv-node10` (`192.168.88.126`) as the outbound initiator and `node3-independent` (`192.168.88.128`) as the listener-only peer. Both unique immutable acceptance objects converged on both snapshots, and a subsequent `hv-node10` systemd restart re-authenticated without losing either object. This is technical peer evidence only. For MVP acceptance, the project separately accepts `hv-node10` as independent by declaration; the technical evidence itself still does not prove organizational independence.
 
 Before production configuration, test TCP reachability and mTLS policy through the disposable harness in [registry-replication-operator-deployment.md](./registry-replication-operator-deployment.md). The harness bootstrap bundle is test-only and must not be reused as a production identity.
 
