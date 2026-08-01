@@ -601,6 +601,13 @@ This work is intentionally outside the functional MVP. It must not alter current
 2. Approve [ECO-0007](./docs/product/ECO-0007-development-reward-pool-and-distribution-policy.md) before any development-reward transfer. It is now a draft policy that defines the Development Pool budget source, Q conversion, caps, vesting, carryover, and treatment of unclaimed or cancelled rewards; activation still requires Governance approval and economic simulation.
 3. Only after both documents are approved, add the corresponding Ledger operations, deterministic epoch distribution, auditable commitments, and a capped rollout. Forge data remains evidence, not a payment authority.
 
+### Dashboard design and information architecture
+
+1. Use [UI-0001](./docs/product/UI-0001-hypervisor-dashboard-specification.md) as the post-MVP Dashboard architecture: Bundle is the operator's central deployment unit, while Endpoint remains the distinct Consumer-facing offer and Runtime/Provider identities remain explicit.
+2. Create a route and domain-object inventory before visual redesign so existing `Home`, `Providers`, `Bundles`, `Endpoints`, `Sessions`, `Market`, and Wallet surfaces migrate without duplicate ownership or parallel configuration state.
+3. Implement immutable Bundle revision/clone UX, resource and validation preflight, and visible publication/session consequences before allowing operators to modify a live deployment through the new shell.
+4. Introduce Basic/Advanced mode only after the canonical Bundle/Endpoint paths are usable; Advanced pages reveal Provider Plugin, Provider Instance, Model Deployment, and Runtime Binding detail without creating another workflow.
+
 ## Source Documents
 
 - Vision: [00_VISION.md](./00_VISION.md)
@@ -631,6 +638,7 @@ This work is intentionally outside the functional MVP. It must not alter current
 - Validation report specification: [docs/product/RFC-0057-validation-report-specification.md](./docs/product/RFC-0057-validation-report-specification.md)
 - Participant eligibility and Sybil resistance: [docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md](./docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md)
 - Development contribution accounting and attribution: [docs/product/RFC-0068-development-contribution-accounting-and-attribution-protocol.md](./docs/product/RFC-0068-development-contribution-accounting-and-attribution-protocol.md)
+- Hypervisor dashboard specification: [docs/product/UI-0001-hypervisor-dashboard-specification.md](./docs/product/UI-0001-hypervisor-dashboard-specification.md)
 - M5 validation bond and escrow design: [docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md](./docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md)
 - Current hypervisor execution plan: [docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md](./docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md)
 - Network architecture spec: [docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md](./docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md)
