@@ -43,6 +43,17 @@ curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/glinko/A
 
 The bootstrap intentionally starts a loopback-only API with Registry replication disabled. It does not publish an Endpoint, open public ports, create Wallet/Registry/TLS keys, or make a directory-trust claim. Continue with the mutual approval steps below before configuring replication.
 
+### One-command two-host transport smoke
+
+When both hosts are under the same test operator's SSH control, run this from the local AiDN checkout to prove the existing mTLS plus Ed25519 Registry transport across hosts:
+
+```bash
+~/aidn/AiDN/tools/run-cross-host-registry-smoke.sh \
+  --remote-ssh user@<remote-host> --remote-repo /home/user/aidn/AiDN
+```
+
+The runner starts a disposable loopback-only test peer remotely, copies only its disposable client bundle through SCP, opens a temporary SSH tunnel, and verifies signed handshake, inventory exchange, and immutable object transfer. It terminates the remote peer and tunnel afterward. It uses no production Hypervisor state or identity and is not evidence of independent ownership; its purpose is a one-command interoperability check before the mutually approved production configuration.
+
 ## 3. Create the Operator Workspace
 
 Run this on the independent operator's host:
