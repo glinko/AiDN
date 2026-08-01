@@ -654,6 +654,11 @@ This work is intentionally outside the functional MVP. It must not alter current
 - Provider plugin system MVP plan: [docs/superpowers/plans/2026-07-14-provider-plugin-system-mvp.md](./docs/superpowers/plans/2026-07-14-provider-plugin-system-mvp.md)
 - Provider install approval and apply flow plan: [docs/superpowers/plans/2026-07-15-provider-install-approval-flow.md](./docs/superpowers/plans/2026-07-15-provider-install-approval-flow.md)
 
+## Latest Acceptance Update
+
+- Registry replication now starts inventory exchange automatically after every authenticated inbound or outbound connection, scopes outbox flushing to the intended peer, and exposes sanitized runtime diagnostics at `GET /registry/replication/status`.
+- The controlled LAN profile was extended to `hv-node10` (`192.168.88.126`) and `node3-independent` (`192.168.88.128`) with one outbound initiator, bidirectional object convergence, and restart/re-authentication evidence. Snapshot persistence is serialized to prevent concurrent peer handlers from racing on the shared temporary file. This remains technical evidence under one operator context, not proof of organizational independence.
+
 ## Maintenance Rule
 
 Every meaningful architecture or milestone change should update this file in the same branch.

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import threading
 import time
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -111,6 +112,7 @@ class RegistryService:
             wallet_identity_peer_transport or WalletIdentityPeerTransport()
         )
         self._snapshot_path = Path(snapshot_path) if snapshot_path is not None else None
+        self._snapshot_lock = threading.RLock()
         self._loading_registry_object_snapshot = True
         try:
             self._load_registry_object_snapshot()
@@ -268,8 +270,9 @@ class RegistryService:
             if key_changed or not enabled
             else existing.get("last_authentication_error"),
         }
-        self._replication_peers[normalized_peer_id] = record
-        self._persist_registry_object_snapshot()
+        with self._snapshot_lock:
+            self._replication_peers[normalized_peer_id] = record
+            self._persist_registry_object_snapshot()
         return deepcopy(record)
 
     def list_replication_peers(self) -> list[dict]:
@@ -296,8 +299,9 @@ class RegistryService:
             updated["last_authentication_error"] = None
         else:
             updated["last_authentication_error"] = error or "authentication_failed"
-        self._replication_peers[peer_id] = updated
-        self._persist_registry_object_snapshot()
+        with self._snapshot_lock:
+            self._replication_peers[peer_id] = updated
+            self._persist_registry_object_snapshot()
         return deepcopy(updated)
 
     def list_wallet_identity_resolutions(self) -> list[dict]:
@@ -1266,6 +1270,11 @@ class RegistryService:
         return record
 
     def upsert_registry_object(self, record: dict, *, persist: bool = True) -> dict:
+        """Store one immutable object while serializing snapshot mutation."""
+        with self._snapshot_lock:
+            return self._upsert_registry_object(record, persist=persist)
+
+    def _upsert_registry_object(self, record: dict, *, persist: bool = True) -> dict:
         object_id = str(record["object_id"])
         normalized = deepcopy(record)
         self._validate_wallet_identity_objects([normalized])
@@ -2796,6 +2805,11 @@ class RegistryService:
             self._wallet_identity_governance_policy = model.model_dump(mode="json")
 
     def _persist_registry_object_snapshot(self) -> None:
+        """Atomically persist one snapshot without colliding writer threads."""
+        with self._snapshot_lock:
+            self._write_registry_object_snapshot()
+
+    def _write_registry_object_snapshot(self) -> None:
         if self._snapshot_path is None:
             return
         self._snapshot_path.parent.mkdir(parents=True, exist_ok=True)

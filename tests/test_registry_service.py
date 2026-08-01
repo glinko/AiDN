@@ -1,6 +1,7 @@
 import hashlib
 import json
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from urllib import error as urllib_error
@@ -1822,6 +1823,37 @@ def test_registry_service_rolls_back_upsert_when_snapshot_persist_fails(
         )
 
     assert service.list_registry_objects() == []
+
+
+def test_registry_service_serializes_concurrent_snapshot_writes(tmp_path: Path) -> None:
+    snapshot_path = tmp_path / "registry-objects.json"
+    service = RegistryService(snapshot_path=snapshot_path)
+
+    def write_batch(prefix: str) -> None:
+        for index in range(8):
+            object_id = f"sha256:{prefix}-{index}"
+            service.upsert_registry_object(
+                {
+                    "object_id": object_id,
+                    "object_type": "capability_definition",
+                    "object_version": "capdef.v1",
+                    "namespace": "protocol",
+                    "payload_hash": f"sha256:{prefix}-payload-{index}",
+                    "payload_encoding": "canonical_json",
+                    "source_reference": f"test:{prefix}:{index}",
+                }
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(write_batch, "peer-a"),
+            executor.submit(write_batch, "peer-b"),
+        ]
+        for future in futures:
+            future.result()
+
+    restarted = RegistryService(snapshot_path=snapshot_path)
+    assert len(restarted.list_registry_objects()) == 16
 
 
 def test_registry_service_rolls_back_batch_when_snapshot_persist_fails(
