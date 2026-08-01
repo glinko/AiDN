@@ -102,6 +102,31 @@ Each operator independently verifies the other operator's identity and public Ed
 
 The configuration uses opaque secret handles and network addresses only. It SHALL NOT contain private key bytes. Both sides must agree on `network_id`, `chain_id`, and `network_revision`. A changed peer key requires local rotation approval; it is not accepted automatically.
 
+### Persistent controlled-testnet identity
+
+For a controlled testnet, use `tools/prepare-registry-replication-identity.py`. Run `init` independently on each host; it creates a local encrypted Secret Manager, an Ed25519 signing key, a host-local CA, an mTLS certificate, and a public bundle. It does not export private material. Exchange `public-peer.json` through an authenticated operator channel, then run `add-peer` on both hosts. The command also writes the approved remote Ed25519 key into the supplied local Registry snapshot.
+
+Example on `hv-node10` (`192.168.88.126`):
+
+```bash
+cd /home/user/aidn/AiDN
+uv run python tools/prepare-registry-replication-identity.py init \
+  --root /home/user/.local/share/aidn/registry-testnet \
+  --peer-id hv-node10 --host 192.168.88.126 --port 9444 \
+  --chain-id aidn-testnet-1
+```
+
+Run the same command on `node4` (`192.168.88.127`) with `--peer-id node4` and its host address. Exchange the two `public-peer.json` files, then import the remote bundle on each host:
+
+```bash
+uv run python tools/prepare-registry-replication-identity.py add-peer \
+  --root /home/user/.local/share/aidn/registry-testnet \
+  --bundle /secure-transfer/node4-public-peer.json \
+  --registry-snapshot /home/user/.local/share/aidn/registry-objects.json
+```
+
+Before starting a replication-enabled Hypervisor, set `AIDN_REGISTRY_REPLICATION_CONFIG`, `AIDN_SECRET_MANAGER_PATH`, and a locally injected `AIDN_SECRET_MANAGER_MASTER_KEY` from `master-key.b64`. Keep the key file mode `0600`; the generated testnet directory is separate from the running Hypervisor's existing state. Use port `9444` only after opening that TCP port between the two approved hosts and reviewing the firewall rule.
+
 Before production configuration, test TCP reachability and mTLS policy through the disposable harness in [registry-replication-operator-deployment.md](./registry-replication-operator-deployment.md). The harness bootstrap bundle is test-only and must not be reused as a production identity.
 
 ## 6. Technical Acceptance Evidence
