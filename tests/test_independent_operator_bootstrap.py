@@ -31,4 +31,6 @@ def test_systemd_replication_installer_keeps_master_key_out_of_unit() -> None:
     assert "ProtectHome=read-only" in script
     assert "sudo install -o root -g root -m 0644" in script
     assert "refusing to replace running replication process" in script
+    assert '< "\\$root/master-key.b64")' in script
+    assert '\\"$root/master-key.b64\\"' not in script
     assert "EnvironmentFile" not in script
