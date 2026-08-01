@@ -42,6 +42,13 @@ Merkle inclusion proof, CometBFT commit signatures and validator transition
 relative to the operator-provided trusted checkpoint. It then rejects endpoints
 which disagree on the finalized height, block ID or application hash.
 
+The production Hypervisor wiring also exposes a multi-RPC finality source. Its
+`minimum_agreement` value requires a bounded quorum of independently verified
+RPC observations before evidence is passed to the local ABCI commitment
+boundary. An ambiguous tie or insufficient matching evidence fails closed.
+The source labels and endpoint URLs are configuration inputs; they do not prove
+that the endpoint operators are organizationally independent.
+
 The output deliberately reports `NOT_PROVEN_BY_PROTOCOL` for ownership. Two
 RPC URLs are not evidence of independent operators on their own; preserve the
 testnet validator roster, control-group declarations and each operator's

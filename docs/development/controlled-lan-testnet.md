@@ -37,6 +37,12 @@ The verifier only accepts insecure HTTP after explicitly constraining it to
 private IP addresses. Its successful report deliberately includes
 `ownership_evidence: NOT_PROVEN_BY_PROTOCOL`.
 
+On 2026-08-01 the four-host LAN gate passed against the live validators at
+height `84959`: all four RPC views reported the same chain ID and application
+hash, four unique validator IDs, and three P2P peers per node. This confirms
+controlled topology readiness for multi-RPC integration drills only; it does
+not establish independent ownership or public network finality.
+
 ## Operating Rule
 
 Use this environment for reproducible multi-host checks such as registry

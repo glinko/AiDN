@@ -301,13 +301,16 @@ Immediate priorities:
     `VoteSignBytes`, exact `SimpleValidator` Merkle roots and validates RPC
     precommits against derived validator addresses. The standard and ZIP-215
     Ed25519 variants are both available; unsupported keys still fail closed.
-    `ABCICommittedFinalitySource` now admits external light-client evidence only
-    when the local ABCI commitment has the same height, block hash and app hash.
-    The RPC validator-set provider now fetches all bounded pages at both `H`
-    and `H+1`, rejects changing totals and is wired directly into the light
-    client bridge. Committed transaction-data Merkle proof verification,
-    production transport and state-sync operation remain required before a
-    public multi-node authority claim.
+   `ABCICommittedFinalitySource` now admits external light-client evidence only
+   when the local ABCI commitment has the same height, block hash and app hash.
+   The RPC validator-set provider now fetches all bounded pages at both `H`
+   and `H+1`, rejects changing totals and is wired directly into the light
+   client bridge. A production multi-RPC finality source now requires a
+   configured quorum of matching operation-bound evidence before the local ABCI
+   commitment is accepted; insufficient evidence and ambiguous ties fail
+   closed. Committed transaction-data Merkle proof verification,
+   production transport and state-sync operation remain required before a
+   public multi-node authority claim.
 1. Complete production Registry peer transport operation. The Replicator now has an opt-in fail-closed Ed25519 handshake gate with nonce replay protection for inbound and outbound exchange; operator-managed peer keys persist in the Registry snapshot, survive restart, and key rotation or disablement revokes the active replication session. A transport session now requires verified TLS, owns the outer message sequence, carries the signed handshake and resets authorization on reconnect. A bounded outbound reconnect supervisor now retries only approved peers, requires a fresh handshake after every new transport, and backs off on connection, frame or handshake-timeout failure. The listener, reconnect supervisor and outbox flushing are now composed by an explicitly injected `RegistryReplicationRuntime` and follow the Hypervisor lifespan without implicitly opening a port or loading a signing key. Operator deployment configuration and encrypted local Secret Manager handles are implemented. On `2026-07-29`, a controlled two-host Linux deployment proved persistent snapshot replication of an immutable object, followed by a forced server restart, fresh mTLS plus Ed25519 authentication and a second inventory exchange without runtime errors. This is controlled operational evidence only; independent operator validation remains required before network-wide directory claims.
 2. Package-backed Plugin Hosts now reject `UNSANDBOXED_HOST` and run only with `SANDBOX_REQUIRED` through a Docker boundary: read-only verified package mount, non-root UID, dropped capabilities, no-new-privileges, bounded PID/memory and no network. Activation credentials may persist through the Secret Manager, are absent from API/status records, and reach package Hosts only through a short-lived read-only secret-file mount rather than Docker environment variables. A privileged local Docker operator remains trusted because it can inspect bind mounts; declared egress and scoped writable data remain future hardening work and fail closed today.
 3. Bind Endpoint Configuration publications to a real Ed25519 owner-wallet signature. New owner wallets and API publications use a verifiable signature over the complete published record; public paid Session admission requires the signature to match the canonical owner identity. Public Registry advertisements carry that proof only for external-facing Endpoints, and Remote Endpoint attachment verifies the proof, summary binding and synchronized owner identity before creating a Proxy target. When the owner identity is absent locally, Remote attach performs a bounded root-only HTTP(S) peer sync and requires a hash-bound Ed25519 envelope matching the expected Registry node, operator and owner wallet before importing it. Legacy local records remain readable but are explicitly unverified. Authenticated Registry replication and peer transport authentication are implemented; independent-peer deployment validation remains pending.
