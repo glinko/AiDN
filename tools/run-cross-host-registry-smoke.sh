@@ -50,7 +50,10 @@ done
 local_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 local_uv="$(command -v uv || true)"
 if [[ -z "$local_uv" && -x "$HOME/.local/bin/uv" ]]; then local_uv="$HOME/.local/bin/uv"; fi
-[[ -n "$local_uv" ]] || { echo 'uv is required locally' >&2; exit 1; }
+local_python="$local_repo/.venv/bin/python"
+if [[ -z "$local_uv" && ! -x "$local_python" ]]; then
+  echo 'local uv or .venv/bin/python is required' >&2; exit 1
+fi
 
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 remote_state="/tmp/aidn-registry-smoke-${run_id}"
@@ -74,12 +77,23 @@ state_dir="$2"
 port="$3"
 uv_bin="$(command -v uv || true)"
 if [[ -z "$uv_bin" && -x "$HOME/.local/bin/uv" ]]; then uv_bin="$HOME/.local/bin/uv"; fi
-[[ -n "$uv_bin" ]] || { echo 'uv is required on the remote host' >&2; exit 1; }
 [[ -d "$repo/.git" ]] || { echo "remote repository is invalid: $repo" >&2; exit 1; }
+python_bin="$repo/.venv/bin/python"
+if [[ -z "$uv_bin" && ! -x "$python_bin" ]]; then
+  echo "remote uv or $repo/.venv/bin/python is required; run the Ubuntu bootstrap there first" >&2
+  exit 1
+fi
+cd "$repo"
 mkdir -p "$state_dir"
-nohup "$uv_bin" --directory "$repo" run python tools/registry_replication_peer_acceptance.py \
-  server --state-dir "$state_dir" --host 127.0.0.1 --port "$port" \
-  > "$state_dir/server.log" 2>&1 < /dev/null &
+if [[ -n "$uv_bin" ]]; then
+  nohup "$uv_bin" --directory "$repo" run python tools/registry_replication_peer_acceptance.py \
+    server --state-dir "$state_dir" --host 127.0.0.1 --port "$port" \
+    > "$state_dir/server.log" 2>&1 < /dev/null &
+else
+  nohup "$python_bin" tools/registry_replication_peer_acceptance.py \
+    server --state-dir "$state_dir" --host 127.0.0.1 --port "$port" \
+    > "$state_dir/server.log" 2>&1 < /dev/null &
+fi
 echo $!
 REMOTE
 )"
@@ -99,9 +113,15 @@ tunnel_pid=$!
 sleep 1
 kill -0 "$tunnel_pid" 2>/dev/null || { echo 'SSH tunnel did not start' >&2; exit 1; }
 
-"$local_uv" --directory "$local_repo" run python tools/registry_replication_peer_acceptance.py \
-  client --state-dir "$local_state/client" --bundle "$local_bundle" \
-  --host 127.0.0.1 --port "$local_port" --timeout "$timeout"
+if [[ -n "$local_uv" ]]; then
+  "$local_uv" --directory "$local_repo" run python tools/registry_replication_peer_acceptance.py \
+    client --state-dir "$local_state/client" --bundle "$local_bundle" \
+    --host 127.0.0.1 --port "$local_port" --timeout "$timeout"
+else
+  "$local_python" tools/registry_replication_peer_acceptance.py \
+    client --state-dir "$local_state/client" --bundle "$local_bundle" \
+    --host 127.0.0.1 --port "$local_port" --timeout "$timeout"
+fi
 
 printf '{"status":"ok","remote_ssh":"%s","remote_test_state":"%s","warning":"test-only disposable identities; no independent ownership claim"}\n' \
   "$remote_ssh" "$remote_state"

@@ -54,6 +54,8 @@ When both hosts are under the same test operator's SSH control, run this from th
 
 The runner starts a disposable loopback-only test peer remotely, copies only its disposable client bundle through SCP, opens a temporary SSH tunnel, and verifies signed handshake, inventory exchange, and immutable object transfer. It terminates the remote peer and tunnel afterward. It uses no production Hypervisor state or identity and is not evidence of independent ownership; its purpose is a one-command interoperability check before the mutually approved production configuration.
 
+The remote host needs either `uv` or an already synchronized `AiDN/.venv`. If neither exists, bootstrap that host first with `--no-start`; the test peer does not require a running Hypervisor there.
+
 ## 3. Create the Operator Workspace
 
 Run this on the independent operator's host:

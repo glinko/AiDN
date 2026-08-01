@@ -17,3 +17,4 @@ def test_cross_host_registry_smoke_is_explicitly_test_only() -> None:
     assert "registry_replication_peer_acceptance.py" in script
     assert "--host 127.0.0.1" in script
     assert "test-only disposable identities" in script
+    assert ".venv/bin/python" in script
