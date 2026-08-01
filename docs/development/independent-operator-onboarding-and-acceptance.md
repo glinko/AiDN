@@ -49,10 +49,10 @@ When both hosts are under the same test operator's SSH control, run this from th
 
 ```bash
 ~/aidn/AiDN/tools/run-cross-host-registry-smoke.sh \
-  --remote-ssh user@<remote-host> --remote-repo /home/user/aidn/AiDN
+  --remote-ssh user@<remote-host>
 ```
 
-The runner starts a disposable loopback-only test peer remotely, copies only its disposable client bundle through SCP, opens a temporary SSH tunnel, and verifies signed handshake, inventory exchange, and immutable object transfer. It terminates the remote peer and tunnel afterward. It uses no production Hypervisor state or identity and is not evidence of independent ownership; its purpose is a one-command interoperability check before the mutually approved production configuration.
+The runner automatically discovers exactly one remote AiDN checkout through the bundled acceptance harness. Pass `--remote-repo /known/path` only when automatic discovery reports more than one candidate. The runner starts a disposable loopback-only test peer remotely, copies only its disposable client bundle through SCP, opens a temporary SSH tunnel, and verifies signed handshake, inventory exchange, and immutable object transfer. It terminates the remote peer and tunnel afterward. It uses no production Hypervisor state or identity and is not evidence of independent ownership; its purpose is a one-command interoperability check before the mutually approved production configuration.
 
 The remote host needs either `uv` or an already synchronized `AiDN/.venv`. If neither exists, bootstrap that host first with `--no-start`; the test peer does not require a running Hypervisor there.
 

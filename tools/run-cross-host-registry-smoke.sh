@@ -5,9 +5,10 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  run-cross-host-registry-smoke.sh --remote-ssh USER@HOST --remote-repo PATH [options]
+  run-cross-host-registry-smoke.sh --remote-ssh USER@HOST [--remote-repo PATH|auto] [options]
 
 Options:
+  --remote-repo PATH  Remote AiDN checkout, or auto (default: auto)
   --remote-port PORT  Disposable remote loopback port (default: 29443)
   --local-port PORT   Local SSH-forwarded port (default: 29443)
   --timeout SECONDS   Client acceptance timeout (default: 20)
@@ -20,7 +21,7 @@ EOF
 }
 
 remote_ssh=''
-remote_repo=''
+remote_repo='auto'
 remote_port='29443'
 local_port='29443'
 timeout='20'
@@ -37,9 +38,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$remote_ssh" && -n "$remote_repo" ]] || {
-  echo '--remote-ssh and --remote-repo are required' >&2; exit 2;
-}
+[[ -n "$remote_ssh" ]] || { echo '--remote-ssh is required' >&2; exit 2; }
 for value in remote_port local_port timeout; do
   [[ "${!value}" =~ ^[0-9]+$ ]] || { echo "--${value//_/-} must be numeric" >&2; exit 2; }
 done
@@ -75,9 +74,23 @@ set -euo pipefail
 repo="$1"
 state_dir="$2"
 port="$3"
+if [[ "$repo" == 'auto' ]]; then
+  candidates=()
+  while IFS= read -r candidate; do candidates+=("$candidate"); done < <(
+    find "$HOME" -maxdepth 5 -type f \
+      -path '*/tools/registry_replication_peer_acceptance.py' -printf '%h/..\n' 2>/dev/null \
+      | while IFS= read -r path; do realpath "$path"; done | sort -u
+  )
+  if (( ${#candidates[@]} != 1 )); then
+    echo "remote checkout auto-discovery expected one candidate, found ${#candidates[@]}: ${candidates[*]:-none}" >&2
+    exit 1
+  fi
+  repo="${candidates[0]}"
+fi
 uv_bin="$(command -v uv || true)"
 if [[ -z "$uv_bin" && -x "$HOME/.local/bin/uv" ]]; then uv_bin="$HOME/.local/bin/uv"; fi
 [[ -d "$repo/.git" ]] || { echo "remote repository is invalid: $repo" >&2; exit 1; }
+echo "resolved remote repository: $repo" >&2
 python_bin="$repo/.venv/bin/python"
 if [[ -z "$uv_bin" && ! -x "$python_bin" ]]; then
   echo "remote uv or $repo/.venv/bin/python is required; run the Ubuntu bootstrap there first" >&2

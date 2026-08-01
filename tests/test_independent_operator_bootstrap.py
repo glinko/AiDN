@@ -13,8 +13,9 @@ def test_ubuntu_bootstrap_is_loopback_only_and_requires_explicit_peer_identity()
 def test_cross_host_registry_smoke_is_explicitly_test_only() -> None:
     script = Path("tools/run-cross-host-registry-smoke.sh").read_text(encoding="utf-8")
 
-    assert "--remote-ssh and --remote-repo are required" in script
+    assert "--remote-ssh is required" in script
     assert "registry_replication_peer_acceptance.py" in script
+    assert "remote checkout auto-discovery expected one candidate" in script
     assert "--host 127.0.0.1" in script
     assert "test-only disposable identities" in script
     assert ".venv/bin/python" in script
