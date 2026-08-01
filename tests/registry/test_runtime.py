@@ -111,3 +111,29 @@ def test_runtime_status_exposes_sanitized_replication_peer_state() -> None:
     assert state[0]["connected"] is True
     assert state[0]["inventory_exchanged"] is False
     assert state[0]["last_activity_at"] > 0
+
+
+def test_runtime_starts_inventory_exchange_after_outbound_authentication() -> None:
+    session = _Session()
+    supervisor = RegistryReplicationReconnectSupervisor(
+        sessions={"registry-b": session},
+        local_public_key="ed25519:local",
+        signer=lambda _: "ed25519:signature",
+    )
+    replicator = RegistryReplicator(node_id="registry-local")
+    runtime = RegistryReplicationRuntime(
+        reconnect_supervisor=supervisor,
+        replicator=replicator,
+        poll_interval_seconds=0.01,
+    )
+
+    runtime.start()
+    try:
+        _wait_until(
+            lambda: any(
+                message["message_type"] == "registry_inventory_request"
+                for message in replicator.get_outbox()
+            )
+        )
+    finally:
+        runtime.stop()

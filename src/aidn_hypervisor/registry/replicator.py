@@ -552,15 +552,40 @@ class RegistryReplicator:
 
     # -- outbox ----------------------------------------------------------
 
-    def get_outbox(self) -> list[dict]:
-        """Get pending messages from the outbox."""
-        return list(self._outbox)
+    def get_outbox(self, peer_id: str | None = None) -> list[dict]:
+        """Get pending messages, optionally scoped to one destination peer."""
+        if peer_id is None:
+            return list(self._outbox)
+        return [
+            message
+            for message in self._outbox
+            if self._message_destination(message) == peer_id
+        ]
 
-    def clear_outbox(self) -> int:
-        """Clear the outbox and return message count."""
-        count = len(self._outbox)
-        self._outbox.clear()
-        return count
+    def clear_outbox(self, peer_id: str | None = None) -> int:
+        """Remove pending messages, optionally scoped to one destination peer."""
+        if peer_id is None:
+            count = len(self._outbox)
+            self._outbox.clear()
+            return count
+
+        pending = []
+        cleared = 0
+        for message in self._outbox:
+            if self._message_destination(message) == peer_id:
+                cleared += 1
+            else:
+                pending.append(message)
+        self._outbox = pending
+        return cleared
+
+    @staticmethod
+    def _message_destination(message: dict) -> str | None:
+        destination = message.get("destination_subject")
+        if not isinstance(destination, dict):
+            return None
+        subject_id = destination.get("subject_id")
+        return subject_id if isinstance(subject_id, str) else None
 
     # -- peer queries ----------------------------------------------------
 

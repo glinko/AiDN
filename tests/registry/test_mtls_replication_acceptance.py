@@ -176,12 +176,21 @@ def test_mtls_runtime_replicates_an_object_between_independent_secret_stores(tmp
     try:
         assert server_runtime.replicator is not None
         assert client_runtime.replicator is not None
-        object_id = "registry-acceptance-object"
+        server_object_id = "registry-server-acceptance-object"
+        client_object_id = "registry-client-acceptance-object"
         server_runtime.replicator.store.put(
             RegistryObjectEnvelope.create(
-                object_id=object_id,
+                object_id=server_object_id,
                 object_type="acceptance",
-                payload={"object_id": object_id, "source": "registry-server"},
+                payload={"object_id": server_object_id, "source": "registry-server"},
+                created_epoch=1,
+            )
+        )
+        client_runtime.replicator.store.put(
+            RegistryObjectEnvelope.create(
+                object_id=client_object_id,
+                object_type="acceptance",
+                payload={"object_id": client_object_id, "source": "registry-client"},
                 created_epoch=1,
             )
         )
@@ -190,16 +199,19 @@ def test_mtls_runtime_replicates_an_object_between_independent_secret_stores(tmp
         _wait_until(
             lambda: client_runtime.status()["outbound_peers"][0]["authenticated"]
         )
-        client_runtime.replicator.build_inventory_request("registry-server")
         try:
-            _wait_until(lambda: client_runtime.replicator.store.has(object_id))
+            _wait_until(
+                lambda: client_runtime.replicator.store.has(server_object_id)
+                and server_runtime.replicator.store.has(client_object_id)
+            )
         except AssertionError as exc:
             raise AssertionError(
                 f"replication did not complete: client={client_runtime.status()}, "
                 f"server={server_runtime.status()}"
             ) from exc
 
-        assert client_runtime.replicator.store.get(object_id) is not None
+        assert client_runtime.replicator.store.get(server_object_id) is not None
+        assert server_runtime.replicator.store.get(client_object_id) is not None
         assert server_runtime.status()["inbound_active_peer_ids"] == ["registry-client"]
     finally:
         client_runtime.stop()

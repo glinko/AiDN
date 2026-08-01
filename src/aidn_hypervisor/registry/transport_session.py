@@ -188,7 +188,9 @@ class RegistryReplicationTransportSession:
         with self._lock:
             if not self.is_authenticated:
                 raise PermissionError("Registry replication peer is not authenticated")
-            pending = self._peer_controller.replicator.get_outbox()
+            pending = self._peer_controller.replicator.get_outbox(
+                peer_id=self._peer_id
+            )
             for raw_message in pending:
                 message = NetworkMessage.model_validate(raw_message)
                 # The Registry builder may also be used through local queues. The
@@ -210,7 +212,7 @@ class RegistryReplicationTransportSession:
                 )
                 self._transport.send(message)
             if pending:
-                self._peer_controller.replicator.clear_outbox()
+                self._peer_controller.replicator.clear_outbox(peer_id=self._peer_id)
             return len(pending)
 
     def _build_message(self, *, message_type: str, payload: dict[str, Any]) -> NetworkMessage:

@@ -55,6 +55,7 @@ class RegistryReplicationRuntime:
         self._lock = threading.RLock()
         self._threads: list[threading.Thread] = []
         self._inbound_workers: dict[str, threading.Thread] = {}
+        self._inventory_requested_peers: set[str] = set()
         self._errors: deque[RegistryReplicationRuntimeError] = deque(
             maxlen=maximum_recorded_errors
         )
@@ -168,6 +169,7 @@ class RegistryReplicationRuntime:
                 if not self._stop_event.is_set():
                     self._record_error("listener", None, exc)
                 continue
+            self._request_inventory(peer_id, inbound=True)
             with self._lock:
                 if peer_id in self._inbound_workers:
                     continue
@@ -199,13 +201,40 @@ class RegistryReplicationRuntime:
             self._listener.disconnect_peer(peer_id=peer_id)
             with self._lock:
                 self._inbound_workers.pop(peer_id, None)
+                self._inventory_requested_peers.discard(peer_id)
 
     def _outbound_loop(self) -> None:
         assert self._reconnect_supervisor is not None
         while not self._stop_event.is_set():
             self._reconnect_supervisor.tick()
+            for peer in self._reconnect_supervisor.status():
+                if peer["authenticated"]:
+                    self._request_inventory(peer["peer_id"])
+                else:
+                    with self._lock:
+                        self._inventory_requested_peers.discard(peer["peer_id"])
             self._reconnect_supervisor.flush_authenticated_outboxes()
             self._stop_event.wait(self._poll_interval_seconds)
+
+    def _request_inventory(self, peer_id: str, *, inbound: bool = False) -> None:
+        """Start one inventory exchange for each authenticated connection."""
+        if self._replicator is None:
+            return
+        with self._lock:
+            if peer_id in self._inventory_requested_peers:
+                return
+        try:
+            self._replicator.build_inventory_request(peer_id)
+            if inbound:
+                if self._listener is None:
+                    return
+                self._listener.flush_outbox(peer_id=peer_id)
+        except (ConnectionError, OSError, PermissionError, ValueError, KeyError) as exc:
+            if not self._stop_event.is_set():
+                self._record_error("inventory_request", peer_id, exc)
+            return
+        with self._lock:
+            self._inventory_requested_peers.add(peer_id)
 
     def _outbound_receive_loop(self, peer_id: str) -> None:
         assert self._reconnect_supervisor is not None

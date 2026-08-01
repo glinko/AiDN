@@ -504,6 +504,17 @@ class TestOutbox:
         assert count >= 1
         assert r.get_outbox() == []
 
+    def test_outbox_can_be_scoped_to_destination_peer(self):
+        r = _make_replicator()
+        r.build_inventory_request("peer-a")
+        r.build_inventory_request("peer-b")
+
+        assert len(r.get_outbox(peer_id="peer-a")) == 1
+        assert len(r.get_outbox(peer_id="peer-b")) == 1
+        assert r.clear_outbox(peer_id="peer-a") == 1
+        assert r.get_outbox(peer_id="peer-a") == []
+        assert len(r.get_outbox(peer_id="peer-b")) == 1
+
     def test_outbox_message_format(self):
         r = _make_replicator()
         r.build_inventory_request("peer-1")

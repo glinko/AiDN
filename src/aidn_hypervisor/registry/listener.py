@@ -145,6 +145,12 @@ class RegistryReplicationTlsListener:
             session = self._sessions[peer_id]
         return session.receive_once()
 
+    def flush_outbox(self, *, peer_id: str) -> int:
+        """Flush messages addressed to one authenticated inbound peer."""
+        with self._lock:
+            session = self._sessions[peer_id]
+        return session.flush_outbox()
+
     def disconnect_peer(self, *, peer_id: str) -> None:
         """Close one inbound peer without affecting other accepted links."""
         with self._lock:
