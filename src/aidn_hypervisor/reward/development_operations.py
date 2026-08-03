@@ -1,13 +1,13 @@
 """Typed ECO-0007 Ledger operation boundary.
 
 Calculation envelopes are consensus-applicable as immutable evidence, pool
-allocation envelopes are source-bound reserve records, reward reserve
-envelopes bind a calculated schedule to that pool reserve, payment envelopes
-consume verified stages, and unclaimed envelopes preserve stages without a
-Wallet. Claim envelopes consume one unclaimed stage through an RFC-0068 signed
-Wallet binding. Finalized commitment envelopes close the exact evidence set
-without minting Q; bounty and correction stages remain catalog-only. Reward
-transitions are not aliases for ``REWARD_MINT``.
+allocation/carryover envelopes are source-bound reserve records, bounty
+envelopes apply a bounded lifecycle, reward reserve envelopes bind a calculated
+schedule to that pool reserve, payment envelopes consume verified stages, and
+unclaimed envelopes preserve stages without a Wallet. Claim envelopes consume
+one unclaimed stage through an RFC-0068 signed Wallet binding. Finalized
+commitment, cancellation and correction envelopes preserve the exact evidence
+set without minting Q. Reward transitions are not aliases for ``REWARD_MINT``.
 """
 
 from __future__ import annotations
@@ -22,8 +22,18 @@ from aidn_hypervisor.reward.development_activation import (
     DevelopmentRewardActivationApproval,
     verify_development_reward_activation_approval,
 )
+from aidn_hypervisor.reward.development_adjustments import DevelopmentRewardStateSnapshot
+from aidn_hypervisor.reward.development_bounty import (
+    DevelopmentBounty,
+    DevelopmentBountyExpiry,
+    DevelopmentBountyRelease,
+    DevelopmentBountyReservation,
+)
+from aidn_hypervisor.reward.development_cancellation import DevelopmentRewardCancellationRecord
+from aidn_hypervisor.reward.development_carryover import DevelopmentPoolCarryoverRecord
 from aidn_hypervisor.reward.development_claim import DevelopmentRewardWalletBindingProof
 from aidn_hypervisor.reward.development_commitments import DevelopmentRewardCommitment
+from aidn_hypervisor.reward.development_correction import DevelopmentRewardCorrectionRecord
 from aidn_hypervisor.reward.development_distribution import (
     DevelopmentRewardCalculation,
     DevelopmentRole,
@@ -48,6 +58,7 @@ DevelopmentRewardOperationType = Literal[
     "DEVELOPMENT_BOUNTY_CREATE",
     "DEVELOPMENT_BOUNTY_RESERVE",
     "DEVELOPMENT_BOUNTY_RELEASE",
+    "DEVELOPMENT_BOUNTY_EXPIRE",
     "DEVELOPMENT_REWARD_CALCULATE",
     "DEVELOPMENT_REWARD_RESERVE",
     "DEVELOPMENT_REWARD_PAY_IMMEDIATE",
@@ -68,6 +79,7 @@ _BOUNTY_OPERATIONS = {
     "DEVELOPMENT_BOUNTY_CREATE",
     "DEVELOPMENT_BOUNTY_RESERVE",
     "DEVELOPMENT_BOUNTY_RELEASE",
+    "DEVELOPMENT_BOUNTY_EXPIRE",
 }
 _REWARD_AMOUNT_OPERATIONS = {
     "DEVELOPMENT_REWARD_RESERVE",
@@ -117,6 +129,11 @@ class DevelopmentRewardOperationRequest(BaseModel, frozen=True):
     reserve_operation_id: str | None = None
     bounty_id: str | None = None
     bounty_hash: str | None = None
+    bounty: DevelopmentBounty | None = None
+    bounty_reservation: DevelopmentBountyReservation | None = None
+    bounty_release: DevelopmentBountyRelease | None = None
+    bounty_expiry: DevelopmentBountyExpiry | None = None
+    pool_carryover: DevelopmentPoolCarryoverRecord | None = None
     reward_id: str | None = None
     contribution_id: str | None = None
     contributor_id: str | None = None
@@ -151,6 +168,9 @@ class DevelopmentRewardOperationRequest(BaseModel, frozen=True):
     ) = None
     correction_id: str | None = None
     correction_delta_q_atoms: int | None = None
+    reward_state_snapshot: DevelopmentRewardStateSnapshot | None = None
+    reward_cancellation: DevelopmentRewardCancellationRecord | None = None
+    reward_correction: DevelopmentRewardCorrectionRecord | None = None
 
     @model_validator(mode="after")
     def validate_operation_fields(self) -> DevelopmentRewardOperationRequest:
@@ -174,13 +194,17 @@ class DevelopmentRewardOperationRequest(BaseModel, frozen=True):
                 raise ValueError("DEVELOPMENT_OPERATION_AMOUNT_REQUIRED")
             if not self.calculation_operation_id or not self.calculation_operation_id.strip():
                 raise ValueError("DEVELOPMENT_OPERATION_CALCULATION_OPERATION_REQUIRED")
-            if (
-                not self.source_epoch_transition_operation_id
-                or not self.source_epoch_transition_operation_id.strip()
-            ):
+            if not self.source_epoch_transition_operation_id or not self.source_epoch_transition_operation_id.strip():
                 raise ValueError("DEVELOPMENT_OPERATION_EPOCH_TRANSITION_REQUIRED")
             if not self.pool_budget_reference or not self.pool_budget_reference.strip():
                 raise ValueError("DEVELOPMENT_OPERATION_POOL_BUDGET_REFERENCE_REQUIRED")
+        if self.operation_type == "DEVELOPMENT_POOL_CARRYOVER":
+            if self.pool_carryover is None:
+                raise ValueError("DEVELOPMENT_OPERATION_CARRYOVER_REQUIRED")
+            if self.amount_q_atoms != self.pool_carryover.carried_q_atoms:
+                raise ValueError("DEVELOPMENT_OPERATION_CARRYOVER_AMOUNT_MISMATCH")
+            if self.target_epoch is None or self.target_epoch != self.pool_carryover.target_epoch:
+                raise ValueError("DEVELOPMENT_OPERATION_CARRYOVER_EPOCH_MISMATCH")
         if self.operation_type == "DEVELOPMENT_REWARD_RESERVE":
             if not self.calculation_operation_id or not self.calculation_operation_id.strip():
                 raise ValueError("DEVELOPMENT_OPERATION_CALCULATION_OPERATION_REQUIRED")
@@ -201,6 +225,31 @@ class DevelopmentRewardOperationRequest(BaseModel, frozen=True):
                 self.amount_q_atoms is None or self.amount_q_atoms <= 0
             ):
                 raise ValueError("DEVELOPMENT_OPERATION_AMOUNT_REQUIRED")
+            record = {
+                "DEVELOPMENT_BOUNTY_CREATE": self.bounty,
+                "DEVELOPMENT_BOUNTY_RESERVE": self.bounty_reservation,
+                "DEVELOPMENT_BOUNTY_RELEASE": self.bounty_release,
+                "DEVELOPMENT_BOUNTY_EXPIRE": self.bounty_expiry,
+            }[self.operation_type]
+            if record is None:
+                raise ValueError("DEVELOPMENT_OPERATION_BOUNTY_RECORD_REQUIRED")
+            record_bounty_id = getattr(record, "bounty_id", None)
+            if record_bounty_id != self.bounty_id:
+                raise ValueError("DEVELOPMENT_OPERATION_BOUNTY_ID_MISMATCH")
+            if self.operation_type == "DEVELOPMENT_BOUNTY_CREATE":
+                if self.bounty_hash != self.bounty.bounty_hash:
+                    raise ValueError("DEVELOPMENT_OPERATION_BOUNTY_HASH_MISMATCH")
+            elif self.operation_type == "DEVELOPMENT_BOUNTY_RESERVE":
+                if self.amount_q_atoms != self.bounty_reservation.amount_q_atoms:
+                    raise ValueError("DEVELOPMENT_OPERATION_BOUNTY_AMOUNT_MISMATCH")
+                if not self.pool_allocation_id or not self.pool_allocation_operation_id:
+                    raise ValueError("DEVELOPMENT_OPERATION_BOUNTY_POOL_ALLOCATION_REQUIRED")
+            elif self.operation_type == "DEVELOPMENT_BOUNTY_RELEASE":
+                if self.amount_q_atoms != self.bounty_release.released_q_atoms:
+                    raise ValueError("DEVELOPMENT_OPERATION_BOUNTY_AMOUNT_MISMATCH")
+            elif self.operation_type == "DEVELOPMENT_BOUNTY_EXPIRE":
+                if self.amount_q_atoms != self.bounty_expiry.returned_q_atoms:
+                    raise ValueError("DEVELOPMENT_OPERATION_BOUNTY_AMOUNT_MISMATCH")
         if self.operation_type in _REWARD_AMOUNT_OPERATIONS:
             if not self.reward_id or not self.reward_id.strip():
                 raise ValueError("DEVELOPMENT_OPERATION_REWARD_REQUIRED")
@@ -238,8 +287,7 @@ class DevelopmentRewardOperationRequest(BaseModel, frozen=True):
             if self.role is None:
                 raise ValueError("DEVELOPMENT_OPERATION_ROLE_REQUIRED")
             if self.operation_type == "DEVELOPMENT_REWARD_PAY_MATURITY" and (
-                not self.source_epoch_transition_operation_id
-                or not self.source_epoch_transition_operation_id.strip()
+                not self.source_epoch_transition_operation_id or not self.source_epoch_transition_operation_id.strip()
             ):
                 raise ValueError("DEVELOPMENT_OPERATION_EPOCH_TRANSITION_REQUIRED")
         if self.operation_type in _UNCLAIMED_OPERATIONS:
@@ -309,10 +357,7 @@ class DevelopmentRewardOperationRequest(BaseModel, frozen=True):
                 raise ValueError("DEVELOPMENT_OPERATION_POOL_ALLOCATION_REQUIRED")
             if not self.pool_allocation_operation_id or not self.pool_allocation_operation_id.strip():
                 raise ValueError("DEVELOPMENT_OPERATION_POOL_ALLOCATION_OPERATION_REQUIRED")
-            if (
-                not self.source_epoch_transition_operation_id
-                or not self.source_epoch_transition_operation_id.strip()
-            ):
+            if not self.source_epoch_transition_operation_id or not self.source_epoch_transition_operation_id.strip():
                 raise ValueError("DEVELOPMENT_OPERATION_EPOCH_TRANSITION_REQUIRED")
             if self.finalization_epoch is None:
                 raise ValueError("DEVELOPMENT_OPERATION_FINALIZATION_EPOCH_REQUIRED")
@@ -340,10 +385,7 @@ class DevelopmentRewardOperationRequest(BaseModel, frozen=True):
                 raise ValueError("DEVELOPMENT_OPERATION_UNCLAIMED_REQUIRED")
             if not self.unclaimed_operation_id or not self.unclaimed_operation_id.strip():
                 raise ValueError("DEVELOPMENT_OPERATION_UNCLAIMED_OPERATION_REQUIRED")
-            if (
-                not self.source_epoch_transition_operation_id
-                or not self.source_epoch_transition_operation_id.strip()
-            ):
+            if not self.source_epoch_transition_operation_id or not self.source_epoch_transition_operation_id.strip():
                 raise ValueError("DEVELOPMENT_OPERATION_EPOCH_TRANSITION_REQUIRED")
             if self.claim_epoch is None:
                 raise ValueError("DEVELOPMENT_OPERATION_CLAIM_EPOCH_REQUIRED")
@@ -376,6 +418,21 @@ class DevelopmentRewardOperationRequest(BaseModel, frozen=True):
                 raise ValueError("DEVELOPMENT_OPERATION_CORRECTION_REQUIRED")
             if self.correction_delta_q_atoms is None:
                 raise ValueError("DEVELOPMENT_OPERATION_CORRECTION_DELTA_REQUIRED")
+            if self.reward_state_snapshot is None or self.reward_correction is None:
+                raise ValueError("DEVELOPMENT_OPERATION_CORRECTION_RECORD_REQUIRED")
+            if self.reward_correction.correction_id != self.correction_id:
+                raise ValueError("DEVELOPMENT_OPERATION_CORRECTION_ID_MISMATCH")
+            if self.reward_correction.correction_delta_q_atoms != self.correction_delta_q_atoms:
+                raise ValueError("DEVELOPMENT_OPERATION_CORRECTION_DELTA_MISMATCH")
+            if self.reward_correction.reward_id != self.reward_id:
+                raise ValueError("DEVELOPMENT_OPERATION_CORRECTION_REWARD_MISMATCH")
+        if self.operation_type == "DEVELOPMENT_REWARD_CANCEL_UNVESTED":
+            if self.reward_state_snapshot is None or self.reward_cancellation is None:
+                raise ValueError("DEVELOPMENT_OPERATION_CANCELLATION_RECORD_REQUIRED")
+            if self.reward_cancellation.reward_id != self.reward_id:
+                raise ValueError("DEVELOPMENT_OPERATION_CANCELLATION_REWARD_MISMATCH")
+            if self.amount_q_atoms != self.reward_cancellation.cancelled_q_atoms:
+                raise ValueError("DEVELOPMENT_OPERATION_CANCELLATION_AMOUNT_MISMATCH")
         return self
 
 
@@ -409,7 +466,12 @@ class DevelopmentRewardOperationBuilder:
             raise ValueError("DEVELOPMENT_OPERATION_ACTIVATION_MISMATCH")
 
         target_epoch = request.target_epoch if request.target_epoch is not None else commitment.epoch
-        if target_epoch != commitment.epoch:
+        if request.operation_type == "DEVELOPMENT_POOL_CARRYOVER":
+            if request.pool_carryover is not None and request.pool_carryover.target_epoch != target_epoch:
+                raise ValueError("DEVELOPMENT_OPERATION_CARRYOVER_EPOCH_MISMATCH")
+            if request.pool_carryover is not None and request.pool_carryover.source_epoch != commitment.epoch:
+                raise ValueError("DEVELOPMENT_OPERATION_CARRYOVER_SOURCE_EPOCH_INVALID")
+        elif target_epoch != commitment.epoch:
             raise ValueError("DEVELOPMENT_OPERATION_TARGET_EPOCH_MISMATCH")
         calculation = request.calculation
         if calculation is not None:
@@ -640,7 +702,7 @@ class DevelopmentRewardOperationBuilder:
             initiator_id=DEVELOPMENT_REWARD_ENGINE_ID,
             fee_class="protocol_sponsored",
             created_at=request.created_at,
-            target_epoch=str(target_epoch),
+            target_epoch=str(commitment.epoch),
             payload=payload,
             evidence_references=sorted(
                 {

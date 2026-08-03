@@ -77,6 +77,16 @@ from aidn_hypervisor.consensus.projection import (
     build_session_settlement_propose_envelope,
     build_session_settlement_ready_envelope,
 )
+from aidn_hypervisor.consensus.public_network import (
+    PublicMultiValidatorAcceptanceReport,
+    PublicMultiValidatorNetworkProfile,
+    PublicProfileSignature,
+    PublicValidatorManifest,
+    assert_public_multivalidator_profile,
+    build_public_multivalidator_profile,
+    inspect_public_multivalidator_profile,
+    public_multivalidator_profile_hash,
+)
 from aidn_hypervisor.consensus.replay import (
     FinalizedOperationReference,
     FinalizedOperationRegistry,
@@ -183,6 +193,14 @@ __all__ = [
     "CometBftDeploymentValidator",
     "CometBftFinalityDeploymentConfig",
     "load_cometbft_finality_deployment_config",
+    "PublicMultiValidatorAcceptanceReport",
+    "PublicMultiValidatorNetworkProfile",
+    "PublicProfileSignature",
+    "PublicValidatorManifest",
+    "assert_public_multivalidator_profile",
+    "build_public_multivalidator_profile",
+    "inspect_public_multivalidator_profile",
+    "public_multivalidator_profile_hash",
     "CometBftCryptographicBackend",
     "CometBftLightClient",
     "CometBftLightClientProofVerifier",

@@ -227,6 +227,31 @@ class ExecutionEngine:
                                 result.envelope,
                                 finalized_operation_ids=finalized_operation_ids,
                             )
+                        elif result.envelope.operation_type == "DEVELOPMENT_POOL_CARRYOVER":
+                            self.ledger.apply_consensus_development_pool_carryover(
+                                result.envelope,
+                                finalized_operation_ids=finalized_operation_ids,
+                            )
+                        elif result.envelope.operation_type == "DEVELOPMENT_BOUNTY_CREATE":
+                            self.ledger.apply_consensus_development_bounty_create(
+                                result.envelope,
+                                finalized_operation_ids=finalized_operation_ids,
+                            )
+                        elif result.envelope.operation_type == "DEVELOPMENT_BOUNTY_RESERVE":
+                            self.ledger.apply_consensus_development_bounty_reserve(
+                                result.envelope,
+                                finalized_operation_ids=finalized_operation_ids,
+                            )
+                        elif result.envelope.operation_type == "DEVELOPMENT_BOUNTY_RELEASE":
+                            self.ledger.apply_consensus_development_bounty_release(
+                                result.envelope,
+                                finalized_operation_ids=finalized_operation_ids,
+                            )
+                        elif result.envelope.operation_type == "DEVELOPMENT_BOUNTY_EXPIRE":
+                            self.ledger.apply_consensus_development_bounty_expire(
+                                result.envelope,
+                                finalized_operation_ids=finalized_operation_ids,
+                            )
                         elif result.envelope.operation_type == "DEVELOPMENT_REWARD_RESERVE":
                             self.ledger.apply_consensus_development_reward_reserve(
                                 result.envelope,
@@ -259,6 +284,16 @@ class ExecutionEngine:
                             )
                         elif result.envelope.operation_type == "DEVELOPMENT_REWARD_FINALIZE_COMMITMENT":
                             self.ledger.apply_consensus_development_reward_finalize_commitment(
+                                result.envelope,
+                                finalized_operation_ids=finalized_operation_ids,
+                            )
+                        elif result.envelope.operation_type == "DEVELOPMENT_REWARD_CANCEL_UNVESTED":
+                            self.ledger.apply_consensus_development_reward_cancel_unvested(
+                                result.envelope,
+                                finalized_operation_ids=finalized_operation_ids,
+                            )
+                        elif result.envelope.operation_type == "DEVELOPMENT_REWARD_CORRECT":
+                            self.ledger.apply_consensus_development_reward_correct(
                                 result.envelope,
                                 finalized_operation_ids=finalized_operation_ids,
                             )
@@ -648,16 +683,102 @@ class ExecutionEngine:
                         after={
                             "pool_id": envelope.payload["pool_allocation"]["pool_id"],
                             "epoch": int(envelope.payload["pool_allocation"]["epoch"]),
-                            "allocated_q_atoms": int(
-                                envelope.payload["pool_allocation"]["allocated_q_atoms"]
-                            ),
-                            "remaining_q_atoms": int(
-                                envelope.payload["pool_allocation"]["remaining_q_atoms"]
-                            ),
+                            "allocated_q_atoms": int(envelope.payload["pool_allocation"]["allocated_q_atoms"]),
+                            "remaining_q_atoms": int(envelope.payload["pool_allocation"]["remaining_q_atoms"]),
                         },
                     )
                 )
                 emitted.append("DevelopmentPoolAllocated")
+            elif envelope.operation_type == "DEVELOPMENT_POOL_CARRYOVER":
+                validation = self.ledger.validate_consensus_development_pool_carryover(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+                state_changes.append(
+                    StateChange(
+                        entity_type="development_pool",
+                        entity_id=validation["carryover"].carryover_id,
+                        change_type="carryover",
+                        after={
+                            "source_epoch": validation["carryover"].source_epoch,
+                            "target_epoch": validation["carryover"].target_epoch,
+                            "carried_q_atoms": validation["carryover"].carried_q_atoms,
+                            "returned_to_emission_reserve_q_atoms": validation[
+                                "carryover"
+                            ].returned_to_emission_reserve_q_atoms,
+                        },
+                    )
+                )
+                emitted.append("DevelopmentPoolCarriedOver")
+            elif envelope.operation_type == "DEVELOPMENT_BOUNTY_CREATE":
+                validation = self.ledger.validate_consensus_development_bounty_create(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+                state_changes.append(
+                    StateChange(
+                        entity_type="development_bounty",
+                        entity_id=validation["bounty"].bounty_id,
+                        change_type="create",
+                        after={
+                            "state": "OPEN",
+                            "reserved_budget_q_atoms": validation["bounty"].reserved_budget_q_atoms,
+                        },
+                    )
+                )
+                emitted.append("DevelopmentBountyCreated")
+            elif envelope.operation_type == "DEVELOPMENT_BOUNTY_RESERVE":
+                validation = self.ledger.validate_consensus_development_bounty_reserve(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+                state_changes.append(
+                    StateChange(
+                        entity_type="development_bounty",
+                        entity_id=validation["reservation"].bounty_id,
+                        change_type="reserve",
+                        after={
+                            "amount_q_atoms": validation["reservation"].amount_q_atoms,
+                            "state": validation["bounty_state"].state,
+                        },
+                    )
+                )
+                emitted.append("DevelopmentBountyReserved")
+            elif envelope.operation_type == "DEVELOPMENT_BOUNTY_RELEASE":
+                validation = self.ledger.validate_consensus_development_bounty_release(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+                state_changes.append(
+                    StateChange(
+                        entity_type="development_bounty",
+                        entity_id=validation["release"].bounty_id,
+                        change_type="release",
+                        after={
+                            "released_q_atoms": validation["release"].released_q_atoms,
+                            "returned_q_atoms": validation["release"].returned_q_atoms,
+                            "state": validation["bounty_state"].state,
+                        },
+                    )
+                )
+                emitted.append("DevelopmentBountyReleased")
+            elif envelope.operation_type == "DEVELOPMENT_BOUNTY_EXPIRE":
+                validation = self.ledger.validate_consensus_development_bounty_expire(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+                state_changes.append(
+                    StateChange(
+                        entity_type="development_bounty",
+                        entity_id=validation["expiry"].bounty_id,
+                        change_type="expire",
+                        after={
+                            "returned_q_atoms": validation["expiry"].returned_q_atoms,
+                            "state": validation["bounty_state"].state,
+                        },
+                    )
+                )
+                emitted.append("DevelopmentBountyExpired")
             elif envelope.operation_type == "DEVELOPMENT_REWARD_RESERVE":
                 self.ledger.validate_consensus_development_reward_reserve(
                     envelope,
@@ -696,9 +817,7 @@ class ExecutionEngine:
                             "reserve_remaining_q_atoms": int(
                                 payment_validation["payment_record"].reserve_remaining_q_atoms
                             ),
-                            "pool_remaining_q_atoms": int(
-                                payment_validation["payment_record"].pool_remaining_q_atoms
-                            ),
+                            "pool_remaining_q_atoms": int(payment_validation["payment_record"].pool_remaining_q_atoms),
                         },
                     )
                 )
@@ -722,9 +841,7 @@ class ExecutionEngine:
                             "reserve_remaining_q_atoms": int(
                                 payment_validation["payment_record"].reserve_remaining_q_atoms
                             ),
-                            "pool_remaining_q_atoms": int(
-                                payment_validation["payment_record"].pool_remaining_q_atoms
-                            ),
+                            "pool_remaining_q_atoms": int(payment_validation["payment_record"].pool_remaining_q_atoms),
                         },
                     )
                 )
@@ -791,9 +908,7 @@ class ExecutionEngine:
                             "payment_stage": envelope.payload["payment_stage"],
                             "amount_q_atoms": int(envelope.payload["amount_q_atoms"]),
                             "expiry_epoch": int(envelope.payload["expiry_epoch"]),
-                            "pool_remaining_q_atoms": int(
-                                expiry_validation["expiry_record"].pool_remaining_q_atoms
-                            ),
+                            "pool_remaining_q_atoms": int(expiry_validation["expiry_record"].pool_remaining_q_atoms),
                         },
                     )
                 )
@@ -821,6 +936,43 @@ class ExecutionEngine:
                     )
                 )
                 emitted.append("DevelopmentRewardCommitmentFinalized")
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_CANCEL_UNVESTED":
+                validation = self.ledger.validate_consensus_development_reward_cancel_unvested(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+                state_changes.append(
+                    StateChange(
+                        entity_type="development_reward_adjustment",
+                        entity_id=validation["cancellation"].cancellation_id,
+                        change_type="cancel_unvested",
+                        after={
+                            "reward_id": validation["cancellation"].reward_id,
+                            "cancelled_q_atoms": validation["cancellation"].cancelled_q_atoms,
+                            "returned_to_pool_q_atoms": validation["cancellation"].returned_to_pool_q_atoms,
+                        },
+                    )
+                )
+                emitted.append("DevelopmentRewardUnvestedCancelled")
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_CORRECT":
+                validation = self.ledger.validate_consensus_development_reward_correct(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+                state_changes.append(
+                    StateChange(
+                        entity_type="development_reward_adjustment",
+                        entity_id=validation["correction"].correction_id,
+                        change_type="correct",
+                        after={
+                            "reward_id": validation["correction"].reward_id,
+                            "correction_delta_q_atoms": validation["correction"].correction_delta_q_atoms,
+                            "returned_to_pool_q_atoms": validation["correction"].returned_to_pool_q_atoms,
+                            "additional_reserved_q_atoms": validation["correction"].additional_reserved_q_atoms,
+                        },
+                    )
+                )
+                emitted.append("DevelopmentRewardCorrected")
             elif envelope.operation_type == "EPOCH_TRANSITION":
                 self.ledger.validate_consensus_epoch_transition(envelope)
                 state_changes.append(
@@ -1342,12 +1494,17 @@ class ExecutionEngine:
             settlement_corrections=settlement.get("settlement_corrections"),
             settlement_transition_hashes=settlement.get("settlement_transition_hashes"),
             development_pool_allocations=settlement.get("development_pool_allocations"),
+            development_pool_carryovers=settlement.get("development_pool_carryovers"),
+            development_bounty_states=settlement.get("development_bounty_states"),
             development_reward_reserves=settlement.get("development_reward_reserves"),
             development_reward_payment_records=settlement.get("development_reward_payment_records"),
             development_reward_unclaimed_records=settlement.get("development_reward_unclaimed_records"),
             development_reward_claim_records=settlement.get("development_reward_claim_records"),
             development_reward_expiry_records=settlement.get("development_reward_expiry_records"),
             development_reward_finalized_commitments=settlement.get("development_reward_finalized_commitments"),
+            development_reward_adjustment_snapshots=settlement.get("development_reward_adjustment_snapshots"),
+            development_reward_cancellations=settlement.get("development_reward_cancellations"),
+            development_reward_corrections=settlement.get("development_reward_corrections"),
             consensus_state=state.get("consensus_state"),
         )
         self._gas_used = 0

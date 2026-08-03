@@ -2489,9 +2489,13 @@ Deferred operations SHALL NOT be simulated through unrelated existing operations
 ### 72.1 ECO-0007 Development Reward Operations
 
 The following operation names are reserved by ECO-0007. They are registered
-in the catalog. The current profile applies nine narrow transitions:
+in the catalog. The current profile applies the following narrow transitions:
 `DEVELOPMENT_REWARD_CALCULATE` as an evidence-only commitment,
 `DEVELOPMENT_POOL_ALLOCATE` as a source-bound reserve record,
+`DEVELOPMENT_POOL_CARRYOVER` as a source-epoch-bound carryover record,
+`DEVELOPMENT_BOUNTY_CREATE`, `DEVELOPMENT_BOUNTY_RESERVE`,
+`DEVELOPMENT_BOUNTY_RELEASE` and `DEVELOPMENT_BOUNTY_EXPIRE` as a
+budget-bound bounty lifecycle,
 `DEVELOPMENT_REWARD_RESERVE` as a schedule-bound reserve record, and
 `DEVELOPMENT_REWARD_PAY_IMMEDIATE` and `DEVELOPMENT_REWARD_PAY_MATURITY` as
 source-bound payment transitions, plus
@@ -2504,6 +2508,7 @@ source-bound payment transitions, plus
 - `DEVELOPMENT_BOUNTY_CREATE`;
 - `DEVELOPMENT_BOUNTY_RESERVE`;
 - `DEVELOPMENT_BOUNTY_RELEASE`;
+- `DEVELOPMENT_BOUNTY_EXPIRE`;
 - `DEVELOPMENT_REWARD_RESERVE`;
 - `DEVELOPMENT_REWARD_PAY_IMMEDIATE`;
 - `DEVELOPMENT_REWARD_PAY_MATURITY`;
@@ -2536,10 +2541,16 @@ payment transitions are not aliases for `REWARD_MINT` and do not accept a
 different source or Wallet. `DEVELOPMENT_REWARD_MARK_UNCLAIMED` requires the
 same finalized sources, an exact `UNCLAIMED` payment with no Wallet, and
 persists a claim-expiration record without debiting the reserve or crediting a
-Wallet; duplicate stage identities are rejected. Other catalog operations not
-described as supported below remain rejected until a future version defines their
-state transitions, replay rules, reserve conservation, snapshot behavior, and
-multi-validator conformance. `DEVELOPMENT_REWARD_CLAIM` requires the
+Wallet; duplicate stage identities are rejected. Carryover validates the source
+epoch transition and conservation split. Bounty lifecycle operations validate
+the source pool allocation, bounded active reservations, release/expiry
+conservation and immutable aggregate state. Reward cancellation and correction
+validate an immutable source snapshot and append-only history; they can change
+only unpaid maturity/unclaimed buckets and never rewrite paid history. Other
+catalog operations not described as supported below remain rejected until a
+future version defines their state transitions, replay rules, reserve
+conservation, snapshot behavior, and multi-validator conformance.
+`DEVELOPMENT_REWARD_CLAIM` requires the
 finalized unclaimed record, a finalized epoch transition whose opening epoch
 falls inside the immutable claim window, and an RFC-0068 signed Wallet
 binding. It creates a separate immutable `CLAIMED` record, consumes exactly

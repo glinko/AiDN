@@ -96,16 +96,27 @@ class DevelopmentRewardActivationApproval(BaseModel, frozen=True):
             raise ValueError("DEVELOPMENT_ACTIVATION_OPERATION_SCOPE_INVALID")
         if "DEVELOPMENT_REWARD_CALCULATE" not in operation_types:
             raise ValueError("DEVELOPMENT_ACTIVATION_CALCULATION_SCOPE_REQUIRED")
-        if (
-            "DEVELOPMENT_POOL_ALLOCATE" in operation_types
-            and self.economic_effect_profile
-            not in {"POOL_ALLOCATION", "DEVELOPMENT_RESERVES", "DEVELOPMENT_PAYMENTS"}
-        ):
+        if "DEVELOPMENT_POOL_ALLOCATE" in operation_types and self.economic_effect_profile not in {
+            "POOL_ALLOCATION",
+            "DEVELOPMENT_RESERVES",
+            "DEVELOPMENT_PAYMENTS",
+        }:
             raise ValueError("DEVELOPMENT_ACTIVATION_POOL_SCOPE_INVALID")
-        if (
-            "DEVELOPMENT_REWARD_RESERVE" in operation_types
-            and self.economic_effect_profile not in {"DEVELOPMENT_RESERVES", "DEVELOPMENT_PAYMENTS"}
-        ):
+        if any(
+            operation_type in operation_types
+            for operation_type in {
+                "DEVELOPMENT_POOL_CARRYOVER",
+                "DEVELOPMENT_BOUNTY_CREATE",
+                "DEVELOPMENT_BOUNTY_RESERVE",
+                "DEVELOPMENT_BOUNTY_RELEASE",
+                "DEVELOPMENT_BOUNTY_EXPIRE",
+            }
+        ) and self.economic_effect_profile not in {"POOL_ALLOCATION", "DEVELOPMENT_RESERVES", "DEVELOPMENT_PAYMENTS"}:
+            raise ValueError("DEVELOPMENT_ACTIVATION_POOL_SCOPE_INVALID")
+        if "DEVELOPMENT_REWARD_RESERVE" in operation_types and self.economic_effect_profile not in {
+            "DEVELOPMENT_RESERVES",
+            "DEVELOPMENT_PAYMENTS",
+        }:
             raise ValueError("DEVELOPMENT_ACTIVATION_REWARD_RESERVE_SCOPE_INVALID")
         if (
             "DEVELOPMENT_REWARD_PAY_IMMEDIATE" in operation_types
@@ -122,21 +133,26 @@ class DevelopmentRewardActivationApproval(BaseModel, frozen=True):
             and self.economic_effect_profile != "DEVELOPMENT_PAYMENTS"
         ):
             raise ValueError("DEVELOPMENT_ACTIVATION_UNCLAIMED_SCOPE_INVALID")
-        if (
-            "DEVELOPMENT_REWARD_CLAIM" in operation_types
-            and self.economic_effect_profile != "DEVELOPMENT_PAYMENTS"
-        ):
+        if "DEVELOPMENT_REWARD_CLAIM" in operation_types and self.economic_effect_profile != "DEVELOPMENT_PAYMENTS":
             raise ValueError("DEVELOPMENT_ACTIVATION_CLAIM_SCOPE_INVALID")
         if (
             "DEVELOPMENT_REWARD_EXPIRE_UNCLAIMED" in operation_types
             and self.economic_effect_profile != "DEVELOPMENT_PAYMENTS"
         ):
             raise ValueError("DEVELOPMENT_ACTIVATION_EXPIRY_SCOPE_INVALID")
-        if (
-            "DEVELOPMENT_REWARD_FINALIZE_COMMITMENT" in operation_types
-            and self.economic_effect_profile not in {"DEVELOPMENT_PAYMENTS", "EVIDENCE_ONLY"}
-        ):
+        if "DEVELOPMENT_REWARD_FINALIZE_COMMITMENT" in operation_types and self.economic_effect_profile not in {
+            "DEVELOPMENT_PAYMENTS",
+            "EVIDENCE_ONLY",
+        }:
             raise ValueError("DEVELOPMENT_ACTIVATION_FINALIZED_COMMITMENT_SCOPE_INVALID")
+        if any(
+            operation_type in operation_types
+            for operation_type in {
+                "DEVELOPMENT_REWARD_CANCEL_UNVESTED",
+                "DEVELOPMENT_REWARD_CORRECT",
+            }
+        ) and self.economic_effect_profile not in {"DEVELOPMENT_RESERVES", "DEVELOPMENT_PAYMENTS"}:
+            raise ValueError("DEVELOPMENT_ACTIVATION_ADJUSTMENT_SCOPE_INVALID")
         if self.rollout_profile is not None:
             if self.rollout_profile.effective_epoch < self.effective_epoch:
                 raise ValueError("DEVELOPMENT_ACTIVATION_ROLLOUT_EPOCH_INVALID")
@@ -219,10 +235,7 @@ def activation_authorization_payload(
     ] = "EVIDENCE_ONLY",
     rollout_profile: DevelopmentRewardRolloutProfile | None = None,
 ) -> bytes:
-    operation_types = sorted(
-        item.strip()
-        for item in (authorized_operation_types or ["DEVELOPMENT_REWARD_CALCULATE"])
-    )
+    operation_types = sorted(item.strip() for item in (authorized_operation_types or ["DEVELOPMENT_REWARD_CALCULATE"]))
     payload = {
         "activation_id": activation_id,
         "policy_hash": policy_hash,
@@ -264,13 +277,11 @@ def activation_id_for(
         "policy_hash": policy_hash,
         "effective_epoch": effective_epoch,
         "eligible_authorities": [
-            item.model_dump(mode="json")
-            for item in sorted(eligible_authorities, key=lambda item: item.authority_id)
+            item.model_dump(mode="json") for item in sorted(eligible_authorities, key=lambda item: item.authority_id)
         ],
         "quorum_threshold": quorum_threshold,
         "authorized_operation_types": sorted(
-            item.strip()
-            for item in (authorized_operation_types or ["DEVELOPMENT_REWARD_CALCULATE"])
+            item.strip() for item in (authorized_operation_types or ["DEVELOPMENT_REWARD_CALCULATE"])
         ),
         "economic_effect_profile": economic_effect_profile,
     }
@@ -306,10 +317,7 @@ def build_development_reward_activation_approval(
     rollout_profile: DevelopmentRewardRolloutProfile | None = None,
     state: Literal["APPROVED", "REVOKED"] = "APPROVED",
 ) -> DevelopmentRewardActivationApproval:
-    operation_types = [
-        item.strip()
-        for item in (authorized_operation_types or ["DEVELOPMENT_REWARD_CALCULATE"])
-    ]
+    operation_types = [item.strip() for item in (authorized_operation_types or ["DEVELOPMENT_REWARD_CALCULATE"])]
     activation_id = activation_id_for(
         policy_hash=policy_hash,
         effective_epoch=effective_epoch,

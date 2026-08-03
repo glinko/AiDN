@@ -112,6 +112,22 @@ def _validate_pair(hypervisor_path: Path, abci_path: Path) -> dict:
         settlement_disputes=[item.model_dump(mode="json") for item in hypervisor.settlement_disputes],
         settlement_corrections=[item.model_dump(mode="json") for item in hypervisor.settlement_corrections],
         settlement_transition_hashes=hypervisor.settlement_transition_hashes,
+        development_pool_allocations=[dict(item) for item in hypervisor.development_pool_allocations],
+        development_pool_carryovers=[dict(item) for item in hypervisor.development_pool_carryovers],
+        development_bounty_states=[dict(item) for item in hypervisor.development_bounty_states],
+        development_reward_reserves=[dict(item) for item in hypervisor.development_reward_reserves],
+        development_reward_payment_records=[dict(item) for item in hypervisor.development_reward_payment_records],
+        development_reward_unclaimed_records=[dict(item) for item in hypervisor.development_reward_unclaimed_records],
+        development_reward_claim_records=[dict(item) for item in hypervisor.development_reward_claim_records],
+        development_reward_expiry_records=[dict(item) for item in hypervisor.development_reward_expiry_records],
+        development_reward_finalized_commitments=[
+            dict(item) for item in hypervisor.development_reward_finalized_commitments
+        ],
+        development_reward_adjustment_snapshots=[
+            dict(item) for item in hypervisor.development_reward_adjustment_snapshots
+        ],
+        development_reward_cancellations=[dict(item) for item in hypervisor.development_reward_cancellations],
+        development_reward_corrections=[dict(item) for item in hypervisor.development_reward_corrections],
     )
     app_hash = AIDNABCIApplication(ledger_service=ledger).prepare_snapshot()["app_hash"]
     if app_hash != snapshot.get("app_hash"):
@@ -143,10 +159,7 @@ def _safe_extract(archive: Path, root: Path) -> None:
             for member in bundle.infolist():
                 destination = root / member.filename
                 resolved = destination.resolve()
-                if (
-                    Path(member.filename).is_absolute()
-                    or (root not in resolved.parents and resolved != root)
-                ):
+                if Path(member.filename).is_absolute() or (root not in resolved.parents and resolved != root):
                     raise ValidatorBackupError("backup archive contains an unsafe path")
             bundle.extractall(root)
     except (OSError, zipfile.BadZipFile) as error:

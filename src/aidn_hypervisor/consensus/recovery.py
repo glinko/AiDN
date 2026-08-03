@@ -77,8 +77,7 @@ def build_validator_recovery_plan(
 
     if missing_ids:
         raise ValidatorRecoveryError(
-            "local Hypervisor state is missing canonical operations: "
-            + ", ".join(sorted(missing_ids))
+            "local Hypervisor state is missing canonical operations: " + ", ".join(sorted(missing_ids))
         )
     if requested_discard != extra_ids:
         raise ValidatorRecoveryError(
@@ -108,9 +107,25 @@ def build_validator_recovery_plan(
             "session_checkpoints": list(settlement_state.get("session_checkpoints", [])),
             "settlement_disputes": list(settlement_state.get("settlement_disputes", [])),
             "settlement_corrections": list(settlement_state.get("settlement_corrections", [])),
-            "settlement_transition_hashes": dict(
-                settlement_state.get("settlement_transition_hashes", {})
+            "settlement_transition_hashes": dict(settlement_state.get("settlement_transition_hashes", {})),
+            "development_pool_allocations": list(settlement_state.get("development_pool_allocations", [])),
+            "development_pool_carryovers": list(settlement_state.get("development_pool_carryovers", [])),
+            "development_bounty_states": list(settlement_state.get("development_bounty_states", [])),
+            "development_reward_reserves": list(settlement_state.get("development_reward_reserves", [])),
+            "development_reward_payment_records": list(settlement_state.get("development_reward_payment_records", [])),
+            "development_reward_unclaimed_records": list(
+                settlement_state.get("development_reward_unclaimed_records", [])
             ),
+            "development_reward_claim_records": list(settlement_state.get("development_reward_claim_records", [])),
+            "development_reward_expiry_records": list(settlement_state.get("development_reward_expiry_records", [])),
+            "development_reward_finalized_commitments": list(
+                settlement_state.get("development_reward_finalized_commitments", [])
+            ),
+            "development_reward_adjustment_snapshots": list(
+                settlement_state.get("development_reward_adjustment_snapshots", [])
+            ),
+            "development_reward_cancellations": list(settlement_state.get("development_reward_cancellations", [])),
+            "development_reward_corrections": list(settlement_state.get("development_reward_corrections", [])),
         }
     )
     projected_state = HypervisorStateSnapshot.model_validate(projected_data)
@@ -146,9 +161,7 @@ def apply_validator_recovery_plan(
     backup = (
         Path(backup_path)
         if backup_path is not None
-        else target.with_name(
-            f"{target.name}.pre-recovery-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
-        )
+        else target.with_name(f"{target.name}.pre-recovery-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}")
     )
     backup.parent.mkdir(parents=True, exist_ok=True)
     if backup.exists():
@@ -179,6 +192,18 @@ def _verify_projected_app_hash(snapshot: dict, projected_state: HypervisorStateS
         settlement_disputes=[item.model_dump(mode="json") for item in projected_state.settlement_disputes],
         settlement_corrections=[item.model_dump(mode="json") for item in projected_state.settlement_corrections],
         settlement_transition_hashes=projected_state.settlement_transition_hashes,
+        development_pool_allocations=projected_state.development_pool_allocations,
+        development_pool_carryovers=projected_state.development_pool_carryovers,
+        development_bounty_states=projected_state.development_bounty_states,
+        development_reward_reserves=projected_state.development_reward_reserves,
+        development_reward_payment_records=projected_state.development_reward_payment_records,
+        development_reward_unclaimed_records=projected_state.development_reward_unclaimed_records,
+        development_reward_claim_records=projected_state.development_reward_claim_records,
+        development_reward_expiry_records=projected_state.development_reward_expiry_records,
+        development_reward_finalized_commitments=projected_state.development_reward_finalized_commitments,
+        development_reward_adjustment_snapshots=projected_state.development_reward_adjustment_snapshots,
+        development_reward_cancellations=projected_state.development_reward_cancellations,
+        development_reward_corrections=projected_state.development_reward_corrections,
     )
     computed = AIDNABCIApplication(ledger_service=ledger).prepare_snapshot()["app_hash"]
     expected = str(snapshot.get("app_hash", "")).lower()
