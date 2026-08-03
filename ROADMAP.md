@@ -911,6 +911,11 @@ This work is intentionally outside the functional MVP. It must not alter current
     The current profile remains `DRAFT_CANDIDATE`; the gate reports the 11 known
     consensus operations without strict transitions and all missing operational
     evidence instead of claiming a public release.
+19. Classified the 11 historical operation names that were superseded by typed
+    Session, escrow, stake, validation and epoch transitions as explicit
+    `legacy_operation_types`. They remain reject-only at strict runtime and are
+    no longer mistaken for missing active MVP transitions; G1 now measures the
+    active profile without introducing unsafe aliases.
 
 ### Current post-MVP implementation gate
 

@@ -5,7 +5,9 @@ import pytest
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.coverage import (
+    ACTIVE_OPERATION_TYPES,
     CONSENSUS_APPLIED_OPERATION_TYPES,
+    LEGACY_OPERATION_TYPES,
     VALIDATION_EVIDENCE_OPERATION_TYPES,
     operation_coverage,
     strict_operation_coverage_error,
@@ -27,6 +29,8 @@ def _tx(operation_type: str) -> bytes:
 
 def test_coverage_matrix_has_no_applied_operation_outside_protocol_catalog() -> None:
     assert CONSENSUS_APPLIED_OPERATION_TYPES <= KNOWN_OPERATION_TYPES
+    assert ACTIVE_OPERATION_TYPES == KNOWN_OPERATION_TYPES - LEGACY_OPERATION_TYPES
+    assert LEGACY_OPERATION_TYPES.isdisjoint(CONSENSUS_APPLIED_OPERATION_TYPES)
     assert all(
         operation_coverage(operation_type) == "IMPLEMENTED"
         for operation_type in CONSENSUS_APPLIED_OPERATION_TYPES

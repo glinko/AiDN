@@ -10,12 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from aidn_hypervisor.consensus.coverage import (
+    ACTIVE_OPERATION_TYPES,
     CONSENSUS_APPLIED_OPERATION_TYPES,
+    LEGACY_OPERATION_TYPES,
     strict_operation_coverage_error,
 )
 from aidn_hypervisor.consensus.fixture_runner import FixtureError, run_fixture_set
 from aidn_hypervisor.consensus.implementation_profile import verify_implementation_profile
-from aidn_hypervisor.consensus.models import KNOWN_OPERATION_TYPES
 from aidn_hypervisor.evidence import EvidenceBundleError, verify_public_evidence_bundle
 
 
@@ -59,7 +60,7 @@ def _run_g0(profile_path: Path) -> dict[str, Any]:
 def _run_g1(fixture_manifest: Path) -> dict[str, Any]:
     coverage_errors = {
         operation_type: strict_operation_coverage_error(operation_type)
-        for operation_type in sorted(KNOWN_OPERATION_TYPES)
+        for operation_type in sorted(ACTIVE_OPERATION_TYPES)
         if strict_operation_coverage_error(operation_type) is not None
     }
     try:
@@ -84,8 +85,9 @@ def _run_g1(fixture_manifest: Path) -> dict[str, Any]:
         "PASS",
         details={
             "strict_operation_coverage": {
-                "known": len(KNOWN_OPERATION_TYPES),
-                "supported": len(CONSENSUS_APPLIED_OPERATION_TYPES & KNOWN_OPERATION_TYPES),
+                "active": len(ACTIVE_OPERATION_TYPES),
+                "supported": len(CONSENSUS_APPLIED_OPERATION_TYPES & ACTIVE_OPERATION_TYPES),
+                "legacy_excluded": len(LEGACY_OPERATION_TYPES),
             },
             "fixture_count": len(fixtures),
         },

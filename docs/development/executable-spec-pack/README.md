@@ -56,3 +56,7 @@ uv run python tools/verify-release-gates.py --evidence-dir ./evidence
 ```
 
 The checked-in implementation profile is a `DRAFT_CANDIDATE` and is not an activation or Governance decision. The release-gate command therefore reports missing operational gates as `NOT_RUN`/`INCOMPLETE` instead of treating local unit tests as public deployment evidence. Use `--allow-incomplete` only for a local development loop.
+
+Historical catalog names that were superseded by typed transitions are listed
+as `legacy_operation_types` in the profile. They remain fail-closed at runtime
+and are not silently implemented as aliases or counted as active G1 gaps.
