@@ -170,6 +170,8 @@ The repository verifier accepts the following canonical attestation shape:
 {
   "attestation_version": 1,
   "operator_id": "...",
+  "control_group_id": "...",
+  "independence_status": "OUT_OF_BAND_DECLARED",
   "operator_public_key": "ed25519:<64 lowercase hex>",
   "evidence_root": "sha256:<64 lowercase hex>",
   "signed_at": "...",
@@ -180,6 +182,18 @@ The repository verifier accepts the following canonical attestation shape:
 The signature covers the canonical JSON object with `signature` omitted. The
 attestation file is control metadata and MUST NOT be included in the artifact
 Merkle root.
+
+For G6 independent-operator review, the attestation MUST additionally carry
+the operator's declared `control_group_id`. The value is an out-of-band claim;
+the bundle signature proves who signed the declaration, not that the
+organization is independent. That independence claim requires separate review.
+`independence_status` MUST remain `OUT_OF_BAND_DECLARED` until that review is
+complete; only the reviewed release evidence may use `OUT_OF_BAND_VERIFIED`.
+
+`gates/release-gate-result.json` is also control metadata. It MAY be published
+inside the bundle, but it is excluded from the artifact Merkle root so the
+final gate result can be written after the immutable artifact manifest and
+operator attestation have been created.
 
 ## 10. Verification command
 

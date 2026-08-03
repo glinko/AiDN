@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,11 @@ from aidn_hypervisor.consensus.snapshot_acceptance import (
     SnapshotAcceptanceError,
     load_and_verify_snapshot_acceptance_report,
 )
-from aidn_hypervisor.evidence import EvidenceBundleError, verify_public_evidence_bundle
+from aidn_hypervisor.evidence import (
+    GATE_RESULT_PATH,
+    EvidenceBundleError,
+    verify_public_evidence_bundle,
+)
 
 
 def _gate(status: str, *, reason: str | None = None, details: Any = None) -> dict[str, Any]:
@@ -102,6 +107,338 @@ def _not_run(reason: str) -> dict[str, Any]:
     return _gate("NOT_RUN", reason=reason)
 
 
+def _load_json_object(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot load {label}: {error}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
+
+
+def _gate_result_status(value: object) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and isinstance(value.get("status"), str):
+        return value["status"]
+    return None
+
+
+def _verify_gate_result_control(evidence_dir: Path) -> dict[str, Any]:
+    """Verify the final gate decision stored as EVD control metadata."""
+    gate_path = evidence_dir.joinpath(*GATE_RESULT_PATH.split("/"))
+    result = _load_json_object(gate_path, label="G7 release-gate-result")
+    if result.get("status") != "PASS":
+        raise ValueError("G7 release-gate-result must have status PASS")
+    gates = result.get("gates")
+    if not isinstance(gates, dict):
+        raise ValueError("G7 release-gate-result must contain gates")
+    required = {f"G{index}" for index in range(7)}
+    missing = sorted(required - gates.keys())
+    if missing:
+        raise ValueError("G7 release-gate-result is missing gates: " + ", ".join(missing))
+    failed = sorted(
+        name for name in required if _gate_result_status(gates.get(name)) != "PASS"
+    )
+    if failed:
+        raise ValueError("G7 release-gate-result contains non-PASS gates: " + ", ".join(failed))
+    if "G7" in gates and _gate_result_status(gates["G7"]) != "PASS":
+        raise ValueError("G7 release-gate-result contains a non-PASS G7 entry")
+    return {
+        "status": result["status"],
+        "release": result.get("release"),
+        "profile_id": result.get("profile_id"),
+        "gate_count": len(gates),
+    }
+
+
+def _validate_validator_snapshots(
+    snapshots: object,
+    *,
+    label: str,
+    minimum_validators: int = 4,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not isinstance(snapshots, list) or len(snapshots) < minimum_validators:
+        raise ValueError(f"{label} must contain at least {minimum_validators} validator snapshots")
+    normalized: list[dict[str, Any]] = []
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            raise ValueError(f"{label} contains a non-object snapshot")
+        rpc_url = snapshot.get("rpc_url")
+        height = snapshot.get("height")
+        app_hash = snapshot.get("app_hash")
+        if (
+            not isinstance(rpc_url, str)
+            or not rpc_url
+            or not isinstance(height, int)
+            or height < 1
+            or not isinstance(app_hash, str)
+            or not re.fullmatch(r"[0-9A-Fa-f]{64}", app_hash)
+        ):
+            raise ValueError(f"{label} contains an invalid validator snapshot")
+        normalized.append(snapshot)
+    if len({item["rpc_url"] for item in normalized}) != len(normalized):
+        raise ValueError(f"{label} contains duplicate RPC endpoints")
+    heights = {item["height"] for item in normalized}
+    app_hashes = {str(item["app_hash"]).upper() for item in normalized}
+    if len(heights) != 1 or len(app_hashes) != 1:
+        raise ValueError(f"{label} validators do not converge on one height and AppHash")
+    node_ids = {
+        item.get("node_id")
+        for item in normalized
+        if isinstance(item.get("node_id"), str) and item.get("node_id")
+    }
+    if node_ids and len(node_ids) != len(normalized):
+        raise ValueError(f"{label} contains duplicate validator node IDs")
+    chain_ids = {
+        item.get("chain_id")
+        for item in normalized
+        if isinstance(item.get("chain_id"), str) and item.get("chain_id")
+    }
+    if chain_ids and len(chain_ids) != 1:
+        raise ValueError(f"{label} validators disagree on chain ID")
+    return normalized, {
+        "validator_count": len(normalized),
+        "height": next(iter(heights)),
+        "app_hash": next(iter(app_hashes)),
+        "node_ids": sorted(node_ids),
+        "chain_ids": sorted(chain_ids),
+    }
+
+
+def _run_g3(report_path: Path | None) -> dict[str, Any]:
+    if report_path is None:
+        return _not_run("multi-node consensus evidence is not supplied")
+    try:
+        report = _load_json_object(report_path, label="G3 report")
+        if report.get("status") != "ok":
+            raise ValueError("G3 report status is not ok")
+        if report.get("scope") not in {None, "CONTROLLED_LAN_TESTNET"}:
+            raise ValueError("G3 report must declare CONTROLLED_LAN_TESTNET scope")
+        operations = report.get("operations")
+        if not isinstance(operations, list) or len(operations) < 8:
+            raise ValueError("G3 report must contain the complete eight-operation drill")
+        for operation in operations:
+            if not isinstance(operation, dict):
+                raise ValueError("G3 operation record must be an object")
+            if not re.fullmatch(r"[0-9A-Fa-f]{64}", str(operation.get("transaction_hash") or "")):
+                raise ValueError("G3 operation record has an invalid transaction hash")
+            if not isinstance(operation.get("transaction_height"), int):
+                raise ValueError("G3 operation record has no committed height")
+        coverage = report.get("strict_operation_coverage_probe")
+        if not isinstance(coverage, dict) or int(coverage.get("code", -1)) != 1:
+            raise ValueError("G3 strict unsupported-operation rejection probe is missing")
+        _, before = _validate_validator_snapshots(
+            report.get("validator_status_before"),
+            label="G3 validator_status_before",
+        )
+        _, after_transactions = _validate_validator_snapshots(
+            report.get("validator_status_after_transactions"),
+            label="G3 validator_status_after_transactions",
+        )
+        _, after_restart = _validate_validator_snapshots(
+            report.get("validator_status_after_restart"),
+            label="G3 validator_status_after_restart",
+        )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+        return _gate("FAIL", reason=str(error))
+    if report.get("scope") is None:
+        return _gate(
+            "INCOMPLETE",
+            reason="G3 report predates the controlled-network evidence schema",
+            details={"before": before, "after_transactions": after_transactions, "after_restart": after_restart},
+        )
+    if report.get("restart_status") != "PASS":
+        return _gate(
+            "INCOMPLETE",
+            reason="G3 transaction evidence is valid but validator restart evidence is missing",
+            details={"before": before, "after_transactions": after_transactions, "after_restart": after_restart},
+        )
+    if report.get("offline_status") != "PASS":
+        return _gate(
+            "INCOMPLETE",
+            reason="G3 transaction evidence is valid but one-validator-offline evidence is missing",
+            details={"before": before, "after_transactions": after_transactions, "after_restart": after_restart},
+        )
+    return _gate(
+        "PASS",
+        details={
+            "operations": len(operations),
+            "before": before,
+            "after_transactions": after_transactions,
+            "after_restart": after_restart,
+        },
+    )
+
+
+def _run_g4(report_path: Path | None) -> dict[str, Any]:
+    if report_path is None:
+        return _not_run("public networking evidence is not supplied")
+    try:
+        report = _load_json_object(report_path, label="G4 report")
+        report_status = report.get("status")
+        if report_status not in {"ok", "PASS", "INCOMPLETE"}:
+            raise ValueError("G4 report status is invalid")
+        if report_status == "INCOMPLETE":
+            source_gate_status = "INCOMPLETE"
+        else:
+            source_gate_status = report.get("gate_status", "PASS")
+        if source_gate_status not in {"PASS", "INCOMPLETE"}:
+            raise ValueError("G4 report gate_status is invalid")
+        endpoints = report.get("rpc_endpoints")
+        if not isinstance(endpoints, list) or len(endpoints) < 2 or any(
+            not isinstance(endpoint, str) or not endpoint.startswith("https://")
+            for endpoint in endpoints
+        ):
+            raise ValueError("G4 report must contain at least two credential-free HTTPS RPC endpoints")
+        finality = report.get("finality_evidence")
+        if not isinstance(finality, dict) or not finality.get("operation_id"):
+            raise ValueError("G4 report lacks operation-bound finality evidence")
+        ownership = report.get("ownership_evidence")
+        if not isinstance(ownership, dict):
+            raise ValueError("G4 report lacks ownership evidence status")
+        checks = report.get("checks")
+        required_checks = {
+            "lan_acceptance",
+            "public_p2p_acceptance",
+            "bootstrap_diversity",
+            "public_rpc_observable",
+            "tls_validated",
+        }
+        if checks is not None and not isinstance(checks, dict):
+            raise ValueError("G4 checks must be an object")
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+        return _gate("FAIL", reason=str(error))
+    if not isinstance(checks, dict) or not required_checks.issubset(checks):
+        return _gate(
+            "INCOMPLETE",
+            reason="public finality is present but the complete G4 network checklist is missing",
+            details={"rpc_endpoints": endpoints, "required_checks": sorted(required_checks)},
+        )
+    failed_checks = sorted(name for name in required_checks if checks.get(name) is not True)
+    if failed_checks:
+        return _gate(
+            "INCOMPLETE",
+            reason="public network checks are not all passed",
+            details={"failed_checks": failed_checks},
+        )
+    if source_gate_status == "INCOMPLETE":
+        return _gate(
+            "INCOMPLETE",
+            reason="G4 report is structurally valid but its source gate is incomplete",
+            details={"rpc_endpoints": endpoints, "ownership_evidence": ownership},
+        )
+    if ownership.get("status") != "OUT_OF_BAND_VERIFIED":
+        return _gate(
+            "INCOMPLETE",
+            reason="public RPC finality is present but operator/control-group independence is not verified",
+            details={"rpc_endpoints": endpoints, "ownership_evidence": ownership},
+        )
+    return _gate("PASS", details={"rpc_endpoints": endpoints, "operation_id": finality["operation_id"]})
+
+
+def _run_g5(report_path: Path | None) -> dict[str, Any]:
+    if report_path is None:
+        return _not_run("fault-recovery drill evidence is not supplied")
+    try:
+        report = _load_json_object(report_path, label="G5 report")
+        if report.get("status") not in {"PASS", "INCOMPLETE"}:
+            raise ValueError("G5 report status must be PASS or INCOMPLETE")
+        if report.get("status") == "INCOMPLETE":
+            return _gate(
+                "INCOMPLETE",
+                reason="G5 source report is incomplete",
+                details={
+                    "drills": sorted(report.get("drills", {}))
+                    if isinstance(report.get("drills"), dict)
+                    else [],
+                    "missing_live_drills": report.get("missing_live_drills", []),
+                },
+            )
+        drills = report.get("drills")
+        required = {
+            "graceful_restart",
+            "abrupt_process_termination",
+            "host_reboot",
+            "snapshot_restore",
+            "state_sync",
+            "invalid_snapshot_rejected",
+            "stale_predecessor_rejected",
+        }
+        if not isinstance(drills, dict) or not required.issubset(drills):
+            raise ValueError("G5 report does not contain all required recovery drills")
+        failed = sorted(
+            name
+            for name in required
+            if not isinstance(drills.get(name), dict)
+            or drills[name].get("status") != "PASS"
+            or not isinstance(drills[name].get("evidence_reference"), str)
+            or not drills[name]["evidence_reference"]
+        )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+        return _gate("FAIL", reason=str(error))
+    if failed:
+        return _gate("INCOMPLETE", reason="required recovery drills are not all passed", details={"failed": failed})
+    return _gate("PASS", details={"drills": sorted(required)})
+
+
+def _run_g6(evidence_dirs: list[Path]) -> dict[str, Any]:
+    if not evidence_dirs:
+        return _not_run("independent operator attestations are not supplied")
+    identities: list[dict[str, str]] = []
+    release_context: set[tuple[str, str, str]] = set()
+    try:
+        for evidence_dir in evidence_dirs:
+            verified = verify_public_evidence_bundle(evidence_dir, require_attestation=True)
+            manifest = _load_json_object(evidence_dir / "manifest.json", label="operator evidence manifest")
+            attestation_path = evidence_dir / "attestations" / "operator-attestation.json"
+            attestation = _load_json_object(attestation_path, label="operator attestation")
+            operator_id = attestation.get("operator_id")
+            control_group_id = attestation.get("control_group_id")
+            public_key = attestation.get("operator_public_key")
+            independence_status = attestation.get("independence_status")
+            if not all(isinstance(value, str) and value for value in (operator_id, control_group_id, public_key)):
+                raise ValueError("G6 attestation must declare operator_id, control_group_id and operator_public_key")
+            identities.append(
+                {
+                    "operator_id": operator_id,
+                    "control_group_id": control_group_id,
+                    "operator_public_key": public_key,
+                    "evidence_root": verified.evidence_root,
+                    "independence_status": independence_status or "MISSING",
+                }
+            )
+            release_context.add(
+                (
+                    str(manifest["network_id"]),
+                    str(manifest["release_version"]),
+                    str(manifest["profile_id"]),
+                )
+            )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError, EvidenceBundleError) as error:
+        return _gate("FAIL", reason=str(error))
+    if len({item["operator_public_key"] for item in identities}) < 2:
+        return _gate("INCOMPLETE", reason="G6 requires at least two distinct operator keys")
+    if len({item["operator_id"] for item in identities}) < 2:
+        return _gate("INCOMPLETE", reason="G6 requires at least two distinct operator identities")
+    if len({item["control_group_id"] for item in identities}) < 2:
+        return _gate("INCOMPLETE", reason="G6 requires at least two distinct control groups")
+    if len(release_context) != 1:
+        return _gate(
+            "FAIL",
+            reason="G6 operator bundles do not attest the same network, release and profile",
+            details={"contexts": sorted(release_context)},
+        )
+    if any(item["independence_status"] != "OUT_OF_BAND_VERIFIED" for item in identities):
+        return _gate(
+            "INCOMPLETE",
+            reason="G6 operator signatures are present but out-of-band independence is not verified",
+            details={"attestations": identities},
+        )
+    return _gate("PASS", details={"attestations": identities})
+
+
 def _run_g2(report_path: Path | None, profile: dict[str, Any]) -> dict[str, Any]:
     if report_path is None:
         return _not_run("snapshot/state-sync operational evidence is not supplied")
@@ -140,6 +477,16 @@ def main() -> int:
         type=Path,
         help="verify a deterministic local G2 snapshot/state-sync acceptance report",
     )
+    parser.add_argument("--g3-report", type=Path, help="verify a controlled multi-validator G3 report")
+    parser.add_argument("--g4-report", type=Path, help="verify a public-network G4 finality report")
+    parser.add_argument("--g5-report", type=Path, help="verify a G5 fault-recovery report")
+    parser.add_argument(
+        "--g6-evidence-dir",
+        action="append",
+        type=Path,
+        default=[],
+        help="verify one EVD-0001 operator bundle; repeat for the G6 quorum",
+    )
     parser.add_argument("--require-evidence", action="append", default=[])
     parser.add_argument(
         "--allow-incomplete",
@@ -161,10 +508,10 @@ def main() -> int:
             if selected_profile is not None
             else _gate("FAIL", reason="cannot validate G2 without a valid implementation profile")
         ),
-        "G3": _not_run("multi-node consensus evidence is not supplied"),
-        "G4": _not_run("public networking evidence is not supplied"),
-        "G5": _not_run("fault-recovery drill evidence is not supplied"),
-        "G6": _not_run("independent operator attestations are not supplied"),
+        "G3": _run_g3(args.g3_report),
+        "G4": _run_g4(args.g4_report),
+        "G5": _run_g5(args.g5_report),
+        "G6": _run_g6(args.g6_evidence_dir),
     }
     if args.evidence_dir is None:
         gates["G7"] = _not_run("use --evidence-dir to verify an EVD-0001 bundle")
@@ -175,7 +522,10 @@ def main() -> int:
                 required_paths=args.require_evidence,
                 require_attestation=True,
             )
+            gate_result = _verify_gate_result_control(args.evidence_dir)
         except EvidenceBundleError as error:
+            gates["G7"] = _gate("FAIL", reason=str(error))
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
             gates["G7"] = _gate("FAIL", reason=str(error))
         else:
             gates["G7"] = _gate(
@@ -184,6 +534,7 @@ def main() -> int:
                     "evidence_root": result.evidence_root,
                     "artifact_count": result.artifact_count,
                     "attestation_verified": result.attestation_verified,
+                    "gate_result": gate_result,
                 },
             )
 
