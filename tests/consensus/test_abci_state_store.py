@@ -119,6 +119,18 @@ def test_state_sync_import_validates_hash_and_restores_state(tmp_path) -> None:
     assert destination_store.load_current() is not None
 
 
+def test_snapshot_restore_rejects_mismatched_declared_state_root() -> None:
+    source = _app()
+    snapshot = source.prepare_snapshot()
+    snapshot["state_root"] = "0" * 64
+
+    restored = _app()
+    result = restored.apply_snapshot(snapshot)
+
+    assert result.code == "internal"
+    assert "state root" in result.log
+
+
 def test_state_sync_rejects_offer_with_mismatched_app_hash(tmp_path) -> None:
     source_store = ABCIStateStore(tmp_path / "source")
     source = _app(source_store)

@@ -165,14 +165,22 @@ The local machine-checkable subset is run with:
 uv run python tools/verify-release-gates.py \
   --profile profiles/aidn-mainnet-candidate-1.json \
   --fixture-manifest fixtures/manifest.json \
+  --g2-report ./g2-report.json \
   --evidence-dir ./evidence
 ```
 
-The command verifies G0, the deterministic portion of G1, and G7 when an
-EVD-0001 bundle is supplied. G2-G6 require operational evidence and remain
-`NOT_RUN` until that evidence is provided. `--allow-incomplete` is permitted
-for local development only; it does not convert an incomplete report into a
-release approval.
+Generate the controlled local G2 report first:
+
+```bash
+uv run python tools/run-consensus-snapshot-acceptance.py \
+  --report ./g2-report.json
+```
+
+The command verifies G0, the deterministic portion of G1, controlled-local G2,
+and G7 when an EVD-0001 bundle is supplied. G3-G6 require multi-node,
+public-network, fault-drill, and independent-operator evidence respectively.
+`--allow-incomplete` is permitted for local development only; it does not
+convert an incomplete report into a release approval.
 
 ## 11. Hard blockers
 
