@@ -128,6 +128,20 @@ The checked-in fixture MUST contain exact expected UTF-8/hex bytes and hash.
 
 The placeholder values in this prose document are NOT the fixture values. The generated fixture file is normative once committed.
 
+## 5.1 Repository runner
+
+The checked-in fixture manifest is verified and executed with:
+
+```bash
+uv run python tools/run-consensus-fixtures.py \
+  --manifest fixtures/manifest.json \
+  --strict
+```
+
+Strict mode requires an executable `execution` block, checks the manifest and
+fixture hashes, binds every fixture to the manifest `profile_id`, validates
+canonical operation bytes and IDs, and compares result codes and post-AppHash.
+
 ## 6. Required transition family: carryover
 
 Required cases:
@@ -550,4 +564,3 @@ Any intentional fixture change requires:
 - compatibility analysis;
 - migration impact;
 - profile/version decision.
-

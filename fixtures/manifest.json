@@ -1,0 +1,12 @@
+{
+  "fixture_set_version": 1,
+  "profile_id": "aidn-mainnet-candidate-1",
+  "fixture_count": 1,
+  "files": [
+    {
+      "path": "valid/wallet-transfer-001.json",
+      "sha256": "0e29f8abd550b8c8667872ee74c544663c243eb0ed5b7255722f9dd6a6a85296"
+    }
+  ],
+  "manifest_hash": "sha256:885acbf4506cedb7de00225e4f74e99438e3d7829db42827af533e9d649be53a"
+}

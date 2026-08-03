@@ -157,6 +157,23 @@ operator attestations
 migration notes
 ```
 
+## 10.1 Repository gate runner
+
+The local machine-checkable subset is run with:
+
+```bash
+uv run python tools/verify-release-gates.py \
+  --profile profiles/aidn-mainnet-candidate-1.json \
+  --fixture-manifest fixtures/manifest.json \
+  --evidence-dir ./evidence
+```
+
+The command verifies G0, the deterministic portion of G1, and G7 when an
+EVD-0001 bundle is supplied. G2-G6 require operational evidence and remain
+`NOT_RUN` until that evidence is provided. `--allow-incomplete` is permitted
+for local development only; it does not convert an incomplete report into a
+release approval.
+
 ## 11. Hard blockers
 
 Any of the following blocks release:
@@ -197,4 +214,3 @@ Machine-readable result:
   "status": "PASS"
 }
 ```
-

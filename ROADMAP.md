@@ -904,12 +904,23 @@ This work is intentionally outside the functional MVP. It must not alter current
     coverage, migration rules, release gates, and public evidence. The pack is
     Draft: command names and fixture manifests become release-authoritative only
     after the corresponding tooling and machine-readable profile are checked in.
+18. Added the first executable verification slice for that pack: a deterministic
+    machine-readable Implementation Profile generator, strict FIX-0001 manifest
+    and ABCI fixture runner, EVD-0001 public evidence verifier with Merkle root
+    and Ed25519 operator attestation checks, and a fail-closed release-gate CLI.
+    The current profile remains `DRAFT_CANDIDATE`; the gate reports the 11 known
+    consensus operations without strict transitions and all missing operational
+    evidence instead of claiming a public release.
 
 ### Current post-MVP implementation gate
 
 - [x] ECO-0007 carryover and bounty lifecycle transitions are consensus-applied and persisted.
 - [x] ECO-0007 unvested cancellation and correction transitions are consensus-applied, append-only, and persisted.
 - [x] Public multi-validator profiles are signed, hash-bound, quorum-checked, and projected into the existing CometBFT finality configuration.
+- [x] Generate and verify the current Implementation Profile and execute the
+  checked-in FIX-0001 ABCI vector deterministically.
+- [x] Verify EVD-0001 artifact hashes, Merkle root, safe publication paths and
+  Ed25519 operator attestation; expose incomplete GATE-0001 status explicitly.
 - [ ] Collect live public RPC observations and bind them to the accepted profile.
 - [ ] Publish a canonical genesis/config/trusted-checkpoint release bundle and verify it during deployment.
 - [ ] Complete production deployment, restart/state-sync/fault-drill evidence across independently operated validators.

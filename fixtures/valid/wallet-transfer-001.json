@@ -1,0 +1,51 @@
+{
+  "fixture_id": "wallet-transfer-001",
+  "profile_id": "aidn-mainnet-candidate-1",
+  "description": "Canonical WALLET_TRANSFER with standard fee recycling.",
+  "expected": {
+    "canonical_operation_hex": "7b22637265617465645f6174223a22323033302d30312d30315430303a30303a30305a222c2265766964656e63655f7265666572656e636573223a5b5d2c22657870697265735f6174223a22323033302d30312d30325430303a30303a30305a222c226665655f636c617373223a227374616e64617264222c226665655f7061796572223a2277616c6c65743a73656e646572222c22696e69746961746f725f6964223a6e756c6c2c226f7065726174696f6e5f6964223a22222c226f7065726174696f6e5f74797065223a2257414c4c45545f5452414e53464552222c226f7065726174696f6e5f76657273696f6e223a22312e302e30222c226f726967696e5f74797065223a2277616c6c6574222c227061796c6f6164223a7b22616d6f756e74223a32352c226d656d6f5f68617368223a227368613235363a746573742d6d656d6f222c22726563697069656e745f77616c6c6574223a2277616c6c65743a726563697069656e74227d2c2270726f746f636f6c5f76657273696f6e223a22302e31222c2273656e6465725f73657175656e6365223a312c2273656e6465725f77616c6c6574223a2277616c6c65743a73656e646572222c227369676e617475726573223a5b5d2c227461726765745f65706f6368223a6e756c6c7d",
+    "operation_id": "9a45079069735f1f1ffb7797bd0328ebda72c5deaa36cbfe5dffb522d946b5fa",
+    "result_code": "ok",
+    "post_app_hash": "b19273f7b2c8707e93390960a0364ee5220410dc206935ac637182deb5948777"
+  },
+  "execution": {
+    "engine": "abci",
+    "current_time": "2030-01-01T00:00:00Z",
+    "block_height": 1,
+    "block_hash_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+    "pre_app_hash": "525f08a85ab159de6160091e844c49046581485510e1264916319db0b9edcc0a",
+    "initial_wallet_balances": {
+      "wallet:sender": 100000
+    },
+    "state_assertions": {
+      "wallet_balances": {
+        "wallet:sender": 89975,
+        "wallet:recipient": 25
+      }
+    }
+  },
+  "operation": {
+    "operation_type": "WALLET_TRANSFER",
+    "operation_version": "1.0.0",
+    "protocol_version": "0.1",
+    "origin_type": "wallet",
+    "initiator_id": null,
+    "sender_wallet": "wallet:sender",
+    "sender_sequence": 1,
+    "fee_payer": "wallet:sender",
+    "fee_class": "standard",
+    "created_at": "2030-01-01T00:00:00Z",
+    "expires_at": "2030-01-02T00:00:00Z",
+    "target_epoch": null,
+    "payload": {
+      "recipient_wallet": "wallet:recipient",
+      "amount": 25,
+      "memo_hash": "sha256:test-memo"
+    },
+    "evidence_references": [],
+    "signatures": [
+      "ed25519:sender"
+    ],
+    "operation_id": "9a45079069735f1f1ffb7797bd0328ebda72c5deaa36cbfe5dffb522d946b5fa"
+  }
+}
