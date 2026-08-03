@@ -1,8 +1,8 @@
 # Plugin Host Docker Boundary Acceptance
 
-Date: 2026-08-02  
-Host: `192.168.88.127`  
-Runtime: Ubuntu 24, Docker Server `29.1.3`  
+Date: 2026-08-02
+Host: `192.168.88.127`
+Runtime: Ubuntu 24, Docker Server `29.1.3`
 Source: current working tree at the time of the run (`a6267ea` plus the
 uncommitted Plugin Host boundary changes)
 

@@ -115,4 +115,3 @@ def test_snapshot_commit_rejects_same_snapshot_id_under_another_operation() -> N
     assert tx_results[0].code == "rejected"
     assert "already committed" in tx_results[0].log
     assert len(ledger.snapshot_operations()) == 1
-
