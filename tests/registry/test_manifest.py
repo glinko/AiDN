@@ -276,7 +276,46 @@ def test_segment_hash_changes_with_order():
     m_b = SegmentManifest.create(
         segment_id="seg-1", start_epoch=1, end_epoch=1, objects=objs_b,
     )
-    assert m_a.manifest_hash == m_b.manifest_hash  # same ids, same count
+    assert m_a.content_hash_root != m_b.content_hash_root
+    assert m_a.manifest_hash != m_b.manifest_hash
+
+
+def test_manifest_contains_content_roots_and_stable_identity():
+    objects = [
+        _make_envelope("o2", payload={"a": 2}, created_epoch=2, created_block_height=20),
+        _make_envelope("o1", payload={"a": 1}, created_epoch=1, created_block_height=10),
+    ]
+    manifest = SegmentManifest.create(
+        segment_id="seg-1",
+        start_epoch=1,
+        end_epoch=2,
+        start_block=10,
+        end_block=20,
+        generation=3,
+        objects=objects,
+    )
+
+    assert manifest.object_ids == ["o1", "o2"]
+    assert len(manifest.object_id_root) == 64
+    assert len(manifest.content_hash_root) == 64
+    assert manifest.manifest_id.startswith("sha256:")
+    assert manifest.verify(objects) is True
+
+
+def test_manifest_verification_preserves_block_scope():
+    objects = [_make_envelope("o1", created_epoch=1, created_block_height=10)]
+    manifest = SegmentManifest.create(
+        segment_id="seg-1",
+        start_epoch=1,
+        end_epoch=1,
+        start_block=10,
+        end_block=10,
+        objects=objects,
+    )
+    altered_scope = manifest.model_copy(update={"end_block": 11})
+
+    assert manifest.verify(objects) is True
+    assert altered_scope.verify(objects) is False
 
 
 # ---------------------------------------------------------------------------

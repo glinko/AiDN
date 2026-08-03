@@ -60,6 +60,13 @@ class EndpointExecutionContextService:
                 session_id=str(session_id),
             )
             session = session_service.store.get_session(str(session_id))
+            if (
+                session.economic_profile == "MVP-0001"
+                and session.canonical_funding_status != "FINALIZED"
+            ):
+                raise ValueError(
+                    "MVP Session is awaiting canonical funding finality"
+                )
             if session.economic_profile == "MVP-0001" and any(
                 item.request.session_id == str(session_id)
                 for item in self._host.runtime_protocol_store.requests.values()

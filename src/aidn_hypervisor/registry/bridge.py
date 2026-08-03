@@ -118,6 +118,10 @@ def legacy_record_to_envelope(record: dict) -> RegistryObjectEnvelope:
         ledger_commitment=_resolve_ledger_commitment(object_type),
         parent_references=([record[LEGACY_SOURCE_REF_FIELD]] if record.get(LEGACY_SOURCE_REF_FIELD) else []),
         payload_encoding=record.get("payload_encoding", "json"),
+        retention_class=record.get("retention_class", "ACTIVE_LIFECYCLE"),
+        access_class=record.get("access_class", "PUBLIC_COMMITMENT"),
+        expiration_epoch=record.get("expiration_epoch"),
+        created_at=record.get("created_at"),
         payload=payload,
     )
     return envelope
@@ -146,6 +150,14 @@ def envelope_to_legacy_record(
         "source_reference": (envelope.parent_references[0] if envelope.parent_references else None),
         "payload": deepcopy(envelope.payload) if envelope.payload else None,
     }
+    if envelope.retention_class.value != "ACTIVE_LIFECYCLE":
+        record["retention_class"] = envelope.retention_class.value
+    if envelope.access_class != "PUBLIC_COMMITMENT":
+        record["access_class"] = envelope.access_class
+    if envelope.expiration_epoch is not None:
+        record["expiration_epoch"] = envelope.expiration_epoch
+    if envelope.created_at is not None:
+        record["created_at"] = envelope.created_at
     if source_node_id is not None:
         record["_source"] = {
             "node_id": source_node_id,

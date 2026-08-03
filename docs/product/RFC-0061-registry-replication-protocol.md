@@ -482,13 +482,34 @@ inventory_segment:
   total_content_size:
   object_id_root:
   content_hash_root:
+  content_hashes:
+  content_sizes:
+  content_merkle_root:
+  merkle_profile_version:
   first_object_id:
   last_object_id:
   generated_at_height:
   generation:
 ```
 
-The root SHALL be calculated deterministically from sorted object identifiers and hashes.
+The segment SHALL use the deterministic ordering defined in section 23.
+`content_hash_root` remains a compact compatibility commitment over object IDs
+and content hashes. The normative retrievability root is
+`content_merkle_root`, calculated from domain-separated leaves containing:
+
+```text
+Leaf = HASH(
+  "aidn.registry.segment-leaf.v1"
+  + object_id
+  + content_hash
+  + content_size
+)
+```
+
+Parent nodes use a domain-separated canonical pair hash. An odd node is
+duplicated into the next level. Empty segments use the protocol-defined empty
+root. `merkle_profile_version` identifies these rules and SHALL be checked
+before accepting an inclusion proof.
 
 ## 22. Inventory Root
 
@@ -501,7 +522,7 @@ Object-Type Roots
     ↓
 Segment Roots
     ↓
-Object IDs and Content Hashes
+Object IDs, Content Hashes and Content Sizes
 ```
 
 The Inventory Root supports:
@@ -877,6 +898,20 @@ The Registry SHALL:
 - verify against canonical commitments;
 - rebuild affected derived indexes.
 
+When more than one peer advertises the affected range, the Registry SHOULD
+construct a deterministic multi-peer repair plan. The plan SHALL:
+
+- group peer claims by `(object_type, content_hash, content_size)`;
+- count independent sources using Known Control Group boundaries;
+- select a source only when the configured independent quorum is met;
+- retain divergent claims as conflict evidence;
+- bind every bounded object request and response to the plan and source
+  Inventory Root;
+- never overwrite an immutable local object merely because a peer disagrees.
+
+If no candidate reaches quorum, the object remains unresolved and SHALL not be
+silently admitted from the first responding peer.
+
 Repair SHALL not require deletion of unrelated valid history.
 
 ## 46. Archive Sync
@@ -1148,15 +1183,17 @@ A Registry challenge includes:
 ```yaml
 registry_challenge:
   challenge_id:
+  challenge_type:
   target_registry_id:
-  object_type:
+  target_inventory_root:
+  target_segment_id:
   object_selector:
-  segment_id:
   required_proof:
   issued_at:
   response_deadline:
   challenger_id:
-  signature:
+  challenge_nonce:
+  challenger_signature:
 ```
 
 The selector SHALL be derived from deterministic or protocol-provided randomness.
@@ -1170,17 +1207,42 @@ The response includes:
 ```yaml
 registry_challenge_response:
   challenge_id:
-  target_registry_id:
+  registry_id:
+  inventory_root:
+  target_segment_id:
   selected_object_id:
   object_hash:
   object_or_reference:
   segment_inclusion_proof:
   ledger_commitment_proof:
   response_timestamp:
-  target_signature:
+  registry_signature:
 ```
 
 The response SHALL be independently verifiable.
+
+The MVP inventory profile carries `content_hashes` and `content_sizes` as
+payload-free parallel arrays for inventory comparison. Retrievability uses a
+full `SegmentMerkleProof` relative to `content_merkle_root`:
+
+```yaml
+segment_merkle_proof:
+  profile_version:
+  object_id:
+  content_hash:
+  content_size:
+  leaf_hash:
+  leaf_index:
+  leaf_count:
+  siblings:
+    - side: left | right
+      hash:
+  root_hash:
+```
+
+The verifier SHALL recompute the leaf, validate the sibling path and bind the
+proof root to the accepted segment manifest. The parallel arrays do not by
+themselves constitute an inclusion proof.
 
 ## 65. Proof Success
 
@@ -1504,6 +1566,115 @@ Shared storage may create a common failure domain.
 
 It does not automatically prove fraudulent duplication.
 
+## 86A. Consensus-Finalized Registry Duty Evidence
+
+Registry replication observations SHALL NOT directly create reward weight.
+For each reward epoch, an authorized epoch task MAY produce one immutable
+`Registry Duty Evidence` object only after the epoch reference used by the
+report has verified consensus finality.
+
+The evidence SHALL bind:
+
+- exact Registry Service identity;
+- reward epoch and finalized operation ID;
+- consensus finality evidence;
+- Required Registry Profile version and hash;
+- Inventory Manifest ID and Inventory Root;
+- Completeness Manifest hash;
+- mandatory challenge totals and successful responses;
+- availability observations and successes;
+- bounded latency, Health, Maturity and Reliability factors;
+- base and additional Registry Work Units;
+- activation age and collateral state;
+- operator Wallet, reward beneficiary and Known Control Group;
+- protocol compatibility, suspension and unresolved conflict state.
+
+The canonical fixed-point scale is `1,000,000` units per factor.  Evidence
+MUST carry an immutable identity hash and an operator signature.  A signature
+without an independently configured signature verifier is not sufficient for
+commitment.
+
+The verifier SHALL fail closed when:
+
+- the finality source is unavailable;
+- returned finality is for another operation or does not match the embedded
+  evidence;
+- the Inventory Root or Manifest is invalid or does not match;
+- the evidence identity, signature or factor bounds are invalid.
+
+Valid evidence that fails an eligibility threshold is retained as an explicit
+`ineligible` result.  It SHALL NOT create a reward input.
+
+## 86B. Registry Duty Verification Result
+
+The eligibility decision SHALL record each gate and its reason.  Initial gates
+include:
+
+- consensus finality;
+- epoch and Service identity binding;
+- Required Registry Profile and Inventory commitment;
+- Initial Sync and reachability;
+- activation age and collateral;
+- protocol version and suspension state;
+- unresolved signed conflicts;
+- minimum Health;
+- minimum mandatory Proof Success;
+- minimum Completeness;
+- availability observations;
+- verified reward beneficiary.
+
+The epoch task SHALL freeze a `Registry Eligibility Snapshot` containing the
+Evidence ID/hash, decision hash, eligibility state, reward beneficiary, Known
+Control Group, raw fixed-point weight and finalized operation reference.  The
+snapshot is immutable for the Epoch; later Registry health or Wallet changes
+apply only to a future snapshot.
+
+For an eligible Registry, the verifier emits a fixed-point reward input for
+the Epoch Engine.  The input contains the Registry Work Units, all bounded
+quality factors, Known Control Group, beneficiary and evidence commitments.
+It contains no Q amount and does not authorize payment.
+
+## 86C. Service Verification Ledger Boundary
+
+The Registry MAY submit:
+
+`SERVICE_VERIFICATION_COMMIT`
+
+with:
+
+- `verification_report_id` equal to the Duty Evidence ID;
+- `service_id` and `service_type=registry`;
+- report and evidence hashes;
+- verification epoch;
+- eligibility result and fixed-point reward-input summary;
+- Registry Inventory reference;
+- finality and evidence references.
+
+The operation is idempotent by Verification Report ID.  It records evidence
+for the epoch eligibility/reward pipeline only.  The Registry SHALL NOT submit
+`REWARD_MINT`, credit a reward beneficiary, or alter a service-pool budget.
+Only the consensus-finalized epoch calculation and Ledger authorization path
+may create a reward mint operation.
+
+## 86D. Registry Epoch Reward Calculation
+
+The Epoch Engine consumes the committed `RegistryRewardInput` objects through
+the fixed-point Registry calculation defined by `ECO-0004` §45B.  The
+calculation is independent of Registry message order and records:
+
+- the exact Epoch and Registry pool budget reference;
+- distinct effective Known Control Groups;
+- the Diversity Factor and capped group share;
+- per-Service integer allocations;
+- unused and unallocated pool atoms;
+- the evidence and Eligibility Snapshot commitments;
+- `REWARD_CALCULATION_ROOT`.
+
+The calculation is an economic commitment, not a mint.  The corresponding
+`EPOCH_TRANSITION` must become consensus-finalized before any `REWARD_MINT`
+can reference the root.  A local Registry, peer, webhook or transition worker
+cannot bypass this boundary.
+
 ## 87. Network Partition
 
 During a network partition:
@@ -1741,6 +1912,11 @@ Replication itself continues continuously.
 
 Reward and eligibility calculations occur through Epoch Tasks.
 
+The `Commit Registry Evidence Root` task SHALL consume only finality-bound
+Registry Duty Evidence.  Local Ledger records and peer agreement without a
+verified consensus finality source are diagnostic commitments and do not make
+a Registry reward-eligible.
+
 ## 100. Ledger Integration
 
 Registry replication messages are off-chain.
@@ -1890,3 +2066,50 @@ The following require further specifications or implementation testing:
 - New Registry Services can synchronize without trusting a single operator.
 - Snapshot application is delegated to `RFC-0062`.
 - Registry replication distributes protocol knowledge but does not replace consensus.
+
+## Repository MVP Implementation Profile
+
+The current implementation profile provides the following RFC-0061 slice:
+
+- approved Registry peers use the existing TLS plus Ed25519-authenticated
+  replication transport; proof and repair messages do not create a second
+  unauthenticated channel;
+- `INVENTORY_RESPONSE` may carry a verified deterministic
+  `RegistryInventoryManifest` and its Inventory Root;
+- catch-up is pull-based and bounded by the configured object batch limit;
+  subsequent batches are requested only after the previous object response is
+  verified;
+- a `RegistryRepairPlan` records missing, conflicting and local-only object
+  identities before any repair object is admitted;
+- repair admission verifies the remote root binding, object identity, content
+  hash and envelope integrity, and never overwrites an immutable conflict;
+- `REGISTRY_CHALLENGE` and `REGISTRY_CHALLENGE_RESPONSE` implement a signed
+  deterministic single-object retrievability proof using a segment Merkle
+  inclusion path; the verifier binds the returned segment and Merkle root to
+  the previously accepted remote Inventory Root rather than trusting a segment
+  supplied only inside the response;
+- multi-peer repair plans select a source only after deterministic independent
+  quorum, preserve divergent commitments as conflict evidence, and carry the
+  plan/root binding into bounded object requests and responses;
+- signed request evidence, independent non-response observations and a signed
+  `RegistryFailureReport` are available; healthy/degraded network conditions
+  are required and a response or outage makes the result non-confirming;
+- consensus-finalized `RegistryDutyEvidence`, frozen `RegistryEligibilitySnapshot`
+  and fixed-point `RegistryRewardInput` are committed through an idempotent
+  `SERVICE_VERIFICATION_COMMIT`; this path never creates `REWARD_MINT` or
+  credits a reward beneficiary.  The Epoch Engine now also provides a
+  fixed-point Registry aggregation adapter with Diversity and Known Control
+  Group caps, deterministic `REWARD_CALCULATION_ROOT` generation, and a Ledger
+  boundary that accepts `REWARD_MINT` only after exact consensus finality;
+  consensus execution validates the referenced `EPOCH_TRANSITION` roots,
+  sequential Epoch numbers and typed pool budgets before recording it;
+  `SERVICE_VERIFICATION_COMMIT` is also an evidence-only consensus operation
+  with typed report/Registry bindings and duplicate-report rejection;
+  both MVP consensus block entrypoints reject a mint whose transition is not
+  finalized before the block and route accepted mints through the same
+  budget-checked wallet-credit path.
+
+This profile still does not claim that local calculation or local Ledger
+submission alone is network-wide consensus execution.  Independent validator
+deployment and the complete operation-by-operation consensus executor remain
+separate rollout requirements.

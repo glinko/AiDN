@@ -14,7 +14,10 @@ from aidn_hypervisor.consensus.cometbft import (
     HttpCometBftRpcTransport,
 )
 from aidn_hypervisor.consensus.cometbft_crypto import Zip215CometBftEd25519Backend
-from aidn_hypervisor.consensus.finality import QuorumConsensusFinalitySource
+from aidn_hypervisor.consensus.finality import (
+    ConsensusFinalitySource,
+    QuorumConsensusFinalitySource,
+)
 from aidn_hypervisor.consensus.light_client import (
     CometBftCryptographicBackend,
     CometBftLightClient,
@@ -93,15 +96,16 @@ def build_cometbft_finality_source(
     *,
     config: CometBftFinalityConfig,
     transaction_hash_for_operation: Callable[[str], str | None],
-    abci_application: AIDNABCIApplication,
+    abci_application: AIDNABCIApplication | None = None,
     transport: CometBftRpcTransport | None = None,
     cryptography: CometBftCryptographicBackend | None = None,
-) -> ABCICommittedFinalitySource:
+) -> ConsensusFinalitySource:
     """Build the only supported external-finality path for a Hypervisor.
 
     The trusted checkpoint is operator-provided and never bootstrapped from the
-    queried RPC node.  Evidence is additionally bound to the local ABCI state
-    commitment, so a verified remote commit cannot mutate unrelated local state.
+    queried RPC node. When a local ABCI application is supplied, evidence is
+    additionally bound to its state commitment. A non-validator may omit that
+    local binding and rely on the verified operation-bound remote proof.
     """
     backend = cryptography or Zip215CometBftEd25519Backend()
     light_client = CometBftLightClient(
@@ -128,21 +132,20 @@ def build_cometbft_finality_source(
         verifier_id=config.verifier_id,
         timeout_seconds=config.timeout_seconds,
     )
-    return ABCICommittedFinalitySource(
-        source=external_source,
-        abci_application=abci_application,
-    )
+    if abci_application is None:
+        return external_source
+    return ABCICommittedFinalitySource(source=external_source, abci_application=abci_application)
 
 
 def build_cometbft_multi_rpc_finality_source(
     *,
     config: CometBftMultiRpcFinalityConfig,
     transaction_hash_for_operation: Callable[[str], str | None],
-    abci_application: AIDNABCIApplication,
+    abci_application: AIDNABCIApplication | None = None,
     transports: Sequence[CometBftRpcTransport] | None = None,
     cryptography: CometBftCryptographicBackend | None = None,
-) -> ABCICommittedFinalitySource:
-    """Build a local-ABCI-bound source requiring a configured RPC quorum."""
+) -> ConsensusFinalitySource:
+    """Build a quorum source with optional local-ABCI commitment binding."""
     if transports is not None and len(transports) != len(config.rpc_endpoints):
         raise ValueError("multi-RPC transports must match endpoint count")
     backend = cryptography or Zip215CometBftEd25519Backend()
@@ -180,11 +183,11 @@ def build_cometbft_multi_rpc_finality_source(
             )
         )
         source_ids.append(endpoint)
-    return ABCICommittedFinalitySource(
-        source=QuorumConsensusFinalitySource(
-            sources=sources,
-            quorum=config.minimum_agreement,
-            source_ids=source_ids,
-        ),
-        abci_application=abci_application,
+    quorum_source = QuorumConsensusFinalitySource(
+        sources=sources,
+        quorum=config.minimum_agreement,
+        source_ids=source_ids,
     )
+    if abci_application is None:
+        return quorum_source
+    return ABCICommittedFinalitySource(source=quorum_source, abci_application=abci_application)

@@ -8,7 +8,31 @@ from aidn_hypervisor.epoch_reward.models import (
 )
 from aidn_hypervisor.epoch_reward.recycling import RecyclingEngine
 from aidn_hypervisor.epoch_reward.transition import EpochTransitionEngine
+from aidn_hypervisor.registry.duty import FIXED_POINT_SCALE, RegistryRewardInput
 from aidn_hypervisor.reward.pools import ServicePoolManager
+
+
+def _registry_reward_input() -> RegistryRewardInput:
+    return RegistryRewardInput(
+        service_id="registry-1",
+        epoch=1,
+        reward_beneficiary="wallet:registry-1",
+        known_control_group_id="kcg-1",
+        work_units_millionths=100,
+        maturity_factor_millionths=FIXED_POINT_SCALE,
+        health_factor_millionths=FIXED_POINT_SCALE,
+        proof_success_millionths=FIXED_POINT_SCALE,
+        completeness_millionths=FIXED_POINT_SCALE,
+        availability_millionths=FIXED_POINT_SCALE,
+        latency_factor_millionths=FIXED_POINT_SCALE,
+        reliability_factor_millionths=FIXED_POINT_SCALE,
+        raw_weight_millionths=100,
+        evidence_id="evidence:1",
+        evidence_hash="hash:evidence:1",
+        eligibility_decision_hash="decision:1",
+        eligibility_snapshot_id="snapshot:1",
+        finalized_operation_id="operation:1",
+    )
 
 
 class TestTransitionPipeline:
@@ -47,6 +71,24 @@ class TestTransitionPipeline:
         assert budget.registry_pool > 0
         assert budget.validation_pool > 0
         assert budget.faucet_pool > 0
+
+    def test_registry_reward_calculation_uses_allocated_epoch_pool(self):
+        recycling = RecyclingEngine()
+        pools = ServicePoolManager()
+        engine = EpochTransitionEngine(pools, recycling)
+        engine.begin_transition(1)
+        budget = engine.calculate_budget(1)
+
+        calculation = engine.calculate_registry_rewards(
+            1,
+            [_registry_reward_input()],
+        )
+
+        assert calculation is not None
+        assert calculation.nominal_pool_budget_q_atoms == budget.registry_pool
+        assert calculation.calculation_root
+        assert engine.get_registry_calculation(1) == calculation
+        assert engine.get_transition(1).notes["registry_calculation_root"] == calculation.calculation_root
 
 
 class TestTransitionWithRecycling:

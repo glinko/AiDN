@@ -35,6 +35,32 @@ from .discovery import (
     PeerDiscoveryEvent,
     RegistryPeerDiscovery,
 )
+from .duty import (
+    DEFAULT_BASE_WORK_UNITS,
+    DEFAULT_MAX_ADDITIONAL_WORK_UNITS,
+    DEFAULT_MINIMUM_ACTIVATION_AGE_EPOCHS,
+    DEFAULT_MINIMUM_COMPLETENESS,
+    DEFAULT_MINIMUM_HEALTH,
+    DEFAULT_MINIMUM_PROOF_SUCCESS,
+    FIXED_POINT_SCALE,
+    RegistryDutyEvidence,
+    RegistryDutyVerificationResult,
+    RegistryDutyVerifier,
+    RegistryEligibilityGate,
+    RegistryEligibilitySnapshot,
+    RegistryRewardInput,
+    registry_duty_signing_bytes,
+)
+from .failure import (
+    NonResponseConfirmationEngine,
+    RegistryFailureReport,
+    RegistryFailureVerificationResult,
+    RegistryNonResponseObservation,
+    RegistryRequestEvidence,
+    failure_report_signing_bytes,
+    observation_signing_bytes,
+    request_evidence_signing_bytes,
+)
 from .grpc_proto_spec import PROTO_SPEC
 from .grpc_transport import (
     GrpcConnectionState,
@@ -43,8 +69,16 @@ from .grpc_transport import (
     GrpcRegistryTransport,
     GrpcTransportConfig,
 )
-from .manifest import InventoryRoot, SegmentManifest
+from .manifest import (
+    InventoryRoot,
+    ManifestObjectEntry,
+    RegistryInventoryManifest,
+    SegmentManifest,
+    SegmentMerkleProof,
+    verify_segment_merkle_proof,
+)
 from .messages import (
+    ChallengeResponsePayload,
     RegistryChannelClass,
     RegistryMessageBuilder,
     RegistryMessageType,
@@ -62,17 +96,35 @@ from .profile import (
     RegistryProfileService,
     RequiredRegistryProfile,
 )
+from .proof import (
+    ProofOfRegistryEngine,
+    ProofVerificationResult,
+    RegistryChallenge,
+    RegistryChallengeResponse,
+    challenge_signing_bytes,
+    response_signing_bytes,
+    verify_ed25519_signature,
+)
 from .protocol import (
     NegotiationResult,
     ProtocolNegotiator,
     ProtocolVersion,
     RegistryStatus,
 )
+from .repair import (
+    MultiPeerRepairPlan,
+    MultiPeerRepairResult,
+    RegistryRepairEngine,
+    RegistryRepairPlan,
+    RegistryRepairResult,
+)
 from .replication import (
     ReplicationEngine,
     TransferProgress,
     TransferState,
 )
+from .replicator import RegistryReplicator, ReplicationState
+from .retention import RegistryRetentionClass, RegistryRetentionPolicy
 from .rewards import (
     ParticipantLedger,
     PenaltyEntry,
@@ -107,6 +159,7 @@ __all__ = [
     "RegistryMessageType",
     "RegistryPayload",
     "RegistryMessageBuilder",
+    "ChallengeResponsePayload",
     # channel
     "RegistryChannelConfig",
     "RegistryChannelManager",
@@ -120,12 +173,40 @@ __all__ = [
     "ObjectIdentity",
     "ObjectVersion",
     "RegistryObjectEnvelope",
+    "RegistryRetentionClass",
+    "RegistryRetentionPolicy",
     # storage
     "ImmutableObjectStore",
     "StorageStats",
     # manifest
     "InventoryRoot",
+    "ManifestObjectEntry",
+    "RegistryInventoryManifest",
     "SegmentManifest",
+    "SegmentMerkleProof",
+    "verify_segment_merkle_proof",
+    # proof and repair
+    "RegistryChallenge",
+    "RegistryChallengeResponse",
+    "ProofOfRegistryEngine",
+    "ProofVerificationResult",
+    "challenge_signing_bytes",
+    "response_signing_bytes",
+    "verify_ed25519_signature",
+    # non-response confirmation
+    "RegistryRequestEvidence",
+    "RegistryNonResponseObservation",
+    "RegistryFailureReport",
+    "RegistryFailureVerificationResult",
+    "NonResponseConfirmationEngine",
+    "request_evidence_signing_bytes",
+    "observation_signing_bytes",
+    "failure_report_signing_bytes",
+    "RegistryRepairEngine",
+    "RegistryRepairPlan",
+    "RegistryRepairResult",
+    "MultiPeerRepairPlan",
+    "MultiPeerRepairResult",
     # peer
     "PeerAuthenticator",
     "PeerManager",
@@ -144,6 +225,8 @@ __all__ = [
     "ReplicationEngine",
     "TransferProgress",
     "TransferState",
+    "RegistryReplicator",
+    "ReplicationState",
     # sync
     "SyncController",
     "SyncMode",
@@ -184,6 +267,21 @@ __all__ = [
     "DiscoveryConfig",
     "PeerDiscoveryEvent",
     "RegistryPeerDiscovery",
+    # duty evidence and reward boundary
+    "FIXED_POINT_SCALE",
+    "DEFAULT_BASE_WORK_UNITS",
+    "DEFAULT_MAX_ADDITIONAL_WORK_UNITS",
+    "DEFAULT_MINIMUM_ACTIVATION_AGE_EPOCHS",
+    "DEFAULT_MINIMUM_COMPLETENESS",
+    "DEFAULT_MINIMUM_HEALTH",
+    "DEFAULT_MINIMUM_PROOF_SUCCESS",
+    "RegistryDutyEvidence",
+    "RegistryDutyVerificationResult",
+    "RegistryDutyVerifier",
+    "RegistryEligibilitySnapshot",
+    "RegistryEligibilityGate",
+    "RegistryRewardInput",
+    "registry_duty_signing_bytes",
     # runtime
     "RegistryReplicationRuntime",
     "RegistryReplicationRuntimeError",

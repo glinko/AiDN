@@ -16,7 +16,11 @@ from aidn_hypervisor.providers.models import PluginHostEntrypoint, PluginSandbox
 _HOST_CODE = """import json, os, socket
 secret_path = os.getenv("AIDN_PLUGIN_HOST_ACTIVATION_SECRET_FILE")
 try:
-    secret_file_present = bool(secret_path) and open(secret_path, encoding="ascii").read().strip() == "616363657074616e63652d736563726574"
+    secret_file_present = (
+        bool(secret_path)
+        and open(secret_path, encoding="ascii").read().strip()
+        == "616363657074616e63652d736563726574"
+    )
 except OSError:
     secret_file_present = False
 result = {
@@ -24,6 +28,12 @@ result = {
     "secret_env_absent": not bool(os.getenv("AIDN_PLUGIN_HOST_ACTIVATION_SECRET")),
     "secret_file_present": secret_file_present,
 }
+try:
+    with open("/var/lib/aidn/plugin-data/acceptance-state", "w", encoding="utf-8") as handle:
+        handle.write("scoped")
+    result["plugin_data_write_allowed"] = True
+except OSError:
+    result["plugin_data_write_allowed"] = False
 try:
     open("/opt/aidn/plugin/host-write-probe", "w").write("blocked")
     result["package_write_blocked"] = False
@@ -48,8 +58,10 @@ def main() -> None:
     with (
         tempfile.TemporaryDirectory(prefix="aidn-plugin-host-acceptance-") as directory,
         tempfile.TemporaryDirectory(prefix="aidn-plugin-host-secret-") as secret_directory,
+        tempfile.TemporaryDirectory(prefix="aidn-plugin-host-data-") as data_directory,
     ):
         package_root = Path(directory)
+        os.chmod(Path(data_directory), 0o777)
         host = package_root / "host.py"
         host.write_text(_HOST_CODE, encoding="utf-8")
         os.chmod(package_root, 0o755)
@@ -63,11 +75,12 @@ def main() -> None:
             entrypoint=PluginHostEntrypoint(entrypoint_path="host.py"),
             sandbox_policy=PluginSandboxPolicy(
                 execution_mode="SANDBOX_REQUIRED",
-                filesystem_scope="NONE",
                 network_scope="NONE",
                 secret_scope="DECLARED_HANDLES_ONLY",
+                filesystem_scope="PLUGIN_DATA_ONLY",
             ),
             activation_secret_file=secret_file,
+            plugin_data_root=Path(data_directory),
         )
         environment = {
             **os.environ,
@@ -79,14 +92,21 @@ def main() -> None:
         completed = subprocess.run(
             spec["command"],
             env=environment,
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
             timeout=30,
         )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "Plugin Host container did not start: "
+            f"exit={completed.returncode}; stdout={completed.stdout!r}; "
+            f"stderr={completed.stderr!r}"
+        )
     result = json.loads(completed.stdout)
     if result != {
         "network_blocked": True,
+        "plugin_data_write_allowed": True,
         "package_write_blocked": True,
         "secret_env_absent": True,
         "secret_file_present": True,

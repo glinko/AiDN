@@ -79,6 +79,11 @@ class SettlementApplicationService:
         return funding
 
     def propose_settlement(self, evaluation, *, created_at: str | None = None):
+        consensus = getattr(self._host, "consensus_service", None)
+        if consensus is not None and consensus.is_validator:
+            raise ValueError(
+                "validator cooperative Settlement requires a canonical consensus transaction"
+            )
         proposal = self._host._ledger_operation_service.propose_settlement(
             evaluation,
             created_at=created_at,
@@ -93,6 +98,59 @@ class SettlementApplicationService:
         )
         self._host._persist_state()
         return accepted
+
+    def submit_consensus_cooperative_settlement(
+        self,
+        evaluation,
+        acceptance,
+        *,
+        created_at: str | None = None,
+        signatures: list[str] | None = None,
+    ) -> dict:
+        """Submit cooperative Settlement through canonical consensus only."""
+        from aidn_hypervisor.consensus.settlement_orchestration import (
+            ConsensusSettlementOperationOrchestrator,
+        )
+
+        consensus = getattr(self._host, "consensus_service", None)
+        if consensus is None or not consensus.is_enabled:
+            raise ValueError("consensus service is not enabled")
+        result = ConsensusSettlementOperationOrchestrator(
+            consensus,
+            self._host._ledger_operation_service,
+            finality_source=self._host.consensus_finality_source,
+            pending_envelope_store=self._host,
+        ).submit_cooperative_settlement(
+            evaluation=evaluation,
+            acceptance=acceptance,
+            created_at=created_at,
+            signatures=signatures,
+        )
+        if result["status"] == "failed":
+            blocked_on = result.get("blocked_on") or "operation"
+            details = result.get("submissions", {}).get(blocked_on, {}).get("error")
+            raise ValueError(
+                f"canonical cooperative Settlement failed at {blocked_on}"
+                + (f": {details}" if details else "")
+            )
+        self._host._persist_state()
+        try:
+            funding = self._host.get_session_funding_account(
+                evaluation.proposal.session_id
+            )
+        except KeyError:
+            funding = None
+        return {
+            "status": "FINALIZED"
+            if result["status"] == "finalized"
+            else "CONSENSUS_PENDING",
+            "evaluation": evaluation,
+            "proposal": evaluation.proposal,
+            "acceptance": acceptance,
+            "funding": funding,
+            "consensus": result,
+            "session_result": None,
+        }
 
     def finalize_accepted_settlement(
         self,
@@ -114,6 +172,150 @@ class SettlementApplicationService:
         )
         self._host._persist_state()
         return funding
+
+    def prepare_force_settlement_operation(self, evaluation, **kwargs):
+        """Prepare a local Forced Settlement without changing canonical state."""
+        consensus = getattr(self._host, "consensus_service", None)
+        stage_only = bool(consensus is not None and consensus.is_validator)
+        if stage_only:
+            existing = self._host.find_pending_consensus_operation(
+                operation_type="SESSION_FORCE_SETTLE",
+                payload_fields={"settlement_id": evaluation.proposal.settlement_id},
+            )
+            if existing is not None:
+                payload = existing.get("payload")
+                expected = {
+                    "session_id": evaluation.proposal.session_id,
+                    "failure_class": kwargs.get("failure_class"),
+                    "settlement_input_root": evaluation.proposal.settlement_input_root,
+                    "requested_payment_q_atoms": (
+                        evaluation.proposal.requested_endpoint_payment_q_atoms
+                    ),
+                    "requested_refund_q_atoms": (
+                        evaluation.proposal.consumer_payment_refund_q_atoms
+                        + evaluation.proposal.consumer_fee_refund_q_atoms
+                    ),
+                }
+                if not isinstance(payload, dict) or any(
+                    payload.get(key) != value for key, value in expected.items()
+                ):
+                    raise ValueError("conflicting pending Forced Settlement projection")
+                return {
+                    "funding": self._host.get_session_funding_account(
+                        evaluation.proposal.session_id
+                    ),
+                    "operation": existing,
+                }
+        kwargs["stage_only"] = stage_only
+        prepared = self._host._ledger_operation_service.prepare_force_settlement_operation(
+            evaluation,
+            **kwargs,
+        )
+        if stage_only:
+            prepared["operation"] = self._host.stage_consensus_operation(
+                prepared["operation"]
+            )
+        else:
+            self._host._persist_state()
+        return prepared
+
+    def apply_prepared_force_settlement(
+        self,
+        evaluation,
+        *,
+        force_operation_id: str,
+        created_at: str | None = None,
+    ):
+        funding = self._host._ledger_operation_service.apply_prepared_force_settlement(
+            evaluation,
+            force_operation_id=force_operation_id,
+            created_at=created_at,
+        )
+        self._host._persist_state()
+        return funding
+
+    def commit_session_failure_evidence(self, **kwargs):
+        consensus = getattr(self._host, "consensus_service", None)
+        stage_only = bool(consensus is not None and consensus.is_validator)
+        existing = None
+        if stage_only:
+            existing = self._host.find_pending_consensus_operation(
+                operation_type="SESSION_FAILURE_EVIDENCE",
+                payload_fields={
+                    "session_id": kwargs["session_id"],
+                    "failure_class": kwargs["failure_class"],
+                    "failure_evidence_root": kwargs["failure_evidence_root"],
+                },
+            )
+        if existing is not None:
+            payload = existing.get("payload")
+            if not isinstance(payload, dict) or payload.get("details") != kwargs.get("details"):
+                raise ValueError("conflicting pending Session failure evidence")
+            return existing
+        operation = self._host._ledger_operation_service.commit_session_failure_evidence(
+            **kwargs,
+            stage_only=stage_only,
+        )
+        if stage_only:
+            operation = self._host.stage_consensus_operation(operation)
+        else:
+            self._host._persist_state()
+        return operation
+
+    def submit_consensus_session_failure_chain(self, **kwargs):
+        """Submit local Session failure records through canonical consensus.
+
+        The local operation IDs are lookup keys only.  The orchestration layer
+        projects fresh network envelopes and gates every dependent submission
+        on verified finality of its predecessor.
+        """
+        from aidn_hypervisor.consensus.session_orchestration import (
+            ConsensusSessionOperationOrchestrator,
+        )
+
+        consensus = self._host.consensus_service
+        if consensus is None:
+            raise ValueError("consensus service is not configured")
+        operation_keys = {
+            "local_lock_operation": "local_lock_operation_id",
+            "local_failure_operation": "local_failure_operation_id",
+            "local_force_operation": "local_force_operation_id",
+        }
+        operations = {}
+        for argument_name, key_name in operation_keys.items():
+            operation_id = kwargs.pop(key_name, None)
+            if not isinstance(operation_id, str) or not operation_id.strip():
+                raise ValueError(f"{key_name} is required")
+            operation = self._host.get_local_consensus_operation(operation_id)
+            if operation is None:
+                raise ValueError(f"local operation was not found: {operation_id}")
+            operations[argument_name] = operation
+        lock_payload = operations["local_lock_operation"].get("payload")
+        if not isinstance(lock_payload, dict):
+            raise ValueError("local escrow lock payload is invalid")
+        from aidn_hypervisor.settlement.models import SessionFundingAccount
+
+        try:
+            funding = SessionFundingAccount.model_validate(lock_payload)
+        except ValueError as error:
+            raise ValueError(f"local escrow lock funding is invalid: {error}") from error
+        supplied_funding = kwargs.pop("funding", None)
+        if supplied_funding is not None:
+            supplied_payload = (
+                supplied_funding.model_dump(mode="json")
+                if hasattr(supplied_funding, "model_dump")
+                else supplied_funding
+            )
+            if supplied_payload != funding.model_dump(mode="json"):
+                raise ValueError("consensus escrow funding does not match local lock")
+        return ConsensusSessionOperationOrchestrator(
+            consensus,
+            finality_source=self._host.consensus_finality_source,
+        ).submit_failure_chain(
+            **operations,
+            funding=funding,
+            **kwargs,
+        )
 
     def open_mvp_fixed_price_session(self, **kwargs):
         return self._host._mvp_session_economics_service.open_mvp_fixed_price_session(

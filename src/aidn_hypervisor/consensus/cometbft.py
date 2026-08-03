@@ -77,6 +77,13 @@ class CometBftRpcTransport(Protocol):
         """Return the decoded JSON-RPC or HTTP response object."""
 
 
+class CometBftSubmissionTransport(Protocol):
+    """Minimal transport for submitting a transaction to CometBFT."""
+
+    def broadcast_tx_sync(self, tx_data: bytes, *, timeout_seconds: int) -> dict:
+        """Submit bytes for CheckTx/mempool admission and return the response."""
+
+
 class _RejectRedirects(urllib_request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, msg, headers, newurl):
         return None
@@ -148,6 +155,52 @@ class HttpCometBftRpcTransport:
         decoded = json.loads(body.decode("utf-8"))
         if not isinstance(decoded, dict):
             raise ValueError("CometBFT RPC response is invalid")
+        return decoded
+
+
+class HttpCometBftSubmissionTransport:
+    """Bounded HTTP submission transport for CometBFT ``broadcast_tx_sync``."""
+
+    def __init__(self, endpoint: str, *, max_response_bytes: int = 1_000_000) -> None:
+        parsed = urllib_parse.urlsplit(endpoint.strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("CometBFT submission endpoint must be an absolute HTTP URL")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError(
+                "CometBFT submission endpoint must not include credentials, query, or fragment"
+            )
+        if parsed.path not in {"", "/"}:
+            raise ValueError("CometBFT submission endpoint must not include a path")
+        try:
+            if parsed.port is not None and not 1 <= parsed.port <= 65535:
+                raise ValueError("CometBFT submission endpoint port is invalid")
+        except ValueError as error:
+            raise ValueError("CometBFT submission endpoint port is invalid") from error
+        if max_response_bytes < 1:
+            raise ValueError("CometBFT submission max_response_bytes must be positive")
+        self._endpoint = urllib_parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+        self._max_response_bytes = max_response_bytes
+
+    def broadcast_tx_sync(self, tx_data: bytes, *, timeout_seconds: int) -> dict:
+        if not isinstance(tx_data, bytes) or not tx_data:
+            raise ValueError("CometBFT transaction bytes are required")
+        if timeout_seconds < 1:
+            raise ValueError("CometBFT submission timeout_seconds must be positive")
+        query = urllib_parse.urlencode({"tx": f"0x{tx_data.hex()}"}, safe="")
+        request = urllib_request.Request(
+            f"{self._endpoint}/broadcast_tx_sync?{query}",
+            method="POST",
+            headers={"Accept": "application/json", "Content-Length": "0"},
+            data=b"",
+        )
+        opener = urllib_request.build_opener(_RejectRedirects())
+        with opener.open(request, timeout=timeout_seconds) as response:
+            body = response.read(self._max_response_bytes + 1)
+        if len(body) > self._max_response_bytes:
+            raise ValueError("CometBFT submission response exceeds configured limit")
+        decoded = json.loads(body.decode("utf-8"))
+        if not isinstance(decoded, dict):
+            raise ValueError("CometBFT submission response is invalid")
         return decoded
 
 

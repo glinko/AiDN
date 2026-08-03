@@ -4,6 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from .object_envelope import RegistryObjectEnvelope
+from .retention import RegistryRetentionPolicy
 
 
 @dataclass
@@ -31,6 +32,7 @@ class ImmutableObjectStore:
         self._epoch_index: dict[int, list[str]] = defaultdict(list)
         self._insertion_order: list[str] = []  # for deterministic iteration
         self._tombstones: set[str] = set()
+        self._expired: set[str] = set()
 
     def put(self, envelope: RegistryObjectEnvelope) -> bool:
         """
@@ -54,17 +56,29 @@ class ImmutableObjectStore:
         self._insertion_order.append(envelope.object_id)
         return True
 
-    def get(self, object_id: str) -> RegistryObjectEnvelope | None:
-        """Retrieve an object by id. None if not found or tombstoned."""
-        if object_id in self._tombstones:
+    def get(
+        self,
+        object_id: str,
+        *,
+        include_expired: bool = False,
+    ) -> RegistryObjectEnvelope | None:
+        """Retrieve an object, optionally including retention-expired entries."""
+        if object_id in self._tombstones or (
+            object_id in self._expired and not include_expired
+        ):
             return None
         return self._objects.get(object_id)
 
-    def get_many(self, object_ids: list[str]) -> list[RegistryObjectEnvelope]:
+    def get_many(
+        self,
+        object_ids: list[str],
+        *,
+        include_expired: bool = False,
+    ) -> list[RegistryObjectEnvelope]:
         """Batch retrieval."""
         result = []
         for oid in object_ids:
-            obj = self.get(oid)
+            obj = self.get(oid, include_expired=include_expired)
             if obj is not None:
                 result.append(obj)
         return result
@@ -74,6 +88,7 @@ class ImmutableObjectStore:
         object_type: str,
         *,
         include_tombstoned: bool = False,
+        include_expired: bool = False,
         limit: int | None = None,
     ) -> list[RegistryObjectEnvelope]:
         """List objects of a given type."""
@@ -81,6 +96,8 @@ class ImmutableObjectStore:
         result = []
         for oid in ids:
             if not include_tombstoned and oid in self._tombstones:
+                continue
+            if not include_expired and oid in self._expired:
                 continue
             obj = self._objects.get(oid)
             if obj is not None:
@@ -94,6 +111,7 @@ class ImmutableObjectStore:
         epoch: int,
         *,
         include_tombstoned: bool = False,
+        include_expired: bool = False,
     ) -> list[RegistryObjectEnvelope]:
         """List objects from a given epoch."""
         ids = self._epoch_index.get(epoch, [])
@@ -101,14 +119,20 @@ class ImmutableObjectStore:
         for oid in ids:
             if not include_tombstoned and oid in self._tombstones:
                 continue
+            if not include_expired and oid in self._expired:
+                continue
             obj = self._objects.get(oid)
             if obj is not None:
                 result.append(obj)
         return result
 
-    def has(self, object_id: str) -> bool:
-        """Check if object exists and is not tombstoned."""
-        return object_id in self._objects and object_id not in self._tombstones
+    def has(self, object_id: str, *, include_expired: bool = False) -> bool:
+        """Check if object exists and is visible under the requested lifecycle view."""
+        return (
+            object_id in self._objects
+            and object_id not in self._tombstones
+            and (include_expired or object_id not in self._expired)
+        )
 
     def tombstone(self, object_id: str) -> bool:
         """Soft-delete an object. Returns True if tombstoned."""
@@ -123,12 +147,18 @@ class ImmutableObjectStore:
             return False
         del self._objects[object_id]
         self._tombstones.discard(object_id)
+        self._expired.discard(object_id)
         self._insertion_order.remove(object_id)
         return True
 
-    def all_ids(self) -> list[str]:
+    def all_ids(self, *, include_expired: bool = False) -> list[str]:
         """All object ids in deterministic insertion order."""
-        return [oid for oid in self._insertion_order if oid not in self._tombstones]
+        return [
+            oid
+            for oid in self._insertion_order
+            if oid not in self._tombstones
+            and (include_expired or oid not in self._expired)
+        ]
 
     def stats(self) -> StorageStats:
         """Storage statistics."""
@@ -153,6 +183,73 @@ class ImmutableObjectStore:
             latest_epoch=max(epochs) if epochs else None,
         )
 
-    def snapshot(self) -> dict[str, RegistryObjectEnvelope]:
-        """Create a snapshot of all objects (for testing/replication)."""
-        return {oid: self._objects[oid] for oid in self._insertion_order if oid not in self._tombstones}
+    def snapshot(
+        self,
+        *,
+        include_expired: bool = False,
+    ) -> dict[str, RegistryObjectEnvelope]:
+        """Create a snapshot of visible objects (for testing/replication)."""
+        return {
+            oid: self._objects[oid]
+            for oid in self.all_ids(include_expired=include_expired)
+        }
+
+    def expired_ids(self) -> list[str]:
+        """Return retention-expired object ids in deterministic insertion order."""
+        return [
+            oid
+            for oid in self._insertion_order
+            if oid in self._expired and oid not in self._tombstones
+        ]
+
+    def is_expired(self, object_id: str) -> bool:
+        return object_id in self._expired
+
+    def apply_retention(
+        self,
+        *,
+        current_epoch: int,
+        policy: RegistryRetentionPolicy,
+        apply: bool = True,
+        limit: int | None = None,
+    ) -> dict:
+        """Evaluate and optionally enforce explicit/versioned retention expiry.
+
+        Expiry is a visibility transition, not a destructive delete. An expired
+        object remains retrievable with ``include_expired=True`` and keeps its
+        object identity for audit and replication repair.
+        """
+        candidates: list[tuple[str, int | None]] = []
+        for object_id in self._insertion_order:
+            if object_id in self._tombstones:
+                continue
+            envelope = self._objects[object_id]
+            expiration_epoch = policy.expiration_epoch_for(
+                created_epoch=envelope.created_epoch,
+                retention_class=envelope.retention_class,
+                explicit_expiration_epoch=envelope.expiration_epoch,
+            )
+            if policy.is_expired(
+                current_epoch=current_epoch,
+                expiration_epoch=expiration_epoch,
+            ):
+                candidates.append((object_id, expiration_epoch))
+
+        if limit is not None:
+            candidates = candidates[: max(0, int(limit))]
+        expired_ids = [object_id for object_id, _ in candidates]
+        newly_expired = [object_id for object_id in expired_ids if object_id not in self._expired]
+        if apply:
+            self._expired.update(expired_ids)
+        return {
+            "current_epoch": int(current_epoch),
+            "policy_hash": policy.policy_hash,
+            "applied": bool(apply),
+            "expired_count": len(expired_ids),
+            "newly_expired_count": len(newly_expired),
+            "expired_ids": expired_ids,
+            "expiration_epochs": {
+                object_id: expiration_epoch
+                for object_id, expiration_epoch in candidates
+            },
+        }

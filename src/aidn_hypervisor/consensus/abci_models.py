@@ -32,6 +32,7 @@ class ABCIResult(BaseModel):
     gas_used: int = 0
     gas_wanted: int = 0
     tags: list[ABCITag] = Field(default_factory=list)
+    validator_updates: list[dict] = Field(default_factory=list)
 
     model_config = {"frozen": True}
 

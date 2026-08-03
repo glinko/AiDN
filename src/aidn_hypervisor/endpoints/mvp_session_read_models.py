@@ -2,11 +2,26 @@ from __future__ import annotations
 
 
 def build_mvp_session_open_payload(session, deposit, funding) -> dict:
-    return {
+    payload = {
         "session": session.model_dump(mode="json"),
         "deposit": deposit.model_dump(mode="json"),
         "funding": funding.model_dump(mode="json"),
     }
+    if session.canonical_funding_status == "PENDING_FINALITY":
+        submission = dict(session.canonical_funding_submission or {})
+        payload["status"] = "CONSENSUS_PENDING"
+        payload["consensus"] = {
+            "status": submission.get("status", "awaiting_verified_finality"),
+            "blocked_on": "lock",
+            "canonical_operation_id": session.canonical_funding_operation_id,
+            "transaction_hash": submission.get("transaction_hash"),
+        }
+    elif session.canonical_funding_operation_id is not None:
+        payload["consensus"] = {
+            "status": "finalized",
+            "canonical_operation_id": session.canonical_funding_operation_id,
+        }
+    return payload
 
 
 def build_mvp_session_result_payload(session_result) -> dict:
@@ -42,7 +57,21 @@ def build_mvp_settlement_finalize_payload(
     }
     if include_acceptance:
         payload["acceptance"] = finalized["acceptance"].model_dump(mode="json")
-    payload.update(build_mvp_session_result_payload(finalized["session_result"]))
+    session_result = finalized.get("session_result")
+    if session_result is None:
+        # Consensus-enabled Forced Settlement is intentionally observable as a
+        # pending result until verified finality. Do not serialize a terminal
+        # Session projection before that boundary has been crossed.
+        payload["session_result"] = None
+        payload["status"] = finalized.get("status", "PENDING")
+        if "consensus" in finalized:
+            payload["consensus"] = finalized["consensus"]
+    else:
+        payload.update(build_mvp_session_result_payload(session_result))
+        if "status" in finalized:
+            payload["status"] = finalized["status"]
+        if "consensus" in finalized:
+            payload["consensus"] = finalized["consensus"]
     return payload
 
 

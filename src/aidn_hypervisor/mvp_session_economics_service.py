@@ -4,6 +4,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
+from aidn_hypervisor.session_failure.models import FailureClass
 from aidn_hypervisor.settlement.models import (
     RequestSettlementInput,
     SessionFundingAccount,
@@ -46,7 +47,28 @@ class MvpSessionEconomicsService:
         consumer_authorization_public_key: str | None = None,
         consumer_authorization: dict | None = None,
         require_wallet_authorization: bool = False,
+        session_id: str | None = None,
+        consensus_sender_sequence: int | None = None,
+        consensus_lock_signatures: list[str] | None = None,
     ):
+        consensus_service = getattr(self._host, "consensus_service", None)
+        validator_consensus = bool(
+            consensus_service is not None
+            and getattr(consensus_service, "is_validator", False)
+        )
+        resumable_session = None
+        if validator_consensus and session_id is not None:
+            try:
+                candidate = session_service.store.get_session(session_id)
+            except KeyError:
+                candidate = None
+            if (
+                candidate is not None
+                and candidate.endpoint_id == endpoint.endpoint_id
+                and candidate.client_wallet == client_wallet
+                and candidate.economic_profile == "MVP-0001"
+            ):
+                resumable_session = candidate
         if deposit_q_atoms <= 0:
             raise ValueError("MVP Session deposit must be positive")
         if network_fee_reserve_q_atoms < 0:
@@ -54,9 +76,16 @@ class MvpSessionEconomicsService:
         payment_reserve = deposit_q_atoms - network_fee_reserve_q_atoms
         if payment_reserve < fixed_price_q_atoms:
             raise ValueError("MVP Session deposit cannot cover fixed price")
-        if self._host.wallet_q_atom_balance(client_wallet) < deposit_q_atoms:
+        if (
+            resumable_session is None
+            and self._host.wallet_q_atom_balance(client_wallet) < deposit_q_atoms
+        ):
             raise ValueError("insufficient q_atoms for MVP Session escrow")
-        if require_wallet_authorization and consumer_authorization is None:
+        if (
+            require_wallet_authorization
+            and consumer_authorization is None
+            and resumable_session is None
+        ):
             raise ValueError("Public MVP Session requires Consumer wallet authorization")
         if (
             require_wallet_authorization
@@ -90,6 +119,23 @@ class MvpSessionEconomicsService:
             )
             consumer_authorization_public_key = identity["public_key"]
 
+        if validator_consensus:
+            return self._open_validator_consensus_session(
+                session_service=session_service,
+                endpoint=endpoint,
+                client_wallet=client_wallet,
+                deposit_q_atoms=deposit_q_atoms,
+                fixed_price_q_atoms=fixed_price_q_atoms,
+                network_fee_reserve_q_atoms=network_fee_reserve_q_atoms,
+                payment_reserve=payment_reserve,
+                accounting_contract=accounting_contract,
+                consumer_authorization_public_key=consumer_authorization_public_key,
+                consumer_authorization=consumer_authorization,
+                session_id=session_id,
+                consensus_sender_sequence=consensus_sender_sequence,
+                consensus_lock_signatures=consensus_lock_signatures,
+            )
+
         result = session_service.open_session(
             endpoint_id=endpoint.endpoint_id,
             client_wallet=client_wallet,
@@ -106,6 +152,7 @@ class MvpSessionEconomicsService:
             accounting_contract=accounting_contract,
             endpoint_configuration_hash=endpoint.configuration_hash,
             consumer_authorization_public_key=consumer_authorization_public_key,
+            session_id=session_id,
         )
         funding = SessionFundingAccount(
             session_id=result.session.session_id,
@@ -134,6 +181,200 @@ class MvpSessionEconomicsService:
             funding_state_hash=str(locked.funding_state_hash),
         )
         return session, result.deposit, locked
+
+    def _open_validator_consensus_session(
+        self,
+        *,
+        session_service,
+        endpoint,
+        client_wallet: str,
+        deposit_q_atoms: int,
+        fixed_price_q_atoms: int,
+        network_fee_reserve_q_atoms: int,
+        payment_reserve: int,
+        accounting_contract: dict | None,
+        consumer_authorization_public_key: str | None,
+        consumer_authorization: dict | None,
+        session_id: str | None,
+        consensus_sender_sequence: int | None,
+        consensus_lock_signatures: list[str] | None,
+    ):
+        """Open or resume a validator Session without a local lock mutation."""
+        if session_id is not None:
+            try:
+                current = session_service.store.get_session(session_id)
+            except KeyError as error:
+                raise ValueError("pending canonical Session was not found") from error
+            if current.endpoint_id != endpoint.endpoint_id:
+                raise ValueError("pending canonical Session Endpoint does not match")
+            if current.client_wallet != client_wallet:
+                raise ValueError("pending canonical Session Consumer does not match")
+            if current.economic_profile != "MVP-0001":
+                raise ValueError("Session is not an MVP-0001 economic Session")
+            if current.deposit_locked_q_atoms != deposit_q_atoms:
+                raise ValueError("pending canonical Session deposit does not match")
+            if current.fixed_price_q_atoms != fixed_price_q_atoms:
+                raise ValueError("pending canonical Session fixed price does not match")
+            if current.request_charge_ceiling_q_atoms != fixed_price_q_atoms:
+                raise ValueError(
+                    "pending canonical Session charge ceiling does not match"
+                )
+            if current.canonical_funding_status == "FINALIZED":
+                funding = self._host.get_session_funding_account(session_id)
+                return current, session_service.store.get_deposit_for_session(session_id), funding
+            if current.canonical_funding_status != "PENDING_FINALITY":
+                raise ValueError("Session does not have a pending canonical funding lock")
+            return self._reconcile_validator_consensus_session(
+                session_service=session_service,
+                session_id=session_id,
+            )
+
+        if consensus_sender_sequence is None:
+            raise ValueError("validator Session open requires canonical sender sequence")
+        if not consensus_lock_signatures:
+            raise ValueError("validator Session open requires canonical lock signatures")
+
+        result = session_service.open_session(
+            endpoint_id=endpoint.endpoint_id,
+            client_wallet=client_wallet,
+            provider_wallet=endpoint.owner_wallet,
+            endpoint_payment_beneficiary=endpoint.owner_wallet,
+            consumer_refund_beneficiary=client_wallet,
+            node_id=self._host.node_id,
+            deposit_q=deposit_q_atoms / Q_ATOMS_PER_Q,
+            deposit_q_atoms=deposit_q_atoms,
+            fixed_price_q_atoms=fixed_price_q_atoms,
+            request_charge_ceiling_q_atoms=fixed_price_q_atoms,
+            economic_profile="MVP-0001",
+            session_policy=endpoint.session.model_dump(mode="json"),
+            accounting_contract=accounting_contract,
+            endpoint_configuration_hash=endpoint.configuration_hash,
+            consumer_authorization_public_key=consumer_authorization_public_key,
+            session_id=session_id,
+            canonical_funding_status="PENDING_FINALITY",
+        )
+        pending_funding = SessionFundingAccount(
+            session_id=result.session.session_id,
+            session_contract_hash=result.session.session_contract_hash,
+            funding_class="ESCROW_PREPAID",
+            consumer_funding_account=client_wallet,
+            endpoint_payment_beneficiary=result.session.endpoint_payment_beneficiary,
+            consumer_refund_beneficiary=result.session.consumer_refund_beneficiary,
+            total_locked_amount_q_atoms=deposit_q_atoms,
+            endpoint_payment_reserve_q_atoms=payment_reserve,
+            network_fee_reserve_q_atoms=network_fee_reserve_q_atoms,
+            unsettled_payment_reserve_q_atoms=payment_reserve,
+            unsettled_fee_reserve_q_atoms=network_fee_reserve_q_atoms,
+            funding_state="LOCK_PENDING",
+        )
+        from aidn_hypervisor.consensus.projection import (
+            build_session_escrow_lock_envelope_from_funding,
+        )
+
+        envelope = build_session_escrow_lock_envelope_from_funding(
+            pending_funding,
+            sender_sequence=consensus_sender_sequence,
+            signatures=consensus_lock_signatures,
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        consensus = self._host.consensus_service
+        try:
+            submission = consensus.submit_operation(envelope)
+            if submission.status.value == "failed":
+                raise ValueError(submission.error or "canonical Session lock was rejected")
+            session = session_service.bind_pending_canonical_funding(
+                result.session.session_id,
+                operation_id=envelope.operation_id,
+                submission={
+                    **self._consensus_submission_payload(submission),
+                    "envelope": envelope.model_dump(mode="json"),
+                },
+            )
+            if consumer_authorization is not None:
+                self._host._consumed_wallet_authorization_nonces.add(
+                    str(consumer_authorization["nonce"])
+                )
+        except Exception:
+            session_service.store.discard_open_session(result.session.session_id)
+            raise
+
+        return self._reconcile_validator_consensus_session(
+            session_service=session_service,
+            session_id=session.session_id,
+        )
+
+    def _reconcile_validator_consensus_session(self, *, session_service, session_id: str):
+        from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+
+        session = session_service.store.get_session(session_id)
+        submission_payload = session.canonical_funding_submission
+        if not isinstance(submission_payload, dict) or not submission_payload:
+            raise ValueError("pending canonical Session lock submission is missing")
+        envelope_payload = submission_payload.get("envelope", submission_payload)
+        if not isinstance(envelope_payload, dict):
+            raise ValueError("pending canonical Session lock envelope is invalid")
+        envelope = LedgerOperationEnvelope.model_validate(envelope_payload)
+        if session.canonical_funding_operation_id != envelope.operation_id:
+            raise ValueError("pending canonical Session lock identity is inconsistent")
+        consensus = self._host.consensus_service
+        submission = consensus.get_submission(envelope.operation_id)
+        if submission is None:
+            submission = consensus.submit_operation(envelope)
+        if submission.status.value == "failed":
+            raise ValueError(submission.error or "canonical Session lock was rejected")
+        finality_source = getattr(self._host, "consensus_finality_source", None)
+        if finality_source is not None:
+            reconciled = consensus.reconcile_finality(
+                envelope.operation_id,
+                finality_source=finality_source,
+            )
+            if reconciled is not None:
+                submission = reconciled
+        if submission.status.value != "finalized":
+            return (
+                session,
+                session_service.store.get_deposit_for_session(session_id),
+                self._pending_funding_from_envelope(envelope),
+            )
+
+        try:
+            funding = self._host.get_session_funding_account(session_id)
+        except KeyError:
+            # Finality evidence without a local canonical projection is not
+            # enough to activate execution on this validator.
+            return (
+                session,
+                session_service.store.get_deposit_for_session(session_id),
+                self._pending_funding_from_envelope(envelope),
+            )
+        expected_funding = self._pending_funding_from_envelope(envelope)
+        if funding.model_dump(mode="json") != expected_funding.model_dump(mode="json"):
+            raise ValueError("canonical Session funding projection does not match lock envelope")
+        session = session_service.bind_canonical_funding(
+            session_id,
+            funding_state_hash=funding.funding_state_hash or "",
+            operation_id=envelope.operation_id,
+        )
+        return session, session_service.store.get_deposit_for_session(session_id), funding
+
+    @staticmethod
+    def _pending_funding_from_envelope(envelope):
+        return SessionFundingAccount.model_validate(envelope.payload)
+
+    @staticmethod
+    def _consensus_submission_payload(submission) -> dict:
+        return {
+            "operation_id": submission.operation_id,
+            "status": submission.status.value,
+            "submitted_at": submission.submitted_at,
+            "admitted_at": submission.admitted_at,
+            "included_at": submission.included_at,
+            "finalized_at": submission.finalized_at,
+            "block_height": submission.block_height,
+            "transaction_hash": submission.transaction_hash,
+            "retry_count": submission.retry_count,
+            "error": submission.error,
+        }
 
     def build_mvp_fixed_price_settlement_evaluation(
         self,
@@ -227,6 +468,21 @@ class MvpSessionEconomicsService:
                     raise ValueError(
                         "Session Route Generation does not match Runtime Request"
                     )
+                if (
+                    record.request.effective_terms_hash is not None
+                    and terminal_evidence.effective_terms_hash
+                    != record.request.effective_terms_hash
+                ):
+                    raise ValueError(
+                        "Session Effective Terms hash does not match Runtime Request"
+                    )
+                if (
+                    session.session_amendment_sequence > 0
+                    and terminal_evidence.effective_terms_hash is None
+                ):
+                    raise ValueError(
+                        "Session Effective Terms hash is required after amendment"
+                    )
                 if terminal_evidence.terminal_state != record.request_state:
                     raise ValueError(
                         "Session terminal state does not match Runtime Request"
@@ -269,6 +525,9 @@ class MvpSessionEconomicsService:
             session_id=session_id,
             request_id=request_id,
             request_charge_ceiling_q_atoms=session.request_charge_ceiling_q_atoms,
+            effective_terms_hash=(
+                session.effective_terms_hash or session.session_contract_hash
+            ),
             accounting_contract_hash=session.accounting_contract_hash,
             terminal_state=record.request_state,
             result_reference=record.terminal_result_hash,
@@ -318,7 +577,9 @@ class MvpSessionEconomicsService:
         return SettlementEngine().evaluate_session(
             funding=funding,
             session_contract_hash=session.session_contract_hash,
-            effective_terms_hash=terms.terms_hash,
+            effective_terms_hash=(
+                session.effective_terms_hash or session.session_contract_hash
+            ),
             request_inputs=[request_input],
             terms_by_hash={session.accounting_contract_hash: terms},
             maximum_session_charge_q_atoms=session.request_charge_ceiling_q_atoms,
@@ -369,12 +630,8 @@ class MvpSessionEconomicsService:
         return SettlementEngine().evaluate_session(
             funding=funding,
             session_contract_hash=session.session_contract_hash,
-            effective_terms_hash=_canonical_hash(
-                {
-                    "economic_profile": "MVP-0001",
-                    "reason": "ENDPOINT_UNAVAILABLE",
-                    "terms": "zero_endpoint_payment",
-                }
+            effective_terms_hash=(
+                session.effective_terms_hash or session.session_contract_hash
             ),
             request_inputs=[],
             terms_by_hash={},
@@ -414,7 +671,7 @@ class MvpSessionEconomicsService:
             raise ValueError(
                 "MVP cooperative Settlement requires undisputed Runtime evidence"
             )
-        proposal = self._host.propose_settlement(evaluation)
+        proposal = evaluation.proposal
         acceptance = SessionSettlementAcceptance(
             settlement_id=proposal.settlement_id,
             session_id=session_id,
@@ -435,8 +692,31 @@ class MvpSessionEconomicsService:
                 acceptance,
                 consumer_public_key=session.consumer_authorization_public_key,
             )
-        self._host.accept_settlement(acceptance)
-        funding = self._host.finalize_accepted_settlement(evaluation)
+        consensus = getattr(self._host, "consensus_service", None)
+        consensus_result = None
+        if consensus is not None and consensus.is_enabled:
+            canonical = self._host.submit_consensus_cooperative_settlement(
+                evaluation,
+                acceptance,
+                created_at=acceptance.accepted_at,
+                signatures=[consumer_signature],
+            )
+            consensus_result = canonical["consensus"]
+            if canonical["status"] != "FINALIZED":
+                return {
+                    "status": "CONSENSUS_PENDING",
+                    "evaluation": evaluation,
+                    "proposal": proposal,
+                    "acceptance": acceptance,
+                    "funding": canonical["funding"],
+                    "consensus": consensus_result,
+                    "session_result": None,
+                }
+            funding = canonical["funding"]
+        else:
+            proposal = self._host.propose_settlement(evaluation)
+            self._host.accept_settlement(acceptance)
+            funding = self._host.finalize_accepted_settlement(evaluation)
         session_result = session_service.mark_canonical_settlement_finalized(
             session_id,
             settlement_evidence_root=evaluation.input_set.settlement_input_root,
@@ -454,6 +734,7 @@ class MvpSessionEconomicsService:
             "acceptance": acceptance,
             "funding": funding,
             "session_result": session_result,
+            **({"status": "FINALIZED", "consensus": consensus_result} if consensus_result is not None else {}),
         }
 
     def force_finalize_mvp_fixed_price_session(
@@ -467,6 +748,13 @@ class MvpSessionEconomicsService:
         now: str | None = None,
         actual_network_fees_q_atoms: int = 0,
         settlement_sequence: int = 1,
+        consensus_sender_sequence: int | None = None,
+        consensus_lock_signatures: list[str] | None = None,
+        consensus_failure_signatures: list[str] | None = None,
+        consensus_initiator_wallet: str | None = None,
+        consensus_initiator_signature: str | None = None,
+        consensus_observed_at: str | None = None,
+        consensus_force_signatures: list[str] | None = None,
     ):
         if reason == "ENDPOINT_UNAVAILABLE":
             evaluation = self.build_mvp_endpoint_unavailable_refund_evaluation(
@@ -491,12 +779,150 @@ class MvpSessionEconomicsService:
             no_request = False
         else:
             raise ValueError("unsupported forced Settlement reason")
-        funding = self._host.force_finalize_fixed_price_settlement(
-            evaluation,
-            reason=reason,
-            force_after=force_after,
-            now=now,
+        failure_evidence_root = session_service.failure_evidence_root(session_id)
+        if failure_evidence_root is None and session_service.failure_handler is not None:
+            failure_evidence_root = session_service.ensure_failure_evidence(
+                session_id=session_id,
+                failure_class=(
+                    FailureClass.ENDPOINT_FAILURE
+                    if reason == "ENDPOINT_UNAVAILABLE"
+                    else FailureClass.CONSUMER_DISCONNECTED
+                ),
+                details=f"MVP forced Settlement reason: {reason}",
+            )
+        if session_service.failure_handler is not None and failure_evidence_root is None:
+            raise ValueError("forced Settlement requires persisted failure evidence")
+        failure_evidence_operation_id = None
+        if failure_evidence_root is not None:
+            failure_evidence_class = (
+                FailureClass.ENDPOINT_FAILURE.value
+                if reason == "ENDPOINT_UNAVAILABLE"
+                else FailureClass.CONSUMER_DISCONNECTED.value
+            )
+            evidence_operation = self._host.commit_session_failure_evidence(
+                session_id=session_id,
+                failure_class=failure_evidence_class,
+                failure_evidence_root=failure_evidence_root,
+                details=f"MVP forced Settlement reason: {reason}",
+            )
+            failure_evidence_operation_id = evidence_operation["operation_id"]
+
+        consensus = getattr(self._host, "consensus_service", None)
+        consensus_enabled = bool(
+            consensus is not None and getattr(consensus, "is_enabled", False)
         )
+        proposal = evaluation.proposal
+        if consensus_enabled:
+            if failure_evidence_operation_id is None:
+                raise ValueError(
+                    "consensus Forced Settlement requires local failure evidence"
+                )
+            ledger = self._host._ledger_operation_service
+            lock_operation = next(
+                (
+                    operation
+                    for operation in reversed(ledger.list_operations())
+                    if operation.get("operation_type") == "SESSION_ESCROW_LOCK"
+                    and isinstance(operation.get("payload"), dict)
+                    and operation["payload"].get("session_id") == session_id
+                ),
+                None,
+            )
+            if lock_operation is None:
+                raise ValueError(
+                    "consensus Forced Settlement requires a local escrow lock"
+                )
+            if consensus_sender_sequence is None:
+                raise ValueError(
+                    "consensus_sender_sequence is required for consensus escrow lock"
+                )
+            if not consensus_lock_signatures:
+                raise ValueError(
+                    "consensus_lock_signatures are required for consensus escrow lock"
+                )
+            if not consensus_failure_signatures:
+                raise ValueError(
+                    "consensus_failure_signatures are required for failure evidence"
+                )
+            if not consensus_initiator_wallet:
+                raise ValueError(
+                    "consensus_initiator_wallet is required for Forced Settlement"
+                )
+            if not consensus_initiator_signature:
+                raise ValueError(
+                    "consensus_initiator_signature is required for Forced Settlement"
+                )
+            observed_at = consensus_observed_at or now
+            if not observed_at:
+                raise ValueError(
+                    "consensus_observed_at or now is required for Forced Settlement"
+                )
+            if consensus_force_signatures is None:
+                consensus_force_signatures = [consensus_initiator_signature]
+
+            prepared = self._host.prepare_force_settlement_operation(
+                evaluation,
+                failure_class=reason,
+                force_after=force_after,
+                now=now,
+                failure_evidence_root=failure_evidence_root,
+                failure_evidence_operation_id=failure_evidence_operation_id,
+                failure_evidence_operation=evidence_operation,
+                initiator_signature=consensus_initiator_signature,
+                require_completed_fixed_price=(
+                    reason == "CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE"
+                ),
+            )
+            force_operation = prepared["operation"]
+            consensus_result = self._host.submit_consensus_session_failure_chain(
+                local_lock_operation_id=str(lock_operation["operation_id"]),
+                local_failure_operation_id=failure_evidence_operation_id,
+                local_force_operation_id=str(force_operation["operation_id"]),
+                funding=prepared["funding"],
+                sender_sequence=consensus_sender_sequence,
+                lock_signatures=consensus_lock_signatures,
+                failure_signatures=consensus_failure_signatures,
+                initiator_wallet=consensus_initiator_wallet,
+                initiator_signature=consensus_initiator_signature,
+                observed_at=observed_at,
+                transition=evaluation.transition.model_dump(mode="json"),
+                force_signatures=consensus_force_signatures,
+            )
+            if consensus_result["status"] != "finalized":
+                return {
+                    "status": "CONSENSUS_PENDING",
+                    "evaluation": evaluation,
+                    "proposal": proposal,
+                    "funding": self._host.get_session_funding_account(session_id),
+                    "consensus": consensus_result,
+                    "session_result": None,
+                }
+            canonical_force_operation_id = str(
+                consensus_result["canonical_operation_ids"]["force"]
+            )
+            consensus_force_operation_id = (
+                canonical_force_operation_id
+                if getattr(consensus, "is_validator", False)
+                else str(force_operation["operation_id"])
+            )
+            funding = self._host.apply_prepared_force_settlement(
+                evaluation,
+                force_operation_id=consensus_force_operation_id,
+                created_at=now,
+            )
+            self._host.discard_pending_consensus_operations(
+                failure_evidence_operation_id,
+                str(force_operation["operation_id"]),
+            )
+        else:
+            funding = self._host.force_finalize_fixed_price_settlement(
+                evaluation,
+                reason=reason,
+                force_after=force_after,
+                now=now,
+                failure_evidence_root=failure_evidence_root,
+                failure_evidence_operation_id=failure_evidence_operation_id,
+            )
         proposal = evaluation.proposal
         session_result = session_service.mark_canonical_settlement_finalized(
             session_id,
@@ -507,13 +933,16 @@ class MvpSessionEconomicsService:
                 + proposal.consumer_fee_refund_q_atoms
             ),
             network_fee_q_atoms=proposal.actual_network_fees_q_atoms,
+            failure_evidence_root=failure_evidence_root,
             close_reason=f"forced_{reason.lower()}",
             no_request=no_request,
         )
         self._host._persist_state()
         return {
+            "status": "FINALIZED",
             "evaluation": evaluation,
             "proposal": proposal,
             "funding": funding,
+            **({"consensus": consensus_result} if consensus_enabled else {}),
             "session_result": session_result,
         }

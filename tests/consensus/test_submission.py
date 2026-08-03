@@ -5,6 +5,7 @@ import json
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.cometbft import cometbft_transaction_hash
+from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.service import (
     ConsensusMode,
@@ -36,6 +37,16 @@ def _make_abci() -> AIDNABCIApplication:
         ledger_service=ledger,
         admission_validator=admission,
     )
+
+
+class RecordingSubmissionTransport:
+    def __init__(self, response: dict) -> None:
+        self.response = response
+        self.calls: list[tuple[bytes, int]] = []
+
+    def broadcast_tx_sync(self, tx_data: bytes, *, timeout_seconds: int) -> dict:
+        self.calls.append((tx_data, timeout_seconds))
+        return self.response
 
 
 # ---- submit accepted → admitted ----
@@ -87,6 +98,106 @@ def test_submission_retains_exact_transaction_hash_for_finality_lookup():
     assert svc.transaction_hash_for_operation(env.operation_id) == cometbft_transaction_hash(
         expected_bytes
     )
+
+
+def test_http_submission_transport_marks_only_checktx_admission():
+    env = _make_envelope()
+    transaction_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    transport = RecordingSubmissionTransport(
+        {
+            "result": {
+                "code": 0,
+                "hash": cometbft_transaction_hash(transaction_bytes),
+            }
+        }
+    )
+    svc = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.NON_VALIDATOR,
+            cometbft_endpoint="http://cometbft.test",
+            submission_timeout_seconds=2.5,
+        ),
+        submission_transport=transport,
+    )
+
+    record = svc.submit_operation(env)
+
+    assert record.status == SubmissionStatus.ADMITTED
+    assert record.admitted_at is not None
+    assert record.finalized_at is None
+    assert transport.calls == [(transaction_bytes, 2)]
+
+
+def test_http_submission_transport_rejects_checktx_failure():
+    transport = RecordingSubmissionTransport(
+        {"result": {"code": 12, "log": "invalid operation"}}
+    )
+    svc = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.NON_VALIDATOR,
+            cometbft_endpoint="http://cometbft.test",
+        ),
+        submission_transport=transport,
+    )
+
+    record = svc.submit_operation(_make_envelope())
+
+    assert record.status == SubmissionStatus.FAILED
+    assert record.error == "invalid operation"
+    assert svc.is_finalized(record.operation_id) is False
+
+
+def test_submission_is_idempotent_for_the_same_operation_and_transaction():
+    transport = RecordingSubmissionTransport({"result": {"code": 0}})
+    svc = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.NON_VALIDATOR,
+            cometbft_endpoint="http://cometbft.test",
+        ),
+        submission_transport=transport,
+    )
+    env = _make_envelope()
+
+    first = svc.submit_operation(env)
+    second = svc.submit_operation(env)
+
+    assert second is first
+    assert len(transport.calls) == 1
+    assert svc.get_metrics()["total_submitted"] == 1
+
+
+def test_reconcile_finality_requires_matching_chain_and_is_idempotent():
+    transport = RecordingSubmissionTransport({"result": {"code": 0}})
+    svc = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.NON_VALIDATOR,
+            chain_id="aidn-testnet-1",
+            cometbft_endpoint="http://cometbft.test",
+        ),
+        submission_transport=transport,
+    )
+    env = _make_finalizable_envelope()
+    svc.submit_operation(env)
+    evidence = ConsensusFinalityEvidence(
+        operation_id=env.operation_id,
+        chain_id="aidn-testnet-1",
+        block_height=17,
+        block_id="block-17",
+        app_hash="app-17",
+        commit_hash="commit-17",
+        finalized_at="2030-01-01T00:00:00Z",
+        verifier_id="test-source",
+    )
+
+    class Source:
+        def finality_evidence(self, operation_id: str):
+            return evidence
+
+    assert svc.reconcile_finality(env.operation_id, finality_source=Source()) is not None
+    assert svc.reconcile_finality(env.operation_id, finality_source=Source()) is not None
+    assert svc.is_finalized(env.operation_id)
+    assert svc.get_submission(env.operation_id).status == SubmissionStatus.FINALIZED
+    assert svc.get_metrics()["total_finalized"] == 1
 
 
 def _make_finalizable_envelope(**kw) -> LedgerOperationEnvelope:

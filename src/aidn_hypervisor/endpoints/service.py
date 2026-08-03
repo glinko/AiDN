@@ -177,6 +177,9 @@ class EndpointService:
             source_base_url=remote_endpoint.source_base_url,
             source_model_class=remote_endpoint.source_model_class,
             operator_id=remote_endpoint.operator_id,
+            source_owner_public_key=remote_endpoint.source_owner_public_key,
+            source_wallet_signature=remote_endpoint.source_wallet_signature,
+            publication_verification=remote_endpoint.publication_verification,
             alias=remote_endpoint.alias,
             attached_at=attached_at,
         )

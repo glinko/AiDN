@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.dispatcher.models import (
     DeadLetterRecord,
     DeliveryRecord,
@@ -58,6 +59,10 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeUsageConflict,
     RuntimeUsageReport,
 )
+from aidn_hypervisor.session_failure.models import (
+    FailureEvidenceRecord,
+    FailureReport,
+)
 from aidn_hypervisor.sessions.models import (
     EndpointSession,
     LockedDeposit,
@@ -67,6 +72,9 @@ from aidn_hypervisor.settlement.models import (
     SessionFundingAccount,
     SessionSettlementAcceptance,
     SessionSettlementProposal,
+    SessionUsageCheckpoint,
+    SettlementCorrection,
+    SettlementDispute,
 )
 from aidn_hypervisor.validation.models import (
     ValidationAssignment,
@@ -75,7 +83,10 @@ from aidn_hypervisor.validation.models import (
     ValidationEpoch,
     ValidationReport,
     ValidationReportCommitment,
+    ValidationReportCustodyChallenge,
+    ValidationReportCustodyCheckTask,
     ValidationReportCustodyObject,
+    ValidationReportCustodyRetirement,
     ValidationReportCustodyState,
     ValidationReportStorageFailure,
     ValidationReportStorageReceipt,
@@ -83,6 +94,7 @@ from aidn_hypervisor.validation.models import (
     ValidationRequest,
     ValidationStatusSnapshot,
     ValidationValidatorEntry,
+    ValidationValidatorKeyBinding,
 )
 from aidn_hypervisor.wallet_models import WalletQuote
 
@@ -446,6 +458,15 @@ class HypervisorStateSnapshot(BaseModel):
     validation_report_custody_states: list[ValidationReportCustodyState] = Field(
         default_factory=list
     )
+    validation_report_custody_challenges: list[ValidationReportCustodyChallenge] = Field(
+        default_factory=list
+    )
+    validation_report_custody_tasks: list[ValidationReportCustodyCheckTask] = Field(
+        default_factory=list
+    )
+    validation_report_custody_retirings: list[ValidationReportCustodyRetirement] = Field(
+        default_factory=list
+    )
     validation_report_custody_objects: list[ValidationReportCustodyObject] = Field(
         default_factory=list
     )
@@ -454,6 +475,9 @@ class HypervisorStateSnapshot(BaseModel):
     )
     validation_epochs: list[ValidationEpoch] = Field(default_factory=list)
     validation_validator_entries: list[ValidationValidatorEntry] = Field(
+        default_factory=list
+    )
+    validation_validator_key_bindings: list[ValidationValidatorKeyBinding] = Field(
         default_factory=list
     )
     validation_assignments: list[ValidationAssignment] = Field(default_factory=list)
@@ -499,11 +523,24 @@ class HypervisorStateSnapshot(BaseModel):
     endpoint_sessions: list[EndpointSessionSnapshot] = Field(default_factory=list)
     locked_deposits: list[LockedDepositSnapshot] = Field(default_factory=list)
     proxy_session_bindings: list[ProxySessionBindingSnapshot] = Field(default_factory=list)
+    session_failure_evidence: list[FailureEvidenceRecord] = Field(default_factory=list)
+    session_failure_reports: list[FailureReport] = Field(default_factory=list)
     ledger_operations: list[LedgerOperationRecord] = Field(default_factory=list)
+    pending_consensus_operations: list[LedgerOperationRecord] = Field(default_factory=list)
+    pending_consensus_envelopes: list[LedgerOperationEnvelope] = Field(
+        default_factory=list
+    )
     wallet_operation_sequences: dict[str, int] = Field(default_factory=dict)
     wallet_q_atom_balances: dict[str, int] = Field(default_factory=dict)
+    recyclable_q_atoms: int = 0
+    burned_q_atoms: int = 0
+    stake_records: list[dict] = Field(default_factory=list)
+    participant_suspensions: list[dict] = Field(default_factory=list)
     session_funding_accounts: list[SessionFundingAccount] = Field(default_factory=list)
     settlement_proposals: list[SessionSettlementProposal] = Field(default_factory=list)
     settlement_acceptances: list[SessionSettlementAcceptance] = Field(default_factory=list)
+    session_checkpoints: list[SessionUsageCheckpoint] = Field(default_factory=list)
+    settlement_disputes: list[SettlementDispute] = Field(default_factory=list)
+    settlement_corrections: list[SettlementCorrection] = Field(default_factory=list)
     settlement_transition_hashes: dict[str, str] = Field(default_factory=dict)
     events: list[JournalEvent] = Field(default_factory=list)

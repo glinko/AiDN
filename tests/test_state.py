@@ -1,5 +1,6 @@
 import pytest
 
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.domain.models import (
     AllocationRequest,
     BundleConfig,
@@ -463,3 +464,32 @@ def test_service_snapshot_and_restore_preserves_bundle_cooldown_state(
             "reason": "provider_cooldown",
         }
     ]
+
+
+def test_service_snapshot_and_restore_preserves_pending_consensus_envelopes() -> None:
+    service = _service(bundles=[], plugins=_registry())
+    envelope = LedgerOperationEnvelope(
+        operation_type="SESSION_SETTLEMENT_READY_COMMIT",
+        origin_type="multi_party",
+        initiator_id="session-pending-envelope",
+        fee_payer="wallet-consumer",
+        fee_class="session",
+        created_at="2030-01-01T00:00:00Z",
+        payload={"session_id": "session-pending-envelope"},
+        signatures=["consumer-signature"],
+    )
+
+    service.stage_pending_consensus_envelope(envelope)
+    snapshot = service.snapshot_state()
+
+    restored_service = _service(bundles=[], plugins=_registry())
+    restored_service.restore_state(snapshot)
+
+    assert snapshot.pending_consensus_envelopes == [envelope]
+    assert (
+        restored_service.get_pending_consensus_envelope(envelope.operation_id)
+        == envelope
+    )
+
+    restored_service.discard_pending_consensus_envelopes(envelope.operation_id)
+    assert restored_service.get_pending_consensus_envelope(envelope.operation_id) is None

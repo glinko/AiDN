@@ -242,13 +242,26 @@ def test_integration_handler_error_handling():
     engine = _engine()
     engine.register_handler("WALLET_TRANSFER", bad_handler, gas_cost=200)
 
+    snapshot_payload = {
+        "snapshot_id": "sha256:snapshot:integration",
+        "block_height": 10,
+        "epoch": 1,
+        "application_state_hash": "sha256:application-state",
+        "snapshot_hash": "sha256:snapshot-content",
+        "chunk_root": "sha256:chunk-root",
+        "protocol_version": "0.1",
+        "registry_references": [{"object_id": "sha256:manifest"}],
+    }
     result = engine.execute_block(
         block_height=1,
         block_hash=BLOCK_HASH,
-        txs=[_tx(), _tx(operation_type="SNAPSHOT_COMMIT")],
+        txs=[
+            _tx(),
+            _tx(operation_type="SNAPSHOT_COMMIT", payload=snapshot_payload),
+        ],
     )
 
-    # First tx rejected (non-fatal), second (SNAPSHOT_COMMIT, no handler) should succeed
+    # First tx rejected (non-fatal), second typed Snapshot commit should succeed.
     assert result.error is None  # no fatal error
     assert result.operations_rejected == 1
     assert result.operations_executed == 1

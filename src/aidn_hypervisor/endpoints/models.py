@@ -133,6 +133,11 @@ class EndpointProxyTarget(BaseModel):
     source_base_url: str
     source_model_class: str
     operator_id: str
+    source_owner_public_key: str | None = None
+    source_wallet_signature: str | None = None
+    publication_verification: Literal["VERIFIED", "LEGACY_UNVERIFIED"] = (
+        "LEGACY_UNVERIFIED"
+    )
     alias: str | None = None
     attached_at: str
 

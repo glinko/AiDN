@@ -154,7 +154,17 @@ def init(args: argparse.Namespace) -> None:
     }
     _write_json(config_path, config)
     _write_json(bundle_path, bundle)
-    print(json.dumps({"status": "ok", "config": str(config_path), "public_bundle": str(bundle_path), "peer_id": args.peer_id}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "config": str(config_path),
+                "public_bundle": str(bundle_path),
+                "peer_id": args.peer_id,
+            },
+            sort_keys=True,
+        )
+    )
 
 
 def add_peer(args: argparse.Namespace) -> None:
@@ -182,7 +192,17 @@ def add_peer(args: argparse.Namespace) -> None:
     snapshot = args.registry_snapshot or root / "registry-objects.json"
     registry = RegistryService(snapshot_path=snapshot)
     registry.upsert_replication_peer(peer_id=str(bundle["peer_id"]), public_key=str(bundle["public_key"]))
-    print(json.dumps({"status": "ok", "config": str(config_path), "peer_id": bundle["peer_id"], "registry_snapshot": str(snapshot)}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "config": str(config_path),
+                "peer_id": bundle["peer_id"],
+                "registry_snapshot": str(snapshot),
+            },
+            sort_keys=True,
+        )
+    )
 
 
 def main() -> None:

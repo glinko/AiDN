@@ -50,6 +50,40 @@ def test_attach_proxy_target_rotates_endpoint_configuration() -> None:
     assert len(service.list_configuration_snapshots(created.endpoint.endpoint_id)) == 2
 
 
+def test_attach_proxy_target_persists_verified_remote_publication_proof() -> None:
+    service = EndpointService(EndpointStore())
+    created = service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Verified Proxy Worker",
+            model_class="llm_text",
+            capabilities=["chat"],
+        )
+    )
+    remote = _remote_reference().model_copy(
+        update={
+            "source_owner_public_key": "ed25519:owner-public-key",
+            "source_wallet_signature": "ed25519:owner-signature",
+            "publication_verification": "VERIFIED",
+        }
+    )
+
+    updated = service.attach_proxy_target(created.endpoint.endpoint_id, remote)
+
+    assert updated.endpoint.proxy_target is not None
+    assert updated.endpoint.proxy_target.publication_verification == "VERIFIED"
+    assert updated.endpoint.proxy_target.source_owner_public_key == (
+        "ed25519:owner-public-key"
+    )
+    assert updated.snapshot is not None
+    assert updated.snapshot.proxy_target is not None
+    assert updated.snapshot.proxy_target.source_wallet_signature == (
+        "ed25519:owner-signature"
+    )
+
+
 def test_detach_proxy_target_reverts_endpoint_to_local_strategy() -> None:
     service = EndpointService(EndpointStore())
     created = service.create_endpoint(

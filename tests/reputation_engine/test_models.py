@@ -47,6 +47,8 @@ class TestReputationDimension:
     def test_endpoint_dimensions_exist(self):
         assert "CERTIFICATION_HISTORY" in ReputationDimension.__args__
         assert "VALIDATION_REPORT_AVAILABILITY" in ReputationDimension.__args__
+        assert "VALIDATION_REPORT_INTEGRITY" in ReputationDimension.__args__
+        assert "VALIDATION_DISCLOSURE_RELIABILITY" in ReputationDimension.__args__
 
 
 class TestReputationEventDirection:

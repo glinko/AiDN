@@ -160,9 +160,13 @@ settlement_input_set:
   settlement_input_root:
 ```
 
-Effective terms are the initial Session Contract plus ordered valid
-Amendments. Invalid, conflicting, cross-Session or retroactive Amendments are
-excluded. Identical valid inputs SHALL produce identical roots and amounts.
+Effective terms are the initial Session Contract plus the ordered valid
+Amendment chain. The `effective_terms_hash` in this Input Set SHALL equal the
+current Session amendment-chain head; it is distinct from the immutable
+`session_contract_hash`. Invalid, conflicting, cross-Session or retroactive
+Amendments are excluded. Runtime Requests and terminal evidence that carry an
+Effective Terms hash SHALL match this same head. Identical valid inputs SHALL
+produce identical roots and amounts.
 
 ## 7. Request-First Evaluation
 
@@ -236,6 +240,15 @@ A Checkpoint is not absolute finality. Forgery, wrong Session binding,
 arithmetic error, Usage conflict or ceiling violation can invalidate it.
 Subjective dissatisfaction cannot.
 
+The MVP consensus profile represents a Checkpoint as an integer
+`SessionUsageCheckpoint` with an explicit Usage Report hash, provider and
+Consumer signatures, monotonic sequence, current exposure and remaining
+deposit. `SESSION_CHECKPOINT_COMMIT` does not move funds; it only records a
+bounded accepted exposure while the Funding Account remains locked. The
+checkpoint binds to a finalized prior Funding operation and its exact state
+hash. Float-based legacy accounting checkpoints remain compatibility data and
+are not canonical consensus evidence.
+
 ## 12. Bounded Disputes and Partial Finalization
 
 A dispute identifies exact Requests, Usage Reports, Checkpoints, evidence root
@@ -245,6 +258,15 @@ the full Session reserve.
 `PARTIAL_UNDISPUTED` may atomically pay the undisputed Endpoint amount, refund
 the undisputed Consumer amount and consume undisputed fees while retaining only
 the bounded dispute reserve. Later resolution accounts for every prior release.
+
+The MVP consensus profile permits one typed dispute per Settlement. The dispute
+must match the proposal's non-zero `disputed_amount_q_atoms` and
+`dispute_reserve_q_atoms`, bind to the finalized proposal operation and include
+its own dispute hash and Evidence Root. `SESSION_SETTLEMENT_PARTIAL_FINALIZE`
+then credits only the proposal's undisputed Endpoint/Consumer amounts, consumes
+the declared Network Fees and leaves the Funding Account in
+`DISPUTE_RESERVED`. Ordinary `SESSION_SETTLEMENT_FINALIZE` cannot consume a
+non-zero dispute reserve.
 
 ## 13. Forced Settlement
 
@@ -258,6 +280,13 @@ Missing Usage invokes the accepted fallback. Without a valid fallback, an
 unsupported variable component is excluded or disputed; it is never guessed.
 Consumer silence does not erase valid authorized exposure, and Endpoint silence
 does not retain unsupported reserve.
+
+For a multi-Request Session, Forced Settlement consumes the same ordered
+Request Settlement Records used by ordinary evaluation. Its canonical
+`SESSION_FORCE_SETTLE` authorization commits the Request Settlement Root,
+Usage Chain Root, Checkpoint Root and per-Request evidence before applying the
+bounded payment, refund and dispute reserve. A failed or conflicting Request
+does not erase independently supported completed work.
 
 ## 14. Validation Settlement
 
@@ -291,18 +320,44 @@ RFC-0059 defines operations equivalent to:
 - `SESSION_ESCROW_LOCK`
 - `SESSION_ESCROW_EXTEND`
 - `SESSION_ESCROW_RELEASE`
+- `SESSION_CHECKPOINT_COMMIT`
 - `SESSION_SETTLEMENT_READY_COMMIT`
 - `SESSION_SETTLEMENT_PROPOSE`
 - `SESSION_SETTLEMENT_ACCEPT`
 - `SESSION_SETTLEMENT_DISPUTE`
 - `SESSION_SETTLEMENT_PARTIAL_FINALIZE`
-- `SESSION_FORCED_SETTLEMENT_REQUEST`
-- `SESSION_FORCED_SETTLEMENT_RESOLVE`
+- `SESSION_FORCE_SETTLE`
 - `SESSION_SETTLEMENT_FINALIZE`
 - `SESSION_SETTLEMENT_CORRECT`
 
-Finalization is replay-protected, sequence-bound and atomic. Canonical Ledger
-state overrides stale local Settlement state.
+The typed MVP consensus profile covers readiness commitment, proposal, acceptance, one bounded
+dispute, partial finalization, ordinary finalization and conservative Forced
+Settlement in both ABCI and the deterministic local Execution Engine. Proposal,
+acceptance and dispute dependencies must be finalized before the block
+containing their dependent operation. Partial finalization is replay-protected,
+credits only undisputed amounts, and preserves the active dispute reserve in
+snapshots. Ordinary finalization is rejected while a non-zero reserve exists.
+The readiness commitment is evidence-only and cannot move funds. When a
+proposal uses it, all Settlement Input roots and Funding bindings must match
+the finalized commitment exactly. Canonical Ledger state overrides stale local
+Settlement state.
+
+The ordinary local cooperative Settlement application path creates this
+commitment immediately before recording `SESSION_SETTLEMENT_PROPOSE`. The
+operation is idempotent across proposal retries and records the exact local
+Funding predecessor used for the current Funding state hash. When consensus is
+enabled, the application layer submits `SESSION_SETTLEMENT_READY_COMMIT`,
+`SESSION_SETTLEMENT_PROPOSE`, `SESSION_SETTLEMENT_ACCEPT` and
+`SESSION_SETTLEMENT_FINALIZE` in dependency order and waits for verified
+finality before applying any missing local projection. Retries reuse canonical
+readiness, proposal and signed acceptance payloads by semantic identity; a
+changed transport timestamp does not create a second economic operation for
+the same Settlement. Validator-mode cooperative Settlement remains fail-closed
+before that boundary; it must not mutate validator-local economic state.
+The Hypervisor persists exact pending envelopes before submission and removes
+them only after the matching local canonical projection is present. On restart,
+the same envelope can be resubmitted and reconciled against finality evidence;
+a duplicate network submission does not override already verified finality.
 
 ## 17. Finality, Corrections and Privacy
 
@@ -315,6 +370,14 @@ The Ledger SHOULD store a compact commitment containing Settlement ID, Session
 ID, Contract Hash, Input Root, Endpoint Payment, refund, fees, dispute state,
 mode and result hash. Private payloads, Results, Provider receipts and logs
 remain access-controlled evidence.
+
+The MVP typed `SESSION_SETTLEMENT_CORRECT` profile is limited to resolving the
+active reserve left by `PARTIAL_UNDISPUTED`. It references the finalized partial
+transition and immutable correction object, consumes the reserve exactly once,
+and may allocate it only to the Endpoint Payment or Consumer Payment Refund.
+It SHALL not change Network Fees, claw back an already released amount, or
+rewrite the prior Settlement/Usage evidence. The resulting Funding Account is
+`RELEASED` or `REFUNDED` with zero active dispute reserve.
 
 ## 18. Stable Errors
 

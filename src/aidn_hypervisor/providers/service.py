@@ -496,11 +496,28 @@ class ProviderInventoryService:
             installed_plugin_id=installed_plugin_id
         )
         entrypoint_depth = len(release.host_entrypoint.entrypoint_path.split("/"))
+        plugin_data_root = None
+        if release.host_sandbox_policy.filesystem_scope == "PLUGIN_DATA_ONLY":
+            if not isinstance(self.package_store, FilesystemPluginPackageStore):
+                raise ValueError("PLUGIN_DATA_ONLY requires durable filesystem package storage")
+            plugin_data_root = (
+                self.package_store.root
+                / "plugin-data"
+                / hashlib.sha256(installed_plugin_id.encode("utf-8")).hexdigest()
+            )
+            if plugin_data_root.is_symlink():
+                raise ValueError("Plugin Host data directory cannot be a symbolic link")
+            plugin_data_root.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chmod(plugin_data_root, 0o777)
+            except OSError as error:
+                raise ValueError("Plugin Host data directory permissions cannot be prepared") from error
         launch_spec = self.plugin_host_container_launcher.build_launch_spec(
             package_root=entrypoint.parents[entrypoint_depth - 1],
             entrypoint=release.host_entrypoint,
             sandbox_policy=release.host_sandbox_policy,
             activation_secret_file=activation_secret_file,
+            plugin_data_root=plugin_data_root,
         )
         launch_spec["metadata"].update(
             {
@@ -1932,6 +1949,7 @@ class ProviderInventoryService:
         execution_mode = normalized_sandbox_policy.get("execution_mode", "RECORDED_ONLY")
         filesystem_scope = normalized_sandbox_policy.get("filesystem_scope", "NONE")
         network_scope = normalized_sandbox_policy.get("network_scope", "NONE")
+        egress_rules = normalized_sandbox_policy.get("egress_rules", [])
         secret_scope = normalized_sandbox_policy.get("secret_scope", "DECLARED_HANDLES_ONLY")
         if execution_mode not in executor_sandbox_capabilities.supported_execution_modes:
             raise ValueError(
@@ -1947,6 +1965,14 @@ class ProviderInventoryService:
             raise ValueError(
                 "plugin sandbox policy requires an unsupported network scope: "
                 f"{network_scope}"
+            )
+        if network_scope == "DECLARED_EGRESS" and not egress_rules:
+            raise ValueError(
+                "plugin sandbox policy requires at least one exact egress rule"
+            )
+        if network_scope != "DECLARED_EGRESS" and egress_rules:
+            raise ValueError(
+                "plugin sandbox policy cannot contain egress rules outside DECLARED_EGRESS"
             )
         if secret_scope not in executor_sandbox_capabilities.supported_secret_scopes:
             raise ValueError(

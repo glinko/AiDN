@@ -10,6 +10,7 @@ from aidn_hypervisor.consensus.service import (
     ConsensusMode,
     ConsensusService,
     ConsensusServiceConfig,
+    SubmissionStatus,
 )
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.scheduler import Scheduler
@@ -120,6 +121,35 @@ def test_quorum_finality_source_fails_closed_without_matching_quorum():
     assert source.finality_evidence("operation-1") is None
 
 
+def test_quorum_finality_source_accepts_only_the_unique_matching_supermajority():
+    first = _evidence()
+    second = ConsensusFinalityEvidence(
+        **{**first.model_dump(), "block_id": "different-block"}
+    )
+
+    class Source:
+        def __init__(self, value):
+            self.value = value
+
+        def finality_evidence(self, operation_id: str):
+            return self.value
+
+    source = QuorumConsensusFinalitySource(
+        sources=[Source(first), Source(first), Source(second)],
+        quorum=2,
+        source_ids=["validator-view-a", "validator-view-b", "validator-view-c"],
+    )
+
+    assert source.finality_evidence("operation-1") == first
+
+    strict_source = QuorumConsensusFinalitySource(
+        sources=[Source(first), Source(first), Source(second)],
+        quorum=3,
+        source_ids=["validator-view-a", "validator-view-b", "validator-view-c"],
+    )
+    assert strict_source.finality_evidence("operation-1") is None
+
+
 def test_quorum_finality_source_fails_closed_on_an_ambiguous_tie():
     first = _evidence()
     second = ConsensusFinalityEvidence(
@@ -187,3 +217,36 @@ def test_hypervisor_uses_verified_finality_source_when_present():
     assert finality["status"] == "consensus_finalized"
     assert finality["consensus_finalized"] is True
     assert finality["finality_evidence"]["commit_hash"] == "commit-hash-42"
+
+
+def test_hypervisor_reconciles_verified_finality_into_submission_state():
+    consensus = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.NON_VALIDATOR,
+            chain_id="aidn-testnet-1",
+        )
+    )
+    envelope = LedgerOperationEnvelope(
+        operation_type="REGISTRY_UPSERT",
+        origin_type="protocol",
+        created_at="2030-01-01T00:00:00Z",
+    )
+    consensus.submit_operation(envelope)
+    evidence = _evidence(operation_id=envelope.operation_id)
+
+    class FinalitySource:
+        def finality_evidence(self, operation_id: str):
+            return evidence
+
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        consensus_service=consensus,
+        consensus_finality_source=FinalitySource(),
+    )
+
+    finality = service.ledger_operation_finality(envelope.operation_id)
+
+    assert finality["consensus_finalized"] is True
+    assert consensus.get_submission(envelope.operation_id).status == SubmissionStatus.FINALIZED
+    assert consensus.get_submission(envelope.operation_id).block_height == 42

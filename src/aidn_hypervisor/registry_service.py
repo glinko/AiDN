@@ -11,6 +11,17 @@ from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
 from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
+from aidn_hypervisor.registry import (
+    ManifestObjectEntry,
+    RegistryDutyEvidence,
+    RegistryDutyVerifier,
+    RegistryInventoryManifest,
+    RegistryRetentionPolicy,
+)
+from aidn_hypervisor.registry.object_envelope import (
+    LedgerCommitmentClass,
+    RegistryObjectEnvelope,
+)
 from aidn_hypervisor.registry.peer import PeerAuthenticator
 from aidn_hypervisor.registry_models import (
     RegistryCompletenessIntegrity,
@@ -90,13 +101,20 @@ class RegistryService:
         *,
         stale_grace_seconds: int = 30,
         snapshot_path: str | Path | None = None,
+        registry_service_id: str = "local-registry",
+        registry_generation: int = 1,
+        retention_policy: RegistryRetentionPolicy | None = None,
         ledger_operation_service: "LedgerOperationService | None" = None,
         consensus_finality_source: "ConsensusFinalitySource | None" = None,
         wallet_identity_peer_transport: WalletIdentityPeerTransport | None = None,
     ) -> None:
         self.stale_grace_seconds = stale_grace_seconds
+        self.registry_service_id = registry_service_id
+        self.registry_generation = int(registry_generation)
+        self.retention_policy = retention_policy or RegistryRetentionPolicy()
         self._nodes: dict[str, dict] = {}
         self._registry_objects: dict[str, dict] = {}
+        self._expired_registry_objects: set[str] = set()
         self._conflicts: dict[str, dict] = {}
         self._wallet_identity_peers: dict[str, dict] = {}
         self._replication_peers: dict[str, dict] = {}
@@ -140,6 +158,73 @@ class RegistryService:
         ):
             raise ValueError("Registry already has a different consensus finality source")
         self._consensus_finality_source = consensus_finality_source
+
+    def reputation_profile_finality(
+        self,
+        object_id: str,
+        *,
+        effective_epoch: int | None = None,
+    ) -> dict:
+        """Return a read-only, finality-aware Reputation profile projection.
+
+        Local Registry data and local Reputation scores are not sufficient to
+        claim canonical Reputation.  This read model therefore returns the
+        committed operation identity while finality is pending, but withholds
+        the profile-root payload until the operation-bound finality adapter
+        verifies it.
+        """
+        normalized_object_id = str(object_id).strip()
+        if not normalized_object_id:
+            raise ValueError("Reputation profile object_id is required")
+
+        base = {
+            "object_id": normalized_object_id,
+            "consensus_finalized": False,
+            "profile_update": None,
+        }
+        if self._ledger_operation_service is None:
+            return {**base, "status": "unavailable"}
+
+        commitment = self._ledger_operation_service.reputation_profile_update_commitment(
+            normalized_object_id,
+            effective_epoch=effective_epoch,
+        )
+        if commitment is None:
+            return {**base, "status": "not_found"}
+
+        operation_id = commitment.get("operation_id")
+        payload = commitment.get("payload")
+        pending = {
+            **base,
+            "status": "pending_finality",
+        }
+        if isinstance(operation_id, str) and operation_id.strip():
+            pending["operation_id"] = operation_id
+        if isinstance(payload, dict) and isinstance(payload.get("effective_epoch"), int):
+            pending["effective_epoch"] = payload["effective_epoch"]
+
+        from aidn_hypervisor.consensus.reputation_finality import (
+            ReputationProfileFinalityAdapter,
+        )
+
+        projection = ReputationProfileFinalityAdapter(
+            ledger_service=self._ledger_operation_service,
+            finality_source=self._consensus_finality_source,
+        ).resolve(
+            object_id=normalized_object_id,
+            effective_epoch=effective_epoch,
+        )
+        if projection is None:
+            return pending
+
+        return {
+            "status": "consensus_finalized",
+            "consensus_finalized": True,
+            "object_id": projection.object_id,
+            "effective_epoch": projection.effective_epoch,
+            "operation_id": projection.operation_id,
+            "profile_update": projection.model_dump(),
+        }
 
     def upsert_node(self, payload: RegistryNodeAdvertisement) -> dict:
         self._validate_wallet_identity_objects(
@@ -521,6 +606,123 @@ class RegistryService:
             "consensus_finality": True,
             "finality_evidence": evidence.model_dump(),
             "finality_note": "Verified network finality evidence is available.",
+        }
+
+    def commit_registry_duty_evidence(
+        self,
+        evidence: RegistryDutyEvidence,
+        *,
+        expected_inventory_manifest: RegistryInventoryManifest | None = None,
+        verifier: RegistryDutyVerifier | None = None,
+        created_at: str | None = None,
+    ) -> dict:
+        """Commit finality-bound Registry evidence without minting rewards.
+
+        The local Ledger receives only ``SERVICE_VERIFICATION_COMMIT``.  A
+        later epoch task must consume the returned eligibility/reward input and
+        produce any canonical reward calculation or ``REWARD_MINT`` operation.
+        """
+        if evidence.registry_service_id != self.registry_service_id:
+            raise ValueError("Registry Duty evidence belongs to another Registry")
+        if expected_inventory_manifest is None:
+            expected_inventory_manifest = self.get_local_registry_inventory_manifest(
+                generated_at_epoch=evidence.epoch,
+            )
+        effective_verifier = verifier or RegistryDutyVerifier(
+            finality_source=self._consensus_finality_source,
+            expected_registry_service_id=self.registry_service_id,
+            required_profile_version=evidence.profile_version,
+            required_protocol_version=evidence.required_protocol_version,
+        )
+        decision = effective_verifier.evaluate(
+            evidence,
+            expected_epoch=evidence.epoch,
+            expected_inventory_manifest=expected_inventory_manifest,
+        )
+        if not decision.valid:
+            reasons = ",".join(decision.reasons) or "invalid_evidence"
+            raise ValueError(f"Registry Duty evidence is not finality-valid: {reasons}")
+        if self._ledger_operation_service is None:
+            raise ValueError("Registry Duty evidence requires an attached Ledger")
+        eligibility_snapshot = effective_verifier.build_eligibility_snapshot(
+            evidence,
+            decision,
+        )
+
+        registry_reference = {
+            "inventory_manifest_id": evidence.inventory_manifest_id,
+            "inventory_root": evidence.inventory_root,
+            "finalized_operation_id": evidence.finalized_operation_id,
+            "profile_version": evidence.profile_version,
+            "profile_hash": evidence.profile_hash,
+        }
+        result_summary = {
+            "eligible": decision.eligible,
+            "reasons": list(decision.reasons),
+            "decision_hash": decision.decision_hash,
+            "eligibility_snapshot_id": eligibility_snapshot.snapshot_id,
+            "raw_weight_millionths": decision.raw_weight_millionths,
+            "proof_success_millionths": decision.proof_success_millionths,
+            "completeness_millionths": decision.completeness_millionths,
+            "availability_millionths": decision.availability_millionths,
+            "reward_beneficiary": evidence.reward_beneficiary,
+            "known_control_group_id": evidence.known_control_group_id,
+        }
+        record = self._ledger_operation_service.commit_service_verification(
+            verification_report_id=evidence.evidence_id,
+            service_id=evidence.registry_service_id,
+            service_type=evidence.service_type,
+            report_hash=evidence.evidence_hash,
+            evidence_root=evidence.evidence_hash,
+            verification_epoch=evidence.epoch,
+            result_summary=result_summary,
+            registry_reference=registry_reference,
+            evidence_references=[
+                evidence.evidence_id,
+                evidence.inventory_manifest_id,
+                evidence.inventory_root,
+                evidence.finalized_operation_id,
+            ],
+            signatures=[evidence.signature] if evidence.signature else [],
+            created_at=created_at,
+        )
+
+        payload = {
+            "evidence": evidence.model_dump(mode="json"),
+            "eligibility": decision.model_dump(mode="json"),
+            "eligibility_snapshot": eligibility_snapshot.model_dump(mode="json"),
+            "ledger_operation_id": record["operation_id"],
+        }
+        registry_object = RegistryObjectEnvelope.create(
+            object_id=evidence.evidence_id,
+            object_type="registry_duty_evidence",
+            namespace="verification",
+            payload=payload,
+            created_epoch=evidence.epoch,
+            created_block_height=int(evidence.finality_evidence["block_height"]),
+            ledger_commitment=LedgerCommitmentClass.LEDGER_OPERATION,
+            parent_references=[evidence.finalized_operation_id],
+            producer_signature=evidence.signature or None,
+        )
+        stored_object = self.upsert_registry_object(
+            registry_object.model_dump(mode="json")
+        )
+        reward_input = None
+        if decision.eligible:
+            reward_input = effective_verifier.build_reward_input(evidence, decision)
+        return {
+            "evidence": evidence.model_dump(mode="json"),
+            "eligibility": decision.model_dump(mode="json"),
+            "eligibility_snapshot": eligibility_snapshot.model_dump(mode="json"),
+            "reward_input": (
+                reward_input.model_dump(mode="json") if reward_input is not None else None
+            ),
+            "ledger_commitment": {
+                "operation_id": record["operation_id"],
+                "operation_type": record["operation_type"],
+                "verification_epoch": evidence.epoch,
+            },
+            "registry_object": stored_object,
         }
 
     def revoke_wallet_identity_governance_certificate(
@@ -1281,7 +1483,9 @@ class RegistryService:
         existing = self._registry_objects.get(object_id)
         if existing is not None and existing != normalized:
             raise ValueError(f"Conflicting registry object for {object_id}")
+        was_expired = object_id in self._expired_registry_objects
         self._registry_objects[object_id] = normalized
+        self._expired_registry_objects.discard(object_id)
         try:
             self._apply_registry_object_state(record=normalized)
         except Exception:
@@ -1289,6 +1493,8 @@ class RegistryService:
                 self._registry_objects.pop(object_id, None)
             else:
                 self._registry_objects[object_id] = existing
+            if was_expired:
+                self._expired_registry_objects.add(object_id)
             self._rebuild_wallet_identity_resolution_state()
             raise
         if persist:
@@ -1299,6 +1505,8 @@ class RegistryService:
                     self._registry_objects.pop(object_id, None)
                 else:
                     self._registry_objects[object_id] = existing
+                if was_expired:
+                    self._expired_registry_objects.add(object_id)
                 self._rebuild_wallet_identity_resolution_state()
                 raise
         return deepcopy(self._registry_objects[object_id])
@@ -1331,6 +1539,11 @@ class RegistryService:
         node_backed_records: dict[str, dict] = {}
         for object_id in sorted(self._registry_objects):
             item = self._registry_objects[object_id]
+            if (
+                object_id in self._expired_registry_objects
+                and not query_model.include_expired
+            ):
+                continue
             source = self._registry_object_source(item)
             if (
                 query_model.node_id is not None
@@ -1431,8 +1644,20 @@ class RegistryService:
         )
         return objects[: query_model.limit]
 
-    def get_registry_object(self, object_id: str, *, include_payload: bool = False) -> dict:
+    def get_registry_object(
+        self,
+        object_id: str,
+        *,
+        include_payload: bool = False,
+        include_expired: bool = False,
+    ) -> dict:
         stored = self._registry_objects.get(object_id)
+        if (
+            stored is not None
+            and object_id in self._expired_registry_objects
+            and not include_expired
+        ):
+            raise KeyError(object_id)
         item: dict | None = None
         if stored is not None:
             item = self._registry_object_row(
@@ -1445,6 +1670,7 @@ class RegistryService:
                 query={
                     "limit": RegistryObjectQuery.model_fields["limit"].default,
                     "include_payload": include_payload,
+                    "include_expired": include_expired,
                 }
             ):
                 if candidate["object_id"] == object_id:
@@ -1718,6 +1944,99 @@ class RegistryService:
             ),
         )
 
+    def apply_registry_retention(
+        self,
+        *,
+        current_epoch: int,
+        apply: bool = True,
+        limit: int | None = None,
+    ) -> dict:
+        """Preview or enforce versioned Registry retention without deleting objects."""
+        with self._snapshot_lock:
+            decisions: list[tuple[str, int | None]] = []
+            for object_id in sorted(self._registry_objects):
+                record = self._registry_objects[object_id]
+                if not isinstance(record, dict):
+                    raise ValueError(
+                        f"Registry object store contains non-object record for {object_id}"
+                    )
+                retention_class = record.get("retention_class")
+                expiration_epoch = self.retention_policy.expiration_epoch_for(
+                    created_epoch=record.get("created_epoch"),
+                    namespace=record.get("namespace"),
+                    object_type=record.get("object_type"),
+                    retention_class=retention_class,
+                    explicit_expiration_epoch=record.get("expiration_epoch"),
+                )
+                if self.retention_policy.is_expired(
+                    current_epoch=current_epoch,
+                    expiration_epoch=expiration_epoch,
+                ):
+                    decisions.append((object_id, expiration_epoch))
+
+            if limit is not None:
+                decisions = decisions[: max(0, int(limit))]
+            expired_ids = [object_id for object_id, _ in decisions]
+            newly_expired = [
+                object_id
+                for object_id in expired_ids
+                if object_id not in self._expired_registry_objects
+            ]
+            if apply and newly_expired:
+                self._expired_registry_objects.update(newly_expired)
+                self._persist_registry_object_snapshot()
+            return {
+                "current_epoch": int(current_epoch),
+                "policy_version": self.retention_policy.policy_version,
+                "policy_hash": self.retention_policy.policy_hash,
+                "applied": bool(apply),
+                "expired_count": len(expired_ids),
+                "newly_expired_count": len(newly_expired),
+                "expired_ids": expired_ids,
+                "expiration_epochs": {
+                    object_id: expiration_epoch
+                    for object_id, expiration_epoch in decisions
+                },
+            }
+
+    def get_local_registry_inventory_manifest(
+        self,
+        *,
+        generated_at_epoch: int | None = None,
+        generated_at_height: int | None = None,
+        include_expired: bool = False,
+    ) -> RegistryInventoryManifest:
+        """Build a payload-free deterministic commitment for local Registry state."""
+        entries: list[ManifestObjectEntry] = []
+        for object_id in sorted(self._registry_objects):
+            if object_id in self._expired_registry_objects and not include_expired:
+                continue
+            record = self._registry_objects[object_id]
+            if not isinstance(record, dict):
+                raise ValueError(
+                    f"Registry object store contains non-object record for {object_id}"
+                )
+            entries.append(ManifestObjectEntry.from_object(record))
+
+        observed_epochs = [
+            entry.created_epoch
+            for entry in entries
+            if entry.created_epoch is not None
+        ]
+        resolved_epoch = (
+            int(generated_at_epoch)
+            if generated_at_epoch is not None
+            else max(observed_epochs, default=0)
+        )
+        return RegistryInventoryManifest.create(
+            registry_service_id=self.registry_service_id,
+            generated_at_epoch=resolved_epoch,
+            generated_at_height=generated_at_height,
+            generation=self.registry_generation,
+            retention_policy_hash=self.retention_policy.policy_hash,
+            objects=entries,
+        )
+
     def _registry_object_summary_issues(
         self,
         *,
@@ -1790,6 +2109,16 @@ class RegistryService:
             "source_count": 1,
             "sources": [deepcopy(source)],
         }
+        for field in (
+            "retention_class",
+            "access_class",
+            "expiration_epoch",
+            "created_at",
+        ):
+            if field in item:
+                row[field] = deepcopy(item[field])
+        if str(item.get("object_id")) in self._expired_registry_objects:
+            row["retention_state"] = "EXPIRED"
         if include_payload and item.get("payload") is not None:
             row["payload"] = deepcopy(item["payload"])
         return row
@@ -1814,6 +2143,14 @@ class RegistryService:
             "payload_encoding": row["payload_encoding"],
             "source_reference": row["source_reference"],
         }
+        for field in (
+            "retention_class",
+            "access_class",
+            "expiration_epoch",
+            "created_at",
+        ):
+            if field in row:
+                record[field] = deepcopy(row[field])
         if "payload" in row:
             record["payload"] = deepcopy(row["payload"])
         return record
@@ -1826,6 +2163,10 @@ class RegistryService:
             "payload_hash",
             "payload_encoding",
             "source_reference",
+            "retention_class",
+            "access_class",
+            "expiration_epoch",
+            "created_at",
         ):
             if left.get(field) != right.get(field):
                 return True
@@ -2706,6 +3047,26 @@ class RegistryService:
             raise ValueError(
                 "Registry object snapshot wallet_identity_governance_policy must be an object"
             )
+        expired_registry_objects = snapshot.get("expired_registry_objects", [])
+        if not isinstance(expired_registry_objects, list) or not all(
+            isinstance(object_id, str) and object_id for object_id in expired_registry_objects
+        ):
+            raise ValueError(
+                "Registry object snapshot expired_registry_objects must be a list of ids"
+            )
+        retention_policy = snapshot.get("retention_policy")
+        if retention_policy is not None:
+            if not isinstance(retention_policy, dict):
+                raise ValueError(
+                    "Registry object snapshot retention_policy must be an object"
+                )
+            self.retention_policy = RegistryRetentionPolicy.model_validate(
+                retention_policy
+            )
+        if snapshot.get("registry_service_id") is not None:
+            self.registry_service_id = str(snapshot["registry_service_id"])
+        if snapshot.get("registry_generation") is not None:
+            self.registry_generation = int(snapshot["registry_generation"])
 
         identity_dependency_order = {
             "wallet_identity_governance_certificate": 0,
@@ -2732,6 +3093,11 @@ class RegistryService:
                 raise ValueError(
                     f"Registry object snapshot contains invalid object entry at index {index}"
                 ) from exc
+        self._expired_registry_objects = {
+            object_id
+            for object_id in expired_registry_objects
+            if object_id in self._registry_objects
+        }
         for index, conflict in enumerate(conflicts):
             if not isinstance(conflict, dict):
                 raise ValueError(
@@ -2815,6 +3181,10 @@ class RegistryService:
         self._snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         snapshot = {
             "schema_version": _REGISTRY_OBJECT_SNAPSHOT_SCHEMA_VERSION,
+            "registry_service_id": self.registry_service_id,
+            "registry_generation": self.registry_generation,
+            "retention_policy": self.retention_policy.model_dump(mode="json"),
+            "expired_registry_objects": sorted(self._expired_registry_objects),
             "objects": [
                 deepcopy(self._registry_objects[object_id])
                 for object_id in sorted(self._registry_objects)

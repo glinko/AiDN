@@ -55,6 +55,7 @@ from aidn_hypervisor.session_application_service import SessionApplicationServic
 from aidn_hypervisor.session_read_models import (
     build_operator_sessions_payload,
 )
+from aidn_hypervisor.sessions.models import SessionAmendmentKind, SessionContractExchange
 from aidn_hypervisor.state import HypervisorStateSnapshot
 from aidn_hypervisor.validation_read_models import (
     build_endpoint_proof_payload,
@@ -114,6 +115,12 @@ class AttachProviderInstanceRequest(BaseModel):
     plugin_id: str
     display_name: str
     configuration: dict
+
+
+class ValidationCustodySweepRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    now: str | None = None
 
 
 class WalletIdentityRegistrationRequest(BaseModel):
@@ -511,6 +518,17 @@ class SessionUsageAcknowledgementRecordRequest(BaseModel):
     accepted_charge_q: float = Field(ge=0.0)
 
 
+class SessionAmendmentRecordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amendment_id: str = Field(min_length=1)
+    amendment_kind: SessionAmendmentKind
+    changes: dict = Field(min_length=1)
+    consumer_signature: str = Field(min_length=1)
+    endpoint_signature: str = Field(min_length=1)
+    accepted_at: str | None = None
+
+
 class ValidationEpochCreateRequest(BaseModel):
     epoch_id: str
     seed: str
@@ -902,6 +920,7 @@ def build_api_router(
         node_id: str | None = None,
         include_stale: bool = False,
         include_payload: bool = False,
+        include_expired: bool = False,
         limit: int = 50,
     ) -> dict:
         query = RegistryObjectQuery(
@@ -911,6 +930,7 @@ def build_api_router(
             node_id=node_id,
             include_stale=include_stale,
             include_payload=include_payload,
+            include_expired=include_expired,
             limit=limit,
         )
         registry = _effective_registry_service()
@@ -920,17 +940,51 @@ def build_api_router(
         }
 
     @router.get("/operators/registry/objects/{object_id}")
-    async def registry_object(object_id: str, include_payload: bool = False) -> dict:
+    async def registry_object(
+        object_id: str,
+        include_payload: bool = False,
+        include_expired: bool = False,
+    ) -> dict:
         registry = _effective_registry_service()
         try:
             return registry.get_registry_object(
                 object_id,
                 include_payload=include_payload,
+                include_expired=include_expired,
             )
         except KeyError as error:
             raise HTTPException(
                 status_code=404, detail=f"Unknown registry object: {object_id}"
             ) from error
+
+    @router.get("/operators/registry/inventory-manifest")
+    async def registry_inventory_manifest(
+        generated_at_epoch: int | None = None,
+        generated_at_height: int | None = None,
+        include_expired: bool = False,
+    ) -> dict:
+        registry = _effective_registry_service()
+        return registry.get_local_registry_inventory_manifest(
+            generated_at_epoch=generated_at_epoch,
+            generated_at_height=generated_at_height,
+            include_expired=include_expired,
+        ).model_dump(mode="json")
+
+    @router.post("/operators/registry/retention/apply")
+    async def apply_registry_retention(
+        current_epoch: int,
+        apply: bool = True,
+        limit: int | None = None,
+    ) -> dict:
+        registry = _effective_registry_service()
+        try:
+            return registry.apply_registry_retention(
+                current_epoch=current_epoch,
+                apply=apply,
+                limit=limit,
+            )
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/operators/registry/conflicts")
     async def registry_conflicts(
@@ -1694,6 +1748,23 @@ def build_api_router(
             return _error(409, "validation_custody_unavailable", str(error))
         return _ok({"custody_state": state.model_dump(mode="json")})
 
+    @router.post("/operators/validation/custody/sweep")
+    async def operator_sweep_validation_custody(
+        request: ValidationCustodySweepRequest,
+    ) -> JSONResponse:
+        if validation_service is None:
+            return _error(503, "validation_unavailable", "Validation service is not configured")
+        try:
+            released = validation_service.sweep_custody_retirements(now=request.now)
+        except (KeyError, ValueError) as error:
+            return _error(409, "validation_custody_sweep_failed", str(error))
+        return _ok(
+            {
+                "released_count": len(released),
+                "retirements": [item.model_dump(mode="json") for item in released],
+            }
+        )
+
     @router.get("/api/v1/sessions")
     async def list_sessions() -> JSONResponse:
         if session_application_service is None:
@@ -1819,6 +1890,95 @@ def build_api_router(
                 f"Unknown session: {session_id}",
             )
         return _ok({"session_accounting": session_accounting})
+
+    @router.get("/api/v1/sessions/{session_id}/amendments")
+    async def list_session_amendments(session_id: str) -> JSONResponse:
+        if session_application_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            return _ok(
+                session_application_service.list_session_amendments(
+                    session_id=session_id
+                )
+            )
+        except KeyError:
+            return _error(404, "session_not_found", f"Unknown session: {session_id}")
+        except ValueError as error:
+            return _error(409, "session_amendment_chain_invalid", str(error))
+
+    @router.post("/api/v1/sessions/{session_id}/amendments")
+    async def accept_session_amendment(
+        session_id: str,
+        request: SessionAmendmentRecordRequest,
+    ) -> JSONResponse:
+        if session_application_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            result = session_application_service.accept_session_amendment(
+                session_id=session_id,
+                amendment_id=request.amendment_id,
+                amendment_kind=request.amendment_kind,
+                changes=request.changes,
+                consumer_signature=request.consumer_signature,
+                endpoint_signature=request.endpoint_signature,
+                accepted_at=request.accepted_at,
+            )
+        except KeyError:
+            return _error(404, "session_not_found", f"Unknown session: {session_id}")
+        except ValueError as error:
+            return _error(409, "session_amendment_rejected", str(error))
+        return _ok(result)
+
+    @router.get("/api/v1/sessions/{session_id}/contract-exchange")
+    async def export_session_contract_exchange(session_id: str) -> JSONResponse:
+        if session_application_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        try:
+            exchange = session_application_service.export_session_contract(
+                session_id=session_id
+            )
+        except KeyError:
+            return _error(404, "session_not_found", f"Unknown session: {session_id}")
+        except ValueError as error:
+            return _error(409, "session_contract_exchange_invalid", str(error))
+        return _ok(exchange)
+
+    @router.post("/api/v1/sessions/{session_id}/contract-exchange")
+    async def import_session_contract_exchange(
+        session_id: str,
+        request: SessionContractExchange,
+    ) -> JSONResponse:
+        if session_application_service is None:
+            return _error(
+                503,
+                "session_service_unavailable",
+                "Session service is not configured",
+            )
+        if request.session_id != session_id:
+            return _error(
+                409,
+                "session_contract_exchange_session_mismatch",
+                "Session Contract exchange session_id does not match URL",
+            )
+        try:
+            result = session_application_service.import_session_contract_exchange(
+                exchange=request.model_dump(mode="json")
+            )
+        except ValueError as error:
+            return _error(409, "session_contract_exchange_rejected", str(error))
+        return _ok(result)
 
     @router.post("/api/v1/sessions/{session_id}/close")
     async def close_session(session_id: str) -> JSONResponse:
@@ -2357,6 +2517,9 @@ def build_api_router(
             source_status=discovered["status"],
             source_base_url=node["base_url"],
             operator_id=node["operator_id"],
+            source_owner_public_key=publication.owner_public_key,
+            source_wallet_signature=publication.wallet_signature,
+            publication_verification="VERIFIED",
             pricing=node["pricing"],
             rating=node["rating"],
             session_policy=publication.session,

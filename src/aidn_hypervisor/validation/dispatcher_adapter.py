@@ -81,7 +81,7 @@ class ValidationDispatcherAdapter:
             channel_class="VALIDATION",
             source_subject=source_subject or {
                 "subject_type": "VALIDATOR",
-                "subject_id": envelope.get("validator_id", "validator-1"),
+                "subject_id": envelope.get("validator_id") or "validator-1",
             },
             destination_subject=destination_subject or {
                 "subject_type": "VALIDATION_TARGET",

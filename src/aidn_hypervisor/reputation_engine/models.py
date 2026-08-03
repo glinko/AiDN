@@ -40,6 +40,8 @@ ReputationDimension = Literal[
     "CERTIFICATION_HISTORY",
     "VALIDATION_REPORT_AVAILABILITY",
     "VALIDATION_REPORT_RETENTION",
+    "VALIDATION_REPORT_INTEGRITY",
+    "VALIDATION_DISCLOSURE_RELIABILITY",
 ]
 
 # ──────────────────────────────────────────────
@@ -165,6 +167,8 @@ class ProfileDimensionWeight:
                 "CERTIFICATION_HISTORY": 0.5,
                 "VALIDATION_REPORT_AVAILABILITY": 0.4,
                 "VALIDATION_REPORT_RETENTION": 0.3,
+                "VALIDATION_REPORT_INTEGRITY": 0.8,
+                "VALIDATION_DISCLOSURE_RELIABILITY": 0.5,
             },
             "VALIDATION_SERVICE": {
                 "AVAILABILITY": 1.0,

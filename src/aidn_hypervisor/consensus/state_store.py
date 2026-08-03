@@ -56,6 +56,13 @@ class ABCIStateStore:
 
     SCHEMA_VERSION = 1
     SNAPSHOT_FORMAT = 1
+    # Two snapshots are not enough when a 200+ chunk snapshot is transferred
+    # while the source keeps committing blocks. Keep a bounded recovery window
+    # by default; operators can tune it through ConsensusServiceConfig.
+    DEFAULT_RETAINED_SNAPSHOTS = 8
+    # Once a consumer has requested a chunk, keep that snapshot available for
+    # a bounded inactivity window so pruning cannot break an active transfer.
+    DEFAULT_SNAPSHOT_LEASE_SECONDS = 30 * 60
     _IDENTIFIER_RE = re.compile(r"^[0-9]{20}-[0-9a-f]{64}$")
 
     def __init__(
@@ -65,13 +72,15 @@ class ABCIStateStore:
         chunk_size: int = 64 * 1024,
         maximum_snapshot_bytes: int = 64 * 1024 * 1024,
         maximum_import_chunk_bytes: int = 1_000_000,
-        retained_snapshots: int = 2,
+        retained_snapshots: int = DEFAULT_RETAINED_SNAPSHOTS,
+        snapshot_lease_seconds: int = DEFAULT_SNAPSHOT_LEASE_SECONDS,
     ) -> None:
         if (
             chunk_size < 1
             or maximum_snapshot_bytes < chunk_size
             or not 1 <= maximum_import_chunk_bytes <= maximum_snapshot_bytes
             or retained_snapshots < 1
+            or snapshot_lease_seconds < 1
         ):
             raise ValueError("ABCI state store limits are invalid")
         self.root = Path(root).expanduser().resolve()
@@ -79,9 +88,11 @@ class ABCIStateStore:
         self.maximum_snapshot_bytes = maximum_snapshot_bytes
         self.maximum_import_chunk_bytes = maximum_import_chunk_bytes
         self.retained_snapshots = retained_snapshots
+        self.snapshot_lease_seconds = snapshot_lease_seconds
         self._snapshots_dir = self.root / "snapshots"
         self._current_path = self.root / "current.json"
         self._incoming: _IncomingSnapshot | None = None
+        self._snapshot_leases: dict[str, float] = {}
 
     def persist(self, state: dict[str, Any]) -> ABCIStateSnapshot:
         """Atomically persist canonical state before reporting block success."""
@@ -169,6 +180,7 @@ class ABCIStateStore:
             raise ABCIStateStoreError("ABCI snapshot chunk index is invalid")
         for metadata in self.list_snapshots():
             if metadata.height == height and metadata.format == format:
+                self._renew_snapshot_lease(metadata.identifier)
                 if chunk >= metadata.chunks:
                     raise ABCIStateStoreError("ABCI snapshot chunk is unavailable")
                 path = self._snapshots_dir / metadata.identifier / f"{chunk:08d}.chunk"
@@ -180,6 +192,13 @@ class ABCIStateStore:
                     raise ABCIStateStoreError("ABCI snapshot chunk is invalid")
                 return payload
         raise ABCIStateStoreError("ABCI snapshot is unavailable")
+
+    def release_snapshot_lease(self, *, height: int, format: int) -> None:
+        """Stop protecting a snapshot after a consumer abandons its transfer."""
+        for metadata in self.list_snapshots():
+            if metadata.height == height and metadata.format == format:
+                self._snapshot_leases.pop(metadata.identifier, None)
+                return
 
     def offer_import(self, metadata: ABCIStateSnapshot) -> bool:
         """Start a bounded incoming State Sync snapshot, replacing no local state."""
@@ -274,8 +293,19 @@ class ABCIStateStore:
 
     def _prune_retained_snapshots(self) -> None:
         snapshots = self.list_snapshots()
+        now = time.monotonic()
+        self._snapshot_leases = {
+            identifier: expires_at
+            for identifier, expires_at in self._snapshot_leases.items()
+            if expires_at > now
+        }
         for metadata in snapshots[self.retained_snapshots :]:
+            if metadata.identifier in self._snapshot_leases:
+                continue
             shutil.rmtree(self._snapshots_dir / metadata.identifier, ignore_errors=True)
+
+    def _renew_snapshot_lease(self, identifier: str) -> None:
+        self._snapshot_leases[identifier] = time.monotonic() + self.snapshot_lease_seconds
 
 
 def _canonical_json_bytes(value: dict[str, Any]) -> bytes:

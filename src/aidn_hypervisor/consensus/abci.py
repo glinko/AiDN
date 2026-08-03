@@ -15,6 +15,10 @@ from aidn_hypervisor.consensus.abci_models import (
     ABCITag,
 )
 from aidn_hypervisor.consensus.admission import AdmissionValidator
+from aidn_hypervisor.consensus.coverage import (
+    VALIDATION_EVIDENCE_OPERATION_TYPES,
+    strict_operation_coverage_error,
+)
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.state_store import (
     ABCIStateSnapshot,
@@ -102,12 +106,11 @@ class AIDNABCIApplication:
         state_store: ABCIStateStore | None = None,
         restore_state_from_store: bool = True,
         state_checkpoint_callback: Callable[[], None] | None = None,
+        strict_operation_coverage: bool = False,
     ):
         self.ledger = ledger_service
         self.mempool = ABCIMempool()
-        self._admission = admission_validator or AdmissionValidator(
-            current_time=datetime.now(UTC).isoformat()
-        )
+        self._admission = admission_validator or AdmissionValidator(current_time=datetime.now(UTC).isoformat())
         self._genesis_time = genesis_time or datetime.now(UTC).isoformat()
         self._last_block_height = 0
         self._last_block_hash = b"\x00" * 32
@@ -115,12 +118,11 @@ class AIDNABCIApplication:
         self._commitments: dict[int, ABCICanonicalCommitment] = {}
         self._state_store = state_store
         self._state_checkpoint_callback = state_checkpoint_callback
+        self._strict_operation_coverage = strict_operation_coverage
         self._restored_from_store = False
 
         persisted_snapshot = (
-            state_store.load_current()
-            if state_store is not None and restore_state_from_store
-            else None
+            state_store.load_current() if state_store is not None and restore_state_from_store else None
         )
         if persisted_snapshot is not None:
             if genesis_accounts:
@@ -154,9 +156,7 @@ class AIDNABCIApplication:
         expected_hash = self._snapshot_app_hash(snapshot)
         actual_hash = self._compute_state_hash()
         if expected_hash != actual_hash:
-            raise ABCIStateStoreError(
-                "durable ABCI state does not match the restored Hypervisor Ledger"
-            )
+            raise ABCIStateStoreError("durable ABCI state does not match the restored Hypervisor Ledger")
         result = self.apply_snapshot(snapshot)
         if result.code != "ok":
             raise ABCIStateStoreError(result.log or "could not restore durable ABCI state")
@@ -240,6 +240,21 @@ class AIDNABCIApplication:
                 ],
             )
 
+        if not recheck:
+            special_error = self._special_operation_error(
+                envelope,
+                finalized_operation_ids=self._finalized_operation_ids(),
+            )
+            if special_error is not None:
+                return ABCIResult(
+                    code="rejected",
+                    log=special_error,
+                    tags=[
+                        ABCITag(key="operation_id", value=envelope.operation_id),
+                        ABCITag(key="reason", value=special_error),
+                    ],
+                )
+
         if recheck:
             return ABCIResult(
                 code="ok",
@@ -270,6 +285,14 @@ class AIDNABCIApplication:
                 envelope = self._parse_envelope(tx_data)
                 if envelope.operation_id in selected_ids or not self._admission.validate(envelope).admitted:
                     continue
+                if (
+                    self._special_operation_error(
+                        envelope,
+                        finalized_operation_ids=self._finalized_operation_ids(),
+                    )
+                    is not None
+                ):
+                    continue
             except Exception:
                 continue
             if maximum_bytes > 0 and total_bytes + len(tx_data) > maximum_bytes:
@@ -282,6 +305,7 @@ class AIDNABCIApplication:
     def process_proposal(self, txs: list[bytes]) -> ABCIResult:
         """Validate a proposed block without changing application state."""
         operation_ids: set[str] = set()
+        finalized_operation_ids = self._finalized_operation_ids()
         for tx_data in txs:
             try:
                 envelope = self._parse_envelope(tx_data)
@@ -293,6 +317,12 @@ class AIDNABCIApplication:
             admission = self._admission.validate(envelope)
             if not admission.admitted:
                 return ABCIResult(code="rejected", log=admission.reason or "admission failed")
+            special_error = self._special_operation_error(
+                envelope,
+                finalized_operation_ids=finalized_operation_ids,
+            )
+            if special_error is not None:
+                return ABCIResult(code="rejected", log=special_error)
         return ABCIResult(code="ok")
 
     def reject_proposal_transaction(self, tx_data: bytes) -> ABCIResult:
@@ -345,9 +375,14 @@ class AIDNABCIApplication:
         rejected: list[ABCIResult] = []
         tx_results: list[ABCIResult] = []
         events = []
+        finalized_operation_ids = self._finalized_operation_ids()
+        validator_updates: list[dict] = []
 
         for tx_data in txs:
-            result = self._execute_one(tx_data)
+            result = self._execute_one(
+                tx_data,
+                finalized_operation_ids=finalized_operation_ids,
+            )
             tx_results.append(result)
             if result.code == "ok":
                 executed.append(result)
@@ -355,6 +390,31 @@ class AIDNABCIApplication:
                     events.extend([t.key + "=" + t.value for t in result.tags])
             else:
                 rejected.append(result)
+
+        # A Validator Set schedule is only activated at the matching Epoch
+        # transition and only when it was finalized before this block.
+        try:
+            for result, tx_data in zip(tx_results, txs, strict=True):
+                if result.code != "ok":
+                    continue
+                envelope = self._parse_envelope(tx_data)
+                if envelope.operation_type != "EPOCH_TRANSITION":
+                    continue
+                validator_updates.extend(
+                    self.ledger.activate_consensus_validator_set_update(
+                        activation_epoch=int(envelope.payload["opening_epoch"]),
+                        finalized_operation_ids=finalized_operation_ids,
+                    )
+                )
+        except (ValueError, TypeError, KeyError) as error:
+            rollback = self.apply_snapshot(previous_snapshot)
+            self._admission.restore_state(previous_admission_state)
+            rollback_note = "" if rollback.code == "ok" else "; rollback failed"
+            failure = ABCIResult(
+                code="internal",
+                log=f"validator set activation failed: {error}{rollback_note}",
+            )
+            return failure, [failure for _ in txs]
 
         # Update state
         self._last_block_height = block_height
@@ -407,6 +467,7 @@ class AIDNABCIApplication:
                 ABCITag(key="executed", value=str(len(executed))),
                 ABCITag(key="rejected", value=str(len(rejected))),
             ],
+            validator_updates=validator_updates,
         ), tx_results
 
     def commit(self) -> ABCICommitResponse:
@@ -477,6 +538,7 @@ class AIDNABCIApplication:
             "ledger_operations": self.ledger.snapshot_operations(),
             "wallet_sequences": self.ledger.snapshot_wallet_sequences(),
             "settlement_state": self.ledger.snapshot_settlement_state(),
+            "consensus_state": self.ledger.snapshot_consensus_state(),
         }
 
     def apply_snapshot(self, snapshot: dict) -> ABCIResult:
@@ -511,10 +573,26 @@ class AIDNABCIApplication:
             operations=snapshot.get("ledger_operations", []),
             wallet_sequences=snapshot.get("wallet_sequences", {}),
             wallet_q_atom_balances=settlement_state.get("wallet_q_atom_balances"),
+            recyclable_q_atoms=int(settlement_state.get("recyclable_q_atoms", 0)),
+            burned_q_atoms=int(settlement_state.get("burned_q_atoms", 0)),
+            stake_records=settlement_state.get("stake_records"),
+            participant_suspensions=settlement_state.get("participant_suspensions"),
             session_funding_accounts=settlement_state.get("session_funding_accounts"),
+            settlement_ready_commits=settlement_state.get("settlement_ready_commits"),
             settlement_proposals=settlement_state.get("settlement_proposals"),
             settlement_acceptances=settlement_state.get("settlement_acceptances"),
+            session_checkpoints=settlement_state.get("session_checkpoints"),
+            settlement_disputes=settlement_state.get("settlement_disputes"),
+            settlement_corrections=settlement_state.get("settlement_corrections"),
             settlement_transition_hashes=settlement_state.get("settlement_transition_hashes"),
+            development_pool_allocations=settlement_state.get("development_pool_allocations"),
+            development_reward_reserves=settlement_state.get("development_reward_reserves"),
+            development_reward_payment_records=settlement_state.get("development_reward_payment_records"),
+            development_reward_unclaimed_records=settlement_state.get("development_reward_unclaimed_records"),
+            development_reward_claim_records=settlement_state.get("development_reward_claim_records"),
+            development_reward_expiry_records=settlement_state.get("development_reward_expiry_records"),
+            development_reward_finalized_commitments=settlement_state.get("development_reward_finalized_commitments"),
+            consensus_state=snapshot.get("consensus_state"),
         )
         self._last_block_height = int(snapshot["last_block_height"])
         if self._last_block_height < 0:
@@ -592,9 +670,7 @@ class AIDNABCIApplication:
             try:
                 self._state_checkpoint_callback()
             except Exception as error:
-                raise ABCIStateStoreError(
-                    "Hypervisor state checkpoint failed after ABCI persistence"
-                ) from error
+                raise ABCIStateStoreError("Hypervisor state checkpoint failed after ABCI persistence") from error
 
     def _persist_abci_state(self) -> None:
         if self._state_store is not None:
@@ -607,7 +683,12 @@ class AIDNABCIApplication:
         obj = json.loads(tx_data)
         return LedgerOperationEnvelope.model_validate(obj)
 
-    def _execute_one(self, tx_data: bytes) -> ABCIResult:
+    def _execute_one(
+        self,
+        tx_data: bytes,
+        *,
+        finalized_operation_ids: set[str],
+    ) -> ABCIResult:
         """Execute a single transaction against the ledger."""
         try:
             envelope = self._parse_envelope(tx_data)
@@ -623,9 +704,178 @@ class AIDNABCIApplication:
                 tags=[ABCITag(key="operation_id", value=envelope.operation_id)],
             )
 
+        coverage_error = self._operation_coverage_error(envelope.operation_type)
+        if coverage_error is not None:
+            return ABCIResult(
+                code="rejected",
+                log=coverage_error,
+                tags=[
+                    ABCITag(key="operation_id", value=envelope.operation_id),
+                    ABCITag(key="reason", value=coverage_error),
+                ],
+            )
+
         # Record in ledger
         try:
-            self.ledger.record_admitted_envelope(envelope)
+            if envelope.operation_type == "WALLET_TRANSFER" and self._strict_operation_coverage:
+                self.ledger.apply_consensus_wallet_transfer(envelope)
+            elif envelope.operation_type == "SESSION_OPEN" and self._strict_operation_coverage:
+                self.ledger.apply_consensus_session_open(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_ACCEPT" and self._strict_operation_coverage:
+                self.ledger.apply_consensus_session_accept(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "EPOCH_TRANSITION":
+                self.ledger.apply_consensus_epoch_transition(envelope)
+            elif envelope.operation_type == "SERVICE_VERIFICATION_COMMIT":
+                self.ledger.apply_consensus_service_verification(envelope)
+            elif envelope.operation_type == "REPUTATION_PROFILE_UPDATE":
+                self.ledger.apply_consensus_reputation_profile_update(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type in VALIDATION_EVIDENCE_OPERATION_TYPES:
+                self.ledger.apply_consensus_validation_evidence(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SNAPSHOT_COMMIT":
+                self.ledger.apply_consensus_snapshot_commit(envelope)
+            elif envelope.operation_type == "SESSION_FAILURE_EVIDENCE":
+                self.ledger.apply_consensus_session_failure_evidence(envelope)
+            elif envelope.operation_type == "CONSENSUS_VALIDATOR_SET_UPDATE":
+                self.ledger.apply_consensus_validator_set_update(envelope)
+            elif envelope.operation_type == "REWARD_MINT":
+                self.ledger.apply_consensus_reward_mint(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_CALCULATE":
+                self.ledger.apply_consensus_development_reward_calculate(envelope)
+            elif envelope.operation_type == "DEVELOPMENT_POOL_ALLOCATE":
+                self.ledger.apply_consensus_development_pool_allocate(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_RESERVE":
+                self.ledger.apply_consensus_development_reward_reserve(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_PAY_IMMEDIATE":
+                self.ledger.apply_consensus_development_reward_pay_immediate(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_PAY_MATURITY":
+                self.ledger.apply_consensus_development_reward_pay_maturity(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_MARK_UNCLAIMED":
+                self.ledger.apply_consensus_development_reward_mark_unclaimed(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_CLAIM":
+                self.ledger.apply_consensus_development_reward_claim(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_EXPIRE_UNCLAIMED":
+                self.ledger.apply_consensus_development_reward_expire_unclaimed(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_FINALIZE_COMMITMENT":
+                self.ledger.apply_consensus_development_reward_finalize_commitment(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "PENALTY_APPLY":
+                self.ledger.apply_consensus_penalty_apply(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_ESCROW_LOCK":
+                self.ledger.apply_consensus_session_escrow_lock(envelope)
+            elif envelope.operation_type == "SESSION_ESCROW_EXTEND":
+                self.ledger.apply_consensus_session_escrow_extend(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_ESCROW_RELEASE":
+                self.ledger.apply_consensus_session_escrow_release(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_CHECKPOINT_COMMIT":
+                self.ledger.apply_consensus_session_checkpoint_commit(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_READY_COMMIT":
+                self.ledger.apply_consensus_settlement_ready_commit(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_PROPOSE":
+                self.ledger.apply_consensus_settlement_propose(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_ACCEPT":
+                self.ledger.apply_consensus_settlement_accept(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_DISPUTE":
+                self.ledger.apply_consensus_settlement_dispute(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_PARTIAL_FINALIZE":
+                self.ledger.apply_consensus_settlement_partial_finalize(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_CORRECT":
+                self.ledger.apply_consensus_settlement_correct(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_FINALIZE":
+                self.ledger.apply_consensus_settlement_finalize(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_FORCE_SETTLE":
+                self.ledger.apply_consensus_force_settle(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "STAKE_LOCK":
+                self.ledger.apply_consensus_stake_lock(envelope)
+            elif envelope.operation_type == "UNSTAKE_REQUEST":
+                self.ledger.apply_consensus_unstake_request(envelope)
+            elif envelope.operation_type == "STAKE_RELEASE":
+                self.ledger.apply_consensus_stake_release(envelope)
+            elif envelope.operation_type == "PARTICIPANT_SUSPEND":
+                self.ledger.apply_consensus_participant_suspend(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "PARTICIPANT_REINSTATE":
+                self.ledger.apply_consensus_participant_reinstate(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            else:
+                self.ledger.record_admitted_envelope(envelope)
             self._admission.record_finalized(envelope.operation_id)
             if envelope.sender_wallet is not None:
                 self._admission.advance_wallet_sequence(envelope.sender_wallet)
@@ -637,21 +887,245 @@ class AIDNABCIApplication:
                     ABCITag(key="type", value=envelope.operation_type),
                 ],
             )
+        except ValueError as e:
+            return ABCIResult(
+                code="rejected",
+                log=str(e),
+                tags=[ABCITag(key="operation_id", value=envelope.operation_id)],
+            )
         except Exception as e:
             return ABCIResult(
                 code="internal",
                 log=f"execution error: {e}",
             )
 
+    def _finalized_operation_ids(self) -> set[str]:
+        finalized_operation_ids = getattr(self.ledger, "finalized_operation_ids", None)
+        if callable(finalized_operation_ids):
+            return set(finalized_operation_ids())
+        return {
+            str(operation["operation_id"])
+            for operation in self.ledger.snapshot_operations()
+            if operation.get("operation_id")
+        }
+
+    def _special_operation_error(
+        self,
+        envelope: LedgerOperationEnvelope,
+        *,
+        finalized_operation_ids: set[str],
+    ) -> str | None:
+        coverage_error = self._operation_coverage_error(envelope.operation_type)
+        if coverage_error is not None:
+            return coverage_error
+        try:
+            if envelope.operation_type == "WALLET_TRANSFER" and self._strict_operation_coverage:
+                self.ledger.validate_consensus_wallet_transfer(envelope)
+            elif envelope.operation_type == "SESSION_OPEN" and self._strict_operation_coverage:
+                self.ledger.validate_consensus_session_open(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_ACCEPT" and self._strict_operation_coverage:
+                self.ledger.validate_consensus_session_accept(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "EPOCH_TRANSITION":
+                self.ledger.validate_consensus_epoch_transition(envelope)
+            elif envelope.operation_type == "SERVICE_VERIFICATION_COMMIT":
+                self.ledger.validate_consensus_service_verification(envelope)
+            elif envelope.operation_type == "SNAPSHOT_COMMIT":
+                self.ledger.validate_consensus_snapshot_commit(envelope)
+            elif envelope.operation_type == "SESSION_FAILURE_EVIDENCE":
+                self.ledger.validate_consensus_session_failure_evidence(envelope)
+            elif envelope.operation_type == "CONSENSUS_VALIDATOR_SET_UPDATE":
+                self.ledger.validate_consensus_validator_set_update(envelope)
+            elif envelope.operation_type == "REWARD_MINT":
+                self.ledger.validate_consensus_reward_mint(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_CALCULATE":
+                self.ledger.validate_consensus_development_reward_calculate(envelope)
+            elif envelope.operation_type == "DEVELOPMENT_POOL_ALLOCATE":
+                self.ledger.validate_consensus_development_pool_allocate(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_RESERVE":
+                self.ledger.validate_consensus_development_reward_reserve(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_PAY_IMMEDIATE":
+                self.ledger.validate_consensus_development_reward_pay_immediate(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_PAY_MATURITY":
+                self.ledger.validate_consensus_development_reward_pay_maturity(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_MARK_UNCLAIMED":
+                self.ledger.validate_consensus_development_reward_mark_unclaimed(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_CLAIM":
+                self.ledger.validate_consensus_development_reward_claim(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_EXPIRE_UNCLAIMED":
+                self.ledger.validate_consensus_development_reward_expire_unclaimed(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_FINALIZE_COMMITMENT":
+                self.ledger.validate_consensus_development_reward_finalize_commitment(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "PENALTY_APPLY":
+                self.ledger.validate_consensus_penalty_apply(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_ESCROW_LOCK":
+                self.ledger.validate_consensus_session_escrow_lock(envelope)
+            elif envelope.operation_type == "SESSION_ESCROW_EXTEND":
+                self.ledger.validate_consensus_session_escrow_extend(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_ESCROW_RELEASE":
+                self.ledger.validate_consensus_session_escrow_release(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_CHECKPOINT_COMMIT":
+                self.ledger.validate_consensus_session_checkpoint_commit(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_READY_COMMIT":
+                self.ledger.validate_consensus_settlement_ready_commit(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_PROPOSE":
+                self.ledger.validate_consensus_settlement_propose(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_ACCEPT":
+                self.ledger.validate_consensus_settlement_accept(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_DISPUTE":
+                self.ledger.validate_consensus_settlement_dispute(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_PARTIAL_FINALIZE":
+                self.ledger.validate_consensus_settlement_partial_finalize(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_CORRECT":
+                self.ledger.validate_consensus_settlement_correct(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_SETTLEMENT_FINALIZE":
+                self.ledger.validate_consensus_settlement_finalize(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "SESSION_FORCE_SETTLE":
+                self.ledger.validate_consensus_force_settle(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "STAKE_LOCK":
+                self.ledger.validate_consensus_stake_lock(envelope)
+            elif envelope.operation_type == "UNSTAKE_REQUEST":
+                self.ledger.validate_consensus_unstake_request(envelope)
+            elif envelope.operation_type == "STAKE_RELEASE":
+                self.ledger.validate_consensus_stake_release(envelope)
+            elif envelope.operation_type == "PARTICIPANT_SUSPEND":
+                self.ledger.validate_consensus_participant_suspend(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "PARTICIPANT_REINSTATE":
+                self.ledger.validate_consensus_participant_reinstate(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            else:
+                return None
+        except ValueError as error:
+            return str(error)
+        return None
+
+    def _operation_coverage_error(self, operation_type: str) -> str | None:
+        if not self._strict_operation_coverage:
+            return None
+        return strict_operation_coverage_error(operation_type)
+
     def _compute_state_hash(self) -> bytes:
         """Compute deterministic hash of current application state."""
+        consensus_state = self.ledger.snapshot_consensus_state()
+        settlement_state = self._canonical_settlement_state_for_hash(self.ledger.snapshot_settlement_state())
         state = {
             "operations": self.ledger.snapshot_operations(),
             "wallet_sequences": self.ledger.snapshot_wallet_sequences(),
-            "settlement_state": self.ledger.snapshot_settlement_state(),
+            "settlement_state": settlement_state,
         }
+        if (
+            consensus_state["active_validator_set"]
+            or consensus_state["active_validator_set_epoch"] is not None
+            or consensus_state["activated_validator_set_epochs"]
+        ):
+            state["consensus_state"] = consensus_state
         canonical = json.dumps(state, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).digest()
+
+    @staticmethod
+    def _canonical_settlement_state_for_hash(settlement_state: dict) -> dict:
+        """Keep empty post-MVP extensions out of the historical AppHash.
+
+        Older ABCI snapshots did not serialize newer stake, penalty,
+        checkpoint and dispute collections. Treating their empty defaults as
+        absent preserves replay compatibility while retaining every populated
+        extension in the commitment.
+        """
+        canonical = dict(settlement_state)
+        empty_extension_defaults = {
+            "recyclable_q_atoms": 0,
+            "burned_q_atoms": 0,
+            "stake_records": [],
+            "participant_suspensions": [],
+            "settlement_ready_commits": [],
+            "session_checkpoints": [],
+            "settlement_disputes": [],
+            "settlement_corrections": [],
+            "development_pool_allocations": [],
+            "development_reward_reserves": [],
+            "development_reward_payment_records": [],
+            "development_reward_unclaimed_records": [],
+            "development_reward_claim_records": [],
+            "development_reward_expiry_records": [],
+            "development_reward_finalized_commitments": [],
+        }
+        for field_name, default in empty_extension_defaults.items():
+            if canonical.get(field_name) == default:
+                canonical.pop(field_name, None)
+        return canonical
 
     @staticmethod
     def _snapshot_app_hash(snapshot: dict) -> bytes:

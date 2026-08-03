@@ -538,6 +538,11 @@ class RuntimeProtocolService:
             report.endpoint_id != request.request.endpoint_id
             or report.endpoint_configuration_hash
             != request.request.endpoint_configuration_hash
+            or (
+                report.effective_terms_hash is not None
+                and report.effective_terms_hash
+                != request.request.effective_terms_hash
+            )
             or report.accounting_contract_hash
             != request.request.accounting_contract_hash
         ):

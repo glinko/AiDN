@@ -7,6 +7,7 @@ from aidn_hypervisor.consensus.cometbft import (
     CometBftRpcFinalitySource,
     CometBftRpcValidatorSetProvider,
     HttpCometBftRpcTransport,
+    HttpCometBftSubmissionTransport,
     cometbft_transaction_hash,
 )
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
@@ -193,6 +194,13 @@ def test_http_cometbft_transport_rejects_unsafe_endpoint_configuration():
         HttpCometBftRpcTransport("https://token@example.test")
     with pytest.raises(ValueError, match="path"):
         HttpCometBftRpcTransport("https://example.test/rpc")
+
+
+def test_http_cometbft_submission_transport_rejects_unsafe_endpoint_configuration():
+    with pytest.raises(ValueError, match="credentials"):
+        HttpCometBftSubmissionTransport("https://token@example.test")
+    with pytest.raises(ValueError, match="path"):
+        HttpCometBftSubmissionTransport("https://example.test/rpc")
 
 
 def test_validator_set_provider_fetches_every_page_for_current_and_next_sets():

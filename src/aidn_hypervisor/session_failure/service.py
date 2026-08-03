@@ -120,9 +120,25 @@ class SessionFailureHandler:
     # Session registration
     # ------------------------------------------------------------------
 
-    def register_session(self, session_id: str, initial_status: str) -> None:
-        """Register a session for failure monitoring."""
+    def register_session(
+        self,
+        session_id: str,
+        initial_status: str,
+        recovery_deadline: str | None = None,
+    ) -> None:
+        """Register a session for failure monitoring.
+
+        A recovering Session restored without a persisted deadline is treated
+        as immediately expired instead of receiving a fresh recovery window.
+        This prevents restart from extending economic exposure silently.
+        """
         self._session_states[session_id] = initial_status
+        if initial_status == "recovering":
+            self._recovery_deadlines[session_id] = recovery_deadline or datetime.now(
+                UTC
+            ).isoformat()
+        else:
+            self._recovery_deadlines.pop(session_id, None)
 
     def unregister_session(self, session_id: str) -> bool:
         """Unregister a session. Returns True if it was tracked."""
@@ -397,6 +413,70 @@ class SessionFailureHandler:
     def get_failure_report(self, session_id: str) -> FailureReport | None:
         """Get the failure report for a session, if one exists."""
         return self.evidence_store.get_report(session_id)
+
+    def snapshot_evidence(self):
+        """Return durable failure evidence for the Hypervisor snapshot."""
+        return self.evidence_store.snapshot_evidence()
+
+    def snapshot_reports(self):
+        """Return durable failure reports for the Hypervisor snapshot."""
+        return self.evidence_store.snapshot_reports()
+
+    def failure_evidence_root(self, session_id: str) -> str | None:
+        """Return the canonical commitment for the Session's failure evidence."""
+        return self.evidence_store.failure_evidence_root(session_id)
+
+    def ensure_failure_evidence(
+        self,
+        *,
+        session_id: str,
+        failure_class: FailureClass,
+        previous_status: str,
+        details: str = "",
+    ) -> str:
+        """Create the minimum durable evidence needed for a forced close.
+
+        A force request can be initiated by a timeout controller before the
+        ordinary failure callback has run. Record the observation without
+        changing Session state, then let the economic path bind its root to the
+        canonical force operation.
+        """
+        existing = self.failure_evidence_root(session_id)
+        if existing is not None:
+            return existing
+
+        now = datetime.now(UTC).isoformat()
+        evidence = FailureEvidenceRecord(
+            session_id=session_id,
+            evidence_level=EvidenceLevel.OBSERVATIONAL,
+            category=failure_class.value,
+            detail=details or f"Forced Settlement requested for {failure_class.value}",
+            recorded_at=now,
+            source="forced_settlement",
+        )
+        self.evidence_store.add_evidence(session_id, evidence)
+        self.evidence_store.save_report(
+            FailureReport(
+                session_id=session_id,
+                failure_class=failure_class,
+                attribution=_DEFAULT_ATTRIBUTION.get(
+                    failure_class, FailureAttribution.INCONCLUSIVE
+                ),
+                evidence_ids=[evidence.recorded_at],
+                failure_timestamp=now,
+                previous_status=previous_status,
+                resulting_status="force_closing",
+                notes=details,
+            )
+        )
+        root = self.failure_evidence_root(session_id)
+        if root is None:  # pragma: no cover - defensive invariant
+            raise RuntimeError("failure evidence root was not created")
+        return root
+
+    def restore_evidence(self, *, evidence, reports) -> None:
+        """Restore validated failure evidence after Hypervisor state restore."""
+        self.evidence_store.restore(evidence=evidence, reports=reports)
 
     # ------------------------------------------------------------------
     # Events

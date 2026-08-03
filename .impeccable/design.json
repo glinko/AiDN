@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-01T00:00:00Z",
+  "title": "Design System: AiDN Hypervisor Dashboard",
+  "extensions": {
+    "colorMeta": {
+      "surface-deep": { "role": "neutral", "displayName": "Deep Control Field", "canonical": "#040a12", "tonalRamp": ["#040a12", "#07111d", "#0b1725", "#0e1d2e", "#22354a", "#8da0b8", "#d7e2ed", "#f2f7fc"] },
+      "route-cyan": { "role": "primary", "displayName": "Route Cyan", "canonical": "#2bd7c5", "tonalRamp": ["#062d2a", "#0b504a", "#11776d", "#1ca492", "#2bd7c5", "#66e5d8", "#a2f2e9", "#d8fbf6"] },
+      "healthy-green": { "role": "tertiary", "displayName": "Confirmed Green", "canonical": "#5ad28f", "tonalRamp": ["#0d291a", "#17452a", "#276a42", "#3c985f", "#5ad28f", "#8ce0af", "#bdeed0", "#e4faec"] },
+      "attention-red": { "role": "tertiary", "displayName": "Attention Red", "canonical": "#ff7e8b", "tonalRamp": ["#330d15", "#5c1724", "#862635", "#b94051", "#ff7e8b", "#ffabb4", "#ffd0d5", "#fff0f2"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Operational Display", "purpose": "Workspace and selected-object names." },
+      "body": { "displayName": "Control Plane Body", "purpose": "Consequences, instructions, and explanations." },
+      "label": { "displayName": "Technical Label", "purpose": "Metrics, state labels, and panel roles." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "state-shift", "value": "border-color and color changes only", "purpose": "Communicate focus and route selection without decorative lift." }
+    ],
+    "breakpoints": [
+      { "name": "workspace-collapse", "value": "1200px" },
+      { "name": "mobile-control-plane", "value": "860px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "One explicit next action in an operator workflow.",
+      "html": "<button class=\"ds-btn-primary\">ACTIVATE BUNDLE</button>",
+      "css": ".ds-btn-primary { min-height: 36px; padding: 0 14px; border: 1px solid #2bd7c5; border-radius: 8px; background: #2bd7c5; color: #040a12; font: 700 12px Manrope, sans-serif; } .ds-btn-primary:hover { background: #66e5d8; } .ds-btn-primary:focus-visible { outline: 2px solid #a2f2e9; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Inspection, comparison, or reversible navigation.",
+      "html": "<button class=\"ds-btn-secondary\">INSPECT</button>",
+      "css": ".ds-btn-secondary { min-height: 36px; padding: 0 14px; border: 1px solid #22354a; border-radius: 8px; background: #0e1d2e; color: #f2f7fc; font: 700 12px Manrope, sans-serif; } .ds-btn-secondary:hover { border-color: #2bd7c5; color: #2bd7c5; } .ds-btn-secondary:focus-visible { outline: 2px solid #2bd7c5; outline-offset: 2px; }"
+    },
+    {
+      "name": "State Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Explicit status label with redundant text and semantic color.",
+      "html": "<span class=\"ds-chip\">READY</span>",
+      "css": ".ds-chip { display: inline-flex; min-height: 24px; align-items: center; padding: 0 8px; border: 1px solid #276a42; border-radius: 6px; background: #0b1725; color: #5ad28f; font: 750 10px Manrope, sans-serif; letter-spacing: .04em; }"
+    },
+    {
+      "name": "Control Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Bounded operational group with tonal depth but no shadow.",
+      "html": "<section class=\"ds-panel\"><strong>BUNDLE DEPLOYMENT</strong><p>Provider, model and runtime binding are ready for review.</p></section>",
+      "css": ".ds-panel { padding: 16px; border: 1px solid #22354a; border-radius: 14px; background: linear-gradient(180deg, #0e1d2e, #0b1725); color: #f2f7fc; font: 500 13px/1.5 Manrope, sans-serif; } .ds-panel strong { color: #8da0b8; font-size: 10px; letter-spacing: .11em; }"
+    },
+    {
+      "name": "Route Navigation",
+      "kind": "nav",
+      "refersTo": "panel",
+      "description": "Stable text-first navigation with one cyan current route.",
+      "html": "<nav class=\"ds-nav\"><button class=\"ds-nav-active\">BUNDLES</button><button>ENDPOINT OFFERS</button></nav>",
+      "css": ".ds-nav { display: flex; gap: 6px; background: #07111d; } .ds-nav button { min-height: 36px; padding: 0 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #8da0b8; font: 700 12px Manrope, sans-serif; } .ds-nav button:hover, .ds-nav button:focus-visible { border-color: #22354a; color: #f2f7fc; outline: none; } .ds-nav .ds-nav-active { border-color: #2b556b; background: rgba(43,215,197,.12); color: #2bd7c5; }"
+    },
+    {
+      "name": "Resource Fact",
+      "kind": "custom",
+      "refersTo": "panel",
+      "description": "Persistent footer fact derived from Hypervisor telemetry.",
+      "html": "<section class=\"ds-resource\"><strong>GPU MEMORY</strong><b>23,552 MB</b><span>Allocatable local VRAM</span></section>",
+      "css": ".ds-resource { display: grid; gap: 4px; min-width: 150px; padding: 10px 14px; border-right: 1px solid #22354a; background: #091522; color: #f2f7fc; font-family: Manrope, sans-serif; } .ds-resource strong { color: #8da0b8; font-size: 10px; letter-spacing: .11em; } .ds-resource b { font-size: 17px; } .ds-resource span { color: #8da0b8; font-size: 10px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Bundle Control Plane",
+    "overview": "AiDN is a dense, calm operational surface rather than an AI chat product or decorative monitoring screen. The active Hypervisor, stable navigation, Bundle execution chain, and real resource state remain legible before any secondary workflow.",
+    "keyCharacteristics": ["Persistent Hypervisor identity and resource truth.", "Dense but bounded panels; no fake charts or decorative telemetry.", "Cyan signals selected route and active local context.", "Mobile preserves access to Hypervisor selection and Advanced Mode."],
+    "rules": [
+      { "name": "The One Route Rule", "body": "Cyan marks the current operational path, not general decoration.", "section": "colors" },
+      { "name": "The Evidence-First Depth Rule", "body": "A panel gains visual weight from a real operational role or persistent location, never from a colored glow.", "section": "elevation" }
+    ],
+    "dos": ["Do keep Bundle as the central deployment workspace.", "Do keep Endpoint offers, Validation, and Sessions as distinct canonical workflows.", "Do expose missing observability explicitly."],
+    "donts": ["Don't use a market offer as the default representation of local Hypervisor health.", "Don't use sparklines, progress rings, or colored glow as stand-ins for operational evidence.", "Don't edit deployed Bundles in place."]
+  }
+}

@@ -720,6 +720,79 @@ The initial Registry formula is:
 
 All quality factors are bounded.
 
+## 45A. Finalized Registry Reward Input
+
+The Registry pool SHALL consume a fixed-point `Registry Reward Input` derived
+from a consensus-finalized Registry Duty Evidence object defined by
+`RFC-0061`.
+
+The input SHALL include:
+
+- Registry Service ID and reward beneficiary;
+- Epoch and finalized operation ID;
+- Registry Work Units;
+- Maturity, Health, Availability, Proof Success, Completeness, Latency and
+  Reliability factors;
+- Known Control Group ID;
+- Duty Evidence ID, evidence hash and eligibility decision hash.
+
+The MVP uses `1,000,000` as the fixed-point scale.  A conforming calculator
+MAY convert the resulting fixed-point raw weight into the pool's integer
+distribution, but SHALL use deterministic integer rounding.
+
+The Registry input is not a Q amount.  A Registry Service, peer, webhook or
+local Ledger record SHALL NOT create `REWARD_MINT` directly.  Reward minting
+requires the finalized epoch reward calculation, pool budget, caps, diversity
+and Ledger authorization defined by this ECO.
+
+If finality, mandatory Proof, Completeness, beneficiary binding or any
+eligibility gate is missing, the Registry receives zero weight for the epoch.
+The evidence MAY still be committed as an explicit ineligible verification
+result for audit and later diagnosis.
+
+## 45B. Registry Epoch Calculation Boundary
+
+The Epoch Engine SHALL aggregate only finalized `Registry Reward Input`
+objects for one exact Epoch and Registry pool budget.  The canonical MVP
+calculation uses fixed-point integer arithmetic with scale `1,000,000`:
+
+1. count distinct effective Known Control Groups;
+2. calculate `DiversityFactor = min(1, GroupCount / TargetGroups)`;
+3. derive the distributable pool using integer floor rounding;
+4. aggregate raw weights by Known Control Group;
+5. cap a group at `max(1 / GroupCount, MinimumGroupShareCap)`;
+6. redistribute only among uncapped groups by remaining raw weight;
+7. distribute each group allocation among its member Registry Services;
+8. leave atoms that cannot be assigned without violating a cap unminted.
+
+The calculation SHALL produce an immutable `Registry Reward Calculation`
+containing the pool budget reference, diversity factor, group cap, per-service
+allocations and all evidence/snapshot references.  Its
+`REWARD_CALCULATION_ROOT` SHALL be the canonical hash of that object and SHALL
+be independent of input ordering.
+
+When an input has no Known Control Group, the MVP SHALL use its verified reward
+beneficiary as the effective grouping key.  This fallback is conservative
+against multiple Registry identities sharing one beneficiary; later identity
+resolution MAY replace it only from a future Epoch boundary.
+
+The calculation root and pool budget SHALL be committed by the consensus
+finalized `EPOCH_TRANSITION`.  Only then may the Ledger accept an individual
+`REWARD_MINT`.  Registry Services, peer replication, webhooks and local
+calculation workers SHALL not mint Q directly.
+
+The transition itself SHALL bind the closing and opening Epochs, all required
+state/calculation roots and typed per-pool budgets.  The opening Epoch must be
+the immediate successor of the closing Epoch, and a second transition for the
+same closing Epoch is invalid.
+
+In the MVP consensus executor, this dependency is evaluated against the
+pre-block finalized operation set in both the ABCI and deterministic local
+execution entrypoints.  A same-block `EPOCH_TRANSITION` plus `REWARD_MINT` is
+rejected, and an accepted mint is applied only through the budget-checked
+Ledger path.  Specialized Registry mint execution does not imply that every
+other Ledger operation family is already fully consensus-wired.
+
 ## 46. Registry Location Neutrality
 
 The Registry reward SHALL not directly depend on geographic claims.

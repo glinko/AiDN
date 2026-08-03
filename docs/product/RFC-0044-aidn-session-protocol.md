@@ -555,11 +555,21 @@ SESSION_OPEN has been submitted but is not finalized.
 
 The Endpoint SHALL NOT execute economically significant work based only on mempool presence.
 
+For the strict MVP consensus profile, `SESSION_OPEN` is a lifecycle
+projection, not the funding mutation. Its payload SHALL reference a finalized
+`SESSION_ESCROW_LOCK` and the exact Funding state hash. The canonical order is
+therefore `SESSION_ESCROW_LOCK` in one finalized block followed by
+`SESSION_OPEN` in a later block; a same-block dependency is rejected.
+
 ---
 
 ## 25. OPEN
 
 The Session collateral and Contract proposal are finalized.
+
+The `SESSION_ESCROW_LOCK` operation is the sole MVP transition that creates
+the locked economic exposure. `SESSION_OPEN` only binds that exposure to the
+Session/Endpoint metadata and does not debit the Consumer again.
 
 The Endpoint may accept or reject the Session.
 
@@ -570,6 +580,12 @@ The Endpoint may accept or reject the Session.
 The Endpoint has signed the exact Session Contract.
 
 The accepted contract is binding.
+
+In the strict MVP consensus profile, `SESSION_ACCEPT` must reference a
+finalized `SESSION_OPEN` and is authorized by the locked Endpoint Payment
+beneficiary. It records the lifecycle acceptance only; escrow, beneficiaries
+and charge ceilings remain those fixed by the earlier Funding/Contract
+records.
 
 The Runtime may be allocated.
 
@@ -1712,6 +1728,87 @@ The MVP MAY permit amendments for:
 * artifact-limit increase.
 
 An amendment SHALL be signed by all economically affected parties.
+
+The local MVP represents an accepted amendment as an immutable
+`session-amendment.v1` Registry Object and stores the ordered objects in the
+Session snapshot. Each amendment contains:
+
+* `amendment_id` and contiguous `sequence`;
+* `previous_effective_terms_hash` and optional `previous_amendment_hash`;
+* `amendment_kind` and canonical `changes`;
+* Consumer and Endpoint signatures;
+* `effective_terms_hash` for the new contract head;
+* `amendment_hash` for the complete acceptance evidence;
+* the Registry `object_id`.
+
+The initial `effective_terms_hash` equals `session_contract_hash`. A valid
+amendment replaces neither the original Session Contract hash nor completed
+Request terms. It advances only the effective-terms head. Re-submitting an
+existing `amendment_id` is idempotent when the signed content is identical;
+conflicting content is rejected.
+
+For an MVP Session, both signatures are verified against the registered
+Consumer and Endpoint Wallet identities over the canonical amendment signing
+payload. A local non-economic Session without registered Wallet keys remains
+compatibility-readable, but a public MVP amendment fails closed when either
+identity is unavailable.
+
+The MVP applies expiration, Request-limit and artifact-limit amendments at
+the local Session boundary. Deposit and maximum-charge amendments require a
+predecessor-bound canonical funding proof from `SESSION_ESCROW_EXTEND`; the
+application verifier checks the operation, Funding Account and successor
+funding hash before updating the local Session/Deposit projection. The Ledger
+remains the authority for the actual escrow mutation.
+
+---
+
+## 107.1 Session Contract Exchange
+
+A Hypervisor MAY exchange the accepted Session Contract with another authorized
+participant as an immutable evidence package. The exchange package SHALL bind:
+
+```yaml
+session_contract_exchange:
+  session_id:
+  session_contract_object_id:
+  session_contract_object_version:
+  session_contract_namespace:
+  session_contract_hash:
+  session_contract:
+  amendments:
+  amendment_sequence:
+  effective_terms_hash:
+  exchange_hash:
+```
+
+The package SHALL include the canonical base Session Contract payload and the
+complete ordered amendment chain. Its `exchange_hash` SHALL commit to every
+field except itself. The receiver SHALL verify:
+
+* the base payload hash and Registry Object identity;
+* the Session ID inside the payload;
+* contiguous amendment sequence and predecessor hashes;
+* the effective-terms head and amendment object identities;
+* the exchange hash when supplied.
+
+An export SHALL fail when the local Session projection, base Registry Object or
+amendment chain is inconsistent. An import SHALL be idempotent for identical
+Registry Objects and SHALL preserve conflict evidence for any differing object
+with the same identity.
+
+Importing an exchange package stages immutable Session Contract evidence in the
+local Registry. It SHALL NOT:
+
+* activate or accept a Session;
+* overwrite a local Session projection;
+* change funding, charge ceilings or Settlement state;
+* authorize execution on behalf of a missing participant.
+
+If a local Session with the same ID already exists, its base hash, amendment
+chain and effective-terms head SHALL match the package or the import SHALL fail
+closed. Transport authentication, peer authorization and replay protection are
+provided by the applicable network or Registry channel; this object-level
+validation remains mandatory regardless of transport.
 
 ---
 

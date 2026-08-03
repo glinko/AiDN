@@ -257,6 +257,8 @@ def test_config_defaults():
     assert cfg.chain_id == "aidn-localnet-1"
     assert cfg.gas_limit == 1_000_000
     assert cfg.max_retries == 3
+    assert cfg.abci_retained_snapshots == 8
+    assert cfg.abci_snapshot_lease_seconds == 1800
 
 
 def test_validator_abci_bootstrap_requires_validator_mode_and_durable_path(tmp_path):
@@ -278,6 +280,9 @@ def test_validator_abci_bootstrap_requires_validator_mode_and_durable_path(tmp_p
     )
     application = configured.bootstrap_validator_abci(ledger_service=ledger)
     assert application.ledger is ledger
+    assert application._state_store is not None
+    assert application._state_store.retained_snapshots == 8
+    assert application._state_store.snapshot_lease_seconds == 1800
     assert configured.bootstrap_validator_abci(ledger_service=ledger) is application
     with pytest.raises(ValueError, match="another Ledger"):
         configured.bootstrap_validator_abci(ledger_service=LedgerOperationService())

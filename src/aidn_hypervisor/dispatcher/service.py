@@ -47,7 +47,8 @@ class NetworkDispatcher:
         self.maximum_queue_messages = maximum_queue_messages
         self.store = store or DispatcherStore()
         self._routes = self.store.routes
-        self._handlers: dict[tuple[str, str], Callable[[dict], object]] = {}
+        self._handlers: dict[tuple[str, str], Callable[..., object]] = {}
+        self._context_handlers: set[tuple[str, str]] = set()
         self._queue: deque[NetworkMessage] = deque(self.store.queued_messages.values())
         self._delivery_records = self.store.delivery_records
         self._processed_messages = self.store.replays
@@ -63,7 +64,9 @@ class NetworkDispatcher:
     def register_local_route(
         self,
         route: DispatcherRoute,
-        handler: Callable[[dict], object],
+        handler: Callable[..., object],
+        *,
+        pass_message_context: bool = False,
     ) -> None:
         if not route.route_type.startswith("LOCAL_"):
             raise ValueError("register_local_route requires a local route type")
@@ -72,6 +75,10 @@ class NetworkDispatcher:
         if previous is not None and route.route_generation <= previous.route_generation:
             if previous == route:
                 self._handlers[key] = handler
+                if pass_message_context:
+                    self._context_handlers.add(key)
+                else:
+                    self._context_handlers.discard(key)
                 return
             raise DispatcherError(
                 "ROUTE_GENERATION_MISMATCH",
@@ -80,6 +87,10 @@ class NetworkDispatcher:
             )
         self._routes[key] = route
         self._handlers[key] = handler
+        if pass_message_context:
+            self._context_handlers.add(key)
+        else:
+            self._context_handlers.discard(key)
         self.store.flush()
 
     def register_remote_route(
@@ -122,6 +133,7 @@ class NetworkDispatcher:
         )
         self._routes[key] = revoked
         self._handlers.pop(key, None)
+        self._context_handlers.discard(key)
         self.store.flush()
         return revoked
 
@@ -289,7 +301,10 @@ class NetworkDispatcher:
 
             key = (route.destination_type, route.destination_id)
             handler = self._handlers[key]
-            result = handler(message.payload)
+            if key in self._context_handlers:
+                result = handler(message.payload, message)
+            else:
+                result = handler(message.payload)
 
             # State transition: DELIVERY_ATTEMPTED → DELIVERED
             delivered = record.model_copy(

@@ -141,6 +141,7 @@ class RegistryObjectQuery(BaseModel):
     node_id: str | None = None
     include_stale: bool = False
     include_payload: bool = False
+    include_expired: bool = False
     limit: int = Field(default=50, ge=1, le=500)
 
 

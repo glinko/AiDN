@@ -548,6 +548,12 @@ Recommended suspension:
 
 `7 Epochs`
 
+The repository implementation evaluates this policy with integer basis points
+and stores the suspension boundary as canonical participant state. A
+`PARTICIPANT_SUSPEND` operation requires finalized prior evidence; a
+same-block evidence shortcut is rejected. Reinstatement requires a separate
+finalized recovery evidence operation and the minimum recovery Epoch.
+
 ## 35. Consensus Abandonment
 
 A Validator that stops participating without submitting an exit request may be classified as abandoned.
@@ -679,6 +685,12 @@ After leaving the Active Validator Set, Stake enters `UNBONDING`.
 Recommended initial period:
 
 `UnbondingPeriod = 14 Epochs`
+
+The typed consensus Ledger path now implements the corresponding
+`STAKE_LOCK -> UNSTAKE_REQUEST -> STAKE_RELEASE` lifecycle. Available Wallet
+Q is debited at lock, the exact release Epoch is persisted at unbonding, and
+release before that boundary is rejected. Ordinary downtime never authorizes
+`PENALTY_APPLY` by itself.
 
 During unbonding:
 
@@ -834,9 +846,19 @@ The operation SHALL specify:
 - target Stake;
 - misconduct type;
 - evidence root;
+- finalized evidence operation ID;
 - slash amount;
 - recyclable or permanent classification;
 - effective Epoch.
+
+The current consensus execution boundary requires the evidence operation to
+be finalized before `PENALTY_APPLY` enters a block. Same-block evidence and
+penalty application is rejected. `wallet:<wallet-id>` targets debit available
+Q; `lock:<stake-id>` targets reduce the canonical Stake without double-debiting
+the owner Wallet, and a full slash marks the Stake unreleasable. Ordinary
+downtime, missed votes and availability failures do not enter this penalty
+path; they are handled by the deterministic participation and suspension
+policy.
 
 ## 57. Reward Forfeiture
 
@@ -948,6 +970,31 @@ The operation contains:
 - eligibility evidence root;
 - Candidate selection seed;
 - resulting Validator Set hash.
+
+The repository MVP implements the typed protocol schedule boundary in both
+consensus execution entrypoints. It validates protocol origin,
+activation-Epoch binding, membership entry shape, positive Stake/voting power,
+valid Ed25519 consensus keys, non-overlapping identities, evidence-root
+presence and one update per activation Epoch. After the schedule is finalized,
+the matching `EPOCH_TRANSITION` applies it to the canonical active set and
+returns CometBFT validator updates; removals are represented by zero power.
+The active set is included in state snapshots and application commitments.
+The deterministic MVP `ValidatorScheduleBuilder` now consumes a finalized
+Eligibility snapshot plus immutable consensus metadata, ranks candidates from
+the committed selection seed, retains the configured incumbent fraction,
+enforces the per-Known-Control-Group slot cap, rejects duplicate consensus keys
+and emits equal voting power for each selected member. The builder computes the
+evidence root over the complete snapshot and metadata set, requires the
+snapshot to be the immediately preceding Epoch, and binds that root into the
+typed schedule operation. It also commits a canonical participant-suspension
+root and excludes a participant whose suspension is effective at the target
+activation Epoch. Ledger admission independently reconstructs and checks the
+final Validator Set hash before recording the schedule.
+
+The duty-policy adapter also translates a removing `ValidatorDutyDecision` into
+an evidence-bound `PARTICIPANT_SUSPEND` envelope. The adapter is pure: it does
+not mutate Ledger state, authorize slashing or bypass the requirement that the
+referenced duty-evidence operation was finalized in an earlier block.
 
 ## 65. Validator Set Finality
 

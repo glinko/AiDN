@@ -795,6 +795,20 @@ plus any independently proven and explicitly authorized fixed or observable char
 
 Disputed Provider-Metered or Proxy-Opaque usage after the checkpoint SHALL not be paid automatically.
 
+When the Settlement proposal contains a bounded disputed component, the MVP
+may use `SESSION_SETTLEMENT_DISPUTE` followed by
+`SESSION_SETTLEMENT_PARTIAL_FINALIZE`: supported undisputed Endpoint payment,
+Consumer refund and Network Fees are applied, while only the declared dispute
+reserve remains in `DISPUTE_RESERVED`. The reserve is not consumed by ordinary
+Forced Settlement until a later dispute-resolution profile authorizes its
+disposition.
+
+The MVP reserve-resolution profile uses `SESSION_SETTLEMENT_CORRECT` for that
+authorization. It must reference the finalized partial transition and consume
+the active reserve exactly once; it may allocate the reserve only to Endpoint
+Payment or Consumer Payment Refund. Network Fees and previously released
+amounts remain unchanged.
+
 The unused Deposit SHALL be refunded.
 
 ## 46. Mismatch Attribution
@@ -924,6 +938,9 @@ After reconnect, both Hypervisors SHALL exchange:
 session_recovery:
   session_id:
   local_state:
+  failure_class:
+  failure_attribution:
+  recovery_deadline_at:
   last_local_usage_report_hash:
   last_remote_usage_report_hash:
   last_acknowledged_sequence:
@@ -935,6 +952,35 @@ session_recovery:
 ```
 
 The Session may resume only if the state chains are compatible.
+
+The local Session projection SHALL persist the failure class, attribution and
+recovery deadline when a failure enters `RECOVERING`. A Hypervisor restoring
+such a Session SHALL re-register it with the failure handler using the exact
+persisted deadline. If a legacy recovering projection has no deadline, it SHALL
+be treated as immediately expired; restart SHALL not silently grant a new
+recovery window.
+
+The Hypervisor durable snapshot SHALL also preserve the failure evidence and
+Failure Reports known to the local failure handler:
+
+```yaml
+hypervisor_failure_evidence:
+  session_failure_evidence:
+  session_failure_reports:
+```
+
+Restore SHALL validate and replace the handler's local evidence view
+atomically. Duplicate identical records are idempotent; conflicting reports
+for one Session SHALL fail closed. Restored evidence is recovery input only and
+does not by itself reopen a terminal Session or authorize a new payment.
+
+The default Hypervisor application wiring SHALL construct the
+`SessionFailureHandler` before exposing production Session force-finalization.
+When the local MVP force path is used, it SHALL derive the canonical v1
+`failure_evidence_root` from the handler's restored evidence view and include
+that exact root in both `SESSION_FORCE_SETTLE` and the terminal Session
+settlement snapshot. A handler-less injected Session service is a legacy/test
+compatibility context and is not the production evidence authority.
 
 ## 56. Compatible Recovery
 
@@ -962,6 +1008,11 @@ Recovery is incompatible when:
 - execution state cannot be reconstructed.
 
 The Session SHALL enter `FORCE_CLOSING`.
+
+Once a Session has reached a terminal state, a stale recovery message SHALL be
+rejected and SHALL not move it back to `ACTIVE` or `RECOVERING`. The canonical
+Settlement/Forced Settlement record takes precedence over an in-memory failure
+handler state.
 
 ## 58. Recovery Attempts
 
@@ -1002,10 +1053,15 @@ session_force_settle:
   requested_at:
   last_accepted_checkpoint:
   provider_usage_report_hash:
+  provider_usage_report_hashes:
   consumer_ack_hash:
   failure_evidence_root:
-  requested_payment:
-  requested_refund:
+  requested_payment_q_atoms:
+  requested_refund_q_atoms:
+  request_settlement_root:
+  usage_chain_root:
+  checkpoint_root:
+  request_evidence:
   attribution_claim:
   initiator_signature:
 ```
@@ -1013,6 +1069,84 @@ session_force_settle:
 Requested values are claims.
 
 The State Machine SHALL independently calculate final values.
+
+The current consensus MVP implements two bounded profiles of this operation.
+`ENDPOINT_UNAVAILABLE` and `ENDPOINT_FAILURE` require finalized failure
+evidence, a finalized escrow lock, an elapsed declared timeout and a typed
+`AtomicSettlementTransition` that pays zero Endpoint Payment and refunds the
+remaining locked exposure. `requested_payment_q_atoms` is required to be zero
+and is never treated as authorization. The failure evidence operation, escrow
+lock state hash, Session ID, failure class, failure root and transition
+Settlement ID SHALL be cross-bound and referenced by the submitted envelope.
+The Settlement reason `CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE` is a
+distinct policy label, not an RFC-0060 failure class. Its compact failure
+evidence SHALL use `CONSUMER_DISCONNECTED`; the forced-settlement payload may
+retain the more specific policy reason and the validator SHALL enforce this
+mapping.
+For `CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE`, a non-zero Endpoint Payment
+is permitted only when every submitted Request evidence item is terminal
+`COMPLETED`, has a Final Usage hash and a record hash, is undisputed, and both
+hashes are referenced by the envelope. The Request Settlement Root and
+Settlement Input Root SHALL also be referenced. The validator SHALL recompute
+the requested Endpoint Payment as the sum of capped Request charges and require
+the typed transition's Endpoint credit, Consumer refund, fee consumption and
+reserve bounds to match the finalized Funding Account. A zero requested
+payment remains valid under the conservative refund fallback.
+Provider-metered, partial, checkpoint-based and disputed non-zero Forced
+Settlement calculations remain unsupported until their evidence and policy
+inputs are specialized in a later profile.
+
+### Consensus-enabled MVP execution boundary
+
+The consensus-enabled MVP separates local preparation from canonical economic
+application. The Hypervisor MAY prepare a local `SESSION_FORCE_SETTLE` record,
+but preparation SHALL not apply the Settlement transition or release/refund
+funds. The canonical operation chain is ordered:
+
+```text
+SESSION_ESCROW_LOCK
+        ↓ verified finality
+SESSION_FAILURE_EVIDENCE
+        ↓ verified finality
+SESSION_FORCE_SETTLE
+        ↓ verified finality
+local economic projection and terminal Session state
+```
+
+In validator mode, the local `SESSION_FAILURE_EVIDENCE` and
+`SESSION_FORCE_SETTLE` records are pending consensus projections only. They are
+stored in the Hypervisor retry snapshot and remain available as local
+correlation inputs, but SHALL NOT be appended to the canonical Ledger operation
+log or included in the ABCI app-hash state before finality. The projected force
+payload is converted to a fresh canonical envelope with finalized dependency
+IDs. After verified finality, the local economic projection SHALL validate the
+canonical force operation ID; a local pending ID is never treated as economic
+finality.
+
+Each stage SHALL be submitted at most once for the same canonical envelope
+identity. A later stage SHALL not be submitted while its predecessor is only
+admitted, locally observed, or awaiting finality. Repeating the API request is
+safe: it SHALL reconcile the existing stage and continue only from the first
+missing finalized stage.
+
+For the MVP, this automatic path supports zero-payment
+`ENDPOINT_UNAVAILABLE`/`ENDPOINT_FAILURE` handling and the evidence-bound
+completed fixed-price Consumer-timeout profile above. The API returns HTTP
+`202` with a pending consensus result while any stage awaits verified finality,
+and returns HTTP `200` only after the force-settlement operation is finalized
+and the local projection is applied. The non-consensus local profile retains
+its existing synchronous behavior.
+
+Validator-local MVP Session opening uses the same pending/finality boundary.
+The validator creates the Session and stores the exact canonical
+`SESSION_ESCROW_LOCK` envelope, but does not debit the Consumer wallet or
+activate execution. A retry with the same Session identity reconciles the
+stored envelope, requires no second wallet authorization, and returns `202`
+until verified finality is available. After finality, the validator requires
+the local `LOCKED` Funding Account to match the envelope byte-for-byte before
+marking the Session `FINALIZED` and allowing execution. This Session-open
+boundary does not itself authorize later Settlement payment; Settlement still
+requires the separate evidence and transition checks defined above.
 
 ## 61. Forced Settlement Preconditions
 
@@ -1084,6 +1218,50 @@ forced_settlement_result:
 ```
 
 The result SHALL be immutable.
+
+## 64.1 Forced Settlement Terminal Projection
+
+Successful Forced Settlement has the canonical Session terminal state
+`FORCE_SETTLED`. A local Hypervisor MAY expose the equivalent lower-case
+projection `force_settled`; ordinary cooperative completion remains
+`SETTLED`/`closed` and SHALL not be conflated with the forced path.
+
+The local Session projection SHALL retain a settlement snapshot containing at
+least the settlement evidence root, Endpoint Payment, Consumer refund, Network
+Fees and the bound payment/refund beneficiaries. The Session close reason and
+the canonical Forced Settlement operation remain part of the surrounding
+Session/Ledger evidence.
+
+Redelivery of the same finalization SHALL return the existing result without a
+second payment, refund or failure-handler transition. A redelivery with a
+different evidence root SHALL be rejected as a conflicting finalization.
+State restore SHALL preserve both `force_settled` and its settlement snapshot;
+the Session SHALL not return to `RECOVERING`, `ACTIVE` or `CLOSED` through a
+stale local recovery message.
+
+Failure evidence restored from the Hypervisor snapshot SHALL remain bound to
+the Session ID and its report identities. It SHALL be reconciled with the
+canonical Forced Settlement evidence root before the evidence is used for
+settlement evaluation; persistence alone never upgrades a local observation
+into canonical economic authority.
+
+For the MVP local path, this reconciliation is performed by comparing the
+handler-derived v1 root with the root carried by the force-finalization result
+before the local terminal projection is persisted. Consensus transport still
+requires a finalized `SESSION_FAILURE_EVIDENCE` operation carrying the same
+root. The local MVP now emits and references that compact operation before
+recording `SESSION_FORCE_SETTLE`. Both ABCI and deterministic block execution
+validate the evidence operation as a typed immutable commitment. Consensus
+submission is performed through an explicit local-to-canonical projection
+boundary: `SESSION_ESCROW_LOCK`, `SESSION_FAILURE_EVIDENCE` and
+`SESSION_FORCE_SETTLE` receive fresh canonical operation identities, while
+local IDs remain audit correlations. The Session operation orchestrator
+submits these operations in dependency order and SHALL not submit a dependent
+operation until a matching `ConsensusFinalitySource` has finalized its
+predecessor. Admission through `broadcast_tx_sync` is insufficient. The
+controlled four-validator acceptance drill exercises this chain and validator
+restart continuity; independently operated production finality remains a
+separate rollout boundary.
 
 ## 65. Duplicate Settlement Protection
 
@@ -1364,6 +1542,13 @@ Forced Settlement of a multi-request Session SHALL evaluate each request indepen
 Completed acknowledged requests remain payable.
 
 A failed final request SHALL not invalidate earlier completed work.
+
+The canonical Ledger authorization SHALL commit the Request Settlement Root,
+Usage Chain Root and a deterministic `request_evidence` list containing each
+Request ID, terminal state, Request Settlement Record hash, Usage hash, capped
+charge, dispute amount and dispute state. The forced path SHALL apply the
+already evaluated Request records; it SHALL not recalculate a Session from one
+aggregate amount or silently discard a conflicting Request.
 
 ## 83. Session Reservation Charges
 

@@ -626,9 +626,10 @@ In `ROADMAP.md`, replace the current session-contract gap wording with:
 In the "What is still missing" section, tighten the gap to:
 
 ```markdown
-- implementation of `RFC-0044` is still pending beyond partial local scaffolding:
-  - accepted Session contracts now persist as immutable local Registry Objects and settlement/open payloads reference those objects;
-  - but amendment/version chains, remote contract exchange, and full forced-settlement lifecycle semantics remain unimplemented.
+- implementation of `RFC-0044` remains partial beyond the local MVP boundary:
+  - accepted Session contracts persist as immutable local Registry Objects, with ordered amendment/version chains and portable contract exchange;
+  - the exchange stages validated evidence but does not activate or overwrite a local Session;
+  - authenticated network transport, distributed Contract acceptance and full checkpoint/dispute Forced Settlement semantics remain open.
 ```
 
 - [ ] **Step 2: Update the RFC alignment audit**
@@ -636,7 +637,7 @@ In the "What is still missing" section, tighten the gap to:
 In `docs/superpowers/specs/2026-07-13-rfc-implementation-alignment-audit.md`, update the `Session contract binding` row to:
 
 ```markdown
-| Session contract binding | RFC-0044 | `EndpointSession` now stores `advertisement_id`, optional `offer_id`, accounting contract references, deterministic `session_contract_hash`, and immutable `session_contract` Registry Object references alongside the accepted policy snapshot. | Partial | Capability definition hash, amendment/version-chain semantics, and distributed Session Contract exchange are still missing. |
+| Session contract binding | RFC-0044 | `EndpointSession` stores `advertisement_id`, optional `offer_id`, accounting contract references, deterministic `session_contract_hash`, immutable `session_contract` Registry Object references, and an ordered amendment/effective-terms chain. | Partial | Authenticated transport, authoritative cross-node activation and broader distributed Contract acceptance remain incomplete. |
 ```
 
 Update the `Settlement evidence` row to:

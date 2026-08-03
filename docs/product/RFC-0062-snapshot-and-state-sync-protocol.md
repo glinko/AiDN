@@ -517,6 +517,21 @@ It does not prove that every Registry Provider remains available or that the Pro
 
 Availability remains independently tested.
 
+### Repository MVP Boundary
+
+The repository's consensus entrypoints treat `SNAPSHOT_COMMIT` as a typed,
+metadata-only operation. They require the Snapshot identity and content hashes,
+the Chunk Root, protocol version, non-negative block height and Epoch, an
+optional matching target Epoch, and at least one typed Registry reference.
+The same Snapshot ID cannot be committed twice, and a Wallet-originated
+operation cannot create the commitment.
+
+This boundary prevents malformed or replayed Snapshot metadata from entering
+the local Ledger. It is not a substitute for the trusted-checkpoint/finality
+boundary in this RFC: external finality, producer authorization, chunk
+availability, restoration, and post-restore application-state verification
+remain separate checks before a node activates restored state.
+
 ## 28. Snapshot Commit Eligibility
 
 A Snapshot may be committed only when:
@@ -1153,7 +1168,19 @@ The policy SHOULD preserve:
 - selected historical Snapshots;
 - Genesis bootstrap data.
 
-Recommended initial retention is the latest two or three stable Snapshots plus required upgrade-boundary Snapshots.
+Recommended initial retention is the latest two or three stable Snapshots plus required upgrade-boundary Snapshots. A
+production source SHOULD retain a larger bounded window when snapshot transfer
+can span several block commits; the AiDN validator profile defaults to eight.
+
+Once a State Sync Consumer has requested the first chunk of a Snapshot, the
+source SHALL protect that exact Snapshot from ordinary retention pruning for a
+bounded transfer lease. The lease is renewed by subsequent chunk requests and
+expires after a configured inactivity interval. The initial validator profile
+uses 30 minutes. An explicit lease expiry or source failure MAY terminate the
+transfer, but a source SHALL NOT silently substitute a different Snapshot or
+mix chunks from different Snapshot identities. The Consumer SHALL restart from
+one complete advertised Snapshot when the lease expires or a chunk becomes
+unavailable.
 
 ## 74. Snapshot Pruning
 
@@ -1163,6 +1190,10 @@ A Provider MAY prune a Snapshot when:
 - enough newer stable Snapshots exist;
 - upgrade retention requirements are satisfied;
 - Provider availability metadata is updated.
+
+An active Snapshot transfer lease is an exception to ordinary pruning. The
+source MAY reclaim the Snapshot after the lease expires or the transfer is
+explicitly released.
 
 Pruning the bytes does not delete the canonical Snapshot commitment.
 
@@ -1527,6 +1558,7 @@ The following remain configurable:
 - trust-period duration;
 - checkpoint maximum age;
 - Snapshot retention count;
+- active Snapshot transfer lease duration;
 - upgrade-boundary retention;
 - availability-challenge rate;
 - transfer concurrency;
@@ -1541,6 +1573,7 @@ Recommended initial directions are:
 - chunk size: approximately 4-16 MiB;
 - provider-diversity target: three independent Provider groups;
 - Snapshot retention count: latest two or three stable Snapshots plus upgrade-boundary retention;
+- active Snapshot transfer lease: 30 minutes of inactivity in the initial validator profile;
 - trust period: aligned with unbonding and checkpoint policy;
 - portable Snapshot encoding profile: deterministic protobuf-like or CBOR-like export.
 

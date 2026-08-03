@@ -3,6 +3,7 @@ import pytest
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
+from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.remote_endpoints.service import (
     RemoteEndpointDependencyError,
     RemoteEndpointService,
@@ -34,6 +35,58 @@ def test_attach_remote_endpoint_creates_catalog_entry() -> None:
     assert attached.source_endpoint_id == "ep-remote"
     assert attached.alias == "Primary Remote"
     assert service.list_remote_endpoints() == [attached]
+
+
+def test_attach_remote_endpoint_persists_verified_publication_proof(tmp_path) -> None:
+    state_store = FileStateStore(tmp_path / "hypervisor-state.json")
+    service = RemoteEndpointService(RemoteEndpointStore(state_store))
+
+    attached = service.attach_remote_endpoint(
+        source_node_id="node-remote",
+        source_endpoint_id="ep-remote",
+        source_owner_wallet="wallet-remote",
+        source_publication_id="pub-remote",
+        source_configuration_hash="cfg-remote",
+        source_visibility="public",
+        source_model_class="llm_text",
+        source_status="published",
+        source_base_url="https://remote.example",
+        operator_id="operator-remote",
+        source_owner_public_key="ed25519:owner-public-key",
+        source_wallet_signature="ed25519:owner-signature",
+        publication_verification="VERIFIED",
+        pricing={"billing_unit": "request", "fixed_request": 1},
+        rating={},
+    )
+
+    restored = RemoteEndpointService(RemoteEndpointStore(state_store)).get_remote_endpoint(
+        attached.remote_endpoint_id
+    )
+
+    assert restored.source_owner_public_key == "ed25519:owner-public-key"
+    assert restored.source_wallet_signature == "ed25519:owner-signature"
+    assert restored.publication_verification == "VERIFIED"
+
+
+def test_attach_remote_endpoint_rejects_verified_status_without_proof() -> None:
+    service = RemoteEndpointService(RemoteEndpointStore())
+
+    with pytest.raises(ValueError, match="requires owner key and signature"):
+        service.attach_remote_endpoint(
+            source_node_id="node-remote",
+            source_endpoint_id="ep-remote",
+            source_owner_wallet="wallet-remote",
+            source_publication_id="pub-remote",
+            source_configuration_hash="cfg-remote",
+            source_visibility="public",
+            source_model_class="llm_text",
+            source_status="published",
+            source_base_url="https://remote.example",
+            operator_id="operator-remote",
+            publication_verification="VERIFIED",
+            pricing={},
+            rating={},
+        )
 
 
 def test_attach_remote_endpoint_refreshes_existing_entry_without_duplication() -> None:

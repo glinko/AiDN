@@ -6,13 +6,17 @@ from aidn_hypervisor.validation.models import (
     ValidationEpoch,
     ValidationReport,
     ValidationReportCommitment,
+    ValidationReportCustodyChallenge,
+    ValidationReportCustodyCheckTask,
     ValidationReportCustodyObject,
+    ValidationReportCustodyRetirement,
     ValidationReportCustodyState,
     ValidationReportStorageFailure,
     ValidationReportStorageReceipt,
     ValidationRequest,
     ValidationStatusSnapshot,
     ValidationValidatorEntry,
+    ValidationValidatorKeyBinding,
 )
 
 
@@ -26,10 +30,14 @@ class ValidationStore:
         self._report_storage_receipts: dict[str, ValidationReportStorageReceipt] = {}
         self._report_storage_failures: dict[str, ValidationReportStorageFailure] = {}
         self._report_custody_states: dict[str, ValidationReportCustodyState] = {}
+        self._report_custody_challenges: dict[str, ValidationReportCustodyChallenge] = {}
+        self._report_custody_tasks: dict[str, ValidationReportCustodyCheckTask] = {}
+        self._report_custody_retirings: dict[str, ValidationReportCustodyRetirement] = {}
         self._report_custody_objects: dict[str, ValidationReportCustodyObject] = {}
         self._snapshots: dict[tuple[str, str], ValidationStatusSnapshot] = {}
         self._epochs: dict[str, ValidationEpoch] = {}
         self._validator_entries: dict[str, ValidationValidatorEntry] = {}
+        self._validator_key_bindings: dict[str, ValidationValidatorKeyBinding] = {}
         self._assignments: dict[str, ValidationAssignment] = {}
         self._authorizations: dict[str, ValidationAuthorization] = {}
         self.restore()
@@ -75,6 +83,24 @@ class ValidationStore:
             )
             for item in snapshot.validation_report_custody_states
         }
+        self._report_custody_challenges = {
+            item.challenge_id: ValidationReportCustodyChallenge.model_validate(
+                item.model_dump(mode="json")
+            )
+            for item in snapshot.validation_report_custody_challenges
+        }
+        self._report_custody_tasks = {
+            item.task_id: ValidationReportCustodyCheckTask.model_validate(
+                item.model_dump(mode="json")
+            )
+            for item in snapshot.validation_report_custody_tasks
+        }
+        self._report_custody_retirings = {
+            item.retirement_id: ValidationReportCustodyRetirement.model_validate(
+                item.model_dump(mode="json")
+            )
+            for item in snapshot.validation_report_custody_retirings
+        }
         self._report_custody_objects = {
             item.report_hash: ValidationReportCustodyObject.model_validate(
                 item.model_dump(mode="json")
@@ -96,6 +122,12 @@ class ValidationStore:
                 item.model_dump(mode="json")
             )
             for item in snapshot.validation_validator_entries
+        }
+        self._validator_key_bindings = {
+            item.validator_id: ValidationValidatorKeyBinding.model_validate(
+                item.model_dump(mode="json")
+            )
+            for item in snapshot.validation_validator_key_bindings
         }
         self._assignments = {
             item.assignment_id: ValidationAssignment.model_validate(
@@ -198,6 +230,108 @@ class ValidationStore:
     def list_report_custody_states(self) -> list[ValidationReportCustodyState]:
         return list(self._report_custody_states.values())
 
+    def save_report_custody_challenge(
+        self,
+        challenge: ValidationReportCustodyChallenge,
+    ) -> None:
+        existing = self._report_custody_challenges.get(challenge.challenge_id)
+        if existing is not None and existing != challenge:
+            raise ValueError(
+                f"Validation report custody challenge conflict: {challenge.challenge_id}"
+            )
+        self._report_custody_challenges[challenge.challenge_id] = challenge
+        self._flush()
+
+    def get_report_custody_challenge(
+        self,
+        challenge_id: str,
+    ) -> ValidationReportCustodyChallenge:
+        return self._report_custody_challenges[challenge_id]
+
+    def list_report_custody_challenges(self) -> list[ValidationReportCustodyChallenge]:
+        return list(self._report_custody_challenges.values())
+
+    def save_report_custody_task(
+        self,
+        task: ValidationReportCustodyCheckTask,
+    ) -> None:
+        existing = self._report_custody_tasks.get(task.task_id)
+        if existing is not None:
+            immutable_fields = (
+                "epoch_id",
+                "seed",
+                "report_id",
+                "report_hash",
+                "endpoint_id",
+                "configuration_hash",
+                "observer_id",
+                "independence_key",
+                "challenge_id",
+                "required_quorum",
+                "observation_role",
+                "scheduled_at",
+                "task_evidence_root",
+            )
+            if any(
+                getattr(existing, field) != getattr(task, field)
+                for field in immutable_fields
+            ):
+                raise ValueError("Validation report custody task conflicts with its identity")
+            if existing.status == "completed" and task.status != "completed":
+                raise ValueError("Validation report custody task cannot be reopened")
+            if existing.status == "completed" and (
+                existing.completed_at != task.completed_at
+                or existing.outcome != task.outcome
+                or existing.challenge_evidence_root != task.challenge_evidence_root
+            ):
+                raise ValueError("Validation report custody task completion conflicts")
+        self._report_custody_tasks[task.task_id] = task
+        self._flush()
+
+    def get_report_custody_task(
+        self,
+        task_id: str,
+    ) -> ValidationReportCustodyCheckTask:
+        return self._report_custody_tasks[task_id]
+
+    def list_report_custody_tasks(self) -> list[ValidationReportCustodyCheckTask]:
+        return list(self._report_custody_tasks.values())
+
+    def save_report_custody_retirement(
+        self,
+        retirement: ValidationReportCustodyRetirement,
+    ) -> None:
+        existing = self._report_custody_retirings.get(retirement.retirement_id)
+        if existing is not None:
+            immutable_fields = (
+                "report_id",
+                "report_hash",
+                "endpoint_id",
+                "configuration_hash",
+                "requested_at",
+                "eligible_at",
+                "release_reason",
+                "evidence_root",
+            )
+            if any(
+                getattr(existing, field) != getattr(retirement, field)
+                for field in immutable_fields
+            ):
+                raise ValueError(
+                    "Validation report custody retirement conflicts with its identity"
+                )
+        self._report_custody_retirings[retirement.retirement_id] = retirement
+        self._flush()
+
+    def get_report_custody_retirement(
+        self,
+        retirement_id: str,
+    ) -> ValidationReportCustodyRetirement:
+        return self._report_custody_retirings[retirement_id]
+
+    def list_report_custody_retirings(self) -> list[ValidationReportCustodyRetirement]:
+        return list(self._report_custody_retirings.values())
+
     def save_report_custody_object(
         self,
         custody_object: ValidationReportCustodyObject,
@@ -249,6 +383,22 @@ class ValidationStore:
 
     def list_validator_entries(self) -> list[ValidationValidatorEntry]:
         return list(self._validator_entries.values())
+
+    def save_validator_key_binding(self, binding: ValidationValidatorKeyBinding) -> None:
+        existing = self._validator_key_bindings.get(binding.validator_id)
+        if existing is not None and existing != binding:
+            if existing.status == "active":
+                raise ValueError(
+                    f"Validation validator transfer key conflict: {binding.validator_id}"
+                )
+        self._validator_key_bindings[binding.validator_id] = binding
+        self._flush()
+
+    def get_validator_key_binding(self, validator_id: str) -> ValidationValidatorKeyBinding:
+        return self._validator_key_bindings[validator_id]
+
+    def list_validator_key_bindings(self) -> list[ValidationValidatorKeyBinding]:
+        return list(self._validator_key_bindings.values())
 
     def save_assignment(self, assignment: ValidationAssignment) -> None:
         self._assignments[assignment.assignment_id] = assignment
@@ -320,12 +470,24 @@ class ValidationStore:
                 "validation_report_custody_states": list(
                     self._report_custody_states.values()
                 ),
+                "validation_report_custody_challenges": list(
+                    self._report_custody_challenges.values()
+                ),
+                "validation_report_custody_tasks": list(
+                    self._report_custody_tasks.values()
+                ),
+                "validation_report_custody_retirings": list(
+                    self._report_custody_retirings.values()
+                ),
                 "validation_report_custody_objects": list(
                     self._report_custody_objects.values()
                 ),
                 "validation_status_snapshots": list(self._snapshots.values()),
                 "validation_epochs": list(self._epochs.values()),
                 "validation_validator_entries": list(self._validator_entries.values()),
+                "validation_validator_key_bindings": list(
+                    self._validator_key_bindings.values()
+                ),
                 "validation_assignments": list(self._assignments.values()),
                 "validation_authorizations": list(self._authorizations.values()),
             }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.domain.models import AllocationRequest
 from aidn_hypervisor.economics.models import (
     EpochRewardBudget,
@@ -10,6 +11,7 @@ from aidn_hypervisor.endpoints.state import (
     EndpointConfigurationSnapshotRecord,
     EndpointManifestSnapshot,
 )
+from aidn_hypervisor.ledger.models import LedgerOperationRecord
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
@@ -49,6 +51,7 @@ class SnapshotStateService:
         endpoint_store = getattr(endpoint_service, "store", None)
         session_service = getattr(self._host, "session_service", None)
         session_store = getattr(session_service, "store", None)
+        failure_handler = getattr(session_service, "failure_handler", None)
         persisted_snapshot = (
             self._host.state_store.load()
             if self._host.state_store is not None
@@ -353,7 +356,39 @@ class SnapshotStateService:
                     else []
                 )
             ),
+            session_failure_evidence=(
+                failure_handler.snapshot_evidence()
+                if failure_handler is not None
+                else (
+                    [
+                        item.model_copy(deep=True)
+                        for item in persisted_snapshot.session_failure_evidence
+                    ]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
+            session_failure_reports=(
+                failure_handler.snapshot_reports()
+                if failure_handler is not None
+                else (
+                    [
+                        item.model_copy(deep=True)
+                        for item in persisted_snapshot.session_failure_reports
+                    ]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
             ledger_operations=self._host.list_ledger_operations(),
+            pending_consensus_operations=[
+                LedgerOperationRecord.model_validate(item)
+                for item in self._host._pending_consensus_operations.values()
+            ],
+            pending_consensus_envelopes=[
+                LedgerOperationEnvelope.model_validate(item)
+                for item in self._host._pending_consensus_envelopes.values()
+            ],
             wallet_operation_sequences=self._host._ledger_operation_service.snapshot_wallet_sequences(),
             **self._host._ledger_operation_service.snapshot_settlement_state(),
             events=[event.model_copy(deep=True) for event in self._host._events],
@@ -393,6 +428,10 @@ class SnapshotStateService:
             ],
             wallet_sequences=dict(snapshot.wallet_operation_sequences),
             wallet_q_atom_balances=dict(snapshot.wallet_q_atom_balances),
+            recyclable_q_atoms=int(snapshot.recyclable_q_atoms),
+            burned_q_atoms=int(snapshot.burned_q_atoms),
+            stake_records=[dict(item) for item in snapshot.stake_records],
+            participant_suspensions=[dict(item) for item in snapshot.participant_suspensions],
             session_funding_accounts=[
                 item.model_dump(mode="json")
                 for item in snapshot.session_funding_accounts
@@ -403,8 +442,25 @@ class SnapshotStateService:
             settlement_acceptances=[
                 item.model_dump(mode="json") for item in snapshot.settlement_acceptances
             ],
+            session_checkpoints=[
+                item.model_dump(mode="json") for item in snapshot.session_checkpoints
+            ],
+            settlement_disputes=[
+                item.model_dump(mode="json") for item in snapshot.settlement_disputes
+            ],
+            settlement_corrections=[
+                item.model_dump(mode="json") for item in snapshot.settlement_corrections
+            ],
             settlement_transition_hashes=dict(snapshot.settlement_transition_hashes),
         )
+        self._host._pending_consensus_operations = {
+            item.operation_id: item.model_dump(mode="json")
+            for item in snapshot.pending_consensus_operations
+        }
+        self._host._pending_consensus_envelopes = {
+            item.operation_id: item.model_dump(mode="json")
+            for item in snapshot.pending_consensus_envelopes
+        }
         self._host._wallet_identities = {
             item["wallet_id"]: dict(item) for item in snapshot.wallet_identities
         }
@@ -416,6 +472,13 @@ class SnapshotStateService:
             for state in snapshot.bundle_states
         }
         self._host._events = [event.model_copy(deep=True) for event in snapshot.events]
+        session_service = getattr(self._host, "session_service", None)
+        failure_handler = getattr(session_service, "failure_handler", None)
+        if failure_handler is not None:
+            failure_handler.restore_evidence(
+                evidence=snapshot.session_failure_evidence,
+                reports=snapshot.session_failure_reports,
+            )
         for allocation in snapshot.allocations:
             self._host._allocations[allocation.allocation_id] = {
                 "allocation_id": allocation.allocation_id,

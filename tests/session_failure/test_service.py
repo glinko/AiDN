@@ -132,6 +132,22 @@ class TestSessionRegistration:
     def test_unregister_unknown_session_returns_false(self, handler):
         assert handler.unregister_session("unknown") is False
 
+    def test_recovering_registration_restores_deadline(self, handler):
+        handler.register_session(
+            "sess-001",
+            "recovering",
+            recovery_deadline="2030-01-01T00:00:00+00:00",
+        )
+        assert handler.get_recovery_deadline("sess-001") == (
+            "2030-01-01T00:00:00+00:00"
+        )
+
+    def test_recovering_registration_without_deadline_expires_immediately(self, handler):
+        handler.register_session("sess-001", "recovering")
+        assert handler.get_recovery_deadline("sess-001") is not None
+        handler._recovery_deadlines["sess-001"] = "2020-01-01T00:00:00+00:00"
+        assert handler.is_recovery_expired("sess-001") is True
+
 
 # ---------------------------------------------------------------------------
 # Recovery window

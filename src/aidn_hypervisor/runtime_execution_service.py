@@ -138,6 +138,9 @@ class RuntimeExecutionService:
             endpoint_configuration_hash=endpoint.configuration_hash,
             session_id=session.session_id,
             session_contract_hash=session.session_contract_hash,
+            effective_terms_hash=(
+                session.effective_terms_hash or session.session_contract_hash
+            ),
             request_id=request_id,
             capability_id=(
                 endpoint.capabilities[0]
@@ -186,6 +189,7 @@ class RuntimeExecutionService:
             endpoint_configuration_hash=request.endpoint_configuration_hash,
             session_id=request.session_id,
             request_id=request.request_id,
+            effective_terms_hash=request.effective_terms_hash,
             accounting_contract_hash=request.accounting_contract_hash,
             report_type="FINAL",
             usage_sequence=1,
@@ -348,6 +352,7 @@ class RuntimeExecutionService:
                 "endpoint_configuration_hash": result.endpoint_configuration_hash,
                 "session_id": result.session_id,
                 "session_contract_hash": record.request.session_contract_hash,
+                "effective_terms_hash": record.request.effective_terms_hash,
                 "accounting_contract_hash": record.request.accounting_contract_hash,
                 "terminal_state": result.terminal_state,
                 "result_hash": result.result_hash,

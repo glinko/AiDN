@@ -115,16 +115,15 @@ def verify_external_cometbft_acceptance(
         evidence = loader(endpoint)
         if evidence is None:
             raise ValueError(f"external CometBFT endpoint did not verify finality: {endpoint}")
+        if not isinstance(evidence, ConsensusFinalityEvidence):
+            raise ValueError("external CometBFT evidence type is invalid")
         if evidence.operation_id != config.operation_id or evidence.chain_id != config.chain_id:
             raise ValueError("external CometBFT evidence identity does not match acceptance config")
         evidence_by_endpoint.append((endpoint, evidence))
     expected = evidence_by_endpoint[0][1]
+    expected_fingerprint = _evidence_fingerprint(expected)
     for _, evidence in evidence_by_endpoint[1:]:
-        if (evidence.block_height, evidence.block_id, evidence.app_hash) != (
-            expected.block_height,
-            expected.block_id,
-            expected.app_hash,
-        ):
+        if _evidence_fingerprint(evidence) != expected_fingerprint:
             raise ValueError("external CometBFT RPC endpoints disagree on finalized evidence")
     return {
         "status": "ok",
@@ -135,6 +134,20 @@ def verify_external_cometbft_acceptance(
             "reason": "Multiple RPC endpoints can agree while remaining under one operator control.",
         },
     }
+
+
+def _evidence_fingerprint(evidence: ConsensusFinalityEvidence) -> tuple[object, ...]:
+    """Compare all canonical finality fields while ignoring verifier identity."""
+    return (
+        evidence.operation_id,
+        evidence.chain_id,
+        evidence.block_height,
+        evidence.block_id,
+        evidence.app_hash,
+        evidence.commit_hash,
+        evidence.finalized_at,
+        evidence.proof_version,
+    )
 
 
 def _default_evidence_loader(
