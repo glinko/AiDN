@@ -472,6 +472,14 @@ AppHash_A(H) == AppHash_B(H)
 StateRoot_A(H) == StateRoot_B(H)
 ```
 
+The repository acceptance harness
+`tools/run-consensus-snapshot-acceptance.py` executes this continuity fixture
+against the current `AIDNABCIApplication`. It also verifies direct snapshot
+restore, chunked State Sync, rejection of a tampered chunk, and advancement of
+the restored/state-synced projections through the next block. Its report is
+`CONTROLLED_LOCAL` evidence only; it does not replace live validator or
+independent-operator acceptance.
+
 ## 18. Genesis fixture
 
 The fixture set MUST freeze:

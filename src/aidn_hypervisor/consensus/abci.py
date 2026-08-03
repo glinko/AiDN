@@ -19,6 +19,7 @@ from aidn_hypervisor.consensus.coverage import (
     VALIDATION_EVIDENCE_OPERATION_TYPES,
     strict_operation_coverage_error,
 )
+from aidn_hypervisor.consensus.execution import compute_execution_state_root
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.state_store import (
     ABCIStateSnapshot,
@@ -534,6 +535,7 @@ class AIDNABCIApplication:
             "last_block_height": self._last_block_height,
             "last_block_hash": self._last_block_hash.hex(),
             "app_hash": self._compute_state_hash().hex(),
+            "state_root": compute_execution_state_root(self.ledger),
             "commitments": [asdict(commitment) for commitment in self._commitments.values()],
             "ledger_operations": self.ledger.snapshot_operations(),
             "wallet_sequences": self.ledger.snapshot_wallet_sequences(),
@@ -606,6 +608,14 @@ class AIDNABCIApplication:
         self._app_hash = self._snapshot_app_hash(snapshot)
         if len(self._last_block_hash) != 32 or len(self._app_hash) != 32:
             raise ValueError("snapshot hash length is invalid")
+        declared_state_root = snapshot.get("state_root")
+        if declared_state_root is not None:
+            if (
+                not isinstance(declared_state_root, str)
+                or len(declared_state_root) != 64
+                or declared_state_root != compute_execution_state_root(self.ledger)
+            ):
+                raise ValueError("snapshot state root does not match state")
         self._genesis_time = snapshot.get("genesis_time", self._genesis_time)
         self._commitments = {
             commitment["height"]: ABCICanonicalCommitment(**commitment)
@@ -613,6 +623,19 @@ class AIDNABCIApplication:
         }
         if self._compute_state_hash() != self._app_hash:
             raise ValueError("snapshot application hash does not match state")
+        # Wallet sequence state is part of the executable consensus projection
+        # even though it is not separately committed. Rebuild it so the next
+        # block uses the same sequence rules. Replay authority remains the
+        # restored Ledger registry, which preserves typed duplicate errors.
+        self._admission.restore_state(
+            {
+                "finalized_ids": set(),
+                "wallet_sequences": {
+                    str(wallet_id): int(sequence)
+                    for wallet_id, sequence in snapshot.get("wallet_sequences", {}).items()
+                },
+            }
+        )
 
     # ---- State Sync ----
 

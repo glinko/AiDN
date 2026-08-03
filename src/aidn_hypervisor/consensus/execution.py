@@ -61,6 +61,26 @@ class BlockExecutionResult:
     validator_updates: list[dict] = field(default_factory=list)
 
 
+def compute_execution_state_root(ledger_service: Any) -> str:
+    """Compute the deterministic execution StateRoot for a Ledger projection."""
+    ops = ledger_service.snapshot_operations()
+    wallet_seqs = ledger_service.snapshot_wallet_sequences()
+
+    state: dict[str, Any] = {
+        "operations": len(ops),
+        "wallets": wallet_seqs,
+    }
+    consensus_state = ledger_service.snapshot_consensus_state()
+    if (
+        consensus_state["active_validator_set"]
+        or consensus_state["active_validator_set_epoch"] is not None
+        or consensus_state["activated_validator_set_epochs"]
+    ):
+        state["consensus_state"] = consensus_state
+    canonical = json.dumps(state, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 # ── Execution Engine ────────────────────────────────────────────────
 
 
@@ -1439,22 +1459,7 @@ class ExecutionEngine:
 
     def _compute_state_root(self) -> str:
         """Compute deterministic hash of current ledger state."""
-        ops = self.ledger.snapshot_operations()
-        wallet_seqs = self.ledger.snapshot_wallet_sequences()
-
-        state = {
-            "operations": len(ops),
-            "wallets": wallet_seqs,
-        }
-        consensus_state = self.ledger.snapshot_consensus_state()
-        if (
-            consensus_state["active_validator_set"]
-            or consensus_state["active_validator_set_epoch"] is not None
-            or consensus_state["activated_validator_set_epochs"]
-        ):
-            state["consensus_state"] = consensus_state
-        canonical = json.dumps(state, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode()).hexdigest()
+        return compute_execution_state_root(self.ledger)
 
     # ── Internal: parse ───────────────────────────────────────────
 

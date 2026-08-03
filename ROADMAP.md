@@ -916,6 +916,14 @@ This work is intentionally outside the functional MVP. It must not alter current
     `legacy_operation_types`. They remain reject-only at strict runtime and are
     no longer mistaken for missing active MVP transitions; G1 now measures the
     active profile without introducing unsafe aliases.
+20. Added the executable controlled-local G2 snapshot acceptance harness. It
+    proves durable export, direct restore, chunked State Sync, corrupt-snapshot
+    rejection, identical StateRoot/AppHash at the snapshot height, and one
+    identical next-block transition. Snapshot restore now rebuilds admission
+    wallet sequences while the restored Ledger remains the replay authority; a
+    restored node cannot claim a matching AppHash and then reject the next
+    valid transaction. This evidence is intentionally not a substitute for
+    live multi-validator or independent operator evidence.
 
 ### Current post-MVP implementation gate
 
@@ -926,6 +934,8 @@ This work is intentionally outside the functional MVP. It must not alter current
   checked-in FIX-0001 ABCI vector deterministically.
 - [x] Verify EVD-0001 artifact hashes, Merkle root, safe publication paths and
   Ed25519 operator attestation; expose incomplete GATE-0001 status explicitly.
+- [x] Run controlled-local G2 snapshot/State Sync acceptance and verify its
+  report through the release-gate CLI.
 - [ ] Collect live public RPC observations and bind them to the accepted profile.
 - [ ] Publish a canonical genesis/config/trusted-checkpoint release bundle and verify it during deployment.
 - [ ] Complete production deployment, restart/state-sync/fault-drill evidence across independently operated validators.

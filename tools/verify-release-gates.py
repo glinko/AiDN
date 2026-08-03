@@ -17,6 +17,10 @@ from aidn_hypervisor.consensus.coverage import (
 )
 from aidn_hypervisor.consensus.fixture_runner import FixtureError, run_fixture_set
 from aidn_hypervisor.consensus.implementation_profile import verify_implementation_profile
+from aidn_hypervisor.consensus.snapshot_acceptance import (
+    SnapshotAcceptanceError,
+    load_and_verify_snapshot_acceptance_report,
+)
 from aidn_hypervisor.evidence import EvidenceBundleError, verify_public_evidence_bundle
 
 
@@ -98,6 +102,30 @@ def _not_run(reason: str) -> dict[str, Any]:
     return _gate("NOT_RUN", reason=reason)
 
 
+def _run_g2(report_path: Path | None, profile: dict[str, Any]) -> dict[str, Any]:
+    if report_path is None:
+        return _not_run("snapshot/state-sync operational evidence is not supplied")
+    try:
+        report = load_and_verify_snapshot_acceptance_report(report_path)
+    except SnapshotAcceptanceError as error:
+        return _gate("FAIL", reason=str(error))
+    if (
+        report.get("profile_id") != profile.get("profile_id")
+        or report.get("profile_commitment") != profile.get("profile_commitment")
+    ):
+        return _gate("FAIL", reason="G2 report does not match the selected implementation profile")
+    return _gate(
+        "PASS",
+        details={
+            "mode": report["mode"],
+            "report_hash": report["report_hash"],
+            "snapshot_height": report["snapshot"]["height"],
+            "snapshot_chunks": report["snapshot"]["chunks"],
+            "checks": report["checks"],
+        },
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -107,6 +135,11 @@ def main() -> int:
     )
     parser.add_argument("--fixture-manifest", type=Path, default=Path("fixtures/manifest.json"))
     parser.add_argument("--evidence-dir", type=Path)
+    parser.add_argument(
+        "--g2-report",
+        type=Path,
+        help="verify a deterministic local G2 snapshot/state-sync acceptance report",
+    )
     parser.add_argument("--require-evidence", action="append", default=[])
     parser.add_argument(
         "--allow-incomplete",
@@ -116,10 +149,18 @@ def main() -> int:
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
 
+    try:
+        selected_profile = _load_profile(args.profile)
+    except ValueError:
+        selected_profile = None
     gates = {
         "G0": _run_g0(args.profile),
         "G1": _run_g1(args.fixture_manifest),
-        "G2": _not_run("snapshot/state-sync operational evidence is not supplied"),
+        "G2": (
+            _run_g2(args.g2_report, selected_profile)
+            if selected_profile is not None
+            else _gate("FAIL", reason="cannot validate G2 without a valid implementation profile")
+        ),
         "G3": _not_run("multi-node consensus evidence is not supplied"),
         "G4": _not_run("public networking evidence is not supplied"),
         "G5": _not_run("fault-recovery drill evidence is not supplied"),

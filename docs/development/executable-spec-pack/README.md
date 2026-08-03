@@ -51,11 +51,19 @@ The current repository provides deterministic local checks for the executable pa
 ```bash
 uv run python tools/generate-implementation-profile.py --check
 uv run python tools/run-consensus-fixtures.py --manifest fixtures/manifest.json --strict
+uv run python tools/run-consensus-snapshot-acceptance.py --report ./g2-report.json
 uv run python tools/verify-public-evidence-bundle.py --evidence-dir ./evidence
-uv run python tools/verify-release-gates.py --evidence-dir ./evidence
+uv run python tools/verify-release-gates.py --g2-report ./g2-report.json --evidence-dir ./evidence
 ```
 
 The checked-in implementation profile is a `DRAFT_CANDIDATE` and is not an activation or Governance decision. The release-gate command therefore reports missing operational gates as `NOT_RUN`/`INCOMPLETE` instead of treating local unit tests as public deployment evidence. Use `--allow-incomplete` only for a local development loop.
+
+`run-consensus-snapshot-acceptance.py` produces controlled local G2 evidence for
+snapshot export, direct restore, chunked State Sync, corrupt-snapshot rejection,
+and one-block continuity. The gate replays the harness while verifying the
+report, so the JSON file is evidence of the current implementation rather than
+an unchecked assertion. It does not claim multi-node, public-network, or
+independent-operator evidence.
 
 Historical catalog names that were superseded by typed transitions are listed
 as `legacy_operation_types` in the profile. They remain fail-closed at runtime
