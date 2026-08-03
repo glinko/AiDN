@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-02`
+Last updated: `2026-08-03`
 
 This is the main public roadmap for the repository.
 
@@ -623,7 +623,14 @@ Immediate priorities:
    The finality regression suite covers absent, mismatched, quorum-ambiguous
    and valid evidence. A public, independently operated multi-validator
    testnet remains the next operational acceptance step before public
-   network-finality claims.
+   network-finality claims. A signed `PublicMultiValidatorNetworkProfile` and
+   fail-closed acceptance tool now bind validator manifests, HTTPS RPC
+   endpoints, distinct operator/control-group thresholds, trusted checkpoint
+   input and release-authority signatures. The tool can emit the existing
+   multi-RPC finality deployment only after out-of-band independence evidence
+   is present; it does not claim that cryptographic RPC agreement proves
+   organizational independence. See
+   `docs/development/public-multivalidator-rollout.md`.
 
 ## Milestones
 
@@ -888,7 +895,18 @@ This work is intentionally outside the functional MVP. It must not alter current
 12. `DEVELOPMENT_REWARD_EXPIRE_UNCLAIMED` is now implemented as a source-bound, non-crediting carryover transition. It requires a finalized claim-window boundary after expiry, preserves the original unclaimed evidence, returns exactly one stage to the allocation's available budget, and rejects claim/expiry replay with snapshot-safe conservation checks.
 13. `DEVELOPMENT_REWARD_FINALIZE_COMMITMENT` is now implemented as an evidence-only close of the exact calculation, allocation, reserve, payment, unclaimed, claim and expiry set. It stores deterministic roots and is replay-protected without minting, paying or changing Wallet balances.
 14. A signed ECO-0007 rollout profile now provides a fail-closed boundary for epoch reward atoms, contribution count and optionally per-contributor reward. The profile is bound into the activation approval and calculation commitment; calculations above the active cap are rejected before reserve/payment transitions.
-15. The remaining reward work is intentionally bounded: pool carryover operation, bounty lifecycle, unvested cancellation, correction, and production multi-validator rollout evidence. Forge data remains evidence, not a payment authority.
+15. Pool carryover, bounty create/reserve/release/expiry, unvested cancellation, and reward correction are now implemented as immutable, source-bound, non-emitting transitions in both ABCI and deterministic execution. Snapshot/restore, replay protection, conservation checks, and strict operation coverage are included. Forge data remains evidence, not a payment authority.
+16. Signed public multi-validator profile/acceptance infrastructure is implemented: validator manifests, CometBFT checkpoint binding, profile-signature quorum, static acceptance reports, and finality-config projection. It does not claim live public deployment or organizational independence. Live HTTPS RPC observations, a canonical genesis/trust-anchor release bundle, production deployment/fault-drill evidence, and out-of-band operator attestations remain explicit public-network gates.
+
+### Current post-MVP implementation gate
+
+- [x] ECO-0007 carryover and bounty lifecycle transitions are consensus-applied and persisted.
+- [x] ECO-0007 unvested cancellation and correction transitions are consensus-applied, append-only, and persisted.
+- [x] Public multi-validator profiles are signed, hash-bound, quorum-checked, and projected into the existing CometBFT finality configuration.
+- [ ] Collect live public RPC observations and bind them to the accepted profile.
+- [ ] Publish a canonical genesis/config/trusted-checkpoint release bundle and verify it during deployment.
+- [ ] Complete production deployment, restart/state-sync/fault-drill evidence across independently operated validators.
+- [ ] Obtain and retain out-of-band operator/control-group independence attestations before making public trust claims.
 
 ### Dashboard design and information architecture
 

@@ -372,22 +372,14 @@ class HypervisorStateSnapshot(BaseModel):
     provider_instances: list[ProviderInstance] = Field(default_factory=list)
     model_deployments: list[ModelDeployment] = Field(default_factory=list)
     runtime_bindings: list[RuntimeBinding] = Field(default_factory=list)
-    provider_artifact_materializations: list[ProviderArtifactMaterialization] = Field(
-        default_factory=list
-    )
-    provider_installation_approvals: list[ProviderInstallationApproval] = Field(
-        default_factory=list
-    )
-    provider_installation_jobs: list[ProviderInstallationJob] = Field(
-        default_factory=list
-    )
+    provider_artifact_materializations: list[ProviderArtifactMaterialization] = Field(default_factory=list)
+    provider_installation_approvals: list[ProviderInstallationApproval] = Field(default_factory=list)
+    provider_installation_jobs: list[ProviderInstallationJob] = Field(default_factory=list)
     plugin_host_connections: list[PluginHostConnection] = Field(default_factory=list)
     dispatcher_routes: list[DispatcherRoute] = Field(default_factory=list)
     dispatcher_queued_messages: list[NetworkMessage] = Field(default_factory=list)
     dispatcher_delivery_records: list[DeliveryRecord] = Field(default_factory=list)
-    dispatcher_replay_records: list[DispatcherReplayRecord] = Field(
-        default_factory=list
-    )
+    dispatcher_replay_records: list[DispatcherReplayRecord] = Field(default_factory=list)
     dispatcher_dead_letters: list[DeadLetterRecord] = Field(default_factory=list)
     runtime_protocol_connections: list[RuntimeConnection] = Field(default_factory=list)
     runtime_protocol_ready_states: list[RuntimeReady] = Field(default_factory=list)
@@ -396,94 +388,42 @@ class HypervisorStateSnapshot(BaseModel):
     runtime_protocol_messages: list[RuntimeMessage] = Field(default_factory=list)
     runtime_protocol_sequences: dict[str, int] = Field(default_factory=dict)
     runtime_protocol_requests: list[RuntimeRequestRecord] = Field(default_factory=list)
-    runtime_protocol_cancellations: list[RuntimeCancellationRecord] = Field(
-        default_factory=list
-    )
-    runtime_protocol_cancellation_results: list[RuntimeCancelResult] = Field(
-        default_factory=list
-    )
+    runtime_protocol_cancellations: list[RuntimeCancellationRecord] = Field(default_factory=list)
+    runtime_protocol_cancellation_results: list[RuntimeCancelResult] = Field(default_factory=list)
     runtime_protocol_results: list[RuntimeResult] = Field(default_factory=list)
     runtime_protocol_streams: list[RuntimeStreamOpen] = Field(default_factory=list)
-    runtime_protocol_stream_chunks: list[RuntimeStreamChunk] = Field(
-        default_factory=list
-    )
-    runtime_protocol_stream_closes: list[RuntimeStreamClose] = Field(
-        default_factory=list
-    )
-    runtime_protocol_artifacts: list[RuntimeArtifactDeclare] = Field(
-        default_factory=list
-    )
-    runtime_protocol_state_checkpoints: list[RuntimeStateCheckpoint] = Field(
-        default_factory=list
-    )
-    runtime_protocol_recovery_states: list[RuntimeRecoveryState] = Field(
-        default_factory=list
-    )
+    runtime_protocol_stream_chunks: list[RuntimeStreamChunk] = Field(default_factory=list)
+    runtime_protocol_stream_closes: list[RuntimeStreamClose] = Field(default_factory=list)
+    runtime_protocol_artifacts: list[RuntimeArtifactDeclare] = Field(default_factory=list)
+    runtime_protocol_state_checkpoints: list[RuntimeStateCheckpoint] = Field(default_factory=list)
+    runtime_protocol_recovery_states: list[RuntimeRecoveryState] = Field(default_factory=list)
     runtime_protocol_usage_reports: list[RuntimeUsageReport] = Field(default_factory=list)
     runtime_protocol_usage_acks: list[RuntimeUsageAck] = Field(default_factory=list)
-    runtime_protocol_usage_conflicts: list[RuntimeUsageConflict] = Field(
-        default_factory=list
-    )
-    runtime_protocol_recovery_plans: list[RuntimeRecoveryPlan] = Field(
-        default_factory=list
-    )
-    runtime_protocol_recovery_results: list[RuntimeRecoveryResult] = Field(
-        default_factory=list
-    )
-    runtime_protocol_drain_requests: list[RuntimeDrainRequest] = Field(
-        default_factory=list
-    )
-    runtime_protocol_drain_statuses: list[RuntimeDrainStatus] = Field(
-        default_factory=list
-    )
-    runtime_protocol_drain_completes: list[RuntimeDrainComplete] = Field(
-        default_factory=list
-    )
+    runtime_protocol_usage_conflicts: list[RuntimeUsageConflict] = Field(default_factory=list)
+    runtime_protocol_recovery_plans: list[RuntimeRecoveryPlan] = Field(default_factory=list)
+    runtime_protocol_recovery_results: list[RuntimeRecoveryResult] = Field(default_factory=list)
+    runtime_protocol_drain_requests: list[RuntimeDrainRequest] = Field(default_factory=list)
+    runtime_protocol_drain_statuses: list[RuntimeDrainStatus] = Field(default_factory=list)
+    runtime_protocol_drain_completes: list[RuntimeDrainComplete] = Field(default_factory=list)
     runtime_protocol_shutdowns: list[RuntimeShutdown] = Field(default_factory=list)
     validation_requests: list[ValidationRequest] = Field(default_factory=list)
     validation_bonds: list[ValidationBond] = Field(default_factory=list)
     validation_reports: list[ValidationReport] = Field(default_factory=list)
-    validation_report_commitments: list[ValidationReportCommitment] = Field(
-        default_factory=list
-    )
-    validation_report_storage_receipts: list[ValidationReportStorageReceipt] = Field(
-        default_factory=list
-    )
-    validation_report_storage_failures: list[ValidationReportStorageFailure] = Field(
-        default_factory=list
-    )
-    validation_report_transfer_replays: list[ValidationReportTransferReplay] = Field(
-        default_factory=list
-    )
-    validation_report_custody_states: list[ValidationReportCustodyState] = Field(
-        default_factory=list
-    )
-    validation_report_custody_challenges: list[ValidationReportCustodyChallenge] = Field(
-        default_factory=list
-    )
-    validation_report_custody_tasks: list[ValidationReportCustodyCheckTask] = Field(
-        default_factory=list
-    )
-    validation_report_custody_retirings: list[ValidationReportCustodyRetirement] = Field(
-        default_factory=list
-    )
-    validation_report_custody_objects: list[ValidationReportCustodyObject] = Field(
-        default_factory=list
-    )
-    validation_status_snapshots: list[ValidationStatusSnapshot] = Field(
-        default_factory=list
-    )
+    validation_report_commitments: list[ValidationReportCommitment] = Field(default_factory=list)
+    validation_report_storage_receipts: list[ValidationReportStorageReceipt] = Field(default_factory=list)
+    validation_report_storage_failures: list[ValidationReportStorageFailure] = Field(default_factory=list)
+    validation_report_transfer_replays: list[ValidationReportTransferReplay] = Field(default_factory=list)
+    validation_report_custody_states: list[ValidationReportCustodyState] = Field(default_factory=list)
+    validation_report_custody_challenges: list[ValidationReportCustodyChallenge] = Field(default_factory=list)
+    validation_report_custody_tasks: list[ValidationReportCustodyCheckTask] = Field(default_factory=list)
+    validation_report_custody_retirings: list[ValidationReportCustodyRetirement] = Field(default_factory=list)
+    validation_report_custody_objects: list[ValidationReportCustodyObject] = Field(default_factory=list)
+    validation_status_snapshots: list[ValidationStatusSnapshot] = Field(default_factory=list)
     validation_epochs: list[ValidationEpoch] = Field(default_factory=list)
-    validation_validator_entries: list[ValidationValidatorEntry] = Field(
-        default_factory=list
-    )
-    validation_validator_key_bindings: list[ValidationValidatorKeyBinding] = Field(
-        default_factory=list
-    )
+    validation_validator_entries: list[ValidationValidatorEntry] = Field(default_factory=list)
+    validation_validator_key_bindings: list[ValidationValidatorKeyBinding] = Field(default_factory=list)
     validation_assignments: list[ValidationAssignment] = Field(default_factory=list)
-    validation_authorizations: list[ValidationAuthorization] = Field(
-        default_factory=list
-    )
+    validation_authorizations: list[ValidationAuthorization] = Field(default_factory=list)
     operator_requests_policy: dict[str, bool | str] = Field(
         default_factory=lambda: {
             "allow_spillover": False,
@@ -496,15 +436,9 @@ class HypervisorStateSnapshot(BaseModel):
     wallet_ledger_events: list[WalletLedgerSnapshot] = Field(default_factory=list)
     wallet_economics_events: list[WalletLedgerSnapshot] = Field(default_factory=list)
     wallet_allocation_events: list[WalletAllocationSnapshot] = Field(default_factory=list)
-    wallet_allocation_activation_events: list[WalletAllocationActivationSnapshot] = Field(
-        default_factory=list
-    )
-    wallet_allocation_dispute_events: list[WalletAllocationDisputeSnapshot] = Field(
-        default_factory=list
-    )
-    wallet_allocation_correction_events: list[WalletAllocationCorrectionSnapshot] = Field(
-        default_factory=list
-    )
+    wallet_allocation_activation_events: list[WalletAllocationActivationSnapshot] = Field(default_factory=list)
+    wallet_allocation_dispute_events: list[WalletAllocationDisputeSnapshot] = Field(default_factory=list)
+    wallet_allocation_correction_events: list[WalletAllocationCorrectionSnapshot] = Field(default_factory=list)
     recyclable_removals: list[RecyclableRemoval] = Field(default_factory=list)
     faucet_claims: list[FaucetClaim] = Field(default_factory=list)
     epoch_reward_budgets: list[EpochRewardBudget] = Field(default_factory=list)
@@ -513,12 +447,8 @@ class HypervisorStateSnapshot(BaseModel):
     consumed_wallet_authorization_nonces: list[str] = Field(default_factory=list)
     operator_onboarding: OperatorOnboardingSnapshot | None = None
     endpoints: list[EndpointManifestSnapshot] = Field(default_factory=list)
-    endpoint_configuration_snapshots: list[EndpointConfigurationSnapshotRecord] = Field(
-        default_factory=list
-    )
-    endpoint_publications: list[PublishedEndpointConfiguration] = Field(
-        default_factory=list
-    )
+    endpoint_configuration_snapshots: list[EndpointConfigurationSnapshotRecord] = Field(default_factory=list)
+    endpoint_publications: list[PublishedEndpointConfiguration] = Field(default_factory=list)
     remote_endpoints: list[RemoteEndpointReference] = Field(default_factory=list)
     endpoint_sessions: list[EndpointSessionSnapshot] = Field(default_factory=list)
     locked_deposits: list[LockedDepositSnapshot] = Field(default_factory=list)
@@ -527,9 +457,7 @@ class HypervisorStateSnapshot(BaseModel):
     session_failure_reports: list[FailureReport] = Field(default_factory=list)
     ledger_operations: list[LedgerOperationRecord] = Field(default_factory=list)
     pending_consensus_operations: list[LedgerOperationRecord] = Field(default_factory=list)
-    pending_consensus_envelopes: list[LedgerOperationEnvelope] = Field(
-        default_factory=list
-    )
+    pending_consensus_envelopes: list[LedgerOperationEnvelope] = Field(default_factory=list)
     wallet_operation_sequences: dict[str, int] = Field(default_factory=dict)
     wallet_q_atom_balances: dict[str, int] = Field(default_factory=dict)
     recyclable_q_atoms: int = 0
@@ -543,4 +471,16 @@ class HypervisorStateSnapshot(BaseModel):
     settlement_disputes: list[SettlementDispute] = Field(default_factory=list)
     settlement_corrections: list[SettlementCorrection] = Field(default_factory=list)
     settlement_transition_hashes: dict[str, str] = Field(default_factory=dict)
+    development_pool_allocations: list[dict] = Field(default_factory=list)
+    development_pool_carryovers: list[dict] = Field(default_factory=list)
+    development_bounty_states: list[dict] = Field(default_factory=list)
+    development_reward_reserves: list[dict] = Field(default_factory=list)
+    development_reward_payment_records: list[dict] = Field(default_factory=list)
+    development_reward_unclaimed_records: list[dict] = Field(default_factory=list)
+    development_reward_claim_records: list[dict] = Field(default_factory=list)
+    development_reward_expiry_records: list[dict] = Field(default_factory=list)
+    development_reward_finalized_commitments: list[dict] = Field(default_factory=list)
+    development_reward_adjustment_snapshots: list[dict] = Field(default_factory=list)
+    development_reward_cancellations: list[dict] = Field(default_factory=list)
+    development_reward_corrections: list[dict] = Field(default_factory=list)
     events: list[JournalEvent] = Field(default_factory=list)

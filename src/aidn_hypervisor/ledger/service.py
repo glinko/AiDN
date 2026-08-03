@@ -176,6 +176,11 @@ class LedgerOperationService:
         self._development_reward_claim_records: dict[str, dict] = {}
         self._development_reward_expiry_records: dict[str, dict] = {}
         self._development_reward_finalized_commitments: dict[str, dict] = {}
+        self._development_pool_carryovers: dict[str, dict] = {}
+        self._development_bounty_states: dict[str, dict] = {}
+        self._development_reward_adjustment_snapshots: dict[str, dict] = {}
+        self._development_reward_cancellations: dict[str, dict] = {}
+        self._development_reward_corrections: dict[str, dict] = {}
         self._active_validator_set: dict[str, dict] = {}
         self._active_validator_set_epoch: int | None = None
         self._activated_validator_set_epochs: set[int] = set()
@@ -1959,16 +1964,16 @@ class LedgerOperationService:
             raise ValueError("DEVELOPMENT_REWARD_COMMITMENT_MISMATCH")
         if expected_operation_type not in approval.authorized_operation_types:
             raise ValueError("DEVELOPMENT_REWARD_OPERATION_NOT_AUTHORIZED")
-        if (
-            expected_operation_type == "DEVELOPMENT_POOL_ALLOCATE"
-            and approval.economic_effect_profile
-            not in {"POOL_ALLOCATION", "DEVELOPMENT_RESERVES", "DEVELOPMENT_PAYMENTS"}
-        ):
+        if expected_operation_type == "DEVELOPMENT_POOL_ALLOCATE" and approval.economic_effect_profile not in {
+            "POOL_ALLOCATION",
+            "DEVELOPMENT_RESERVES",
+            "DEVELOPMENT_PAYMENTS",
+        }:
             raise ValueError("DEVELOPMENT_REWARD_POOL_ALLOCATION_SCOPE_INVALID")
-        if (
-            expected_operation_type == "DEVELOPMENT_REWARD_RESERVE"
-            and approval.economic_effect_profile not in {"DEVELOPMENT_RESERVES", "DEVELOPMENT_PAYMENTS"}
-        ):
+        if expected_operation_type == "DEVELOPMENT_REWARD_RESERVE" and approval.economic_effect_profile not in {
+            "DEVELOPMENT_RESERVES",
+            "DEVELOPMENT_PAYMENTS",
+        }:
             raise ValueError("DEVELOPMENT_REWARD_RESERVE_SCOPE_INVALID")
         if (
             expected_operation_type == "DEVELOPMENT_REWARD_RESERVE"
@@ -1983,7 +1988,8 @@ class LedgerOperationService:
         ):
             raise ValueError("DEVELOPMENT_REWARD_RESERVE_PAYMENT_SCOPE_INVALID")
         if (
-            expected_operation_type in {
+            expected_operation_type
+            in {
                 "DEVELOPMENT_REWARD_PAY_IMMEDIATE",
                 "DEVELOPMENT_REWARD_PAY_MATURITY",
                 "DEVELOPMENT_REWARD_MARK_UNCLAIMED",
@@ -2180,6 +2186,459 @@ class LedgerOperationService:
             emitted_events=["DevelopmentPoolAllocated"],
         )
         self._development_pool_allocations[allocation.allocation_id] = allocation.model_dump(mode="json")
+        return record
+
+    def _validate_development_reward_adjustment_context(
+        self,
+        envelope: "LedgerOperationEnvelope",
+        *,
+        expected_operation_type: str,
+    ) -> dict:
+        """Validate activation/evidence binding for non-calculation ECO-0007 ops."""
+
+        from aidn_hypervisor.reward.development_activation import (
+            DevelopmentRewardActivationApproval,
+            verify_development_reward_activation_approval,
+        )
+        from aidn_hypervisor.reward.development_commitments import DevelopmentRewardCommitment
+        from aidn_hypervisor.reward.development_distribution import canonical_hash
+
+        if envelope.operation_type != expected_operation_type:
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_OPERATION_INVALID")
+        if envelope.origin_type != "protocol" or envelope.sender_wallet is not None:
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_ORIGIN_INVALID")
+        if envelope.fee_class != "protocol_sponsored":
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_FEE_INVALID")
+        payload = dict(envelope.payload)
+        payload_hash = payload.get("payload_hash")
+        if not isinstance(payload_hash, str) or payload_hash != canonical_hash(
+            {key: value for key, value in payload.items() if key != "payload_hash"}
+        ):
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_PAYLOAD_HASH_INVALID")
+        epoch = payload.get("epoch")
+        if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_EPOCH_INVALID")
+        if envelope.target_epoch != str(epoch):
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_TARGET_EPOCH_INVALID")
+        try:
+            commitment = DevelopmentRewardCommitment.model_validate(payload.get("commitment"))
+            approval = DevelopmentRewardActivationApproval.model_validate(payload.get("activation_approval"))
+        except Exception as error:
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_EVIDENCE_INVALID") from error
+        if not commitment.verify_integrity() or commitment.activation_state != "ACTIVATION_VERIFIED":
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_COMMITMENT_INVALID")
+        if commitment.simulation_only is not True or commitment.emits_q or commitment.ledger_writes:
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_COMMITMENT_EFFECT_INVALID")
+        try:
+            verify_development_reward_activation_approval(approval)
+        except ValueError as error:
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_ACTIVATION_INVALID") from error
+        identity_fields = {
+            "commitment_id": commitment.commitment_id,
+            "commitment_hash": commitment.commitment_hash,
+            "activation_id": approval.activation_id,
+            "activation_approval_hash": approval.approval_hash,
+            "policy_hash": commitment.policy_hash,
+            "calculation_root": commitment.calculation_root,
+        }
+        for field_name, expected in identity_fields.items():
+            if payload.get(field_name) != expected:
+                raise ValueError(f"DEVELOPMENT_REWARD_ADJUSTMENT_BINDING_INVALID:{field_name}")
+        if payload.get("epoch") != commitment.epoch:
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_BINDING_INVALID:epoch")
+        if (
+            commitment.activation_id != approval.activation_id
+            or commitment.activation_approval_hash != approval.approval_hash
+        ):
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_ACTIVATION_MISMATCH")
+        if expected_operation_type not in approval.authorized_operation_types:
+            raise ValueError("DEVELOPMENT_REWARD_OPERATION_NOT_AUTHORIZED")
+        if expected_operation_type == "DEVELOPMENT_POOL_CARRYOVER":
+            allowed_profiles = {"POOL_ALLOCATION", "DEVELOPMENT_RESERVES", "DEVELOPMENT_PAYMENTS"}
+        else:
+            allowed_profiles = {"DEVELOPMENT_RESERVES", "DEVELOPMENT_PAYMENTS"}
+        if approval.economic_effect_profile not in allowed_profiles:
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_SCOPE_INVALID")
+        required_evidence = {
+            commitment.commitment_id,
+            commitment.commitment_hash,
+            commitment.calculation_root,
+            approval.activation_id,
+            approval.approval_hash,
+        }
+        if not required_evidence.issubset(set(envelope.evidence_references)):
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_EVIDENCE_REFERENCES_INVALID")
+        return {
+            "payload": payload,
+            "commitment": commitment,
+            "approval": approval,
+            "epoch": epoch,
+        }
+
+    def development_pool_carryover(self, carryover_id: str) -> dict | None:
+        record = self._development_pool_carryovers.get(carryover_id)
+        return None if record is None else dict(record)
+
+    def validate_consensus_development_pool_carryover(
+        self,
+        envelope: "LedgerOperationEnvelope",
+        *,
+        finalized_operation_ids: set[str],
+    ) -> dict:
+        from aidn_hypervisor.reward.development_carryover import DevelopmentPoolCarryoverRecord
+
+        validated = self._validate_development_reward_adjustment_context(
+            envelope,
+            expected_operation_type="DEVELOPMENT_POOL_CARRYOVER",
+        )
+        payload = validated["payload"]
+        try:
+            carryover = DevelopmentPoolCarryoverRecord.model_validate(payload.get("pool_carryover"))
+        except Exception as error:
+            raise ValueError("DEVELOPMENT_POOL_CARRYOVER_RECORD_INVALID") from error
+        if not carryover.verify_integrity():
+            raise ValueError("DEVELOPMENT_POOL_CARRYOVER_HASH_INVALID")
+        source_operation_id = payload.get("source_epoch_transition_operation_id")
+        if not isinstance(source_operation_id, str) or source_operation_id not in finalized_operation_ids:
+            raise ValueError("DEVELOPMENT_POOL_CARRYOVER_EPOCH_TRANSITION_NOT_FINALIZED")
+        source_operation = self._operation_by_id(source_operation_id)
+        if source_operation is None or source_operation.get("operation_type") != "EPOCH_TRANSITION":
+            raise ValueError("DEVELOPMENT_POOL_CARRYOVER_EPOCH_TRANSITION_INVALID")
+        source_payload = source_operation.get("payload") or {}
+        if (
+            source_payload.get("closing_epoch") != carryover.source_epoch
+            or source_payload.get("opening_epoch") != carryover.target_epoch
+        ):
+            raise ValueError("DEVELOPMENT_POOL_CARRYOVER_EPOCH_MISMATCH")
+        if carryover.source_epoch != validated["commitment"].epoch:
+            raise ValueError("DEVELOPMENT_POOL_CARRYOVER_SOURCE_EPOCH_INVALID")
+        if carryover.carryover_id in self._development_pool_carryovers:
+            raise ValueError("DEVELOPMENT_POOL_CARRYOVER_DUPLICATE")
+        return {**validated, "carryover": carryover}
+
+    def apply_consensus_development_pool_carryover(
+        self,
+        envelope: "LedgerOperationEnvelope",
+        *,
+        finalized_operation_ids: set[str],
+    ) -> dict:
+        validated = self.validate_consensus_development_pool_carryover(
+            envelope,
+            finalized_operation_ids=finalized_operation_ids,
+        )
+        carryover = validated["carryover"]
+        record = self.record_admitted_envelope(
+            envelope,
+            emitted_events=["DevelopmentPoolCarriedOver"],
+        )
+        self._development_pool_carryovers[carryover.carryover_id] = carryover.model_dump(mode="json")
+        return record
+
+    def development_bounty_state(self, bounty_id: str) -> dict | None:
+        state = self._development_bounty_states.get(bounty_id)
+        return None if state is None else dict(state)
+
+    def _bounty_state(self, bounty_id: str):
+        from aidn_hypervisor.reward.development_bounty import DevelopmentBountyState
+
+        raw = self._development_bounty_states.get(bounty_id)
+        if raw is None:
+            raise ValueError("DEVELOPMENT_BOUNTY_NOT_FOUND")
+        try:
+            state = DevelopmentBountyState.model_validate(raw)
+        except Exception as error:
+            raise ValueError("DEVELOPMENT_BOUNTY_STATE_INVALID") from error
+        if not state.verify_integrity():
+            raise ValueError("DEVELOPMENT_BOUNTY_STATE_HASH_INVALID")
+        return state
+
+    def validate_consensus_development_bounty_create(
+        self,
+        envelope: "LedgerOperationEnvelope",
+        *,
+        finalized_operation_ids: set[str],
+    ) -> dict:
+        from aidn_hypervisor.reward.development_bounty import (
+            DevelopmentBounty,
+            build_development_bounty_state,
+        )
+
+        validated = self._validate_development_reward_adjustment_context(
+            envelope,
+            expected_operation_type="DEVELOPMENT_BOUNTY_CREATE",
+        )
+        try:
+            bounty = DevelopmentBounty.model_validate(validated["payload"].get("bounty"))
+        except Exception as error:
+            raise ValueError("DEVELOPMENT_BOUNTY_RECORD_INVALID") from error
+        if not bounty.verify_integrity() or bounty.bounty_id != validated["payload"].get("bounty_id"):
+            raise ValueError("DEVELOPMENT_BOUNTY_BINDING_INVALID")
+        if bounty.created_epoch != validated["epoch"]:
+            raise ValueError("DEVELOPMENT_BOUNTY_EPOCH_INVALID")
+        if bounty.bounty_id in self._development_bounty_states:
+            raise ValueError("DEVELOPMENT_BOUNTY_DUPLICATE")
+        return {**validated, "bounty": bounty, "bounty_state": build_development_bounty_state(bounty)}
+
+    def apply_consensus_development_bounty_create(
+        self, envelope: "LedgerOperationEnvelope", *, finalized_operation_ids: set[str]
+    ) -> dict:
+        validated = self.validate_consensus_development_bounty_create(
+            envelope,
+            finalized_operation_ids=finalized_operation_ids,
+        )
+        state = validated["bounty_state"]
+        record = self.record_admitted_envelope(envelope, emitted_events=["DevelopmentBountyCreated"])
+        self._development_bounty_states[state.bounty.bounty_id] = state.model_dump(mode="json")
+        return record
+
+    def validate_consensus_development_bounty_reserve(
+        self,
+        envelope: "LedgerOperationEnvelope",
+        *,
+        finalized_operation_ids: set[str],
+    ) -> dict:
+        from aidn_hypervisor.reward.development_bounty import (
+            DevelopmentBountyReservation,
+            apply_development_bounty_reservation,
+        )
+
+        validated = self._validate_development_reward_adjustment_context(
+            envelope,
+            expected_operation_type="DEVELOPMENT_BOUNTY_RESERVE",
+        )
+        payload = validated["payload"]
+        state = self._bounty_state(str(payload.get("bounty_id")))
+        try:
+            reservation = DevelopmentBountyReservation.model_validate(payload.get("bounty_reservation"))
+        except Exception as error:
+            raise ValueError("DEVELOPMENT_BOUNTY_RESERVATION_INVALID") from error
+        if not reservation.verify_integrity() or reservation.bounty_id != state.bounty.bounty_id:
+            raise ValueError("DEVELOPMENT_BOUNTY_RESERVATION_BINDING_INVALID")
+        allocation_id = payload.get("pool_allocation_id")
+        allocation_operation_id = payload.get("pool_allocation_operation_id")
+        if not isinstance(allocation_id, str) or not isinstance(allocation_operation_id, str):
+            raise ValueError("DEVELOPMENT_BOUNTY_POOL_ALLOCATION_REQUIRED")
+        if allocation_operation_id not in finalized_operation_ids:
+            raise ValueError("DEVELOPMENT_BOUNTY_POOL_ALLOCATION_NOT_FINALIZED")
+        allocation = self._development_pool_allocations.get(allocation_id)
+        allocation_operation = self._operation_by_id(allocation_operation_id)
+        if (
+            allocation is None
+            or allocation_operation is None
+            or allocation_operation.get("operation_type") != "DEVELOPMENT_POOL_ALLOCATE"
+        ):
+            raise ValueError("DEVELOPMENT_BOUNTY_POOL_ALLOCATION_INVALID")
+        if reservation.source_pool_reference != allocation_id or reservation.source_pool_id != allocation.get(
+            "pool_id"
+        ):
+            raise ValueError("DEVELOPMENT_BOUNTY_POOL_ALLOCATION_BINDING_INVALID")
+        active_bounty_reserved = 0
+        for raw_state in self._development_bounty_states.values():
+            other = self._bounty_state(str(raw_state["bounty"]["bounty_id"]))
+            active_bounty_reserved += sum(
+                item.amount_q_atoms for item in other.active_reservations if item.source_pool_reference == allocation_id
+            )
+        reward_reserved = sum(
+            int(item.get("reserved_q_atoms", 0))
+            for item in self._development_reward_reserves.values()
+            if item.get("pool_allocation_id") == allocation_id
+        )
+        if active_bounty_reserved + reward_reserved + reservation.amount_q_atoms > int(allocation["allocated_q_atoms"]):
+            raise ValueError("DEVELOPMENT_BOUNTY_POOL_EXCEEDED")
+        try:
+            next_state = apply_development_bounty_reservation(state, reservation)
+        except ValueError as error:
+            raise ValueError(str(error)) from error
+        return {**validated, "reservation": reservation, "bounty_state": next_state}
+
+    def apply_consensus_development_bounty_reserve(
+        self, envelope: "LedgerOperationEnvelope", *, finalized_operation_ids: set[str]
+    ) -> dict:
+        validated = self.validate_consensus_development_bounty_reserve(
+            envelope,
+            finalized_operation_ids=finalized_operation_ids,
+        )
+        state = validated["bounty_state"]
+        record = self.record_admitted_envelope(envelope, emitted_events=["DevelopmentBountyReserved"])
+        self._development_bounty_states[state.bounty.bounty_id] = state.model_dump(mode="json")
+        return record
+
+    def validate_consensus_development_bounty_release(
+        self,
+        envelope: "LedgerOperationEnvelope",
+        *,
+        finalized_operation_ids: set[str],
+    ) -> dict:
+        from aidn_hypervisor.reward.development_bounty import (
+            DevelopmentBountyRelease,
+            apply_development_bounty_release,
+        )
+
+        validated = self._validate_development_reward_adjustment_context(
+            envelope,
+            expected_operation_type="DEVELOPMENT_BOUNTY_RELEASE",
+        )
+        state = self._bounty_state(str(validated["payload"].get("bounty_id")))
+        try:
+            release = DevelopmentBountyRelease.model_validate(validated["payload"].get("bounty_release"))
+            next_state = apply_development_bounty_release(state, release)
+        except Exception as error:
+            raise ValueError("DEVELOPMENT_BOUNTY_RELEASE_INVALID") from error
+        return {**validated, "release": release, "bounty_state": next_state}
+
+    def apply_consensus_development_bounty_release(
+        self, envelope: "LedgerOperationEnvelope", *, finalized_operation_ids: set[str]
+    ) -> dict:
+        validated = self.validate_consensus_development_bounty_release(
+            envelope,
+            finalized_operation_ids=finalized_operation_ids,
+        )
+        state = validated["bounty_state"]
+        record = self.record_admitted_envelope(envelope, emitted_events=["DevelopmentBountyReleased"])
+        self._development_bounty_states[state.bounty.bounty_id] = state.model_dump(mode="json")
+        return record
+
+    def validate_consensus_development_bounty_expire(
+        self,
+        envelope: "LedgerOperationEnvelope",
+        *,
+        finalized_operation_ids: set[str],
+    ) -> dict:
+        from aidn_hypervisor.reward.development_bounty import (
+            DevelopmentBountyExpiry,
+            apply_development_bounty_expiry,
+        )
+
+        validated = self._validate_development_reward_adjustment_context(
+            envelope,
+            expected_operation_type="DEVELOPMENT_BOUNTY_EXPIRE",
+        )
+        state = self._bounty_state(str(validated["payload"].get("bounty_id")))
+        try:
+            expiry = DevelopmentBountyExpiry.model_validate(validated["payload"].get("bounty_expiry"))
+            next_state = apply_development_bounty_expiry(state, expiry)
+        except Exception as error:
+            raise ValueError("DEVELOPMENT_BOUNTY_EXPIRY_INVALID") from error
+        return {**validated, "expiry": expiry, "bounty_state": next_state}
+
+    def apply_consensus_development_bounty_expire(
+        self, envelope: "LedgerOperationEnvelope", *, finalized_operation_ids: set[str]
+    ) -> dict:
+        validated = self.validate_consensus_development_bounty_expire(
+            envelope,
+            finalized_operation_ids=finalized_operation_ids,
+        )
+        state = validated["bounty_state"]
+        record = self.record_admitted_envelope(envelope, emitted_events=["DevelopmentBountyExpired"])
+        self._development_bounty_states[state.bounty.bounty_id] = state.model_dump(mode="json")
+        return record
+
+    def _validate_adjustment_snapshot(self, payload: dict):
+        from aidn_hypervisor.reward.development_adjustments import DevelopmentRewardStateSnapshot
+
+        try:
+            snapshot = DevelopmentRewardStateSnapshot.model_validate(payload.get("reward_state_snapshot"))
+        except Exception as error:
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_SNAPSHOT_INVALID") from error
+        if not snapshot.verify_integrity():
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_SNAPSHOT_HASH_INVALID")
+        existing = self._development_reward_adjustment_snapshots.get(snapshot.snapshot_id)
+        if existing is not None and existing != snapshot.model_dump(mode="json"):
+            raise ValueError("DEVELOPMENT_REWARD_ADJUSTMENT_SNAPSHOT_CONFLICT")
+        return snapshot
+
+    def validate_consensus_development_reward_cancel_unvested(
+        self,
+        envelope: "LedgerOperationEnvelope",
+        *,
+        finalized_operation_ids: set[str],
+    ) -> dict:
+        from aidn_hypervisor.reward.development_cancellation import (
+            DevelopmentRewardCancellationRecord,
+            validate_cancellation_history,
+        )
+
+        validated = self._validate_development_reward_adjustment_context(
+            envelope,
+            expected_operation_type="DEVELOPMENT_REWARD_CANCEL_UNVESTED",
+        )
+        snapshot = self._validate_adjustment_snapshot(validated["payload"])
+        try:
+            cancellation = DevelopmentRewardCancellationRecord.model_validate(
+                validated["payload"].get("reward_cancellation")
+            )
+            previous = [
+                DevelopmentRewardCancellationRecord.model_validate(item)
+                for item in self._development_reward_cancellations.values()
+                if item.get("source_snapshot_id") == snapshot.snapshot_id
+            ]
+            validate_cancellation_history(snapshot, [*previous, cancellation])
+        except ValueError as error:
+            raise ValueError(str(error)) from error
+        if cancellation.cancellation_id in self._development_reward_cancellations:
+            raise ValueError("DEVELOPMENT_REWARD_CANCELLATION_DUPLICATE")
+        if cancellation.reward_id != validated["payload"].get("reward_id"):
+            raise ValueError("DEVELOPMENT_REWARD_CANCELLATION_REWARD_MISMATCH")
+        return {**validated, "snapshot": snapshot, "cancellation": cancellation}
+
+    def apply_consensus_development_reward_cancel_unvested(
+        self, envelope: "LedgerOperationEnvelope", *, finalized_operation_ids: set[str]
+    ) -> dict:
+        validated = self.validate_consensus_development_reward_cancel_unvested(
+            envelope,
+            finalized_operation_ids=finalized_operation_ids,
+        )
+        snapshot = validated["snapshot"]
+        cancellation = validated["cancellation"]
+        record = self.record_admitted_envelope(envelope, emitted_events=["DevelopmentRewardUnvestedCancelled"])
+        self._development_reward_adjustment_snapshots[snapshot.snapshot_id] = snapshot.model_dump(mode="json")
+        self._development_reward_cancellations[cancellation.cancellation_id] = cancellation.model_dump(mode="json")
+        return record
+
+    def validate_consensus_development_reward_correct(
+        self,
+        envelope: "LedgerOperationEnvelope",
+        *,
+        finalized_operation_ids: set[str],
+    ) -> dict:
+        from aidn_hypervisor.reward.development_correction import (
+            DevelopmentRewardCorrectionRecord,
+            validate_reward_correction_history,
+        )
+
+        validated = self._validate_development_reward_adjustment_context(
+            envelope,
+            expected_operation_type="DEVELOPMENT_REWARD_CORRECT",
+        )
+        snapshot = self._validate_adjustment_snapshot(validated["payload"])
+        try:
+            correction = DevelopmentRewardCorrectionRecord.model_validate(validated["payload"].get("reward_correction"))
+            previous = [
+                DevelopmentRewardCorrectionRecord.model_validate(item)
+                for item in self._development_reward_corrections.values()
+                if item.get("source_snapshot_id") == snapshot.snapshot_id
+            ]
+            validate_reward_correction_history(snapshot, [*previous, correction])
+        except ValueError as error:
+            raise ValueError(str(error)) from error
+        if correction.correction_id in self._development_reward_corrections:
+            raise ValueError("DEVELOPMENT_REWARD_CORRECTION_DUPLICATE")
+        if correction.reward_id != validated["payload"].get("reward_id"):
+            raise ValueError("DEVELOPMENT_REWARD_CORRECTION_REWARD_MISMATCH")
+        return {**validated, "snapshot": snapshot, "correction": correction}
+
+    def apply_consensus_development_reward_correct(
+        self, envelope: "LedgerOperationEnvelope", *, finalized_operation_ids: set[str]
+    ) -> dict:
+        validated = self.validate_consensus_development_reward_correct(
+            envelope,
+            finalized_operation_ids=finalized_operation_ids,
+        )
+        snapshot = validated["snapshot"]
+        correction = validated["correction"]
+        record = self.record_admitted_envelope(envelope, emitted_events=["DevelopmentRewardCorrected"])
+        self._development_reward_adjustment_snapshots[snapshot.snapshot_id] = snapshot.model_dump(mode="json")
+        self._development_reward_corrections[correction.correction_id] = correction.model_dump(mode="json")
         return record
 
     def development_reward_reserve(self, reserve_id: str) -> dict | None:
@@ -2461,9 +2920,7 @@ class LedgerOperationService:
             raise ValueError("DEVELOPMENT_REWARD_PAYMENT_POOL_ALLOCATION_NOT_FOUND")
 
         reserve_operation = self._operation_by_id(reserve_operation_id)
-        if reserve_operation is None or reserve_operation.get("operation_type") != (
-            "DEVELOPMENT_REWARD_RESERVE"
-        ):
+        if reserve_operation is None or reserve_operation.get("operation_type") != ("DEVELOPMENT_REWARD_RESERVE"):
             raise ValueError("DEVELOPMENT_REWARD_PAYMENT_RESERVE_OPERATION_INVALID")
         reserve_payload = reserve_operation.get("payload") or {}
         nested_reserve = reserve_payload.get("reward_reserve") or {}
@@ -2486,9 +2943,7 @@ class LedgerOperationService:
             payment = DevelopmentRewardPayment.model_validate(payload.get("reward_payment"))
         except Exception as error:
             raise ValueError("DEVELOPMENT_REWARD_PAYMENT_EVIDENCE_INVALID") from error
-        if payment.payment_hash != canonical_hash(
-            payment.model_dump(mode="json", exclude={"payment_hash"})
-        ):
+        if payment.payment_hash != canonical_hash(payment.model_dump(mode="json", exclude={"payment_hash"})):
             raise ValueError("DEVELOPMENT_REWARD_PAYMENT_HASH_INVALID")
         expected_payment = {
             "reward_id": payment.reward_id,
@@ -2559,9 +3014,7 @@ class LedgerOperationService:
             raise ValueError("DEVELOPMENT_REWARD_PAYMENT_DUPLICATE")
 
         reserve_records = [
-            item
-            for item in self._development_reward_payment_records.values()
-            if item.get("reserve_id") == reserve_id
+            item for item in self._development_reward_payment_records.values() if item.get("reserve_id") == reserve_id
         ]
         reserve_paid_before = sum(int(item.get("amount_q_atoms", 0)) for item in reserve_records)
         consumed_amount = 0 if expected_operation_type == "DEVELOPMENT_REWARD_MARK_UNCLAIMED" else amount
@@ -2581,8 +3034,7 @@ class LedgerOperationService:
         stage_unclaimed_before = sum(
             int(item.get("amount_q_atoms", 0))
             for item in self._development_reward_unclaimed_records.values()
-            if item.get("reserve_id") == reserve_id
-            and item.get("payment_stage") == payment.payment_stage
+            if item.get("reserve_id") == reserve_id and item.get("payment_stage") == payment.payment_stage
         )
         if stage_paid_before + stage_unclaimed_before + amount > int(reserve.get(stage_amount_field, 0)):
             raise ValueError("DEVELOPMENT_REWARD_PAYMENT_STAGE_EXCEEDED")
@@ -2768,9 +3220,7 @@ class LedgerOperationService:
             raise ValueError("DEVELOPMENT_REWARD_CLAIM_CALCULATION_BINDING_INVALID")
 
         allocation_operation = self._operation_by_id(payload["pool_allocation_operation_id"])
-        if allocation_operation is None or allocation_operation.get("operation_type") != (
-            "DEVELOPMENT_POOL_ALLOCATE"
-        ):
+        if allocation_operation is None or allocation_operation.get("operation_type") != ("DEVELOPMENT_POOL_ALLOCATE"):
             raise ValueError("DEVELOPMENT_REWARD_CLAIM_POOL_ALLOCATION_OPERATION_INVALID")
         allocation_payload = allocation_operation.get("payload") or {}
         nested_allocation = allocation_payload.get("pool_allocation") or {}
@@ -2779,9 +3229,7 @@ class LedgerOperationService:
             raise ValueError("DEVELOPMENT_REWARD_CLAIM_POOL_ALLOCATION_BINDING_INVALID")
 
         reserve_operation = self._operation_by_id(payload["reserve_operation_id"])
-        if reserve_operation is None or reserve_operation.get("operation_type") != (
-            "DEVELOPMENT_REWARD_RESERVE"
-        ):
+        if reserve_operation is None or reserve_operation.get("operation_type") != ("DEVELOPMENT_REWARD_RESERVE"):
             raise ValueError("DEVELOPMENT_REWARD_CLAIM_RESERVE_OPERATION_INVALID")
         reserve_payload = reserve_operation.get("payload") or {}
         nested_reserve = reserve_payload.get("reward_reserve") or {}
@@ -3014,9 +3462,7 @@ class LedgerOperationService:
             raise ValueError("DEVELOPMENT_REWARD_EXPIRY_CALCULATION_BINDING_INVALID")
 
         allocation_operation = self._operation_by_id(payload["pool_allocation_operation_id"])
-        if allocation_operation is None or allocation_operation.get("operation_type") != (
-            "DEVELOPMENT_POOL_ALLOCATE"
-        ):
+        if allocation_operation is None or allocation_operation.get("operation_type") != ("DEVELOPMENT_POOL_ALLOCATE"):
             raise ValueError("DEVELOPMENT_REWARD_EXPIRY_POOL_ALLOCATION_OPERATION_INVALID")
         nested_allocation = (allocation_operation.get("payload") or {}).get("pool_allocation") or {}
         if nested_allocation.get("allocation_id") != payload["pool_allocation_id"]:
@@ -3026,9 +3472,7 @@ class LedgerOperationService:
             raise ValueError("DEVELOPMENT_REWARD_EXPIRY_POOL_ALLOCATION_NOT_FOUND")
 
         reserve_operation = self._operation_by_id(payload["reserve_operation_id"])
-        if reserve_operation is None or reserve_operation.get("operation_type") != (
-            "DEVELOPMENT_REWARD_RESERVE"
-        ):
+        if reserve_operation is None or reserve_operation.get("operation_type") != ("DEVELOPMENT_REWARD_RESERVE"):
             raise ValueError("DEVELOPMENT_REWARD_EXPIRY_RESERVE_OPERATION_INVALID")
         nested_reserve = (reserve_operation.get("payload") or {}).get("reward_reserve") or {}
         if nested_reserve.get("reserve_id") != payload["reserve_id"]:
@@ -3067,10 +3511,8 @@ class LedgerOperationService:
             or unclaimed_payload.get("reserve_id") != unclaimed_record.reserve_id
             or unclaimed_payload.get("reserve_operation_id") != unclaimed_record.reserve_operation_id
             or unclaimed_payload.get("pool_allocation_id") != unclaimed_record.pool_allocation_id
-            or unclaimed_payload.get("pool_allocation_operation_id")
-            != unclaimed_record.pool_allocation_operation_id
-            or unclaimed_payload.get("calculation_operation_id")
-            != unclaimed_record.calculation_operation_id
+            or unclaimed_payload.get("pool_allocation_operation_id") != unclaimed_record.pool_allocation_operation_id
+            or unclaimed_payload.get("calculation_operation_id") != unclaimed_record.calculation_operation_id
             or unclaimed_payload.get("calculation_root") != unclaimed_record.calculation_root
             or unclaimed_payload.get("reward_id") != unclaimed_record.reward_id
             or unclaimed_payload.get("contributor_id") != unclaimed_record.contributor_id
@@ -3312,10 +3754,9 @@ class LedgerOperationService:
             "DEVELOPMENT_REWARD_CALCULATE",
             "DEVELOPMENT_REWARD_FINALIZED_CALCULATION_OPERATION_INVALID",
         )
-        if (
-            (calculation_operation.get("payload") or {}).get("commitment_id") != commitment.commitment_id
-            or (calculation_operation.get("payload") or {}).get("calculation_root") != calculation.calculation_root
-        ):
+        if (calculation_operation.get("payload") or {}).get("commitment_id") != commitment.commitment_id or (
+            calculation_operation.get("payload") or {}
+        ).get("calculation_root") != calculation.calculation_root:
             raise ValueError("DEVELOPMENT_REWARD_FINALIZED_CALCULATION_BINDING_INVALID")
 
         allocation_operation = source_operation(
@@ -3523,9 +3964,7 @@ class LedgerOperationService:
             envelope,
             emitted_events=["DevelopmentRewardPaidImmediate"],
         )
-        self._development_reward_payment_records[payment_record.payment_id] = payment_record.model_dump(
-            mode="json"
-        )
+        self._development_reward_payment_records[payment_record.payment_id] = payment_record.model_dump(mode="json")
         self.credit_wallet_q_atoms(
             wallet_id=payment_record.wallet_address,
             amount_q_atoms=payment_record.amount_q_atoms,
@@ -3549,9 +3988,7 @@ class LedgerOperationService:
             envelope,
             emitted_events=["DevelopmentRewardPaidMaturity"],
         )
-        self._development_reward_payment_records[payment_record.payment_id] = payment_record.model_dump(
-            mode="json"
-        )
+        self._development_reward_payment_records[payment_record.payment_id] = payment_record.model_dump(mode="json")
         self.credit_wallet_q_atoms(
             wallet_id=payment_record.wallet_address,
             amount_q_atoms=payment_record.amount_q_atoms,
@@ -3575,8 +4012,8 @@ class LedgerOperationService:
             envelope,
             emitted_events=["DevelopmentRewardMarkedUnclaimed"],
         )
-        self._development_reward_unclaimed_records[unclaimed_record.unclaimed_id] = (
-            unclaimed_record.model_dump(mode="json")
+        self._development_reward_unclaimed_records[unclaimed_record.unclaimed_id] = unclaimed_record.model_dump(
+            mode="json"
         )
         return record
 
@@ -3621,9 +4058,7 @@ class LedgerOperationService:
             envelope,
             emitted_events=["DevelopmentRewardExpiredReturned"],
         )
-        self._development_reward_expiry_records[expiry_record.expiry_id] = expiry_record.model_dump(
-            mode="json"
-        )
+        self._development_reward_expiry_records[expiry_record.expiry_id] = expiry_record.model_dump(mode="json")
         return record
 
     def apply_consensus_development_reward_finalize_commitment(
@@ -7315,14 +7750,17 @@ class LedgerOperationService:
             ],
             "settlement_transition_hashes": dict(self._settlement_transition_hashes),
             "development_pool_allocations": list(self._development_pool_allocations.values()),
+            "development_pool_carryovers": list(self._development_pool_carryovers.values()),
+            "development_bounty_states": list(self._development_bounty_states.values()),
             "development_reward_reserves": list(self._development_reward_reserves.values()),
             "development_reward_payment_records": list(self._development_reward_payment_records.values()),
             "development_reward_unclaimed_records": list(self._development_reward_unclaimed_records.values()),
             "development_reward_claim_records": list(self._development_reward_claim_records.values()),
             "development_reward_expiry_records": list(self._development_reward_expiry_records.values()),
-            "development_reward_finalized_commitments": list(
-                self._development_reward_finalized_commitments.values()
-            ),
+            "development_reward_finalized_commitments": list(self._development_reward_finalized_commitments.values()),
+            "development_reward_adjustment_snapshots": list(self._development_reward_adjustment_snapshots.values()),
+            "development_reward_cancellations": list(self._development_reward_cancellations.values()),
+            "development_reward_corrections": list(self._development_reward_corrections.values()),
         }
 
     def restore(
@@ -7344,12 +7782,17 @@ class LedgerOperationService:
         settlement_corrections: list[dict] | None = None,
         settlement_transition_hashes: dict[str, str] | None = None,
         development_pool_allocations: list[dict] | None = None,
+        development_pool_carryovers: list[dict] | None = None,
+        development_bounty_states: list[dict] | None = None,
         development_reward_reserves: list[dict] | None = None,
         development_reward_payment_records: list[dict] | None = None,
         development_reward_unclaimed_records: list[dict] | None = None,
         development_reward_claim_records: list[dict] | None = None,
         development_reward_expiry_records: list[dict] | None = None,
         development_reward_finalized_commitments: list[dict] | None = None,
+        development_reward_adjustment_snapshots: list[dict] | None = None,
+        development_reward_cancellations: list[dict] | None = None,
+        development_reward_corrections: list[dict] | None = None,
         consensus_state: dict | None = None,
     ) -> None:
         self._operations = [LedgerOperationRecord(**item).model_dump(mode="json") for item in operations]
@@ -7436,6 +7879,30 @@ class LedgerOperationService:
             if allocation.allocation_id in self._development_pool_allocations:
                 raise ValueError("development pool allocation IDs are not unique")
             self._development_pool_allocations[allocation.allocation_id] = allocation.model_dump(mode="json")
+        from aidn_hypervisor.reward.development_carryover import DevelopmentPoolCarryoverRecord
+
+        self._development_pool_carryovers = {}
+        for raw_carryover in development_pool_carryovers or []:
+            carryover = DevelopmentPoolCarryoverRecord.model_validate(raw_carryover)
+            if not carryover.verify_integrity():
+                raise ValueError("development pool carryover hash is invalid")
+            if carryover.carryover_id in self._development_pool_carryovers:
+                raise ValueError("development pool carryover IDs are not unique")
+            source_operation = self._operation_by_id(carryover.operation_id)
+            if source_operation is not None and source_operation.get("operation_type") != "DEVELOPMENT_POOL_CARRYOVER":
+                raise ValueError("development pool carryover operation binding is invalid")
+            self._development_pool_carryovers[carryover.carryover_id] = carryover.model_dump(mode="json")
+        from aidn_hypervisor.reward.development_bounty import DevelopmentBountyState
+
+        self._development_bounty_states = {}
+        for raw_bounty_state in development_bounty_states or []:
+            bounty_state = DevelopmentBountyState.model_validate(raw_bounty_state)
+            if not bounty_state.verify_integrity():
+                raise ValueError("development bounty state hash is invalid")
+            bounty_id = bounty_state.bounty.bounty_id
+            if bounty_id in self._development_bounty_states:
+                raise ValueError("development bounty state IDs are not unique")
+            self._development_bounty_states[bounty_id] = bounty_state.model_dump(mode="json")
         from aidn_hypervisor.reward.development_reserve import DevelopmentRewardReserve
 
         self._development_reward_reserves = {}
@@ -7461,10 +7928,9 @@ class LedgerOperationService:
                 "DEVELOPMENT_POOL_ALLOCATE"
             ):
                 raise ValueError("development reward reserve pool allocation operation is missing")
-            reserved_by_allocation[reserve["pool_allocation_id"]] = (
-                reserved_by_allocation.get(reserve["pool_allocation_id"], 0)
-                + int(reserve["reserved_q_atoms"])
-            )
+            reserved_by_allocation[reserve["pool_allocation_id"]] = reserved_by_allocation.get(
+                reserve["pool_allocation_id"], 0
+            ) + int(reserve["reserved_q_atoms"])
         for allocation_id, reserved_total in reserved_by_allocation.items():
             if reserved_total > int(self._development_pool_allocations[allocation_id]["allocated_q_atoms"]):
                 raise ValueError("development reward reserves exceed pool allocation")
@@ -7501,9 +7967,7 @@ class LedgerOperationService:
                 "DEVELOPMENT_POOL_ALLOCATE"
             ):
                 raise ValueError("development reward payment pool allocation operation is missing")
-            if reserve_operation is None or reserve_operation.get("operation_type") != (
-                "DEVELOPMENT_REWARD_RESERVE"
-            ):
+            if reserve_operation is None or reserve_operation.get("operation_type") != ("DEVELOPMENT_REWARD_RESERVE"):
                 raise ValueError("development reward payment reserve operation is missing")
             self._development_reward_payment_records[payment.payment_id] = payment.model_dump(mode="json")
         paid_by_reserve: dict[str, int] = {}
@@ -7560,16 +8024,14 @@ class LedgerOperationService:
                 "DEVELOPMENT_POOL_ALLOCATE"
             ):
                 raise ValueError("development reward unclaimed pool allocation operation is missing")
-            if reserve_operation is None or reserve_operation.get("operation_type") != (
-                "DEVELOPMENT_REWARD_RESERVE"
-            ):
+            if reserve_operation is None or reserve_operation.get("operation_type") != ("DEVELOPMENT_REWARD_RESERVE"):
                 raise ValueError("development reward unclaimed reserve operation is missing")
             self._development_reward_unclaimed_records[unclaimed.unclaimed_id] = unclaimed.model_dump(mode="json")
         unclaimed_by_reserve: dict[str, int] = {}
         for unclaimed in self._development_reward_unclaimed_records.values():
-            unclaimed_by_reserve[unclaimed["reserve_id"]] = unclaimed_by_reserve.get(
-                unclaimed["reserve_id"], 0
-            ) + int(unclaimed["amount_q_atoms"])
+            unclaimed_by_reserve[unclaimed["reserve_id"]] = unclaimed_by_reserve.get(unclaimed["reserve_id"], 0) + int(
+                unclaimed["amount_q_atoms"]
+            )
         for reserve_id, unclaimed_total in unclaimed_by_reserve.items():
             paid_total = paid_by_reserve.get(reserve_id, 0)
             if paid_total + unclaimed_total > int(self._development_reward_reserves[reserve_id]["reserved_q_atoms"]):
@@ -7695,11 +8157,7 @@ class LedgerOperationService:
             paid_total = paid_by_allocation.get(allocation_id, 0)
             allocation_budget = int(self._development_pool_allocations[allocation_id]["allocated_q_atoms"])
             reserved_total = reserved_by_allocation.get(allocation_id, 0)
-            if (
-                reserved_total <= 0
-                or reserved_total > allocation_budget
-                or claimed_total + paid_total > reserved_total
-            ):
+            if reserved_total <= 0 or reserved_total > allocation_budget or claimed_total + paid_total > reserved_total:
                 raise ValueError("development reward claim allocation balance is invalid")
         from aidn_hypervisor.reward.development_expiry import DevelopmentRewardExpiryRecord
 
@@ -7809,9 +8267,7 @@ class LedgerOperationService:
             if finalized_commitment.finalized_commitment_id in self._development_reward_finalized_commitments:
                 raise ValueError("development reward finalized commitment IDs are not unique")
             operation = self._operation_by_id(finalized_commitment.finalized_operation_id)
-            if operation is None or operation.get("operation_type") != (
-                "DEVELOPMENT_REWARD_FINALIZE_COMMITMENT"
-            ):
+            if operation is None or operation.get("operation_type") != ("DEVELOPMENT_REWARD_FINALIZE_COMMITMENT"):
                 raise ValueError("development reward finalized commitment operation is missing")
             try:
                 validated_commitment = self.validate_consensus_development_reward_finalize_commitment(
@@ -7822,9 +8278,59 @@ class LedgerOperationService:
                 raise ValueError("development reward finalized commitment is invalid") from error
             if validated_commitment.model_dump(mode="json") != finalized_commitment.model_dump(mode="json"):
                 raise ValueError("development reward finalized commitment binding is invalid")
-            self._development_reward_finalized_commitments[
-                finalized_commitment.finalized_commitment_id
-            ] = finalized_commitment.model_dump(mode="json")
+            self._development_reward_finalized_commitments[finalized_commitment.finalized_commitment_id] = (
+                finalized_commitment.model_dump(mode="json")
+            )
+        from aidn_hypervisor.reward.development_adjustments import DevelopmentRewardStateSnapshot
+        from aidn_hypervisor.reward.development_cancellation import (
+            DevelopmentRewardCancellationRecord,
+            validate_cancellation_history,
+        )
+        from aidn_hypervisor.reward.development_correction import (
+            DevelopmentRewardCorrectionRecord,
+            validate_reward_correction_history,
+        )
+
+        self._development_reward_adjustment_snapshots = {}
+        for raw_snapshot in development_reward_adjustment_snapshots or []:
+            snapshot = DevelopmentRewardStateSnapshot.model_validate(raw_snapshot)
+            if not snapshot.verify_integrity():
+                raise ValueError("development reward adjustment snapshot hash is invalid")
+            if snapshot.snapshot_id in self._development_reward_adjustment_snapshots:
+                raise ValueError("development reward adjustment snapshot IDs are not unique")
+            self._development_reward_adjustment_snapshots[snapshot.snapshot_id] = snapshot.model_dump(mode="json")
+        self._development_reward_cancellations = {}
+        for raw_cancellation in development_reward_cancellations or []:
+            cancellation = DevelopmentRewardCancellationRecord.model_validate(raw_cancellation)
+            snapshot = self._development_reward_adjustment_snapshots.get(cancellation.source_snapshot_id)
+            if snapshot is None:
+                raise ValueError("development reward cancellation snapshot is missing")
+            source = DevelopmentRewardStateSnapshot.model_validate(snapshot)
+            history = [
+                DevelopmentRewardCancellationRecord.model_validate(item)
+                for item in self._development_reward_cancellations.values()
+                if item.get("source_snapshot_id") == source.snapshot_id
+            ]
+            validate_cancellation_history(source, [*history, cancellation])
+            if cancellation.cancellation_id in self._development_reward_cancellations:
+                raise ValueError("development reward cancellation IDs are not unique")
+            self._development_reward_cancellations[cancellation.cancellation_id] = cancellation.model_dump(mode="json")
+        self._development_reward_corrections = {}
+        for raw_correction in development_reward_corrections or []:
+            correction = DevelopmentRewardCorrectionRecord.model_validate(raw_correction)
+            snapshot = self._development_reward_adjustment_snapshots.get(correction.source_snapshot_id)
+            if snapshot is None:
+                raise ValueError("development reward correction snapshot is missing")
+            source = DevelopmentRewardStateSnapshot.model_validate(snapshot)
+            history = [
+                DevelopmentRewardCorrectionRecord.model_validate(item)
+                for item in self._development_reward_corrections.values()
+                if item.get("source_snapshot_id") == source.snapshot_id
+            ]
+            validate_reward_correction_history(source, [*history, correction])
+            if correction.correction_id in self._development_reward_corrections:
+                raise ValueError("development reward correction IDs are not unique")
+            self._development_reward_corrections[correction.correction_id] = correction.model_dump(mode="json")
         self._settlement_proposals = {
             proposal.settlement_id: proposal
             for proposal in (SessionSettlementProposal.model_validate(item) for item in (settlement_proposals or []))

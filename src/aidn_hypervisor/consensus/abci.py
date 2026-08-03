@@ -586,12 +586,17 @@ class AIDNABCIApplication:
             settlement_corrections=settlement_state.get("settlement_corrections"),
             settlement_transition_hashes=settlement_state.get("settlement_transition_hashes"),
             development_pool_allocations=settlement_state.get("development_pool_allocations"),
+            development_pool_carryovers=settlement_state.get("development_pool_carryovers"),
+            development_bounty_states=settlement_state.get("development_bounty_states"),
             development_reward_reserves=settlement_state.get("development_reward_reserves"),
             development_reward_payment_records=settlement_state.get("development_reward_payment_records"),
             development_reward_unclaimed_records=settlement_state.get("development_reward_unclaimed_records"),
             development_reward_claim_records=settlement_state.get("development_reward_claim_records"),
             development_reward_expiry_records=settlement_state.get("development_reward_expiry_records"),
             development_reward_finalized_commitments=settlement_state.get("development_reward_finalized_commitments"),
+            development_reward_adjustment_snapshots=settlement_state.get("development_reward_adjustment_snapshots"),
+            development_reward_cancellations=settlement_state.get("development_reward_cancellations"),
+            development_reward_corrections=settlement_state.get("development_reward_corrections"),
             consensus_state=snapshot.get("consensus_state"),
         )
         self._last_block_height = int(snapshot["last_block_height"])
@@ -761,6 +766,31 @@ class AIDNABCIApplication:
                     envelope,
                     finalized_operation_ids=finalized_operation_ids,
                 )
+            elif envelope.operation_type == "DEVELOPMENT_POOL_CARRYOVER":
+                self.ledger.apply_consensus_development_pool_carryover(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_BOUNTY_CREATE":
+                self.ledger.apply_consensus_development_bounty_create(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_BOUNTY_RESERVE":
+                self.ledger.apply_consensus_development_bounty_reserve(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_BOUNTY_RELEASE":
+                self.ledger.apply_consensus_development_bounty_release(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_BOUNTY_EXPIRE":
+                self.ledger.apply_consensus_development_bounty_expire(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
             elif envelope.operation_type == "DEVELOPMENT_REWARD_RESERVE":
                 self.ledger.apply_consensus_development_reward_reserve(
                     envelope,
@@ -793,6 +823,16 @@ class AIDNABCIApplication:
                 )
             elif envelope.operation_type == "DEVELOPMENT_REWARD_FINALIZE_COMMITMENT":
                 self.ledger.apply_consensus_development_reward_finalize_commitment(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_CANCEL_UNVESTED":
+                self.ledger.apply_consensus_development_reward_cancel_unvested(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_CORRECT":
+                self.ledger.apply_consensus_development_reward_correct(
                     envelope,
                     finalized_operation_ids=finalized_operation_ids,
                 )
@@ -953,6 +993,31 @@ class AIDNABCIApplication:
                     envelope,
                     finalized_operation_ids=finalized_operation_ids,
                 )
+            elif envelope.operation_type == "DEVELOPMENT_POOL_CARRYOVER":
+                self.ledger.validate_consensus_development_pool_carryover(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_BOUNTY_CREATE":
+                self.ledger.validate_consensus_development_bounty_create(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_BOUNTY_RESERVE":
+                self.ledger.validate_consensus_development_bounty_reserve(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_BOUNTY_RELEASE":
+                self.ledger.validate_consensus_development_bounty_release(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_BOUNTY_EXPIRE":
+                self.ledger.validate_consensus_development_bounty_expire(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
             elif envelope.operation_type == "DEVELOPMENT_REWARD_RESERVE":
                 self.ledger.validate_consensus_development_reward_reserve(
                     envelope,
@@ -985,6 +1050,16 @@ class AIDNABCIApplication:
                 )
             elif envelope.operation_type == "DEVELOPMENT_REWARD_FINALIZE_COMMITMENT":
                 self.ledger.validate_consensus_development_reward_finalize_commitment(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_CANCEL_UNVESTED":
+                self.ledger.validate_consensus_development_reward_cancel_unvested(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_CORRECT":
+                self.ledger.validate_consensus_development_reward_correct(
                     envelope,
                     finalized_operation_ids=finalized_operation_ids,
                 )
@@ -1115,12 +1190,17 @@ class AIDNABCIApplication:
             "settlement_disputes": [],
             "settlement_corrections": [],
             "development_pool_allocations": [],
+            "development_pool_carryovers": [],
+            "development_bounty_states": [],
             "development_reward_reserves": [],
             "development_reward_payment_records": [],
             "development_reward_unclaimed_records": [],
             "development_reward_claim_records": [],
             "development_reward_expiry_records": [],
             "development_reward_finalized_commitments": [],
+            "development_reward_adjustment_snapshots": [],
+            "development_reward_cancellations": [],
+            "development_reward_corrections": [],
         }
         for field_name, default in empty_extension_defaults.items():
             if canonical.get(field_name) == default:

@@ -214,6 +214,7 @@ DEVELOPMENT_POOL_CARRYOVER
 DEVELOPMENT_BOUNTY_CREATE
 DEVELOPMENT_BOUNTY_RESERVE
 DEVELOPMENT_BOUNTY_RELEASE
+DEVELOPMENT_BOUNTY_EXPIRE
 DEVELOPMENT_REWARD_CALCULATE
 DEVELOPMENT_REWARD_RESERVE
 DEVELOPMENT_REWARD_PAY_IMMEDIATE
@@ -244,9 +245,12 @@ reserve and Wallet unchanged. No transition is an alias for `REWARD_MINT`.
 boundary inside its claim window, and a valid RFC-0068 signed Wallet binding;
 it creates a separate `CLAIMED` record, consumes exactly one stage and credits
 only the bound Wallet. Expiry-return and finalized evidence closure are also
-implemented as source-bound transitions; carryover, bounty, cancellation, and
-correction remain fail-closed until their own canonical state transitions are
-implemented.
+implemented as source-bound transitions. Pool carryover is bound to the source
+epoch transition and conservation split; bounty create/reserve/release/expiry
+is bound to the allocated pool and immutable bounty state; cancellation and
+correction preserve paid history and append only validated unpaid-balance
+adjustments. All of these transitions are dispatched and validated in both
+ABCI and deterministic execution, with snapshot restore coverage.
 
 Pool allocation, carryover, bounty reservation, reward calculation/reservation/payment, unclaimed marking, claim, cancellation, and correction SHALL be idempotent. Each paid stage atomically debits the applicable bucket, credits the verified Wallet, updates the record, and updates the maturity reserve. Unclaimed marking only records the immutable claim state and does not debit the reserve. A `(Reward ID, Payment Stage)` cannot pay, become unclaimed, or be claimed twice; a claim keeps the original unclaimed evidence and consumes the corresponding reserved stage exactly once. Failed payment remains reserved for idempotent retry.
 

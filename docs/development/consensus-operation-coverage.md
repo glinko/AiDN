@@ -138,12 +138,6 @@ consensus profile:
 - `VALIDATION_REQUEST`
 - `VALIDATOR_STAKE`
 - `VALIDATOR_UNSTAKE`
-- `DEVELOPMENT_POOL_CARRYOVER`
-- `DEVELOPMENT_BOUNTY_CREATE`
-- `DEVELOPMENT_BOUNTY_RESERVE`
-- `DEVELOPMENT_BOUNTY_RELEASE`
-- `DEVELOPMENT_REWARD_CANCEL_UNVESTED`
-- `DEVELOPMENT_REWARD_CORRECT`
 
 They may still be used by local compatibility services or prepared as
 off-chain/domain records, but a validator configured with the strict profile
@@ -175,16 +169,20 @@ exception: it requires the finalized unclaimed record, a finalized epoch
 boundary inside the immutable claim window, and a valid RFC-0068 signed Wallet
 binding. It creates a separate immutable `CLAIMED` record, consumes exactly one
 unclaimed stage, credits only the bound Wallet, and rejects duplicate claims;
-the original `UNCLAIMED` evidence remains unchanged. After these additions,
-the remaining ECO-0007 entries stay in the declared-unimplemented set.
+the original `UNCLAIMED` evidence remains unchanged. The pool lifecycle is
+also implemented: `DEVELOPMENT_POOL_CARRYOVER` is bound to the source epoch
+transition, bounty create/reserve/release/expiry transitions are budget- and
+state-bound, and reward cancellation/correction transitions preserve paid
+history while changing only eligible unpaid state. These operations are
+covered by both ABCI and deterministic execution dispatchers.
 `DEVELOPMENT_REWARD_EXPIRE_UNCLAIMED` and `DEVELOPMENT_REWARD_FINALIZE_COMMITMENT`
-are the two implemented additions:
+remain implemented evidence transitions:
 expiry returns one unclaimed stage to carryover availability after a finalized
 claim-window boundary, while finalized commitment stores the exact evidence
-roots and operation IDs without creating a Q effect. The remaining typed
-envelopes require the same activation and commitment binding, but strict
-ABCI/Execution rejects them until their monetary transitions are explicitly
-approved and implemented.
+roots and operation IDs without creating a Q effect. Other typed envelopes
+require the same activation and commitment binding, but strict ABCI/Execution
+rejects them until their monetary transitions are explicitly approved and
+implemented.
 
 ## Extension Rule
 

@@ -197,17 +197,20 @@ def _wallet_binding(
     challenge_hash = "sha256:challenge-unclaimed"
     source_platform_account = "github:unclaimed"
     binding_version = 1
-    signature = "ed25519:" + private_key.sign(
-        contributor_wallet_binding_payload(
-            contributor_id=contributor_id,
-            source_platform_account=source_platform_account,
-            wallet_address=wallet_address,
-            wallet_public_key=wallet_public_key,
-            challenge_id=challenge_id,
-            challenge_hash=challenge_hash,
-            binding_version=binding_version,
-        )
-    ).hex()
+    signature = (
+        "ed25519:"
+        + private_key.sign(
+            contributor_wallet_binding_payload(
+                contributor_id=contributor_id,
+                source_platform_account=source_platform_account,
+                wallet_address=wallet_address,
+                wallet_public_key=wallet_public_key,
+                challenge_id=challenge_id,
+                challenge_hash=challenge_hash,
+                binding_version=binding_version,
+            )
+        ).hex()
+    )
     unsigned = {
         "contributor_id": contributor_id,
         "source_platform_account": source_platform_account,
@@ -782,17 +785,14 @@ def _build_payment_retry(
 
 def test_development_operations_have_explicit_consensus_coverage():
     assert DECLARED_OPERATION_TYPES | IMPLEMENTED_OPERATION_TYPES <= KNOWN_OPERATION_TYPES
-    assert all(operation_coverage(item) == "DECLARED_UNIMPLEMENTED" for item in DECLARED_OPERATION_TYPES)
+    assert all(operation_coverage(item) == "IMPLEMENTED" for item in DECLARED_OPERATION_TYPES)
     assert operation_coverage("DEVELOPMENT_REWARD_CALCULATE") == "IMPLEMENTED"
     assert operation_coverage("DEVELOPMENT_POOL_ALLOCATE") == "IMPLEMENTED"
     assert operation_coverage("DEVELOPMENT_REWARD_RESERVE") == "IMPLEMENTED"
     assert operation_coverage("DEVELOPMENT_REWARD_PAY_IMMEDIATE") == "IMPLEMENTED"
     assert operation_coverage("DEVELOPMENT_REWARD_PAY_MATURITY") == "IMPLEMENTED"
     assert operation_coverage("DEVELOPMENT_REWARD_MARK_UNCLAIMED") == "IMPLEMENTED"
-    assert all(
-        strict_operation_coverage_error(item) == f"consensus operation transition is not implemented: {item}"
-        for item in DECLARED_OPERATION_TYPES
-    )
+    assert all(strict_operation_coverage_error(item) is None for item in DECLARED_OPERATION_TYPES)
     assert strict_operation_coverage_error("DEVELOPMENT_REWARD_CALCULATE") is None
 
 
@@ -857,9 +857,7 @@ def test_strict_execution_applies_source_bound_immediate_payment():
 
 
 def test_reward_payment_rejects_same_block_dependencies():
-    _, _, _, epoch_tx, calculation_envelope, allocation_envelope, reserve_envelope, payment = (
-        _payment_envelopes()
-    )
+    _, _, _, epoch_tx, calculation_envelope, allocation_envelope, reserve_envelope, payment = _payment_envelopes()
     ledger = LedgerOperationService()
     engine = ExecutionEngine(
         ledger_service=ledger,
@@ -887,9 +885,7 @@ def test_reward_payment_rejects_same_block_dependencies():
 
 
 def test_reward_payment_rejects_tampered_recipient_binding_after_sources_finalize():
-    _, _, _, epoch_tx, calculation_envelope, allocation_envelope, reserve_envelope, payment = (
-        _payment_envelopes()
-    )
+    _, _, _, epoch_tx, calculation_envelope, allocation_envelope, reserve_envelope, payment = _payment_envelopes()
     ledger = LedgerOperationService()
     engine = ExecutionEngine(
         ledger_service=ledger,
@@ -1053,9 +1049,7 @@ def test_strict_execution_applies_maturity_payment_after_boundary():
 
 
 def test_maturity_payment_rejects_same_block_dependencies():
-    _, _, _, epoch_tx, calculation_envelope, allocation_envelope, reserve_envelope, stage_one, _ = (
-        _maturity_envelopes()
-    )
+    _, _, _, epoch_tx, calculation_envelope, allocation_envelope, reserve_envelope, stage_one, _ = _maturity_envelopes()
     ledger = LedgerOperationService()
     engine = ExecutionEngine(
         ledger_service=ledger,
@@ -1083,9 +1077,7 @@ def test_maturity_payment_rejects_same_block_dependencies():
 
 
 def test_maturity_payment_rejects_stage_two_before_boundary():
-    _, _, _, epoch_tx, calculation_envelope, allocation_envelope, reserve_envelope, _, stage_two = (
-        _maturity_envelopes()
-    )
+    _, _, _, epoch_tx, calculation_envelope, allocation_envelope, reserve_envelope, _, stage_two = _maturity_envelopes()
     ledger = LedgerOperationService()
     engine = ExecutionEngine(
         ledger_service=ledger,
@@ -1264,9 +1256,7 @@ def test_builder_emits_expiry_return_envelope_without_wallet():
     assert expiry.operation_type == "DEVELOPMENT_REWARD_EXPIRE_UNCLAIMED"
     assert "recipient_wallet" not in expiry.payload
     assert expiry.payload["return_destination"] == "CARRYOVER"
-    assert expiry.payload["expiry_epoch"] == (
-        calculation.epoch + calculation.policy.claim_window_epochs + 1
-    )
+    assert expiry.payload["expiry_epoch"] == (calculation.epoch + calculation.policy.claim_window_epochs + 1)
     assert expiry.payload["reward_payment"]["state"] == "UNCLAIMED"
     assert expiry.payload["reward_unclaimed"]["unclaimed_id"] == expiry.payload["unclaimed_id"]
     assert expiry.payload["activation_id"] == approval.activation_id
@@ -1524,8 +1514,9 @@ def test_abci_expiry_return_replay_and_snapshot_restore(tmp_path):
     assert restored.info().last_block_app_hash == app.info().last_block_app_hash
     assert restored.ledger.development_reward_expiry(expiry_id) == app.ledger.development_reward_expiry(expiry_id)
     assert restored.ledger.snapshot_operations() == app.ledger.snapshot_operations()
-    assert restored.ledger.snapshot_settlement_state()["development_reward_expiry_records"] == (
-        app.ledger.snapshot_settlement_state()["development_reward_expiry_records"]
+    assert (
+        restored.ledger.snapshot_settlement_state()["development_reward_expiry_records"]
+        == (app.ledger.snapshot_settlement_state()["development_reward_expiry_records"])
     )
 
 
@@ -1633,9 +1624,7 @@ def test_finalized_commitment_closes_auditable_reward_evidence_set(tmp_path):
 
 
 def test_unclaimed_reward_rejects_same_block_dependencies():
-    _, _, _, epoch_tx, calculation_envelope, allocation_envelope, reserve_envelope, unclaimed = (
-        _unclaimed_envelopes()
-    )
+    _, _, _, epoch_tx, calculation_envelope, allocation_envelope, reserve_envelope, unclaimed = _unclaimed_envelopes()
     ledger = LedgerOperationService()
     engine = ExecutionEngine(
         ledger_service=ledger,
@@ -1735,8 +1724,9 @@ def test_abci_unclaimed_reward_replay_and_snapshot_restore(tmp_path):
         unclaimed_id
     )
     assert restored.ledger.snapshot_operations() == app.ledger.snapshot_operations()
-    assert restored.ledger.snapshot_settlement_state()["development_reward_unclaimed_records"] == (
-        app.ledger.snapshot_settlement_state()["development_reward_unclaimed_records"]
+    assert (
+        restored.ledger.snapshot_settlement_state()["development_reward_unclaimed_records"]
+        == (app.ledger.snapshot_settlement_state()["development_reward_unclaimed_records"])
     )
 
 
@@ -1803,8 +1793,7 @@ def test_strict_execution_claims_unclaimed_stage_with_signed_wallet_binding():
     assert claim_record["wallet_address"] == binding.wallet_address
     assert claim_record["wallet_binding_id"] == binding.binding_id
     assert claim_record["reserve_remaining_q_atoms"] == (
-        reserve_envelope.payload["reward_reserve"]["reserved_q_atoms"]
-        - calculation.payments[0].amount_q_atoms
+        reserve_envelope.payload["reward_reserve"]["reserved_q_atoms"] - calculation.payments[0].amount_q_atoms
     )
     assert state["development_reward_payment_records"] == []
 
@@ -2082,9 +2071,7 @@ def test_pool_allocation_requires_finalized_sources_and_has_no_wallet_effect():
     assert second.operations_executed == 1
     assert third.operations_executed == 1
     assert third.execution_events[0].emitted_events == ["DevelopmentPoolAllocated"]
-    allocation = ledger.development_pool_allocation(
-        allocation_envelope.payload["pool_allocation"]["allocation_id"]
-    )
+    allocation = ledger.development_pool_allocation(allocation_envelope.payload["pool_allocation"]["allocation_id"])
     assert allocation is not None
     assert allocation["remaining_q_atoms"] == calculation.pool.base_allocation_q_atoms
     assert ledger.wallet_q_atom_balance("q1recipient") == 0
@@ -2134,12 +2121,8 @@ def test_pool_allocation_rejects_same_block_or_wrong_budget_source():
 
     assert same_block.operations_executed == 2
     assert same_block.operations_rejected == 1
-    assert "DEVELOPMENT_POOL_CALCULATION_NOT_FINALIZED" in (
-        same_block.execution_events[2].error or ""
-    )
-    assert ledger.development_pool_allocation(
-        allocation_envelope.payload["pool_allocation"]["allocation_id"]
-    ) is None
+    assert "DEVELOPMENT_POOL_CALCULATION_NOT_FINALIZED" in (same_block.execution_events[2].error or "")
+    assert ledger.development_pool_allocation(allocation_envelope.payload["pool_allocation"]["allocation_id"]) is None
 
 
 def test_abci_pool_allocation_is_source_bound_and_replay_protected():
@@ -2188,9 +2171,7 @@ def test_abci_pool_allocation_is_source_bound_and_replay_protected():
     assert retry_result.code == "ok"
     assert retry_tx_results[0].code == "rejected"
     assert retry_tx_results[0].log == "DEVELOPMENT_POOL_ALLOCATION_ALREADY_FINALIZED"
-    allocation = ledger.development_pool_allocation(
-        allocation_envelope.payload["pool_allocation"]["allocation_id"]
-    )
+    allocation = ledger.development_pool_allocation(allocation_envelope.payload["pool_allocation"]["allocation_id"])
     assert allocation is not None
     assert allocation["allocated_q_atoms"] == calculation.pool.base_allocation_q_atoms
     assert ledger.wallet_q_atom_balance("q1recipient") == 0
@@ -2273,9 +2254,7 @@ def test_pool_allocation_rejects_budget_mismatch_after_sources_finalize():
     assert result.operations_executed == 0
     assert result.operations_rejected == 1
     assert result.execution_events[0].error == "DEVELOPMENT_POOL_ALLOCATION_BUDGET_MISMATCH"
-    assert ledger.development_pool_allocation(
-        allocation_envelope.payload["pool_allocation"]["allocation_id"]
-    ) is None
+    assert ledger.development_pool_allocation(allocation_envelope.payload["pool_allocation"]["allocation_id"]) is None
 
 
 def test_pool_allocation_requires_pool_allocation_activation_scope():
@@ -2327,9 +2306,7 @@ def test_pool_allocation_requires_pool_allocation_activation_scope():
 
 
 def test_reward_reserve_requires_finalized_sources_and_has_no_wallet_effect():
-    calculation, _, _, epoch_tx, calculation_envelope, allocation_envelope, reserve_envelope = (
-        _reserve_envelopes()
-    )
+    calculation, _, _, epoch_tx, calculation_envelope, allocation_envelope, reserve_envelope = _reserve_envelopes()
     ledger = LedgerOperationService()
     engine = ExecutionEngine(
         ledger_service=ledger,
@@ -2359,9 +2336,7 @@ def test_reward_reserve_requires_finalized_sources_and_has_no_wallet_effect():
     assert third.operations_executed == 1
     assert fourth.operations_executed == 1
     assert fourth.execution_events[0].emitted_events == ["DevelopmentRewardReserved"]
-    reserve = ledger.development_reward_reserve(
-        reserve_envelope.payload["reward_reserve"]["reserve_id"]
-    )
+    reserve = ledger.development_reward_reserve(reserve_envelope.payload["reward_reserve"]["reserve_id"])
     assert reserve is not None
     assert reserve["reserved_q_atoms"] == calculation.schedules[0].gross_reward_q_atoms
     assert reserve["remaining_q_atoms"] == reserve["reserved_q_atoms"]
@@ -2390,9 +2365,7 @@ def test_reward_reserve_rejects_same_block_dependency():
     assert result.operations_executed == 2
     assert result.operations_rejected == 2
     assert result.execution_events[3].error == "DEVELOPMENT_REWARD_RESERVE_CALCULATION_NOT_FINALIZED"
-    assert ledger.development_reward_reserve(
-        reserve_envelope.payload["reward_reserve"]["reserve_id"]
-    ) is None
+    assert ledger.development_reward_reserve(reserve_envelope.payload["reward_reserve"]["reserve_id"]) is None
 
 
 def test_abci_reward_reserve_replay_and_snapshot_restore(tmp_path):
@@ -2452,9 +2425,7 @@ def test_abci_reward_reserve_replay_and_snapshot_restore(tmp_path):
     assert retry_tx_results[0].log == "DEVELOPMENT_REWARD_RESERVE_ALREADY_FINALIZED"
     assert restored.info().last_block_height == 5
     assert restored.info().last_block_app_hash == app.info().last_block_app_hash
-    assert restored.ledger.development_reward_reserve(reserve_id) == (
-        app.ledger.development_reward_reserve(reserve_id)
-    )
+    assert restored.ledger.development_reward_reserve(reserve_id) == (app.ledger.development_reward_reserve(reserve_id))
     assert restored.ledger.snapshot_operations() == app.ledger.snapshot_operations()
     assert restored.ledger.wallet_q_atom_balance("q1recipient") == 0
 
@@ -2654,3 +2625,334 @@ def test_operation_request_enforces_payment_fields_and_stage():
             payment_stage="IMMEDIATE",
             amount_q_atoms=1,
         )
+
+
+def test_consensus_applies_pool_carryover_and_bounty_lifecycle():
+    from aidn_hypervisor.reward.development_bounty import (
+        build_development_bounty,
+        build_development_bounty_expiry,
+        build_development_bounty_release,
+        build_development_bounty_reservation,
+    )
+    from aidn_hypervisor.reward.development_carryover import build_development_pool_carryover
+
+    calculation = run_launch_simulation_matrix().scenarios[0].calculation
+    approval = _approval(
+        calculation.policy,
+        authorized_operation_types=[
+            "DEVELOPMENT_REWARD_CALCULATE",
+            "DEVELOPMENT_POOL_ALLOCATE",
+            "DEVELOPMENT_POOL_CARRYOVER",
+            "DEVELOPMENT_BOUNTY_CREATE",
+            "DEVELOPMENT_BOUNTY_RESERVE",
+            "DEVELOPMENT_BOUNTY_RELEASE",
+            "DEVELOPMENT_BOUNTY_EXPIRE",
+        ],
+        economic_effect_profile="DEVELOPMENT_RESERVES",
+    )
+    commitment = build_development_reward_commitment(
+        calculation,
+        activation_approval=approval,
+        current_epoch=20,
+    )
+    epoch_tx = _epoch_transition(calculation)
+    epoch_operation_id = LedgerOperationEnvelope.model_validate(json.loads(epoch_tx)).operation_id
+    calculation_envelope = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_REWARD_CALCULATE",
+            created_at="2030-01-01T00:00:01Z",
+            commitment=commitment,
+            activation_approval=approval,
+            calculation=calculation,
+        )
+    )
+    allocation_envelope = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_POOL_ALLOCATE",
+            created_at="2030-01-01T00:00:02Z",
+            commitment=commitment,
+            activation_approval=approval,
+            calculation=calculation,
+            amount_q_atoms=calculation.pool.base_allocation_q_atoms,
+            calculation_operation_id=calculation_envelope.operation_id,
+            source_epoch_transition_operation_id=epoch_operation_id,
+            pool_budget_reference="epoch:20:GENERAL_DEVELOPMENT",
+        )
+    )
+    allocation_id = allocation_envelope.payload["pool_allocation"]["allocation_id"]
+    carryover = build_development_pool_carryover(
+        operation_id="carryover-record",
+        source_pool_id="GENERAL_DEVELOPMENT",
+        target_pool_id="GENERAL_DEVELOPMENT",
+        source_epoch=20,
+        target_epoch=21,
+        source_pool_reference="epoch:20:GENERAL_DEVELOPMENT",
+        target_pool_reference="epoch:21:GENERAL_DEVELOPMENT",
+        source_pool_q_atoms=100,
+        committed_q_atoms=20,
+        uncommitted_q_atoms=80,
+        carryover_limit_q_atoms=80,
+        carried_q_atoms=80,
+        returned_to_emission_reserve_q_atoms=0,
+    )
+    carryover_envelope = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_POOL_CARRYOVER",
+            created_at="2030-01-01T00:00:03Z",
+            commitment=commitment,
+            activation_approval=approval,
+            target_epoch=21,
+            amount_q_atoms=80,
+            source_epoch_transition_operation_id=epoch_operation_id,
+            pool_carryover=carryover,
+        )
+    )
+
+    def bounty(name: str):
+        return build_development_bounty(
+            create_operation_id=f"{name}-create",
+            created_epoch=20,
+            title=name,
+            acceptance_criteria_hash=f"sha256:{name}-criteria",
+            eligible_repository_ids=("repo:aidn",),
+            contribution_class="CODE",
+            minimum_reward_q_atoms=10,
+            maximum_reward_q_atoms=20,
+            reserved_budget_q_atoms=20,
+            priority_factor_millionths=1_000_000,
+            reviewer_policy="MAINTAINER",
+            opens_at_epoch=20,
+            expires_at_epoch=25,
+        )
+
+    release_bounty = bounty("bounty-release")
+    expiry_bounty = bounty("bounty-expiry")
+
+    def create_envelope(item, created_at: str):
+        return build_development_reward_operation(
+            DevelopmentRewardOperationRequest(
+                operation_type="DEVELOPMENT_BOUNTY_CREATE",
+                created_at=created_at,
+                commitment=commitment,
+                activation_approval=approval,
+                bounty_id=item.bounty_id,
+                bounty_hash=item.bounty_hash,
+                bounty=item,
+            )
+        )
+
+    release_create = create_envelope(release_bounty, "2030-01-01T00:00:04Z")
+    expiry_create = create_envelope(expiry_bounty, "2030-01-01T00:00:05Z")
+
+    def reservation(item, operation_id: str):
+        return build_development_bounty_reservation(
+            bounty_id=item.bounty_id,
+            operation_id=operation_id,
+            source_pool_id="GENERAL_DEVELOPMENT",
+            source_pool_reference=allocation_id,
+            reservation_epoch=20,
+            amount_q_atoms=10,
+        )
+
+    release_reservation = reservation(release_bounty, "release-reservation")
+    expiry_reservation = reservation(expiry_bounty, "expiry-reservation")
+    release_reserve = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_BOUNTY_RESERVE",
+            created_at="2030-01-01T00:00:06Z",
+            commitment=commitment,
+            activation_approval=approval,
+            amount_q_atoms=10,
+            bounty_id=release_bounty.bounty_id,
+            bounty_reservation=release_reservation,
+            pool_allocation_id=allocation_id,
+            pool_allocation_operation_id=allocation_envelope.operation_id,
+        )
+    )
+    expiry_reserve = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_BOUNTY_RESERVE",
+            created_at="2030-01-01T00:00:07Z",
+            commitment=commitment,
+            activation_approval=approval,
+            amount_q_atoms=10,
+            bounty_id=expiry_bounty.bounty_id,
+            bounty_reservation=expiry_reservation,
+            pool_allocation_id=allocation_id,
+            pool_allocation_operation_id=allocation_envelope.operation_id,
+        )
+    )
+    release = build_development_bounty_release(
+        bounty=release_bounty,
+        reservation=release_reservation,
+        operation_id="release-event",
+        contribution_id="contribution-release",
+        release_epoch=20,
+        released_q_atoms=10,
+    )
+    release_envelope = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_BOUNTY_RELEASE",
+            created_at="2030-01-01T00:00:08Z",
+            commitment=commitment,
+            activation_approval=approval,
+            amount_q_atoms=10,
+            bounty_id=release_bounty.bounty_id,
+            bounty_release=release,
+        )
+    )
+    expiry = build_development_bounty_expiry(
+        bounty=expiry_bounty,
+        reservations=(expiry_reservation,),
+        operation_id="expiry-event",
+        expiry_epoch=26,
+    )
+    expiry_envelope = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_BOUNTY_EXPIRE",
+            created_at="2030-01-01T00:00:09Z",
+            commitment=commitment,
+            activation_approval=approval,
+            amount_q_atoms=10,
+            bounty_id=expiry_bounty.bounty_id,
+            bounty_expiry=expiry,
+        )
+    )
+
+    ledger = LedgerOperationService()
+    engine = ExecutionEngine(
+        ledger_service=ledger,
+        admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
+        strict_operation_coverage=True,
+    )
+    envelopes = [
+        calculation_envelope,
+        allocation_envelope,
+        carryover_envelope,
+        release_create,
+        expiry_create,
+        release_reserve,
+        expiry_reserve,
+        release_envelope,
+        expiry_envelope,
+    ]
+    result = engine.execute_block(
+        block_height=1,
+        block_hash=b"B" * 32,
+        txs=[epoch_tx],
+    )
+    assert result.operations_executed == 1
+    for height, envelope in enumerate(envelopes, start=2):
+        result = engine.execute_block(
+            block_height=height,
+            block_hash=bytes([height]) * 32,
+            txs=[json.dumps(envelope.model_dump(mode="json")).encode("utf-8")],
+        )
+        assert result.operations_executed == 1
+
+    assert ledger.development_pool_carryover(carryover.carryover_id)["target_epoch"] == 21
+    assert ledger.development_bounty_state(release_bounty.bounty_id)["state"] == "RELEASED"
+    assert ledger.development_bounty_state(expiry_bounty.bounty_id)["state"] == "EXPIRED"
+
+
+def test_consensus_applies_reward_cancellation_and_correction():
+    from aidn_hypervisor.reward.development_adjustments import build_development_reward_state_snapshot
+    from aidn_hypervisor.reward.development_cancellation import build_development_reward_cancellation
+    from aidn_hypervisor.reward.development_correction import build_development_reward_correction
+
+    calculation = run_launch_simulation_matrix().scenarios[0].calculation
+    approval = _approval(
+        calculation.policy,
+        authorized_operation_types=[
+            "DEVELOPMENT_REWARD_CALCULATE",
+            "DEVELOPMENT_REWARD_CANCEL_UNVESTED",
+            "DEVELOPMENT_REWARD_CORRECT",
+        ],
+        economic_effect_profile="DEVELOPMENT_RESERVES",
+    )
+    commitment = build_development_reward_commitment(
+        calculation,
+        activation_approval=approval,
+        current_epoch=20,
+    )
+    schedule = calculation.schedules[0]
+    source = build_development_reward_state_snapshot(
+        schedule=schedule,
+        source_commitment_id=commitment.commitment_id,
+        source_record_hashes=("sha256:reserve", "sha256:payment"),
+        paid_q_atoms=schedule.immediate_amount_q_atoms,
+        unpaid_immediate_q_atoms=0,
+        unpaid_maturity_stage_one_q_atoms=schedule.maturity_stage_one_amount_q_atoms,
+        unpaid_maturity_stage_two_q_atoms=schedule.maturity_stage_two_amount_q_atoms,
+        unclaimed_q_atoms=0,
+    )
+    cancellation = build_development_reward_cancellation(
+        source=source,
+        cancellation_operation_id="cancel-event",
+        cancellation_epoch=20,
+        reason="ORDINARY_DEFECT",
+        cancelled_unpaid_maturity_stage_one_q_atoms=1,
+    )
+    correction = build_development_reward_correction(
+        source=source,
+        correction_operation_id="correction-event",
+        correction_epoch=20,
+        reason="ARITHMETIC_ERROR",
+        authorization_reference="governance:correction",
+        delta_unpaid_maturity_stage_two_q_atoms=-1,
+    )
+    cancellation_envelope = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_REWARD_CANCEL_UNVESTED",
+            created_at="2030-01-01T00:00:01Z",
+            commitment=commitment,
+            activation_approval=approval,
+            reward_id=source.reward_id,
+            amount_q_atoms=cancellation.cancelled_q_atoms,
+            reward_state_snapshot=source,
+            reward_cancellation=cancellation,
+        )
+    )
+    correction_envelope = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_REWARD_CORRECT",
+            created_at="2030-01-01T00:00:02Z",
+            commitment=commitment,
+            activation_approval=approval,
+            reward_id=source.reward_id,
+            correction_id=correction.correction_id,
+            correction_delta_q_atoms=correction.correction_delta_q_atoms,
+            reward_state_snapshot=source,
+            reward_correction=correction,
+        )
+    )
+    calculation_envelope = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_REWARD_CALCULATE",
+            created_at="2030-01-01T00:00:03Z",
+            commitment=commitment,
+            activation_approval=approval,
+            calculation=calculation,
+        )
+    )
+    ledger = LedgerOperationService()
+    engine = ExecutionEngine(
+        ledger_service=ledger,
+        admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
+        strict_operation_coverage=True,
+    )
+    for height, envelope in enumerate(
+        [calculation_envelope, cancellation_envelope, correction_envelope],
+        start=1,
+    ):
+        result = engine.execute_block(
+            block_height=height,
+            block_hash=bytes([height + 20]) * 32,
+            txs=[json.dumps(envelope.model_dump(mode="json")).encode("utf-8")],
+        )
+        assert result.operations_executed == 1
+
+    state = ledger.snapshot_settlement_state()
+    assert state["development_reward_cancellations"][0]["cancelled_q_atoms"] == 1
+    assert state["development_reward_corrections"][0]["correction_delta_q_atoms"] == -1
+    assert state["development_reward_adjustment_snapshots"][0]["snapshot_id"] == source.snapshot_id
