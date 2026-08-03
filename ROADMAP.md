@@ -898,6 +898,13 @@ This work is intentionally outside the functional MVP. It must not alter current
 15. Pool carryover, bounty create/reserve/release/expiry, unvested cancellation, and reward correction are now implemented as immutable, source-bound, non-emitting transitions in both ABCI and deterministic execution. Snapshot/restore, replay protection, conservation checks, and strict operation coverage are included. Forge data remains evidence, not a payment authority.
 16. Signed public multi-validator profile/acceptance infrastructure is implemented: validator manifests, CometBFT checkpoint binding, profile-signature quorum, static acceptance reports, and finality-config projection. It does not claim live public deployment or organizational independence. Live HTTPS RPC observations, a canonical genesis/trust-anchor release bundle, production deployment/fault-drill evidence, and out-of-band operator attestations remain explicit public-network gates.
 
+17. Added the executable implementation and operator specification pack under
+    [docs/development/executable-spec-pack](./docs/development/executable-spec-pack/README.md).
+    It is the bridge from architecture RFCs to implementation claims, fixture
+    coverage, migration rules, release gates, and public evidence. The pack is
+    Draft: command names and fixture manifests become release-authoritative only
+    after the corresponding tooling and machine-readable profile are checked in.
+
 ### Current post-MVP implementation gate
 
 - [x] ECO-0007 carryover and bounty lifecycle transitions are consensus-applied and persisted.

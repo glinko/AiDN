@@ -44,3 +44,4 @@ four-validator CometBFT drill is Docker-backed and intentionally opt-in.
 - [Architecture](02_ARCHITECTURE.md)
 - [Roadmap](ROADMAP.md)
 - [Four-validator CometBFT acceptance drill](docs/development/cometbft-multivalidator-acceptance-drill.md)
+- [Executable implementation and operator specification pack](docs/development/executable-spec-pack/README.md)
