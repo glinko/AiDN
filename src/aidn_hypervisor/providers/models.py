@@ -1,5 +1,7 @@
 import hashlib
+import ipaddress
 import json
+import re
 from pathlib import PurePosixPath
 from typing import Literal
 
@@ -96,6 +98,7 @@ PluginSandboxNetworkScope = Literal[
     "PRIVATE_ONLY",
     "DECLARED_EGRESS",
 ]
+PluginEgressProtocol = Literal["TCP"]
 PluginSandboxSecretScope = Literal[
     "NONE",
     "DECLARED_HANDLES_ONLY",
@@ -127,6 +130,65 @@ def _require_non_empty(value: str) -> str:
 
 def plugin_permission_hash(permissions: list[str]) -> str:
     normalized = sorted({_require_non_empty(permission) for permission in permissions})
+    payload = json.dumps(normalized, separators=(",", ":"), ensure_ascii=True)
+    return f"sha256:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
+
+
+class PluginEgressRule(BaseModel):
+    """One exact outbound TCP destination permitted to a Plugin Host."""
+
+    host: str
+    port: int
+    protocol: PluginEgressProtocol = "TCP"
+
+    @field_validator("host", mode="before")
+    @classmethod
+    def _normalize_host(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("Plugin egress host must be text")
+        host = value.strip().rstrip(".").lower()
+        if not host or len(host) > 253:
+            raise ValueError("Plugin egress host must be a bounded DNS name")
+        if any(character.isspace() for character in host):
+            raise ValueError("Plugin egress host must not contain whitespace")
+        if any(character in host for character in ("*", "/", "\\", ":")):
+            raise ValueError("Plugin egress host must be an exact DNS name")
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("Plugin egress host must not be an IP literal")
+        try:
+            ascii_host = host.encode("idna").decode("ascii")
+        except UnicodeError as error:
+            raise ValueError("Plugin egress host is not a valid DNS name") from error
+        labels = ascii_host.split(".")
+        if any(
+            not label
+            or len(label) > 63
+            or label[0] == "-"
+            or label[-1] == "-"
+            or re.fullmatch(r"[a-z0-9-]+", label) is None
+            for label in labels
+        ):
+            raise ValueError("Plugin egress host is not a valid DNS name")
+        return ascii_host
+
+    @field_validator("port")
+    @classmethod
+    def _validate_port(cls, value: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
+            raise ValueError("Plugin egress port must be an integer from 1 to 65535")
+        return value
+
+
+def plugin_egress_policy_hash(rules: list[PluginEgressRule]) -> str:
+    """Hash the normalized exact egress allowlist for approval and launch binding."""
+    normalized = sorted(
+        (rule.model_dump(mode="json") for rule in rules),
+        key=lambda item: (item["host"], item["port"], item["protocol"]),
+    )
     payload = json.dumps(normalized, separators=(",", ":"), ensure_ascii=True)
     return f"sha256:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
 
@@ -207,8 +269,25 @@ class PluginSandboxPolicy(BaseModel):
     execution_mode: PluginSandboxExecutionMode = "RECORDED_ONLY"
     filesystem_scope: PluginSandboxFilesystemScope = "NONE"
     network_scope: PluginSandboxNetworkScope = "NONE"
+    egress_rules: list[PluginEgressRule] = Field(default_factory=list)
     secret_scope: PluginSandboxSecretScope = "DECLARED_HANDLES_ONLY"
     notes: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_egress_rules(self) -> "PluginSandboxPolicy":
+        if len(self.egress_rules) > 32:
+            raise ValueError("Plugin sandbox policy permits at most 32 egress rules")
+        keys = [
+            (rule.host, rule.port, rule.protocol)
+            for rule in self.egress_rules
+        ]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Plugin sandbox egress rules must be unique")
+        if self.network_scope != "DECLARED_EGRESS" and self.egress_rules:
+            raise ValueError(
+                "Plugin sandbox egress rules require network_scope DECLARED_EGRESS"
+            )
+        return self
 
     @field_validator("notes")
     @classmethod

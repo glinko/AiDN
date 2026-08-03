@@ -73,6 +73,9 @@ class MvpSessionApplicationService:
         consumer_authorization: dict | None = None,
         require_published_configuration: bool = False,
         require_wallet_authorization: bool = False,
+        session_id: str | None = None,
+        consensus_sender_sequence: int | None = None,
+        consensus_lock_signatures: list[str] | None = None,
     ) -> dict:
         endpoint = self._get_endpoint(endpoint_id)
         if require_published_configuration:
@@ -99,6 +102,9 @@ class MvpSessionApplicationService:
             consumer_authorization_public_key=consumer_authorization_public_key,
             consumer_authorization=consumer_authorization,
             require_wallet_authorization=require_wallet_authorization,
+            session_id=session_id,
+            consensus_sender_sequence=consensus_sender_sequence,
+            consensus_lock_signatures=consensus_lock_signatures,
         )
         return {
             "endpoint": endpoint,
@@ -267,6 +273,13 @@ class MvpSessionApplicationService:
         request_id: str | None = None,
         now: str | None = None,
         actual_network_fees_q_atoms: int = 0,
+        consensus_sender_sequence: int | None = None,
+        consensus_lock_signatures: list[str] | None = None,
+        consensus_failure_signatures: list[str] | None = None,
+        consensus_initiator_wallet: str | None = None,
+        consensus_initiator_signature: str | None = None,
+        consensus_observed_at: str | None = None,
+        consensus_force_signatures: list[str] | None = None,
     ) -> dict:
         session = self._session_service.store.get_session(session_id)
         if session.endpoint_id != endpoint_id:
@@ -279,6 +292,13 @@ class MvpSessionApplicationService:
             request_id=request_id,
             now=now,
             actual_network_fees_q_atoms=actual_network_fees_q_atoms,
+            consensus_sender_sequence=consensus_sender_sequence,
+            consensus_lock_signatures=consensus_lock_signatures,
+            consensus_failure_signatures=consensus_failure_signatures,
+            consensus_initiator_wallet=consensus_initiator_wallet,
+            consensus_initiator_signature=consensus_initiator_signature,
+            consensus_observed_at=consensus_observed_at,
+            consensus_force_signatures=consensus_force_signatures,
         )
         return {
             "payload": build_mvp_settlement_finalize_payload(

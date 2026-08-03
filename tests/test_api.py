@@ -394,6 +394,7 @@ class LocalImportApiPlugin(FakeManagedPlugin):
             "execution_mode": "SANDBOX_REQUIRED",
             "filesystem_scope": "CONTROLLED_PATHS",
             "network_scope": "DECLARED_EGRESS",
+            "egress_rules": [{"host": "provider.example.com", "port": 443}],
             "secret_scope": "DECLARED_HANDLES_ONLY",
             "notes": "Managed install may write state inside one controlled host path.",
         }
@@ -1530,6 +1531,35 @@ def test_operator_registry_objects_endpoint_returns_local_registry_objects() -> 
     assert response.status_code == 200
     object_types = {item["object_type"] for item in response.json()["objects"]}
     assert "capability_definition" in object_types
+
+
+def test_operator_registry_inventory_manifest_endpoint_returns_payload_free_commitment() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    client = TestClient(build_app(service=service))
+
+    response = client.get(
+        "/operators/registry/inventory-manifest?generated_at_epoch=7"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["generated_at_epoch"] == 7
+    assert body["manifest_id"].startswith("sha256:")
+    assert body["inventory_root"]["root_hash"]
+    assert all("payload" not in segment for segment in body["segments"])
+
+
+def test_operator_registry_retention_endpoint_supports_preview() -> None:
+    service = _service(with_runtime=False, use_process_manager=True)
+    client = TestClient(build_app(service=service))
+
+    response = client.post(
+        "/operators/registry/retention/apply?current_epoch=7&apply=false"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied"] is False
+    assert len(response.json()["policy_hash"]) == 64
 
 
 def test_operator_registry_objects_endpoint_lists_wallet_identity_objects() -> None:
@@ -2921,6 +2951,10 @@ def test_attach_remote_endpoint_route_accepts_verified_publication() -> None:
 
     assert response.status_code == 201
     assert response.json()["data"]["remote_endpoint"]["source_publication_id"] == publication.publication_id
+    remote_payload = response.json()["data"]["remote_endpoint"]
+    assert remote_payload["publication_verification"] == "VERIFIED"
+    assert remote_payload["source_owner_public_key"] == owner_public_key
+    assert remote_payload["source_wallet_signature"] == publication.wallet_signature
 
 
 def test_detach_remote_endpoint_route_removes_preferred_catalogue_entry() -> None:
@@ -3157,6 +3191,10 @@ def test_operator_dashboard_shell_route_returns_terminal_layout_markup() -> None
     assert 'data-role="workspace"' in response.text
     assert 'data-role="inspector"' in response.text
     assert 'data-role="operations-band"' in response.text
+    assert 'class="hypervisor-tabs"' in response.text
+    assert 'class="bundle-nav-summary"' in response.text
+    assert 'class="home-bundle-table-head"' in response.text
+    assert 'class="validation-donut"' in response.text
 
 
 def test_operator_services_route_returns_canonical_service_inventory() -> None:
@@ -3179,7 +3217,7 @@ def test_operator_dashboard_shell_mentions_compute_service_overlay() -> None:
     assert response.status_code == 200
     assert "Compute Service" in response.text
     assert "Capability Runtimes" in response.text
-    assert "Bundles remain a transitional local supply layer." in response.text
+    assert "Bundle, Endpoint, and Session keep their own exact identities." in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_market_terminal_controls() -> None:
@@ -3471,9 +3509,9 @@ def test_operator_dashboard_shell_route_exposes_endpoint_pipeline_copy() -> None
     response = client.get("/operators/dashboard")
 
     assert response.status_code == 200
-    assert "Endpoint Pipeline" in response.text
-    assert "Endpoints are the primary operator workspace." in response.text
-    assert "Providers prepare execution supply. Bundles prepare endpoint candidates." in response.text
+    assert "Bundle Deployment Chain" in response.text
+    assert "Endpoint offers remain separate commercial and validation objects." in response.text
+    assert "Provider Plugin" in response.text
     assert 'data-screen-jump="endpoints"' in response.text
 
 
@@ -3525,7 +3563,7 @@ def test_operator_dashboard_shell_route_uses_payload_driven_provider_and_bundle_
     assert "selectedProvider()?.endpoint_readiness" in response.text
     assert "selectedFleetBundle()?.endpoint_relationship" in response.text
     assert "This screen prepares execution supply through provider plugins" in response.text
-    assert "This screen tracks bundle-to-endpoint relationship state." in response.text
+    assert "Bundles are immutable deployment definitions" in response.text
 
 
 def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> None:
@@ -7652,6 +7690,105 @@ def test_session_detail_exposes_session_contract_object_references() -> None:
     assert session_payload["endpoint_payment_beneficiary"] == "wallet-provider"
     assert session_payload["consumer_refund_beneficiary"] == "wallet-client"
     assert session_payload["session_contract_namespace"] == "session"
+
+
+def test_session_amendment_api_exposes_hash_bound_contract_head() -> None:
+    registry_service = RegistryService()
+    session_service = SessionService(SessionStore(), registry_service=registry_service)
+    service = _service(with_runtime=False, use_process_manager=True)
+    client = TestClient(
+        build_app(
+            service=service,
+            registry_service=registry_service,
+            session_service=session_service,
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-client",
+        provider_wallet="wallet-provider",
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy={
+            "minimum_deposit": 10.0,
+            "idle_timeout_seconds": 600,
+            "max_concurrent_sessions": 1,
+            "maximum_session_duration_seconds": 3600,
+            "queue_policy": "busy",
+        },
+        session_id="session-api-amendment-1",
+    )
+    original_hash = opened.session.effective_terms_hash
+
+    response = client.post(
+        f"/api/v1/sessions/{opened.session.session_id}/amendments",
+        json={
+            "amendment_id": "amendment-api-1",
+            "amendment_kind": "EXPIRATION_EXTENSION",
+            "changes": {"expires_at": "2030-01-01T00:00:00+00:00"},
+            "consumer_signature": "consumer-signature",
+            "endpoint_signature": "endpoint-signature",
+            "accepted_at": "2026-07-21T00:00:00+00:00",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["amendment"]["sequence"] == 1
+    assert payload["effective_terms_hash"] != original_hash
+    assert payload["payload"]["session"]["effective_terms_hash"] == payload[
+        "effective_terms_hash"
+    ]
+
+    list_response = client.get(
+        f"/api/v1/sessions/{opened.session.session_id}/amendments"
+    )
+    assert list_response.status_code == 200
+    assert list_response.json()["data"]["items"][0]["amendment_id"] == "amendment-api-1"
+
+
+def test_session_contract_exchange_api_exports_and_reimports_idempotently() -> None:
+    registry_service = RegistryService()
+    session_service = SessionService(SessionStore(), registry_service=registry_service)
+    service = _service(with_runtime=False, use_process_manager=True)
+    client = TestClient(
+        build_app(
+            service=service,
+            registry_service=registry_service,
+            session_service=session_service,
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-client",
+        provider_wallet="wallet-provider",
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy={
+            "minimum_deposit": 10.0,
+            "idle_timeout_seconds": 600,
+            "max_concurrent_sessions": 1,
+            "maximum_session_duration_seconds": 3600,
+            "queue_policy": "busy",
+        },
+        session_id="session-api-contract-exchange-1",
+    )
+
+    exported = client.get(
+        f"/api/v1/sessions/{opened.session.session_id}/contract-exchange"
+    )
+    assert exported.status_code == 200
+    exchange = exported.json()["data"]
+    assert exchange["session_id"] == opened.session.session_id
+    assert exchange["effective_terms_hash"] == opened.session.effective_terms_hash
+
+    imported = client.post(
+        f"/api/v1/sessions/{opened.session.session_id}/contract-exchange",
+        json=exchange,
+    )
+    assert imported.status_code == 200
+    assert imported.json()["data"]["status"] == "DUPLICATE"
+    assert imported.json()["data"]["local_session_reconciled"] is True
 
 
 def test_operator_dashboard_session_sweep_action_closes_idle_sessions() -> None:

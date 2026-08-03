@@ -30,6 +30,9 @@ class RegistryMessageType(str):
     SYNC_STATUS = "registry_sync_status"
     ANNOUNCEMENT = "registry_announcement"
     CHALLENGE = "registry_challenge"
+    CHALLENGE_RESPONSE = "registry_challenge_response"
+    NON_RESPONSE_OBSERVATION = "registry_non_response_observation"
+    FAILURE_REPORT = "registry_failure_report"
     REPAIR = "registry_repair"
     EPOCH_UPDATE = "registry_epoch_update"
 
@@ -77,6 +80,7 @@ class InventoryResponsePayload(RegistryPayload):
     latest_epoch: int = 0
     bloom_filter_data: bytes | None = None
     inventory_root_hash: str = ""
+    inventory_manifest: dict | None = None
     object_ids: list[str] = Field(default_factory=list)
     inventory_truncated: bool = False
 
@@ -87,6 +91,8 @@ class ObjectRequestPayload(RegistryPayload):
     object_ids: list[str] = Field(default_factory=list)
     object_type: str = ""
     include_payload: bool = True
+    repair_plan_id: str = ""
+    expected_inventory_root: str = ""
 
 
 class ObjectResponsePayload(RegistryPayload):
@@ -96,6 +102,8 @@ class ObjectResponsePayload(RegistryPayload):
     missing_ids: list[str] = Field(default_factory=list)
     total_requested: int = 0
     total_delivered: int = 0
+    repair_plan_id: str = ""
+    source_inventory_root: str = ""
 
 
 class BloomFilterPayload(RegistryPayload):
@@ -131,14 +139,56 @@ class AnnouncementPayload(RegistryPayload):
 
 
 class ChallengePayload(RegistryPayload):
-    """Registry challenge for completeness proof."""
+    """Registry challenge for deterministic Proof of Registry."""
     registry_message_type: str = RegistryMessageType.CHALLENGE
     challenge_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     challenge_type: str = "completeness"  # completeness | consistency | freshness
-    target_object_ids: list[str] = Field(default_factory=list)
+    target_registry_id: str = ""
+    target_inventory_root: str = ""
+    target_segment_id: str | None = None
+    object_selector: str = ""
+    target_object_ids: list[str] = Field(default_factory=list)  # legacy hint only
     target_epochs: list[int] = Field(default_factory=list)
     deadline_epoch: int = 0
+    issued_at: float = 0.0
+    response_deadline: float = 0.0
+    challenger_id: str = ""
+    challenge_nonce: str = ""
+    challenger_signature: str = ""
+    required_proof: list[str] = Field(default_factory=list)
     evidence_required: bool = True
+
+
+class ChallengeResponsePayload(RegistryPayload):
+    """Signed response to a Registry challenge."""
+
+    registry_message_type: str = RegistryMessageType.CHALLENGE_RESPONSE
+    challenge_id: str = ""
+    registry_id: str = ""
+    inventory_root: str = ""
+    target_segment_id: str = ""
+    selected_object_id: str = ""
+    object_hash: str = ""
+    object_or_reference: dict | None = None
+    segment_manifest: dict = Field(default_factory=dict)
+    segment_inclusion_proof: dict = Field(default_factory=dict)
+    ledger_commitment_proof: dict | None = None
+    response_timestamp: float = 0.0
+    registry_signature: str = ""
+
+
+class NonResponseObservationPayload(RegistryPayload):
+    """Signed observation used to confirm a challenge non-response."""
+
+    registry_message_type: str = RegistryMessageType.NON_RESPONSE_OBSERVATION
+    observation: dict = Field(default_factory=dict)
+
+
+class FailureReportPayload(RegistryPayload):
+    """Signed Registry Failure Report evidence."""
+
+    registry_message_type: str = RegistryMessageType.FAILURE_REPORT
+    report: dict = Field(default_factory=dict)
 
 
 class RepairPayload(RegistryPayload):
@@ -257,6 +307,8 @@ class RegistryMessageBuilder:
         destination_node_id: str,
         object_ids: list[str],
         include_payload: bool = True,
+        repair_plan_id: str = "",
+        expected_inventory_root: str = "",
     ) -> dict:
         """Build an object request message."""
         payload = ObjectRequestPayload(
@@ -264,6 +316,8 @@ class RegistryMessageBuilder:
             destination_node_id=destination_node_id,
             object_ids=object_ids,
             include_payload=include_payload,
+            repair_plan_id=repair_plan_id,
+            expected_inventory_root=expected_inventory_root,
         )
         return self.build(payload, destination_node_id=destination_node_id)
 
@@ -312,3 +366,59 @@ class RegistryMessageBuilder:
             content_size=content_size,
         )
         return self.build(payload)
+
+    def build_challenge(
+        self,
+        *,
+        destination_node_id: str,
+        challenge: dict,
+    ) -> dict:
+        """Build a Proof of Registry challenge message."""
+        payload = ChallengePayload(
+            source_node_id=self._node_id,
+            destination_node_id=destination_node_id,
+            **challenge,
+        )
+        # Proof requests use the already authenticated replication channel in
+        # the MVP; no second unauthenticated control transport is introduced.
+        return self.build(payload, destination_node_id=destination_node_id)
+
+    def build_challenge_response(
+        self,
+        *,
+        destination_node_id: str,
+        response: dict,
+    ) -> dict:
+        """Build a Proof of Registry challenge response message."""
+        payload = ChallengeResponsePayload(
+            source_node_id=self._node_id,
+            destination_node_id=destination_node_id,
+            **response,
+        )
+        return self.build(payload, destination_node_id=destination_node_id)
+
+    def build_non_response_observation(
+        self,
+        *,
+        destination_node_id: str,
+        observation: dict,
+    ) -> dict:
+        payload = NonResponseObservationPayload(
+            source_node_id=self._node_id,
+            destination_node_id=destination_node_id,
+            observation=observation,
+        )
+        return self.build(payload, destination_node_id=destination_node_id)
+
+    def build_failure_report(
+        self,
+        *,
+        destination_node_id: str,
+        report: dict,
+    ) -> dict:
+        payload = FailureReportPayload(
+            source_node_id=self._node_id,
+            destination_node_id=destination_node_id,
+            report=report,
+        )
+        return self.build(payload, destination_node_id=destination_node_id)

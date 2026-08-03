@@ -224,7 +224,31 @@ DEVELOPMENT_REWARD_CANCEL_UNVESTED
 DEVELOPMENT_REWARD_CORRECT
 ```
 
-Pool allocation, carryover, bounty reservation, reward calculation/reservation/payment, unclaimed marking, claim, cancellation, and correction SHALL be idempotent. Each payment atomically debits the applicable bucket, credits the verified Wallet, updates the record, and updates the maturity reserve. A `(Reward ID, Payment Stage)` cannot pay twice; failed payment remains reserved for idempotent retry.
+The current strict consensus profile implements `DEVELOPMENT_REWARD_CALCULATE`
+as immutable evidence, `DEVELOPMENT_POOL_ALLOCATE` as a source-bound pool
+reserve, `DEVELOPMENT_REWARD_RESERVE` as a schedule-bound reward reserve,
+`DEVELOPMENT_REWARD_PAY_IMMEDIATE` as a source-bound immediate payment,
+`DEVELOPMENT_REWARD_PAY_MATURITY` as a source-bound maturity payment, and
+`DEVELOPMENT_REWARD_MARK_UNCLAIMED` as a source-bound unclaimed-stage record,
+and `DEVELOPMENT_REWARD_CLAIM` as a Wallet-bound claim transition.
+Calculation, allocation, reserve and unclaimed transitions do not credit
+Wallets or mint Q. Immediate payment requires finalized predecessors, the
+exact payable payment hash and stage, a verified Wallet binding, replay
+protection, and snapshot-safe reserve/pool conservation checks; maturity
+payment additionally requires a finalized epoch transition whose opening
+epoch reaches the exact stage-one or stage-two boundary and accepts only a
+reserved maturity stage. Unclaimed marking requires an exact `UNCLAIMED`
+stage with no Wallet, records the claim-expiration epoch, and leaves both the
+reserve and Wallet unchanged. No transition is an alias for `REWARD_MINT`.
+`DEVELOPMENT_REWARD_CLAIM` requires that immutable record, a finalized epoch
+boundary inside its claim window, and a valid RFC-0068 signed Wallet binding;
+it creates a separate `CLAIMED` record, consumes exactly one stage and credits
+only the bound Wallet. Expiry-return and finalized evidence closure are also
+implemented as source-bound transitions; carryover, bounty, cancellation, and
+correction remain fail-closed until their own canonical state transitions are
+implemented.
+
+Pool allocation, carryover, bounty reservation, reward calculation/reservation/payment, unclaimed marking, claim, cancellation, and correction SHALL be idempotent. Each paid stage atomically debits the applicable bucket, credits the verified Wallet, updates the record, and updates the maturity reserve. Unclaimed marking only records the immutable claim state and does not debit the reserve. A `(Reward ID, Payment Stage)` cannot pay, become unclaimed, or be claimed twice; a claim keeps the original unclaimed evidence and consumes the corresponding reserved stage exactly once. Failed payment remains reserved for idempotent retry.
 
 The system SHALL mitigate line inflation, PR splitting, fake reviewers, maintainer collusion, Wallet substitution, duplicate rewards, reserve theft, bounty double funding, Sybil identities, and normalization manipulation. No bot, webhook, or maintainer account may mint arbitrary Q: every payment is bounded by epoch allocation, available Pool, caps, canonical attestation, and deterministic distribution.
 
@@ -254,6 +278,15 @@ Before mainnet activation, simulation SHOULD cover low/high contribution demand,
 
 The post-MVP minimum implementation includes fixed Development Share, bounded Pool and carryover, CU conversion, nominal rate, caps, deterministic normalization, role distribution, immediate/maturity schedule, reserves, unclaimed claims, bounties, Security Pool, reward records, Ledger payments, and public pool accounting.
 
+The first executable rollout is deliberately narrower than the complete
+policy. Governance may attach a signed rollout profile to the activation
+approval. The profile can cap total accepted reward atoms per calculation
+epoch, the number of contribution records, and optionally the accepted reward
+attributable to one contributor. These caps are checked before a calculation
+commitment can be created and are inherited by reserve/payment transitions. A
+rollout profile is prospective and becomes active only at its declared
+effective epoch; it cannot retroactively reprice a finalized calculation.
+
 Deferred features include dynamic Development Share, market CU rates, quadratic allocation, decentralized reviewer auctions, ecosystem-wide impact rounds, cross-project grants, public-goods voting, price stabilization, development insurance, and contributor-delegation markets.
 
 Required error codes include:
@@ -277,7 +310,29 @@ DEVELOPMENT_MATURITY_CANCELLED
 DEVELOPMENT_MATURITY_RESERVE_INSUFFICIENT
 DEVELOPMENT_WALLET_NOT_VERIFIED
 DEVELOPMENT_REWARD_UNCLAIMED
+DEVELOPMENT_REWARD_UNCLAIMED_DUPLICATE
+DEVELOPMENT_REWARD_UNCLAIMED_STATE_INVALID
+DEVELOPMENT_REWARD_UNCLAIMED_WALLET_INVALID
+DEVELOPMENT_REWARD_UNCLAIMED_ID_INVALID
 DEVELOPMENT_CLAIM_WINDOW_EXPIRED
+DEVELOPMENT_REWARD_CLAIM_DUPLICATE
+DEVELOPMENT_REWARD_CLAIM_AMOUNT_INVALID
+DEVELOPMENT_REWARD_CLAIM_EPOCH_INVALID
+DEVELOPMENT_REWARD_CLAIM_UNCLAIMED_NOT_FOUND
+DEVELOPMENT_REWARD_CLAIM_UNCLAIMED_BINDING_INVALID
+DEVELOPMENT_REWARD_CLAIM_RESERVE_EXCEEDED
+DEVELOPMENT_REWARD_CLAIM_STAGE_EXCEEDED
+DEVELOPMENT_REWARD_CLAIM_POOL_EXCEEDED
+DEVELOPMENT_REWARD_EXPIRE_UNCLAIMED
+DEVELOPMENT_REWARD_EXPIRY_DUPLICATE
+DEVELOPMENT_REWARD_EXPIRY_NOT_REACHED
+DEVELOPMENT_REWARD_EXPIRY_POOL_EXCEEDED
+DEVELOPMENT_REWARD_FINALIZED_COMMITMENT_DUPLICATE
+DEVELOPMENT_REWARD_ROLLOUT_EPOCH_CAP_EXCEEDED
+DEVELOPMENT_REWARD_ROLLOUT_CONTRIBUTION_COUNT_EXCEEDED
+DEVELOPMENT_REWARD_ROLLOUT_CONTRIBUTOR_CAP_EXCEEDED
+DEVELOPMENT_REWARD_WALLET_BINDING_INVALID
+DEVELOPMENT_REWARD_WALLET_BINDING_MISMATCH
 DEVELOPMENT_BOUNTY_NOT_FOUND
 DEVELOPMENT_BOUNTY_EXPIRED
 DEVELOPMENT_BOUNTY_CRITERIA_NOT_MET
@@ -293,5 +348,6 @@ DEVELOPMENT_REWARD_CORRECTION_INVALID
 - CU are non-transferable; caps apply before normalization; a low-demand epoch does not force full distribution;
 - role shares are deterministic; one payment stage is never paid twice; cancelled unvested value returns to the Pool;
 - raw lines, reviewer count, PR count, and contributor aliases do not create reward demand without accepted value;
+- a signed rollout profile can only narrow the active reward boundary; it cannot widen the approved Pool or create new emission;
 - parameters are prospective, historical rewards are not repriced, and emergency pauses preserve accounting;
 - GitHub records what happened, RFC-0068 evaluates contribution, and this ECO bounds the Q distribution.

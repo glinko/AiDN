@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from aidn_hypervisor.epoch_reward.models import (
     EmissionRecord,
     EpochTransitionRecord,
     EpochTransitionState,
 )
 from aidn_hypervisor.epoch_reward.recycling import RecyclingEngine
+from aidn_hypervisor.registry.duty import RegistryRewardInput
 from aidn_hypervisor.reward.models import (
     BASE_EMISSION_Q_ATOMS,
     EpochRewardBudget,
 )
 from aidn_hypervisor.reward.pools import ServicePoolManager
+from aidn_hypervisor.reward.registry_distribution import (
+    RegistryEpochRewardCalculator,
+    RegistryRewardCalculation,
+)
 
 
 class EpochTransitionEngine:
@@ -42,6 +49,10 @@ class EpochTransitionEngine:
         self._transitions: dict[int, EpochTransitionRecord] = {}
         # Emission records
         self._emissions: dict[int, EmissionRecord] = {}
+        # Fixed-point Registry calculations are recorded separately from the
+        # legacy mint generator and require Ledger finality before minting.
+        self._registry_calculations: dict[int, RegistryRewardCalculation] = {}
+        self._budgets: dict[int, EpochRewardBudget] = {}
 
     def begin_transition(self, epoch: int) -> EpochTransitionRecord:
         """Begin an epoch transition.
@@ -103,6 +114,7 @@ class EpochTransitionEngine:
             base_emission=self._base_emission,
             recyclable=recyclable,
         )
+        self._budgets[epoch] = budget
 
         # Update transition record with budget
         record = self._transitions.get(epoch)
@@ -121,6 +133,50 @@ class EpochTransitionEngine:
             )
 
         return budget
+
+    def calculate_registry_rewards(
+        self,
+        epoch: int,
+        inputs: Iterable[RegistryRewardInput],
+        *,
+        calculator: RegistryEpochRewardCalculator | None = None,
+        pool_budget_reference: str | None = None,
+    ) -> RegistryRewardCalculation | None:
+        """Aggregate finalized Registry inputs against this Epoch's pool.
+
+        The transition records the calculation root for consensus.  It never
+        calls a wallet and never emits ``REWARD_MINT`` itself.
+        """
+        budget = self._budgets.get(epoch)
+        record = self._transitions.get(epoch)
+        if budget is None or record is None:
+            return None
+        reward_calculator = calculator or RegistryEpochRewardCalculator()
+        calculation = reward_calculator.calculate(
+            inputs,
+            epoch=epoch,
+            nominal_pool_budget_q_atoms=budget.registry_pool,
+            pool_budget_reference=pool_budget_reference or f"epoch:{epoch}:registry",
+        )
+        self._registry_calculations[epoch] = calculation
+        notes = dict(record.notes)
+        notes.update(
+            {
+                "registry_calculation_root": calculation.calculation_root,
+                "registry_unallocated_q_atoms": calculation.unused_pool_q_atoms,
+            }
+        )
+        self._transitions[epoch] = record.model_copy(
+            update={
+                "state": EpochTransitionState.REWARDS_CALCULATED,
+                "participant_count": len(calculation.allocations),
+                "reward_recipient_count": sum(
+                    1 for item in calculation.allocations if item.allocated_q_atoms > 0
+                ),
+                "notes": notes,
+            }
+        )
+        return calculation
 
     def record_emission(
         self,
@@ -229,6 +285,10 @@ class EpochTransitionEngine:
     def get_emission(self, epoch: int) -> EmissionRecord | None:
         """Get emission record for an epoch."""
         return self._emissions.get(epoch)
+
+    def get_registry_calculation(self, epoch: int) -> RegistryRewardCalculation | None:
+        """Get the immutable Registry calculation for an Epoch."""
+        return self._registry_calculations.get(epoch)
 
     @property
     def recycling_engine(self) -> RecyclingEngine:

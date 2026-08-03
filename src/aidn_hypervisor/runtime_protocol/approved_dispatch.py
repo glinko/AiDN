@@ -79,7 +79,11 @@ class ApprovedRuntimeDispatcher:
             raise ApprovedRuntimeDispatchError(
                 "Session Endpoint Configuration is no longer current"
             )
-        if not session.session_contract_hash or not session.accounting_contract_hash:
+        if (
+            not session.session_contract_hash
+            or not session.effective_terms_hash
+            or not session.accounting_contract_hash
+        ):
             raise ApprovedRuntimeDispatchError("Session contract is incomplete")
 
         provider = self.provider_inventory.store.get_provider_instance(
@@ -147,6 +151,7 @@ class ApprovedRuntimeDispatcher:
             endpoint_configuration_hash=endpoint.configuration_hash,
             session_id=session.session_id,
             session_contract_hash=session.session_contract_hash,
+            effective_terms_hash=session.effective_terms_hash,
             request_id=request_id,
             capability_id=binding.capability_id,
             capability_version=binding.capability_version,
@@ -231,6 +236,10 @@ class ApprovedRuntimeDispatcher:
             and request.endpoint_configuration_hash == endpoint.configuration_hash
             and request.session_id == session.session_id
             and request.session_contract_hash == session.session_contract_hash
+            and (
+                request.effective_terms_hash is None
+                or request.effective_terms_hash == session.effective_terms_hash
+            )
             and request.accounting_contract_hash == session.accounting_contract_hash
         )
 

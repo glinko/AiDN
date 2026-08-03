@@ -53,19 +53,47 @@ jobs:
     if: inputs.run_consensus_drill
     needs: release-artifact
     runs-on: ubuntu-latest
+    env:
+      AIDN_VALIDATOR_COUNT: "4"
+      AIDN_COMETBFT_IMAGE: cometbft/cometbft:v0.38.19
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install verifier dependencies
+        run: uv sync --all-extras --frozen
       - name: Start and verify isolated validator network
         run: |
+          set -o pipefail
+          mkdir -p "${RUNNER_TEMP}/aidn-cometbft-evidence"
           chmod +x tools/run-cometbft-multivalidator-devnet.sh
           tools/run-cometbft-multivalidator-devnet.sh "${RUNNER_TEMP}/aidn-cometbft-state"
-          python tools/verify-cometbft-multivalidator-devnet.py
+          uv run python tools/verify-cometbft-multivalidator-devnet.py \
+            --output "${RUNNER_TEMP}/aidn-cometbft-evidence/consensus-drill.json" \
+            --validator-rpc-url http://127.0.0.1:26658 \
+            --validator-rpc-url http://127.0.0.1:26659 \
+            --validator-rpc-url http://127.0.0.1:26660 \
+            | tee "${RUNNER_TEMP}/aidn-cometbft-evidence/consensus-drill.stdout.json"
+      - name: Upload consensus drill evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: consensus-drill-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/aidn-cometbft-evidence/
+          if-no-files-found: warn
       - name: Preserve validator diagnostics on failure
         if: failure()
         run: |
           docker ps -a
-          docker logs aidn-comet-0 --tail 160 || true
-          docker logs aidn-abci-0 --tail 160 || true
+          for i in 0 1 2 3; do
+            docker logs "aidn-comet-$i" --tail 160 || true
+            docker logs "aidn-abci-$i" --tail 160 || true
+          done
       - name: Clean up isolated validator network
         if: always()
         run: |

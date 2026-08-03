@@ -32,7 +32,7 @@ def test_verified_package_host_uses_docker_for_sandbox_required_policy(tmp_path)
     store = InMemoryProviderInventoryStore()
     policy = PluginSandboxPolicy(
         execution_mode="SANDBOX_REQUIRED",
-        filesystem_scope="NONE",
+        filesystem_scope="PLUGIN_DATA_ONLY",
         network_scope="NONE",
         secret_scope="DECLARED_HANDLES_ONLY",
     )
@@ -88,3 +88,9 @@ def test_verified_package_host_uses_docker_for_sandbox_required_policy(tmp_path)
     assert spec["command"][-3:] == ["python", "/opt/aidn/plugin/runtime/host.py", "--serve"]
     assert spec["metadata"]["package_execution_mode"] == "SANDBOX_REQUIRED"
     assert spec["metadata"]["activation_secret_delivery"] == "READ_ONLY_FILE"
+    assert spec["metadata"]["filesystem_scope"] == "PLUGIN_DATA_ONLY"
+    assert spec["metadata"]["plugin_data_mount"] == "/var/lib/aidn/plugin-data"
+    assert any(
+        "plugin-data" in argument and "dst=/var/lib/aidn/plugin-data" in argument
+        for argument in spec["command"]
+    )

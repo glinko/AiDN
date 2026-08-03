@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from aidn_hypervisor.registry import ImmutableObjectStore, RegistryObjectEnvelope
+from aidn_hypervisor.registry import (
+    ImmutableObjectStore,
+    RegistryObjectEnvelope,
+    RegistryRetentionPolicy,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -372,3 +376,46 @@ def test_insertion_order_preserved():
     for oid in ids:
         store.put(_make_envelope(object_id=oid))
     assert store.all_ids() == ids
+
+
+def test_retention_expiry_is_non_destructive_and_filterable():
+    store = ImmutableObjectStore()
+    envelope = RegistryObjectEnvelope.create(
+        object_type="recent",
+        payload={"value": 1},
+        object_id="recent-1",
+        created_epoch=10,
+        expiration_epoch=12,
+    )
+    store.put(envelope)
+
+    report = store.apply_retention(
+        current_epoch=12,
+        policy=RegistryRetentionPolicy(),
+    )
+
+    assert report["newly_expired_count"] == 1
+    assert store.get("recent-1") is None
+    assert store.get("recent-1", include_expired=True) == envelope
+    assert store.all_ids() == []
+    assert store.all_ids(include_expired=True) == ["recent-1"]
+    assert store.expired_ids() == ["recent-1"]
+
+
+def test_retention_policy_can_derive_expiry_from_created_epoch():
+    store = ImmutableObjectStore()
+    store.put(
+        RegistryObjectEnvelope.create(
+            object_type="recent",
+            payload={"value": 1},
+            object_id="recent-1",
+            created_epoch=10,
+            retention_class="RECENT",
+        )
+    )
+    policy = RegistryRetentionPolicy(
+        expiration_epochs_by_class={"RECENT": 2},
+    )
+
+    assert store.apply_retention(current_epoch=11, policy=policy)["expired_count"] == 0
+    assert store.apply_retention(current_epoch=12, policy=policy)["expired_count"] == 1

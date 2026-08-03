@@ -218,6 +218,33 @@ Changing any signed field SHALL produce a different Operation ID.
 
 Two finalized operations SHALL NOT share the same Operation ID.
 
+### 7.1 Finalized Operation Replay Registry
+
+The reference Ledger SHALL maintain a deterministic finalized-operation replay
+registry derived from the canonical operation log. Each entry binds:
+
+- `operation_id`;
+- `operation_type`;
+- `sequence_id`;
+- the SHA-256 digest of the complete immutable operation record.
+
+The registry SHALL reject:
+
+- a duplicate operation ID;
+- the same operation ID with a different record digest;
+- two finalized records with the same sequence ID;
+- evidence references to an operation absent from the registry.
+
+The operation log remains the committed source of truth. The registry is a
+rebuildable index and SHALL be reconstructed during restart or Snapshot/State
+Sync restore. Rebuilding it from the restored operation log SHALL produce the
+same entries and SHALL fail closed on any identity, digest or sequence conflict.
+
+An identical operation redelivery is idempotent at the consensus admission
+boundary; it SHALL not execute a second state transition or create a second
+economic effect. A conflicting payload cannot reuse the original operation ID,
+because the operation ID is bound to the canonical unsigned envelope.
+
 ## 8. Wallet Sequence
 
 Every Wallet-authorized operation SHALL include a monotonically increasing `sender_sequence`.
@@ -492,6 +519,7 @@ The MVP catalog contains the following categories:
 | `SESSION_DEPOSIT_EXTEND` | Wallet | Session |
 | `SESSION_SETTLE` | Multi-party | Session |
 | `SESSION_EXPIRE` | Protocol | Protocol Sponsored |
+| `SESSION_FAILURE_EVIDENCE` | Evidence-triggered | Session |
 | `SESSION_FORCE_SETTLE` | Evidence-triggered | Session |
 | `VALIDATION_REQUEST` | Wallet | Standard |
 | `VALIDATION_ASSIGNMENT_CREATE` | Protocol | Protocol Sponsored |
@@ -994,6 +1022,10 @@ amount:
 memo_hash:
 ```
 
+The MVP consensus profile uses `STANDARD_NETWORK_FEE_Q_ATOMS = 10,000`
+(`0.01Q`). The fee is derived from the `STANDARD` fee class and is not
+caller-controlled; it is recorded in the recyclable removal accumulator.
+
 Preconditions
 
 - sender has sufficient available balance;
@@ -1011,6 +1043,12 @@ recycle_accumulator += fee
 ```
 
 Transfer amount does not affect total supply.
+
+The current ABCI and deterministic block-execution paths apply this transfer
+atomically: they debit `amount + 10,000` from the sender, credit `amount` to
+the recipient, recycle the fee, and persist the operation in the replay
+registry. Snapshot restoration preserves both balances and the recyclable
+accumulator. A duplicate operation cannot repeat the transfer.
 
 ## 33. Faucet Claim
 
@@ -1091,6 +1129,10 @@ State Changes
 - creates Stake object;
 - records activation or eligibility delay.
 
+The current consensus execution path debits the sender Wallet, persists the
+Stake object in canonical Ledger state and includes it in Snapshot and app
+hash commitments.
+
 ## 35. Unstake Request
 
 `UNSTAKE_REQUEST`
@@ -1108,6 +1150,10 @@ State Changes
 - Stake enters `UNBONDING`;
 - release height or Epoch is calculated;
 - participant may lose relevant eligibility immediately or at the next Epoch.
+
+The MVP uses the fixed `UnbondingPeriod = 14 Epochs` and records the exact
+release Epoch in the Stake object. A request cannot be submitted by another
+Wallet or for an already unbonding/released Stake.
 
 ## 36. Stake Release
 
@@ -1129,11 +1175,29 @@ State Changes
 
 No new `Q` is minted.
 
+The current consensus execution path credits only the recorded Stake owner
+after the release Epoch and preserves the `RELEASED` state for replay and
+Snapshot recovery.
+
 ## 37. Session Open
 
 `SESSION_OPEN`
 
-Creates a pending Session and locks the initial Deposit.
+Creates the canonical non-economic Session lifecycle projection after the
+initial Funding Account has already been locked. `SESSION_OPEN` SHALL NOT
+debit a Consumer Wallet, move a reserve or act as an alias for
+`SESSION_ESCROW_LOCK`.
+
+The strict MVP order is:
+
+```text
+SESSION_ESCROW_LOCK (finalized)
+        ->
+SESSION_OPEN
+```
+
+The dependency SHALL be finalized before the block containing
+`SESSION_OPEN`; a same-block lock/open shortcut is invalid.
 
 Required Payload
 
@@ -1147,26 +1211,38 @@ endpoint_configuration_hash:
 pricing_policy_hash:
 accounting_contract_hash:
 session_policy_hash:
-deposit_amount:
+session_contract_hash:
+effective_terms_hash:
+endpoint_payment_beneficiary:
+consumer_refund_beneficiary:
+deposit_amount_q_atoms:
+funding_lock_operation_id:
+funding_state_reference:
 open_expiration:
 ```
 
 Preconditions
 
 - Consumer owns or controls the initiating Hypervisor;
-- Endpoint is active and accessible;
-- Endpoint version and policy hashes match current state;
-- Deposit meets published minimum;
-- Consumer has sufficient available `Q`;
+- `funding_lock_operation_id` references a finalized `SESSION_ESCROW_LOCK`;
+- the lock and `funding_state_reference` are present in the evidence list;
+- the lock belongs to the same Session and Session Contract;
+- Endpoint and Consumer Refund beneficiaries match the locked Funding Account;
+- `deposit_amount_q_atoms` matches the locked Funding Account;
 - no duplicate Session ID exists.
 
 State Changes
 
-- creates Session in `PENDING_ACCEPTANCE`;
-- locks Deposit;
-- records accepted policy versions;
-- records pending expiration;
-- removes Session Network Fee into the recycle accumulator.
+- records Session in the canonical `OPEN_PENDING` lifecycle projection;
+- records accepted Endpoint, pricing, accounting and policy hashes;
+- binds the Session to the finalized Funding Account and lock operation;
+- advances the wallet operation sequence for the lifecycle authorization;
+- performs no Q debit, credit, reserve movement or Network Fee recycling.
+
+`SESSION_ESCROW_LOCK` owns the atomic prepaid debit and reserve creation.
+Local compatibility services MAY still emit a legacy `SESSION_OPEN` domain
+record while preparing a Session, but that record is not a validator
+transition and cannot replace the strict canonical lock/open sequence.
 
 Session execution SHALL NOT begin before acceptance.
 
@@ -1174,7 +1250,23 @@ Session execution SHALL NOT begin before acceptance.
 
 `SESSION_ACCEPT`
 
-Provider accepts a pending Session.
+The Endpoint accepts a pending Session after the canonical
+`SESSION_OPEN` projection. `SESSION_ACCEPT` is lifecycle-only and SHALL NOT
+debit a Wallet, release or expand escrow, or create a second funding effect.
+
+Required Payload
+
+```yaml
+session_id:
+session_open_operation_id:
+session_contract_hash:
+effective_terms_hash:
+endpoint_id:
+endpoint_configuration_hash:
+provider_hypervisor_id:
+accepted_by:
+accepted_at:
+```
 
 Authorization
 
@@ -1182,7 +1274,11 @@ Signed by the Provider Hypervisor or authorized Endpoint execution identity.
 
 Preconditions
 
-- Session is pending;
+- `session_open_operation_id` is finalized before the containing block;
+- the operation is referenced in the evidence list;
+- Session, Contract and Endpoint hashes match the finalized `SESSION_OPEN`;
+- the sender is the locked Endpoint Payment beneficiary;
+- Session funding remains `LOCKED`;
 - acceptance has not expired;
 - Endpoint remains active;
 - Endpoint configuration still matches;
@@ -1194,6 +1290,10 @@ State Changes
 - Session becomes `ACTIVE`;
 - activation time is recorded;
 - Session slot becomes reserved.
+
+The consensus Ledger records only the acceptance projection. Runtime
+allocation and local slot reservation remain Hypervisor/Session-service
+effects after canonical acceptance; no Q balance or Funding reserve changes.
 
 ## 39. Session Reject
 
@@ -1236,7 +1336,15 @@ An active Session cannot use ordinary cancellation.
 
 `SESSION_DEPOSIT_EXTEND`
 
-Adds `Q` to an active or pending Session Deposit.
+This legacy name is not a consensus alias in the strict MVP profile. The
+canonical economic operation is `SESSION_ESCROW_EXTEND`, which carries the
+complete next Funding Account, binds the exact predecessor and applies one
+atomic Consumer debit. A validator SHALL reject `SESSION_DEPOSIT_EXTEND`
+rather than risk a second implementation of the same funding mutation.
+
+The legacy domain operation MAY remain in compatibility services, but it SHALL
+not create canonical Q movement. The following fields describe that local
+projection only; they are not a strict validator transition.
 
 Preconditions
 
@@ -1257,7 +1365,13 @@ The extension becomes usable only after operation finalization.
 
 `SESSION_SETTLE`
 
-Settles an ordinarily completed Session.
+This legacy name is not a consensus alias in the strict MVP profile. The
+canonical economic path is the typed `SESSION_SETTLEMENT_PROPOSE` ->
+`SESSION_SETTLEMENT_ACCEPT` -> `SESSION_SETTLEMENT_FINALIZE` family (or the
+explicit dispute/forced variants). A validator SHALL reject `SESSION_SETTLE`
+instead of selecting an undocumented settlement shortcut. The remainder of
+this section describes the legacy local projection and is not consensus
+authorization.
 
 Origin
 
@@ -1320,6 +1434,51 @@ For active Sessions:
 - transition to the forced-settlement workflow;
 - preserve last accepted Usage checkpoint.
 
+## 44.1 Session Failure Evidence
+
+`SESSION_FAILURE_EVIDENCE`
+
+Commits the compact, Session-bound evidence reference consumed by a Forced
+Settlement. The full Failure Evidence and Failure Report remain in the
+durable Hypervisor snapshot or restricted evidence storage.
+
+Origin
+
+`EVIDENCE_TRIGGERED`.
+
+Required Payload
+
+```yaml
+session_id:
+failure_class:
+failure_evidence_root:
+details: optional
+```
+
+Required Evidence
+
+- `failure_evidence_root`;
+- the local or restricted RFC-0060 evidence object identified by that root.
+
+State Changes
+
+- records an immutable evidence commitment;
+- creates no payment or refund;
+- may be referenced by idempotent Forced Settlement attempts for the same
+  Session and root.
+
+Consensus Validation
+
+- requires `EVIDENCE_TRIGGERED` origin and `session` fee class;
+- requires the `session_id` to match `initiator_id`;
+- requires the evidence root to appear in `evidence_references`;
+- rejects unsupported failure classes and conflicting reuse of one
+  Session/root pair.
+
+The operation SHALL be finalized before a consensus `SESSION_FORCE_SETTLE`
+operation that references it. A conflicting Session, failure class or root is
+rejected.
+
 ## 44. Forced Session Settlement
 
 `SESSION_FORCE_SETTLE`
@@ -1359,6 +1518,11 @@ State Changes
 - records unresolved or attributed failure;
 - closes Session;
 - emits Reputation events.
+
+For a multi-Request Session, the payload SHALL also commit the Request
+Settlement Root, Usage Chain Root, Checkpoint Root and per-Request evidence.
+The operation applies an already evaluated Settlement Input Set and does not
+replace Request-level ceilings or Usage-chain conflict handling.
 
 ## 45. Validation Request
 
@@ -1617,6 +1781,15 @@ State Changes
 - marks Duty Proof status;
 - makes Service eligible or ineligible for current reward calculation.
 
+The MVP consensus boundary requires protocol origin, non-empty report and
+evidence hashes, a non-negative verification Epoch matching the envelope
+target, a structured result summary and a non-empty Registry reference.  A
+second operation for the same verification report is rejected.  This
+operation is evidence-only: it does not credit a Wallet or create a
+`REWARD_MINT`.  Consensus-finality validation of the referenced evidence stays
+with the Registry/consensus integration and is not delegated to a generic
+operation handler.
+
 ## 52. Reputation Profile Update
 
 `REPUTATION_PROFILE_UPDATE`
@@ -1631,8 +1804,13 @@ object_type:
 previous_profile_hash:
 new_profile_hash:
 metric_deltas:
+  <dimension_id>:
+    positive_mass_milli:
+    negative_mass_milli:
+    event_count:
 evidence_root:
 effective_epoch:
+formula_version:
 ```
 
 Preconditions
@@ -1641,10 +1819,18 @@ Preconditions
 - formula version matches protocol state;
 - resulting profile is deterministic.
 
+`positive_mass_milli`, `negative_mass_milli` and `event_count` are
+non-negative integer fixed-point accumulators. The Ledger commits these
+profile inputs and their evidence root; it does not calculate Reputation
+scores or independently assign a participant rating. The MVP formula version
+is `reputation.v1`, and each profile object forms a strictly increasing
+`effective_epoch` hash chain.
+
 State Changes
 
-- replaces active Reputation Profile;
-- preserves historical profile references.
+- commits the new profile-root update and its evidence references;
+- preserves historical profile-root references for the profile engine;
+- does not calculate a score, mutate Reputation state, or create a payment.
 
 Reputation SHALL NOT be manually assigned.
 
@@ -1680,6 +1866,13 @@ State Changes
 - resets Epoch-scoped counters;
 - opens the next Epoch.
 
+The MVP consensus boundary requires `opening_epoch = closing_epoch + 1`, a
+protocol origin without a Wallet sender, all transition roots, a typed pool
+budget map and, when present, a non-empty reference for every pool budget.
+The target Epoch must match `closing_epoch`, and a second transition for the
+same closing Epoch is rejected.  Both ABCI and deterministic local block
+execution apply this validation before recording the operation.
+
 ## 54. Reward Mint
 
 `REWARD_MINT`
@@ -1706,9 +1899,11 @@ pool_id:
 pool_budget_reference:
 contribution_evidence_root:
 calculation_version:
+reward_calculation_root:
+calculation_operation_id:
 ```
 
-Preconditions
+Compatibility-only Preconditions
 
 - reward calculation is finalized;
 - recipient was eligible;
@@ -1716,6 +1911,12 @@ Preconditions
 - pool has sufficient authorization;
 - reward was not previously minted;
 - total Epoch Mint remains within `ECO-0005` limits.
+- `calculation_operation_id` identifies an existing `EPOCH_TRANSITION`;
+- verified consensus finality exists for that exact operation;
+- the transition commits the same `reward_calculation_root`, Epoch and pool
+  budget;
+- all previous `REWARD_MINT` operations under that calculation root remain
+  within the committed pool budget.
 
 State Changes
 
@@ -1725,6 +1926,70 @@ State Changes
 - records reward provenance.
 
 No Wallet may submit `REWARD_MINT`.
+
+The MVP Ledger boundary is idempotent by `reward_id`.  A repeated identical
+request returns the existing operation without crediting the recipient twice;
+a conflicting retry is rejected.  A Registry Service or local Epoch worker may
+prepare a calculation, but only the consensus-authorized protocol path may
+create this operation and apply the Q balance effect.
+
+The MVP consensus execution boundary applies the same rule in both supported
+block entrypoints (`ABCI` and the deterministic `ExecutionEngine`): the
+`calculation_operation_id` must be present in the finalized operation set that
+existed before the block started.  A transition and its dependent mint in one
+block is rejected, and a registered generic operation handler cannot bypass the
+`REWARD_MINT` validation or wallet-credit path.  This closes the local
+consensus execution boundary for Registry rewards; it does not claim that all
+RFC-0059 operation families already have specialized consensus handlers.
+
+The validator production profile is fail-closed for catalog entries without a
+specialized transition. Such an operation is rejected before mempool/proposal
+acceptance rather than being recorded by the generic admitted-envelope path.
+The current implemented and declared-but-unimplemented sets are maintained in
+the [consensus operation coverage matrix](../development/consensus-operation-coverage.md).
+
+`SESSION_ESCROW_LOCK` is the first typed Session funding boundary in both
+entrypoints. Its payload carries the complete locked `SessionFundingAccount`,
+including both reserves, beneficiaries and `funding_state_hash`. Admission
+reconstructs the account, verifies conservation and Consumer-wallet ownership,
+checks prepaid balance, then debits the wallet and persists the account as one
+atomic state transition. A generic handler cannot record this operation without
+applying the escrow debit, and Snapshot restoration preserves both the wallet
+balance and Funding Account.
+
+`SESSION_OPEN` is the next typed Session lifecycle boundary in both entrypoints.
+It requires the exact finalized lock operation, the lock's Funding state hash,
+matching Session Contract and beneficiaries, and a complete Session/Endpoint
+metadata binding. Applying it records only the lifecycle operation; it does not
+touch wallet balances or Funding reserves. The implementation rebuilds this
+projection from the canonical operation log during Snapshot restore, so a
+restart cannot create a second economic lock or lose the open binding.
+
+`SESSION_ACCEPT` is the following typed lifecycle transition. It is signed by
+the Endpoint Payment beneficiary, requires a finalized `SESSION_OPEN` and
+matching Session/Endpoint hashes, and records only the accepted lifecycle
+projection. Its application does not debit the Endpoint, Consumer or Funding
+Account; local Runtime allocation follows only after this canonical record.
+
+The next typed Session funding boundaries are also implemented in both
+entrypoints:
+
+- `SESSION_ESCROW_EXTEND` accepts only a prepaid extension, binds the resulting
+  complete Funding Account to the exact prior Funding state and finalized
+  predecessor, verifies that only the two reserves and their unsettled portions
+  increased, then debits the additional Consumer amount atomically;
+- `SESSION_ESCROW_RELEASE` is an MVP co-authorized refund path. It requires
+  both participant authorizations, can consume only currently unsettled payment
+  and fee reserves, cannot consume a dispute reserve or pay the Endpoint, and
+  updates the Consumer refund and Funding state atomically;
+- `SESSION_CHECKPOINT_COMMIT` persists an integer `q_atoms` exposure checkpoint
+  only while funding is locked. It enforces monotonic sequence/exposure,
+  exact deposit conservation, prior Funding binding and evidence references,
+  without moving funds.
+
+The checkpoint and funding state are included in Ledger snapshots. Same-block
+funding predecessor shortcuts are rejected because all predecessor operations
+must be finalized before the dependent block.
 
 ## 55. Consensus Validator Set Update
 
@@ -1737,24 +2002,59 @@ Required Payload
 ```yaml
 activation_epoch:
 validator_additions:
+  - node_id:
+    operator_id:
+    consensus_address:
+    consensus_public_key:
+    stake:
+    voting_power:
 validator_removals:
+  - node_id:
 voting_power_updates:
+  - node_id:
+    voting_power:
 validator_set_hash:
 eligibility_evidence_root:
+participant_suspension_root:
 ```
 
 Preconditions
 
-- Consensus eligibility calculation finalized;
-- voting-power limits satisfied;
-- Stake requirements satisfied;
-- Known Control Group rules satisfied.
+- operation origin is Protocol and no Wallet sender is present;
+- `activation_epoch` is a non-negative integer and matches the envelope
+  target Epoch when one is supplied;
+- at least one addition, removal or voting-power update is present;
+- additions contain a node, operator, consensus address, positive Stake and
+  positive voting power, and a valid 32-byte Ed25519 consensus public key;
+- removals and voting-power updates contain a node identity and updates use
+  positive voting power;
+- one node identity does not occur in more than one update category;
+- the Validator Set hash and eligibility evidence root are non-empty;
+- `participant_suspension_root` is present when the schedule was built with a
+  participant suspension snapshot;
+- the application reconstructs the resulting Validator Set from the current
+  active set and rejects a hash mismatch;
+- no other update is already committed for the same activation Epoch.
 
-State Changes
+Compatibility-only State Changes
 
-- schedules or activates Validator Set changes;
-- updates Consensus role state;
-- emits adapter instructions for CometBFT.
+- records one protocol-authorized Validator Set schedule;
+- emits `ValidatorSetUpdateScheduled` for consensus adapter processing;
+- does not credit a Wallet or activate CometBFT during schedule admission;
+- at the matching `EPOCH_TRANSITION`, applies a previously finalized schedule
+  to the canonical active set and emits CometBFT validator updates, including
+  zero-power updates for removals.
+
+The MVP consensus boundary validates and records the schedule in both ABCI and
+deterministic local execution. Candidate selection, Known Control Group limits,
+and higher-level eligibility policy remain separate checks defined by
+`RFC-0047` and `ECO-0006`; the deterministic schedule builder binds those
+checks to the immediately preceding finalized Eligibility snapshot and its
+canonical evidence root. It also binds the canonical participant-suspension
+root and excludes a participant whose suspension is effective at the target
+activation Epoch. A schedule from the same block as its transition is not
+eligible for activation because only pre-block-finalized schedules may change
+the active set.
 
 ## 56. Snapshot Commit
 
@@ -1777,18 +2077,27 @@ registry_references:
 
 Preconditions
 
-- block and state hash are finalized;
-- Snapshot format is supported;
-- chunk root is valid.
+- operation origin is Protocol and no Wallet sender is present;
+- `snapshot_id`, application-state hash, Snapshot content hash, Chunk Root and
+  protocol version are non-empty;
+- block height and Epoch are non-negative integers;
+- the envelope target Epoch, when present, matches the payload Epoch;
+- at least one typed Registry reference is present;
+- the Snapshot ID has not already been committed.
 
 State Changes
 
-- records trusted Snapshot commitment;
-- makes Snapshot available for Registry distribution and State Sync.
+- records one metadata-only Snapshot commitment;
+- emits `SnapshotCommitted` for Registry and State Sync indexing;
+- does not credit a Wallet or transfer Q.
 
 The Snapshot payload remains off-chain.
 
-Snapshot metadata commitment, distribution, and restoration semantics are defined by `RFC-0062`.
+The MVP consensus boundary validates structural identity and replay protection.
+It does not independently prove external finality, producer availability, chunk
+contents or restoration correctness. Snapshot metadata commitment,
+distribution, trusted-checkpoint handling and restoration semantics are defined
+by `RFC-0062`.
 
 ## 57. Participant Suspension
 
@@ -1804,13 +2113,16 @@ target_type:
 scope:
 reason_code:
 evidence_root:
-effective_time:
+effective_epoch:
 minimum_recovery_epoch:
+evidence_operation_id:
 ```
 
 Preconditions
 
 - objective finalized evidence exists;
+- the evidence operation was finalized before the suspension block;
+- the evidence operation ID and evidence root are envelope references;
 - suspension rule is defined;
 - scope is proportional to the violation.
 
@@ -1833,6 +2145,10 @@ Preconditions
 - collateral restored where applicable;
 - required verification succeeded.
 
+The MVP requires a prior-finalized recovery evidence operation and refuses
+reinstatement before `minimum_recovery_epoch`. Suspension and reinstatement
+are persisted as participant state and do not themselves debit or mint Q.
+
 State Changes
 
 - removes applicable suspension;
@@ -1853,15 +2169,29 @@ target_wallet_or_lock:
 penalty_type:
 amount:
 evidence_root:
+evidence_operation_id:
 recyclable:
 ```
 
 Preconditions
 
 - objective evidence finalized;
+- `evidence_operation_id` is already finalized before the block containing
+  `PENALTY_APPLY`;
+- both the evidence operation ID and `evidence_root` are present in the
+  operation envelope evidence references;
 - penalty rule exists;
-- amount does not exceed applicable balance or lock;
+- amount does not exceed the applicable Wallet balance or locked Stake amount;
 - penalty not previously applied.
+
+The MVP accepts `wallet:<wallet-id>` targets and `lock:<stake-id>` targets.
+Wallet targets debit available Q; lock targets reduce the canonical locked
+Stake without debiting the Wallet a second time. A partial slash keeps the
+Stake in its current locked or unbonding state with a reduced amount; a full
+slash marks it `SLASHED` and prevents release. The MVP penalty classes are
+`CONSENSUS_SLASH`, `DOUBLE_SIGNING`,
+`FORGED_CONSENSUS_EVIDENCE`, `UNAUTHORIZED_VALIDATOR_SET_MANIPULATION` and
+`REPUTATION_PENALTY`.
 
 State Changes
 
@@ -2156,6 +2486,74 @@ The MVP MAY postpone:
 
 Deferred operations SHALL NOT be simulated through unrelated existing operations.
 
+### 72.1 ECO-0007 Development Reward Operations
+
+The following operation names are reserved by ECO-0007. They are registered
+in the catalog. The current profile applies nine narrow transitions:
+`DEVELOPMENT_REWARD_CALCULATE` as an evidence-only commitment,
+`DEVELOPMENT_POOL_ALLOCATE` as a source-bound reserve record,
+`DEVELOPMENT_REWARD_RESERVE` as a schedule-bound reserve record, and
+`DEVELOPMENT_REWARD_PAY_IMMEDIATE` and `DEVELOPMENT_REWARD_PAY_MATURITY` as
+source-bound payment transitions, plus
+`DEVELOPMENT_REWARD_MARK_UNCLAIMED` as a source-bound unclaimed-stage record,
+`DEVELOPMENT_REWARD_EXPIRE_UNCLAIMED` as a carryover-return transition, and
+`DEVELOPMENT_REWARD_FINALIZE_COMMITMENT` as an evidence-only close:
+
+- `DEVELOPMENT_POOL_ALLOCATE`;
+- `DEVELOPMENT_POOL_CARRYOVER`;
+- `DEVELOPMENT_BOUNTY_CREATE`;
+- `DEVELOPMENT_BOUNTY_RESERVE`;
+- `DEVELOPMENT_BOUNTY_RELEASE`;
+- `DEVELOPMENT_REWARD_RESERVE`;
+- `DEVELOPMENT_REWARD_PAY_IMMEDIATE`;
+- `DEVELOPMENT_REWARD_PAY_MATURITY`;
+- `DEVELOPMENT_REWARD_MARK_UNCLAIMED`;
+- `DEVELOPMENT_REWARD_CLAIM`;
+- `DEVELOPMENT_REWARD_EXPIRE_UNCLAIMED`;
+- `DEVELOPMENT_REWARD_FINALIZE_COMMITMENT`;
+- `DEVELOPMENT_REWARD_CANCEL_UNVESTED`;
+- `DEVELOPMENT_REWARD_CORRECT`.
+
+Typed envelopes require the exact ECO-0007 policy hash, activation approval,
+and dry-run commitment to match. `DEVELOPMENT_REWARD_CALCULATE` records the
+full calculation evidence and remains non-emitting: it cannot reserve, mint,
+or transfer Q. `DEVELOPMENT_POOL_ALLOCATE` requires a finalized prior-block
+`EPOCH_TRANSITION` with the exact pool budget, a finalized prior-block
+calculation, and an activation approval explicitly scoped to
+`POOL_ALLOCATION` or `DEVELOPMENT_RESERVES`. It persists an immutable
+allocation record with all budget still available; it does not credit a Wallet
+or mint Q. `DEVELOPMENT_REWARD_RESERVE` requires finalized calculation and
+pool-allocation source operations, binds the exact schedule identified by
+`reward_id` and `schedule_hash`, and records a bounded reserve without a
+Wallet effect. `DEVELOPMENT_REWARD_PAY_IMMEDIATE` requires those finalized
+predecessors plus the exact payable payment hash, role, stage, amount and
+verified Wallet binding. It materializes one immutable payment record, credits
+only that amount, and rejects a repeated `(reserve_id, payment_hash, stage)`
+with `DEVELOPMENT_REWARD_PAYMENT_DUPLICATE`. `DEVELOPMENT_REWARD_PAY_MATURITY`
+additionally requires a finalized epoch transition whose opening epoch reaches
+the exact stage boundary and accepts only a reserved maturity stage. The
+payment transitions are not aliases for `REWARD_MINT` and do not accept a
+different source or Wallet. `DEVELOPMENT_REWARD_MARK_UNCLAIMED` requires the
+same finalized sources, an exact `UNCLAIMED` payment with no Wallet, and
+persists a claim-expiration record without debiting the reserve or crediting a
+Wallet; duplicate stage identities are rejected. Other catalog operations not
+described as supported below remain rejected until a future version defines their
+state transitions, replay rules, reserve conservation, snapshot behavior, and
+multi-validator conformance. `DEVELOPMENT_REWARD_CLAIM` requires the
+finalized unclaimed record, a finalized epoch transition whose opening epoch
+falls inside the immutable claim window, and an RFC-0068 signed Wallet
+binding. It creates a separate immutable `CLAIMED` record, consumes exactly
+the unclaimed stage, credits only the bound Wallet, preserves the original
+`UNCLAIMED` evidence, and rejects duplicate claims. `DEVELOPMENT_REWARD_EXPIRE_UNCLAIMED`
+requires a finalized epoch transition after the claim window, returns exactly
+one unclaimed stage to carryover availability, and preserves the original
+unclaimed record. `DEVELOPMENT_REWARD_FINALIZE_COMMITMENT` records exact
+source-operation IDs and deterministic roots for the calculation, allocation,
+reserve, payment, unclaimed, claim and expiry evidence set. It is replay
+protected and has no Wallet or Q effect. None of these operations SHALL be
+aliased to
+`REWARD_MINT`, `WALLET_TRANSFER`, or any existing operation.
+
 ## 73. Open Questions
 
 The following require further specifications:
@@ -2210,3 +2608,54 @@ Every finalization operation binds Session ID, Settlement sequence, Input Root,
 Endpoint Payment Beneficiary, Consumer Refund Beneficiary, prior releases,
 Network Fees and reserve conservation. Transport acknowledgment is not
 Settlement authorization or Ledger finality.
+
+The MVP consensus execution profile now specializes seven Settlement operations
+in both ABCI and the deterministic local Execution Engine:
+
+- `SESSION_SETTLEMENT_READY_COMMIT` records an immutable, hash-bound
+  Settlement Input commitment before proposal. It binds the current Funding
+  predecessor, Session Contract, beneficiaries and request/Usage/Checkpoint
+  roots, moves no Q, is replay-protected and survives Snapshot/State Sync.
+  When present, a later typed proposal must reference and match the finalized
+  readiness commitment exactly.
+
+- `SESSION_SETTLEMENT_PROPOSE` reconstructs the typed proposal, binds it to the
+  exact latest finalized Funding predecessor (`SESSION_ESCROW_LOCK`,
+  `SESSION_ESCROW_EXTEND` or `SESSION_ESCROW_RELEASE`), current Funding state
+  hash and beneficiaries, requires that predecessor and Input Root as evidence
+  references, and checks both reserve-conservation equations before persisting
+  it. A
+  `PARTIAL_UNDISPUTED` proposal must carry equal, non-zero disputed amount and
+  dispute reserve values; other modes must carry zero values;
+- `SESSION_SETTLEMENT_ACCEPT` requires a previously finalized proposal,
+  Consumer wallet binding, exact amounts, the proposal operation as evidence,
+  and the proposal Input Root;
+- `SESSION_SETTLEMENT_DISPUTE` accepts one exact dispute for a Settlement. It
+  binds the dispute to the finalized proposal, Session/Input Root, participant
+  claimant, dispute hash and Evidence Root, and does not move funds;
+- `SESSION_SETTLEMENT_PARTIAL_FINALIZE` requires finalized proposal,
+  acceptance and dispute dependencies. It atomically credits only undisputed
+  Endpoint/Consumer amounts, consumes declared Network Fees and persists the
+  Funding Account as `DISPUTE_RESERVED` with the bounded reserve intact;
+- `SESSION_SETTLEMENT_CORRECT` is the narrow MVP reserve-resolution operation.
+  It requires both participant signatures, the finalized partial-finalization
+  dependency and exact prior transition hash, then consumes the active reserve
+  once into Endpoint Payment and/or Consumer Payment Refund. It cannot change
+  Network Fees or claw back prior credits, and the correction object is retained
+  in snapshots;
+- `SESSION_SETTLEMENT_FINALIZE` requires finalized proposal and acceptance
+  dependencies and evidence references, verifies the complete
+  `AtomicSettlementTransition`, rejects a non-zero dispute reserve, then
+  credits Endpoint/Consumer wallets and updates Funding state atomically;
+- `SESSION_FORCE_SETTLE` currently supports only finalized Endpoint failure
+  evidence whose Session, failure class and evidence root match the finalized
+  evidence operation, with zero Endpoint Payment and refund of the remaining
+  locked exposure. Requested payment claims are not used as authorization.
+  The transition Settlement ID is also evidence-bound for replay protection.
+
+Dependencies are required to be finalized before the block containing the
+dependent operation. Same-block proposal/acceptance/dispute/finalization
+shortcuts are therefore rejected. The MVP deliberately supports one dispute per
+Settlement and one reserve-resolution correction; multi-request dispute
+aggregation, general post-finalization corrections and non-zero Forced
+Settlement calculation remain later profiles.

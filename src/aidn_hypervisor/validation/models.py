@@ -82,6 +82,7 @@ class ValidationRequest(BaseModel):
     owner_wallet: str
     minimum_session_deposit_q: float = Field(default=0.0, ge=0.0)
     request_kind: ValidationRequestKind = "initial"
+    evidence_access_class: ValidationEvidenceAccessClass = "public"
     status: ValidationRequestStatus
     created_at: str
     bond_id: str
@@ -253,6 +254,7 @@ class ValidationReportTransferEnvelope(BaseModel):
     report_id: str
     request_id: str
     assignment_id: str
+    validator_id: str | None = None
     authorization_id: str
     endpoint_id: str
     endpoint_configuration_hash: str
@@ -291,6 +293,83 @@ class ValidationReportCustodyState(BaseModel):
     failure_streak: int = Field(default=0, ge=0)
     latest_challenge_id: str | None = None
     mirror_available: bool | None = None
+
+
+ValidationCustodyChallengeOutcome = Literal[
+    "available",
+    "temporarily_unavailable",
+    "withheld",
+    "lost",
+    "corrupted",
+    "access_restricted",
+]
+
+ValidationCustodyObservationRole = Literal["origin", "mirror"]
+
+
+class ValidationReportCustodyChallenge(BaseModel):
+    challenge_id: str
+    report_id: str
+    report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    endpoint_id: str
+    configuration_hash: str
+    challenger_id: str
+    requested_at: str
+    checked_at: str
+    outcome: ValidationCustodyChallengeOutcome
+    observation_role: ValidationCustodyObservationRole = "origin"
+    observed_report_size: int | None = Field(default=None, ge=0)
+    evidence_root: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    independence_key: str | None = None
+
+
+ValidationReportCustodyRetirementStatus = Literal["pending", "released"]
+
+
+class ValidationReportCustodyRetirement(BaseModel):
+    """Durable retirement-grace obligation for one committed report."""
+
+    retirement_id: str
+    report_id: str
+    report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    endpoint_id: str
+    configuration_hash: str
+    requested_at: str
+    eligible_at: str
+    release_reason: str = Field(min_length=1, max_length=128)
+    evidence_root: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    status: ValidationReportCustodyRetirementStatus = "pending"
+    released_at: str | None = None
+    release_operation_id: str | None = None
+
+
+ValidationReportCustodyTaskStatus = Literal["scheduled", "completed"]
+
+
+class ValidationReportCustodyCheckTask(BaseModel):
+    """Durable epoch-scoped custody observation assignment."""
+
+    task_id: str
+    epoch_id: str
+    seed: str
+    report_id: str
+    report_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    endpoint_id: str
+    configuration_hash: str
+    observer_id: str
+    independence_key: str
+    challenge_id: str
+    required_quorum: int = Field(ge=1)
+    observation_role: ValidationCustodyObservationRole = "origin"
+    scheduled_at: str
+    status: ValidationReportCustodyTaskStatus = "scheduled"
+    completed_at: str | None = None
+    outcome: ValidationCustodyChallengeOutcome | None = None
+    challenge_evidence_root: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+    task_evidence_root: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 class ValidationReportCustodyObject(BaseModel):
@@ -349,6 +428,18 @@ class ValidationValidatorEntry(BaseModel):
     capability_profiles: list[str] = Field(default_factory=list)
     contribution_q: float = Field(default=0.0, ge=0.0)
     wallet_exposed: bool = False
+    transfer_public_key: str | None = None
+
+
+ValidationValidatorKeyStatus = Literal["active", "revoked"]
+
+
+class ValidationValidatorKeyBinding(BaseModel):
+    binding_id: str
+    validator_id: str
+    transfer_public_key: str
+    registered_at: str
+    status: ValidationValidatorKeyStatus = "active"
 
 
 class ValidationAssignment(BaseModel):

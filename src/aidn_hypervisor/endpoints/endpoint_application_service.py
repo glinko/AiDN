@@ -96,6 +96,25 @@ class EndpointApplicationService:
             },
         }
 
+    def delete_endpoint(self, endpoint_id: str) -> dict:
+        """Soft-delete an Endpoint and schedule its report custody grace."""
+        deleted = self._endpoint_service.delete_endpoint(endpoint_id)
+        retirements = []
+        if self._validation_service is not None:
+            retirements = self._validation_service.request_endpoint_retirement(
+                endpoint_id=endpoint_id,
+            )
+        return {
+            "deleted": deleted,
+            "retirements": retirements,
+            "payload": {
+                "endpoint": deleted.endpoint.model_dump(mode="json"),
+                "custody_retirements": [
+                    item.model_dump(mode="json") for item in retirements
+                ],
+            },
+        }
+
     def attach_proxy_target(self, endpoint_id: str, remote_endpoint_id: str) -> dict:
         if self._remote_endpoint_service is None:
             raise RemoteEndpointServiceUnavailableError(

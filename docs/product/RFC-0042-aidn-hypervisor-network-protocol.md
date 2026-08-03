@@ -2705,6 +2705,15 @@ deduplication and an application-level report hash. A `PROCESSED` acknowledgment
 means the Endpoint custody handler accepted the immutable report, not that the
 Validation commitment finalized.
 
+The `VALIDATION_REPORT_CUSTODY_CHALLENGE` profile carries only a persisted
+epoch/seed task commitment to one authorized observer. The payload SHALL bind
+the task ID, report hash, Endpoint, Configuration Hash, observer, quorum,
+observation role and task evidence root. The observer SHALL execute the local
+custody check and return only the outcome, challenge evidence root and task
+commitment; the report body SHALL not be transported by this profile. Delivery
+and task completion are separately idempotent, and `mirror` observations SHALL
+not satisfy or clear the `origin` quorum view.
+
 ## 181. Dispatcher Errors
 
 In addition to Section 131, v0.3 requires stable errors for domain, route,
@@ -2728,6 +2737,8 @@ Route Table resolution, Route Generation races, stale queued messages, Runtime
 replacement, Plugin permission enforcement, bounded queue saturation, priority
 fairness, deadline expiration, persistent deduplication, Dead Letter creation,
 restart recovery and Validation report transfer replay.
+Conformance SHALL also cover custody-challenge task binding, observer-specific
+routes, origin/mirror quorum separation and body-free acknowledgments.
 
 The MVP SHALL implement the Dispatcher as a transport-independent core. Physical
 QUIC/TLS, TCP/TLS, WebSocket/TLS and Local IPC gateways MAY be delivered in

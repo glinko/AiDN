@@ -3,6 +3,9 @@ import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 from aidn_hypervisor.accounting.models import (
     SessionAccountingCheckpoint,
     UsageAcknowledgement,
@@ -15,13 +18,18 @@ from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.session_failure.models import (
     FailureClass,
     RecoveryWindowConfig,
+    is_terminal_status,
 )
 from aidn_hypervisor.session_failure.poller import SessionFailurePoller
 from aidn_hypervisor.session_failure.service import SessionFailureHandler
 from aidn_hypervisor.sessions.models import (
+    CanonicalFundingStatus,
     EndpointSession,
     LockedDeposit,
     ProxySessionBinding,
+    SessionAmendmentKind,
+    SessionContractAmendment,
+    SessionContractExchange,
     SessionResult,
     SessionRuntimeTerminalEvidence,
     SessionSettlementSummary,
@@ -55,12 +63,14 @@ class SessionService:
         registry_service: RegistryService | None = None,
         failure_handler: SessionFailureHandler | None = None,
         recovery_config: RecoveryWindowConfig | None = None,
+        funding_amendment_verifier=None,
     ) -> None:
         self.store = store
         self.event_recorder = event_recorder
         self.operation_recorder = operation_recorder
         self.network_fee_q = max(0.0, float(network_fee_q))
         self.registry_service = registry_service or RegistryService()
+        self._funding_amendment_verifier = funding_amendment_verifier
 
         # RFC-0060: failure handler (separate component)
         self.failure_handler = failure_handler
@@ -70,11 +80,13 @@ class SessionService:
             self.failure_handler.set_status_change_callback(
                 self._on_failure_status_change
             )
-            # Register any existing active/queued sessions
+            # Restore failure tracking from the durable Session projection.
             for session in self.store.list_sessions():
-                if session.status in {"queued", "active"}:
+                if session.status in {"queued", "active", "recovering"}:
                     self.failure_handler.register_session(
-                        session.session_id, session.status
+                        session.session_id,
+                        session.status,
+                        recovery_deadline=session.recovery_deadline_at,
                     )
         self._recovery_config = recovery_config
 
@@ -125,6 +137,12 @@ class SessionService:
         """Callback when failure handler transitions a session status."""
         try:
             session = self.store.get_session(session_id)
+            if is_terminal_status(session.status):
+                # A stale recovery callback must not reactivate a terminal
+                # Session after canonical Settlement or restart reconciliation.
+                if self.failure_handler is not None:
+                    self.failure_handler.unregister_session(session_id)
+                return
             if session.status != old_status:
                 return  # SessionService already moved it
             updated = session.model_copy(update={"status": new_status})
@@ -168,18 +186,40 @@ class SessionService:
         """
         if self.failure_handler is None:
             return
-        self.failure_handler.classify_failure(
+        report = self.failure_handler.classify_failure(
             session_id=session_id,
             failure_class=failure_class,
             attribution=attribution,
             details=details,
+        )
+        current = self.store.get_session(session_id)
+        self.store.save_session(
+            current.model_copy(
+                update={
+                    "failure_class": report.failure_class.value,
+                    "failure_attribution": report.details.get("attribution")
+                    if hasattr(report, "details")
+                    else None,
+                    "recovery_deadline_at": self.failure_handler.get_recovery_deadline(
+                        session_id
+                    ),
+                }
+            )
         )
 
     def recover_session_from_failure(self, session_id: str) -> None:
         """Recover a session that is in the 'recovering' failure state."""
         if self.failure_handler is None:
             return
+        current = self.store.get_session(session_id)
+        if is_terminal_status(current.status):
+            self.failure_handler.unregister_session(session_id)
+            raise ValueError(
+                f"Session {session_id} is already terminal: {current.status}"
+            )
         self.failure_handler.recover_session(session_id)
+        updated = self.store.get_session(session_id)
+        self.store.save_session(updated.model_copy(update={"recovery_deadline_at": None}))
 
     def handle_proxy_failure(
         self,
@@ -197,6 +237,30 @@ class SessionService:
             error=error,
         )
 
+    def failure_evidence_root(self, session_id: str) -> str | None:
+        """Return the durable RFC-0060 evidence commitment for a Session."""
+        if self.failure_handler is None:
+            return None
+        return self.failure_handler.failure_evidence_root(session_id)
+
+    def ensure_failure_evidence(
+        self,
+        *,
+        session_id: str,
+        failure_class: FailureClass,
+        details: str = "",
+    ) -> str | None:
+        """Ensure a timeout-triggered force path has durable RFC-0060 evidence."""
+        if self.failure_handler is None:
+            return None
+        current = self.store.get_session(session_id)
+        return self.failure_handler.ensure_failure_evidence(
+            session_id=session_id,
+            failure_class=failure_class,
+            previous_status=current.status,
+            details=details,
+        )
+
     def list_sessions(self) -> list[EndpointSession]:
         return self.store.list_sessions()
 
@@ -204,6 +268,556 @@ class SessionService:
         session = self.store.get_session(session_id)
         deposit = self.store.get_deposit_for_session(session_id)
         return SessionResult(session=session, deposit=deposit)
+
+    def set_funding_amendment_verifier(self, verifier) -> None:
+        """Attach the application-owned canonical funding proof verifier."""
+        self._funding_amendment_verifier = verifier
+
+    def get_session_amendments(
+        self,
+        session_id: str,
+    ) -> list[SessionContractAmendment]:
+        """Return and validate the immutable Session Contract version chain."""
+        session = self.store.get_session(session_id)
+        amendments: list[SessionContractAmendment] = []
+        previous_effective_terms_hash = session.session_contract_hash
+        previous_amendment_hash: str | None = None
+        for expected_sequence, payload in enumerate(
+            session.session_amendment_chain,
+            start=1,
+        ):
+            try:
+                amendment = SessionContractAmendment.model_validate(payload)
+            except ValueError as error:
+                raise ValueError(
+                    f"Session amendment chain is invalid: {error}"
+                ) from error
+            if amendment.session_id != session_id:
+                raise ValueError("Session amendment belongs to another Session")
+            if amendment.sequence != expected_sequence:
+                raise ValueError("Session amendment sequence is not contiguous")
+            if amendment.previous_effective_terms_hash != previous_effective_terms_hash:
+                raise ValueError("Session amendment predecessor terms hash mismatch")
+            if amendment.previous_amendment_hash != previous_amendment_hash:
+                raise ValueError("Session amendment predecessor hash mismatch")
+            amendments.append(amendment)
+            previous_effective_terms_hash = amendment.effective_terms_hash
+            previous_amendment_hash = amendment.amendment_hash
+        expected_sequence = len(amendments)
+        if session.session_amendment_sequence != expected_sequence:
+            raise ValueError("Session amendment sequence does not match chain length")
+        if session.effective_terms_hash != previous_effective_terms_hash:
+            raise ValueError("Session effective terms hash does not match chain head")
+        return amendments
+
+    def export_session_contract(self, session_id: str) -> SessionContractExchange:
+        """Build a complete, immutable contract package for peer exchange."""
+        session = self.store.get_session(session_id)
+        if not session.session_contract_object_id or not session.session_contract_hash:
+            raise ValueError("Session Contract object reference is missing")
+        record = self.registry_service.get_registry_object(
+            session.session_contract_object_id,
+            include_payload=True,
+        )
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            raise ValueError("Session Contract Registry object has no payload")
+        if record.get("object_type") != "session_contract":
+            raise ValueError("Session Contract Registry object type is invalid")
+        if record.get("object_version") != session.session_contract_object_version:
+            raise ValueError("Session Contract Registry object version is invalid")
+        if record.get("namespace") != session.session_contract_namespace:
+            raise ValueError("Session Contract Registry object namespace is invalid")
+        if record.get("payload_hash") != session.session_contract_hash:
+            raise ValueError("Session Contract Registry object hash differs from Session")
+        amendments = self.get_session_amendments(session_id)
+        return SessionContractExchange(
+            session_id=session_id,
+            session_contract_object_id=session.session_contract_object_id,
+            session_contract_object_version=session.session_contract_object_version
+            or "session-contract.v2",
+            session_contract_namespace=session.session_contract_namespace or "session",
+            session_contract_hash=session.session_contract_hash,
+            session_contract=payload,
+            amendments=amendments,
+            amendment_sequence=session.session_amendment_sequence,
+            effective_terms_hash=session.effective_terms_hash or session.session_contract_hash,
+        )
+
+    def import_session_contract_exchange(
+        self,
+        exchange: SessionContractExchange | dict,
+    ) -> dict:
+        """Stage a validated peer contract without changing local execution state.
+
+        A local Session, when present, must already agree with the package. This
+        prevents a remote peer from silently changing terms for an active local
+        Session; the package is only an immutable Registry evidence transfer.
+        """
+        package = (
+            exchange
+            if isinstance(exchange, SessionContractExchange)
+            else SessionContractExchange.model_validate(exchange)
+        )
+        try:
+            local = self.store.get_session(package.session_id)
+        except KeyError:
+            local = None
+        if local is not None:
+            if local.session_contract_hash != package.session_contract_hash:
+                raise ValueError("local Session Contract hash conflicts with exchange")
+            local_amendments = self.get_session_amendments(package.session_id)
+            if [item.amendment_hash for item in local_amendments] != [
+                item.amendment_hash for item in package.amendments
+            ]:
+                raise ValueError("local Session amendment chain conflicts with exchange")
+            if local.effective_terms_hash != package.effective_terms_hash:
+                raise ValueError("local Session effective terms hash conflicts with exchange")
+
+        base_record = {
+            "object_id": package.session_contract_object_id,
+            "object_type": "session_contract",
+            "object_version": package.session_contract_object_version,
+            "namespace": package.session_contract_namespace,
+            "payload_hash": package.session_contract_hash,
+            "payload_encoding": "canonical_json",
+            "source_reference": package.session_id,
+            "payload": package.session_contract,
+        }
+        amendment_records: list[dict] = [
+            {
+                "object_id": amendment.object_id,
+                "object_type": "session_contract_amendment",
+                "object_version": amendment.object_version,
+                "namespace": "session",
+                "payload_hash": amendment.amendment_hash,
+                "payload_encoding": "canonical_json",
+                "source_reference": package.session_id,
+                "payload": amendment.evidence_payload(),
+            }
+            for amendment in package.amendments
+        ]
+        records: list[dict] = [base_record, *amendment_records]
+        imported_count = 0
+        for record in records:
+            try:
+                existing = self.registry_service.get_registry_object(
+                    str(record["object_id"]),
+                    include_payload=True,
+                    include_expired=True,
+                )
+            except KeyError:
+                imported_count += 1
+                continue
+            if any(existing.get(key) != record.get(key) for key in (
+                "object_type",
+                "object_version",
+                "namespace",
+                "payload_hash",
+                "payload_encoding",
+                "source_reference",
+            )) or existing.get("payload") != record.get("payload"):
+                raise ValueError(
+                    f"conflicting Registry object for {record['object_id']}"
+                )
+        self.registry_service.ingest_registry_objects(records)
+        return {
+            "status": "IMPORTED" if imported_count else "DUPLICATE",
+            "session_id": package.session_id,
+            "exchange_hash": package.exchange_hash,
+            "session_contract_object_id": package.session_contract_object_id,
+            "session_contract_hash": package.session_contract_hash,
+            "amendment_sequence": package.amendment_sequence,
+            "effective_terms_hash": package.effective_terms_hash,
+            "imported_object_count": imported_count,
+            "local_session_reconciled": local is not None,
+        }
+
+    @staticmethod
+    def _validate_session_amendment_changes(
+        session: EndpointSession,
+        *,
+        amendment_kind: SessionAmendmentKind,
+        changes: dict,
+    ) -> dict:
+        normalized = dict(changes)
+        allowed_fields = {
+            "EXPIRATION_EXTENSION": {"expires_at"},
+            "REQUEST_LIMIT_INCREASE": {"max_requests"},
+            "ARTIFACT_LIMIT_INCREASE": {"max_artifact_bytes"},
+            "DEPOSIT_EXTENSION": {
+                "additional_endpoint_payment_q_atoms",
+                "additional_network_fee_q_atoms",
+                "funding_operation_id",
+                "previous_funding_state_hash",
+                "next_funding_state_hash",
+            },
+            "MAXIMUM_SESSION_CHARGE_INCREASE": {
+                "maximum_session_charge_q_atoms",
+                "funding_operation_id",
+                "previous_funding_state_hash",
+                "next_funding_state_hash",
+            },
+        }[amendment_kind]
+        unknown = sorted(set(normalized) - allowed_fields)
+        if unknown:
+            raise ValueError(
+                "Session amendment contains unsupported fields: "
+                + ", ".join(unknown)
+            )
+        if amendment_kind == "EXPIRATION_EXTENSION":
+            expires_at = str(normalized.get("expires_at") or "")
+            if not expires_at:
+                raise ValueError("expiration amendment requires expires_at")
+            try:
+                next_expiration = datetime.fromisoformat(expires_at)
+                current_expiration = datetime.fromisoformat(session.expires_at)
+            except ValueError as error:
+                raise ValueError("expiration amendment has invalid expires_at") from error
+            if next_expiration <= current_expiration:
+                raise ValueError("expiration amendment must extend Session expiration")
+            normalized["expires_at"] = expires_at
+        elif amendment_kind == "REQUEST_LIMIT_INCREASE":
+            try:
+                max_requests = int(normalized["max_requests"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError("request limit amendment requires max_requests") from error
+            current_limit = int(session.session_policy_snapshot.get("max_requests", 0) or 0)
+            if max_requests <= current_limit:
+                raise ValueError("request limit amendment must increase max_requests")
+            normalized["max_requests"] = max_requests
+        elif amendment_kind == "ARTIFACT_LIMIT_INCREASE":
+            try:
+                max_artifact_bytes = int(normalized["max_artifact_bytes"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(
+                    "artifact limit amendment requires max_artifact_bytes"
+                ) from error
+            current_limit = int(
+                session.session_policy_snapshot.get("max_artifact_bytes", 0) or 0
+            )
+            if max_artifact_bytes <= current_limit:
+                raise ValueError(
+                    "artifact limit amendment must increase max_artifact_bytes"
+                )
+            normalized["max_artifact_bytes"] = max_artifact_bytes
+        else:
+            # These terms alter economic exposure.  The Ledger already has a
+            # canonical escrow-extension operation, but this local API does
+            # not own that operation's proof.  Refuse to record a contract
+            # version that could claim more exposure than the bound funding.
+            required = {
+                "funding_operation_id",
+                "previous_funding_state_hash",
+                "next_funding_state_hash",
+            }
+            if not required.issubset(normalized):
+                raise ValueError(
+                    "economic Session amendments require canonical funding evidence"
+                )
+            if session.canonical_funding_state_hash != normalized["previous_funding_state_hash"]:
+                raise ValueError(
+                    "economic Session amendment predecessor funding hash mismatch"
+                )
+            if normalized["next_funding_state_hash"] == normalized["previous_funding_state_hash"]:
+                raise ValueError(
+                    "economic Session amendment must change funding state"
+                )
+            if amendment_kind == "MAXIMUM_SESSION_CHARGE_INCREASE":
+                try:
+                    maximum_session_charge_q_atoms = int(
+                        normalized["maximum_session_charge_q_atoms"]
+                    )
+                except (KeyError, TypeError, ValueError) as error:
+                    raise ValueError(
+                        "maximum-charge amendment requires maximum_session_charge_q_atoms"
+                    ) from error
+                current_maximum = int(
+                    session.session_policy_snapshot.get(
+                        "maximum_session_charge_q_atoms", 0
+                    )
+                    or 0
+                )
+                if maximum_session_charge_q_atoms <= current_maximum:
+                    raise ValueError(
+                        "maximum-charge amendment must increase the Session maximum"
+                    )
+                normalized["maximum_session_charge_q_atoms"] = (
+                    maximum_session_charge_q_atoms
+                )
+            for field_name in (
+                "additional_endpoint_payment_q_atoms",
+                "maximum_session_charge_q_atoms",
+            ):
+                if field_name in normalized:
+                    try:
+                        value = int(normalized[field_name])
+                    except (TypeError, ValueError) as error:
+                        raise ValueError(
+                            f"economic Session amendment field is invalid: {field_name}"
+                        ) from error
+                    if value <= 0:
+                        raise ValueError(
+                            f"economic Session amendment field must be positive: {field_name}"
+                        )
+                    normalized[field_name] = value
+            if amendment_kind == "DEPOSIT_EXTENSION":
+                additional_network_fee_q_atoms = int(
+                    normalized.get("additional_network_fee_q_atoms", 0)
+                )
+                if additional_network_fee_q_atoms < 0:
+                    raise ValueError(
+                        "additional_network_fee_q_atoms cannot be negative"
+                    )
+                normalized["additional_network_fee_q_atoms"] = (
+                    additional_network_fee_q_atoms
+                )
+                if (
+                    int(normalized.get("additional_endpoint_payment_q_atoms", 0))
+                    + additional_network_fee_q_atoms
+                    <= 0
+                ):
+                    raise ValueError("economic Session amendment must add funding")
+        return normalized
+
+    def _verify_session_amendment_signatures(
+        self,
+        session: EndpointSession,
+        amendment: SessionContractAmendment,
+    ) -> None:
+        consumer_identity = self.registry_service.resolve_wallet_identity(
+            session.consumer_refund_beneficiary
+        )
+        consumer_public_key = session.consumer_authorization_public_key or (
+            consumer_identity.get("public_key") if consumer_identity else None
+        )
+        endpoint_identity = self.registry_service.resolve_wallet_identity(
+            session.endpoint_payment_beneficiary
+        )
+        endpoint_public_key = (
+            endpoint_identity.get("public_key") if endpoint_identity else None
+        )
+        require_both = session.economic_profile == "MVP-0001"
+        if require_both and not amendment.accepted_at:
+            raise ValueError("MVP Session amendment requires accepted_at")
+        if require_both and (not consumer_public_key or not endpoint_public_key):
+            raise ValueError(
+                "MVP Session amendment requires registered Consumer and Endpoint identities"
+            )
+        for party, public_key, signature in (
+            ("Consumer", consumer_public_key, amendment.consumer_signature),
+            ("Endpoint", endpoint_public_key, amendment.endpoint_signature),
+        ):
+            if public_key is None:
+                continue
+            if not public_key.startswith("ed25519:") or not signature.startswith("ed25519:"):
+                raise ValueError(f"{party} Session amendment signature is invalid")
+            try:
+                Ed25519PublicKey.from_public_bytes(
+                    bytes.fromhex(public_key.removeprefix("ed25519:"))
+                ).verify(
+                    bytes.fromhex(signature.removeprefix("ed25519:")),
+                    amendment.signing_payload(),
+                )
+            except (ValueError, InvalidSignature) as error:
+                raise ValueError(f"{party} Session amendment signature is invalid") from error
+
+    def accept_session_amendment(
+        self,
+        session_id: str,
+        *,
+        amendment_id: str,
+        amendment_kind: SessionAmendmentKind,
+        changes: dict,
+        consumer_signature: str,
+        endpoint_signature: str,
+        accepted_at: str | None = None,
+    ) -> EndpointSession:
+        """Accept one signed, idempotent Session Contract amendment.
+
+        The method updates only terms that have a local execution boundary.
+        Economic amendments additionally require a predecessor and successor
+        funding proof; the canonical Ledger operation remains authoritative
+        for the actual escrow mutation.
+        """
+        current = self.store.get_session(session_id)
+        amendments = self.get_session_amendments(session_id)
+        existing = next(
+            (item for item in amendments if item.amendment_id == amendment_id),
+            None,
+        )
+        if existing is not None:
+            if (
+                existing.amendment_kind != amendment_kind
+                or existing.changes != changes
+                or existing.consumer_signature != consumer_signature
+                or existing.endpoint_signature != endpoint_signature
+            ):
+                raise ValueError("Session amendment ID conflicts with existing amendment")
+            return current
+        amendable_statuses = {"queued", "active", "paused", "recovering"}
+        if current.status not in amendable_statuses:
+            raise ValueError("Session Contract cannot be amended in the current Session state")
+        if not amendment_id.strip():
+            raise ValueError("Session amendment ID is required")
+        normalized_changes = self._validate_session_amendment_changes(
+            current,
+            amendment_kind=amendment_kind,
+            changes=changes,
+        )
+        if amendment_kind in {
+            "DEPOSIT_EXTENSION",
+            "MAXIMUM_SESSION_CHARGE_INCREASE",
+        }:
+            if self._funding_amendment_verifier is None:
+                raise ValueError(
+                    "economic Session amendments require a canonical funding verifier"
+                )
+            if not self._funding_amendment_verifier(
+                session=current,
+                amendment_kind=amendment_kind,
+                changes=normalized_changes,
+            ):
+                raise ValueError("canonical funding evidence was not verified")
+        if not consumer_signature.strip() or not endpoint_signature.strip():
+            raise ValueError("Session amendment requires Consumer and Endpoint signatures")
+        if current.economic_profile == "MVP-0001" and accepted_at is None:
+            raise ValueError("MVP Session amendment requires accepted_at")
+        sequence = len(amendments) + 1
+        previous_effective_terms_hash = current.effective_terms_hash or current.session_contract_hash
+        if not previous_effective_terms_hash:
+            raise ValueError("Session Contract has no effective terms hash")
+        previous_amendment_hash = amendments[-1].amendment_hash if amendments else None
+        effective_terms_hash = _hash_payload(
+            {
+                "previous_effective_terms_hash": previous_effective_terms_hash,
+                "sequence": sequence,
+                "amendment_kind": amendment_kind,
+                "changes": normalized_changes,
+            }
+        )
+        accepted_at_value = accepted_at or datetime.now(UTC).isoformat()
+        evidence_payload = {
+            "amendment_id": amendment_id,
+            "session_id": session_id,
+            "sequence": sequence,
+            "previous_effective_terms_hash": previous_effective_terms_hash,
+            "previous_amendment_hash": previous_amendment_hash,
+            "amendment_kind": amendment_kind,
+            "changes": normalized_changes,
+            "affected_parties": ["CONSUMER", "ENDPOINT"],
+            "consumer_signature": consumer_signature,
+            "endpoint_signature": endpoint_signature,
+            "accepted_at": accepted_at_value,
+            "effective_terms_hash": effective_terms_hash,
+            "object_version": "session-amendment.v1",
+        }
+        amendment_hash = _hash_payload(evidence_payload)
+        object_id = _registry_object_id(
+            object_type="session_contract_amendment",
+            object_version="session-amendment.v1",
+            payload_hash=amendment_hash,
+        )
+        amendment = SessionContractAmendment(
+            **evidence_payload,
+            amendment_hash=amendment_hash,
+            object_id=object_id,
+        )
+        self._verify_session_amendment_signatures(current, amendment)
+        amendment_record = {
+            "object_id": object_id,
+            "object_type": "session_contract_amendment",
+            "object_version": "session-amendment.v1",
+            "namespace": "session",
+            "payload_hash": amendment_hash,
+            "payload_encoding": "canonical_json",
+            "source_reference": session_id,
+            # The Registry payload is the signed evidence payload.  Its
+            # hash is ``amendment_hash``; object_id and the hash itself are
+            # envelope metadata, not recursive payload content.
+            "payload": amendment.evidence_payload(),
+        }
+        session_policy_snapshot = dict(current.session_policy_snapshot)
+        original_deposit = None
+        session_updates = {
+            "effective_terms_hash": amendment.effective_terms_hash,
+            "session_amendment_sequence": sequence,
+            "session_amendment_chain": [
+                *current.session_amendment_chain,
+                amendment.model_dump(mode="json"),
+            ],
+        }
+        if amendment_kind == "EXPIRATION_EXTENSION":
+            session_updates["expires_at"] = normalized_changes["expires_at"]
+        elif amendment_kind == "REQUEST_LIMIT_INCREASE":
+            session_policy_snapshot["max_requests"] = normalized_changes["max_requests"]
+            session_updates["session_policy_snapshot"] = session_policy_snapshot
+        elif amendment_kind == "ARTIFACT_LIMIT_INCREASE":
+            session_policy_snapshot["max_artifact_bytes"] = normalized_changes[
+                "max_artifact_bytes"
+            ]
+            session_updates["session_policy_snapshot"] = session_policy_snapshot
+        updated = current.model_copy(update=session_updates)
+        updated_deposit = None
+        if amendment_kind == "DEPOSIT_EXTENSION":
+            deposit = self.store.get_deposit_for_session(session_id)
+            original_deposit = deposit
+            additional_q_atoms = int(
+                normalized_changes.get("additional_endpoint_payment_q_atoms", 0)
+            ) + int(normalized_changes.get("additional_network_fee_q_atoms", 0))
+            if additional_q_atoms <= 0:
+                raise ValueError("economic Session amendment must add funding")
+            updated_deposit = deposit.model_copy(
+                update={
+                    "locked_q": deposit.locked_q + additional_q_atoms / 1_000_000,
+                }
+            )
+            session_updates["deposit_locked_q"] = updated_deposit.locked_q
+            session_updates["deposit_locked_q_atoms"] = (
+                int(current.deposit_locked_q_atoms or 0) + additional_q_atoms
+            )
+        if amendment_kind in {
+            "DEPOSIT_EXTENSION",
+            "MAXIMUM_SESSION_CHARGE_INCREASE",
+        }:
+            if amendment_kind == "MAXIMUM_SESSION_CHARGE_INCREASE":
+                session_policy_snapshot["maximum_session_charge_q_atoms"] = (
+                    normalized_changes["maximum_session_charge_q_atoms"]
+                )
+                session_updates["session_policy_snapshot"] = session_policy_snapshot
+            session_updates["canonical_funding_state_hash"] = normalized_changes[
+                "next_funding_state_hash"
+            ]
+            updated = current.model_copy(update=session_updates)
+        self.store.save_session(updated)
+        try:
+            if updated_deposit is not None:
+                self.store.save_deposit(updated_deposit)
+            self._persist_session_contract_object(record=amendment_record)
+        except Exception:
+            self.store.save_session(current)
+            if updated_deposit is not None:
+                self.store.save_deposit(original_deposit)
+            raise
+        self._emit(
+            event_type="session.contract_amended",
+            message="Session Contract amendment accepted",
+            details={
+                "session_id": session_id,
+                "amendment_id": amendment.amendment_id,
+                "amendment_kind": amendment.amendment_kind,
+                "sequence": amendment.sequence,
+                "effective_terms_hash": amendment.effective_terms_hash,
+            },
+        )
+        self._record_accounting_operation(
+            operation_type="SESSION_AMENDMENT_ACCEPT",
+            session=updated,
+            payload=amendment.model_dump(mode="json"),
+            created_at=amendment.accepted_at,
+            emitted_events=["SessionContractAmended"],
+        )
+        return updated
 
     def get_proxy_session_binding(self, local_session_id: str) -> ProxySessionBinding:
         return self.store.get_proxy_session_binding(local_session_id)
@@ -521,6 +1135,9 @@ class SessionService:
         deposit_q_atoms: int | None = None,
         fixed_price_q_atoms: int | None = None,
         request_charge_ceiling_q_atoms: int | None = None,
+        canonical_funding_status: CanonicalFundingStatus | None = None,
+        canonical_funding_operation_id: str | None = None,
+        canonical_funding_submission: dict | None = None,
     ) -> SessionResult:
         session_policy_snapshot = dict(session_policy)
         session_policy_snapshot.setdefault("network_fee_q", self.network_fee_q)
@@ -573,6 +1190,9 @@ class SessionService:
             session_policy.get("maximum_session_duration_seconds", 3600) or 3600
         )
         session_id = session_id or f"sess-{uuid4().hex[:12]}"
+        resolved_canonical_funding_status = canonical_funding_status or (
+            "UNBOUND" if economic_profile == "MVP-0001" else "FINALIZED"
+        )
         session_contract_payload = self._session_contract_payload(
             session_id=session_id,
             endpoint_id=endpoint_id,
@@ -621,6 +1241,9 @@ class SessionService:
             deposit_locked_q_atoms=deposit_q_atoms,
             fixed_price_q_atoms=fixed_price_q_atoms,
             request_charge_ceiling_q_atoms=request_charge_ceiling_q_atoms,
+            canonical_funding_status=resolved_canonical_funding_status,
+            canonical_funding_operation_id=canonical_funding_operation_id,
+            canonical_funding_submission=dict(canonical_funding_submission or {}),
             reserved_slot_index=reserved_slot_index,
             queue_policy_snapshot=queue_policy,
             session_policy_snapshot=session_policy_snapshot,
@@ -651,6 +1274,9 @@ class SessionService:
             ),
             session_contract_namespace=str(session_contract_record["namespace"]),
             session_contract_hash=session_contract_hash,
+            effective_terms_hash=session_contract_hash,
+            session_amendment_sequence=0,
+            session_amendment_chain=[],
             close_reason=("waiting_for_slot" if queued_sessions or not slot_available else None),
         )
         deposit = LockedDeposit(
@@ -697,12 +1323,49 @@ class SessionService:
         session_id: str,
         *,
         funding_state_hash: str,
+        operation_id: str | None = None,
     ) -> EndpointSession:
         current = self.store.get_session(session_id)
         if current.economic_profile != "MVP-0001":
             raise ValueError("Session is not an MVP-0001 economic Session")
         updated = current.model_copy(
-            update={"canonical_funding_state_hash": funding_state_hash}
+            update={
+                "canonical_funding_state_hash": funding_state_hash,
+                "canonical_funding_status": "FINALIZED",
+                "canonical_funding_operation_id": (
+                    operation_id or current.canonical_funding_operation_id
+                ),
+            }
+        )
+        self.store.save_session(updated)
+        return updated
+
+    def bind_pending_canonical_funding(
+        self,
+        session_id: str,
+        *,
+        operation_id: str,
+        submission: dict,
+    ) -> EndpointSession:
+        """Persist a canonical lock submission without applying economic state."""
+        current = self.store.get_session(session_id)
+        if current.economic_profile != "MVP-0001":
+            raise ValueError("Session is not an MVP-0001 economic Session")
+        if current.canonical_funding_status == "FINALIZED":
+            if current.canonical_funding_operation_id not in {None, operation_id}:
+                raise ValueError("Session canonical funding operation conflicts")
+            return current
+        if (
+            current.canonical_funding_operation_id is not None
+            and current.canonical_funding_operation_id != operation_id
+        ):
+            raise ValueError("Session canonical funding operation conflicts")
+        updated = current.model_copy(
+            update={
+                "canonical_funding_status": "PENDING_FINALITY",
+                "canonical_funding_operation_id": operation_id,
+                "canonical_funding_submission": dict(submission),
+            }
         )
         self.store.save_session(updated)
         return updated
@@ -710,13 +1373,23 @@ class SessionService:
     def close_session(self, session_id: str) -> SessionResult:
         current = self.store.get_session(session_id)
         deposit = self.store.get_deposit_for_session(session_id)
-        if current.status == "closed":
-            return SessionResult(session=current, deposit=deposit)
+        if current.status in {"closed", "force_settled"}:
+            settlement = (
+                SessionSettlementSummary.model_validate(current.settlement_snapshot)
+                if current.settlement_snapshot
+                else None
+            )
+            return SessionResult(session=current, deposit=deposit, settlement=settlement)
+        close_reason = current.close_reason or (
+            "forced_recovery_expired"
+            if current.status == "force_closing"
+            else "closed_by_client"
+        )
         result = self._settle_and_close_session(
             current,
             deposit,
             closed_at=datetime.now(UTC),
-            close_reason=current.close_reason or "closed_by_client",
+            close_reason=close_reason,
         )
 
         # RFC-0060: unregister session from failure handler
@@ -734,6 +1407,7 @@ class SessionService:
         endpoint_payment_q_atoms: int,
         consumer_refund_q_atoms: int,
         network_fee_q_atoms: int = 0,
+        failure_evidence_root: str | None = None,
         close_reason: str = "canonical_settlement_finalized",
         no_request: bool = False,
     ) -> SessionResult:
@@ -741,6 +1415,24 @@ class SessionService:
         deposit = self.store.get_deposit_for_session(session_id)
         if current.economic_profile != "MVP-0001":
             raise ValueError("Session is not an MVP-0001 economic Session")
+        if current.status in {"closed", "force_settled"}:
+            existing = current.settlement_snapshot
+            if not existing:
+                raise ValueError("Session is already finalized without settlement evidence")
+            if existing.get("settlement_evidence_root") != settlement_evidence_root:
+                raise ValueError("Session is already finalized with different settlement evidence")
+            if (
+                failure_evidence_root is not None
+                and existing.get("failure_evidence_root") != failure_evidence_root
+            ):
+                raise ValueError(
+                    "Session is already finalized with different failure evidence"
+                )
+            return SessionResult(
+                session=current,
+                deposit=deposit,
+                settlement=SessionSettlementSummary.model_validate(existing),
+            )
         atoms_per_q = 1_000_000
         endpoint_payment_q = round(endpoint_payment_q_atoms / atoms_per_q, 6)
         consumer_refund_q = round(consumer_refund_q_atoms / atoms_per_q, 6)
@@ -748,6 +1440,7 @@ class SessionService:
         charged_q = round(endpoint_payment_q + network_fee_q, 6)
         settlement = SessionSettlementSummary(
             settlement_evidence_root=settlement_evidence_root,
+            failure_evidence_root=failure_evidence_root,
             endpoint_payment_beneficiary=current.endpoint_payment_beneficiary,
             consumer_refund_beneficiary=current.consumer_refund_beneficiary,
             network_fee_q=network_fee_q,
@@ -759,9 +1452,14 @@ class SessionService:
         )
         closed = current.model_copy(
             update={
-                "status": "closed",
+                "status": (
+                    "force_settled"
+                    if close_reason.startswith("forced_")
+                    else "closed"
+                ),
                 "reserved_slot_index": None,
                 "close_reason": close_reason,
+                "settlement_snapshot": settlement.model_dump(mode="json"),
             }
         )
         released = deposit.model_copy(
@@ -773,6 +1471,8 @@ class SessionService:
         )
         self.store.save_session(closed)
         self.store.save_deposit(released)
+        if self.failure_handler is not None:
+            self.failure_handler.unregister_session(session_id)
         self._emit(
             event_type="session.canonical_settled",
             message="canonical MVP Session settlement finalized",
@@ -870,6 +1570,20 @@ class SessionService:
             )
         if terminal.session_contract_hash != current.session_contract_hash:
             raise ValueError("runtime evidence Session Contract does not match target session")
+        expected_effective_terms_hash = (
+            current.effective_terms_hash or current.session_contract_hash
+        )
+        if current.session_amendment_sequence > 0 and terminal.effective_terms_hash is None:
+            raise ValueError(
+                "runtime evidence is missing the current effective terms hash"
+            )
+        if (
+            terminal.effective_terms_hash is not None
+            and terminal.effective_terms_hash != expected_effective_terms_hash
+        ):
+            raise ValueError(
+                "runtime evidence Effective Terms hash does not match target session"
+            )
         if terminal.accounting_contract_hash != current.accounting_contract_hash:
             raise ValueError("runtime evidence Accounting Contract does not match target session")
         for existing in current.runtime_terminal_evidence:
@@ -1391,9 +2105,15 @@ class SessionService:
         )
         closed = session.model_copy(
             update={
-                "status": "closed",
+                "status": (
+                    "force_settled"
+                    if session.status == "force_closing"
+                    or close_reason.startswith("forced_")
+                    else "closed"
+                ),
                 "reserved_slot_index": None,
                 "close_reason": close_reason,
+                "settlement_snapshot": settlement.model_dump(mode="json"),
             }
         )
         released = deposit.model_copy(

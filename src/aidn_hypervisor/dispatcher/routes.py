@@ -254,6 +254,14 @@ VALIDATION_MESSAGE_TYPES = {
     "VALIDATION_REPORT_TRANSFER",
 }
 
+VALIDATION_CUSTODY_MESSAGE_TYPES = {
+    "VALIDATION_REPORT_CUSTODY_GET",
+}
+
+VALIDATION_OBSERVER_MESSAGE_TYPES = {
+    "VALIDATION_REPORT_CUSTODY_CHALLENGE",
+}
+
 
 def validation_route(
     *,
@@ -301,6 +309,127 @@ def bind_validation_route(
         hypervisor_key=hypervisor_key,
     )
     dispatcher.register_local_route(route, handler)
+    return route
+
+
+def validation_custody_route(
+    *,
+    destination_id: str = "validation_custody_handler",
+    route_generation: int,
+    hypervisor_key: str | None = None,
+) -> DispatcherRoute:
+    """Create a scoped RFC-0042 route for authenticated custody retrieval."""
+    return DispatcherRoute(
+        destination_type="VALIDATION_CUSTODY_TARGET",
+        destination_id=destination_id,
+        route_type="LOCAL_PROTOCOL_HANDLER",
+        route_generation=route_generation,
+        allowed_source_types={
+            "ENDPOINT",
+            "HYPERVISOR",
+            "VALIDATION_AUTHORITY",
+            "VALIDATOR",
+        },
+        allowed_channel_classes={"VALIDATION"},
+        allowed_message_types=set(VALIDATION_CUSTODY_MESSAGE_TYPES),
+        hypervisor_key=hypervisor_key,
+        created_at=datetime.now(UTC).isoformat(),
+    )
+
+
+def bind_validation_custody_route(
+    dispatcher,
+    handler: Callable[..., object],
+    *,
+    destination_id: str = "validation_custody_handler",
+    route_generation: int,
+    hypervisor_key: str | None = None,
+) -> DispatcherRoute:
+    route = validation_custody_route(
+        destination_id=destination_id,
+        route_generation=route_generation,
+        hypervisor_key=hypervisor_key,
+    )
+    dispatcher.register_local_route(route, handler, pass_message_context=True)
+    return route
+
+
+def validation_observer_route(
+    *,
+    observer_id: str,
+    route_generation: int,
+    allowed_source_ids: set[str] | None = None,
+    hypervisor_key: str | None = None,
+) -> DispatcherRoute:
+    """Create a route for one observer's scheduled custody challenge queue."""
+    if not observer_id.strip():
+        raise ValueError("observer_id is required")
+    return DispatcherRoute(
+        destination_type="VALIDATION_OBSERVER",
+        destination_id=observer_id,
+        route_type="LOCAL_PROTOCOL_HANDLER",
+        route_generation=route_generation,
+        allowed_source_types={"VALIDATION_AUTHORITY", "HYPERVISOR", "VALIDATOR"},
+        allowed_source_ids=set(allowed_source_ids or set()),
+        allowed_channel_classes={"VALIDATION"},
+        allowed_message_types=set(VALIDATION_OBSERVER_MESSAGE_TYPES),
+        hypervisor_key=hypervisor_key,
+        created_at=datetime.now(UTC).isoformat(),
+    )
+
+
+def bind_validation_observer_route(
+    dispatcher,
+    handler: Callable[..., object],
+    *,
+    observer_id: str,
+    route_generation: int,
+    allowed_source_ids: set[str] | None = None,
+    hypervisor_key: str | None = None,
+) -> DispatcherRoute:
+    route = validation_observer_route(
+        observer_id=observer_id,
+        route_generation=route_generation,
+        allowed_source_ids=allowed_source_ids,
+        hypervisor_key=hypervisor_key,
+    )
+    dispatcher.register_local_route(route, handler, pass_message_context=True)
+    return route
+
+
+def remote_validation_observer_route(
+    *,
+    observer_id: str,
+    route_generation: int,
+    allowed_source_ids: set[str] | None = None,
+    hypervisor_key: str | None = None,
+) -> DispatcherRoute:
+    """Create a remote route for an observer reached through authenticated transport."""
+    route = validation_observer_route(
+        observer_id=observer_id,
+        route_generation=route_generation,
+        allowed_source_ids=allowed_source_ids,
+        hypervisor_key=hypervisor_key,
+    )
+    return route.model_copy(update={"route_type": "REMOTE_HYPERVISOR"})
+
+
+def bind_remote_validation_observer_route(
+    dispatcher,
+    sender: Callable[[dict], object],
+    *,
+    observer_id: str,
+    route_generation: int,
+    allowed_source_ids: set[str] | None = None,
+    hypervisor_key: str | None = None,
+) -> DispatcherRoute:
+    route = remote_validation_observer_route(
+        observer_id=observer_id,
+        route_generation=route_generation,
+        allowed_source_ids=allowed_source_ids,
+        hypervisor_key=hypervisor_key,
+    )
+    dispatcher.register_remote_route(route, sender)
     return route
 
 

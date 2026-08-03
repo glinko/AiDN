@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -180,3 +181,72 @@ def test_corrupt_durable_state_fails_closed(tmp_path) -> None:
 
     with pytest.raises(ABCIStateStoreError, match="corrupt"):
         _app(store)
+
+
+def test_state_sync_retention_keeps_a_bounded_transfer_window(tmp_path) -> None:
+    store = ABCIStateStore(tmp_path / "abci", retained_snapshots=3)
+    application = _app(store)
+
+    for height in range(1, 5):
+        result = application.finalize_block(
+            block_height=height,
+            block_hash=bytes([height]) * 32,
+            txs=[],
+        )
+        assert result.code == "ok"
+
+    assert [snapshot.height for snapshot in store.list_snapshots()] == [4, 3, 2]
+    with pytest.raises(ABCIStateStoreError, match="unavailable"):
+        store.load_snapshot_chunk(height=1, format=1, chunk=0)
+
+
+def test_state_sync_lease_protects_snapshot_after_transfer_starts(tmp_path) -> None:
+    store = ABCIStateStore(
+        tmp_path / "abci",
+        retained_snapshots=1,
+        snapshot_lease_seconds=60,
+    )
+    application = _app(store)
+
+    application.finalize_block(block_height=1, block_hash=b"a" * 32, txs=[])
+    metadata = store.list_snapshots()[0]
+    first_chunk = store.load_snapshot_chunk(
+        height=metadata.height,
+        format=metadata.format,
+        chunk=0,
+    )
+    assert first_chunk
+
+    application.finalize_block(block_height=2, block_hash=b"b" * 32, txs=[])
+    assert any(item.height == 1 for item in store.list_snapshots())
+
+    store.release_snapshot_lease(height=metadata.height, format=metadata.format)
+    application.finalize_block(block_height=3, block_hash=b"c" * 32, txs=[])
+    with pytest.raises(ABCIStateStoreError, match="unavailable"):
+        store.load_snapshot_chunk(
+            height=metadata.height,
+            format=metadata.format,
+            chunk=0,
+        )
+
+
+def test_empty_settlement_extensions_do_not_change_legacy_app_hash() -> None:
+    application = _app()
+    current = application.prepare_snapshot()
+    legacy_state = {
+        "operations": current["ledger_operations"],
+        "wallet_sequences": current["wallet_sequences"],
+        "settlement_state": {
+            "wallet_q_atom_balances": {},
+            "session_funding_accounts": [],
+            "settlement_proposals": [],
+            "settlement_acceptances": [],
+            "settlement_transition_hashes": {},
+        },
+    }
+
+    legacy_hash = hashlib.sha256(
+        json.dumps(legacy_state, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    assert legacy_hash == current["app_hash"]

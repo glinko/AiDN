@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import socket
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -178,6 +180,10 @@ class AIDNABCISocketServer:
                     "finalize_block",
                     _fields(
                         *(_message_field(2, _result_message(item)) for item in tx_results),
+                        *(
+                            _message_field(3, _validator_update_message(item))
+                            for item in result.validator_updates
+                        ),
                         _bytes_field(5, self.application.commit().data),
                     ),
                 )
@@ -266,6 +272,31 @@ def _result_message(result: ABCIResult) -> bytes:
         _varint_field(5, result.gas_wanted),
         _varint_field(6, result.gas_used),
         _string(8, result.codespace),
+    )
+
+
+def _validator_update_message(update: dict) -> bytes:
+    """Encode one CometBFT ``ValidatorUpdate`` protobuf message."""
+    public_key = update.get("public_key")
+    if not isinstance(public_key, str) or not public_key.startswith("ed25519:"):
+        raise ABCIWireError("validator update public key is invalid")
+    try:
+        public_key_bytes = base64.b64decode(
+            public_key.removeprefix("ed25519:"),
+            validate=True,
+        )
+    except (ValueError, binascii.Error) as error:
+        raise ABCIWireError("validator update public key is invalid") from error
+    if len(public_key_bytes) != 32:
+        raise ABCIWireError("validator update public key must contain 32 bytes")
+
+    power = update.get("power")
+    if isinstance(power, bool) or not isinstance(power, int) or power < 0:
+        raise ABCIWireError("validator update voting power is invalid")
+    public_key_message = _fields(_bytes_field(1, public_key_bytes))
+    return _fields(
+        _message_field(1, public_key_message),
+        _varint_field(2, power),
     )
 
 

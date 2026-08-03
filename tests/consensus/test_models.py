@@ -112,6 +112,7 @@ def test_all_operation_types():
     types: list[OperationType] = [
         "WALLET_TRANSFER",
         "SESSION_OPEN",
+        "SESSION_SETTLEMENT_READY_COMMIT",
         "DEPOSIT_LOCK",
         "SESSION_SETTLE",
         "ENDPOINT_PUBLISH",

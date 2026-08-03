@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 RemoteEndpointRoutingMode = Literal["preferred", "standby"]
+RemotePublicationVerification = Literal["VERIFIED", "LEGACY_UNVERIFIED"]
 
 
 class RemoteEndpointReference(BaseModel):
@@ -17,6 +18,9 @@ class RemoteEndpointReference(BaseModel):
     source_status: str
     source_base_url: str
     operator_id: str
+    source_owner_public_key: str | None = None
+    source_wallet_signature: str | None = None
+    publication_verification: RemotePublicationVerification = "LEGACY_UNVERIFIED"
     alias: str | None = None
     routing_mode: RemoteEndpointRoutingMode = "preferred"
     attached_at: str

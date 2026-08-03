@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .retention import RegistryRetentionClass
+
 
 def canonical_payload_bytes(payload: dict[str, Any]) -> bytes:
     """Encode a Registry object payload using the committed JSON form."""
@@ -61,6 +63,10 @@ class RegistryObjectEnvelope(BaseModel, frozen=True):
     previous_version_reference: str | None = None
     payload_encoding: str = "json"  # json | protobuf | raw
     compression: str | None = None  # gzip | none
+    retention_class: RegistryRetentionClass = RegistryRetentionClass.ACTIVE_LIFECYCLE
+    access_class: str = Field(default="PUBLIC_COMMITMENT", min_length=1)
+    expiration_epoch: int | None = Field(default=None, ge=0)
+    created_at: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     producer_signature: str | None = None
 
@@ -78,6 +84,10 @@ class RegistryObjectEnvelope(BaseModel, frozen=True):
         parent_references: list[str] | None = None,
         previous_version_reference: str | None = None,
         producer_signature: str | None = None,
+        retention_class: RegistryRetentionClass | str = RegistryRetentionClass.ACTIVE_LIFECYCLE,
+        access_class: str = "PUBLIC_COMMITMENT",
+        expiration_epoch: int | None = None,
+        created_at: str | None = None,
     ) -> RegistryObjectEnvelope:
         """Factory: compute id, hash, size from payload."""
         canonical = canonical_payload_bytes(payload)
@@ -98,6 +108,10 @@ class RegistryObjectEnvelope(BaseModel, frozen=True):
             ledger_commitment=ledger_commitment,
             parent_references=parent_references or [],
             previous_version_reference=previous_version_reference,
+            retention_class=retention_class,
+            access_class=access_class,
+            expiration_epoch=expiration_epoch,
+            created_at=created_at,
             payload=payload,
             producer_signature=producer_signature,
         )

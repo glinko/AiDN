@@ -1,5 +1,9 @@
 """Session Failure Evidence Store — separate persistence for RFC-0060 evidence."""
 
+import hashlib
+import json
+from collections.abc import Iterable
+
 from aidn_hypervisor.session_failure.models import (
     FailureEvidenceRecord,
     FailureReport,
@@ -7,10 +11,11 @@ from aidn_hypervisor.session_failure.models import (
 
 
 class SessionFailureEvidenceStore:
-    """In-memory store for failure evidence and reports.
+    """Store for failure evidence and reports.
 
     Separate from SessionStore so failure evidence can be audited
-    independently of Session lifecycle state.
+    independently of Session lifecycle state. Snapshot methods provide the
+    durable boundary; the store itself remains storage-backend agnostic.
     """
 
     def __init__(self) -> None:
@@ -63,6 +68,73 @@ class SessionFailureEvidenceStore:
         """Return True when a failure report exists for the session."""
         return session_id in self._reports
 
+    def snapshot_evidence(self) -> list[FailureEvidenceRecord]:
+        """Return deterministic evidence records for Hypervisor snapshots."""
+        return [
+            record.model_copy(deep=True)
+            for session_id in sorted(self._evidence)
+            for record in self._evidence[session_id]
+        ]
+
+    def snapshot_reports(self) -> list[FailureReport]:
+        """Return deterministic reports for Hypervisor snapshots."""
+        return [
+            self._reports[session_id].model_copy(deep=True)
+            for session_id in sorted(self._reports)
+        ]
+
+    def failure_evidence_root(self, session_id: str) -> str | None:
+        """Return the canonical v1 commitment for one Session's failure data.
+
+        The commitment includes the complete local evidence set and the latest
+        Failure Report. It is deliberately absent when no failure evidence is
+        known, so an empty store cannot masquerade as a valid failure claim.
+        """
+        evidence = [
+            record.model_dump(mode="json")
+            for record in self._evidence.get(session_id, [])
+        ]
+        report = self._reports.get(session_id)
+        if not evidence and report is None:
+            return None
+        evidence.sort(key=_canonical_json)
+        payload = {
+            "schema": "rfc-0060-failure-evidence.v1",
+            "session_id": session_id,
+            "evidence": evidence,
+            "report": report.model_dump(mode="json") if report is not None else None,
+        }
+        digest = hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+        return f"sha256:{digest}"
+
+    def restore(
+        self,
+        *,
+        evidence: Iterable[FailureEvidenceRecord | dict] = (),
+        reports: Iterable[FailureReport | dict] = (),
+    ) -> None:
+        """Replace local evidence with validated durable snapshot data."""
+        self.reset()
+        for raw_record in evidence:
+            record = (
+                raw_record
+                if isinstance(raw_record, FailureEvidenceRecord)
+                else FailureEvidenceRecord.model_validate(raw_record)
+            )
+            self.add_evidence(record.session_id, record)
+        for raw_report in reports:
+            report = (
+                raw_report
+                if isinstance(raw_report, FailureReport)
+                else FailureReport.model_validate(raw_report)
+            )
+            existing = self._reports.get(report.session_id)
+            if existing is not None and existing != report:
+                raise ValueError(
+                    f"conflicting failure report for Session {report.session_id}"
+                )
+            self.save_report(report)
+
     # ------------------------------------------------------------------
     # Bulk / utility
     # ------------------------------------------------------------------
@@ -81,3 +153,12 @@ class SessionFailureEvidenceStore:
         """Clear all data (testing only)."""
         self._evidence.clear()
         self._reports.clear()
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )

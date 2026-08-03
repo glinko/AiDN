@@ -81,6 +81,19 @@ def build_registry_router(service: RegistryService) -> APIRouter:
         )
         return service.discover(query)
 
+    @router.get("/registry/reputation-profiles/{object_id}/finality")
+    async def reputation_profile_finality(
+        object_id: str,
+        effective_epoch: int | None = None,
+    ) -> dict:
+        try:
+            return service.reputation_profile_finality(
+                object_id,
+                effective_epoch=effective_epoch,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @router.get("/registry/conflicts")
     async def list_conflicts(
         conflict_class: str | None = None,

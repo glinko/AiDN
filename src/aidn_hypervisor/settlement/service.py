@@ -40,6 +40,8 @@ class SettlementEngine:
         self,
         request: RequestSettlementInput,
         terms: SettlementAccountingTerms,
+        *,
+        effective_terms_hash: str | None = None,
     ) -> RequestSettlementRecord:
         if request.accounting_contract_hash != terms.accounting_contract_hash:
             raise SettlementError(
@@ -126,6 +128,7 @@ class SettlementEngine:
             session_id=request.session_id,
             request_id=request.request_id,
             request_charge_ceiling_q_atoms=request.request_charge_ceiling_q_atoms,
+            effective_terms_hash=effective_terms_hash or request.effective_terms_hash,
             accounting_contract_hash=request.accounting_contract_hash,
             terminal_state=request.terminal_state,
             result_reference=request.result_reference,
@@ -183,6 +186,14 @@ class SettlementEngine:
                     "SETTLEMENT_REQUEST_RECORD_INVALID",
                     "Request belongs to another Session",
                 )
+            if (
+                request.effective_terms_hash is not None
+                and request.effective_terms_hash != effective_terms_hash
+            ):
+                raise SettlementError(
+                    "SETTLEMENT_EFFECTIVE_TERMS_MISMATCH",
+                    "Request and Settlement Effective Terms hashes differ",
+                )
             try:
                 terms = terms_by_hash[request.accounting_contract_hash]
             except KeyError as exc:
@@ -190,7 +201,13 @@ class SettlementEngine:
                     "SETTLEMENT_ACCOUNTING_CONTRACT_MISMATCH",
                     "Settlement terms are unavailable",
                 ) from exc
-            records.append(self.evaluate_request(request, terms))
+            records.append(
+                self.evaluate_request(
+                    request,
+                    terms,
+                    effective_terms_hash=effective_terms_hash,
+                )
+            )
 
         input_set = SettlementInputSet(
             session_id=funding.session_id,
@@ -451,6 +468,7 @@ class SettlementEngine:
             session_id=request.session_id,
             request_id=request.request_id,
             request_charge_ceiling_q_atoms=request.request_charge_ceiling_q_atoms,
+            effective_terms_hash=request.effective_terms_hash,
             accounting_contract_hash=request.accounting_contract_hash,
             terminal_state=request.terminal_state,
             result_reference=request.result_reference,

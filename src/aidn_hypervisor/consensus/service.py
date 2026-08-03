@@ -11,7 +11,15 @@ from enum import Enum
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.admission import AdmissionValidator
-from aidn_hypervisor.consensus.cometbft import cometbft_transaction_hash
+from aidn_hypervisor.consensus.cometbft import (
+    CometBftSubmissionTransport,
+    HttpCometBftSubmissionTransport,
+    cometbft_transaction_hash,
+)
+from aidn_hypervisor.consensus.finality import (
+    ConsensusFinalityEvidence,
+    ConsensusFinalitySource,
+)
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.state_store import ABCIStateStore
 
@@ -47,6 +55,9 @@ class ConsensusServiceConfig:
     abci_listen_host: str = "127.0.0.1"
     abci_listen_port: int = 26658
     abci_maximum_message_size: int = 1_048_576
+    abci_retained_snapshots: int = ABCIStateStore.DEFAULT_RETAINED_SNAPSHOTS
+    abci_snapshot_lease_seconds: int = ABCIStateStore.DEFAULT_SNAPSHOT_LEASE_SECONDS
+    strict_operation_coverage: bool = False
 
 
 @dataclass
@@ -81,14 +92,25 @@ class ConsensusService:
         abci_app: AIDNABCIApplication | None = None,
         *,
         time_now: Callable[[], float] | None = None,
+        submission_transport: CometBftSubmissionTransport | None = None,
     ):
         self.config = config
         self.abci = abci_app
         self._abci_socket_server = None
         self._time_now = time_now or time.monotonic
+        self._submission_transport: CometBftSubmissionTransport | None = submission_transport
+        if submission_transport is not None:
+            self._submission_transport = submission_transport
+        elif config.cometbft_endpoint.startswith(("http://", "https://")):
+            self._submission_transport = HttpCometBftSubmissionTransport(
+                config.cometbft_endpoint
+            )
+        else:
+            self._submission_transport = None
 
         # Submission tracking
         self._submissions: dict[str, SubmissionRecord] = {}
+        self._submitted_envelopes: dict[str, LedgerOperationEnvelope] = {}
         self._finalized_operation_ids: set[str] = set()
 
         # Validator state
@@ -121,6 +143,12 @@ class ConsensusService:
         """
         transaction_bytes = self._serialize_envelope(envelope)
         transaction_hash = cometbft_transaction_hash(transaction_bytes)
+        self._submitted_envelopes[envelope.operation_id] = envelope
+        existing = self._submissions.get(envelope.operation_id)
+        if existing is not None:
+            if existing.transaction_hash != transaction_hash:
+                raise ValueError("operation_id is already bound to another transaction")
+            return existing
         if not self.is_enabled:
             # Local processing — no consensus
             record = SubmissionRecord(
@@ -156,8 +184,54 @@ class ConsensusService:
                 record.status = SubmissionStatus.FAILED
                 record.error = result.log
                 self._total_failed += 1
+        elif self._submission_transport is not None:
+            try:
+                response = self._submission_transport.broadcast_tx_sync(
+                    transaction_bytes,
+                    timeout_seconds=max(1, int(self.config.submission_timeout_seconds)),
+                )
+                submission_result = self._submission_result(response)
+                code = self._submission_code(submission_result.get("code"))
+                if code != 0:
+                    raise ValueError(
+                        str(
+                            submission_result.get("log")
+                            or submission_result.get("info")
+                            or f"CometBFT CheckTx code {code}"
+                        )
+                    )
+                response_hash = submission_result.get("hash")
+                if response_hash is not None and not self._matches_transaction_hash(
+                    response_hash,
+                    transaction_hash,
+                ):
+                    raise ValueError("CometBFT submission hash does not match transaction")
+                record.status = SubmissionStatus.ADMITTED
+                record.admitted_at = self._time_now()
+            except Exception as error:
+                record.status = SubmissionStatus.FAILED
+                record.error = str(error) or error.__class__.__name__
+                self._total_failed += 1
 
         return record
+
+    def get_operation_envelope(self, operation_id: str) -> LedgerOperationEnvelope | None:
+        """Return the exact envelope retained for an idempotent retry."""
+        return self._submitted_envelopes.get(operation_id)
+
+    def find_submitted_envelope(
+        self,
+        operation_type: str,
+        *,
+        predicate: Callable[[LedgerOperationEnvelope], bool] | None = None,
+    ) -> LedgerOperationEnvelope | None:
+        """Find a previously submitted semantic operation for reconnect recovery."""
+        for envelope in reversed(tuple(self._submitted_envelopes.values())):
+            if envelope.operation_type != operation_type:
+                continue
+            if predicate is None or predicate(envelope):
+                return envelope
+        return None
 
     def get_submission(self, operation_id: str) -> SubmissionRecord | None:
         """Get submission tracking record."""
@@ -183,9 +257,15 @@ class ConsensusService:
 
     def mark_included(self, operation_id: str, block_height: int) -> bool:
         """Mark an operation as included in a block."""
+        if block_height < 1:
+            return False
         record = self._submissions.get(operation_id)
         if not record:
             return False
+        if record.status == SubmissionStatus.FINALIZED:
+            return record.block_height == block_height
+        if record.status == SubmissionStatus.INCLUDED:
+            return record.block_height == block_height
         record.status = SubmissionStatus.INCLUDED
         record.included_at = self._time_now()
         record.block_height = block_height
@@ -193,15 +273,43 @@ class ConsensusService:
 
     def mark_finalized(self, operation_id: str, block_height: int) -> bool:
         """Mark an operation as finalized."""
+        if block_height < 1:
+            return False
         record = self._submissions.get(operation_id)
         if not record:
             return False
+        if record.status == SubmissionStatus.FINALIZED:
+            return record.block_height == block_height
         record.status = SubmissionStatus.FINALIZED
         record.finalized_at = self._time_now()
         record.block_height = block_height
         self._finalized_operation_ids.add(operation_id)
         self._total_finalized += 1
         return True
+
+    def reconcile_finality(
+        self,
+        operation_id: str,
+        *,
+        finality_source: ConsensusFinalitySource,
+    ) -> SubmissionRecord | None:
+        """Apply only verified, operation-bound finality evidence."""
+        record = self._submissions.get(operation_id)
+        if record is None:
+            return None
+        try:
+            evidence = finality_source.finality_evidence(operation_id)
+        except Exception:
+            return None
+        if not isinstance(evidence, ConsensusFinalityEvidence):
+            return None
+        if evidence.operation_id != operation_id or evidence.chain_id != self.config.chain_id:
+            return None
+        if not self.mark_included(operation_id, evidence.block_height):
+            return None
+        if not self.mark_finalized(operation_id, evidence.block_height):
+            return None
+        return record
 
     def is_finalized(self, operation_id: str) -> bool:
         """Check if an operation has been finalized."""
@@ -214,6 +322,7 @@ class ConsensusService:
         *,
         ledger_service,
         admission_validator: AdmissionValidator | None = None,
+        genesis_accounts: dict[str, int] | None = None,
         restore_state_from_store: bool = False,
         state_checkpoint_callback: Callable[[], None] | None = None,
     ) -> AIDNABCIApplication:
@@ -235,9 +344,15 @@ class ConsensusService:
         self.abci = AIDNABCIApplication(
             ledger_service=ledger_service,
             admission_validator=admission_validator,
-            state_store=ABCIStateStore(self.config.abci_state_path),
+            genesis_accounts=genesis_accounts,
+            state_store=ABCIStateStore(
+                self.config.abci_state_path,
+                retained_snapshots=self.config.abci_retained_snapshots,
+                snapshot_lease_seconds=self.config.abci_snapshot_lease_seconds,
+            ),
             restore_state_from_store=restore_state_from_store,
             state_checkpoint_callback=state_checkpoint_callback,
+            strict_operation_coverage=self.config.strict_operation_coverage,
         )
         return self.abci
 
@@ -493,3 +608,37 @@ class ConsensusService:
 
     def _serialize_envelope(self, envelope: LedgerOperationEnvelope) -> bytes:
         return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
+
+    def _submission_result(self, response: dict) -> dict:
+        if not isinstance(response, dict):
+            raise ValueError("CometBFT submission response is invalid")
+        if response.get("error") not in {None, ""}:
+            raise ValueError("CometBFT submission returned an RPC error")
+        result = response.get("result", response)
+        if not isinstance(result, dict):
+            raise ValueError("CometBFT submission result is invalid")
+        return result
+
+    def _submission_code(self, value: object) -> int:
+        if isinstance(value, bool):
+            raise ValueError("CometBFT submission code is invalid")
+        if value is None:
+            return 0
+        if isinstance(value, int):
+            code = value
+        elif isinstance(value, str):
+            try:
+                code = int(value)
+            except ValueError as error:
+                raise ValueError("CometBFT submission code is invalid") from error
+        else:
+            raise ValueError("CometBFT submission code is invalid")
+        if code < 0:
+            raise ValueError("CometBFT submission code is invalid")
+        return code
+
+    def _matches_transaction_hash(self, value: object, expected: str) -> bool:
+        if not isinstance(value, str):
+            return False
+        normalized = value.removeprefix("0x").upper()
+        return normalized == expected

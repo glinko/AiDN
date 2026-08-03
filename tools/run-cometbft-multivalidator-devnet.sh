@@ -8,6 +8,16 @@ NETWORK="aidn-cometbft-devnet"
 APP_IMAGE="aidn-hypervisor-devnet"
 COUNT="${AIDN_VALIDATOR_COUNT:-4}"
 
+for required_command in docker curl python3; do
+  command -v "$required_command" >/dev/null 2>&1 || {
+    echo "required command is missing: $required_command" >&2
+    exit 2
+  }
+done
+docker info >/dev/null 2>&1 || {
+  echo "Docker daemon is unavailable" >&2
+  exit 2
+}
 [[ "$COUNT" == "4" ]] || { echo "this drill requires exactly four validators" >&2; exit 2; }
 mkdir -p "$ROOT"
 chmod 777 "$ROOT"
@@ -34,23 +44,32 @@ for i in 0 1 2 3; do
   sed -i "s#^proxy_app = .*#proxy_app = \"tcp://aidn-abci-$i:26658\"#" "$ROOT/testnet/node$i/config/config.toml"
   sed -i 's#^laddr = "tcp://127.0.0.1:26657"#laddr = "tcp://0.0.0.0:26657"#' "$ROOT/testnet/node$i/config/config.toml"
   docker rm -f "aidn-abci-$i" "aidn-comet-$i" >/dev/null 2>&1 || true
-  docker run -d --name "aidn-abci-$i" --network "$NETWORK" \
+  docker run -d --name "aidn-abci-$i" --restart unless-stopped --network "$NETWORK" \
     -e AIDN_HYPERVISOR_STATE_PATH=/state/hypervisor.json \
     -e AIDN_CONSENSUS_MODE=validator \
+    -e AIDN_CONSENSUS_STRICT_OPERATION_COVERAGE=true \
+    -e AIDN_CONSENSUS_GENESIS_ACCOUNTS_JSON='{"wallet:acceptance-consumer":2000}' \
     -e AIDN_COMETBFT_ABCI_STATE_PATH=/state/abci \
     -e AIDN_COMETBFT_ABCI_HOST=0.0.0.0 \
     -e AIDN_COMETBFT_ABCI_PORT=26658 \
     -v "$ROOT/state/node-$i:/state" "$APP_IMAGE" >/dev/null
-  ports=()
-  [[ "$i" == "0" ]] && ports=(-p 127.0.0.1:26657:26657)
-  docker run -d --name "aidn-comet-$i" --network "$NETWORK" --network-alias "comet-$i" "${ports[@]}" \
+  # Expose every validator RPC on a deterministic loopback port so the
+  # acceptance verifier can prove convergence instead of observing node 0
+  # only.  The CometBFT peers still communicate over the private Docker net.
+  ports=(-p "127.0.0.1:$((26657 + i)):26657")
+  docker run -d --name "aidn-comet-$i" --restart unless-stopped --network "$NETWORK" --network-alias "comet-$i" "${ports[@]}" \
     -v "$ROOT/testnet/node$i:/cometbft" "$IMAGE" start >/dev/null
 done
 
 echo "waiting for validator network..."
 for _ in $(seq 1 40); do
+  all_running=true
+  for i in 0 1 2 3; do
+    [[ "$(docker inspect -f '{{.State.Running}}' "aidn-comet-$i" 2>/dev/null || true)" == "true" ]] || all_running=false
+    [[ "$(docker inspect -f '{{.State.Running}}' "aidn-abci-$i" 2>/dev/null || true)" == "true" ]] || all_running=false
+  done
   height=$(curl -fsS http://127.0.0.1:26657/status 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin)["result"]["sync_info"]["latest_block_height"])' 2>/dev/null || true)
-  if [[ -n "$height" && "$height" -ge 3 ]]; then
+  if [[ "$all_running" == true && -n "$height" && "$height" -ge 3 ]]; then
     echo "multi-validator devnet ready at height $height"
     exit 0
   fi

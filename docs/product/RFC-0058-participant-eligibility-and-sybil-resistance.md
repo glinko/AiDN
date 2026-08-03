@@ -469,6 +469,16 @@ A Registry Service becomes reward-eligible only after:
 
 Claimed storage capacity alone creates no reward rights.
 
+Registry eligibility SHALL be evaluated from a finality-bound Registry Duty
+Evidence object for the target Epoch.  The evidence hash and the resulting
+eligibility decision hash SHALL be included in the frozen Eligibility Snapshot.
+Local completeness counters, peer agreement, or an unfinalized Ledger record
+may support diagnostics but SHALL not satisfy the Duty Proof gate.
+
+The Registry reward beneficiary and Known Control Group used for the Snapshot
+are read from the same verified evidence boundary.  A later beneficiary or
+group update SHALL apply only from its declared future Epoch.
+
 ## 30. Registry Sybil Resistance
 
 Registry reward weight SHALL depend on verified service contribution rather than Registry identity count.

@@ -4,6 +4,10 @@ from datetime import datetime
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
+from aidn_hypervisor.consensus.abci import AIDNABCIApplication
+from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.main import build_registry_app
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery, RegistryNodeAdvertisement
 from aidn_hypervisor.registry_service import RegistryService
@@ -150,6 +154,163 @@ def _sign_quorum_approval(
         )
     ).hex()
     return f"ed25519:{signature}"
+
+
+def _reputation_profile_transactions() -> tuple[bytes, bytes, dict]:
+    evidence_transaction = json.dumps(
+        {
+            "operation_type": "SERVICE_VERIFICATION_COMMIT",
+            "operation_version": "1.0.0",
+            "protocol_version": "0.1",
+            "origin_type": "protocol",
+            "initiator_id": "reputation-scheduler",
+            "sender_wallet": None,
+            "sender_sequence": None,
+            "fee_payer": None,
+            "fee_class": "protocol_sponsored",
+            "created_at": "2026-08-02T00:00:00+00:00",
+            "expires_at": None,
+            "target_epoch": "7",
+            "payload": {
+                "verification_report_id": "verification-1",
+                "service_id": "endpoint-1",
+                "service_type": "ENDPOINT",
+                "report_hash": "sha256:" + "a" * 64,
+                "evidence_root": "sha256:" + "b" * 64,
+                "verification_epoch": 7,
+                "result_summary": {"eligible": True},
+                "registry_reference": {"object_id": "sha256:" + "c" * 64},
+            },
+            "evidence_references": ["sha256:external-evidence"],
+            "signatures": ["ed25519:protocol-attestation"],
+        }
+    ).encode()
+    evidence_operation_id = LedgerOperationEnvelope.model_validate(
+        json.loads(evidence_transaction)
+    ).operation_id
+    profile_payload = {
+        "object_id": "endpoint:endpoint-1",
+        "object_type": "reputation_profile",
+        "previous_profile_hash": "sha256:" + "0" * 64,
+        "new_profile_hash": "sha256:" + "d" * 64,
+        "metric_deltas": {
+            "VALIDATION_REPORT_AVAILABILITY": {
+                "positive_mass_milli": 300,
+                "negative_mass_milli": 0,
+                "event_count": 1,
+            }
+        },
+        "evidence_root": "sha256:" + "e" * 64,
+        "effective_epoch": 7,
+        "formula_version": "reputation.v1",
+    }
+    profile_transaction = json.dumps(
+        {
+            "operation_type": "REPUTATION_PROFILE_UPDATE",
+            "operation_version": "1.0.0",
+            "protocol_version": "0.1",
+            "origin_type": "protocol",
+            "initiator_id": "reputation-scheduler",
+            "sender_wallet": None,
+            "sender_sequence": None,
+            "fee_payer": None,
+            "fee_class": "protocol_sponsored",
+            "created_at": "2026-08-02T00:00:01+00:00",
+            "expires_at": None,
+            "target_epoch": "7",
+            "payload": profile_payload,
+            "evidence_references": [evidence_operation_id],
+            "signatures": ["ed25519:protocol-attestation"],
+        }
+    ).encode()
+    return evidence_transaction, profile_transaction, profile_payload
+
+
+class _ProfileFinalitySource:
+    def __init__(self, evidence: ConsensusFinalityEvidence | None) -> None:
+        self._evidence = evidence
+
+    def finality_evidence(self, operation_id: str):
+        if self._evidence is None or self._evidence.operation_id != operation_id:
+            return None
+        return self._evidence
+
+
+def _profile_registry(
+    *,
+    finality_source: _ProfileFinalitySource | None = None,
+) -> tuple[RegistryService, str, str]:
+    ledger = LedgerOperationService()
+    application = AIDNABCIApplication(ledger_service=ledger)
+    evidence_transaction, profile_transaction, profile_payload = (
+        _reputation_profile_transactions()
+    )
+    evidence_result = application.finalize_block_with_results(
+        block_height=1,
+        block_hash=b"A" * 32,
+        txs=[evidence_transaction],
+    )
+    assert evidence_result[1][0].code == "ok"
+    profile_result = application.finalize_block_with_results(
+        block_height=2,
+        block_hash=b"B" * 32,
+        txs=[profile_transaction],
+    )
+    assert profile_result[1][0].code == "ok"
+    operation_id = LedgerOperationEnvelope.model_validate(
+        json.loads(profile_transaction)
+    ).operation_id
+    registry = RegistryService(
+        ledger_operation_service=ledger,
+        consensus_finality_source=finality_source,
+    )
+    return registry, operation_id, profile_payload["object_id"]
+
+
+def test_registry_reputation_profile_read_model_withholds_root_until_finality() -> None:
+    registry, operation_id, object_id = _profile_registry()
+    client = TestClient(build_registry_app(service=registry))
+
+    response = client.get(f"/registry/reputation-profiles/{object_id}/finality")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "pending_finality"
+    assert payload["consensus_finalized"] is False
+    assert payload["operation_id"] == operation_id
+    assert payload["profile_update"] is None
+
+
+def test_registry_reputation_profile_read_model_exposes_verified_projection() -> None:
+    registry, operation_id, object_id = _profile_registry()
+    registry.bind_consensus_finality_source(
+        _ProfileFinalitySource(
+            ConsensusFinalityEvidence(
+                operation_id=operation_id,
+                chain_id="aidn-testnet-1",
+                block_height=2,
+                block_id="block-2",
+                app_hash="app-hash-2",
+                commit_hash="commit-hash-2",
+                finalized_at="2026-08-02T00:00:02Z",
+                verifier_id="cometbft-verifier",
+            )
+        )
+    )
+    client = TestClient(build_registry_app(service=registry))
+
+    response = client.get(
+        f"/registry/reputation-profiles/{object_id}/finality",
+        params={"effective_epoch": 7},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "consensus_finalized"
+    assert payload["consensus_finalized"] is True
+    assert payload["operation_id"] == operation_id
+    assert payload["profile_update"]["new_profile_hash"] == "sha256:" + "d" * 64
+    assert payload["profile_update"]["finality_evidence"]["block_height"] == 2
 
 
 def test_registry_node_upsert_endpoint_stores_advertisement() -> None:

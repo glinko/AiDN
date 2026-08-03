@@ -40,12 +40,17 @@ PYTHONPATH=src python tools/verify-cometbft-external-testnet.py \
 For every endpoint, the verifier checks the exact transaction binding, its
 Merkle inclusion proof, CometBFT commit signatures and validator transition
 relative to the operator-provided trusted checkpoint. It then rejects endpoints
-which disagree on the finalized height, block ID or application hash.
+which disagree on any canonical finality field: operation, chain, height, block
+ID, application hash, commit hash, finalization timestamp or proof version.
 
 The production Hypervisor wiring also exposes a multi-RPC finality source. Its
 `minimum_agreement` value requires a bounded quorum of independently verified
 RPC observations before evidence is passed to the local ABCI commitment
 boundary. An ambiguous tie or insufficient matching evidence fails closed.
+For a non-validator Hypervisor, the same builder may omit the local ABCI
+application and expose the verified operation-bound RPC quorum directly. A
+validator keeps the stricter local-ABCI binding, which additionally requires
+the local committed block and AppHash to match the remote evidence.
 The source labels and endpoint URLs are configuration inputs; they do not prove
 that the endpoint operators are organizationally independent.
 
@@ -53,3 +58,28 @@ The output deliberately reports `NOT_PROVEN_BY_PROTOCOL` for ownership. Two
 RPC URLs are not evidence of independent operators on their own; preserve the
 testnet validator roster, control-group declarations and each operator's
 attestation with the release evidence.
+
+## Hypervisor activation
+
+The running Hypervisor can load the same multi-RPC finality boundary from an
+operator-owned JSON file by setting:
+
+```bash
+export AIDN_CONSENSUS_MODE=non_validator
+export AIDN_COMETBFT_FINALITY_CONFIG=/etc/aidn/cometbft-finality.json
+```
+
+The deployment file contains the `rpc_endpoints`, `minimum_agreement`,
+`chain_id`, `verifier_id`, `trust_period_seconds`, and the complete
+`trusted_checkpoint` object. It must contain at least two unique credential-free
+HTTP(S) RPC endpoints. The loader rejects unknown fields, endpoint paths,
+credentials, invalid quorum bounds and an incorrectly shaped profile before
+the application starts. Checkpoint freshness is enforced later by the
+light-client trust-period rule. The full schema is represented by
+`CometBftFinalityDeploymentConfig` in the source package.
+
+When `AIDN_CONSENSUS_MODE=validator`, the source is additionally bound to the
+Hypervisor's own durable ABCI Ledger. If the local ABCI application is absent
+or belongs to another Ledger, startup fails closed. Without the deployment
+variable, no external finality source is created and the existing local/MVP
+behavior remains unchanged.

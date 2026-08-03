@@ -18,6 +18,7 @@ from aidn_hypervisor.endpoints.mvp_session_application_service import (
     MvpPaidSmokeEvidenceMissingError,
     MvpSessionApplicationService,
 )
+from aidn_hypervisor.endpoints.service import EndpointStateError
 from aidn_hypervisor.session_application_service import SessionApplicationService
 
 
@@ -32,11 +33,14 @@ class OpenSessionRequest(BaseModel):
 
 class OpenMvpFixedPriceSessionRequest(BaseModel):
     client_wallet: str
+    session_id: str | None = Field(default=None, min_length=1)
     deposit_q_atoms: int = Field(gt=0)
     fixed_price_q_atoms: int = Field(ge=0)
     network_fee_reserve_q_atoms: int = Field(default=0, ge=0)
     consumer_authorization_public_key: str | None = None
     consumer_authorization: dict | None = None
+    consensus_sender_sequence: int | None = Field(default=None, ge=1)
+    consensus_lock_signatures: list[str] | None = None
 
 
 class FinalizeMvpFixedPriceSessionRequest(BaseModel):
@@ -58,6 +62,13 @@ class ForceFinalizeMvpFixedPriceSessionRequest(BaseModel):
     request_id: str | None = Field(default=None, min_length=1)
     now: str | None = Field(default=None, min_length=1)
     actual_network_fees_q_atoms: int = Field(default=0, ge=0)
+    consensus_sender_sequence: int | None = Field(default=None, ge=1)
+    consensus_lock_signatures: list[str] | None = None
+    consensus_failure_signatures: list[str] | None = None
+    consensus_initiator_wallet: str | None = Field(default=None, min_length=1)
+    consensus_initiator_signature: str | None = Field(default=None, min_length=1)
+    consensus_observed_at: str | None = Field(default=None, min_length=1)
+    consensus_force_signatures: list[str] | None = None
 
 
 class MvpPaidSmokeRequest(BaseModel):
@@ -113,6 +124,22 @@ def build_endpoint_router(
             },
         )
 
+    def _publication_execution_payload(endpoint) -> dict:
+        execution = {
+            "strategy": endpoint.execution_strategy,
+            "runtime_binding_id": endpoint.runtime_binding_id,
+        }
+        if endpoint.execution_strategy != "proxy" or endpoint.proxy_target is None:
+            return execution
+        execution["target_fingerprint"] = configuration_hash_for_publication(
+            {
+                "remote_endpoint_id": endpoint.proxy_target.remote_endpoint_id,
+                "source_publication_id": endpoint.proxy_target.source_publication_id,
+                "source_configuration_hash": endpoint.proxy_target.source_configuration_hash,
+            }
+        )
+        return execution
+
     def _local_publication_configuration_hash(endpoint) -> str:
         payload = canonical_configuration_payload(
             bundle_hash=endpoint.bundle_hash,
@@ -122,10 +149,7 @@ def build_endpoint_router(
             publication=endpoint.publication.model_dump(mode="json"),
             pricing=endpoint.pricing.model_dump(mode="json"),
             session=endpoint.session.model_dump(mode="json"),
-            execution={
-                "strategy": endpoint.execution_strategy,
-                "runtime_binding_id": endpoint.runtime_binding_id,
-            },
+            execution=_publication_execution_payload(endpoint),
         )
         return configuration_hash_for_publication(payload)
 
@@ -160,6 +184,54 @@ def build_endpoint_router(
             )
         except ValueError:
             return "Public MVP Session rejects an invalid Endpoint publication signature"
+        if (
+            endpoint.execution_strategy == "proxy"
+            and endpoint.proxy_target is not None
+            and (
+                endpoint.proxy_target.publication_verification != "VERIFIED"
+                or not endpoint.proxy_target.source_owner_public_key
+                or not endpoint.proxy_target.source_wallet_signature
+            )
+        ):
+            return (
+                "Public MVP Session requires a verified remote Endpoint publication "
+                "for proxy execution"
+            )
+        if endpoint.execution_strategy == "proxy" and endpoint.proxy_target is not None:
+            if remote_endpoint_service is None:
+                return (
+                    "Public MVP Session requires the remote Endpoint catalog "
+                    "for proxy binding verification"
+                )
+            try:
+                remote_reference = remote_endpoint_service.get_remote_endpoint(
+                    endpoint.proxy_target.remote_endpoint_id
+                )
+            except KeyError:
+                return (
+                    "Public MVP Session rejects a proxy target missing from the "
+                    "remote Endpoint catalog"
+                )
+            target = endpoint.proxy_target
+            if any(
+                (
+                    target.source_node_id != remote_reference.source_node_id,
+                    target.source_endpoint_id != remote_reference.source_endpoint_id,
+                    target.source_publication_id != remote_reference.source_publication_id,
+                    target.source_configuration_hash
+                    != remote_reference.source_configuration_hash,
+                    target.source_owner_public_key
+                    != remote_reference.source_owner_public_key,
+                    target.source_wallet_signature
+                    != remote_reference.source_wallet_signature,
+                    target.publication_verification
+                    != remote_reference.publication_verification,
+                )
+            ):
+                return (
+                    "Public MVP Session rejects a stale proxy target whose remote "
+                    "publication proof no longer matches the catalog"
+                )
         local_publication_configuration_hash = _local_publication_configuration_hash(
             endpoint
         )
@@ -233,7 +305,10 @@ def build_endpoint_router(
                     details=admission,
                 )
             raise
-        return _ok(result["payload"], status_code=201)
+        open_status = (
+            202 if result["payload"].get("status") == "CONSENSUS_PENDING" else 201
+        )
+        return _ok(result["payload"], status_code=open_status)
 
     @router.get("/{endpoint_id}")
     async def get_endpoint(endpoint_id: str) -> JSONResponse:
@@ -242,6 +317,16 @@ def build_endpoint_router(
         except KeyError:
             return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
         return _ok({"endpoint": result.endpoint.model_dump(mode="json")})
+
+    @router.delete("/{endpoint_id}")
+    async def delete_endpoint(endpoint_id: str) -> JSONResponse:
+        try:
+            result = endpoint_application_service.delete_endpoint(endpoint_id)
+        except KeyError:
+            return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        except EndpointStateError as error:
+            return _error(409, "endpoint_state_conflict", str(error))
+        return _ok(result["payload"])
 
     @router.patch("/{endpoint_id}")
     async def update_endpoint(
@@ -309,7 +394,10 @@ def build_endpoint_router(
             return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
         except ValueError as error:
             return _error(409, "session_open_rejected", str(error))
-        return _ok(result["payload"], status_code=201)
+        open_status = (
+            202 if result["payload"].get("status") == "CONSENSUS_PENDING" else 201
+        )
+        return _ok(result["payload"], status_code=open_status)
 
     @router.post("/{endpoint_id}/mvp-sessions", status_code=201)
     async def open_mvp_fixed_price_session(
@@ -326,17 +414,23 @@ def build_endpoint_router(
             result = mvp_session_application_service.open_fixed_price_session(
                 endpoint_id=endpoint_id,
                 client_wallet=request.client_wallet,
+                session_id=request.session_id,
                 deposit_q_atoms=request.deposit_q_atoms,
                 fixed_price_q_atoms=request.fixed_price_q_atoms,
                 network_fee_reserve_q_atoms=request.network_fee_reserve_q_atoms,
                 consumer_authorization_public_key=request.consumer_authorization_public_key,
                 consumer_authorization=request.consumer_authorization,
+                consensus_sender_sequence=request.consensus_sender_sequence,
+                consensus_lock_signatures=request.consensus_lock_signatures,
             )
         except KeyError:
             return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
         except ValueError as error:
             return _error(409, "mvp_session_open_rejected", str(error))
-        return _ok(result["payload"], status_code=201)
+        open_status = (
+            202 if result["payload"].get("status") == "CONSENSUS_PENDING" else 201
+        )
+        return _ok(result["payload"], status_code=open_status)
 
     @router.post("/{endpoint_id}/public-mvp-sessions", status_code=201)
     async def open_public_mvp_fixed_price_session(
@@ -353,10 +447,13 @@ def build_endpoint_router(
             result = mvp_session_application_service.open_fixed_price_session(
                 endpoint_id=endpoint_id,
                 client_wallet=request.client_wallet,
+                session_id=request.session_id,
                 deposit_q_atoms=request.deposit_q_atoms,
                 fixed_price_q_atoms=request.fixed_price_q_atoms,
                 network_fee_reserve_q_atoms=request.network_fee_reserve_q_atoms,
                 consumer_authorization=request.consumer_authorization,
+                consensus_sender_sequence=request.consensus_sender_sequence,
+                consensus_lock_signatures=request.consensus_lock_signatures,
                 require_published_configuration=True,
                 require_wallet_authorization=True,
             )
@@ -364,7 +461,10 @@ def build_endpoint_router(
             return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
         except ValueError as error:
             return _error(409, "public_mvp_session_open_rejected", str(error))
-        return _ok(result["payload"], status_code=201)
+        open_status = (
+            202 if result["payload"].get("status") == "CONSENSUS_PENDING" else 201
+        )
+        return _ok(result["payload"], status_code=open_status)
 
     @router.post("/{endpoint_id}/mvp-paid-smoke")
     async def run_mvp_paid_smoke(
@@ -480,6 +580,13 @@ def build_endpoint_router(
                 request_id=request.request_id,
                 now=request.now,
                 actual_network_fees_q_atoms=request.actual_network_fees_q_atoms,
+                consensus_sender_sequence=request.consensus_sender_sequence,
+                consensus_lock_signatures=request.consensus_lock_signatures,
+                consensus_failure_signatures=request.consensus_failure_signatures,
+                consensus_initiator_wallet=request.consensus_initiator_wallet,
+                consensus_initiator_signature=request.consensus_initiator_signature,
+                consensus_observed_at=request.consensus_observed_at,
+                consensus_force_signatures=request.consensus_force_signatures,
             )
         except KeyError:
             return _error(404, "session_not_found", f"Unknown session: {session_id}")
@@ -490,6 +597,10 @@ def build_endpoint_router(
                 else "mvp_session_force_finalize_rejected"
             )
             return _error(409, code, str(error))
-        return _ok(result["payload"])
+        payload = result["payload"]
+        return _ok(
+            payload,
+            status_code=(202 if payload.get("status") == "CONSENSUS_PENDING" else 200),
+        )
 
     return router

@@ -160,6 +160,15 @@ def build_registry_replication_runtime(
             chain_id=config.chain_id,
             network_revision=config.network_revision,
             require_authenticated_peers=True,
+            registry_generation=int(getattr(registry_service, "registry_generation", 1)),
+            retention_policy_hash=str(
+                getattr(
+                    getattr(registry_service, "retention_policy", None),
+                    "policy_hash",
+                    "registry-replicator-default",
+                )
+            ),
+            proof_signer=signer,
         )
 
         def persist_replicated_object(peer_id, envelope) -> None:

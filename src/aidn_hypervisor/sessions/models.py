@@ -1,6 +1,8 @@
+import json
+from hashlib import sha256
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # RFC-0060: expanded Session status (15 states)
 # Terminal: closed, rejected, cancelled, expired, force_settled, unrecoverable
@@ -23,6 +25,7 @@ SessionStatus = Literal[
     "force_settled",
     "unrecoverable",
 ]
+CanonicalFundingStatus = Literal["UNBOUND", "PENDING_FINALITY", "FINALIZED"]
 DepositStatus = Literal["locked", "released"]
 SessionAccountingStatus = Literal["open", "ack_pending", "mismatch", "force_settle_required"]
 ProxySessionBindingStatus = Literal[
@@ -33,6 +36,176 @@ ProxySessionBindingStatus = Literal[
     "closed",
 ]
 ProxySessionCloseStatus = Literal["not_requested", "closed", "pending_reconcile"]
+SessionAmendmentKind = Literal[
+    "DEPOSIT_EXTENSION",
+    "MAXIMUM_SESSION_CHARGE_INCREASE",
+    "EXPIRATION_EXTENSION",
+    "REQUEST_LIMIT_INCREASE",
+    "ARTIFACT_LIMIT_INCREASE",
+]
+
+
+def _canonical_hash(payload: dict) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return f"sha256:{sha256(encoded).hexdigest()}"
+
+
+class SessionContractAmendment(BaseModel):
+    """One accepted, immutable version of a Session Contract.
+
+    ``effective_terms_hash`` is a hash chain over contract terms.  The
+    separate ``amendment_hash`` also commits identity, signatures and
+    acceptance time, so a replay cannot substitute a different evidence
+    object for the same terms transition.
+    """
+
+    amendment_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    sequence: int = Field(ge=1)
+    previous_effective_terms_hash: str = Field(min_length=1)
+    previous_amendment_hash: str | None = None
+    amendment_kind: SessionAmendmentKind
+    changes: dict = Field(min_length=1)
+    affected_parties: list[str] = Field(min_length=1)
+    consumer_signature: str = Field(min_length=1)
+    endpoint_signature: str = Field(min_length=1)
+    accepted_at: str = Field(min_length=1)
+    effective_terms_hash: str = Field(min_length=1)
+    amendment_hash: str = Field(min_length=1)
+    object_id: str | None = None
+    object_version: str = "session-amendment.v1"
+
+    def terms_payload(self) -> dict:
+        return {
+            "previous_effective_terms_hash": self.previous_effective_terms_hash,
+            "sequence": self.sequence,
+            "amendment_kind": self.amendment_kind,
+            "changes": self.changes,
+        }
+
+    def evidence_payload(self) -> dict:
+        return self.model_dump(
+            mode="json",
+            exclude={"amendment_hash", "object_id"},
+        )
+
+    def signing_payload(self) -> bytes:
+        payload = self.model_dump(
+            mode="json",
+            exclude={
+                "consumer_signature",
+                "endpoint_signature",
+                "amendment_hash",
+                "object_id",
+            },
+        )
+        payload["domain"] = "aidn.session-amendment.v1"
+        return json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+
+    @model_validator(mode="after")
+    def _validate_hashes_and_chain(self):
+        if self.sequence == 1 and self.previous_amendment_hash is not None:
+            raise ValueError("first Session amendment cannot have a predecessor")
+        if self.sequence > 1 and not self.previous_amendment_hash:
+            raise ValueError("Session amendment predecessor is required")
+        expected_terms_hash = _canonical_hash(self.terms_payload())
+        if self.effective_terms_hash != expected_terms_hash:
+            raise ValueError("effective_terms_hash does not match Session amendment")
+        expected_amendment_hash = _canonical_hash(self.evidence_payload())
+        if self.amendment_hash != expected_amendment_hash:
+            raise ValueError("amendment_hash does not match Session amendment")
+        return self
+
+
+class SessionContractExchange(BaseModel):
+    """Portable, integrity-checked Session Contract evidence package.
+
+    Importing this object stages immutable Registry evidence. It does not
+    activate a Session or overwrite a local Session projection.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(min_length=1)
+    session_contract_object_id: str = Field(min_length=1)
+    session_contract_object_version: str = "session-contract.v2"
+    session_contract_namespace: str = "session"
+    session_contract_hash: str = Field(min_length=1)
+    session_contract: dict = Field(min_length=1)
+    amendments: list[SessionContractAmendment] = Field(default_factory=list)
+    amendment_sequence: int = Field(ge=0)
+    effective_terms_hash: str = Field(min_length=1)
+    exchange_hash: str | None = None
+
+    @staticmethod
+    def _registry_object_id(*, object_type: str, object_version: str, payload_hash: str) -> str:
+        return _canonical_hash(
+            {
+                "object_type": object_type,
+                "object_version": object_version,
+                "payload_hash": payload_hash,
+            }
+        )
+
+    def _exchange_payload(self) -> dict:
+        return self.model_dump(mode="json", exclude={"exchange_hash"})
+
+    @model_validator(mode="after")
+    def _validate_exchange(self):
+        if _canonical_hash(self.session_contract) != self.session_contract_hash:
+            raise ValueError("Session Contract payload hash does not match exchange")
+        expected_object_id = self._registry_object_id(
+            object_type="session_contract",
+            object_version=self.session_contract_object_version,
+            payload_hash=self.session_contract_hash,
+        )
+        if self.session_contract_object_id != expected_object_id:
+            raise ValueError("Session Contract object identity does not match exchange")
+        if self.session_contract.get("session_id") != self.session_id:
+            raise ValueError("Session Contract belongs to another Session")
+
+        previous_terms_hash = self.session_contract_hash
+        previous_amendment_hash: str | None = None
+        for expected_sequence, amendment in enumerate(self.amendments, start=1):
+            if amendment.session_id != self.session_id:
+                raise ValueError("Session amendment belongs to another Session")
+            if not amendment.object_id:
+                raise ValueError("Session amendment object identity is missing")
+            expected_amendment_object_id = self._registry_object_id(
+                object_type="session_contract_amendment",
+                object_version=amendment.object_version,
+                payload_hash=amendment.amendment_hash,
+            )
+            if amendment.object_id != expected_amendment_object_id:
+                raise ValueError("Session amendment object identity does not match exchange")
+            if amendment.sequence != expected_sequence:
+                raise ValueError("Session amendment sequence is not contiguous")
+            if amendment.previous_effective_terms_hash != previous_terms_hash:
+                raise ValueError("Session amendment predecessor terms hash mismatch")
+            if amendment.previous_amendment_hash != previous_amendment_hash:
+                raise ValueError("Session amendment predecessor hash mismatch")
+            previous_terms_hash = amendment.effective_terms_hash
+            previous_amendment_hash = amendment.amendment_hash
+        if self.amendment_sequence != len(self.amendments):
+            raise ValueError("Session amendment sequence does not match exchange")
+        if self.effective_terms_hash != previous_terms_hash:
+            raise ValueError("Session effective terms hash does not match exchange")
+        expected_exchange_hash = _canonical_hash(self._exchange_payload())
+        if self.exchange_hash is None:
+            self.exchange_hash = expected_exchange_hash
+        elif self.exchange_hash != expected_exchange_hash:
+            raise ValueError("Session Contract exchange hash does not match exchange")
+        return self
 
 
 class SessionRuntimeTerminalEvidence(BaseModel):
@@ -46,6 +219,7 @@ class SessionRuntimeTerminalEvidence(BaseModel):
     endpoint_configuration_hash: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
     session_contract_hash: str = Field(min_length=1)
+    effective_terms_hash: str | None = None
     accounting_contract_hash: str = Field(min_length=1)
     terminal_state: str = Field(min_length=1)
     result_hash: str = Field(min_length=1)
@@ -75,6 +249,9 @@ class EndpointSession(BaseModel):
     fixed_price_q_atoms: int | None = Field(default=None, ge=0)
     request_charge_ceiling_q_atoms: int | None = Field(default=None, ge=0)
     canonical_funding_state_hash: str | None = None
+    canonical_funding_status: CanonicalFundingStatus = "UNBOUND"
+    canonical_funding_operation_id: str | None = None
+    canonical_funding_submission: dict = Field(default_factory=dict)
     request_count: int = Field(default=0, ge=0)
     reserved_slot_index: int | None = Field(default=None, ge=0)
     queue_policy_snapshot: str
@@ -92,6 +269,9 @@ class EndpointSession(BaseModel):
     session_contract_object_version: str | None = None
     session_contract_namespace: str | None = None
     session_contract_hash: str | None = None
+    effective_terms_hash: str | None = None
+    session_amendment_sequence: int = Field(default=0, ge=0)
+    session_amendment_chain: list[dict] = Field(default_factory=list)
     runtime_terminal_evidence: list[SessionRuntimeTerminalEvidence] = Field(
         default_factory=list
     )
@@ -103,7 +283,11 @@ class EndpointSession(BaseModel):
     accounting_checkpoint: dict = Field(default_factory=dict)
     last_accepted_report_sequence: int | None = Field(default=None, ge=1)
     last_accepted_usage_charged_q: float = Field(default=0.0, ge=0.0)
+    failure_class: str | None = None
+    failure_attribution: str | None = None
+    recovery_deadline_at: str | None = None
     close_reason: str | None = None
+    settlement_snapshot: dict = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
@@ -119,6 +303,20 @@ class EndpointSession(BaseModel):
             normalized["consumer_refund_beneficiary"] = normalized.get(
                 "client_wallet"
             )
+        if not normalized.get("effective_terms_hash"):
+            normalized["effective_terms_hash"] = normalized.get("session_contract_hash")
+        if "canonical_funding_status" not in normalized:
+            normalized["canonical_funding_status"] = (
+                "FINALIZED"
+                if normalized.get("canonical_funding_state_hash")
+                else "UNBOUND"
+            )
+        amendment_chain = normalized.get("session_amendment_chain")
+        if not isinstance(amendment_chain, list):
+            amendment_chain = []
+            normalized["session_amendment_chain"] = amendment_chain
+        if "session_amendment_sequence" not in normalized:
+            normalized["session_amendment_sequence"] = len(amendment_chain)
         return normalized
 
 
@@ -144,6 +342,7 @@ class LockedDeposit(BaseModel):
 
 class SessionSettlementSummary(BaseModel):
     settlement_evidence_root: str | None = None
+    failure_evidence_root: str | None = None
     endpoint_payment_beneficiary: str | None = None
     consumer_refund_beneficiary: str | None = None
     usage_charged_q: float = Field(default=0.0, ge=0.0)

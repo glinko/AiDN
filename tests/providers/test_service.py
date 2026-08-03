@@ -488,6 +488,7 @@ class ControlledFilesystemPlugin(FakeManagedPlugin):
             "execution_mode": "SANDBOX_REQUIRED",
             "filesystem_scope": "CONTROLLED_PATHS",
             "network_scope": "DECLARED_EGRESS",
+            "egress_rules": [{"host": "provider.example.com", "port": 443}],
             "secret_scope": "DECLARED_HANDLES_ONLY",
             "notes": "Managed install may write state inside one controlled host path.",
         }
@@ -1441,6 +1442,7 @@ def test_controlled_filesystem_executor_writes_and_removes_state(tmp_path) -> No
                 "execution_mode": "SANDBOX_REQUIRED",
                 "filesystem_scope": "CONTROLLED_PATHS",
                 "network_scope": "DECLARED_EGRESS",
+                "egress_rules": [{"host": "provider.example.com", "port": 443}],
                 "secret_scope": "DECLARED_HANDLES_ONLY",
             },
         }
@@ -1506,6 +1508,7 @@ def test_controlled_filesystem_executor_imports_local_artifact_into_volume(tmp_p
                 "execution_mode": "SANDBOX_REQUIRED",
                 "filesystem_scope": "CONTROLLED_PATHS",
                 "network_scope": "DECLARED_EGRESS",
+                "egress_rules": [{"host": "provider.example.com", "port": 443}],
                 "secret_scope": "DECLARED_HANDLES_ONLY",
             },
         }
@@ -2488,6 +2491,7 @@ def test_provider_inventory_executor_capabilities_allow_stricter_sandbox_policy_
                 "execution_mode": "SANDBOX_REQUIRED",
                 "filesystem_scope": "CONTROLLED_PATHS",
                 "network_scope": "DECLARED_EGRESS",
+                "egress_rules": [{"host": "provider.example.com", "port": 443}],
                 "secret_scope": "DECLARED_HANDLES_ONLY",
             }
             return description

@@ -131,6 +131,35 @@ Progress 2026-07-18: a transport-neutral `VALIDATION_REPORT_TRANSFER` message pr
 
 Progress 2026-07-18: Message ID replay records are now persisted with the Validation state snapshot, so the channel adapter preserves idempotency through Hypervisor restart. Retention bounds, network-level sequence reconciliation and a shared RFC-0042 dispatcher remain pending.
 
+Progress 2026-08-02: transfer envelopes now carry the assigned `validator_id`, and validator entries may register the expected Ed25519 transfer public key. In the strict custody profile, report transfer requires that key, binds the report and signature to the persisted Assignment, and rejects a validly signed envelope from another validator. Legacy unsigned or key-unregistered transfer remains available only in the compatibility profile.
+
+Progress 2026-08-02: stable `aidn://endpoint/<endpoint_id>/validation/<report_hash>` locators now resolve only against an exact persisted commitment and enforce Endpoint and Configuration Hash scope before reading custody bytes. The existing hash-only helper remains as a compatibility API; network authentication and restricted-evidence authorization are still separate transport work.
+
+Progress 2026-08-02: the Endpoint Hypervisor now persists a canonical validator transfer-key registry. Registration is idempotent for the same active key and rejects active-key substitution; epoch assignments are canonicalized from the registry, strict transfer requires a registered key, and receivers verify the persisted binding across restart.
+
+Progress 2026-08-02: an opt-in custody Certification lifecycle now applies deterministic grace and failure thresholds. Temporary loss preserves positive Certification until the grace boundary, prolonged loss enters `maintenance_in_progress`, corruption/withholding/access restriction enters maintenance immediately, valid restoration returns the report's derived positive status, and negative Validation remains unaffected.
+
+Progress 2026-08-02: stable locator retrieval now enforces the report's access class. Public reports remain directly retrievable within the exact Endpoint and Configuration Hash scope; encrypted and restricted reports require an injected authoritative access checker; `HASH_COMMITTED` reports never return a body. This is an application-level authorization boundary, not yet authenticated RFC-0042 transport authorization.
+
+Progress 2026-08-02: persisted custody challenges now provide an idempotent, conflict-safe local evidence primitive. A challenge records the observed custody outcome, report hash, scope, optional body size and deterministic evidence root, survives restart and never exposes restricted report bodies merely because a challenge was requested. Independent actor/quorum validation, Known Control Group handling, Reputation effects and network-scheduled challenges remain Slice 6 work.
+
+Progress 2026-08-02: the local challenge projection now supports a deterministic quorum policy. Each observation carries a challenger and an independence key; configured Known Control Groups collapse to one observation, repeated challenge IDs remain idempotent, and the summary exposes pending/confirmed quorum without changing Certification or Reputation. Network-scheduled challenges, cross-host quorum evidence and Reputation consequences remain separate work.
+
+Progress 2026-08-02: custody checks now have a durable epoch/seed scheduler. It creates deterministic report-scoped tasks for independent observers, rejects a schedule that cannot satisfy the configured quorum, persists task identity across restart, and makes task execution idempotent by reusing the underlying challenge ID. The scheduler remains an evidence/task layer: network dispatch, Certification/Reputation policy and full report-body migration are not implied.
+
+Progress 2026-08-02: the local Reputation projection boundary is now explicit. `CustodyReputationAdapter` maps custody outcomes to deterministic Endpoint events for report availability, retention, integrity and disclosure reliability, supports quorum-aware evidence confidence, and applies events only through an explicit opt-in call with replay-safe event identities. Validation custody checks and scheduled tasks do not invoke it automatically; canonical network Reputation finality, Hypervisor shared-storage attribution and cross-host dispatch remain open.
+
+Progress 2026-08-02: `REPUTATION_PROFILE_UPDATE` now provides the missing consensus boundary for a profile-root commitment. ABCI and deterministic execution validate protocol sponsorship, finalized evidence references, fixed-point metric deltas, formula version and strictly increasing effective-epoch hash chaining, then persist an evidence-only operation without calculating scores or mutating Reputation locally. A read-only `ReputationProfileFinalityAdapter` now exposes that root only after operation-bound verified consensus evidence; score calculation and event ingestion remain explicit. Cross-host dispatch and external multi-validator acceptance remain pending.
+
+Progress 2026-08-02: scheduled custody tasks now have an RFC-0042
+`VALIDATION_REPORT_CUSTODY_CHALLENGE` dispatch profile. Observer-specific routes
+validate the persisted task binding, execute the task idempotently and return
+only outcome/evidence metadata; report bodies never enter the challenge
+payload. Custody observations now distinguish `origin` from `mirror`, with
+origin quorum remaining authoritative and mirror success unable to clear an
+origin failure. Cross-host transport acceptance and canonical Reputation
+finality remain pending.
+
 ### Slice 4: Compact Ledger Operations and Dual Write
 
 - Extend `VALIDATION_REPORT_COMMIT` with compact Certification inputs and receipt/failure references.
@@ -139,6 +168,26 @@ Progress 2026-07-18: Message ID replay records are now persisted with the Valida
 - Separate report storage from Certification state derivation.
 
 Exit criteria: replay creates no duplicate effect; commitment validates without fetching the full report; negative report plus refusal remains canonical; positive report without receipt cannot certify.
+
+Progress 2026-08-02: the evidence-only consensus projection now accepts
+`VALIDATION_REPORT_COMMIT`, `VALIDATION_REPORT_STORAGE_RECEIPT`,
+`VALIDATION_REPORT_STORAGE_FAILURE` and `VALIDATION_REPORT_AVAILABILITY_COMMIT` in
+both ABCI and deterministic block execution. Receipt, failure and availability
+operations require a finalized matching commitment, exact Endpoint/
+Configuration/locator/retention scope and report size; Receipt and Failure are
+mutually exclusive, and challenge IDs are conflict-protected. These operations
+only commit evidence and emit events: they do not pay wallets, derive
+Certification or apply Reputation. `VALIDATION_REPORT_CUSTODY_RELEASE` is also
+accepted as a non-destructive retirement commitment: it preserves the canonical
+report commitment, hash, Certification and Reputation history without implying
+body deletion. Endpoint soft-delete now creates a persisted retirement queue;
+the configured retirement grace boundary is stable across retries and restart,
+and an operator sweep emits the release commitment without deleting the report
+body. The local RFC-0042 VALIDATION custody route now authenticates the source
+through the Dispatcher envelope, binds retrieval to report/hash/Endpoint/config/
+locator scope and preserves replay protection. Cross-host transport acceptance,
+network-scheduled quorum and full report-body migration remain pending; local
+Known Control Group-aware quorum projection is available as evidence only.
 
 ### Slice 5: Certification Custody Lifecycle
 
@@ -151,7 +200,9 @@ Exit criteria: transitions are deterministic and idempotent; one transient outag
 
 ### Slice 6: Availability Challenges and Reputation
 
-- Add bounded randomized custody challenges to Epoch tasks.
+- Add bounded deterministic epoch/seed custody challenge tasks and persist their
+  idempotent local execution.
+- Dispatch scheduled tasks across authorized network observers.
 - Verify report size, hash, signature and authorized access behavior.
 - Separate origin and mirror observations.
 - Emit Endpoint Reputation events for availability, retention, integrity and disclosure reliability.

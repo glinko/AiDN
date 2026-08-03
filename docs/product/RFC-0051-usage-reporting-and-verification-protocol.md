@@ -785,6 +785,17 @@ semantic Usage acknowledgment.
 An accepted Session participant MAY additionally acknowledge a Usage
 Checkpoint.
 
+The MVP consensus representation is `SessionUsageCheckpoint`: all economic
+values use integer `q_atoms`, the object carries provider and Consumer
+signatures, and its canonical hash is committed by `SESSION_CHECKPOINT_COMMIT`.
+That operation only records an accepted bounded exposure while the Funding
+Account is locked; it does not itself release, charge or mint funds. The
+checkpoint must bind to a finalized prior Funding operation, its exact state
+hash, the Usage Report hash and a monotonic Session checkpoint sequence.
+
+The older float-valued checkpoint fields remain a compatibility projection for
+local accounting APIs and are not canonical consensus evidence.
+
 ```yaml
 usage_ack:
   session_id:

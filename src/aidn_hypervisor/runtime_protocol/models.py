@@ -252,6 +252,7 @@ class RuntimeExecuteRequest(BaseModel):
     endpoint_configuration_hash: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
     session_contract_hash: str = Field(min_length=1)
+    effective_terms_hash: str | None = None
     request_id: str = Field(min_length=1)
     capability_id: str = Field(min_length=1)
     capability_version: str = Field(min_length=1)
@@ -643,6 +644,7 @@ class RuntimeUsageReport(BaseModel):
     endpoint_configuration_hash: str | None = None
     session_id: str = Field(min_length=1)
     request_id: str = Field(min_length=1)
+    effective_terms_hash: str | None = None
     accounting_contract_hash: str | None = None
     report_type: Literal[
         "INTERIM",

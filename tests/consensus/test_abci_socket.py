@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import socket
 
@@ -19,7 +20,11 @@ from aidn_hypervisor.consensus.abci_socket import (
 from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.state_store import ABCIStateStore
+from aidn_hypervisor.consensus.validator_schedule import compute_validator_set_hash
 from aidn_hypervisor.ledger.service import LedgerOperationService
+
+PUBLIC_KEY = bytes(range(32))
+PUBLIC_KEY_TEXT = "ed25519:" + base64.b64encode(PUBLIC_KEY).decode("ascii")
 
 
 def _application(state_store: ABCIStateStore | None = None) -> AIDNABCIApplication:
@@ -54,6 +59,64 @@ def _operation_bytes() -> bytes:
         payload={"abci_socket": True},
     )
     return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
+
+
+def _protocol_operation(operation_type: str, payload: dict, target_epoch: str) -> bytes:
+    envelope = LedgerOperationEnvelope(
+        operation_type=operation_type,
+        origin_type="protocol",
+        initiator_id="epoch-engine",
+        created_at="2030-01-01T00:00:00Z",
+        expires_at="2030-01-02T00:00:00Z",
+        target_epoch=target_epoch,
+        payload=payload,
+        evidence_references=["sha256:eligibility"],
+        signatures=["ed25519:epoch-engine"],
+    )
+    return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
+
+
+def _validator_schedule_bytes() -> bytes:
+    additions = [
+        {
+            "node_id": "node-1",
+            "operator_id": "operator-1",
+            "consensus_address": "sha256:node-1",
+            "consensus_public_key": PUBLIC_KEY_TEXT,
+            "stake": 500_000_000_000,
+            "voting_power": 1,
+        }
+    ]
+    return _protocol_operation(
+        "CONSENSUS_VALIDATOR_SET_UPDATE",
+        {
+            "activation_epoch": 2,
+            "validator_additions": additions,
+            "validator_removals": [],
+            "voting_power_updates": [],
+            "validator_set_hash": compute_validator_set_hash(additions),
+            "eligibility_evidence_root": "sha256:eligibility-2",
+        },
+        "2",
+    )
+
+
+def _epoch_transition_bytes() -> bytes:
+    return _protocol_operation(
+        "EPOCH_TRANSITION",
+        {
+            "closing_epoch": 1,
+            "opening_epoch": 2,
+            "closing_state_root": "sha256:closing-1",
+            "epoch_task_result_root": "sha256:tasks-1",
+            "eligibility_snapshot_root": "sha256:eligibility-snapshot-1",
+            "reward_calculation_root": "sha256:rewards-1",
+            "next_protocol_parameters_hash": "sha256:params-2",
+            "pool_budgets": {"registry": 0},
+            "pool_budget_references": {"registry": "epoch:1:registry"},
+        },
+        "1",
+    )
 
 
 def test_abci_socket_handles_real_v038_request_lifecycle():
@@ -118,6 +181,45 @@ def test_abci_socket_returns_exception_for_unknown_request():
             response = _read_frame(connection, 1_048_576)
             fields = _fields_value(response)
             assert fields[0][0] == 1
+    finally:
+        server.stop()
+
+
+def test_abci_socket_emits_cometbft_validator_updates_after_epoch_transition():
+    application = _application()
+    server = AIDNABCISocketServer(application=application, port=0)
+    server.start()
+
+    try:
+        with socket.create_connection(("127.0.0.1", server.port), timeout=2) as connection:
+            schedule = _validator_schedule_bytes()
+            _request(
+                connection,
+                20,
+                _fields(
+                    _bytes_field(1, schedule),
+                    _bytes_field(4, b"A" * 32),
+                    _varint_field(5, 1),
+                ),
+            )
+
+            finalized = _request(
+                connection,
+                20,
+                _fields(
+                    _bytes_field(1, _epoch_transition_bytes()),
+                    _bytes_field(4, b"B" * 32),
+                    _varint_field(5, 2),
+                ),
+            )
+            updates = _field_values(finalized, 3)
+            assert len(updates) == 1
+            validator_update = updates[0]
+            assert isinstance(validator_update, bytes)
+            public_key_message = _field_values(validator_update, 1)[0]
+            assert isinstance(public_key_message, bytes)
+            assert _field_values(public_key_message, 1) == [PUBLIC_KEY]
+            assert _field_values(validator_update, 2) == [1]
     finally:
         server.stop()
 

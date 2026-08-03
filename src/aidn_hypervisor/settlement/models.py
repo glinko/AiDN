@@ -203,6 +203,7 @@ class RequestSettlementInput(BaseModel):
     session_id: str = Field(min_length=1)
     request_id: str = Field(min_length=1)
     request_charge_ceiling_q_atoms: int = Field(ge=0)
+    effective_terms_hash: str | None = None
     accounting_contract_hash: str = Field(min_length=1)
     terminal_state: RequestTerminalState
     result_reference: str | None = None
@@ -242,6 +243,7 @@ class RequestSettlementRecord(BaseModel):
     session_id: str = Field(min_length=1)
     request_id: str = Field(min_length=1)
     request_charge_ceiling_q_atoms: int = Field(ge=0)
+    effective_terms_hash: str | None = None
     accounting_contract_hash: str = Field(min_length=1)
     terminal_state: RequestTerminalState
     result_reference: str | None = None
@@ -353,6 +355,37 @@ class SessionSettlementProposal(BaseModel):
     proposal_expiration: str | None = None
 
 
+class SettlementReadyCommitment(BaseModel):
+    """Immutable Settlement Input Set commitment before proposal admission."""
+
+    session_id: str = Field(min_length=1)
+    settlement_sequence: int = Field(ge=1)
+    session_contract_hash: str = Field(min_length=1)
+    effective_terms_hash: str = Field(min_length=1)
+    funding_state_reference: str = Field(min_length=1)
+    endpoint_payment_beneficiary: str = Field(min_length=1)
+    consumer_refund_beneficiary: str = Field(min_length=1)
+    request_settlement_root: str = Field(min_length=1)
+    usage_chain_root: str = Field(min_length=1)
+    checkpoint_root: str = Field(min_length=1)
+    settlement_input_root: str = Field(min_length=1)
+    session_close_reference: str = Field(min_length=1)
+    ready_at: str = Field(min_length=1)
+    commitment_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _populate_commitment_hash(self):
+        payload = self.model_dump(mode="json", exclude={"commitment_hash"})
+        expected = canonical_hash(payload)
+        if self.commitment_hash is None:
+            self.commitment_hash = expected
+        elif self.commitment_hash != expected:
+            raise ValueError(
+                "commitment_hash does not match Settlement Ready Commitment"
+            )
+        return self
+
+
 class SessionSettlementAcceptance(BaseModel):
     settlement_id: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
@@ -372,6 +405,36 @@ class SessionSettlementAcceptance(BaseModel):
             self.acceptance_hash = expected
         elif self.acceptance_hash != expected:
             raise ValueError("acceptance_hash does not match Settlement Acceptance")
+        return self
+
+
+class SessionUsageCheckpoint(BaseModel):
+    """Integer, hash-bound exposure checkpoint for consensus Settlement."""
+
+    checkpoint_id: str = Field(min_length=1)
+    checkpoint_sequence: int = Field(ge=1)
+    session_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    usage_report_id: str = Field(min_length=1)
+    usage_report_hash: str = Field(min_length=1)
+    usage_sequence: int = Field(ge=1)
+    calculated_charge_q_atoms: int = Field(ge=0)
+    current_session_exposure_q_atoms: int = Field(ge=0)
+    remaining_deposit_q_atoms: int = Field(ge=0)
+    accounting_contract_hash: str = Field(min_length=1)
+    created_at: str = Field(min_length=1)
+    provider_signature: str = Field(min_length=1)
+    consumer_signature: str = Field(min_length=1)
+    checkpoint_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _populate_checkpoint_hash(self):
+        payload = self.model_dump(mode="json", exclude={"checkpoint_hash"})
+        expected = canonical_hash(payload)
+        if self.checkpoint_hash is None:
+            self.checkpoint_hash = expected
+        elif self.checkpoint_hash != expected:
+            raise ValueError("checkpoint_hash does not match Session Usage Checkpoint")
         return self
 
 
@@ -416,6 +479,7 @@ class SettlementCorrection(BaseModel):
     endpoint_payment_delta_q_atoms: int
     consumer_refund_delta_q_atoms: int
     network_fee_delta_q_atoms: int
+    dispute_reserve_delta_q_atoms: int = 0
     authorization_reference: str = Field(min_length=1)
     evidence_root: str = Field(min_length=1)
     created_at: str = Field(min_length=1)
@@ -428,9 +492,10 @@ class SettlementCorrection(BaseModel):
             self.endpoint_payment_delta_q_atoms
             + self.consumer_refund_delta_q_atoms
             + self.network_fee_delta_q_atoms
+            + self.dispute_reserve_delta_q_atoms
             != 0
         ):
-            raise ValueError("Settlement correction must conserve Q")
+            raise ValueError("Settlement correction must conserve Q including reserve")
         payload = self.model_dump(mode="json", exclude={"correction_hash"})
         expected = canonical_hash(payload)
         if self.correction_hash is None:

@@ -7,8 +7,6 @@ replication network transport.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 from collections.abc import Callable
 from typing import Any
@@ -16,7 +14,14 @@ from typing import Any
 from pydantic import BaseModel
 
 from .channel import RegistryChannelManager
+from .failure import (
+    NonResponseConfirmationEngine,
+    RegistryFailureReport,
+    RegistryNonResponseObservation,
+    RegistryRequestEvidence,
+)
 from .inventory import BloomFilter
+from .manifest import ManifestObjectEntry, RegistryInventoryManifest
 from .messages import (
     InventoryResponsePayload,
     ObjectResponsePayload,
@@ -25,6 +30,19 @@ from .messages import (
 )
 from .object_envelope import RegistryObjectEnvelope
 from .peer import PeerAuthenticator
+from .proof import (
+    ProofOfRegistryEngine,
+    RegistryChallenge,
+    RegistryChallengeResponse,
+    challenge_signing_bytes,
+    verify_ed25519_signature,
+)
+from .repair import (
+    MultiPeerRepairPlan,
+    MultiPeerRepairResult,
+    RegistryRepairEngine,
+    RegistryRepairPlan,
+)
 from .replication import ReplicationEngine
 from .routes import create_default_registry_channels
 from .storage import ImmutableObjectStore
@@ -46,6 +64,15 @@ class ReplicationState(BaseModel):
     bytes_transferred: int = 0
     last_activity_at: float = 0.0
     error: str | None = None
+    remote_inventory_root: str | None = None
+    remote_inventory_manifest_id: str | None = None
+    repair_plan_id: str | None = None
+    last_repair_status: str | None = None
+    last_proof_challenge_id: str | None = None
+    last_proof_status: str | None = None
+    multi_peer_repair_plan_id: str | None = None
+    last_failure_report_id: str | None = None
+    last_failure_status: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -79,12 +106,19 @@ class RegistryReplicator:
         maximum_inventory_object_ids: int = 500,
         peer_authenticator: PeerAuthenticator | None = None,
         require_authenticated_peers: bool = False,
+        registry_generation: int = 1,
+        retention_policy_hash: str = "registry-replicator-default",
+        proof_signer: Callable[[bytes], str] | None = None,
+        failure_signer: Callable[[bytes], str] | None = None,
     ):
         if maximum_inventory_object_ids < 1:
             raise ValueError("maximum_inventory_object_ids must be at least one")
         self._node_id = node_id
+        self._registry_generation = int(registry_generation)
+        self._retention_policy_hash = retention_policy_hash
         self._store = store or ImmutableObjectStore()
         self._engine = ReplicationEngine(self._store)
+        self._repair = RegistryRepairEngine(self._store)
         self._sync = SyncController(self._store)
         self._channel_manager = create_default_registry_channels()
         self._builder = RegistryMessageBuilder(
@@ -102,6 +136,25 @@ class RegistryReplicator:
         self._require_authenticated_peers = require_authenticated_peers
         self._peer_authenticator = peer_authenticator or (
             PeerAuthenticator() if require_authenticated_peers else None
+        )
+        self._peer_public_keys: dict[str, str] = {}
+        self._proof_signer = proof_signer
+        self._failure_signer = failure_signer or proof_signer
+        self._peer_inventory_manifests: dict[str, RegistryInventoryManifest] = {}
+        self._proof_challenges: dict[str, RegistryChallenge] = {}
+        self._multi_peer_repair_plans: dict[str, MultiPeerRepairPlan] = {}
+        self._request_evidence: dict[str, RegistryRequestEvidence] = {}
+        self._non_response_observations: dict[str, list[RegistryNonResponseObservation]] = {}
+        self._failure_reports: dict[str, RegistryFailureReport] = {}
+        self._proof = ProofOfRegistryEngine(
+            registry_id=node_id,
+            store=self._store,
+            manifest_provider=self.build_inventory_manifest,
+            signer=proof_signer,
+        )
+        self._failure = NonResponseConfirmationEngine(
+            registry_id=node_id,
+            signer=self._failure_signer,
         )
 
     @property
@@ -156,6 +209,7 @@ class RegistryReplicator:
         if self._peer_authenticator is None:
             self._peer_authenticator = PeerAuthenticator()
         self._peer_authenticator.register_key(peer_id, public_key)
+        self._peer_public_keys[peer_id] = public_key
 
     def authenticate_peer(
         self,
@@ -249,6 +303,211 @@ class RegistryReplicator:
 
     # -- inventory -------------------------------------------------------
 
+    def build_inventory_manifest(
+        self,
+        *,
+        generated_at_epoch: int | None = None,
+        object_ids: list[str] | None = None,
+    ) -> RegistryInventoryManifest:
+        """Build the deterministic payload-free inventory commitment."""
+        selected_ids = object_ids or self._store.all_ids()
+        objects = [
+            self._store.get(object_id, include_expired=True)
+            for object_id in selected_ids
+        ]
+        envelopes = [object_value for object_value in objects if object_value is not None]
+        observed_epochs = [
+            envelope.created_epoch
+            for envelope in envelopes
+            if envelope.created_epoch is not None
+        ]
+        return RegistryInventoryManifest.create(
+            registry_service_id=self._node_id,
+            generated_at_epoch=(
+                int(generated_at_epoch)
+                if generated_at_epoch is not None
+                else max(observed_epochs, default=0)
+            ),
+            generation=self._registry_generation,
+            retention_policy_hash=self._retention_policy_hash,
+            objects=[ManifestObjectEntry.from_object(envelope) for envelope in envelopes],
+        )
+
+    def build_repair_plan(
+        self,
+        *,
+        peer_id: str,
+        mode: str = "catch_up",
+    ) -> RegistryRepairPlan:
+        """Compare the last remote manifest with local state."""
+        remote = self._peer_inventory_manifests.get(peer_id)
+        if remote is None:
+            raise ValueError("peer inventory manifest is not available")
+        plan = self._repair.build_plan(
+            peer_id=peer_id,
+            local_manifest=self.build_inventory_manifest(),
+            remote_manifest=remote,
+            mode=mode,
+        )
+        state = self.get_or_create_peer_state(peer_id)
+        state.repair_plan_id = plan.plan_id
+        state.last_repair_status = "planned"
+        return plan
+
+    def request_repair(
+        self,
+        *,
+        peer_id: str,
+        mode: str = "catch_up",
+        batch_size: int | None = None,
+    ) -> dict | None:
+        """Request the next bounded missing-object batch from a peer."""
+        plan = self.build_repair_plan(peer_id=peer_id, mode=mode)
+        limit = self._maximum_inventory_object_ids if batch_size is None else int(batch_size)
+        if limit < 1 or limit > self._maximum_inventory_object_ids:
+            raise ValueError("repair batch size exceeds the configured object limit")
+        if not plan.missing_object_ids:
+            self.get_or_create_peer_state(peer_id).last_repair_status = "complete"
+            return None
+        return self.build_object_request(
+            peer_id,
+            plan.missing_object_ids[:limit],
+            repair_plan_id=plan.plan_id,
+            expected_inventory_root=plan.remote_inventory_root,
+        )
+
+    def build_multi_peer_repair_plan(
+        self,
+        *,
+        peer_ids: list[str] | None = None,
+        minimum_independent_sources: int = 2,
+        known_control_groups: dict[str, str] | None = None,
+        peer_priorities: dict[str, int] | None = None,
+        mode: str = "multi_peer_repair",
+    ) -> MultiPeerRepairPlan:
+        """Build a quorum-bound repair plan from verified peer manifests."""
+        selected_peers = sorted(peer_ids or self._peer_inventory_manifests)
+        manifests = {
+            peer_id: self._peer_inventory_manifests[peer_id]
+            for peer_id in selected_peers
+            if peer_id in self._peer_inventory_manifests
+        }
+        if len(manifests) != len(selected_peers):
+            raise ValueError("one or more peer inventory manifests are unavailable")
+        plan = self._repair.build_multi_peer_plan(
+            local_manifest=self.build_inventory_manifest(),
+            peer_manifests=manifests,
+            minimum_independent_sources=minimum_independent_sources,
+            known_control_groups=known_control_groups,
+            peer_priorities=peer_priorities,
+            mode=mode,
+        )
+        self._multi_peer_repair_plans[plan.plan_id] = plan
+        for peer_id in plan.peer_ids:
+            state = self.get_or_create_peer_state(peer_id)
+            state.multi_peer_repair_plan_id = plan.plan_id
+            state.last_repair_status = "quorum_planned"
+        return plan
+
+    def request_multi_peer_repair(
+        self,
+        *,
+        plan: MultiPeerRepairPlan,
+        batch_size: int | None = None,
+    ) -> list[dict]:
+        """Request each source's bounded portion of a quorum repair plan."""
+        self._multi_peer_repair_plans[plan.plan_id] = plan
+        limit = self._maximum_inventory_object_ids if batch_size is None else int(batch_size)
+        if limit < 1 or limit > self._maximum_inventory_object_ids:
+            raise ValueError("repair batch size exceeds the configured object limit")
+        messages: list[dict] = []
+        for peer_id in sorted(set(plan.source_by_object.values())):
+            object_ids = [
+                object_id
+                for object_id in plan.target_object_ids
+                if plan.source_by_object.get(object_id) == peer_id
+            ][:limit]
+            if not object_ids:
+                continue
+            messages.append(
+                self.build_object_request(
+                    peer_id,
+                    object_ids,
+                    repair_plan_id=plan.plan_id,
+                    expected_inventory_root=plan.source_inventory_roots[peer_id],
+                )
+            )
+        return messages
+
+    def apply_multi_peer_repair_batch(
+        self,
+        *,
+        plan: MultiPeerRepairPlan,
+        source_peer_id: str,
+        envelopes: list[RegistryObjectEnvelope],
+    ) -> MultiPeerRepairResult:
+        """Verify and store a source-bound quorum repair batch."""
+        remote_manifest = self._peer_inventory_manifests.get(source_peer_id)
+        if remote_manifest is None:
+            raise ValueError("source peer inventory manifest is unavailable")
+        result = self._repair.apply_multi_peer_batch(
+            plan=plan,
+            source_peer_id=source_peer_id,
+            remote_manifest=remote_manifest,
+            envelopes=envelopes,
+        )
+        state = self.get_or_create_peer_state(source_peer_id)
+        state.last_repair_status = "complete" if result.completed else "in_progress"
+        state.objects_pending = max(
+            0,
+            len(plan.target_object_ids)
+            - len(result.accepted_object_ids)
+            - len(result.duplicate_object_ids),
+        )
+        return result
+
+    def issue_proof_challenge(
+        self,
+        *,
+        peer_id: str,
+        target_segment_id: str | None = None,
+        challenge_type: str = "completeness",
+        response_timeout_seconds: float = 300.0,
+        challenge_nonce: str | None = None,
+    ) -> RegistryChallenge:
+        """Issue a deterministic Proof of Registry challenge to a peer."""
+        if self._reject_unauthenticated_peer(peer_id):
+            raise ValueError("Registry peer authentication is required")
+        remote = self._peer_inventory_manifests.get(peer_id)
+        if remote is None or not remote.verify():
+            raise ValueError("peer inventory manifest is not available")
+        challenge = self._proof.create_challenge(
+            target_registry_id=peer_id,
+            inventory_root=remote.inventory_root.root_hash,
+            challenger_id=self._node_id,
+            target_segment_id=target_segment_id,
+            challenge_type=challenge_type,
+            response_timeout_seconds=response_timeout_seconds,
+            challenge_nonce=challenge_nonce,
+        )
+        if self._proof_signer is not None:
+            signature = self._proof_signer(challenge_signing_bytes(challenge))
+            if not isinstance(signature, str) or not signature.startswith("ed25519:"):
+                raise ValueError("Registry proof signer must return an ed25519 signature")
+            challenge = challenge.model_copy(update={"challenger_signature": signature})
+        request_evidence = self._failure.create_request_evidence(challenge=challenge)
+        self._request_evidence[challenge.challenge_id] = request_evidence
+        self._proof_challenges[challenge.challenge_id] = challenge
+        state = self.get_or_create_peer_state(peer_id)
+        state.last_proof_challenge_id = challenge.challenge_id
+        state.last_proof_status = "issued"
+        message = self._builder.build_challenge(
+            destination_node_id=peer_id,
+            challenge=challenge.model_dump(mode="json"),
+        )
+        self._outbox.append(message)
+        return challenge
+
     def build_inventory_request(
         self,
         peer_id: str,
@@ -285,28 +544,42 @@ class RegistryReplicator:
         state = self.get_or_create_peer_state(peer_id)
         state.last_activity_at = time.time()
 
-        stats = self._store.stats()
         request_payload = message.get("payload", {}).get("registry_payload", {})
         requested_types = set(request_payload.get("requested_object_types") or [])
-        object_ids = [
-            object_id
-            for object_id in self._store.all_ids()
-            if not requested_types
-            or (
-                (envelope := self._store.get(object_id)) is not None
-                and envelope.object_type in requested_types
-            )
-        ]
+        epoch_range = request_payload.get("epoch_range") or (0, 0)
+        start_epoch, end_epoch = (int(epoch_range[0]), int(epoch_range[1]))
+        selected_objects = []
+        for object_id in self._store.all_ids():
+            envelope = self._store.get(object_id)
+            if envelope is None:
+                continue
+            if requested_types and envelope.object_type not in requested_types:
+                continue
+            if (start_epoch or end_epoch) and envelope.created_epoch is not None:
+                if start_epoch and envelope.created_epoch < start_epoch:
+                    continue
+                if end_epoch and envelope.created_epoch > end_epoch:
+                    continue
+            selected_objects.append(envelope)
+        object_ids = [envelope.object_id for envelope in selected_objects]
         inventory_truncated = len(object_ids) > self._maximum_inventory_object_ids
         object_ids = object_ids[: self._maximum_inventory_object_ids]
 
         # Build bloom filter
         bloom = BloomFilter(
-            estimated_elements=max(1, stats.total_objects),
+            estimated_elements=max(1, len(selected_objects)),
             false_positive_rate=0.01,
         )
-        for oid in self._store.all_ids():
+        for oid in object_ids:
             bloom.add(oid)
+
+        manifest = self.build_inventory_manifest(object_ids=[obj.object_id for obj in selected_objects])
+        object_types: dict[str, int] = {}
+        epochs = []
+        for envelope in selected_objects:
+            object_types[envelope.object_type] = object_types.get(envelope.object_type, 0) + 1
+            if envelope.created_epoch is not None:
+                epochs.append(envelope.created_epoch)
 
         response = InventoryResponsePayload(
             source_node_id=self._node_id,
@@ -314,17 +587,13 @@ class RegistryReplicator:
             correlation_id=message.get("payload", {}).get(
                 "registry_payload", {}
             ).get("correlation_id", ""),
-            object_count=stats.total_objects,
-            object_types=dict(stats.objects_by_type),
-            earliest_epoch=stats.earliest_epoch or 0,
-            latest_epoch=stats.latest_epoch or 0,
+            object_count=len(selected_objects),
+            object_types=object_types,
+            earliest_epoch=min(epochs, default=0),
+            latest_epoch=max(epochs, default=0),
             bloom_filter_data=bloom.serialize(),
-            inventory_root_hash=hashlib.sha256(
-                json.dumps(
-                    sorted(self._store.all_ids()),
-                    sort_keys=True,
-                ).encode()
-            ).hexdigest(),
+            inventory_root_hash=manifest.inventory_root.root_hash,
+            inventory_manifest=manifest.model_dump(mode="json"),
             object_ids=object_ids,
             inventory_truncated=inventory_truncated,
         )
@@ -357,6 +626,37 @@ class RegistryReplicator:
             state.error = "inventory_object_ids_invalid"
             return None
         missing_ids = [object_id for object_id in object_ids if not self._store.has(object_id)]
+        remote_manifest = None
+        if payload.inventory_manifest is not None:
+            try:
+                remote_manifest = RegistryInventoryManifest.model_validate(
+                    payload.inventory_manifest
+                )
+                if not remote_manifest.verify():
+                    raise ValueError("remote inventory manifest is invalid")
+                if remote_manifest.registry_service_id != peer_id:
+                    raise ValueError("remote inventory manifest source mismatch")
+                if remote_manifest.inventory_root.root_hash != payload.inventory_root_hash:
+                    raise ValueError("remote inventory root mismatch")
+            except (TypeError, ValueError):
+                state.error = "inventory_manifest_invalid"
+                return None
+            self._peer_inventory_manifests[peer_id] = remote_manifest
+            state.remote_inventory_root = remote_manifest.inventory_root.root_hash
+            state.remote_inventory_manifest_id = remote_manifest.manifest_id
+            try:
+                plan = self._repair.build_plan(
+                    peer_id=peer_id,
+                    local_manifest=self.build_inventory_manifest(),
+                    remote_manifest=remote_manifest,
+                    mode="catch_up",
+                )
+                state.repair_plan_id = plan.plan_id
+                state.last_repair_status = "planned"
+                missing_ids = plan.missing_object_ids
+            except ValueError:
+                state.error = "repair_plan_invalid"
+                return None
         state.inventory_exchanged = True
         state.objects_pending = len(missing_ids)
         self._emit_event(
@@ -365,10 +665,15 @@ class RegistryReplicator:
             object_count=payload.object_count,
             advertised_object_count=len(object_ids),
             inventory_truncated=payload.inventory_truncated,
+            inventory_root_hash=payload.inventory_root_hash,
         )
         if not missing_ids:
+            state.last_repair_status = "complete"
             return None
-        return self.build_object_request(peer_id, missing_ids)
+        return self.build_object_request(
+            peer_id,
+            missing_ids[: self._maximum_inventory_object_ids],
+        )
 
     # -- object requests -------------------------------------------------
 
@@ -378,6 +683,8 @@ class RegistryReplicator:
         object_ids: list[str],
         *,
         include_payload: bool = True,
+        repair_plan_id: str = "",
+        expected_inventory_root: str = "",
     ) -> dict:
         """Build an object request for specific objects."""
         if self._reject_unauthenticated_peer(peer_id):
@@ -392,6 +699,8 @@ class RegistryReplicator:
             destination_node_id=peer_id,
             object_ids=object_ids,
             include_payload=include_payload,
+            repair_plan_id=repair_plan_id,
+            expected_inventory_root=expected_inventory_root,
         )
         self._channel_manager.enqueue_message(
             channel_id="registry:replication",
@@ -407,6 +716,8 @@ class RegistryReplicator:
         peer_id: str,
         object_ids: list[str],
         include_payload: bool = True,
+        repair_plan_id: str = "",
+        expected_inventory_root: str = "",
     ) -> dict | None:
         """Handle an incoming object request."""
         state = self.get_or_create_peer_state(peer_id)
@@ -414,6 +725,11 @@ class RegistryReplicator:
         if len(object_ids) > self._maximum_inventory_object_ids:
             state.error = "object_request_limit_exceeded"
             return None
+        if expected_inventory_root:
+            current_root = self.build_inventory_manifest().inventory_root.root_hash
+            if current_root != expected_inventory_root:
+                state.error = "object_request_inventory_root_stale"
+                return None
 
         delivered = []
         missing = []
@@ -432,6 +748,8 @@ class RegistryReplicator:
             missing_ids=missing,
             total_requested=len(object_ids),
             total_delivered=len(delivered),
+            repair_plan_id=repair_plan_id,
+            source_inventory_root=expected_inventory_root,
         )
 
         msg = self._builder.build(response, destination_node_id=peer_id)
@@ -441,6 +759,30 @@ class RegistryReplicator:
         state.objects_pending = len(missing)
 
         return msg
+
+    def _project_received_object(
+        self,
+        peer_id: str,
+        envelope: RegistryObjectEnvelope,
+    ) -> int:
+        """Run projections after an envelope has passed immutable storage."""
+        handler_errors = 0
+        handlers = [
+            *self._object_handlers.get(envelope.object_type, []),
+            *self._object_handlers.get("*", []),
+        ]
+        for handler in handlers:
+            try:
+                handler(peer_id, envelope)
+            except Exception:
+                handler_errors += 1
+        self._emit_event(
+            "object_received",
+            peer_id=peer_id,
+            object_id=envelope.object_id,
+            object_type=envelope.object_type,
+        )
+        return handler_errors
 
     def handle_object_response(
         self,
@@ -465,6 +807,41 @@ class RegistryReplicator:
             state.error = "object_response_limit_exceeded"
             result["invalid"] = len(payload.objects)
             return result
+        if payload.repair_plan_id:
+            plan = self._multi_peer_repair_plans.get(payload.repair_plan_id)
+            if plan is None:
+                state.error = "multi_peer_repair_plan_not_found"
+                result["invalid"] = len(payload.objects)
+                return result
+            if payload.source_inventory_root != plan.source_inventory_roots.get(peer_id):
+                state.error = "multi_peer_repair_source_root_mismatch"
+                result["invalid"] = len(payload.objects)
+                return result
+            try:
+                envelopes = [RegistryObjectEnvelope.model_validate(raw) for raw in payload.objects]
+                multi_result = self.apply_multi_peer_repair_batch(
+                    plan=plan,
+                    source_peer_id=peer_id,
+                    envelopes=envelopes,
+                )
+            except (TypeError, ValueError):
+                state.error = "multi_peer_repair_batch_invalid"
+                result["invalid"] = len(payload.objects)
+                return result
+            result["stored"] = len(multi_result.accepted_object_ids)
+            result["duplicates"] = len(multi_result.duplicate_object_ids)
+            result["invalid"] = len(multi_result.rejected_object_ids)
+            result["handler_errors"] = sum(
+                self._project_received_object(
+                    peer_id,
+                    self._store.get(object_id, include_expired=True),
+                )
+                for object_id in multi_result.accepted_object_ids
+                if self._store.get(object_id, include_expired=True) is not None
+            )
+            if multi_result.rejected_object_ids:
+                state.error = "multi_peer_repair_batch_rejected"
+            return result
         for raw_object in payload.objects:
             try:
                 envelope = RegistryObjectEnvelope.model_validate(raw_object)
@@ -484,26 +861,33 @@ class RegistryReplicator:
             result["stored"] += 1
             state.objects_transferred += 1
             state.bytes_transferred += envelope.content_size
-            handlers = [
-                *self._object_handlers.get(envelope.object_type, []),
-                *self._object_handlers.get("*", []),
-            ]
-            for handler in handlers:
-                try:
-                    handler(peer_id, envelope)
-                except Exception:
-                    result["handler_errors"] += 1
-            self._emit_event(
-                "object_received",
-                peer_id=peer_id,
-                object_id=envelope.object_id,
-                object_type=envelope.object_type,
-            )
+            result["handler_errors"] += self._project_received_object(peer_id, envelope)
         state.objects_pending = max(0, state.objects_pending - result["stored"])
         if result["invalid"]:
             state.error = "object_response_contains_invalid_objects"
         elif result["handler_errors"]:
             state.error = "object_response_handler_failed"
+        elif peer_id in self._peer_inventory_manifests:
+            # Continue a bounded catch-up batch until the manifest-derived
+            # plan is empty. Existing object requests remain idempotent.
+            try:
+                plan = self.build_repair_plan(peer_id=peer_id, mode="catch_up")
+                remaining = [
+                    object_id
+                    for object_id in plan.missing_object_ids
+                    if not self._store.has(object_id)
+                ]
+                state.objects_pending = len(remaining)
+                if remaining:
+                    state.last_repair_status = "in_progress"
+                    self.build_object_request(
+                        peer_id,
+                        remaining[: self._maximum_inventory_object_ids],
+                    )
+                else:
+                    state.last_repair_status = "complete"
+            except (TypeError, ValueError):
+                state.error = "repair_plan_invalid"
         return result
 
     # -- announcements ---------------------------------------------------
@@ -631,6 +1015,8 @@ class RegistryReplicator:
                 peer_id=peer_id,
                 object_ids=obj_ids,
                 include_payload=include,
+                repair_plan_id=registry_payload.get("repair_plan_id", ""),
+                expected_inventory_root=registry_payload.get("expected_inventory_root", ""),
             )
 
         elif msg_type == RegistryMessageType.INVENTORY_RESPONSE:
@@ -652,12 +1038,265 @@ class RegistryReplicator:
             )
             return None
 
+        elif msg_type == RegistryMessageType.CHALLENGE:
+            return self.handle_challenge(peer_id=peer_id, challenge=registry_payload)
+
+        elif msg_type == RegistryMessageType.CHALLENGE_RESPONSE:
+            self.handle_challenge_response(
+                peer_id=peer_id,
+                response=registry_payload,
+            )
+            return None
+
+        elif msg_type == RegistryMessageType.NON_RESPONSE_OBSERVATION:
+            self.handle_non_response_observation(
+                peer_id=peer_id,
+                observation=registry_payload.get("observation", {}),
+            )
+            return None
+
+        elif msg_type == RegistryMessageType.FAILURE_REPORT:
+            self.handle_failure_report(
+                peer_id=peer_id,
+                report=registry_payload.get("report", {}),
+            )
+            return None
+
         # For unknown types, try registered handler
         handler = self._message_handlers.get(msg_type)
         if handler:
             return handler(peer_id, message)
 
         return None
+
+    def handle_challenge(
+        self,
+        *,
+        peer_id: str,
+        challenge: dict,
+    ) -> dict | None:
+        """Answer an authenticated peer's Proof of Registry challenge."""
+        state = self.get_or_create_peer_state(peer_id)
+        try:
+            parsed = RegistryChallenge.model_validate(challenge)
+            expected_key = self._peer_public_keys.get(peer_id)
+            if parsed.challenger_signature and (
+                expected_key is None
+                or not verify_ed25519_signature(
+                    public_key=expected_key,
+                    signature=parsed.challenger_signature,
+                    payload=challenge_signing_bytes(parsed),
+                )
+            ):
+                raise ValueError("Registry challenge signature is invalid")
+            response = self._proof.answer_challenge(parsed)
+            message = self._builder.build_challenge_response(
+                destination_node_id=peer_id,
+                response=response.model_dump(mode="json"),
+            )
+        except (TypeError, ValueError) as error:
+            state.last_proof_status = "failed"
+            state.error = "proof_challenge_failed"
+            self._emit_event(
+                "proof_challenge_failed",
+                peer_id=peer_id,
+                error=str(error),
+            )
+            return None
+        state.last_proof_challenge_id = parsed.challenge_id
+        state.last_proof_status = "answered"
+        self._outbox.append(message)
+        self._emit_event(
+            "proof_challenge_answered",
+            peer_id=peer_id,
+            challenge_id=parsed.challenge_id,
+        )
+        return message
+
+    def handle_challenge_response(
+        self,
+        *,
+        peer_id: str,
+        response: dict,
+    ) -> dict:
+        """Verify a peer's Proof of Registry response."""
+        state = self.get_or_create_peer_state(peer_id)
+        try:
+            parsed = RegistryChallengeResponse.model_validate(response)
+        except (TypeError, ValueError):
+            state.last_proof_status = "invalid"
+            state.error = "proof_response_invalid"
+            return {"valid": False, "reason": "proof_response_invalid"}
+        challenge = self._proof_challenges.get(parsed.challenge_id)
+        if challenge is None:
+            state.last_proof_status = "unknown_challenge"
+            state.error = "proof_challenge_not_found"
+            return {"valid": False, "reason": "proof_challenge_not_found"}
+        result = self._proof.verify_response(
+            challenge=challenge,
+            response=parsed,
+            expected_inventory_manifest=self._peer_inventory_manifests.get(peer_id),
+            expected_registry_public_key=self._peer_public_keys.get(peer_id),
+            require_signature=True,
+        )
+        state.last_proof_status = "verified" if result.valid else "failed"
+        if not result.valid:
+            state.error = f"proof_verification_failed:{result.reason}"
+        self._emit_event(
+            "proof_challenge_verified" if result.valid else "proof_challenge_failed",
+            peer_id=peer_id,
+            challenge_id=parsed.challenge_id,
+            result=result.model_dump(mode="json"),
+        )
+        return result.model_dump(mode="json")
+
+    def create_non_response_observation(
+        self,
+        *,
+        challenge: RegistryChallenge,
+        request_evidence: RegistryRequestEvidence,
+        response_received: bool = False,
+        response_hash: str = "",
+        transport_state: str = "no_response",
+        network_condition: str = "healthy",
+        observer_role: str = "independent_verifier",
+        attempt_id: str | None = None,
+    ) -> RegistryNonResponseObservation:
+        """Create and retain a signed independent challenge observation."""
+        observation = self._failure.create_observation(
+            request_evidence=request_evidence,
+            challenge=challenge,
+            response_received=response_received,
+            response_hash=response_hash,
+            transport_state=transport_state,
+            network_condition=network_condition,
+            observer_role=observer_role,
+            attempt_id=attempt_id,
+        )
+        self._non_response_observations.setdefault(challenge.challenge_id, []).append(observation)
+        return observation
+
+    def build_non_response_observation_message(
+        self,
+        *,
+        destination_node_id: str,
+        observation: RegistryNonResponseObservation,
+    ) -> dict:
+        """Build a wire message carrying one signed non-response observation."""
+        message = self._builder.build_non_response_observation(
+            destination_node_id=destination_node_id,
+            observation=observation.model_dump(mode="json"),
+        )
+        self._outbox.append(message)
+        return message
+
+    def handle_non_response_observation(
+        self,
+        *,
+        peer_id: str,
+        observation: dict,
+    ) -> bool:
+        """Accept a structurally valid observation for later quorum review."""
+        state = self.get_or_create_peer_state(peer_id)
+        try:
+            parsed = RegistryNonResponseObservation.model_validate(observation)
+        except (TypeError, ValueError):
+            state.last_failure_status = "observation_invalid"
+            state.error = "non_response_observation_invalid"
+            return False
+        if parsed.observer_id != peer_id:
+            state.last_failure_status = "observation_source_mismatch"
+            state.error = "non_response_observation_source_mismatch"
+            return False
+        self._non_response_observations.setdefault(parsed.challenge_id, []).append(parsed)
+        state.last_failure_status = "observation_received"
+        self._emit_event(
+            "non_response_observation_received",
+            peer_id=peer_id,
+            challenge_id=parsed.challenge_id,
+            observation_id=parsed.observation_id,
+        )
+        return True
+
+    def build_failure_report(
+        self,
+        *,
+        challenge_id: str,
+        known_control_groups: dict[str, str] | None = None,
+        minimum_independent_observers: int = 2,
+    ) -> RegistryFailureReport:
+        """Finalize a signed failure report after independent confirmation."""
+        challenge = self._proof_challenges.get(challenge_id)
+        request_evidence = self._request_evidence.get(challenge_id)
+        if challenge is None or request_evidence is None:
+            raise ValueError("challenge evidence is not available")
+        report = self._failure.build_failure_report(
+            challenge=challenge,
+            request_evidence=request_evidence,
+            observations=self._non_response_observations.get(challenge_id, []),
+            known_control_groups=known_control_groups,
+            minimum_independent_observers=minimum_independent_observers,
+        )
+        self._failure_reports[report.report_id] = report
+        state = self.get_or_create_peer_state(challenge.target_registry_id)
+        state.last_failure_report_id = report.report_id
+        state.last_failure_status = "confirmed_non_response"
+        return report
+
+    def build_failure_report_message(
+        self,
+        *,
+        destination_node_id: str,
+        report: RegistryFailureReport,
+    ) -> dict:
+        """Build a wire message carrying a signed Registry Failure Report."""
+        message = self._builder.build_failure_report(
+            destination_node_id=destination_node_id,
+            report=report.model_dump(mode="json"),
+        )
+        self._outbox.append(message)
+        return message
+
+    def handle_failure_report(
+        self,
+        *,
+        peer_id: str,
+        report: dict,
+        verifier_public_keys: dict[str, str] | None = None,
+        known_control_groups: dict[str, str] | None = None,
+        minimum_independent_observers: int = 2,
+    ) -> dict:
+        """Verify and retain a signed Registry Failure Report."""
+        state = self.get_or_create_peer_state(peer_id)
+        try:
+            parsed = RegistryFailureReport.model_validate(report)
+            challenge = self._proof_challenges.get(parsed.challenge_id)
+            if challenge is None:
+                raise ValueError("challenge evidence is not available")
+            result = self._failure.verify_failure_report(
+                challenge=challenge,
+                report=parsed,
+                verifier_public_keys=verifier_public_keys or self._peer_public_keys,
+                known_control_groups=known_control_groups,
+                minimum_independent_observers=minimum_independent_observers,
+            )
+        except (TypeError, ValueError) as error:
+            state.last_failure_status = "report_invalid"
+            state.error = "registry_failure_report_invalid"
+            return {"valid": False, "reason": str(error)}
+        state.last_failure_status = "verified" if result.valid else "rejected"
+        if result.valid:
+            self._failure_reports[parsed.report_id] = parsed
+            state.last_failure_report_id = parsed.report_id
+        else:
+            state.error = f"registry_failure_report_rejected:{result.reason}"
+        self._emit_event(
+            "registry_failure_report_verified" if result.valid else "registry_failure_report_rejected",
+            peer_id=peer_id,
+            report_id=parsed.report_id,
+            result=result.model_dump(mode="json"),
+        )
+        return result.model_dump(mode="json")
 
     # -- sync -----------------------------------------------------------
 

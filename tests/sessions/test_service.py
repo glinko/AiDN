@@ -11,9 +11,14 @@ from aidn_hypervisor.accounting.models import (
     UsageReport,
 )
 from aidn_hypervisor.registry_service import RegistryService
-from aidn_hypervisor.sessions.models import ProxySessionBinding
+from aidn_hypervisor.session_application_service import SessionApplicationService
+from aidn_hypervisor.sessions.models import (
+    ProxySessionBinding,
+    SessionContractExchange,
+)
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
+from aidn_hypervisor.settlement.models import SessionFundingAccount
 
 
 def _canonical_hash(payload: dict) -> str:
@@ -472,6 +477,352 @@ def test_open_session_binds_explicit_payment_and_refund_beneficiaries() -> None:
     assert opened.session.provider_wallet == "legacy-provider-wallet"
     assert opened.session.endpoint_payment_beneficiary == "wallet-treasury"
     assert opened.session.consumer_refund_beneficiary == "wallet-refunds"
+
+
+def test_session_amendment_chain_is_hash_bound_and_idempotent(tmp_path: Path) -> None:
+    registry = RegistryService(snapshot_path=tmp_path / "registry-objects.json")
+    service = SessionService(SessionStore(), registry_service=registry)
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-consumer",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(),
+        session_id="session-amendment-1",
+    )
+
+    updated = service.accept_session_amendment(
+        opened.session.session_id,
+        amendment_id="amendment-1",
+        amendment_kind="EXPIRATION_EXTENSION",
+        changes={"expires_at": "2030-01-01T00:00:00+00:00"},
+        consumer_signature="consumer-signature",
+        endpoint_signature="endpoint-signature",
+        accepted_at="2026-07-21T00:00:00+00:00",
+    )
+
+    assert updated.session_amendment_sequence == 1
+    assert updated.effective_terms_hash != opened.session.session_contract_hash
+    assert updated.expires_at == "2030-01-01T00:00:00+00:00"
+    amendments = service.get_session_amendments(opened.session.session_id)
+    assert len(amendments) == 1
+    amendment = amendments[0]
+    assert amendment.previous_effective_terms_hash == opened.session.session_contract_hash
+    assert amendment.effective_terms_hash == updated.effective_terms_hash
+
+    stored = registry.get_registry_object(amendment.object_id, include_payload=True)
+    assert stored["object_type"] == "session_contract_amendment"
+    assert stored["payload_hash"] == _canonical_hash(stored["payload"])
+    assert stored["payload_hash"] == amendment.amendment_hash
+
+    retried = service.accept_session_amendment(
+        opened.session.session_id,
+        amendment_id="amendment-1",
+        amendment_kind="EXPIRATION_EXTENSION",
+        changes={"expires_at": "2030-01-01T00:00:00+00:00"},
+        consumer_signature="consumer-signature",
+        endpoint_signature="endpoint-signature",
+    )
+    assert retried == updated
+
+    with pytest.raises(ValueError, match="conflicts"):
+        service.accept_session_amendment(
+            opened.session.session_id,
+            amendment_id="amendment-1",
+            amendment_kind="EXPIRATION_EXTENSION",
+            changes={"expires_at": "2031-01-01T00:00:00+00:00"},
+            consumer_signature="consumer-signature",
+            endpoint_signature="endpoint-signature",
+        )
+
+
+def test_session_contract_exchange_round_trips_and_rejects_tampering(
+    tmp_path: Path,
+) -> None:
+    source_registry = RegistryService(snapshot_path=tmp_path / "source-registry.json")
+    source = SessionService(SessionStore(), registry_service=source_registry)
+    opened = source.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-consumer",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(),
+        session_id="session-contract-exchange-1",
+    )
+    source.accept_session_amendment(
+        opened.session.session_id,
+        amendment_id="exchange-amendment-1",
+        amendment_kind="EXPIRATION_EXTENSION",
+        changes={"expires_at": "2030-01-01T00:00:00+00:00"},
+        consumer_signature="consumer-signature",
+        endpoint_signature="endpoint-signature",
+        accepted_at="2026-07-21T00:00:00+00:00",
+    )
+
+    exchange = source.export_session_contract(opened.session.session_id)
+    assert isinstance(exchange, SessionContractExchange)
+    assert exchange.amendment_sequence == 1
+    assert exchange.effective_terms_hash == source.get_session(
+        opened.session.session_id
+    ).session.effective_terms_hash
+
+    peer_registry = RegistryService(snapshot_path=tmp_path / "peer-registry.json")
+    peer = SessionService(SessionStore(), registry_service=peer_registry)
+    imported = peer.import_session_contract_exchange(exchange)
+    assert imported["status"] == "IMPORTED"
+    assert imported["imported_object_count"] == 2
+    duplicate = peer.import_session_contract_exchange(exchange.model_dump(mode="json"))
+    assert duplicate["status"] == "DUPLICATE"
+    assert duplicate["imported_object_count"] == 0
+
+    tampered = exchange.model_dump(mode="json")
+    tampered["session_contract"]["endpoint_id"] = "ep-tampered"
+    with pytest.raises(ValueError, match="payload hash"):
+        peer.import_session_contract_exchange(tampered)
+
+
+def test_session_contract_exchange_does_not_overwrite_conflicting_local_session(
+    tmp_path: Path,
+) -> None:
+    source = SessionService(
+        SessionStore(),
+        registry_service=RegistryService(snapshot_path=tmp_path / "source-registry.json"),
+    )
+    source_session = source.open_session(
+        endpoint_id="ep-source",
+        client_wallet="wallet-consumer",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(),
+        session_id="session-contract-conflict-1",
+    )
+    exchange = source.export_session_contract(source_session.session.session_id)
+
+    peer = SessionService(
+        SessionStore(),
+        registry_service=RegistryService(snapshot_path=tmp_path / "peer-registry.json"),
+    )
+    peer.open_session(
+        endpoint_id="ep-other",
+        client_wallet="wallet-consumer",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(),
+        session_id=exchange.session_id,
+    )
+
+    with pytest.raises(ValueError, match="local Session Contract hash conflicts"):
+        peer.import_session_contract_exchange(exchange)
+    with pytest.raises(KeyError):
+        peer.registry_service.get_registry_object(
+            exchange.session_contract_object_id,
+            include_payload=True,
+        )
+
+
+def test_forced_settlement_is_terminal_idempotent_and_snapshot_persistent() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-consumer",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        deposit_q_atoms=10_000_000,
+        fixed_price_q_atoms=9_000_000,
+        request_charge_ceiling_q_atoms=9_000_000,
+        session_policy=_session_policy(),
+        economic_profile="MVP-0001",
+        session_id="session-force-terminal-1",
+    )
+
+    forced = service.mark_canonical_settlement_finalized(
+        opened.session.session_id,
+        settlement_evidence_root="sha256:forced-evidence",
+        endpoint_payment_q_atoms=9_000_000,
+        consumer_refund_q_atoms=1_000_000,
+        close_reason="forced_endpoint_unavailable",
+    )
+    assert forced.session.status == "force_settled"
+    assert forced.session.settlement_snapshot["settlement_evidence_root"] == (
+        "sha256:forced-evidence"
+    )
+
+    repeated = service.mark_canonical_settlement_finalized(
+        opened.session.session_id,
+        settlement_evidence_root="sha256:forced-evidence",
+        endpoint_payment_q_atoms=9_000_000,
+        consumer_refund_q_atoms=1_000_000,
+        close_reason="forced_endpoint_unavailable",
+    )
+    assert repeated.session == forced.session
+    assert repeated.deposit == forced.deposit
+    closed = service.close_session(opened.session.session_id)
+    assert closed.session.status == "force_settled"
+    assert closed.settlement is not None
+
+    with pytest.raises(ValueError, match="different settlement evidence"):
+        service.mark_canonical_settlement_finalized(
+            opened.session.session_id,
+            settlement_evidence_root="sha256:other-evidence",
+            endpoint_payment_q_atoms=9_000_000,
+            consumer_refund_q_atoms=1_000_000,
+        )
+
+
+def test_force_closing_session_closes_as_force_settled_with_snapshot() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-consumer",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        deposit_q_atoms=10_000_000,
+        fixed_price_q_atoms=9_000_000,
+        request_charge_ceiling_q_atoms=9_000_000,
+        session_policy=_session_policy(),
+        economic_profile="MVP-0001",
+        session_id="session-force-closing-1",
+    )
+    service.store.save_session(
+        opened.session.model_copy(update={"status": "force_closing"})
+    )
+
+    closed = service.close_session(opened.session.session_id)
+
+    assert closed.session.status == "force_settled"
+    assert closed.session.close_reason == "forced_recovery_expired"
+    assert closed.session.settlement_snapshot["settlement_evidence_root"] == (
+        closed.settlement.settlement_evidence_root
+        if closed.settlement is not None
+        else None
+    )
+    repeated = service.close_session(opened.session.session_id)
+    assert repeated.session.status == "force_settled"
+    assert repeated.settlement == closed.settlement
+
+
+def test_economic_session_amendment_requires_canonical_funding_evidence() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-consumer",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        session_policy=_session_policy(),
+        economic_profile="MVP-0001",
+        session_id="session-economic-amendment-1",
+    )
+
+    with pytest.raises(ValueError, match="canonical funding evidence"):
+        service.accept_session_amendment(
+            opened.session.session_id,
+            amendment_id="amendment-economic-1",
+            amendment_kind="DEPOSIT_EXTENSION",
+            changes={"additional_endpoint_payment_q_atoms": 1_000_000},
+            consumer_signature="consumer-signature",
+            endpoint_signature="endpoint-signature",
+        )
+
+
+def test_application_verifies_escrow_extension_before_economic_amendment() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-consumer",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        deposit_q_atoms=10_000_000,
+        fixed_price_q_atoms=5_000_000,
+        request_charge_ceiling_q_atoms=5_000_000,
+        session_policy=_session_policy(),
+        session_id="session-economic-amendment-verified",
+    )
+    current_funding = SessionFundingAccount(
+        session_id=opened.session.session_id,
+        session_contract_hash=opened.session.session_contract_hash,
+        funding_class="ESCROW_PREPAID",
+        consumer_funding_account="wallet-consumer",
+        endpoint_payment_beneficiary="wallet-provider",
+        consumer_refund_beneficiary="wallet-consumer",
+        total_locked_amount_q_atoms=10_000_000,
+        endpoint_payment_reserve_q_atoms=9_000_000,
+        network_fee_reserve_q_atoms=1_000_000,
+        unsettled_payment_reserve_q_atoms=9_000_000,
+        unsettled_fee_reserve_q_atoms=1_000_000,
+    )
+    next_funding = SessionFundingAccount(
+        session_id=opened.session.session_id,
+        session_contract_hash=opened.session.session_contract_hash,
+        funding_class="ESCROW_PREPAID",
+        consumer_funding_account="wallet-consumer",
+        endpoint_payment_beneficiary="wallet-provider",
+        consumer_refund_beneficiary="wallet-consumer",
+        total_locked_amount_q_atoms=12_000_000,
+        endpoint_payment_reserve_q_atoms=11_000_000,
+        network_fee_reserve_q_atoms=1_000_000,
+        unsettled_payment_reserve_q_atoms=11_000_000,
+        unsettled_fee_reserve_q_atoms=1_000_000,
+    )
+    service.store.save_session(
+        opened.session.model_copy(
+            update={"canonical_funding_state_hash": current_funding.funding_state_hash}
+        )
+    )
+
+    class FakeLedger:
+        def list_operations(self):
+            return [
+                {
+                    "operation_id": "extension-operation-1",
+                    "operation_type": "SESSION_ESCROW_EXTEND",
+                    "payload": {
+                        "session_id": opened.session.session_id,
+                        "funding_state_reference": current_funding.funding_state_hash,
+                        "funding": next_funding.model_dump(mode="json"),
+                        "added_endpoint_payment_reserve_q_atoms": 2_000_000,
+                        "added_network_fee_reserve_q_atoms": 0,
+                    },
+                }
+            ]
+
+    class FakeHypervisor:
+        ledger_operation_service = FakeLedger()
+
+        def get_session_funding_account(self, session_id: str):
+            assert session_id == opened.session.session_id
+            return next_funding
+
+    application = SessionApplicationService(
+        hypervisor_service=FakeHypervisor(),
+        session_service=service,
+    )
+    updated = application.accept_session_amendment(
+        session_id=opened.session.session_id,
+        amendment_id="economic-amendment-verified",
+        amendment_kind="DEPOSIT_EXTENSION",
+        changes={
+            "additional_endpoint_payment_q_atoms": 2_000_000,
+            "additional_network_fee_q_atoms": 0,
+            "funding_operation_id": "extension-operation-1",
+            "previous_funding_state_hash": current_funding.funding_state_hash,
+            "next_funding_state_hash": next_funding.funding_state_hash,
+        },
+        consumer_signature="consumer-signature",
+        endpoint_signature="endpoint-signature",
+    )
+
+    assert updated["effective_terms_hash"] == service.get_session(
+        opened.session.session_id
+    ).session.effective_terms_hash
+    assert service.get_session(opened.session.session_id).deposit.locked_q == 12.0
 
 
 def test_open_session_reuses_persisted_session_contract_object_after_registry_restart(

@@ -26,6 +26,7 @@ from aidn_hypervisor.validation.service import ValidationService
 from aidn_hypervisor.validation.store import ValidationStore
 from aidn_hypervisor.validation.transfer_signing import (
     Ed25519ValidationReportTransferSigner,
+    transfer_envelope_signing_payload,
     verify_report_transfer_envelope,
 )
 
@@ -438,6 +439,102 @@ def test_receiver_accepts_signed_report_transfer_into_custody(tmp_path) -> None:
     assert receiver.store.get_report_commitment(outcome.report.report_id).report_hash == accepted.report_hash
 
 
+def test_canonical_transfer_identity_binds_signature_to_assigned_validator(tmp_path) -> None:
+    signer = Ed25519ValidationReportTransferSigner("aa" * 32)
+    sender = ValidationService(
+        ValidationStore(),
+        custody_store=ValidationReportCustodyStore(tmp_path / "sender-custody"),
+        transfer_signer=signer,
+        require_canonical_validator_transfer_identity=True,
+    )
+    requested = sender.request_validation(
+        endpoint_id="ep-1", owner_wallet="wallet-1", configuration_hash="cfg-1", minimum_session_deposit_q=25.0
+    )
+    binding = sender.register_validator_transfer_key(
+        validator_id="val-1",
+        transfer_public_key=signer.public_key,
+        registered_at="2026-08-02T00:00:00+00:00",
+    )
+    sender.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = sender.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+    envelope = sender.build_report_transfer_envelope(report_id=outcome.report.report_id)
+    assert envelope.validator_id == "val-1"
+    assert outcome.report.validator_id == "val-1"
+
+    receiver = ValidationService(
+        ValidationStore(),
+        custody_store=ValidationReportCustodyStore(tmp_path / "receiver-custody"),
+        require_signed_transfer_envelope=True,
+        require_canonical_validator_transfer_identity=True,
+    )
+    receiver.store.save_request(sender.store.get_request(requested.request.request_id))
+    receiver.store.save_assignment(sender.store.list_assignments()[0])
+    receiver.store.save_authorization(sender.store.list_authorizations()[0])
+    receiver.store.save_validator_entry(sender.store.list_validator_entries()[0])
+    receiver.store.save_validator_key_binding(binding)
+
+    accepted = receiver.accept_report_transfer(envelope=envelope, report=outcome.report)
+    assert accepted.report_hash == outcome.commitment.report_hash
+
+    attacker = Ed25519ValidationReportTransferSigner("bb" * 32)
+    forged = envelope.model_copy(
+        update={
+            "validator_public_key": attacker.public_key,
+            "validator_signature": None,
+        }
+    )
+    forged = forged.model_copy(
+        update={"validator_signature": attacker.sign(transfer_envelope_signing_payload(forged))}
+    )
+    with pytest.raises(ValueError, match="key does not match assigned validator"):
+        receiver.accept_report_transfer(envelope=forged, report=outcome.report)
+
+
+def test_validator_transfer_key_registry_is_idempotent_and_restart_persistent(tmp_path) -> None:
+    state_store = FileStateStore(tmp_path / "state.json")
+    signer = Ed25519ValidationReportTransferSigner("cc" * 32)
+    service = ValidationService(ValidationStore(state_store))
+
+    first = service.register_validator_transfer_key(
+        validator_id="val-1",
+        transfer_public_key=signer.public_key,
+        registered_at="2026-08-02T00:00:00+00:00",
+    )
+    assert service.register_validator_transfer_key(
+        validator_id="val-1",
+        transfer_public_key=signer.public_key,
+        registered_at="2026-08-02T00:00:00+00:00",
+    ) == first
+    with pytest.raises(ValueError, match="already registered"):
+        service.register_validator_transfer_key(
+            validator_id="val-1",
+            transfer_public_key=Ed25519ValidationReportTransferSigner("dd" * 32).public_key,
+        )
+    with pytest.raises(ValueError, match="public key is invalid"):
+        service.register_validator_transfer_key(
+            validator_id="val-2",
+            transfer_public_key="not-a-key",
+        )
+
+    restored = ValidationStore(state_store)
+    assert restored.get_validator_key_binding("val-1") == first
+
+
 def test_validation_channel_transfer_is_idempotent_and_rejects_conflict(tmp_path) -> None:
     signer = Ed25519ValidationReportTransferSigner("77" * 32)
     sender = ValidationService(
@@ -726,6 +823,387 @@ def test_validation_read_models_expose_custody_metadata_without_report_body(tmp_
     assert "report_body" not in history
 
 
+def test_stable_custody_locator_enforces_endpoint_and_configuration_scope(tmp_path) -> None:
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    service = ValidationService(ValidationStore(), custody_store=custody)
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+
+    body = service.get_custody_report_by_locator(
+        outcome.commitment.report_locator,
+        requester_endpoint_id="ep-1",
+        configuration_hash="cfg-1",
+    )
+    assert body["endpoint_id"] == "ep-1"
+    with pytest.raises(ValueError, match="Endpoint scope mismatch"):
+        service.get_custody_report_by_locator(
+            outcome.commitment.report_locator,
+            requester_endpoint_id="ep-other",
+            configuration_hash="cfg-1",
+        )
+    with pytest.raises(ValueError, match="configuration scope mismatch"):
+        service.get_custody_report_by_locator(
+            outcome.commitment.report_locator,
+            requester_endpoint_id="ep-1",
+            configuration_hash="cfg-other",
+        )
+    with pytest.raises(ValueError, match="invalid Validation Report locator"):
+        service.get_custody_report_by_locator(
+            outcome.commitment.report_locator + "?raw=1",
+            requester_endpoint_id="ep-1",
+        )
+
+
+def test_custody_access_class_requires_authority_and_hash_only_never_serves_body(tmp_path) -> None:
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    denied = ValidationService(
+        ValidationStore(),
+        custody_store=custody,
+        custody_access_checker=lambda **_: False,
+    )
+    requested = denied.request_validation(
+        endpoint_id="ep-restricted",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+        evidence_access_class="restricted",
+    )
+    denied.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {"validator_id": "val-1", "validator_label": "validator-a", "shares": 1}
+        ],
+        seed="seed-1",
+    )
+    restricted = denied.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="restricted evidence",
+    )
+    with pytest.raises(PermissionError, match="access is not authorized"):
+        denied.get_custody_report_by_locator(
+            restricted.commitment.report_locator,
+            requester_endpoint_id="ep-restricted",
+            requester_subject="validator-1",
+        )
+
+    authorized = ValidationService(
+        denied.store,
+        custody_store=custody,
+        custody_access_checker=lambda **_: True,
+    )
+    body = authorized.get_custody_report_by_locator(
+        restricted.commitment.report_locator,
+        requester_endpoint_id="ep-restricted",
+        requester_subject="validator-1",
+    )
+    assert body["endpoint_id"] == "ep-restricted"
+
+    hash_only_requested = authorized.request_validation(
+        endpoint_id="ep-hash-only",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-2",
+        minimum_session_deposit_q=25.0,
+        evidence_access_class="hash_committed",
+    )
+    authorized.assign_epoch_requests(
+        epoch_id="epoch-2",
+        validator_entries=[
+            {"validator_id": "val-2", "validator_label": "validator-b", "shares": 1}
+        ],
+        seed="seed-2",
+    )
+    hash_only = authorized.submit_validation_report(
+        request_id=hash_only_requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-b",
+        evidence_summary="hash only",
+    )
+    with pytest.raises(PermissionError, match="hash-committed only"):
+        authorized.get_custody_report_by_locator(
+            hash_only.commitment.report_locator,
+            requester_endpoint_id="ep-hash-only",
+        )
+
+
+def test_custody_challenge_is_idempotent_conflict_safe_and_persistent(tmp_path) -> None:
+    state_store = FileStateStore(tmp_path / "state.json")
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    service = ValidationService(ValidationStore(state_store), custody_store=custody)
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {"validator_id": "val-1", "validator_label": "validator-a", "shares": 1}
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+
+    first = service.challenge_report_custody(
+        report_id=outcome.report.report_id,
+        challenge_id="challenge-1",
+        challenger_id="validator-independent-1",
+        checked_at="2026-08-02T00:00:00+00:00",
+    )
+    second = service.challenge_report_custody(
+        report_id=outcome.report.report_id,
+        challenge_id="challenge-1",
+        challenger_id="validator-independent-1",
+        checked_at="2026-08-02T00:01:00+00:00",
+    )
+    assert second == first
+    assert first.outcome == "available"
+    assert first.observed_report_size == outcome.commitment.report_size
+    with pytest.raises(ValueError, match="conflicts with prior identity"):
+        service.challenge_report_custody(
+            report_id=outcome.report.report_id,
+            challenge_id="challenge-1",
+            challenger_id="validator-independent-2",
+        )
+
+    restored = ValidationStore(state_store)
+    assert restored.get_report_custody_challenge("challenge-1") == first
+
+
+def test_custody_challenge_quorum_collapses_known_control_groups(tmp_path) -> None:
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    operations: list[dict] = []
+    service = ValidationService(
+        ValidationStore(),
+        custody_store=custody,
+        custody_challenge_quorum=2,
+        custody_known_control_groups={
+            "validator-a": "group-1",
+            "validator-b": "group-1",
+            "validator-c": "group-2",
+        },
+        operation_recorder=lambda **item: operations.append(item),
+    )
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {"validator_id": "val-1", "validator_label": "validator-a", "shares": 1}
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+
+    first = service.challenge_report_custody(
+        report_id=outcome.report.report_id,
+        challenge_id="challenge-a",
+        challenger_id="validator-a",
+        checked_at="2026-08-02T00:00:00+00:00",
+    )
+    second = service.challenge_report_custody(
+        report_id=outcome.report.report_id,
+        challenge_id="challenge-b",
+        challenger_id="validator-b",
+        checked_at="2026-08-02T00:01:00+00:00",
+    )
+    pending = service.custody_challenge_summary(report_id=outcome.report.report_id)
+    assert first.independence_key == "control-group:group-1"
+    assert second.independence_key == "control-group:group-1"
+    assert pending["independent_observation_count"] == 1
+    assert pending["quorum_state"] == "pending"
+
+    third = service.challenge_report_custody(
+        report_id=outcome.report.report_id,
+        challenge_id="challenge-c",
+        challenger_id="validator-c",
+        checked_at="2026-08-02T00:02:00+00:00",
+    )
+    confirmed = service.custody_challenge_summary(report_id=outcome.report.report_id)
+    assert third.independence_key == "control-group:group-2"
+    assert confirmed["independent_observation_count"] == 2
+    assert confirmed["quorum_state"] == "confirmed"
+    assert confirmed["challenge_count"] == 3
+    assert confirmed["outcome_counts"] == {"available": 3}
+
+    availability = [
+        item
+        for item in operations
+        if item["operation_type"] == "VALIDATION_REPORT_AVAILABILITY_COMMIT"
+    ]
+    assert [item["payload"]["independence_key"] for item in availability] == [
+        "control-group:group-1",
+        "control-group:group-1",
+        "control-group:group-2",
+    ]
+
+
+def test_scheduled_custody_tasks_are_deterministic_persistent_and_idempotent(tmp_path) -> None:
+    state_store = FileStateStore(tmp_path / "state.json")
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    service = ValidationService(
+        ValidationStore(state_store),
+        custody_store=custody,
+        custody_challenge_quorum=2,
+        custody_known_control_groups={
+            "validator-a": "group-1",
+            "validator-b": "group-1",
+            "validator-c": "group-2",
+        },
+    )
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {"validator_id": "val-1", "validator_label": "validator-a", "shares": 1}
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+
+    first = service.schedule_custody_challenges(
+        epoch_id="custody-epoch-1",
+        seed="custody-seed-1",
+        observer_ids=["validator-a", "validator-b", "validator-c"],
+        scheduled_at="2026-08-02T00:00:00+00:00",
+    )
+    second = service.schedule_custody_challenges(
+        epoch_id="custody-epoch-1",
+        seed="custody-seed-1",
+        observer_ids=["validator-c", "validator-b", "validator-a"],
+        scheduled_at="2026-08-02T01:00:00+00:00",
+    )
+    assert len(first) == 2
+    assert second == first
+    assert {item.independence_key for item in first} == {
+        "control-group:group-1",
+        "control-group:group-2",
+    }
+    assert all(item.status == "scheduled" for item in first)
+    assert all(item.report_id == outcome.report.report_id for item in first)
+
+    restored = ValidationService(
+        ValidationStore(state_store),
+        custody_store=custody,
+        custody_challenge_quorum=2,
+        custody_known_control_groups={
+            "validator-a": "group-1",
+            "validator-b": "group-1",
+            "validator-c": "group-2",
+        },
+    )
+    completed = restored.run_scheduled_custody_challenge(
+        task_id=first[0].task_id,
+        checked_at="2026-08-02T00:05:00+00:00",
+    )
+    replayed = restored.run_scheduled_custody_challenge(task_id=first[0].task_id)
+    assert completed.status == "completed"
+    assert completed.outcome == "available"
+    assert completed.challenge_evidence_root is not None
+    assert replayed == completed
+    persisted = ValidationStore(state_store).get_report_custody_task(first[0].task_id)
+    assert persisted == completed
+
+
+def test_origin_and_mirror_observations_have_separate_quorum_views(tmp_path) -> None:
+    service = ValidationService(
+        ValidationStore(),
+        custody_store=ValidationReportCustodyStore(tmp_path / "custody"),
+        custody_challenge_quorum=1,
+    )
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {"validator_id": "val-1", "validator_label": "validator-a", "shares": 1}
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+    service.challenge_report_custody(
+        report_id=outcome.report.report_id,
+        challenge_id="origin-challenge-1",
+        challenger_id="origin-observer",
+        observation_role="origin",
+        checked_at="2026-08-02T00:00:00+00:00",
+    )
+    service.challenge_report_custody(
+        report_id=outcome.report.report_id,
+        challenge_id="mirror-challenge-1",
+        challenger_id="mirror-observer",
+        observation_role="mirror",
+        checked_at="2026-08-02T00:01:00+00:00",
+    )
+
+    summary = service.custody_challenge_summary(report_id=outcome.report.report_id)
+    assert summary["origin_independent_observation_count"] == 1
+    assert summary["mirror_independent_observation_count"] == 1
+    assert summary["origin_quorum_state"] == "confirmed"
+    assert summary["mirror_quorum_state"] == "confirmed"
+    assert summary["quorum_state"] == "confirmed"
+    assert summary["outcome_counts_by_role"] == {
+        "origin": {"available": 1},
+        "mirror": {"available": 1},
+    }
+
+
 def test_storage_failure_is_idempotent_and_preserves_negative_report(tmp_path) -> None:
     custody = ValidationReportCustodyStore(tmp_path / "custody")
     operations: list[dict] = []
@@ -779,6 +1257,89 @@ def test_storage_failure_is_idempotent_and_preserves_negative_report(tmp_path) -
     assert service.validation_history("ep-1")["report_storage_failures"] == [first.model_dump(mode="json")]
 
 
+def test_endpoint_retirement_queue_survives_restart_and_never_deletes_report(
+    tmp_path,
+) -> None:
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    state_store = FileStateStore(tmp_path / "state.json")
+    operations: list[dict] = []
+
+    def record_operation(**item):
+        operations.append(item)
+        return {"operation_id": f"op-{len(operations)}"}
+
+    service = ValidationService(
+        ValidationStore(state_store),
+        custody_store=custody,
+        custody_retirement_grace_period_seconds=60,
+        operation_recorder=record_operation,
+    )
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {
+                "validator_id": "val-1",
+                "validator_label": "validator-a",
+                "shares": 1,
+            }
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+
+    first = service.request_endpoint_retirement(
+        endpoint_id="ep-1",
+        requested_at="2026-08-02T00:00:00+00:00",
+    )
+    second = service.request_endpoint_retirement(
+        endpoint_id="ep-1",
+        requested_at="2026-08-02T00:05:00+00:00",
+    )
+    assert second == first
+    assert first[0].status == "pending"
+    assert first[0].eligible_at == "2026-08-02T00:01:00+00:00"
+
+    restored = ValidationService(
+        ValidationStore(state_store),
+        custody_store=custody,
+        custody_retirement_grace_period_seconds=60,
+        operation_recorder=record_operation,
+    )
+    assert restored.store.list_report_custody_retirings() == first
+    assert restored.sweep_custody_retirements(
+        now="2026-08-02T00:00:59+00:00"
+    ) == []
+    released = restored.sweep_custody_retirements(
+        now="2026-08-02T00:01:00+00:00"
+    )
+    assert len(released) == 1
+    assert released[0].status == "released"
+    assert restored.sweep_custody_retirements(
+        now="2026-08-02T00:02:00+00:00"
+    ) == []
+    assert len(
+        [
+            item
+            for item in operations
+            if item["operation_type"] == "VALIDATION_REPORT_CUSTODY_RELEASE"
+        ]
+    ) == 1
+    assert restored.get_custody_report_body(outcome.commitment.report_hash)["endpoint_id"] == "ep-1"
+    metadata = restored.report_custody_metadata(report_id=outcome.report.report_id)
+    assert metadata["custody_retirements"][0]["status"] == "released"
+
+
 def test_custody_check_distinguishes_available_missing_and_corrupted(tmp_path) -> None:
     custody = ValidationReportCustodyStore(tmp_path / "custody")
     service = ValidationService(ValidationStore(), custody_store=custody)
@@ -826,3 +1387,114 @@ def test_custody_check_distinguishes_available_missing_and_corrupted(tmp_path) -
     assert missing.failure_streak == 1
     assert corrupted.status == "corrupted"
     assert corrupted.failure_streak == 2
+
+
+def test_custody_lifecycle_applies_grace_and_restores_certification(tmp_path) -> None:
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    service = ValidationService(
+        ValidationStore(),
+        custody_store=custody,
+        custody_signer=Ed25519ValidationReportCustodySigner("ee" * 32),
+        require_storage_receipt_for_positive_certification=True,
+        enforce_custody_certification_lifecycle=True,
+        custody_grace_period_seconds=60,
+        custody_failure_threshold=2,
+    )
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {"validator_id": "val-1", "validator_label": "validator-a", "shares": 1}
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="pass",
+        validator_label="validator-a",
+        evidence_summary="all checks passed",
+    )
+    service.create_report_storage_receipt(report_id=outcome.report.report_id)
+    assert service.store.get_snapshot("ep-1", "cfg-1").certification_status == "certified"
+
+    service.check_report_custody(
+        report_id=outcome.report.report_id,
+        checked_at="2026-08-02T00:00:00+00:00",
+    )
+    payload_path = tmp_path / "custody" / outcome.custody_object.storage_relative_path
+    payload_path.chmod(stat.S_IREAD | stat.S_IWRITE)
+    payload_path.unlink()
+
+    first_missing = service.check_report_custody(
+        report_id=outcome.report.report_id,
+        checked_at="2026-08-02T00:00:10+00:00",
+    )
+    second_missing = service.check_report_custody(
+        report_id=outcome.report.report_id,
+        checked_at="2026-08-02T00:00:20+00:00",
+    )
+    assert first_missing.status == "temporarily_unavailable"
+    assert second_missing.failure_streak == 2
+    assert service.store.get_snapshot("ep-1", "cfg-1").certification_status == "certified"
+
+    expired = service.check_report_custody(
+        report_id=outcome.report.report_id,
+        checked_at="2026-08-02T00:01:10+00:00",
+    )
+    assert expired.status == "temporarily_unavailable"
+    assert service.store.get_snapshot("ep-1", "cfg-1").certification_status == (
+        "maintenance_in_progress"
+    )
+
+    custody.store_report(outcome.report)
+    restored = service.check_report_custody(
+        report_id=outcome.report.report_id,
+        checked_at="2026-08-02T00:01:20+00:00",
+    )
+    assert restored.status == "available"
+    assert service.store.get_snapshot("ep-1", "cfg-1").certification_status == "certified"
+
+
+def test_custody_lifecycle_does_not_change_negative_certification(tmp_path) -> None:
+    custody = ValidationReportCustodyStore(tmp_path / "custody")
+    service = ValidationService(
+        ValidationStore(),
+        custody_store=custody,
+        enforce_custody_certification_lifecycle=True,
+        custody_grace_period_seconds=0,
+        custody_failure_threshold=1,
+    )
+    requested = service.request_validation(
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        configuration_hash="cfg-1",
+        minimum_session_deposit_q=25.0,
+    )
+    service.assign_epoch_requests(
+        epoch_id="epoch-1",
+        validator_entries=[
+            {"validator_id": "val-1", "validator_label": "validator-a", "shares": 1}
+        ],
+        seed="seed-1",
+    )
+    outcome = service.submit_validation_report(
+        request_id=requested.request.request_id,
+        outcome="fail",
+        validator_label="validator-a",
+        evidence_summary="critical issue",
+        detected_issues=[{"issue_id": "critical-1", "severity": "critical"}],
+    )
+    payload_path = tmp_path / "custody" / outcome.custody_object.storage_relative_path
+    payload_path.chmod(stat.S_IREAD | stat.S_IWRITE)
+    payload_path.unlink()
+
+    service.check_report_custody(
+        report_id=outcome.report.report_id,
+        checked_at="2026-08-02T00:00:00+00:00",
+    )
+    assert service.store.get_snapshot("ep-1", "cfg-1").certification_status == "uncertified"

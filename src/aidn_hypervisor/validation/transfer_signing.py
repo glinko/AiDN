@@ -56,3 +56,15 @@ def verify_report_transfer_envelope(
         )
     except (InvalidSignature, ValueError) as exc:
         raise ValueError("Validation report transfer signature is invalid") from exc
+
+
+def validate_transfer_public_key(public_key: str) -> None:
+    """Validate the canonical wire representation used by transfer signatures."""
+    try:
+        key_type, encoded_key = public_key.split(":", 1)
+        if key_type != "ed25519":
+            raise ValueError
+        raw_key = base64.b64decode(encoded_key, validate=True)
+        Ed25519PublicKey.from_public_bytes(raw_key)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("Validation transfer public key is invalid") from exc

@@ -160,6 +160,51 @@ A submitted operation progresses through:
 
 Only finalized operations modify canonical Ledger state.
 
+The finalized-operation replay registry is rebuilt from the committed Ledger
+operation log on validator restart and State Sync restore. It binds each
+operation ID to its immutable record digest and sequence, so replay checks do
+not depend on an in-memory set that can silently diverge from the restored
+application state.
+
+### 6.2 Consensus Operation Coverage
+
+The reference validator SHALL use an explicit operation-coverage profile. A
+known operation without a specialized deterministic Ledger transition in both
+ABCI and the deterministic local execution path SHALL not fall through to a
+generic `record_admitted_envelope` path when the production profile is enabled.
+It SHALL be rejected before mempool insertion, proposal acceptance or canonical
+operation-log recording.
+
+The production profile is enabled by default for validator bootstrapping and
+may be controlled by `AIDN_CONSENSUS_STRICT_OPERATION_COVERAGE`. Embedded
+library instances and compatibility tests may use the permissive profile, but
+that profile SHALL not be used for a network validator.
+
+The current implementation matrix is maintained in
+`docs/development/consensus-operation-coverage.md`. The matrix is a release
+gate: adding a type to the catalog does not make it consensus-ready. A new
+operation requires matching transitions, replay and snapshot behavior, and
+conformance coverage in both entrypoints. A deployment-local custom handler
+may support an extension, but it does not promote that extension into the
+network operation catalog.
+
+The reference submission adapter uses CometBFT `broadcast_tx_sync` only for
+admission. A successful response creates an `ADMITTED` local observation; it
+does not prove block inclusion or network finality. Finality SHALL be applied
+only after a `ConsensusFinalitySource` returns operation-bound evidence that
+has already verified the transaction binding, block commitment and active
+network trust policy. The adapter SHALL reject evidence for another chain and
+reconciliation SHALL be idempotent. A local submission record marked
+`FINALIZED` by an in-process validator path remains a local observation until
+an external or explicitly configured verified finality source confirms it.
+
+Local Ledger records SHALL NOT be submitted by copying their local
+`operation_id` into an envelope. The reference projection builders create a
+new canonical envelope identity, retain the local ID only as an audit
+correlation, require explicit canonical dependency IDs for dependent Session
+operations and require the initiator authorization signature. Local operation
+creation and consensus submission remain separate steps.
+
 ## 7. Operation Envelope
 
 Every operation submitted to consensus SHALL use a common envelope.
@@ -459,6 +504,24 @@ Validator changes become active only at deterministic protocol boundaries.
 
 The MVP SHOULD apply Validator Set changes at Epoch boundaries.
 
+The `CONSENSUS_VALIDATOR_SET_UPDATE` operation is the application-level
+schedule boundary. Its protocol-only, typed payload commits the target Epoch,
+membership changes, voting-power assignments, eligibility evidence root,
+participant suspension root and resulting Validator Set hash. The application SHALL reconstruct the resulting
+set from the current active set and the typed additions, removals and
+voting-power updates, and reject a schedule whose hash does not match that
+canonical result. A locally recorded schedule is not by itself an
+active CometBFT set: activation requires the schedule to be finalized before
+the matching `EPOCH_TRANSITION`. At that boundary the application updates its
+active-set state and returns CometBFT `ResponseFinalizeBlock.validator_updates`:
+positive power for additions or power changes and zero power for removals. The
+active set is included in the application state commitment and Snapshot/State
+Sync payload, so restart or State Sync cannot silently fall back to a stale
+local configuration. The schedule builder excludes participants whose
+canonical suspension is effective at the target Epoch and binds the
+suspension-state root into the schedule evidence. A schedule included in the
+same block as its transition is not eligible for activation.
+
 ## 22. Consensus Eligibility
 
 Consensus eligibility is independent from Endpoint Validation eligibility.
@@ -525,6 +588,12 @@ Provable misconduct MAY result in:
 
 Ordinary downtime SHOULD primarily reduce rewards and reputation rather than immediately burn Stake.
 
+The typed `PENALTY_APPLY` path is reserved for finalized objective evidence.
+Its evidence operation and evidence root are bound in the envelope, and the
+evidence operation MUST precede the penalty block. A same-block evidence and
+penalty shortcut is invalid. This boundary protects CometBFT execution from
+turning a proposer-created observation into an immediate economic effect.
+
 This avoids turning brief network failure into economic execution by firing squad, a tradition distributed systems can live without.
 
 ## 26. Consensus Liveness
@@ -541,6 +610,12 @@ The Consensus Service SHALL track:
 These metrics update the Consensus Reputation Profile.
 
 Repeated absence MAY cause temporary suspension or removal from the active Validator Set.
+
+The application boundary represents this consequence through typed
+`PARTICIPANT_SUSPEND` and `PARTICIPANT_REINSTATE` operations. Suspension is
+evidence-bound and cannot consume same-block evidence; reinstatement is
+delayed until its committed recovery Epoch and finalized recovery evidence.
+Stake remains separate and follows the typed 14-Epoch unbonding lifecycle.
 
 ## 27. Consensus Rewards
 

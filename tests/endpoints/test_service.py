@@ -1,5 +1,6 @@
 import pytest
 
+from aidn_hypervisor.endpoints.endpoint_application_service import EndpointApplicationService
 from aidn_hypervisor.endpoints.models import (
     CreateEndpointCommand,
     UpdateEndpointCommand,
@@ -25,6 +26,36 @@ def test_create_endpoint_generates_initial_configuration_snapshot() -> None:
     assert created.endpoint.status == "created"
     assert created.snapshot.endpoint_id == created.endpoint.endpoint_id
     assert created.snapshot.configuration_hash == created.endpoint.configuration_hash
+
+
+def test_endpoint_application_delete_schedules_validation_custody_retirement() -> None:
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Operator STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    calls: list[str] = []
+
+    class ValidationStub:
+        def request_endpoint_retirement(self, *, endpoint_id: str):
+            calls.append(endpoint_id)
+            return []
+
+    application = EndpointApplicationService(
+        endpoint_service=endpoint_service,
+        validation_service=ValidationStub(),
+    )
+
+    result = application.delete_endpoint(created.endpoint.endpoint_id)
+
+    assert result["deleted"].endpoint.status == "deleted"
+    assert calls == [created.endpoint.endpoint_id]
 
 
 def test_create_endpoint_accepts_runtime_binding_identity_with_bundle_fallback() -> None:

@@ -6,6 +6,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
+from aidn_hypervisor.consensus.abci_finality import ABCICommittedFinalitySource
+from aidn_hypervisor.consensus.cometbft import CometBftRpcFinalitySource
 from aidn_hypervisor.consensus.cometbft_crypto import Zip215CometBftEd25519Backend
 from aidn_hypervisor.consensus.cometbft_finality import (
     CometBftFinalityConfig,
@@ -88,6 +90,26 @@ def test_finality_wiring_composes_strict_rpc_verification_with_local_abci_commit
     assert isinstance(source._source._proof_verifier._light_client._cryptography, Zip215CometBftEd25519Backend)
 
 
+def test_finality_wiring_supports_non_validator_without_local_abci_commitment():
+    config = CometBftFinalityConfig(
+        rpc_endpoint="https://consensus.example",
+        chain_id="aidn-testnet-1",
+        verifier_id="operator-checkpoint-1",
+        trusted_checkpoint=_trusted_checkpoint(),
+        trust_period_seconds=3600,
+    )
+
+    source = build_cometbft_finality_source(
+        config=config,
+        transaction_hash_for_operation=lambda operation_id: None,
+        transport=NoCallTransport(),
+    )
+
+    assert source.finality_evidence("unknown-operation") is None
+    assert isinstance(source, CometBftRpcFinalitySource)
+    assert not isinstance(source, ABCICommittedFinalitySource)
+
+
 def test_multi_rpc_finality_wiring_requires_agreement_and_local_abci_commitment():
     config = CometBftMultiRpcFinalityConfig(
         rpc_endpoints=("https://consensus-a.example", "https://consensus-b.example"),
@@ -108,6 +130,26 @@ def test_multi_rpc_finality_wiring_requires_agreement_and_local_abci_commitment(
     assert isinstance(source._source, QuorumConsensusFinalitySource)
     assert source._source.quorum == 2
     assert source._source.source_count == 2
+
+
+def test_multi_rpc_finality_wiring_can_run_without_local_abci_for_non_validator():
+    config = CometBftMultiRpcFinalityConfig(
+        rpc_endpoints=("https://consensus-a.example", "https://consensus-b.example"),
+        minimum_agreement=2,
+        chain_id="aidn-testnet-1",
+        verifier_id="operator-checkpoint-quorum",
+        trusted_checkpoint=_trusted_checkpoint(),
+        trust_period_seconds=3600,
+    )
+
+    source = build_cometbft_multi_rpc_finality_source(
+        config=config,
+        transaction_hash_for_operation=lambda operation_id: None,
+        transports=[NoCallTransport(), NoCallTransport()],
+    )
+
+    assert source.finality_evidence("unknown-operation") is None
+    assert isinstance(source, QuorumConsensusFinalitySource)
 
 
 def test_multi_rpc_finality_wiring_rejects_insufficient_transport_count():

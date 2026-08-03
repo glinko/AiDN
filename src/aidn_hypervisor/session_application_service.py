@@ -10,6 +10,7 @@ from aidn_hypervisor.session_read_models import (
     build_session_result_payload,
     build_session_sweep_payload,
 )
+from aidn_hypervisor.sessions.models import SessionAmendmentKind
 
 if TYPE_CHECKING:
     from aidn_hypervisor.endpoints.service import EndpointService
@@ -30,6 +31,67 @@ class SessionApplicationService:
         self._hypervisor_service = hypervisor_service
         self._session_service = session_service
         self._endpoint_service = endpoint_service
+        if hypervisor_service is not None:
+            session_service.set_funding_amendment_verifier(
+                self._verify_funding_amendment
+            )
+
+    def _verify_funding_amendment(
+        self,
+        *,
+        session,
+        amendment_kind: str,
+        changes: dict,
+    ) -> bool:
+        if self._hypervisor_service is None:
+            return False
+        try:
+            funding = self._hypervisor_service.get_session_funding_account(
+                session.session_id
+            )
+        except KeyError:
+            return False
+        if funding.session_contract_hash != session.session_contract_hash:
+            return False
+        if funding.funding_state_hash != changes.get("next_funding_state_hash"):
+            return False
+        operation_id = changes.get("funding_operation_id")
+        if not isinstance(operation_id, str) or not operation_id:
+            return False
+        operations = self._hypervisor_service.ledger_operation_service.list_operations()
+        operation = next(
+            (
+                item
+                for item in operations
+                if item.get("operation_id") == operation_id
+                and item.get("operation_type") == "SESSION_ESCROW_EXTEND"
+            ),
+            None,
+        )
+        if operation is None:
+            return False
+        payload = operation.get("payload")
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("session_id") != session.session_id:
+            return False
+        if payload.get("funding_state_reference") != changes.get(
+            "previous_funding_state_hash"
+        ):
+            return False
+        next_funding = payload.get("funding")
+        if not isinstance(next_funding, dict):
+            return False
+        if next_funding.get("funding_state_hash") != funding.funding_state_hash:
+            return False
+        if amendment_kind == "DEPOSIT_EXTENSION":
+            return (
+                int(payload.get("added_endpoint_payment_reserve_q_atoms", 0))
+                == int(changes.get("additional_endpoint_payment_q_atoms", 0))
+                and int(payload.get("added_network_fee_reserve_q_atoms", 0))
+                == int(changes.get("additional_network_fee_q_atoms", 0))
+            )
+        return int(changes.get("maximum_session_charge_q_atoms", 0)) > 0
 
     def open_session(
         self,
@@ -148,3 +210,52 @@ class SessionApplicationService:
     def get_session_accounting(self, *, session_id: str) -> dict:
         result = self._session_service.get_session(session_id)
         return build_session_accounting_payload(result.session)
+
+    def list_session_amendments(self, *, session_id: str) -> dict:
+        session = self._session_service.get_session(session_id).session
+        amendments = self._session_service.get_session_amendments(session_id)
+        return {
+            "session_id": session_id,
+            "session_contract_hash": session.session_contract_hash,
+            "effective_terms_hash": session.effective_terms_hash,
+            "amendment_sequence": session.session_amendment_sequence,
+            "items": [item.model_dump(mode="json") for item in amendments],
+        }
+
+    def export_session_contract(self, *, session_id: str) -> dict:
+        exchange = self._session_service.export_session_contract(session_id)
+        return exchange.model_dump(mode="json")
+
+    def import_session_contract_exchange(self, *, exchange: dict) -> dict:
+        return self._session_service.import_session_contract_exchange(exchange)
+
+    def accept_session_amendment(
+        self,
+        *,
+        session_id: str,
+        amendment_id: str,
+        amendment_kind: SessionAmendmentKind,
+        changes: dict,
+        consumer_signature: str,
+        endpoint_signature: str,
+        accepted_at: str | None = None,
+    ) -> dict:
+        session = self._session_service.accept_session_amendment(
+            session_id,
+            amendment_id=amendment_id,
+            amendment_kind=amendment_kind,
+            changes=changes,
+            consumer_signature=consumer_signature,
+            endpoint_signature=endpoint_signature,
+            accepted_at=accepted_at,
+        )
+        amendments = self._session_service.get_session_amendments(session_id)
+        amendment = next(
+            item for item in amendments if item.amendment_id == amendment_id
+        )
+        result = self._session_service.get_session(session_id)
+        return {
+            "amendment": amendment.model_dump(mode="json"),
+            "effective_terms_hash": session.effective_terms_hash,
+            "payload": build_session_detail_payload(result),
+        }

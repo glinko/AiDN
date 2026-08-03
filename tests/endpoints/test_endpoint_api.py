@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
+from aidn_hypervisor.endpoints.models import CreateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.main import build_app
@@ -13,6 +14,8 @@ from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.registry_service import RegistryService
+from aidn_hypervisor.remote_endpoints.service import RemoteEndpointService
+from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeExecuteRequest,
@@ -23,6 +26,8 @@ from aidn_hypervisor.runtime_protocol.models import (
 )
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.session_failure.models import RecoveryWindowConfig
+from aidn_hypervisor.session_failure.service import SessionFailureHandler
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.settlement.models import SessionSettlementAcceptance
@@ -57,10 +62,17 @@ def _runtime_binding_bundle(bundle_id: str) -> BundleConfig:
     )
 
 
-def _mvp_api_context(consumer_authorization_public_key: str | None = None):
+def _mvp_api_context(
+    consumer_authorization_public_key: str | None = None,
+    failure_handler: SessionFailureHandler | None = None,
+):
     hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
     endpoint_service = EndpointService(EndpointStore())
-    session_service = SessionService(SessionStore())
+    session_service = SessionService(
+        SessionStore(),
+        failure_handler=failure_handler,
+        recovery_config=(failure_handler.recovery_config if failure_handler else None),
+    )
     client = TestClient(
         build_app(
             service=hypervisor,
@@ -547,6 +559,98 @@ def test_open_public_mvp_fixed_price_session_requires_wallet_bound_authorization
     )
     assert mismatched.status_code == 409
     assert "fixed price must match" in mismatched.json()["error"]["message"]
+
+
+def test_open_public_mvp_proxy_session_rejects_legacy_remote_publication() -> None:
+    hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    endpoint_service = EndpointService(EndpointStore())
+    remote_endpoint_service = RemoteEndpointService(RemoteEndpointStore())
+    hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
+    operator_wallet_id = hypervisor.owner_wallet_state()["wallet_id"]
+    endpoint = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=operator_wallet_id,
+            bundle_id="bundle-proxy",
+            bundle_hash="bundle-hash-proxy",
+            display_name="Legacy Proxy",
+            model_class="llm.chat",
+            capabilities=["llm.chat"],
+            publication={
+                "visibility": "public",
+                "discoverable": True,
+                "accepts_external_requests": True,
+            },
+            pricing={"billing_unit": "request", "fixed_price": 0.0009},
+        )
+    ).endpoint
+    remote = remote_endpoint_service.attach_remote_endpoint(
+        source_node_id="node-remote",
+        source_endpoint_id="remote-endpoint",
+        source_owner_wallet="wallet-remote",
+        source_publication_id="pub-remote",
+        source_configuration_hash="remote-config",
+        source_visibility="public",
+        source_model_class="llm.chat",
+        source_status="published",
+        source_base_url="https://remote.example",
+        operator_id="operator-remote",
+        pricing={"billing_unit": "request", "fixed_request": 1},
+        rating={},
+    )
+    endpoint_service.attach_proxy_target(endpoint.endpoint_id, remote)
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    operator_key = Ed25519PrivateKey.from_private_bytes(
+        bytes.fromhex(hypervisor.owner_wallet_private_key().removeprefix("ed25519:"))
+    )
+    operator_public_key = (
+        f"ed25519:{operator_key.public_key().public_bytes_raw().hex()}"
+    )
+    operator_nonce = "proxy-operator-registration"
+    operator_signature = operator_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id=operator_wallet_id,
+            public_key=operator_public_key,
+            registration_nonce=operator_nonce,
+        )
+    ).hex()
+    hypervisor.register_wallet_identity(
+        wallet_id=operator_wallet_id,
+        public_key=operator_public_key,
+        registration_nonce=operator_nonce,
+        signature=f"ed25519:{operator_signature}",
+    )
+    publication_service.publish_configuration(
+        endpoint_id=endpoint.endpoint_id,
+        owner_wallet=operator_wallet_id,
+        owner_public_key=operator_public_key,
+        node_id="node-local",
+        wallet_private_key=hypervisor.owner_wallet_private_key(),
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+            remote_endpoint_service=remote_endpoint_service,
+            session_service=SessionService(SessionStore()),
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint.endpoint_id}/public-mvp-sessions",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 100,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "verified remote Endpoint publication" in response.json()["error"]["message"]
 
 
 def test_open_public_mvp_fixed_price_session_returns_endpoint_not_found() -> None:
@@ -1134,6 +1238,27 @@ def test_mvp_fixed_price_session_executes_task_and_finalizes_from_runtime_eviden
     assert finalize_response.status_code == 200
     assert finalize_body["data"]["proposal"]["final_endpoint_payment_q_atoms"] == 900
     assert finalize_body["data"]["proposal"]["consumer_fee_refund_q_atoms"] == 100
+    operations = hypervisor.list_ledger_operations()
+    ready_operations = [
+        item
+        for item in operations
+        if item["operation_type"] == "SESSION_SETTLEMENT_READY_COMMIT"
+    ]
+    proposal_operations = [
+        item
+        for item in operations
+        if item["operation_type"] == "SESSION_SETTLEMENT_PROPOSE"
+    ]
+    assert len(ready_operations) == 1
+    assert len(proposal_operations) == 1
+    ready_payload = ready_operations[0]["payload"]
+    assert ready_payload["session_id"] == session["session_id"]
+    assert ready_payload["ready"]["settlement_input_root"] == (
+        finalize_body["data"]["proposal"]["settlement_input_root"]
+    )
+    assert proposal_operations[0]["payload"]["settlement_ready_operation_id"] == (
+        ready_operations[0]["operation_id"]
+    )
     assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
 
@@ -1454,9 +1579,56 @@ def test_force_finalize_mvp_endpoint_unavailable_refunds_after_timeout() -> None
     assert body["data"]["proposal"]["consumer_payment_refund_q_atoms"] == 900
     assert body["data"]["proposal"]["consumer_fee_refund_q_atoms"] == 100
     assert body["data"]["settlement"]["no_request"] is True
-    assert body["data"]["session"]["status"] == "closed"
+    assert body["data"]["session"]["status"] == "force_settled"
     assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 0
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 1_000
+
+
+def test_force_finalize_mvp_binds_failure_evidence_root() -> None:
+    handler = SessionFailureHandler(
+        recovery_config=RecoveryWindowConfig(
+            consumer_reconnect_timeout_seconds=60,
+            provider_reconnect_timeout_seconds=60,
+        )
+    )
+    hypervisor, client, endpoint, session = _mvp_api_context(
+        failure_handler=handler
+    )
+
+    response = _force_finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        reason="ENDPOINT_UNAVAILABLE",
+        force_after="2026-07-18T12:01:00+00:00",
+        now="2026-07-18T12:01:00+00:00",
+    )
+
+    assert response.status_code == 200
+    expected_root = handler.failure_evidence_root(session["session_id"])
+    assert expected_root is not None
+    failure_operation = next(
+        item
+        for item in hypervisor.list_ledger_operations()
+        if item["operation_type"] == "SESSION_FAILURE_EVIDENCE"
+    )
+    forced_operation = next(
+        item
+        for item in hypervisor.list_ledger_operations()
+        if item["operation_type"] == "SESSION_FORCE_SETTLE"
+    )
+    assert forced_operation["payload"]["failure_evidence_root"] == expected_root
+    assert (
+        forced_operation["payload"]["failure_evidence_operation_id"]
+        == failure_operation["operation_id"]
+    )
+    assert failure_operation["payload"]["failure_evidence_root"] == expected_root
+    assert failure_operation["payload"]["failure_class"] == "ENDPOINT_FAILURE"
+    assert (
+        hypervisor.session_service.store.get_session(session["session_id"])
+        .settlement_snapshot["failure_evidence_root"]
+        == expected_root
+    )
 
 
 def test_force_finalize_mvp_endpoint_unavailable_survives_restore_without_double_refund(
@@ -1478,7 +1650,7 @@ def test_force_finalize_mvp_endpoint_unavailable_survives_restore_without_double
         state_store
     )
     funding = restored.get_session_funding_account(session["session_id"])
-    forced_operations = _ledger_operation_count(restored, "SESSION_FORCED_SETTLEMENT")
+    forced_operations = _ledger_operation_count(restored, "SESSION_FORCE_SETTLE")
     restored_session = restored_session_service.store.get_session(session["session_id"])
     restored_deposit = restored_session_service.store.get_deposit_for_session(
         session["session_id"]
@@ -1487,7 +1659,8 @@ def test_force_finalize_mvp_endpoint_unavailable_survives_restore_without_double
     assert funding.funding_state == "RELEASED"
     assert restored.wallet_q_atom_balance("wallet-endpoint") == 0
     assert restored.wallet_q_atom_balance("wallet-consumer") == 1_000
-    assert restored_session.status == "closed"
+    assert restored_session.status == "force_settled"
+    assert restored_session.settlement_snapshot["settlement_evidence_root"]
     assert restored_deposit.status == "released"
     assert forced_operations == 1
 
@@ -1505,7 +1678,7 @@ def test_force_finalize_mvp_endpoint_unavailable_survives_restore_without_double
     assert restored.wallet_q_atom_balance("wallet-endpoint") == 0
     assert restored.wallet_q_atom_balance("wallet-consumer") == 1_000
     assert (
-        _ledger_operation_count(restored, "SESSION_FORCED_SETTLEMENT")
+        _ledger_operation_count(restored, "SESSION_FORCE_SETTLE")
         == forced_operations
     )
 
@@ -1538,6 +1711,49 @@ def test_force_finalize_mvp_completed_fixed_price_pays_after_consumer_timeout() 
     )
     assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
+def test_force_finalize_mvp_consumer_timeout_uses_protocol_failure_class() -> None:
+    handler = SessionFailureHandler(
+        recovery_config=RecoveryWindowConfig(
+            consumer_reconnect_timeout_seconds=60,
+            provider_reconnect_timeout_seconds=60,
+        )
+    )
+    hypervisor, client, endpoint, session = _mvp_api_context(
+        failure_handler=handler
+    )
+    request, _ = _seed_terminal_runtime_evidence(
+        hypervisor,
+        endpoint=endpoint,
+        session=session,
+    )
+
+    response = _force_finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        reason="CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE",
+        force_after="2026-07-18T12:01:00+00:00",
+        now="2026-07-18T12:01:00+00:00",
+        request_id=request.request_id,
+    )
+
+    assert response.status_code == 200
+    failure_operation = next(
+        item
+        for item in hypervisor.list_ledger_operations()
+        if item["operation_type"] == "SESSION_FAILURE_EVIDENCE"
+    )
+    forced_operation = next(
+        item
+        for item in hypervisor.list_ledger_operations()
+        if item["operation_type"] == "SESSION_FORCE_SETTLE"
+    )
+    assert failure_operation["payload"]["failure_class"] == "CONSUMER_DISCONNECTED"
+    assert forced_operation["payload"]["failure_class"] == (
+        "CONSUMER_TIMEOUT_AFTER_COMPLETED_FIXED_PRICE"
+    )
 
 
 def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
@@ -1632,6 +1848,27 @@ def test_create_endpoint_route_rejects_runtime_binding_admission_blocker() -> No
     assert body["error"]["details"]["blockers"][0]["code"] == (
         "RUNTIME_BINDING_NOT_READY"
     )
+
+
+def test_delete_endpoint_is_soft_delete_and_returns_custody_schedule() -> None:
+    client = _client()
+    created = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-1",
+            "bundle_id": "bundle-a",
+            "bundle_hash": "bundle-hash-a",
+            "display_name": "Operator STT",
+            "model_class": "speech.stt",
+            "capabilities": ["speech.stt"],
+        },
+    ).json()["data"]["endpoint"]
+
+    response = client.delete(f"/api/v1/endpoints/{created['endpoint_id']}")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["endpoint"]["status"] == "deleted"
+    assert response.json()["data"]["custody_retirements"] == []
 
 
 def test_patch_endpoint_runtime_rotates_configuration_hash() -> None:

@@ -101,9 +101,16 @@ def _validate_pair(hypervisor_path: Path, abci_path: Path) -> dict:
         operations=[item.model_dump(mode="json") for item in hypervisor.ledger_operations],
         wallet_sequences=hypervisor.wallet_operation_sequences,
         wallet_q_atom_balances=hypervisor.wallet_q_atom_balances,
+        recyclable_q_atoms=hypervisor.recyclable_q_atoms,
+        burned_q_atoms=hypervisor.burned_q_atoms,
+        stake_records=[dict(item) for item in hypervisor.stake_records],
+        participant_suspensions=[dict(item) for item in hypervisor.participant_suspensions],
         session_funding_accounts=[item.model_dump(mode="json") for item in hypervisor.session_funding_accounts],
         settlement_proposals=[item.model_dump(mode="json") for item in hypervisor.settlement_proposals],
         settlement_acceptances=[item.model_dump(mode="json") for item in hypervisor.settlement_acceptances],
+        session_checkpoints=[item.model_dump(mode="json") for item in hypervisor.session_checkpoints],
+        settlement_disputes=[item.model_dump(mode="json") for item in hypervisor.settlement_disputes],
+        settlement_corrections=[item.model_dump(mode="json") for item in hypervisor.settlement_corrections],
         settlement_transition_hashes=hypervisor.settlement_transition_hashes,
     )
     app_hash = AIDNABCIApplication(ledger_service=ledger).prepare_snapshot()["app_hash"]

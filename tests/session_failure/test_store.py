@@ -191,3 +191,89 @@ class TestBulkOperations:
         store.reset()
         assert not store.has_evidence("sess-001")
         assert store.get_all_session_ids() == []
+
+    def test_snapshot_and_restore_preserve_evidence_and_report(self, store):
+        record = FailureEvidenceRecord(
+            session_id="sess-001",
+            evidence_level=EvidenceLevel.CRYPTOGRAPHIC,
+            category="signed_failure",
+            detail="signed endpoint failure",
+            recorded_at="2026-08-02T00:00:00+00:00",
+            source="endpoint",
+        )
+        report = FailureReport(
+            session_id="sess-001",
+            failure_class=FailureClass.ENDPOINT_FAILURE,
+            failure_timestamp="2026-08-02T00:00:00+00:00",
+            previous_status="active",
+            resulting_status="recovering",
+            evidence_ids=[record.recorded_at],
+        )
+        store.add_evidence(record.session_id, record)
+        store.save_report(report)
+
+        restored = SessionFailureEvidenceStore()
+        restored.restore(
+            evidence=[item.model_dump(mode="json") for item in store.snapshot_evidence()],
+            reports=[item.model_dump(mode="json") for item in store.snapshot_reports()],
+        )
+
+        assert restored.snapshot_evidence() == [record]
+        assert restored.snapshot_reports() == [report]
+
+    def test_restore_rejects_conflicting_duplicate_report(self, store):
+        first = FailureReport(
+            session_id="sess-001",
+            failure_class=FailureClass.ENDPOINT_FAILURE,
+            failure_timestamp="2026-08-02T00:00:00+00:00",
+            previous_status="active",
+            resulting_status="recovering",
+        )
+        conflicting = first.model_copy(update={"resulting_status": "force_closing"})
+        with pytest.raises(ValueError, match="conflicting failure report"):
+            store.restore(reports=[first, conflicting])
+
+    def test_failure_evidence_root_is_empty_until_evidence_exists(self, store):
+        assert store.failure_evidence_root("sess-001") is None
+
+    def test_failure_evidence_root_is_order_independent_and_restorable(self, store):
+        first = FailureEvidenceRecord(
+            session_id="sess-001",
+            evidence_level=EvidenceLevel.OBSERVATIONAL,
+            category="transport_timeout",
+            detail="connection lost",
+            recorded_at="2026-08-02T00:00:00+00:00",
+        )
+        second = FailureEvidenceRecord(
+            session_id="sess-001",
+            evidence_level=EvidenceLevel.REPRODUCIBLE,
+            category="hash_mismatch",
+            detail="result hash mismatch",
+            recorded_at="2026-08-02T00:01:00+00:00",
+        )
+        report = FailureReport(
+            session_id="sess-001",
+            failure_class=FailureClass.ENDPOINT_FAILURE,
+            failure_timestamp="2026-08-02T00:00:00+00:00",
+            previous_status="active",
+            resulting_status="recovering",
+            evidence_ids=[first.recorded_at, second.recorded_at],
+        )
+        store.add_evidence("sess-001", first)
+        store.add_evidence("sess-001", second)
+        store.save_report(report)
+        root = store.failure_evidence_root("sess-001")
+        assert root is not None
+
+        reordered = SessionFailureEvidenceStore()
+        reordered.add_evidence("sess-001", second)
+        reordered.add_evidence("sess-001", first)
+        reordered.save_report(report)
+        assert reordered.failure_evidence_root("sess-001") == root
+
+        restored = SessionFailureEvidenceStore()
+        restored.restore(
+            evidence=[item.model_dump(mode="json") for item in store.snapshot_evidence()],
+            reports=[item.model_dump(mode="json") for item in store.snapshot_reports()],
+        )
+        assert restored.failure_evidence_root("sess-001") == root

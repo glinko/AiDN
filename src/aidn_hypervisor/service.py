@@ -1,6 +1,7 @@
 import hashlib
 import json
 import time
+from copy import deepcopy
 from datetime import UTC, datetime
 
 from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
@@ -8,6 +9,7 @@ from aidn_hypervisor.allocation_catalog_service import AllocationCatalogService
 from aidn_hypervisor.allocation_lifecycle_service import AllocationLifecycleService
 from aidn_hypervisor.bundle_runtime_policy_service import BundleRuntimePolicyService
 from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, TaskRequest
 from aidn_hypervisor.economics.models import (
     EpochRewardPoolShares,
@@ -175,8 +177,8 @@ class HypervisorService:
         self.registry_service = registry_service
         self.consensus_service = consensus_service
         self.consensus_finality_source = consensus_finality_source
-        if registry_service is not None and consensus_finality_source is not None:
-            registry_service.bind_consensus_finality_source(consensus_finality_source)
+        if consensus_finality_source is not None:
+            self.bind_consensus_finality_source(consensus_finality_source)
         self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
             state_store
         )
@@ -247,6 +249,12 @@ class HypervisorService:
         # Track allocation_ids that must be auto-held due to strict-accounting blocks
         self._wallet_strict_held_allocations: set[str] = set()
         self._ledger_operation_service = LedgerOperationService()
+        # Pending consensus projections are local correlation records. They are
+        # persisted for retry, but never enter the canonical Ledger operation log.
+        self._pending_consensus_operations: dict[str, dict] = {}
+        # Unlike the projection records above, these are the exact immutable
+        # network envelopes needed to retry an admitted operation after restart.
+        self._pending_consensus_envelopes: dict[str, dict] = {}
         self._mvp_session_economics_service = MvpSessionEconomicsService(self)
         self._wallet_economics_service = WalletEconomicsService(self)
         self._wallet_allocation_service = WalletAllocationService(self)
@@ -271,10 +279,22 @@ class HypervisorService:
         self._provider_inventory_application_service = (
             ProviderInventoryApplicationService(self)
         )
+
         self._settlement_application_service = SettlementApplicationService(self)
         self.operator_read_models = OperatorReadModelService(self)
         self._events: list[JournalEvent] = []
         self._runtime_boundary = RuntimeProtocolBoundaryService(self)
+
+    def bind_consensus_finality_source(self, consensus_finality_source) -> None:
+        """Bind one verified finality source to the Hypervisor and Registry."""
+        if (
+            self.consensus_finality_source is not None
+            and self.consensus_finality_source is not consensus_finality_source
+        ):
+            raise ValueError("Hypervisor is already bound to another consensus finality source")
+        self.consensus_finality_source = consensus_finality_source
+        if self.registry_service is not None:
+            self.registry_service.bind_consensus_finality_source(consensus_finality_source)
 
     @property
     def pricing(self) -> dict:
@@ -342,6 +362,22 @@ class HypervisorService:
                 isinstance(evidence, ConsensusFinalityEvidence)
                 and evidence.operation_id == operation_id
             ):
+                consensus = self.consensus_service
+                if consensus is not None and getattr(consensus, "is_enabled", False):
+                    if evidence.chain_id != consensus.config.chain_id:
+                        evidence = None
+                    else:
+                        try:
+                            consensus.reconcile_finality(
+                                operation_id,
+                                finality_source=finality_source,
+                            )
+                        except Exception:
+                            evidence = None
+            if (
+                isinstance(evidence, ConsensusFinalityEvidence)
+                and evidence.operation_id == operation_id
+            ):
                 return {
                     "status": "consensus_finalized",
                     "consensus_finalized": True,
@@ -374,6 +410,113 @@ class HypervisorService:
     def ledger_operation_service(self) -> LedgerOperationService:
         """Expose the canonical ledger dependency for application composition."""
         return self._ledger_operation_service
+
+    def stage_consensus_operation(self, operation: dict) -> dict:
+        operation_id = operation.get("operation_id")
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            raise ValueError("pending consensus operation ID is invalid")
+        existing = self._pending_consensus_operations.get(operation_id)
+        if existing is not None:
+            if existing != operation:
+                raise ValueError("conflicting pending consensus operation")
+            return deepcopy(existing)
+        self._pending_consensus_operations[operation_id] = deepcopy(operation)
+        self._persist_state()
+        return deepcopy(operation)
+
+    def stage_pending_consensus_envelope(
+        self, envelope: LedgerOperationEnvelope | dict
+    ) -> dict:
+        """Persist one exact consensus envelope before network submission."""
+        typed = LedgerOperationEnvelope.model_validate(envelope)
+        operation_id = typed.operation_id
+        payload = typed.model_dump(mode="json")
+        existing = self._pending_consensus_envelopes.get(operation_id)
+        if existing is not None:
+            if existing != payload:
+                raise ValueError("conflicting pending consensus envelope")
+            return deepcopy(existing)
+        self._pending_consensus_envelopes[operation_id] = deepcopy(payload)
+        self._persist_state()
+        return deepcopy(payload)
+
+    def get_pending_consensus_envelope(
+        self, operation_id: str
+    ) -> LedgerOperationEnvelope | None:
+        """Return the exact persisted envelope for one pending operation."""
+        payload = self._pending_consensus_envelopes.get(operation_id)
+        if payload is None:
+            return None
+        return LedgerOperationEnvelope.model_validate(deepcopy(payload))
+
+    def find_pending_consensus_envelope(
+        self,
+        *,
+        operation_type: str,
+        predicate=None,
+    ) -> LedgerOperationEnvelope | None:
+        """Find a persisted envelope by operation type and semantic predicate."""
+        for payload in reversed(list(self._pending_consensus_envelopes.values())):
+            try:
+                envelope = LedgerOperationEnvelope.model_validate(deepcopy(payload))
+            except ValueError:
+                continue
+            if envelope.operation_type != operation_type:
+                continue
+            if predicate is None or predicate(envelope):
+                return envelope
+        return None
+
+    def list_pending_consensus_envelopes(self) -> list[LedgerOperationEnvelope]:
+        """Return all pending envelopes for conflict-aware recovery checks."""
+        envelopes: list[LedgerOperationEnvelope] = []
+        for payload in self._pending_consensus_envelopes.values():
+            try:
+                envelopes.append(LedgerOperationEnvelope.model_validate(deepcopy(payload)))
+            except ValueError:
+                continue
+        return envelopes
+
+    def discard_pending_consensus_envelopes(self, *operation_ids: str) -> None:
+        """Remove envelopes once their canonical projections are local."""
+        changed = False
+        for operation_id in operation_ids:
+            changed = (
+                self._pending_consensus_envelopes.pop(operation_id, None) is not None
+                or changed
+            )
+        if changed:
+            self._persist_state()
+
+    def get_local_consensus_operation(self, operation_id: str) -> dict | None:
+        operation = self._ledger_operation_service.get_operation(operation_id)
+        if operation is not None:
+            return operation
+        pending = self._pending_consensus_operations.get(operation_id)
+        return deepcopy(pending) if pending is not None else None
+
+    def find_pending_consensus_operation(
+        self,
+        *,
+        operation_type: str,
+        payload_fields: dict[str, object],
+    ) -> dict | None:
+        for operation in reversed(list(self._pending_consensus_operations.values())):
+            if operation.get("operation_type") != operation_type:
+                continue
+            payload = operation.get("payload")
+            if isinstance(payload, dict) and all(
+                payload.get(key) == value for key, value in payload_fields.items()
+            ):
+                return deepcopy(operation)
+        return None
+
+    def discard_pending_consensus_operations(self, *operation_ids: str) -> None:
+        changed = False
+        for operation_id in operation_ids:
+            changed = self._pending_consensus_operations.pop(operation_id, None) is not None or changed
+        if changed:
+            self._persist_state()
 
     def export_ledger_operations(
         self,
@@ -431,6 +574,21 @@ class HypervisorService:
             created_at=created_at,
         )
 
+    def submit_consensus_cooperative_settlement(
+        self,
+        evaluation,
+        acceptance,
+        *,
+        created_at: str | None = None,
+        signatures: list[str] | None = None,
+    ):
+        return self._settlement_application_facade().submit_consensus_cooperative_settlement(
+            evaluation,
+            acceptance,
+            created_at=created_at,
+            signatures=signatures,
+        )
+
     def finalize_accepted_settlement(self, evaluation, *, created_at: str | None = None):
         return self._settlement_application_facade().finalize_accepted_settlement(
             evaluation,
@@ -441,6 +599,25 @@ class HypervisorService:
         return self._settlement_application_facade().force_finalize_fixed_price_settlement(
             evaluation,
             **kwargs,
+        )
+
+    def prepare_force_settlement_operation(self, evaluation, **kwargs):
+        return self._settlement_application_facade().prepare_force_settlement_operation(
+            evaluation,
+            **kwargs,
+        )
+
+    def apply_prepared_force_settlement(
+        self,
+        evaluation,
+        *,
+        force_operation_id: str,
+        created_at: str | None = None,
+    ):
+        return self._settlement_application_facade().apply_prepared_force_settlement(
+            evaluation,
+            force_operation_id=force_operation_id,
+            created_at=created_at,
         )
 
     def open_mvp_fixed_price_session(
@@ -456,6 +633,9 @@ class HypervisorService:
         consumer_authorization_public_key: str | None = None,
         consumer_authorization: dict | None = None,
         require_wallet_authorization: bool = False,
+        session_id: str | None = None,
+        consensus_sender_sequence: int | None = None,
+        consensus_lock_signatures: list[str] | None = None,
     ):
         return self._settlement_application_facade().open_mvp_fixed_price_session(
             session_service=session_service,
@@ -468,6 +648,9 @@ class HypervisorService:
             consumer_authorization_public_key=consumer_authorization_public_key,
             consumer_authorization=consumer_authorization,
             require_wallet_authorization=require_wallet_authorization,
+            session_id=session_id,
+            consensus_sender_sequence=consensus_sender_sequence,
+            consensus_lock_signatures=consensus_lock_signatures,
         )
 
     def build_mvp_fixed_price_settlement_evaluation(
@@ -540,6 +723,13 @@ class HypervisorService:
         now: str | None = None,
         actual_network_fees_q_atoms: int = 0,
         settlement_sequence: int = 1,
+        consensus_sender_sequence: int | None = None,
+        consensus_lock_signatures: list[str] | None = None,
+        consensus_failure_signatures: list[str] | None = None,
+        consensus_initiator_wallet: str | None = None,
+        consensus_initiator_signature: str | None = None,
+        consensus_observed_at: str | None = None,
+        consensus_force_signatures: list[str] | None = None,
     ):
         return self._settlement_application_facade().force_finalize_mvp_fixed_price_session(
             session_service=session_service,
@@ -550,6 +740,36 @@ class HypervisorService:
             now=now,
             actual_network_fees_q_atoms=actual_network_fees_q_atoms,
             settlement_sequence=settlement_sequence,
+            consensus_sender_sequence=consensus_sender_sequence,
+            consensus_lock_signatures=consensus_lock_signatures,
+            consensus_failure_signatures=consensus_failure_signatures,
+            consensus_initiator_wallet=consensus_initiator_wallet,
+            consensus_initiator_signature=consensus_initiator_signature,
+            consensus_observed_at=consensus_observed_at,
+            consensus_force_signatures=consensus_force_signatures,
+        )
+
+    def commit_session_failure_evidence(
+        self,
+        *,
+        session_id: str,
+        failure_class: str,
+        failure_evidence_root: str,
+        details: str | None = None,
+        created_at: str | None = None,
+    ) -> dict:
+        return self._settlement_application_facade().commit_session_failure_evidence(
+            session_id=session_id,
+            failure_class=failure_class,
+            failure_evidence_root=failure_evidence_root,
+            details=details,
+            created_at=created_at,
+        )
+
+    def submit_consensus_session_failure_chain(self, **kwargs):
+        """Advance local Session failure evidence through canonical consensus."""
+        return self._settlement_application_facade().submit_consensus_session_failure_chain(
+            **kwargs
         )
 
     def record_ledger_operation(

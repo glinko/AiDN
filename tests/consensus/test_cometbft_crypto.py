@@ -136,6 +136,64 @@ def test_backend_hashes_rpc_validator_set_and_verifies_signed_precommits():
     ) == {validator.address for validator in validator_set.validators}
 
 
+def test_backend_returns_only_valid_signers_for_supermajority_inputs():
+    private_keys = [Ed25519PrivateKey.generate() for _ in range(3)]
+    validator_set = CometBftValidatorSet(
+        tuple(
+            _validator(private_key, voting_power)
+            for private_key, voting_power in zip(private_keys, (4, 3, 3), strict=True)
+        )
+    )
+    backend = StrictCometBftEd25519Backend()
+    block_id = _block_id()
+    timestamp = "2030-01-01T00:00:00Z"
+
+    def signed_header_for(indices: list[int]) -> dict:
+        sign_bytes = cometbft_vote_sign_bytes(
+            chain_id="aidn-testnet-1",
+            height=11,
+            round_number=0,
+            block_id=block_id,
+            timestamp=timestamp,
+        )
+        return {
+            "commit": {
+                "height": "11",
+                "round": "0",
+                "block_id": block_id,
+                "signatures": [
+                    {
+                        "block_id_flag": 2,
+                        "validator_address": validator_set.validators[index].address,
+                        "timestamp": timestamp,
+                        "signature": base64.b64encode(
+                            private_keys[index].sign(sign_bytes)
+                        ).decode("ascii"),
+                    }
+                    for index in indices
+                ],
+            }
+        }
+
+    assert backend.verified_signer_addresses(
+        signed_header=signed_header_for([0, 1]),
+        validator_set=validator_set,
+        chain_id="aidn-testnet-1",
+        block_height=11,
+        block_id="A" * 64,
+    ) == {
+        validator_set.validators[0].address,
+        validator_set.validators[1].address,
+    }
+    assert backend.verified_signer_addresses(
+        signed_header=signed_header_for([0]),
+        validator_set=validator_set,
+        chain_id="aidn-testnet-1",
+        block_height=11,
+        block_id="A" * 64,
+    ) == {validator_set.validators[0].address}
+
+
 def test_backend_accepts_the_cometbft_rpc_block_id_parts_field():
     private_key = Ed25519PrivateKey.generate()
     validator = _validator(private_key, 1)

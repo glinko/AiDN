@@ -173,7 +173,17 @@ tools/run-independent-operator-acceptance.sh \
   --evidence-dir /var/lib/aidn/acceptance-evidence
 ```
 
-The runner writes separate Registry replication and external-finality JSON reports plus SHA-256 sums. Preserve the reports, exact checkout commit, peer attestation, checkpoint source, validator/control-group evidence, and operator contact/ownership statement.
+The runner writes separate Registry replication and external-finality JSON reports, a
+SHA-256 manifest covering those two source reports, and a derived
+`evidence-validation-<timestamp>.json` result. The validator receives the exact
+manifest produced by the same run and fails closed when a source report is
+missing, mutated, duplicated, structurally incomplete, or makes an unsupported
+ownership claim. Symlinked or path-escaping bundle entries are also rejected.
+The validation result is intentionally derived and is not included in the
+source-report checksum manifest. Preserve all three reports, the checksum
+manifest, exact checkout commit, peer attestation,
+checkpoint source, validator/control-group evidence, and operator
+contact/ownership statement.
 
 Successful output still reports `ownership_evidence: NOT_PROVEN_BY_PROTOCOL`. mTLS, Ed25519, and two RPC endpoints prove protocol-level identity and matching evidence, not that operators are independent. Do not enable a public directory-trust or public network-finality claim until the corresponding out-of-band evidence is reviewed.
 

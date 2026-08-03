@@ -4,6 +4,7 @@ from uuid import uuid4
 from aidn_hypervisor.remote_endpoints.models import (
     RemoteEndpointReference,
     RemoteEndpointRoutingMode,
+    RemotePublicationVerification,
 )
 
 
@@ -76,12 +77,21 @@ class RemoteEndpointService:
         source_status: str,
         source_base_url: str,
         operator_id: str,
+        source_owner_public_key: str | None = None,
+        source_wallet_signature: str | None = None,
+        publication_verification: RemotePublicationVerification = "LEGACY_UNVERIFIED",
         pricing: dict[str, str | int | float | None],
         rating: dict[str, str | int | float | None],
         session_policy: dict | None = None,
         alias: str | None = None,
         routing_mode: RemoteEndpointRoutingMode = "preferred",
     ) -> RemoteEndpointReference:
+        if publication_verification == "VERIFIED" and not (
+            source_owner_public_key and source_wallet_signature
+        ):
+            raise ValueError(
+                "Verified remote Endpoint publication requires owner key and signature"
+            )
         records = self.store.list_records()
         now = datetime.now(UTC).isoformat()
         existing = next(
@@ -106,6 +116,9 @@ class RemoteEndpointService:
                 source_status=source_status,
                 source_base_url=source_base_url,
                 operator_id=operator_id,
+                source_owner_public_key=source_owner_public_key,
+                source_wallet_signature=source_wallet_signature,
+                publication_verification=publication_verification,
                 alias=alias,
                 routing_mode=routing_mode,
                 attached_at=now,
@@ -127,6 +140,9 @@ class RemoteEndpointService:
                 "source_status": source_status,
                 "source_base_url": source_base_url,
                 "operator_id": operator_id,
+                "source_owner_public_key": source_owner_public_key,
+                "source_wallet_signature": source_wallet_signature,
+                "publication_verification": publication_verification,
                 "alias": alias if alias is not None else existing.alias,
                 "routing_mode": routing_mode,
                 "last_seen_at": now,

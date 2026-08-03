@@ -32,6 +32,23 @@ unsupported, not silently approximated.
   no Usage conflict.
 - Endpoint unavailability is conservatively settled as zero Endpoint Payment
   and a Consumer refund after the timeout.
+- A successful forced finalization has protocol terminal state `FORCE_SETTLED`
+  and local Session projection status `force_settled`; its settlement snapshot
+  is persisted and rehydrated on restart. Repeating the same finalization is
+  idempotent, while a different settlement evidence root is rejected. Ordinary
+  cooperative finalization remains `closed`.
+- Failure classification persists `failure_class`, attribution and the exact
+  recovery deadline in the Session projection. Restart re-registers a
+  `recovering` Session with that deadline; a missing legacy deadline expires
+  immediately instead of extending exposure. Terminal Settlement rejects stale
+  recovery callbacks.
+- Failure evidence and Failure Reports are included in the durable Hypervisor
+  snapshot. Restore validates and replaces the local failure-handler evidence
+  view idempotently, rejects conflicting reports, and does not turn restored
+  local evidence into terminal Settlement authority by itself. The default
+  production `build_app()` wires a `SessionFailureHandler` and restores that
+  evidence before force-finalization; the handler's canonical v1 evidence root
+  is then bound into the Forced Settlement operation and terminal snapshot.
 
 ## Required Invariants
 
@@ -72,8 +89,47 @@ Implemented now:
   commits the Result hash, Final Usage chain head, Runtime Binding and Runtime/
   Route generation lineage. Settlement cross-checks that record before paying a
   runtime-bound Endpoint.
+- Session Contract versions now have an immutable local amendment chain. The
+  initial `effective_terms_hash` equals the Session Contract hash; accepted
+  expiration, Request-limit and artifact-limit amendments advance the chain,
+  while economic amendments require application-verified canonical
+  predecessor-bound escrow proof.
+  Runtime Requests, terminal evidence and Settlement Inputs carry the current
+  effective-terms head. Public MVP amendments verify both Wallet signatures;
+  missing identity evidence fails closed.
 - Canonical `q_atoms` funding accounts, escrow lock, proposal, acceptance,
-  cooperative finalization and the two conservative forced-settlement rules.
+  cooperative finalization, zero-payment Endpoint failure settlement and the
+  evidence-bound completed fixed-price Consumer-timeout profile.
+- The ordinary local cooperative path records one idempotent
+  `SESSION_SETTLEMENT_READY_COMMIT` immediately before the Settlement
+  proposal. It binds the current Funding predecessor and Settlement Input
+  roots without moving Q. With consensus enabled, the application submits the
+  readiness, proposal, acceptance and finalization envelopes in order, waits
+  for verified finality, and applies only missing canonical projections;
+  validator-local cooperative writes remain rejected before that boundary.
+  Retries reuse canonical readiness, proposal and signed acceptance payloads
+  even when reconnect changes envelope timestamps. Exact pending envelopes are
+  persisted in the Hypervisor snapshot before submission and removed only
+  after the local canonical projection is present.
+- Forced Settlement terminal lifecycle: `force_settled` local projection,
+  persisted settlement snapshot, restart recovery and evidence-root conflict
+  rejection.
+- RFC-0060 failure evidence and Failure Reports now round-trip through the
+  app-level Hypervisor snapshot with deterministic validation and fail-closed
+  conflict handling. The configured local MVP force-finalize path computes the
+  canonical v1 evidence root from that handler, emits the compact
+  `SESSION_FAILURE_EVIDENCE` commitment, and binds it into both the dependent
+  `SESSION_FORCE_SETTLE` operation and terminal Session snapshot. Explicit
+  test/legacy `SessionService` injections without a handler remain compatibility
+  contexts. Both ABCI and deterministic block execution now validate and apply
+  `SESSION_FAILURE_EVIDENCE` as a typed immutable operation; consensus
+  submission now uses explicit projection builders that derive a new consensus
+  identity, retain the local operation only as audit correlation, require
+  canonical dependency IDs and bind the initiator signature. Automatic
+  submission from local force-finalization and external multi-validator
+  finality of the dependent operations remain the next rollout boundary.
+- Portable Session Contract exchange with base/amendment hash-chain
+  validation, idempotent Registry staging and no local Session overwrite.
 - A local Wallet Identity registry binds `wallet_id -> Ed25519 public key`,
   persists registrations through snapshot/restore, rejects key rotation and
   records canonical `WALLET_IDENTITY_REGISTER` Ledger operations.
@@ -151,6 +207,11 @@ Implemented now:
   Runtime execution, Final Usage, restart recovery from durable state, signed
   cooperative Settlement acceptance and canonical finalization without a
   second provider execution or payment.
+- Cooperative Settlement persists exact pending consensus envelopes before
+  submission and removes them after local canonical projection. Recovery reuses
+  the same operation identity, reconciles duplicate transport responses against
+  verified finality, and rejects a conflicting pending envelope rather than
+  silently creating a second economic operation for the same Session stage.
 - The same public fixed-price execution and restart/Settlement boundary is
   covered against an attached live `vLLM` Runtime Binding. Provider-reported
   token Usage remains evidence only under `MVP-0001`; payment stays fixed-price.
@@ -258,3 +319,15 @@ Still required before public paid-MVP launch:
    observations, but always reports
    `consensus_finality: false`. Network consensus-finality verification and
    broader network governance remain outside this MVP profile.
+
+2. Persist verified remote Endpoint publication evidence through the complete
+   attach path. A verified remote reference stores the owner public key,
+   publication signature and verification state; a Proxy target and its
+   configuration snapshot carry the same evidence across restart. Legacy
+   remote references remain readable for migration and diagnostics, but a
+   Proxy Endpoint backed by `LEGACY_UNVERIFIED` evidence cannot open a public
+   paid MVP Session. Proxy publication hashes include the remote target
+   fingerprint, so the signed local configuration is bound to the exact
+   remote publication and configuration it routes to. Public admission also
+   reconciles the persisted Proxy target against the current remote catalog and
+   fails closed on a stale or replaced remote publication.
