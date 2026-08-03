@@ -44,3 +44,15 @@ OPS-0001
 
 `GATE-0001`, `MIG-0001`, and `EVD-0001` SHOULD be maintained in parallel and MUST be complete before a public production release.
 
+## Repository verification tools
+
+The current repository provides deterministic local checks for the executable pack:
+
+```bash
+uv run python tools/generate-implementation-profile.py --check
+uv run python tools/run-consensus-fixtures.py --manifest fixtures/manifest.json --strict
+uv run python tools/verify-public-evidence-bundle.py --evidence-dir ./evidence
+uv run python tools/verify-release-gates.py --evidence-dir ./evidence
+```
+
+The checked-in implementation profile is a `DRAFT_CANDIDATE` and is not an activation or Governance decision. The release-gate command therefore reports missing operational gates as `NOT_RUN`/`INCOMPLETE` instead of treating local unit tests as public deployment evidence. Use `--allow-incomplete` only for a local development loop.

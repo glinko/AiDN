@@ -62,6 +62,9 @@ evidence/
 
 Artifacts are ordered lexicographically by path.
 
+In the leaf formula, `sha256(file_bytes)` is represented as its lowercase
+64-character hexadecimal ASCII form before concatenation.
+
 For each artifact:
 
 ```text
@@ -76,6 +79,22 @@ SHA256(
 ```
 
 `evidence_root` is the profile-defined Merkle root over ArtifactLeaf values.
+
+The current `EVD-0001.v1` implementation freezes the internal node rule as:
+
+```text
+EvidenceNode(left, right) =
+  SHA256(
+    "AIDN:EVIDENCE-NODE:v1"
+    || 0x00
+    || left_digest_bytes
+    || right_digest_bytes
+  )
+```
+
+Artifacts are sorted by normalized POSIX path before leaf construction. An odd
+Merkle level duplicates its last digest. A one-artifact bundle uses the leaf
+digest as its root. The published string form is `sha256:<64 lowercase hex>`.
 
 ## 5. Sensitive data prohibition
 
@@ -145,6 +164,23 @@ artifact hashes
 
 The final attestation signs the Evidence Root, not each file independently.
 
+The repository verifier accepts the following canonical attestation shape:
+
+```json
+{
+  "attestation_version": 1,
+  "operator_id": "...",
+  "operator_public_key": "ed25519:<64 lowercase hex>",
+  "evidence_root": "sha256:<64 lowercase hex>",
+  "signed_at": "...",
+  "signature": "ed25519:<128 lowercase hex>"
+}
+```
+
+The signature covers the canonical JSON object with `signature` omitted. The
+attestation file is control metadata and MUST NOT be included in the artifact
+Merkle root.
+
 ## 10. Verification command
 
 Recommended:
@@ -172,4 +208,3 @@ Evidence bundles MAY be distributed through:
 - COMET/AiDN object distribution.
 
 The location is not trusted. Hash/signature verification is authoritative.
-

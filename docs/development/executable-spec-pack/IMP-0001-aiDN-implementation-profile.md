@@ -749,6 +749,20 @@ containing:
 
 The generated artifact hash MUST appear in the release evidence bundle.
 
+The repository generator is:
+
+```bash
+uv run python tools/generate-implementation-profile.py \
+  --output profiles/aidn-mainnet-candidate-1.json
+uv run python tools/generate-implementation-profile.py \
+  --check
+```
+
+The generated profile is derived from the current code and operation-coverage
+matrix. Until Governance activates it, its status remains
+`DRAFT_CANDIDATE`/`NOT_ACTIVE`; generation alone does not claim protocol
+support for known operations listed as unsupported.
+
 ## 41. Unsupported behavior principle
 
 Anything not explicitly supported by this profile is unsupported.
