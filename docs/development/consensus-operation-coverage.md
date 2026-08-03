@@ -122,10 +122,11 @@ typed Settlement proposal. It commits the immutable Settlement Input roots,
 Funding predecessor and beneficiaries, but never moves funds or finalizes a
 Session by itself.
 
-## Declared but Not Implemented
+## Legacy Catalog Entries Excluded From Active Profile
 
-These catalog entries remain intentionally outside the current specialized
-consensus profile:
+These names remain in the historical RFC-0059 catalog so old clients receive
+a deterministic rejection, but they are explicitly excluded from the active
+implementation profile:
 
 - `DEPOSIT_LOCK`
 - `ENDPOINT_PUBLISH`
@@ -140,9 +141,9 @@ consensus profile:
 - `VALIDATOR_UNSTAKE`
 
 They may still be used by local compatibility services or prepared as
-off-chain/domain records, but a validator configured with the strict profile
-must reject them until their canonical transition is implemented and covered
-in both entrypoints. A similarly named operation is not treated as an alias:
+off-chain/domain records. A validator configured with the strict profile must
+reject them; they are not counted as missing active transitions. A similarly
+named operation is not treated as an alias:
 for example, `SESSION_SETTLE` does not bypass the specialized
 `SESSION_SETTLEMENT_FINALIZE` transition.
 

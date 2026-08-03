@@ -8,6 +8,26 @@ from aidn_hypervisor.consensus.models import KNOWN_OPERATION_TYPES
 
 OperationCoverage = Literal["IMPLEMENTED", "DECLARED_UNIMPLEMENTED", "EXTENSION"]
 
+# These names remain in the historical RFC-0059 catalog so old clients can
+# receive a deterministic rejection. They are not active operations in the
+# current implementation profile and must not be implemented as aliases for
+# the newer typed transitions.
+LEGACY_OPERATION_TYPES = frozenset(
+    {
+        "DEPOSIT_LOCK",
+        "ENDPOINT_PUBLISH",
+        "EPOCH_TASK",
+        "REGISTRY_UPSERT",
+        "SESSION_SETTLE",
+        "SETTLEMENT_ACCEPT",
+        "SETTLEMENT_PROPOSE",
+        "VALIDATION_REPORT",
+        "VALIDATION_REQUEST",
+        "VALIDATOR_STAKE",
+        "VALIDATOR_UNSTAKE",
+    }
+)
+
 VALIDATION_EVIDENCE_OPERATION_TYPES = frozenset(
     {
         "VALIDATION_REPORT_COMMIT",
@@ -69,6 +89,13 @@ CONSENSUS_APPLIED_OPERATION_TYPES = frozenset(
         "PARTICIPANT_REINSTATE",
     }
 )
+
+ACTIVE_OPERATION_TYPES = frozenset(KNOWN_OPERATION_TYPES - LEGACY_OPERATION_TYPES)
+
+if not LEGACY_OPERATION_TYPES <= KNOWN_OPERATION_TYPES:
+    raise RuntimeError("legacy operation types must be present in the protocol catalog")
+if CONSENSUS_APPLIED_OPERATION_TYPES & LEGACY_OPERATION_TYPES:
+    raise RuntimeError("legacy operation types cannot be consensus-applied")
 
 
 def operation_coverage(operation_type: str) -> OperationCoverage:

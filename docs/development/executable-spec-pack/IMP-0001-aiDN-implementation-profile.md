@@ -761,7 +761,9 @@ uv run python tools/generate-implementation-profile.py \
 The generated profile is derived from the current code and operation-coverage
 matrix. Until Governance activates it, its status remains
 `DRAFT_CANDIDATE`/`NOT_ACTIVE`; generation alone does not claim protocol
-support for known operations listed as unsupported.
+support for known operations listed as unsupported. The profile distinguishes
+active operation types from historical `legacy_operation_types`; legacy names
+remain reject-only and do not become aliases for a newer transition.
 
 ## 41. Unsupported behavior principle
 

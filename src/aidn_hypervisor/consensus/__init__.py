@@ -37,27 +37,11 @@ from aidn_hypervisor.consensus.cometbft_merkle import (
     verify_cometbft_transaction_inclusion,
 )
 from aidn_hypervisor.consensus.coverage import (
+    ACTIVE_OPERATION_TYPES,
     CONSENSUS_APPLIED_OPERATION_TYPES,
+    LEGACY_OPERATION_TYPES,
     operation_coverage,
     strict_operation_coverage_error,
-)
-from aidn_hypervisor.consensus.implementation_profile import (
-    DEFAULT_IMPLEMENTATION_PROFILE_ID,
-    IMPLEMENTATION_PROFILE_ACTIVATION_STATE,
-    IMPLEMENTATION_PROFILE_STATUS,
-    IMPLEMENTATION_PROFILE_VERSION,
-    build_implementation_profile,
-    canonical_json_bytes,
-    operation_catalog_payload,
-    sha256_digest,
-    verify_implementation_profile,
-)
-from aidn_hypervisor.consensus.fixture_runner import (
-    FixtureError,
-    FixtureRunResult,
-    run_fixture,
-    run_fixture_set,
-    validate_fixture_manifest,
 )
 from aidn_hypervisor.consensus.deployment import (
     CometBftDeploymentCheckpoint,
@@ -70,6 +54,24 @@ from aidn_hypervisor.consensus.finality import (
     ConsensusFinalitySource,
     QuorumConsensusFinalitySource,
     VerifiedConsensusFinalitySource,
+)
+from aidn_hypervisor.consensus.fixture_runner import (
+    FixtureError,
+    FixtureRunResult,
+    run_fixture,
+    run_fixture_set,
+    validate_fixture_manifest,
+)
+from aidn_hypervisor.consensus.implementation_profile import (
+    DEFAULT_IMPLEMENTATION_PROFILE_ID,
+    IMPLEMENTATION_PROFILE_ACTIVATION_STATE,
+    IMPLEMENTATION_PROFILE_STATUS,
+    IMPLEMENTATION_PROFILE_VERSION,
+    build_implementation_profile,
+    canonical_json_bytes,
+    operation_catalog_payload,
+    sha256_digest,
+    verify_implementation_profile,
 )
 from aidn_hypervisor.consensus.light_client import (
     CometBftCryptographicBackend,
@@ -185,6 +187,8 @@ __all__ = [
     "FinalizedReputationProfileUpdate",
     "ReputationProfileFinalityAdapter",
     "CONSENSUS_APPLIED_OPERATION_TYPES",
+    "ACTIVE_OPERATION_TYPES",
+    "LEGACY_OPERATION_TYPES",
     "operation_coverage",
     "strict_operation_coverage_error",
     "DEFAULT_IMPLEMENTATION_PROFILE_ID",

@@ -22,6 +22,9 @@ def test_checked_in_implementation_profile_matches_current_code() -> None:
     assert profile == build_implementation_profile(profile_id=profile["profile_id"])
     assert "WALLET_TRANSFER" in profile["operation_catalog"]["supported_operation_types"]
     assert "REGISTRY_UPSERT" in profile["operation_catalog"]["known_but_unsupported_operation_types"]
+    assert "REGISTRY_UPSERT" in profile["operation_catalog"]["legacy_operation_types"]
+    assert "REGISTRY_UPSERT" not in profile["operation_catalog"]["active_operation_types"]
+    assert profile["operation_catalog"]["active_but_unsupported_operation_types"] == []
 
 
 def test_implementation_profile_rejects_tampering() -> None:

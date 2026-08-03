@@ -11,11 +11,15 @@ import hashlib
 import json
 from typing import Any
 
-from aidn_hypervisor.consensus.coverage import CONSENSUS_APPLIED_OPERATION_TYPES
+from aidn_hypervisor.consensus.coverage import (
+    ACTIVE_OPERATION_TYPES,
+    CONSENSUS_APPLIED_OPERATION_TYPES,
+    LEGACY_OPERATION_TYPES,
+)
 from aidn_hypervisor.consensus.models import KNOWN_OPERATION_TYPES, LedgerOperationEnvelope
 from aidn_hypervisor.consensus.state_store import ABCIStateStore
 
-IMPLEMENTATION_PROFILE_VERSION = "imp-0001.v1"
+IMPLEMENTATION_PROFILE_VERSION = "imp-0001.v2"
 DEFAULT_IMPLEMENTATION_PROFILE_ID = "aidn-mainnet-candidate-1"
 IMPLEMENTATION_PROFILE_STATUS = "DRAFT_CANDIDATE"
 IMPLEMENTATION_PROFILE_ACTIVATION_STATE = "NOT_ACTIVE"
@@ -37,13 +41,20 @@ def operation_catalog_payload() -> dict[str, Any]:
     """Return the deterministic operation catalog input and derived coverage."""
 
     known = sorted(KNOWN_OPERATION_TYPES)
-    supported = sorted(CONSENSUS_APPLIED_OPERATION_TYPES & KNOWN_OPERATION_TYPES)
-    unsupported = sorted(KNOWN_OPERATION_TYPES - CONSENSUS_APPLIED_OPERATION_TYPES)
+    active = sorted(ACTIVE_OPERATION_TYPES)
+    supported = sorted(CONSENSUS_APPLIED_OPERATION_TYPES & ACTIVE_OPERATION_TYPES)
+    unsupported = sorted(ACTIVE_OPERATION_TYPES - CONSENSUS_APPLIED_OPERATION_TYPES)
+    legacy = sorted(LEGACY_OPERATION_TYPES)
     payload = {
         "operation_catalog_version": 1,
         "known_operation_types": known,
+        "active_operation_types": active,
         "supported_operation_types": supported,
-        "known_but_unsupported_operation_types": unsupported,
+        "active_but_unsupported_operation_types": unsupported,
+        "legacy_operation_types": legacy,
+        "known_but_unsupported_operation_types": sorted(
+            set(unsupported) | set(legacy)
+        ),
     }
     return {**payload, "operation_catalog_hash": sha256_digest(payload)}
 
