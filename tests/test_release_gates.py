@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -279,33 +280,21 @@ def test_release_gate_rejects_non_string_g3_transaction_hash(tmp_path: Path) -> 
     assert "invalid transaction hash" in payload["gates"]["G3"]["reason"]
 
 
-def _g5_report() -> dict:
-    drills = {
-        name: {
-            "status": "PASS",
-            "evidence_reference": "sha256:" + str(index + 1) * 64,
-        }
-        for index, name in enumerate(
-            (
-                "graceful_restart",
-                "abrupt_process_termination",
-                "host_reboot",
-                "snapshot_restore",
-                "state_sync",
-                "invalid_snapshot_rejected",
-                "stale_predecessor_rejected",
-            )
-        )
-    }
-    report = {
-        "schema_version": 1,
-        "status": "PASS",
-        "g2_report_hash": "sha256:" + "a" * 64,
-        "live_report_hash": "sha256:" + "b" * 64,
-        "drills": drills,
-    }
-    report["report_hash"] = _report_hash(report)
-    return report
+def _g5_report(tmp_path: Path) -> dict:
+    fixture_path = ROOT / "tests/test_fault_recovery_evidence.py"
+    spec = importlib.util.spec_from_file_location("g5_fault_recovery_fixture", fixture_path)
+    assert spec is not None and spec.loader is not None
+    fixture = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixture)
+
+    g2_path = tmp_path / "g2-source.json"
+    g2_path.write_text(json.dumps(run_snapshot_acceptance()), encoding="utf-8")
+    live_path = tmp_path / "live-source.json"
+    live_path.write_text(json.dumps(fixture._live_report()), encoding="utf-8")
+    return fixture.MODULE.verify_fault_recovery_evidence(
+        g2_report_path=g2_path,
+        live_report_path=live_path,
+    )
 
 
 def _g4_checks() -> dict[str, dict[str, str]]:
@@ -328,7 +317,7 @@ def _g4_checks() -> dict[str, dict[str, str]]:
 
 def test_release_gate_accepts_integrity_bound_g5_report(tmp_path: Path) -> None:
     report_path = tmp_path / "g5-report.json"
-    report_path.write_text(json.dumps(_g5_report()), encoding="utf-8")
+    report_path.write_text(json.dumps(_g5_report(tmp_path)), encoding="utf-8")
 
     result = _run_gate("--g5-report", str(report_path), "--allow-incomplete")
     payload = json.loads(result.stdout)
@@ -338,7 +327,7 @@ def test_release_gate_accepts_integrity_bound_g5_report(tmp_path: Path) -> None:
 
 
 def test_release_gate_rejects_tampered_g5_report(tmp_path: Path) -> None:
-    report = _g5_report()
+    report = _g5_report(tmp_path)
     report["drills"]["host_reboot"]["status"] = "FAIL"
     report_path = tmp_path / "g5-report.json"
     report_path.write_text(json.dumps(report), encoding="utf-8")
@@ -349,6 +338,24 @@ def test_release_gate_rejects_tampered_g5_report(tmp_path: Path) -> None:
     assert result.returncode == 2
     assert payload["gates"]["G5"]["status"] == "FAIL"
     assert "G5 report hash is invalid" in payload["gates"]["G5"]["reason"]
+
+
+def test_release_gate_rejects_tampered_g5_source_report(tmp_path: Path) -> None:
+    report = _g5_report(tmp_path)
+    live_path = Path(report["live_report"])
+    live = json.loads(live_path.read_text(encoding="utf-8"))
+    live["drills"]["host_reboot"]["recovery_result"]["returncode"] = 1
+    live_path.write_text(json.dumps(live), encoding="utf-8")
+    report["report_hash"] = _report_hash({key: value for key, value in report.items() if key != "report_hash"})
+    report_path = tmp_path / "g5-report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    result = _run_gate("--g5-report", str(report_path), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G5"]["status"] == "FAIL"
+    assert "G5 source evidence is invalid" in payload["gates"]["G5"]["reason"]
 
 
 def test_release_gate_accepts_complete_g4_report(tmp_path: Path) -> None:

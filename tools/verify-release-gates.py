@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 from datetime import UTC, datetime
@@ -74,6 +75,28 @@ def _sha256_bytes(value: bytes) -> str:
 
 def _sha256_file(path: Path) -> str:
     return _sha256_bytes(path.read_bytes())
+
+
+def _load_g5_verifier() -> Any:
+    path = Path(__file__).with_name("verify-fault-recovery-evidence.py")
+    spec = importlib.util.spec_from_file_location("aidn_g5_fault_recovery_verifier", path)
+    if spec is None or spec.loader is None:
+        raise ValueError("G5 source verifier cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _resolve_g5_source_path(value: object, *, report_path: Path, label: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"G5 report {label} path is missing")
+    candidates = [Path(value)]
+    if not candidates[0].is_absolute():
+        candidates.append(report_path.parent / candidates[0])
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise ValueError(f"G5 report {label} source file is missing: {value}")
 
 
 def _verify_signed_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -599,6 +622,33 @@ def _run_g5(report_path: Path | None) -> dict[str, Any]:
             for field in ("g2_report_hash", "live_report_hash")
         ):
             raise ValueError("G5 PASS report is missing source report hashes")
+        if report.get("status") == "PASS":
+            g2_source = _resolve_g5_source_path(
+                report.get("g2_report"),
+                report_path=report_path,
+                label="G2",
+            )
+            live_source = _resolve_g5_source_path(
+                report.get("live_report"),
+                report_path=report_path,
+                label="live",
+            )
+            verifier = _load_g5_verifier()
+            try:
+                source_result = verifier.verify_fault_recovery_evidence(
+                    g2_report_path=g2_source,
+                    live_report_path=live_source,
+                )
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+                raise ValueError(f"G5 source evidence is invalid: {error}") from error
+            if source_result.get("status") != "PASS":
+                raise ValueError("G5 source evidence did not produce PASS")
+            if (
+                source_result.get("g2_report_hash") != report.get("g2_report_hash")
+                or source_result.get("live_report_hash") != report.get("live_report_hash")
+                or source_result.get("drills") != report.get("drills")
+            ):
+                raise ValueError("G5 aggregate does not match validated source evidence")
         if report.get("status") == "INCOMPLETE":
             return _gate(
                 "INCOMPLETE",
