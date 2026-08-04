@@ -119,6 +119,18 @@ def test_public_network_report_rejects_verified_ownership_without_root(tmp_path:
         )
 
 
+def test_public_network_report_rejects_credentialed_rpc_endpoint(tmp_path: Path) -> None:
+    paths = _source_reports(tmp_path, ownership_status="OUT_OF_BAND_VERIFIED")
+    external = json.loads(paths[1].read_text(encoding="utf-8"))
+    external["rpc_endpoints"][0] = "https://user:secret@rpc-a.example"
+    paths[1].write_text(json.dumps(external), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="credential-free HTTPS"):
+        MODULE.build_report(
+            lan_path=paths[0], external_path=paths[1], deployment_path=paths[2]
+        )
+
+
 def test_public_network_report_cli_uses_gate_status_for_exit_code(tmp_path: Path) -> None:
     paths = _source_reports(tmp_path, ownership_status="OUT_OF_BAND_VERIFIED")
     result = subprocess.run(

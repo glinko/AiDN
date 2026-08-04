@@ -9,6 +9,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 REQUIRED_CHECKS = (
     "lan_acceptance",
@@ -44,6 +45,35 @@ def _file_evidence_reference(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _credential_free_https_endpoints(value: object) -> list[str]:
+    if not isinstance(value, list) or len(value) < 2:
+        raise ValueError("G4 report must contain at least two credential-free HTTPS RPC endpoints")
+    normalized: list[str] = []
+    for endpoint in value:
+        if not isinstance(endpoint, str) or any(character.isspace() for character in endpoint):
+            raise ValueError("G4 report RPC endpoints must be credential-free HTTPS URLs")
+        try:
+            parsed = urlsplit(endpoint)
+            hostname = parsed.hostname
+        except ValueError as error:
+            raise ValueError("G4 report RPC endpoints must be valid HTTPS URLs") from error
+        if (
+            parsed.scheme != "https"
+            or not parsed.netloc
+            or not hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError("G4 report RPC endpoints must be credential-free HTTPS URLs without paths")
+        normalized.append(endpoint.rstrip("/"))
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("G4 report RPC endpoints must be unique")
+    return normalized
+
+
 def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) -> dict[str, Any]:
     lan = _load(lan_path, "LAN report")
     external = _load(external_path, "external finality report")
@@ -57,13 +87,10 @@ def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) 
         or deployment.get("scope") != "PUBLIC_NETWORK_DEPLOYMENT"
     ):
         raise ValueError("public deployment report is not a verified deployment observation")
-    endpoints = external.get("rpc_endpoints")
+    endpoints = _credential_free_https_endpoints(external.get("rpc_endpoints"))
     finality = external.get("finality_evidence")
     if (
-        not isinstance(endpoints, list)
-        or len(endpoints) < 2
-        or any(not isinstance(endpoint, str) or not endpoint.startswith("https://") for endpoint in endpoints)
-        or not isinstance(finality, dict)
+        not isinstance(finality, dict)
         or not finality.get("operation_id")
     ):
         raise ValueError("external report lacks two credential-free HTTPS finality endpoints")

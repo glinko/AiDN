@@ -10,6 +10,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -308,6 +309,33 @@ def _g4_check_passes(value: object) -> bool:
     )
 
 
+def _valid_g4_rpc_endpoints(value: object) -> bool:
+    if not isinstance(value, list) or len(value) < 2:
+        return False
+    normalized: list[str] = []
+    for endpoint in value:
+        if not isinstance(endpoint, str) or any(character.isspace() for character in endpoint):
+            return False
+        try:
+            parsed = urlsplit(endpoint)
+            hostname = parsed.hostname
+        except ValueError:
+            return False
+        if (
+            parsed.scheme != "https"
+            or not parsed.netloc
+            or not hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            return False
+        normalized.append(endpoint.rstrip("/"))
+    return len(set(normalized)) == len(normalized)
+
+
 def _verify_gate_result_control(evidence_dir: Path) -> dict[str, Any]:
     """Verify the final gate decision stored as EVD control metadata."""
     gate_path = evidence_dir.joinpath(*GATE_RESULT_PATH.split("/"))
@@ -470,10 +498,7 @@ def _run_g4(report_path: Path | None) -> dict[str, Any]:
         if source_gate_status not in {"PASS", "INCOMPLETE"}:
             raise ValueError("G4 report gate_status is invalid")
         endpoints = report.get("rpc_endpoints")
-        if not isinstance(endpoints, list) or len(endpoints) < 2 or any(
-            not isinstance(endpoint, str) or not endpoint.startswith("https://")
-            for endpoint in endpoints
-        ):
+        if not _valid_g4_rpc_endpoints(endpoints):
             raise ValueError("G4 report must contain at least two credential-free HTTPS RPC endpoints")
         finality = report.get("finality_evidence")
         if not isinstance(finality, dict) or not finality.get("operation_id"):

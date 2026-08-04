@@ -303,6 +303,41 @@ def test_release_gate_keeps_structurally_valid_incomplete_g4_report_incomplete(t
     assert payload["gates"]["G4"]["status"] == "INCOMPLETE"
 
 
+def test_release_gate_rejects_credentialed_g4_rpc_endpoint(tmp_path: Path) -> None:
+    report_path = tmp_path / "g4-report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "rpc_endpoints": ["https://user:secret@rpc-a.example", "https://rpc-b.example"],
+                "finality_evidence": {"operation_id": "op-1"},
+                "ownership_evidence": {
+                    "status": "OUT_OF_BAND_VERIFIED",
+                    "ownership_evidence_root": "sha256:reviewed-ownership",
+                },
+                "checks": {
+                    name: {"status": "PASS", "evidence_reference": f"{name}.json"}
+                    for name in (
+                        "lan_acceptance",
+                        "public_p2p_acceptance",
+                        "bootstrap_diversity",
+                        "public_rpc_observable",
+                        "tls_validated",
+                    )
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gate("--g4-report", str(report_path), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G4"]["status"] == "FAIL"
+    assert "credential-free HTTPS" in payload["gates"]["G4"]["reason"]
+
+
 def _write_g6_bundle(root: Path, *, index: int) -> None:
     artifact = root / "release/version.json"
     artifact.parent.mkdir(parents=True, exist_ok=True)
