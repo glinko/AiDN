@@ -126,6 +126,15 @@ both processes with a bounded outage before restarting them. `recover` fails
 closed when the named ABCI container is missing; it does not silently turn a
 missing deployment into a successful recovery claim.
 
+The ABCI application MUST be built from a revision where `FinalizeBlock`
+returns only a preview hash and durable application state is persisted by the
+subsequent `Commit` call. A deployment that persisted ABCI state during
+`FinalizeBlock` is not compatible with this control profile: after a crash
+between those phases it may leave CometBFT responses one height behind the
+application. Such a node MUST be re-provisioned through an approved
+state-reconciliation procedure; operators MUST NOT use `unsafe-reset-all`,
+manual database deletion or hand-edited state files to manufacture recovery.
+
 Then collect the live restart, abrupt termination, host reboot and stale
 predecessor observations on the operator host. Host reboot MUST stop the ABCI
 application and CometBFT before reboot, then explicitly start the ABCI

@@ -21,7 +21,7 @@ from aidn_hypervisor.consensus.finality import (
     ConsensusFinalitySource,
 )
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
-from aidn_hypervisor.consensus.state_store import ABCIStateStore
+from aidn_hypervisor.consensus.state_store import ABCIStateStore, ABCIStateStoreError
 
 
 class ConsensusMode(str, Enum):
@@ -429,6 +429,23 @@ class ConsensusService:
                 "code": result.code,
             }
 
+        # Commit
+        try:
+            commit = self.abci.commit()
+        except ABCIStateStoreError as error:
+            for tx_data in txs:
+                self._mark_proposal_transaction_failed(
+                    tx_data,
+                    block_height=block_height,
+                    error=str(error),
+                )
+            return {
+                "block_height": block_height,
+                "executed": 0,
+                "app_hash": "",
+                "code": "internal",
+            }
+
         for tx_data, transaction_result in zip(txs, transaction_results, strict=True):
             try:
                 envelope = self._parse_envelope(tx_data)
@@ -445,9 +462,6 @@ class ConsensusService:
                     )
             except Exception:
                 pass
-
-        # Commit
-        commit = self.abci.commit()
 
         return {
             "block_height": block_height,

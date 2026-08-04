@@ -35,6 +35,7 @@ def test_validator_lifecycle_restores_matching_hypervisor_and_abci_state(
             txs=[],
         )
         assert result.code == "ok"
+        first_consensus.abci.commit()
     assert not first_consensus._abci_socket_server
 
     restored_app = build_app()
@@ -61,6 +62,7 @@ def test_validator_lifecycle_fails_closed_when_abci_ledger_differs(monkeypatch, 
         txs=[],
     )
     assert result.code == "ok"
+    consensus.abci.commit()
 
     hypervisor = app.state.hypervisor_service
     hypervisor.ledger_operation_service.credit_wallet_q_atoms(

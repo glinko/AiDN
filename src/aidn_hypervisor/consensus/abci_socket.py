@@ -184,7 +184,7 @@ class AIDNABCISocketServer:
                             _message_field(3, _validator_update_message(item))
                             for item in result.validator_updates
                         ),
-                        _bytes_field(5, self.application.commit().data),
+                        _bytes_field(5, self.application.preview_commit().data),
                     ),
                 )
             if kind == "commit":
