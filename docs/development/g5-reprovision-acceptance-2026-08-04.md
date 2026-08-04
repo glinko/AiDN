@@ -59,6 +59,6 @@ created by the probe.
 
 ## Gate State
 
-The release-gate matrix for commit `0b48b91` records G0, G1, G2, G3 and G5 as
+The release-gate matrix for commit `e6c4417` records G0, G1, G2, G3 and G5 as
 `PASS`. G4, G6 and G7 remain `NOT_RUN` until public-network evidence,
 independent operator attestations and a complete EVD-0001 bundle are supplied.
