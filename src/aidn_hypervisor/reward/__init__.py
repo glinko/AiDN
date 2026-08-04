@@ -114,6 +114,7 @@ from aidn_hypervisor.reward.development_finalized_commitments import (
     development_reward_finalized_commitment_id,
 )
 from aidn_hypervisor.reward.development_operations import (
+    DEVELOPMENT_REWARD_CONSENSUS_OPERATION_VERSION,
     DEVELOPMENT_REWARD_ENGINE_ID,
     DEVELOPMENT_REWARD_OPERATION_VERSION,
     DevelopmentRewardOperationBuilder,
@@ -320,6 +321,7 @@ __all__ = [
     "development_bounty_reservation_id",
     "development_pool_carryover_id",
     "DEVELOPMENT_REWARD_ENGINE_ID",
+    "DEVELOPMENT_REWARD_CONSENSUS_OPERATION_VERSION",
     "DEVELOPMENT_REWARD_OPERATION_VERSION",
     "DevelopmentRewardOperationBuilder",
     "DevelopmentRewardOperationRequest",

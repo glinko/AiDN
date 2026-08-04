@@ -15,6 +15,7 @@ from aidn_hypervisor.consensus.coverage import (
     ACTIVE_OPERATION_TYPES,
     CONSENSUS_APPLIED_OPERATION_TYPES,
     LEGACY_OPERATION_TYPES,
+    SUPPORTED_OPERATION_VERSIONS,
 )
 from aidn_hypervisor.consensus.models import KNOWN_OPERATION_TYPES, LedgerOperationEnvelope
 from aidn_hypervisor.consensus.state_store import ABCIStateStore
@@ -84,6 +85,7 @@ def build_implementation_profile(
         },
         "operation_envelope": {
             "default_operation_version": envelope_default_version,
+            "supported_operation_versions": sorted(SUPPORTED_OPERATION_VERSIONS),
             "operation_id": "sha256(canonical envelope with operation_id empty and signatures empty)",
             "signing_bytes": "canonical envelope with signatures empty",
         },

@@ -37,6 +37,19 @@ Use an immutable release tag or reviewed commit rather than an unreviewed branch
 
 ### One-command Ubuntu bootstrap
 
+The release-ready package is documented in [Ubuntu Operator Release Package](./operator-release-package.md).
+It is the preferred path for new operators because it provisions the local
+identity, encrypted Registry store, persistent user-systemd service and
+secret-free bootstrap summary in one wizard. The older low-level bootstrap
+below remains available for compatibility and intentionally starts only a
+loopback Hypervisor without creating keys.
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/glinko/AiDN/<reviewed-ref>/tools/aidn-operator-bootstrap-ubuntu.sh \
+  | bash -s -- --ref <reviewed-ref>
+```
+
 For a fresh Ubuntu 24.04+ host, the following downloads the current bootstrap, installs its OS and Python dependencies, clones AiDN, creates a secret-free operator workspace, and starts the Hypervisor on `127.0.0.1:8766`:
 
 ```bash

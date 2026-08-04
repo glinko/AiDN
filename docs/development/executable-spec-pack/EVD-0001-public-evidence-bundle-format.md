@@ -36,7 +36,8 @@ evidence/
 ├── gates/
 │   └── release-gate-result.json
 └── attestations/
-    └── operator-attestation.json
+    ├── operator-attestation.json
+    └── independence-review.json
 ```
 
 ## 3. Manifest
@@ -170,6 +171,8 @@ The repository verifier accepts the following canonical attestation shape:
 {
   "attestation_version": 1,
   "operator_id": "...",
+  "control_group_id": "...",
+  "independence_status": "OUT_OF_BAND_DECLARED",
   "operator_public_key": "ed25519:<64 lowercase hex>",
   "evidence_root": "sha256:<64 lowercase hex>",
   "signed_at": "...",
@@ -180,6 +183,64 @@ The repository verifier accepts the following canonical attestation shape:
 The signature covers the canonical JSON object with `signature` omitted. The
 attestation file is control metadata and MUST NOT be included in the artifact
 Merkle root.
+
+An independently trusted release reviewer MAY add the following control file
+after the operator bundle is built:
+
+```json
+{
+  "review_version": 1,
+  "reviewer_id": "...",
+  "reviewer_public_key": "ed25519:<64 lowercase hex>",
+  "review_status": "VERIFIED",
+  "review_basis": "...",
+  "reviewed_operator_id": "...",
+  "reviewed_control_group_id": "...",
+  "reviewed_evidence_root": "sha256:<64 lowercase hex>",
+  "reviewed_at": "...",
+  "signature": "ed25519:<128 lowercase hex>"
+}
+```
+
+The reviewer signature covers the canonical object with `signature` omitted.
+The review file is control metadata, is excluded from the artifact Merkle
+root, and MUST bind the operator, control group and Evidence Root exactly.
+G6 release verification MUST receive the trusted reviewer public key before it
+can report `PASS`.
+The trusted reviewer identity and public key MUST be distinct from every
+operator identity and public key in the quorum; a reviewer key reused by an
+operator is not independent review evidence.
+
+For G6 independent-operator review, the attestation MUST additionally carry
+the operator's declared `control_group_id`. The value is an out-of-band claim;
+the bundle signature proves who signed the declaration, not that the
+organization is independent. That independence claim requires separate review.
+`independence_status` MUST remain `OUT_OF_BAND_DECLARED` until that review is
+complete; only the reviewed release evidence may use `OUT_OF_BAND_VERIFIED`.
+
+`gates/release-gate-result.json` is also control metadata. It MAY be published
+inside the bundle, but it is excluded from the artifact Merkle root so the
+final gate result can be written after the immutable artifact manifest and
+operator attestation have been created.
+The control file MUST contain passing entries for every gate `G0` through `G7`
+and a `source_gate_statuses` object with passing entries for every gate `G0`
+through `G6`. Its `evidence_root` MUST exactly match the bundle manifest's
+`evidence_root`; otherwise it is not a valid G7 result. The release verifier
+also binds the control context to the manifest's network, release and profile.
+
+G5 fault-recovery evidence has an additional machine-verifiable contract. The
+combined report MUST use `schema_version: 1`, include a `report_hash` over the
+canonical report body, and include hash references for both the controlled G2
+source report and the live fault report. A passing live report MUST declare at
+least four validator RPC URLs and one target URL, and its graceful restart,
+abrupt termination and host reboot records MUST contain converged before/after
+validator snapshots with node identity and chain ID preserved. The host reboot
+record MUST also contain an observed outage and a successful explicit recovery
+command. The stale-predecessor record MUST bind to the target URL, include
+before/after identity snapshots, transaction hashes, a non-zero rejection code
+and checks proving the funding-predecessor rejection. A stale or older report
+without these fields is evidence that must be recollected, not upgraded by
+editing the JSON.
 
 ## 10. Verification command
 

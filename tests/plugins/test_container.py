@@ -88,7 +88,7 @@ def test_docker_plugin_host_rejects_writable_activation_secret_file(tmp_path) ->
     package_root.mkdir()
     (package_root / "host.py").write_text("print('host')", encoding="utf-8")
     secret_file = _activation_secret_file(tmp_path)
-    secret_file.chmod(0o644)
+    secret_file.chmod(0o666)
 
     with pytest.raises(PluginHostContainerError, match="secret file is writable"):
         DockerPluginHostLauncher().build_launch_spec(

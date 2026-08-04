@@ -42,6 +42,7 @@ from aidn_hypervisor.consensus.coverage import (
     LEGACY_OPERATION_TYPES,
     operation_coverage,
     strict_operation_coverage_error,
+    strict_operation_version_error,
 )
 from aidn_hypervisor.consensus.deployment import (
     CometBftDeploymentCheckpoint,
@@ -191,6 +192,7 @@ __all__ = [
     "LEGACY_OPERATION_TYPES",
     "operation_coverage",
     "strict_operation_coverage_error",
+    "strict_operation_version_error",
     "DEFAULT_IMPLEMENTATION_PROFILE_ID",
     "IMPLEMENTATION_PROFILE_ACTIVATION_STATE",
     "IMPLEMENTATION_PROFILE_STATUS",

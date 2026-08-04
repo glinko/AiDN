@@ -137,6 +137,8 @@ Before public production:
 [ ] at least 1 operator followed OPS-0001 from a clean host
 [ ] no private developer intervention was required
 [ ] each attestation contains an EVD-0001 evidence root
+[ ] each bundle contains a signed `attestations/independence-review.json`
+[ ] the trusted release-reviewer public key is supplied to the gate verifier
 ```
 
 Threshold may be raised for mainnet.
@@ -165,6 +167,8 @@ The local machine-checkable subset is run with:
 uv run python tools/verify-release-gates.py \
   --profile profiles/aidn-mainnet-candidate-1.json \
   --fixture-manifest fixtures/manifest.json \
+  --network-id aidn-public-testnet \
+  --release-version 0.1.0-rc1 \
   --g2-report ./g2-report.json \
   --evidence-dir ./evidence
 ```
@@ -181,6 +185,136 @@ and G7 when an EVD-0001 bundle is supplied. G3-G6 require multi-node,
 public-network, fault-drill, and independent-operator evidence respectively.
 `--allow-incomplete` is permitted for local development only; it does not
 convert an incomplete report into a release approval.
+
+## 10.2 G0 and G1 evidence generation
+
+G0 and G1 require source reports. A valid implementation profile alone is not
+enough to pass either gate.
+
+Build the package, hash the artifacts, sign the release manifest, and run the
+dependency/license scan:
+
+```bash
+uv sync --all-extras --frozen
+uv run python tools/build-release-integrity-report.py \
+  --profile profiles/aidn-mainnet-candidate-1.json \
+  --fixture-manifest fixtures/manifest.json \
+  --signing-key ./release-signing-seed.hex \
+  --report ./g0-integrity.json
+```
+
+The signing key is a 32-byte Ed25519 private seed kept outside the repository.
+Omitting `--signing-key` is allowed only for disposable local evidence and
+uses an ephemeral key.
+
+The G0 builder requires a clean Git worktree so the package artifacts cannot
+be attributed to a commit while containing uncommitted source changes.
+
+Run the strict protocol suite and its machine-readable probes:
+
+```bash
+uv run python tools/run-protocol-conformance.py \
+  --profile profiles/aidn-mainnet-candidate-1.json \
+  --fixture-manifest fixtures/manifest.json \
+  --report ./g1-conformance.json
+```
+
+Verify these reports together with the controlled operational evidence:
+
+```bash
+uv run python tools/verify-release-gates.py \
+  --profile profiles/aidn-mainnet-candidate-1.json \
+  --fixture-manifest fixtures/manifest.json \
+  --network-id aidn-public-testnet \
+  --release-version 0.1.0-rc1 \
+  --g0-report ./g0-integrity.json \
+  --g1-report ./g1-conformance.json \
+  --g2-report ./g2-report.json \
+  --g3-report ./g3-report.json \
+  --g5-report ./g5-report.json \
+  --allow-incomplete \
+  --report ./release-gates.json
+```
+
+The verifier returns `INCOMPLETE`, not `PASS`, when required reports are
+missing. A report with failed G0 or G1 checks is a hard `FAIL`. G4 and G6
+remain external gates and require public-network and independent-operator
+evidence; `--allow-incomplete` does not weaken those requirements.
+
+The G5 report is accepted only when its canonical `report_hash` and source
+report hashes verify. A live PASS report must contain the structured
+four-validator recovery snapshots, explicit host-reboot recovery result and
+target-bound stale-predecessor rejection evidence described in EVD-0001.
+Older compact reports must be recollected rather than edited in place.
+
+Before combining G4 source reports, collect the public deployment observation
+from at least two credential-free HTTPS RPC endpoints:
+
+```bash
+uv run python tools/verify-public-network-deployment.py \
+  --rpc-url https://rpc-a.example \
+  --rpc-url https://rpc-b.example \
+  --minimum-peers 1 \
+  --minimum-bootstrap-peers 2 \
+  --minimum-bootstrap-hosts 2 \
+  --output ./public-deployment.json
+```
+
+The collector is read-only and checks `/status`, `/net_info`, TLS, peer
+reachability and observed peer diversity. Its checks are hash-bound and do not
+claim independent operator ownership.
+
+The combined G4 report MUST declare `schema_version: 1` and
+`scope: PUBLIC_NETWORK`. The release verifier rejects a checklist-shaped
+report that omits either context field.
+
+The report MUST also carry the target `network_id`, `release_version` and
+`profile_id`; the final release orchestrator compares all three values with
+the EVD-0001 bundle arguments.
+
+Its `finality_evidence` MUST be a complete
+`consensus-finality-evidence.v1` record bound to an operation, chain, block
+height, block/AppHash/commit hashes, finalization time and verifier identity;
+an `operation_id` alone is insufficient.
+
+For final publication, use the fail-closed orchestrator after G0-G6 evidence
+exists. It refuses to create an output directory until every pre-publication
+gate is `PASS`, writes `gates/release-gate-result.json` outside the Evidence
+Root, and reruns the strict verifier including G7:
+
+```bash
+uv run python tools/build-release-evidence-bundle.py \
+  --output ./evidence/release-candidate \
+  --network-id aidn-public-testnet \
+  --release-version 0.1.0-rc1 \
+  --profile profiles/aidn-mainnet-candidate-1.json \
+  --fixture-manifest fixtures/manifest.json \
+  --g0-report ./g0-integrity.json \
+  --g1-report ./g1-conformance.json \
+  --g2-report ./g2-report.json \
+  --g3-report ./g3-report.json \
+  --g4-report ./g4-public-network.json \
+  --g5-report ./g5-report.json \
+  --g6-evidence-dir ./operator-a \
+  --g6-evidence-dir ./operator-b \
+  --g6-review-key release-reviewer=ed25519:<64-hex-public-key> \
+  --operator-id operator-a \
+  --control-group-id control-group-a \
+  --private-key /secure/operator-ed25519.key \
+  --artifact profiles/aidn-mainnet-candidate-1.json=release/profile.json \
+  --artifact fixtures/manifest.json=release/fixture-manifest.json \
+  --artifact ./g4-public-network.json=network/g4-public-network.json
+```
+
+The low-level `build-public-evidence-bundle.py` command remains useful for
+operator-level evidence, but it is not a release approval mechanism.
+
+The standalone verifier accepts the same `network-id` and `release-version`
+arguments and derives the expected `profile_id` from `--profile`; when these
+arguments are supplied, G4 and G6 evidence must match all three values. The
+release orchestrator also checks that every G6 operator manifest matches the
+requested context. It rejects a quorum collected for a different release
+instead of silently reusing it.
 
 ## 11. Hard blockers
 
@@ -205,8 +339,18 @@ Machine-readable result:
 
 ```json
 {
+  "network_id": "...",
   "release": "...",
   "profile_id": "...",
+  "source_gate_statuses": {
+    "G0": "PASS",
+    "G1": "PASS",
+    "G2": "PASS",
+    "G3": "PASS",
+    "G4": "PASS",
+    "G5": "PASS",
+    "G6": "PASS"
+  },
   "gates": {
     "G0": "PASS",
     "G1": "PASS",

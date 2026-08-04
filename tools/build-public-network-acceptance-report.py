@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""Combine LAN, public-finality and deployment observations into G4 evidence."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
+
+REQUIRED_CHECKS = (
+    "lan_acceptance",
+    "public_p2p_acceptance",
+    "bootstrap_diversity",
+    "public_rpc_observable",
+    "tls_validated",
+)
+_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _load(path: Path, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot load {label}: {error}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
+
+
+def _check_value(value: object, *, name: str) -> dict[str, str]:
+    if isinstance(value, dict):
+        if value.get("status") != "PASS":
+            raise ValueError(f"G4 check must have status PASS: {name}")
+        reference = value.get("evidence_reference")
+        if not isinstance(reference, str) or _HASH_RE.fullmatch(reference) is None:
+            raise ValueError(f"G4 check lacks a valid evidence_reference: {name}")
+        return {"status": "PASS", "evidence_reference": reference}
+    raise ValueError(f"G4 check must be a PASS object with evidence_reference: {name}")
+
+
+def _file_evidence_reference(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _credential_free_https_endpoints(value: object) -> list[str]:
+    if not isinstance(value, list) or len(value) < 2:
+        raise ValueError("G4 report must contain at least two credential-free HTTPS RPC endpoints")
+    normalized: list[str] = []
+    for endpoint in value:
+        if not isinstance(endpoint, str) or any(character.isspace() for character in endpoint):
+            raise ValueError("G4 report RPC endpoints must be credential-free HTTPS URLs")
+        try:
+            parsed = urlsplit(endpoint)
+            hostname = parsed.hostname
+        except ValueError as error:
+            raise ValueError("G4 report RPC endpoints must be valid HTTPS URLs") from error
+        if (
+            parsed.scheme != "https"
+            or not parsed.netloc
+            or not hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError("G4 report RPC endpoints must be credential-free HTTPS URLs without paths")
+        normalized.append(endpoint.rstrip("/"))
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("G4 report RPC endpoints must be unique")
+    return normalized
+
+
+def _validate_finality(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("external report lacks operation-bound finality evidence")
+    required = {
+        "operation_id",
+        "chain_id",
+        "block_height",
+        "block_id",
+        "app_hash",
+        "commit_hash",
+        "finalized_at",
+        "verifier_id",
+        "proof_version",
+    }
+    if not required.issubset(value):
+        raise ValueError("external finality evidence is missing required fields")
+    try:
+        evidence = ConsensusFinalityEvidence(**value)
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError("external finality evidence is invalid") from error
+    for field in ("block_id", "app_hash", "commit_hash"):
+        if re.fullmatch(r"[0-9A-Fa-f]{64}", getattr(evidence, field)) is None:
+            raise ValueError(f"external finality evidence {field} is not a 64-hex hash")
+    return evidence.model_dump()
+
+
+def build_report(
+    *,
+    lan_path: Path,
+    external_path: Path,
+    deployment_path: Path,
+    network_id: str,
+    release_version: str,
+    profile_id: str,
+) -> dict[str, Any]:
+    context = {
+        "network_id": network_id,
+        "release_version": release_version,
+        "profile_id": profile_id,
+    }
+    if any(not isinstance(value, str) or not value.strip() for value in context.values()):
+        raise ValueError("G4 report context fields must be non-empty strings")
+    lan = _load(lan_path, "LAN report")
+    external = _load(external_path, "external finality report")
+    deployment = _load(deployment_path, "public deployment report")
+    if lan.get("status") != "ok" or lan.get("scope") != "CONTROLLED_LAN_TESTNET":
+        raise ValueError("LAN report is not a valid controlled testnet acceptance")
+    if external.get("status") != "ok":
+        raise ValueError("external finality report is not ok")
+    if (
+        deployment.get("status") != "ok"
+        or deployment.get("scope") != "PUBLIC_NETWORK_DEPLOYMENT"
+    ):
+        raise ValueError("public deployment report is not a verified deployment observation")
+    endpoints = _credential_free_https_endpoints(external.get("rpc_endpoints"))
+    deployment_endpoints = _credential_free_https_endpoints(deployment.get("rpc_endpoints"))
+    if set(deployment_endpoints) != set(endpoints):
+        raise ValueError(
+            "public deployment RPC endpoints do not match external finality RPC endpoints"
+        )
+    finality = _validate_finality(external.get("finality_evidence"))
+    deployment_network_ids = deployment.get("network_ids")
+    if (
+        not isinstance(deployment_network_ids, list)
+        or len(deployment_network_ids) != 1
+        or not isinstance(deployment_network_ids[0], str)
+        or not deployment_network_ids[0]
+    ):
+        raise ValueError("public deployment report must declare exactly one network_id")
+    if deployment_network_ids[0] != finality["chain_id"]:
+        raise ValueError(
+            "public deployment network_id does not match external finality chain_id"
+        )
+    deployment_checks = deployment.get("checks")
+    if not isinstance(deployment_checks, dict):
+        raise ValueError("public deployment report must contain checks")
+    checks: dict[str, dict[str, str]] = {
+        "lan_acceptance": {
+            "status": "PASS",
+            "evidence_reference": _file_evidence_reference(lan_path),
+        },
+        "public_rpc_observable": {
+            "status": "PASS",
+            "evidence_reference": _file_evidence_reference(external_path),
+        },
+    }
+    evidence: dict[str, Any] = {"lan": lan, "external": external, "deployment": deployment}
+    for name in ("public_p2p_acceptance", "bootstrap_diversity", "tls_validated"):
+        if name not in deployment_checks:
+            raise ValueError(f"public deployment report lacks check: {name}")
+        checks[name] = _check_value(deployment_checks[name], name=name)
+    ownership = external.get("ownership_evidence")
+    if not isinstance(ownership, dict):
+        raise ValueError("external report lacks ownership evidence")
+    if ownership.get("status") == "OUT_OF_BAND_VERIFIED" and not (
+        isinstance(ownership.get("ownership_evidence_root"), str)
+        and _HASH_RE.fullmatch(ownership["ownership_evidence_root"]) is not None
+    ):
+        raise ValueError(
+            "verified ownership evidence must include ownership_evidence_root"
+        )
+    checks_pass = all(
+        isinstance(check, dict)
+        and check.get("status") == "PASS"
+        and isinstance(check.get("evidence_reference"), str)
+        and _HASH_RE.fullmatch(check["evidence_reference"]) is not None
+        for check in checks.values()
+    )
+    gate_status = "PASS" if checks_pass and ownership.get("status") == "OUT_OF_BAND_VERIFIED" else "INCOMPLETE"
+    return {
+        "schema_version": 1,
+        "status": "ok",
+        "gate_status": gate_status,
+        "scope": "PUBLIC_NETWORK",
+        **context,
+        "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "rpc_endpoints": endpoints,
+        "finality_evidence": finality,
+        "ownership_evidence": ownership,
+        "checks": checks,
+        "evidence": evidence,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--lan-report", type=Path, required=True)
+    parser.add_argument("--external-report", type=Path, required=True)
+    parser.add_argument("--deployment-report", type=Path, required=True)
+    parser.add_argument("--network-id", required=True)
+    parser.add_argument("--release-version", required=True)
+    parser.add_argument("--profile-id", required=True)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    try:
+        report = build_report(
+            lan_path=args.lan_report,
+            external_path=args.external_report,
+            deployment_path=args.deployment_report,
+            network_id=args.network_id,
+            release_version=args.release_version,
+            profile_id=args.profile_id,
+        )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+        print(json.dumps({"status": "FAIL", "reason": str(error)}, sort_keys=True))
+        return 2
+    encoded = json.dumps(report, ensure_ascii=True, indent=2) + "\n"
+    print(encoded, end="")
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(encoded, encoding="utf-8")
+    return 0 if report["gate_status"] == "PASS" else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-03`
+Last updated: `2026-08-04`
 
 This is the main public roadmap for the repository.
 
@@ -42,6 +42,11 @@ Usage reporting, accounting transparency, checkpoint acknowledgement, mismatch h
 Capability Runtime service boundaries, Runtime identity, Runtime ownership, and Runtime isolation rules must also stay aligned with [docs/product/RFC-0053-capability-runtime-specification.md](./docs/product/RFC-0053-capability-runtime-specification.md).
 
 Hypervisor-to-Runtime registration, Session execution, streaming, usage-report transport, health, and recovery semantics must also stay aligned with [docs/product/RFC-0054-capability-runtime-protocol.md](./docs/product/RFC-0054-capability-runtime-protocol.md).
+
+Agent control-plane lifecycle, scopes, plan/apply semantics, resource exposure,
+approval boundaries, and MCP transport behavior must also stay aligned with
+[the MCP-0001 implementation profile](./docs/product/MCP-0001-node-control-server-implementation-profile.md)
+and the attached MCP-0001 normative document pack.
 
 Provider-plugin manifests, Provider Instance lifecycle, Model Deployment lifecycle, installation recipes, and plugin trust boundaries must also stay aligned with [docs/product/RFC-0055-provider-plugin-system-and-directory.md](./docs/product/RFC-0055-provider-plugin-system-and-directory.md).
 
@@ -200,6 +205,8 @@ Product alignment summary:
 - the canonical Ledger operation inventory is now documented in `RFC-0059`, so future consensus, settlement, reward, Faucet, validation, and suspension work can land on one state-transition catalog instead of duplicating operation semantics across RFCs;
 - the Capability Runtime service model is now documented in `RFC-0053`, so future runtime packaging, runtime authorization, runtime replacement, and multi-runtime capability work can share one architectural contract before wire-level protocol details;
 - the Hypervisor-to-Runtime boundary is now documented in `RFC-0054`, and its first durable protocol core now enforces approved Binding/route identity, handshake version negotiation, semantic replay protection, Request admission/idempotency, Usage chains and explicit recovery plans/results;
+- the first `MCP-0001` node-control slice is now implemented as a local stdio JSON-RPC server plus an opt-in bearer-token HTTP gateway over the existing Hypervisor service. It exposes scope-filtered read models and Bundle plan/apply mutations with persistent Control Sessions, atomic plans/idempotency, revision checks, hash-linked audit events, a separate operator approval channel, and an operator emergency stop. The production HTTP profile now adds mandatory mTLS, TLS 1.2+, HTTPS enforcement, private-key permission checks, a single-worker launcher, Secret Manager-backed TLS handles, hash-only rotation detection, valid-bundle gating, and graceful certificate reload; QUIC hardening, shell execution, wallet signing, public Endpoint actions, and consensus writes remain deferred. See [the MCP implementation profile](./docs/product/MCP-0001-node-control-server-implementation-profile.md) and [the quickstart](./docs/development/mcp-server-quickstart.md);
+- the production MCP TLS profile has controlled Ubuntu acceptance on `192.168.88.127`: a real client certificate, encrypted Secret Manager handles, certificate serial rotation, graceful restart, stale transport-session rejection and new-session reconnect all passed. The evidence is [MCP TLS rotation acceptance](./docs/development/mcp-tls-rotation-acceptance-2026-08-04.md); it is technical interoperability evidence only and does not prove organizational independence;
 - registry replication is now documented in `RFC-0061`, so future Full Registry eligibility, anti-entropy, completeness proofs, challenge evidence, and repair synchronization can build on one deterministic storage and retrieval model instead of scattered service-local heuristics;
 - snapshot and fast State Sync are now documented in `RFC-0062`, so future node bootstrap, corruption recovery, trusted checkpoint handling, and portable state restoration can build on one verification-first protocol instead of ad hoc database-copy assumptions;
 - validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
@@ -866,6 +873,50 @@ Exit criteria:
 
 ## Immediate Priorities
 
+### GATE-0001 release status (local verification, 2026-08-03)
+
+The deterministic and controlled operational portions of the release gate are
+now executable and fail closed. The verified local evidence is bound to the
+latest clean release-candidate commit and profile commitment
+`sha256:4ebeab687d3871534b96399b77d26ccd8e53414a7c1882631e82e6dbb30af190`.
+
+- [x] G0 Build Integrity: clean-tree package build, artifact hashes, signed
+  release manifest, profile/catalog/fixture bindings, and dependency/license
+  evidence.
+- [x] G1 Deterministic Protocol: strict FIX-0001 fixtures, 49/49 active
+  operation coverage, unsupported-version rejection, idempotency,
+  predecessor, monetary-boundary and canonical-vector probes; 660 scoped
+  consensus/settlement/ledger tests pass.
+- [x] G2 State/Snapshot Integrity: controlled local snapshot restore and State
+  Sync acceptance with identical StateRoot/AppHash and next-block transition.
+- [x] G3 Multi-Node Consensus: four-validator controlled Ubuntu LAN evidence,
+  transaction inclusion proofs, AppHash convergence and restart continuity.
+- [x] G5 Fault Recovery: graceful restart, abrupt termination, host reboot,
+  snapshot restore, State Sync, invalid snapshot and stale-predecessor drills;
+  the aggregate and live reports are now hash-bound and require structured
+  four-validator convergence, target identity/chain continuity and explicit
+  host-reboot recovery evidence. Existing pre-hardening live reports must be
+  recollected rather than edited.
+- [ ] G4 Public Networking: live public RPC/P2P, bootstrap diversity and
+  public finality evidence are still absent.
+- [x] G4 collection plumbing: a read-only HTTPS `/status` and `/net_info`
+  collector now emits hash-bound deployment checks and rejects unreferenced
+  boolean/failed observations and non-credential-free RPC URLs; live public
+  endpoints are still required.
+- [x] G6 review plumbing: EVD-0001 supports a signed
+  `attestations/independence-review.json`; the verifier requires a trusted
+  reviewer key and exact operator, control-group and evidence-root binding.
+  Live independent-operator evidence is still required.
+- [ ] G6 Independent Operator: out-of-band attestations from distinct operator
+  identities/control groups are still absent. The functional controlled-testnet
+  MVP assumption for `hv-node10` remains narrower than this public-release gate.
+- [ ] G7 Evidence Publication: final EVD-0001 bundle cannot be published until
+  G4 and G6 evidence is available and the release-gate result is PASS.
+- [x] G7 publication plumbing: `tools/build-release-evidence-bundle.py` now
+  verifies G0-G6 before building, writes the excluded release-gate control file,
+  and reruns strict EVD-0001 verification. This closes the implementation
+  path, but does not manufacture the missing G4/G6 evidence.
+
 Order of work right now:
 
 1. Operator deployment configuration and encrypted local Secret Manager-backed certificate/signing-key handles now compose the explicitly injected Registry replication runtime. Automated local acceptance proves real mTLS, signed peer authentication, inventory exchange and object transfer between distinct local secret stores, and fixed timeout/sequence/concurrent-close defects. A host-separated Windows-to-Linux acceptance harness now proves the same flow over an SSH-forwarded mTLS connection with independently generated test credentials. A production verifier now runs the actual configured runtime against its durable Registry snapshot, requires authenticated inventory exchange and can require a declared immutable object transfer; its report explicitly does not claim organizational independence. A peer owned by an independent operator remains required before a directory trust claim.
@@ -1003,6 +1054,9 @@ This work is intentionally outside the functional MVP. It must not alter current
   CometBFT Merkle proofs, four-way AppHash convergence and remote validator
   restart continuity all passed on the live Ubuntu hosts. This is controlled
   lab evidence only; the detailed record is [here](./docs/development/cometbft-lan-acceptance-2026-08-02.md).
+- MCP TLS rotation acceptance (2026-08-04): the actual Secret Manager-backed
+  production HTTP launcher passed certificate rotation and MCP reconnect on
+  `192.168.88.127`; the detailed record is [here](./docs/development/mcp-tls-rotation-acceptance-2026-08-04.md).
 - Validator AppHash compatibility now treats empty post-MVP Ledger extensions as absent during canonical hashing, so upgrades do not invalidate historical snapshots merely by adding empty stake, penalty, checkpoint, dispute, or correction fields; populated extensions remain committed.
 - The functional controlled-testnet MVP gate is now closed. Remaining priorities in this section are public-network/post-MVP claims: independent-operator evidence, public directory authority, external multi-validator finality, and enforceable production trust policy.
 

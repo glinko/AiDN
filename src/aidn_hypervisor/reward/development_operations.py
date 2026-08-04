@@ -50,6 +50,7 @@ from aidn_hypervisor.reward.development_reserve import build_development_reward_
 from aidn_hypervisor.reward.development_unclaimed import build_development_reward_unclaimed_record
 
 DEVELOPMENT_REWARD_OPERATION_VERSION = "eco-0007-operation.v1"
+DEVELOPMENT_REWARD_CONSENSUS_OPERATION_VERSION = "1.0.0"
 DEVELOPMENT_REWARD_ENGINE_ID = "development-reward-engine"
 
 DevelopmentRewardOperationType = Literal[
@@ -490,6 +491,7 @@ class DevelopmentRewardOperationBuilder:
             "commitment_hash": commitment.commitment_hash,
             "activation_id": approval.activation_id,
             "activation_approval_hash": approval.approval_hash,
+            "development_operation_version": DEVELOPMENT_REWARD_OPERATION_VERSION,
             "policy_hash": commitment.policy_hash,
             "calculation_root": commitment.calculation_root,
             "epoch": commitment.epoch,
@@ -697,7 +699,7 @@ class DevelopmentRewardOperationBuilder:
         payload["payload_hash"] = canonical_hash(payload)
         return LedgerOperationEnvelope(
             operation_type=request.operation_type,
-            operation_version=DEVELOPMENT_REWARD_OPERATION_VERSION,
+            operation_version=DEVELOPMENT_REWARD_CONSENSUS_OPERATION_VERSION,
             origin_type="protocol",
             initiator_id=DEVELOPMENT_REWARD_ENGINE_ID,
             fee_class="protocol_sponsored",
@@ -725,6 +727,7 @@ def build_development_reward_operation(
 __all__ = [
     "DEVELOPMENT_REWARD_ENGINE_ID",
     "DEVELOPMENT_REWARD_OPERATION_VERSION",
+    "DEVELOPMENT_REWARD_CONSENSUS_OPERATION_VERSION",
     "DevelopmentRewardOperationBuilder",
     "DevelopmentRewardOperationRequest",
     "DevelopmentRewardOperationType",

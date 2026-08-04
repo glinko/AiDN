@@ -53,6 +53,57 @@ def test_finalized_state_survives_application_restart(tmp_path) -> None:
     assert len(restored.ledger.snapshot_operations()) == 1
 
 
+def test_finalize_block_defers_durable_state_until_commit(tmp_path) -> None:
+    store = ABCIStateStore(tmp_path / "abci")
+    application = _app(store)
+
+    result, _ = application.finalize_block_with_results(
+        block_height=1,
+        block_hash=b"p" * 32,
+        txs=[],
+    )
+
+    assert result.code == "ok"
+    assert store.load_current() is None
+    preview = application.preview_commit()
+    committed = application.commit()
+    assert committed.data == preview.data
+    durable_snapshot = store.load_current()
+    assert durable_snapshot is not None
+    assert durable_snapshot["last_block_height"] == 1
+
+
+def test_commit_failure_restores_last_durable_block(tmp_path, monkeypatch) -> None:
+    store = ABCIStateStore(tmp_path / "abci")
+    application = _app(store)
+    assert application.finalize_block(block_height=1, block_hash=b"a" * 32, txs=[]).code == "ok"
+
+    original_persist = store.persist
+    persist_calls = 0
+
+    def fail_once(snapshot: dict) -> None:
+        nonlocal persist_calls
+        persist_calls += 1
+        if persist_calls == 1:
+            raise ABCIStateStoreError("disk full")
+        original_persist(snapshot)
+
+    monkeypatch.setattr(store, "persist", fail_once)
+    result, _ = application.finalize_block_with_results(
+        block_height=2,
+        block_hash=b"b" * 32,
+        txs=[],
+    )
+
+    assert result.code == "ok"
+    with pytest.raises(ABCIStateStoreError, match="durable state persistence failed"):
+        application.commit()
+    assert application.info().last_block_height == 1
+    durable_snapshot = store.load_current()
+    assert durable_snapshot is not None
+    assert durable_snapshot["last_block_height"] == 1
+
+
 def test_persistence_failure_rolls_back_block_state(tmp_path, monkeypatch) -> None:
     store = ABCIStateStore(tmp_path / "abci")
     application = _app(store)

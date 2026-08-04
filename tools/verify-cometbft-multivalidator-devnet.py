@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import hashlib
 import json
 import subprocess
@@ -34,34 +35,48 @@ from aidn_hypervisor.settlement.models import (
 )
 
 
-def _rpc_get(endpoint: str, path: str, **params: str) -> dict[str, Any]:
+def _rpc_get(endpoint: str, rpc_path: str, **params: str) -> dict[str, Any]:
     query = urllib_parse.urlencode(params)
-    with urllib_request.urlopen(f"{endpoint}{path}?{query}", timeout=10) as response:
+    with urllib_request.urlopen(f"{endpoint}{rpc_path}?{query}", timeout=10) as response:
         payload = json.loads(response.read().decode("utf-8"))
     if not isinstance(payload, dict) or payload.get("error"):
-        raise RuntimeError(f"CometBFT RPC request failed for {path}: {payload!r}")
+        raise RuntimeError(f"CometBFT RPC request failed for {rpc_path}: {payload!r}")
     result = payload.get("result")
     if not isinstance(result, dict):
-        raise RuntimeError(f"CometBFT RPC result is invalid for {path}")
+        raise RuntimeError(f"CometBFT RPC result is invalid for {rpc_path}")
     return result
 
 
-def _status(endpoint: str) -> tuple[int, str]:
+def _status(endpoint: str) -> dict[str, Any]:
     result = _rpc_get(endpoint, "/status")
     sync_info = result.get("sync_info")
-    if not isinstance(sync_info, dict):
-        raise RuntimeError("CometBFT status has no sync_info")
+    node_info = result.get("node_info")
+    if not isinstance(sync_info, dict) or not isinstance(node_info, dict):
+        raise RuntimeError("CometBFT status is incomplete")
     height = int(sync_info["latest_block_height"])
     app_hash = str(sync_info.get("latest_app_hash") or "")
-    if height < 1 or len(app_hash) != 64:
-        raise RuntimeError("CometBFT status does not expose a finalized app hash")
-    return height, app_hash.upper()
+    node_id = str(node_info.get("id") or "")
+    chain_id = str(node_info.get("network") or "")
+    if height < 1 or len(app_hash) != 64 or not node_id or not chain_id:
+        raise RuntimeError("CometBFT status does not expose a complete finalized state")
+    net_info = _rpc_get(endpoint, "/net_info")
+    return {
+        "rpc_url": endpoint,
+        "height": height,
+        "app_hash": app_hash.upper(),
+        "node_id": node_id,
+        "chain_id": chain_id,
+        "catching_up": bool(sync_info.get("catching_up")),
+        "peer_count": int(net_info.get("n_peers") or 0),
+    }
 
 
 def _converged_status(
     statuses: list[dict[str, Any]], *, greater_than: int
 ) -> tuple[int, str] | None:
     if not statuses:
+        return None
+    if any(item.get("catching_up") is not False for item in statuses):
         return None
     heights = {item.get("height") for item in statuses}
     app_hashes = {item.get("app_hash") for item in statuses}
@@ -91,14 +106,7 @@ def _wait_for_network_convergence(
         try:
             statuses = []
             for endpoint in endpoints:
-                height, app_hash = _status(endpoint)
-                statuses.append(
-                    {
-                        "rpc_url": endpoint,
-                        "height": height,
-                        "app_hash": app_hash,
-                    }
-                )
+                statuses.append(_status(endpoint))
             convergence = _converged_status(statuses, greater_than=greater_than)
             if convergence is not None:
                 height, app_hash = convergence
@@ -116,8 +124,70 @@ def _wait_for_network_convergence(
     )
 
 
-def _failure_chain_transactions() -> list[tuple[str, str, bytes]]:
+def _wallet_next_sequence(endpoint: str, wallet_id: str) -> int:
+    """Read the next sender sequence from the live ABCI query surface."""
+    result = _rpc_get(
+        endpoint,
+        "/abci_query",
+        path=json.dumps(f"wallet/sequence/{wallet_id}", separators=(",", ":")),
+    )
+    response = result.get("response")
+    if not isinstance(response, dict) or int(response.get("code", -1)) != 0:
+        raise RuntimeError(f"ABCI wallet sequence query failed: {result!r}")
+    encoded = response.get("value")
+    if not isinstance(encoded, str) or not encoded:
+        raise RuntimeError(f"ABCI wallet sequence query returned no value: {result!r}")
+    try:
+        sequence = int(base64.b64decode(encoded, validate=True).decode("ascii"))
+    except (binascii.Error, ValueError, UnicodeDecodeError) as error:
+        raise RuntimeError("ABCI wallet sequence query returned invalid data") from error
+    if sequence < 1:
+        raise RuntimeError("ABCI wallet next sequence must be positive")
+    return sequence
+
+
+def _load_offline_report(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"cannot load offline recovery report: {error}") from error
+    if not isinstance(report, dict) or report.get("status") != "PASS":
+        raise RuntimeError("offline recovery report must be a PASS JSON object")
+    if report.get("drill") != "ONE_VALIDATOR_OFFLINE":
+        raise RuntimeError("offline recovery report has an unexpected drill type")
+    checks = report.get("checks")
+    required_checks = (
+        "survivor_quorum_progressed",
+        "all_validators_reconverged",
+        "offline_validator_rejoined",
+    )
+    if not isinstance(checks, dict) or not all(checks.get(name) is True for name in required_checks):
+        raise RuntimeError("offline recovery report does not prove all required checks")
+    return report
+
+
+def _restart_validator(*, ssh_target: str | None, restart_command: str | None, container: str) -> str:
+    if (ssh_target is None) != (restart_command is None):
+        raise ValueError("--restart-ssh-target and --restart-command must be supplied together")
+    if ssh_target is not None and restart_command is not None:
+        subprocess.run(["ssh", ssh_target, restart_command], check=True)
+        return "SSH_COMMAND"
+    subprocess.run(["docker", "restart", container], check=True)
+    return "LOCAL_DOCKER"
+
+
+def _failure_chain_transactions(
+    *,
+    consumer_wallet: str = "wallet:acceptance-consumer",
+    consumer_sequence: int = 1,
+    total_locked_amount_q_atoms: int = 1_100,
+) -> list[tuple[str, str, bytes]]:
     """Create one disposable canonical RFC-0060 failure chain."""
+    if total_locked_amount_q_atoms <= 100:
+        raise ValueError("failure-chain lock amount must exceed the 100 q_atoms fee reserve")
+    endpoint_payment_reserve = total_locked_amount_q_atoms - 100
     now = datetime.now(UTC).replace(microsecond=0)
     session_id = f"session-cometbft-drill-{uuid.uuid4()}"
     failure_root = f"sha256:cometbft-failure-{uuid.uuid4()}"
@@ -127,13 +197,13 @@ def _failure_chain_transactions() -> list[tuple[str, str, bytes]]:
         session_id=session_id,
         session_contract_hash="sha256:cometbft-drill-session-contract",
         funding_class="ESCROW_PREPAID",
-        consumer_funding_account="wallet:acceptance-consumer",
+        consumer_funding_account=consumer_wallet,
         endpoint_payment_beneficiary="wallet:acceptance-endpoint",
-        consumer_refund_beneficiary="wallet:acceptance-consumer",
-        total_locked_amount_q_atoms=1_100,
-        endpoint_payment_reserve_q_atoms=1_000,
+        consumer_refund_beneficiary=consumer_wallet,
+        total_locked_amount_q_atoms=total_locked_amount_q_atoms,
+        endpoint_payment_reserve_q_atoms=endpoint_payment_reserve,
         network_fee_reserve_q_atoms=100,
-        unsettled_payment_reserve_q_atoms=1_000,
+        unsettled_payment_reserve_q_atoms=endpoint_payment_reserve,
         unsettled_fee_reserve_q_atoms=100,
     )
     lock = LedgerOperationEnvelope(
@@ -143,7 +213,7 @@ def _failure_chain_transactions() -> list[tuple[str, str, bytes]]:
         origin_type="wallet",
         initiator_id=session_id,
         sender_wallet=funding.consumer_funding_account,
-        sender_sequence=1,
+        sender_sequence=consumer_sequence,
         fee_payer=funding.consumer_funding_account,
         fee_class="session",
         created_at=now.isoformat(),
@@ -177,10 +247,10 @@ def _failure_chain_transactions() -> list[tuple[str, str, bytes]]:
         previously_refunded_to_consumer_q_atoms=0,
         previously_consumed_network_fees_q_atoms=0,
         credit_endpoint_q_atoms=0,
-        credit_consumer_q_atoms=1_100,
+        credit_consumer_q_atoms=total_locked_amount_q_atoms,
         consume_network_fees_q_atoms=0,
         retain_dispute_reserve_q_atoms=0,
-        total_locked_amount_q_atoms=1_100,
+        total_locked_amount_q_atoms=total_locked_amount_q_atoms,
     )
     force = LedgerOperationEnvelope(
         operation_type="SESSION_FORCE_SETTLE",
@@ -202,7 +272,7 @@ def _failure_chain_transactions() -> list[tuple[str, str, bytes]]:
             "failure_evidence_operation_id": failure.operation_id,
             "funding_lock_operation_id": lock.operation_id,
             "requested_payment_q_atoms": 0,
-            "requested_refund_q_atoms": 1_100,
+            "requested_refund_q_atoms": total_locked_amount_q_atoms,
             "request_settlement_root": "sha256:cometbft-empty-requests",
             "usage_chain_root": "sha256:cometbft-empty-usage",
             "checkpoint_root": "sha256:cometbft-empty-checkpoints",
@@ -225,8 +295,18 @@ def _failure_chain_transactions() -> list[tuple[str, str, bytes]]:
     ]
 
 
-def _session_lifecycle_transactions() -> list[tuple[str, str, bytes]]:
+def _session_lifecycle_transactions(
+    *,
+    consumer_wallet: str = "wallet:acceptance-consumer",
+    consumer_sequence: int = 2,
+    endpoint_wallet: str = "wallet:acceptance-endpoint",
+    endpoint_sequence: int = 1,
+    total_locked_amount_q_atoms: int = 300,
+) -> list[tuple[str, str, bytes]]:
     """Create a disposable lock -> open -> accept lifecycle chain."""
+    if total_locked_amount_q_atoms <= 50:
+        raise ValueError("lifecycle lock amount must exceed the 50 q_atoms fee reserve")
+    endpoint_payment_reserve = total_locked_amount_q_atoms - 50
     now = datetime.now(UTC).replace(microsecond=0)
     session_id = f"session-cometbft-lifecycle-{uuid.uuid4()}"
     expires_at = (now + timedelta(minutes=10)).isoformat()
@@ -234,13 +314,13 @@ def _session_lifecycle_transactions() -> list[tuple[str, str, bytes]]:
         session_id=session_id,
         session_contract_hash="sha256:cometbft-lifecycle-session-contract",
         funding_class="ESCROW_PREPAID",
-        consumer_funding_account="wallet:acceptance-consumer",
-        endpoint_payment_beneficiary="wallet:acceptance-endpoint",
-        consumer_refund_beneficiary="wallet:acceptance-consumer",
-        total_locked_amount_q_atoms=300,
-        endpoint_payment_reserve_q_atoms=250,
+        consumer_funding_account=consumer_wallet,
+        endpoint_payment_beneficiary=endpoint_wallet,
+        consumer_refund_beneficiary=consumer_wallet,
+        total_locked_amount_q_atoms=total_locked_amount_q_atoms,
+        endpoint_payment_reserve_q_atoms=endpoint_payment_reserve,
         network_fee_reserve_q_atoms=50,
-        unsettled_payment_reserve_q_atoms=250,
+        unsettled_payment_reserve_q_atoms=endpoint_payment_reserve,
         unsettled_fee_reserve_q_atoms=50,
     )
     lock = LedgerOperationEnvelope(
@@ -250,7 +330,7 @@ def _session_lifecycle_transactions() -> list[tuple[str, str, bytes]]:
         origin_type="wallet",
         initiator_id=session_id,
         sender_wallet=funding.consumer_funding_account,
-        sender_sequence=2,
+        sender_sequence=consumer_sequence,
         fee_payer=funding.consumer_funding_account,
         fee_class="session",
         created_at=now.isoformat(),
@@ -284,7 +364,7 @@ def _session_lifecycle_transactions() -> list[tuple[str, str, bytes]]:
         origin_type="wallet",
         initiator_id=session_id,
         sender_wallet=funding.consumer_funding_account,
-        sender_sequence=3,
+        sender_sequence=consumer_sequence + 1,
         fee_payer=funding.consumer_funding_account,
         fee_class="session",
         created_at=now.isoformat(),
@@ -300,7 +380,7 @@ def _session_lifecycle_transactions() -> list[tuple[str, str, bytes]]:
         origin_type="wallet",
         initiator_id="hv-acceptance-endpoint",
         sender_wallet=funding.endpoint_payment_beneficiary,
-        sender_sequence=1,
+        sender_sequence=endpoint_sequence,
         fee_payer=funding.endpoint_payment_beneficiary,
         fee_class="session",
         created_at=now.isoformat(),
@@ -492,6 +572,35 @@ def _verify_transaction_proof(endpoint: str, transaction_hash: str, tx_result: d
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rpc-url", default="http://127.0.0.1:26657")
+    parser.add_argument("--consumer-wallet", default="wallet:acceptance-consumer")
+    parser.add_argument(
+        "--consumer-sequence",
+        type=int,
+        help="Next sender sequence; defaults to a live ABCI query for --consumer-wallet.",
+    )
+    parser.add_argument("--endpoint-wallet", default="wallet:acceptance-endpoint")
+    parser.add_argument(
+        "--failure-lock-amount-q-atoms",
+        type=int,
+        default=1_100,
+        help="Disposable failure-chain escrow amount (default: 1100).",
+    )
+    parser.add_argument(
+        "--lifecycle-lock-amount-q-atoms",
+        type=int,
+        default=300,
+        help="Disposable lifecycle escrow amount (default: 300).",
+    )
+    parser.add_argument(
+        "--endpoint-sequence",
+        type=int,
+        help="Next endpoint sender sequence; defaults to a live ABCI query.",
+    )
+    parser.add_argument(
+        "--offline-report",
+        type=Path,
+        help="PASS report from tools/run-cometbft-offline-drill.py",
+    )
     parser.add_argument(
         "--validator-rpc-url",
         action="append",
@@ -502,6 +611,11 @@ def main() -> None:
         ),
     )
     parser.add_argument("--restart-container", default="aidn-comet-3")
+    parser.add_argument("--restart-ssh-target", help="SSH target for a remote validator restart")
+    parser.add_argument(
+        "--restart-command",
+        help="Explicit remote command that restarts the selected disposable validator",
+    )
     parser.add_argument(
         "--commit-timeout-seconds",
         type=int,
@@ -524,6 +638,21 @@ def main() -> None:
     if args.commit_timeout_seconds <= 0 or args.height_timeout_seconds <= 0:
         raise ValueError("acceptance timeouts must be positive")
     endpoint = args.rpc_url.rstrip("/")
+    offline_report = _load_offline_report(args.offline_report)
+    consumer_sequence = (
+        args.consumer_sequence
+        if args.consumer_sequence is not None
+        else _wallet_next_sequence(endpoint, args.consumer_wallet)
+    )
+    endpoint_sequence = (
+        args.endpoint_sequence
+        if args.endpoint_sequence is not None
+        else _wallet_next_sequence(endpoint, args.endpoint_wallet)
+    )
+    if consumer_sequence < 1:
+        raise ValueError("consumer-sequence must be positive")
+    if endpoint_sequence < 1:
+        raise ValueError("endpoint-sequence must be positive")
     validator_endpoints = [endpoint]
     for validator_endpoint in args.validator_rpc_urls or []:
         normalized_endpoint = validator_endpoint.rstrip("/")
@@ -541,11 +670,24 @@ def main() -> None:
     )
     transaction_records = []
     for stage, session_id, transaction_bytes in [
-        *_failure_chain_transactions(),
-        *_session_lifecycle_transactions(),
+        *_failure_chain_transactions(
+            consumer_wallet=args.consumer_wallet,
+            consumer_sequence=consumer_sequence,
+            total_locked_amount_q_atoms=args.failure_lock_amount_q_atoms,
+        ),
+        *_session_lifecycle_transactions(
+            consumer_wallet=args.consumer_wallet,
+            consumer_sequence=consumer_sequence + 1,
+            endpoint_wallet=args.endpoint_wallet,
+            endpoint_sequence=endpoint_sequence,
+            total_locked_amount_q_atoms=args.lifecycle_lock_amount_q_atoms,
+        ),
         *_reputation_profile_transactions(),
     ]:
-        transaction_hash = _submit_transaction(endpoint, transaction_bytes)
+        try:
+            transaction_hash = _submit_transaction(endpoint, transaction_bytes)
+        except RuntimeError as error:
+            raise RuntimeError(f"{stage}: {error}") from error
         transaction = _wait_for_transaction(
             endpoint,
             transaction_hash,
@@ -577,7 +719,11 @@ def main() -> None:
         raise RuntimeError("accepted operations did not change the application hash")
 
     if not args.skip_restart:
-        subprocess.run(["docker", "restart", args.restart_container], check=True)
+        restart_mode = _restart_validator(
+            ssh_target=args.restart_ssh_target,
+            restart_command=args.restart_command,
+            container=args.restart_container,
+        )
         restarted_height, restarted_app_hash, restarted_statuses = _wait_for_network_convergence(
             validator_endpoints,
             greater_than=verified_height,
@@ -586,6 +732,7 @@ def main() -> None:
         if restarted_app_hash != verified_app_hash:
             raise RuntimeError("Application hash changed after validator restart")
     else:
+        restart_mode = "SKIPPED"
         restarted_height, restarted_app_hash, restarted_statuses = (
             verified_height,
             verified_app_hash,
@@ -594,12 +741,17 @@ def main() -> None:
 
     report = {
         "status": "ok",
+        "scope": "CONTROLLED_LAN_TESTNET",
         "strict_operation_coverage_probe": coverage_probe,
         "validator_rpc_urls": validator_endpoints,
         "validator_status_before": before_statuses,
         "operations": transaction_records,
         "validator_status_after_transactions": verified_statuses,
         "validator_status_after_restart": restarted_statuses,
+        "restart_status": "SKIPPED" if args.skip_restart else "PASS",
+        "restart_mode": restart_mode,
+        "offline_status": "PASS" if offline_report is not None else "NOT_RUN",
+        "offline_evidence": offline_report,
         "height_after_restart": restarted_height,
         "app_hash": restarted_app_hash,
     }

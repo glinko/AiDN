@@ -28,3 +28,32 @@ def test_file_secret_manager_rejects_wrong_key_and_invalid_handle(tmp_path) -> N
         FileSecretManager(path=path, master_key=os.urandom(32))
     with pytest.raises(SecretManagerError, match="secret://"):
         manager.get("registry/signing-key")
+
+
+def test_file_secret_manager_refreshes_and_atomically_updates_many_handles(tmp_path) -> None:
+    path = tmp_path / "secrets.json"
+    key = os.urandom(32)
+    manager = FileSecretManager(path=path, master_key=key)
+    manager.put_many(
+        {
+            "secret://mcp/certificate": b"certificate-v1",
+            "secret://mcp/private-key": b"private-key-v1",
+        }
+    )
+    restored = FileSecretManager(path=path, master_key=key)
+    old_fingerprint = restored.fingerprint(
+        ("secret://mcp/certificate", "secret://mcp/private-key")
+    )
+
+    manager.put_many(
+        {
+            "secret://mcp/certificate": b"certificate-v2",
+            "secret://mcp/private-key": b"private-key-v2",
+        }
+    )
+
+    assert restored.reload() is True
+    assert restored.get("secret://mcp/certificate") == b"certificate-v2"
+    assert restored.fingerprint(
+        ("secret://mcp/certificate", "secret://mcp/private-key")
+    ) != old_fingerprint

@@ -19,6 +19,9 @@
   },
   "operation_envelope": {
     "default_operation_version": "1.0.0",
+    "supported_operation_versions": [
+      "1.0.0"
+    ],
     "operation_id": "sha256(canonical envelope with operation_id empty and signatures empty)",
     "signing_bytes": "canonical envelope with signatures empty"
   },
@@ -224,5 +227,5 @@
     "empty_extension_compatibility": "empty post-MVP extensions are omitted from historical AppHash"
   },
   "stable_error_policy": "symbolic deterministic errors; human text is non-consensus",
-  "profile_commitment": "sha256:9c9b698e096a8fdb34393b16a4feab27259b11f5610994301811ee81ca3a8560"
+  "profile_commitment": "sha256:4ebeab687d3871534b96399b77d26ccd8e53414a7c1882631e82e6dbb30af190"
 }

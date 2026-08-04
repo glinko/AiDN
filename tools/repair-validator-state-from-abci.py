@@ -20,8 +20,15 @@ def main() -> None:
     parser.add_argument("--abci-state", required=True, type=Path)
     parser.add_argument("--discard-operation-id", action="append", default=[])
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--confirm-offline",
+        action="store_true",
+        help="confirm that CometBFT and the ABCI process are stopped before applying",
+    )
     parser.add_argument("--backup-path", type=Path)
     args = parser.parse_args()
+    if args.apply and not args.confirm_offline:
+        raise SystemExit("--apply requires --confirm-offline; reconcile validator state offline")
     try:
         plan = build_validator_recovery_plan(
             hypervisor_state_path=args.hypervisor_state,
@@ -42,7 +49,13 @@ def main() -> None:
                 hypervisor_state_path=args.hypervisor_state,
                 backup_path=args.backup_path,
             )
-            result.update({"status": "applied", "backup_path": str(backup)})
+            result.update(
+                {
+                    "status": "applied",
+                    "backup_path": str(backup),
+                    "offline_confirmation": "OPERATOR_CONFIRMED_VALIDATOR_OFFLINE",
+                }
+            )
         print(json.dumps(result, sort_keys=True))
     except ValidatorRecoveryError as error:
         raise SystemExit(f"validator recovery rejected: {error}") from error

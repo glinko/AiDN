@@ -28,6 +28,7 @@ def _create_validator_state(monkeypatch, root, *, finalize: bool = True):
             txs=[],
         )
         assert result.code == "ok"
+        consensus.abci.commit()
     return app
 
 

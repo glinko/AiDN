@@ -1,0 +1,125 @@
+# AiDN Ubuntu Operator Release Package
+
+This is the supported one-command installation path for a fresh Ubuntu 24.04+
+or later host. It installs the Hypervisor checkout, creates persistent local
+state, provisions a host-local operator identity and encrypted Registry secret
+store, and manages the Hypervisor with a user-level systemd service.
+
+The installer is intentionally safe by default:
+
+- the API binds to `127.0.0.1:8766`;
+- the Registry listener is disabled from external access;
+- no firewall rule is changed;
+- no Wallet, peer approval, or public-directory trust is created;
+- sudo is used only through the normal Ubuntu prompt;
+- private keys and the Secret Manager master key remain below the operator's
+  data directory and are never printed or put in a unit file.
+
+## One command
+
+Use a reviewed immutable tag or commit for an acceptance run. Replace
+`<reviewed-ref>` with that exact ref in both places:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/glinko/AiDN/<reviewed-ref>/tools/aidn-operator-bootstrap-ubuntu.sh \
+  | bash -s -- --ref <reviewed-ref>
+```
+
+The wizard asks only for the operator/node name and deployment defaults. It
+reads from `/dev/tty`, so sudo and wizard prompts work even though the script
+itself is downloaded through a pipe. It never asks for or stores the root
+password.
+
+For automation with the safe defaults:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/glinko/AiDN/<reviewed-ref>/tools/aidn-operator-bootstrap-ubuntu.sh \
+  | bash -s -- --ref <reviewed-ref> --operator-id operator-example-1 --non-interactive
+```
+
+The non-interactive form still requires the caller's ordinary sudo access. It
+does not silently enable a public API or a Registry listener.
+
+## Enabling peer onboarding
+
+To prepare a LAN/testnet Registry listener during installation, explicitly add
+`--enable-registry`:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/glinko/AiDN/<reviewed-ref>/tools/aidn-operator-bootstrap-ubuntu.sh \
+  | bash -s -- --ref <reviewed-ref> --operator-id operator-example-1 \
+      --enable-registry --advertise-host 192.0.2.10 --non-interactive
+```
+
+This creates `public-peer.json` but does not approve a remote peer or create an
+outbound connection. Exchange only the public bundle through an authenticated
+operator channel, then import it with the existing
+`prepare-registry-replication-identity.py add-peer` command on both hosts. The
+host firewall is deliberately not modified by the bootstrap; open TCP 9444
+only after reviewing the LAN policy.
+
+The API remains loopback-only in this mode. A non-loopback API bind requires
+the explicit `--allow-public-api` flag because the MVP API does not provide a
+public authentication boundary:
+
+```bash
+... --api-host 0.0.0.0 --api-port 8766 --allow-public-api
+```
+
+Do not use that option on an untrusted network. Prefer an authenticated
+reverse proxy or a private management network for the dashboard.
+
+## Resulting layout
+
+For operator `operator-example-1`, defaults are:
+
+```text
+~/aidn/operator-example-1/AiDN/                    immutable checkout
+~/.local/share/aidn/operator-example-1/            persistent state
+  bootstrap-state.json                              secret-free summary
+  operator-identity/                                local identity metadata
+    operator-attestation-key.raw                    PRIVATE, mode 0600
+    operator-identity.json                          PRIVATE metadata, mode 0600
+    operator-public-identity.json                   safe to exchange
+  registry-replication/
+    public-peer.json                                safe to exchange
+    secrets.json                                    encrypted private store
+    master-key.b64                                  PRIVATE, mode 0600
+  run-hypervisor.sh                                 PRIVATE launcher
+  logs/
+~/.config/systemd/user/aidn-hypervisor-operator-example-1.service
+```
+
+`bootstrap-state.json` contains the exact checkout commit, operator ID, public
+key, service name and public bundle path. It contains no private key or master
+key. Verify the service with:
+
+```bash
+systemctl --user status aidn-hypervisor-operator-example-1.service
+curl --fail http://127.0.0.1:8766/health
+```
+
+The installer enables user lingering so the service can return after reboot.
+The generated unit uses restart-on-failure and restricts writable state to the
+operator data directory.
+
+## Re-running and removal
+
+Re-running the same command at the same paths is idempotent for identity keys:
+existing keys are verified and reused, not rotated. Local checkout changes are
+never overwritten; the installer stops if the checkout is dirty or the path is
+not an AiDN repository.
+
+To stop and disable one installed operator without deleting evidence or keys:
+
+```bash
+systemctl --user disable --now aidn-hypervisor-operator-example-1.service
+```
+
+Do not delete `master-key.b64`, `secrets.json`, or
+`operator-attestation-key.raw` until any required evidence and recovery window
+has ended. Peer approval, key rotation, Wallet binding, provider installation,
+and public network release remain separate workflows.

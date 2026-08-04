@@ -108,6 +108,17 @@ def test_public_evidence_bundle_rejects_unlisted_files(tmp_path: Path) -> None:
         verify_public_evidence_bundle(tmp_path)
 
 
+def test_public_evidence_bundle_allows_release_gate_control_file(tmp_path: Path) -> None:
+    _write_bundle(tmp_path)
+    gate_path = tmp_path / "gates/release-gate-result.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text('{"status":"PASS"}\n', encoding="utf-8")
+
+    result = verify_public_evidence_bundle(tmp_path)
+
+    assert result.attestation_verified is True
+
+
 def test_public_evidence_bundle_can_be_checked_before_attestation(tmp_path: Path) -> None:
     _write_bundle(tmp_path, with_attestation=False)
 

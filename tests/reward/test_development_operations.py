@@ -803,6 +803,8 @@ def test_builder_emits_deterministic_payment_envelope_without_ledger_write():
 
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
     assert first.operation_type == "DEVELOPMENT_REWARD_PAY_IMMEDIATE"
+    assert first.operation_version == "1.0.0"
+    assert first.payload["development_operation_version"] == "eco-0007-operation.v1"
     assert first.origin_type == "protocol"
     assert first.sender_wallet is None
     assert first.payload["activation_id"] == approval.activation_id
@@ -972,6 +974,7 @@ def test_abci_reward_payment_replay_and_snapshot_restore(tmp_path):
         block_hash=b"G" * 32,
         txs=[json.dumps(retry.model_dump(mode="json")).encode("utf-8")],
     )
+    app.commit()
     restored = AIDNABCIApplication(
         ledger_service=LedgerOperationService(),
         admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
@@ -1167,6 +1170,7 @@ def test_abci_maturity_payment_replay_and_snapshot_restore(tmp_path):
         block_hash=b"Y" * 32,
         txs=[json.dumps(retry.model_dump(mode="json")).encode("utf-8")],
     )
+    app.commit()
     restored = AIDNABCIApplication(
         ledger_service=LedgerOperationService(),
         admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
@@ -1497,6 +1501,7 @@ def test_abci_expiry_return_replay_and_snapshot_restore(tmp_path):
         block_hash=b"Y" * 32,
         txs=[json.dumps(retry.model_dump(mode="json")).encode("utf-8")],
     )
+    app.commit()
     restored = AIDNABCIApplication(
         ledger_service=LedgerOperationService(),
         admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
@@ -1605,6 +1610,7 @@ def test_finalized_commitment_closes_auditable_reward_evidence_set(tmp_path):
         block_hash=b"L" * 32,
         txs=[json.dumps(retry.model_dump(mode="json")).encode("utf-8")],
     )
+    app.commit()
     restored = AIDNABCIApplication(
         ledger_service=LedgerOperationService(),
         admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
@@ -1705,6 +1711,7 @@ def test_abci_unclaimed_reward_replay_and_snapshot_restore(tmp_path):
         block_hash=b"Z" * 32,
         txs=[json.dumps(retry.model_dump(mode="json")).encode("utf-8")],
     )
+    app.commit()
     restored = AIDNABCIApplication(
         ledger_service=LedgerOperationService(),
         admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
@@ -1969,6 +1976,7 @@ def test_abci_reward_claim_replay_and_snapshot_restore(tmp_path):
         block_hash=b"F" * 32,
         txs=[json.dumps(retry.model_dump(mode="json")).encode("utf-8")],
     )
+    app.commit()
     restored = AIDNABCIApplication(
         ledger_service=LedgerOperationService(),
         admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
@@ -2412,6 +2420,7 @@ def test_abci_reward_reserve_replay_and_snapshot_restore(tmp_path):
         block_hash=b"U" * 32,
         txs=[json.dumps(retry.model_dump(mode="json")).encode("utf-8")],
     )
+    app.commit()
     restored = AIDNABCIApplication(
         ledger_service=LedgerOperationService(),
         admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),

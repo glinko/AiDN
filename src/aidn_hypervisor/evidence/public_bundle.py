@@ -18,6 +18,8 @@ EVIDENCE_LEAF_DOMAIN = b"AIDN:EVIDENCE-LEAF:v1\x00"
 EVIDENCE_NODE_DOMAIN = b"AIDN:EVIDENCE-NODE:v1\x00"
 MANIFEST_NAME = "manifest.json"
 ATTESTATION_PATH = "attestations/operator-attestation.json"
+INDEPENDENCE_REVIEW_PATH = "attestations/independence-review.json"
+GATE_RESULT_PATH = "gates/release-gate-result.json"
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 _PRIVATE_KEY_RE = re.compile(rb"-----BEGIN [^-]*PRIVATE KEY-----", re.IGNORECASE)
@@ -93,7 +95,7 @@ def _safe_relative_path(value: object) -> str:
     normalized = "/".join(parsed.parts)
     if normalized != value:
         raise EvidenceBundleError(f"artifact path is not normalized: {value!r}")
-    if value in (MANIFEST_NAME, ATTESTATION_PATH):
+    if value in (MANIFEST_NAME, ATTESTATION_PATH, INDEPENDENCE_REVIEW_PATH, GATE_RESULT_PATH):
         raise EvidenceBundleError(f"control file cannot be an evidence artifact: {value}")
     return value
 
@@ -265,7 +267,12 @@ def verify_public_evidence_bundle(
     if missing:
         raise EvidenceBundleError("required evidence artifacts are missing: " + ", ".join(missing))
 
-    control_paths = {MANIFEST_NAME, ATTESTATION_PATH}
+    control_paths = {
+        MANIFEST_NAME,
+        ATTESTATION_PATH,
+        INDEPENDENCE_REVIEW_PATH,
+        GATE_RESULT_PATH,
+    }
     unlisted = sorted(_relative_files(root) - listed_paths - control_paths)
     if unlisted:
         raise EvidenceBundleError("unlisted files are not publishable evidence: " + ", ".join(unlisted))
@@ -297,6 +304,8 @@ __all__ = [
     "EVIDENCE_NODE_DOMAIN",
     "EvidenceBundleError",
     "EvidenceVerificationResult",
+    "GATE_RESULT_PATH",
+    "INDEPENDENCE_REVIEW_PATH",
     "canonical_json_bytes",
     "evidence_root",
     "verify_public_evidence_bundle",

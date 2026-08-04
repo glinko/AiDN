@@ -31,3 +31,11 @@ def test_snapshot_acceptance_report_is_reproducible_and_tamper_evident() -> None
     tampered["height_two"]["source_app_hash"] = "0" * 64
     with pytest.raises(SnapshotAcceptanceError, match="hash mismatch"):
         verify_snapshot_acceptance_report(tampered)
+
+
+def test_snapshot_acceptance_rejects_malformed_check_schema_before_replay() -> None:
+    report = run_snapshot_acceptance()
+    report.pop("checks")
+
+    with pytest.raises(SnapshotAcceptanceError, match="checks are incomplete"):
+        verify_snapshot_acceptance_report(report)

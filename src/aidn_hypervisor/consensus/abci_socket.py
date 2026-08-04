@@ -184,7 +184,7 @@ class AIDNABCISocketServer:
                             _message_field(3, _validator_update_message(item))
                             for item in result.validator_updates
                         ),
-                        _bytes_field(5, self.application.commit().data),
+                        _bytes_field(5, self.application.preview_commit().data),
                     ),
                 )
             if kind == "commit":
@@ -212,12 +212,16 @@ class AIDNABCISocketServer:
                 chunk = self.application.load_state_snapshot_chunk(
                     height=_int_field(payload, 1),
                     format=_int_field(payload, 2),
-                    chunk=_int_field(payload, 3),
+                    # Proto3 omits a zero-valued scalar. CometBFT therefore
+                    # omits `chunk` for the first snapshot chunk.
+                    chunk=_int_field(payload, 3, default=0),
                 )
                 return _response("load_snapshot_chunk", _bytes_field(1, chunk))
             if kind == "apply_snapshot_chunk":
                 status = self.application.apply_state_snapshot_chunk(
-                    index=_int_field(payload, 1),
+                    # Proto3 omits a zero-valued scalar. The first incoming
+                    # chunk consequently has no `index` field on the wire.
+                    index=_int_field(payload, 1, default=0),
                     chunk=_bytes_field_value(payload, 2),
                 )
                 return _response("apply_snapshot_chunk", _varint_field(1, _APPLY_SNAPSHOT_STATUS[status]))

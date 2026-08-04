@@ -18,6 +18,7 @@ from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.coverage import (
     VALIDATION_EVIDENCE_OPERATION_TYPES,
     strict_operation_coverage_error,
+    strict_operation_version_error,
 )
 from aidn_hypervisor.consensus.execution import compute_execution_state_root
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
@@ -121,6 +122,8 @@ class AIDNABCIApplication:
         self._state_checkpoint_callback = state_checkpoint_callback
         self._strict_operation_coverage = strict_operation_coverage
         self._restored_from_store = False
+        self._pending_commit_snapshot: dict[str, Any] | None = None
+        self._pending_commit_admission_state: dict[str, Any] | None = None
 
         persisted_snapshot = (
             state_store.load_current() if state_store is not None and restore_state_from_store else None
@@ -359,6 +362,11 @@ class AIDNABCIApplication:
             txs=txs,
             time=time,
         )
+        if result.code == "ok":
+            try:
+                self.commit()
+            except ABCIStateStoreError as error:
+                return ABCIResult(code="internal", log=str(error))
         return result
 
     def finalize_block_with_results(
@@ -427,24 +435,12 @@ class AIDNABCIApplication:
             app_hash=self._app_hash.hex().upper(),
         )
 
-        try:
-            self._persist_durable_state()
-        except ABCIStateStoreError as error:
-            # Never acknowledge a block whose application state cannot survive
-            # a restart.  Restore the pre-block state before returning failure.
-            rollback = self.apply_snapshot(previous_snapshot)
-            self._admission.restore_state(previous_admission_state)
-            rollback_note = "" if rollback.code == "ok" else "; rollback failed"
-            if rollback.code == "ok":
-                try:
-                    self._persist_abci_state()
-                except ABCIStateStoreError:
-                    rollback_note += "; durable rollback failed"
-            failure = ABCIResult(
-                code="internal",
-                log=f"durable state persistence failed: {error}{rollback_note}",
-            )
-            return failure, [failure for _ in txs]
+        # CometBFT persists the finalized application state only in the
+        # subsequent Commit call.  Keep the pre-block state in memory so a
+        # failed Commit can roll back both the Ledger and admission projection.
+        if self._pending_commit_snapshot is None:
+            self._pending_commit_snapshot = previous_snapshot
+            self._pending_commit_admission_state = previous_admission_state
 
         # Clear mempool of included txs
         for tx_data in txs:
@@ -476,8 +472,38 @@ class AIDNABCIApplication:
         app_hash = self._compute_state_hash()
         self._app_hash = app_hash
 
+        pending_snapshot = self._pending_commit_snapshot
+        pending_admission_state = self._pending_commit_admission_state
+        if pending_snapshot is not None:
+            try:
+                self._persist_durable_state()
+            except ABCIStateStoreError as error:
+                rollback = self.apply_snapshot(pending_snapshot)
+                if pending_admission_state is not None:
+                    self._admission.restore_state(pending_admission_state)
+                rollback_note = "" if rollback.code == "ok" else "; rollback failed"
+                if rollback.code == "ok":
+                    try:
+                        self._persist_abci_state()
+                    except ABCIStateStoreError:
+                        rollback_note += "; durable rollback failed"
+                self._pending_commit_snapshot = None
+                self._pending_commit_admission_state = None
+                raise ABCIStateStoreError(
+                    f"durable state persistence failed: {error}{rollback_note}"
+                ) from error
+            self._pending_commit_snapshot = None
+            self._pending_commit_admission_state = None
+
         return ABCICommitResponse(
             data=app_hash,
+            version=str(self._last_block_height),
+        )
+
+    def preview_commit(self) -> ABCICommitResponse:
+        """Return the post-FinalizeBlock hash without persisting application state."""
+        return ABCICommitResponse(
+            data=self._compute_state_hash(),
             version=str(self._last_block_height),
         )
 
@@ -981,6 +1007,12 @@ class AIDNABCIApplication:
         coverage_error = self._operation_coverage_error(envelope.operation_type)
         if coverage_error is not None:
             return coverage_error
+        version_error = strict_operation_version_error(
+            envelope.operation_type,
+            envelope.operation_version,
+        )
+        if version_error is not None:
+            return version_error
         try:
             if envelope.operation_type == "WALLET_TRANSFER" and self._strict_operation_coverage:
                 self.ledger.validate_consensus_wallet_transfer(envelope)
