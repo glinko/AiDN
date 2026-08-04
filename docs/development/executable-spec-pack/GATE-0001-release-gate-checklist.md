@@ -235,6 +235,37 @@ missing. A report with failed G0 or G1 checks is a hard `FAIL`. G4 and G6
 remain external gates and require public-network and independent-operator
 evidence; `--allow-incomplete` does not weaken those requirements.
 
+For final publication, use the fail-closed orchestrator after G0-G6 evidence
+exists. It refuses to create an output directory until every pre-publication
+gate is `PASS`, writes `gates/release-gate-result.json` outside the Evidence
+Root, and reruns the strict verifier including G7:
+
+```bash
+uv run python tools/build-release-evidence-bundle.py \
+  --output ./evidence/release-candidate \
+  --network-id aidn-public-testnet \
+  --release-version 0.1.0-rc1 \
+  --profile profiles/aidn-mainnet-candidate-1.json \
+  --fixture-manifest fixtures/manifest.json \
+  --g0-report ./g0-integrity.json \
+  --g1-report ./g1-conformance.json \
+  --g2-report ./g2-report.json \
+  --g3-report ./g3-report.json \
+  --g4-report ./g4-public-network.json \
+  --g5-report ./g5-report.json \
+  --g6-evidence-dir ./operator-a \
+  --g6-evidence-dir ./operator-b \
+  --operator-id operator-a \
+  --control-group-id control-group-a \
+  --private-key /secure/operator-ed25519.key \
+  --artifact profiles/aidn-mainnet-candidate-1.json=release/profile.json \
+  --artifact fixtures/manifest.json=release/fixture-manifest.json \
+  --artifact ./g4-public-network.json=network/g4-public-network.json
+```
+
+The low-level `build-public-evidence-bundle.py` command remains useful for
+operator-level evidence, but it is not a release approval mechanism.
+
 ## 11. Hard blockers
 
 Any of the following blocks release:
