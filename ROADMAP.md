@@ -891,6 +891,10 @@ latest clean release-candidate commit and profile commitment
 - [x] G4 collection plumbing: a read-only HTTPS `/status` and `/net_info`
   collector now emits hash-bound deployment checks and rejects unreferenced
   boolean observations; live public endpoints are still required.
+- [x] G6 review plumbing: EVD-0001 supports a signed
+  `attestations/independence-review.json`; the verifier requires a trusted
+  reviewer key and exact operator, control-group and evidence-root binding.
+  Live independent-operator evidence is still required.
 - [ ] G6 Independent Operator: out-of-band attestations from distinct operator
   identities/control groups are still absent. The functional controlled-testnet
   MVP assumption for `hv-node10` remains narrower than this public-release gate.

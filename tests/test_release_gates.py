@@ -11,7 +11,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aidn_hypervisor.consensus.snapshot_acceptance import run_snapshot_acceptance
-from aidn_hypervisor.evidence import canonical_json_bytes, evidence_root
+from aidn_hypervisor.evidence import (
+    INDEPENDENCE_REVIEW_PATH,
+    canonical_json_bytes,
+    evidence_root,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE_TOOL = ROOT / "tools/verify-release-gates.py"
@@ -333,6 +337,29 @@ def _write_g6_bundle(root: Path, *, index: int) -> None:
     path = root / "attestations/operator-attestation.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(attestation), encoding="utf-8")
+    reviewer_key = Ed25519PrivateKey.from_private_bytes(bytes(range(101, 133)))
+    reviewer_public_key = reviewer_key.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    review_payload = {
+        "review_version": 1,
+        "reviewer_id": "release-reviewer-1",
+        "reviewer_public_key": "ed25519:" + reviewer_public_key.hex(),
+        "review_status": "VERIFIED",
+        "review_basis": "test-out-of-band-review",
+        "reviewed_operator_id": f"operator-{index}",
+        "reviewed_control_group_id": f"group-{index}",
+        "reviewed_evidence_root": root_hash,
+        "reviewed_at": "2030-01-01T00:00:02Z",
+    }
+    review = {
+        **review_payload,
+        "signature": "ed25519:" + reviewer_key.sign(canonical_json_bytes(review_payload)).hex(),
+    }
+    review_path = root / Path(*INDEPENDENCE_REVIEW_PATH.split("/"))
+    review_path.parent.mkdir(parents=True, exist_ok=True)
+    review_path.write_text(json.dumps(review), encoding="utf-8")
 
 
 def test_release_gate_requires_distinct_verified_g6_operators(tmp_path: Path) -> None:
@@ -346,12 +373,52 @@ def test_release_gate_requires_distinct_verified_g6_operators(tmp_path: Path) ->
         str(first),
         "--g6-evidence-dir",
         str(second),
+        "--g6-review-key",
+        "release-reviewer-1=ed25519:"
+        + Ed25519PrivateKey.from_private_bytes(bytes(range(101, 133)))
+        .public_key()
+        .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        .hex(),
         "--allow-incomplete",
     )
     payload = json.loads(result.stdout)
 
     assert result.returncode == 0
     assert payload["gates"]["G6"]["status"] == "PASS"
+
+
+def test_release_gate_rejects_reviewer_key_reused_by_operator(tmp_path: Path) -> None:
+    first = tmp_path / "operator-a"
+    second = tmp_path / "operator-b"
+    _write_g6_bundle(first, index=1)
+    _write_g6_bundle(second, index=2)
+    operator_key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+    reviewer_public_key = operator_key.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    for evidence_dir in (first, second):
+        review_path = evidence_dir / Path(*INDEPENDENCE_REVIEW_PATH.split("/"))
+        review = json.loads(review_path.read_text(encoding="utf-8"))
+        review["reviewer_public_key"] = "ed25519:" + reviewer_public_key.hex()
+        payload = {key: value for key, value in review.items() if key != "signature"}
+        review["signature"] = "ed25519:" + operator_key.sign(canonical_json_bytes(payload)).hex()
+        review_path.write_text(json.dumps(review), encoding="utf-8")
+
+    result = _run_gate(
+        "--g6-evidence-dir",
+        str(first),
+        "--g6-evidence-dir",
+        str(second),
+        "--g6-review-key",
+        "release-reviewer-1=ed25519:" + reviewer_public_key.hex(),
+        "--allow-incomplete",
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G6"]["status"] == "FAIL"
+    assert "reviewer identity" in payload["gates"]["G6"]["reason"]
 
 
 def test_release_gate_g7_requires_a_passing_embedded_gate_result(tmp_path: Path) -> None:

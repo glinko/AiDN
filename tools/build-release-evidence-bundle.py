@@ -93,6 +93,8 @@ def _run_gate_verifier(
             command.extend([option, str(report)])
     for operator_dir in args.g6_evidence_dir:
         command.extend(["--g6-evidence-dir", str(operator_dir)])
+    for reviewer_key in args.g6_review_key:
+        command.extend(["--g6-review-key", reviewer_key])
     if evidence_dir is not None:
         command.extend(["--evidence-dir", str(evidence_dir)])
         for _, relative in args.artifact:
@@ -246,6 +248,12 @@ def main() -> int:
     parser.add_argument("--g4-report", type=Path, required=True)
     parser.add_argument("--g5-report", type=Path, required=True)
     parser.add_argument("--g6-evidence-dir", action="append", type=Path, default=[])
+    parser.add_argument(
+        "--g6-review-key",
+        action="append",
+        default=[],
+        metavar="REVIEWER_ID=ed25519:<64-hex>",
+    )
     parser.add_argument("--operator-id", required=True)
     parser.add_argument("--control-group-id", required=True)
     parser.add_argument(

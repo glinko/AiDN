@@ -151,14 +151,27 @@ signature. Verify the quorum with repeated inputs:
 ```bash
 uv run python tools/verify-release-gates.py \
   --g6-evidence-dir evidence/operator-a \
-  --g6-evidence-dir evidence/operator-b
+  --g6-evidence-dir evidence/operator-b \
+  --g6-review-key release-reviewer=ed25519:<64-hex-public-key>
 ```
 
 The gate requires distinct public keys, operator IDs and declared control
-groups, and all bundles must refer to the same network, release version and
-implementation profile. The declarations still require human/out-of-band
-review; the protocol does not infer organizational independence from IP
-addresses.
+groups, a signed `attestations/independence-review.json` for every bundle, and
+all bundles must refer to the same network, release version and implementation
+profile. Create each review only after the operator evidence has been checked:
+
+```bash
+uv run python tools/sign-independence-review.py \
+  --evidence-dir evidence/operator-a \
+  --reviewer-id release-reviewer \
+  --operator-id operator-a \
+  --control-group-id control-group-a \
+  --review-basis "out-of-band identity and deployment review" \
+  --private-key /secure/release-reviewer-ed25519.key
+```
+
+The protocol still does not infer organizational independence from IP
+addresses; the trusted reviewer key represents the external review authority.
 
 ## G7 bundle creation
 
@@ -183,6 +196,7 @@ uv run python tools/build-release-evidence-bundle.py \
   --g5-report evidence/drills/g5-fault-recovery.json \
   --g6-evidence-dir evidence/operator-a \
   --g6-evidence-dir evidence/operator-b \
+  --g6-review-key release-reviewer=ed25519:<64-hex-public-key> \
   --operator-id operator-a \
   --control-group-id control-group-a \
   --independence-status OUT_OF_BAND_DECLARED \

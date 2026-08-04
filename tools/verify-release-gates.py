@@ -27,8 +27,11 @@ from aidn_hypervisor.consensus.snapshot_acceptance import (
     load_and_verify_snapshot_acceptance_report,
 )
 from aidn_hypervisor.evidence import (
+    ATTESTATION_PATH,
     GATE_RESULT_PATH,
+    INDEPENDENCE_REVIEW_PATH,
     EvidenceBundleError,
+    canonical_json_bytes,
     verify_public_evidence_bundle,
 )
 
@@ -574,16 +577,81 @@ def _run_g5(report_path: Path | None) -> dict[str, Any]:
     return _gate("PASS", details={"drills": sorted(required)})
 
 
-def _run_g6(evidence_dirs: list[Path]) -> dict[str, Any]:
+def _verify_g6_review(
+    evidence_dir: Path,
+    *,
+    evidence_root: str,
+    operator_id: str,
+    control_group_id: str,
+    reviewer_keys: dict[str, str],
+) -> dict[str, str]:
+    review_path = evidence_dir.joinpath(*INDEPENDENCE_REVIEW_PATH.split("/"))
+    review = _load_json_object(review_path, label="G6 independence review")
+    required = {
+        "review_version",
+        "reviewer_id",
+        "reviewer_public_key",
+        "review_status",
+        "review_basis",
+        "reviewed_operator_id",
+        "reviewed_control_group_id",
+        "reviewed_evidence_root",
+        "reviewed_at",
+        "signature",
+    }
+    if review.get("review_version") != 1 or not required.issubset(review):
+        raise ValueError("G6 independence review is missing required fields")
+    reviewer_id = review["reviewer_id"]
+    reviewer_public_key = review["reviewer_public_key"]
+    if not isinstance(reviewer_id, str) or not reviewer_id:
+        raise ValueError("G6 independence review reviewer_id is invalid")
+    expected_public_key = reviewer_keys.get(reviewer_id)
+    if expected_public_key is None or reviewer_public_key != expected_public_key:
+        raise ValueError("G6 independence review reviewer key is not trusted")
+    if review["review_status"] != "VERIFIED":
+        raise ValueError("G6 independence review is not VERIFIED")
+    if review["reviewed_operator_id"] != operator_id:
+        raise ValueError("G6 independence review operator binding is invalid")
+    if review["reviewed_control_group_id"] != control_group_id:
+        raise ValueError("G6 independence review control-group binding is invalid")
+    if review["reviewed_evidence_root"] != evidence_root:
+        raise ValueError("G6 independence review evidence root is invalid")
+    signature = review.get("signature")
+    if not isinstance(signature, str) or not signature.startswith("ed25519:"):
+        raise ValueError("G6 independence review signature is invalid")
+    try:
+        public_key = bytes.fromhex(reviewer_public_key.removeprefix("ed25519:"))
+        signature_bytes = bytes.fromhex(signature.removeprefix("ed25519:"))
+        Ed25519PublicKey.from_public_bytes(public_key).verify(
+            signature_bytes,
+            canonical_json_bytes({key: value for key, value in review.items() if key != "signature"}),
+        )
+    except (ValueError, InvalidSignature) as error:
+        raise ValueError("G6 independence review signature verification failed") from error
+    return {
+        "reviewer_id": reviewer_id,
+        "reviewer_public_key": reviewer_public_key,
+        "reviewed_operator_id": operator_id,
+        "reviewed_control_group_id": control_group_id,
+        "reviewed_evidence_root": evidence_root,
+    }
+
+
+def _run_g6(evidence_dirs: list[Path], reviewer_keys: dict[str, str]) -> dict[str, Any]:
     if not evidence_dirs:
         return _not_run("independent operator attestations are not supplied")
+    if not reviewer_keys:
+        return _gate(
+            "INCOMPLETE",
+            reason="trusted G6 reviewer keys are not supplied",
+        )
     identities: list[dict[str, str]] = []
     release_context: set[tuple[str, str, str]] = set()
     try:
         for evidence_dir in evidence_dirs:
             verified = verify_public_evidence_bundle(evidence_dir, require_attestation=True)
             manifest = _load_json_object(evidence_dir / "manifest.json", label="operator evidence manifest")
-            attestation_path = evidence_dir / "attestations" / "operator-attestation.json"
+            attestation_path = evidence_dir.joinpath(*ATTESTATION_PATH.split("/"))
             attestation = _load_json_object(attestation_path, label="operator attestation")
             operator_id = attestation.get("operator_id")
             control_group_id = attestation.get("control_group_id")
@@ -600,6 +668,15 @@ def _run_g6(evidence_dirs: list[Path]) -> dict[str, Any]:
                     "independence_status": independence_status or "MISSING",
                 }
             )
+            review = _verify_g6_review(
+                evidence_dir,
+                evidence_root=verified.evidence_root,
+                operator_id=operator_id,
+                control_group_id=control_group_id,
+                reviewer_keys=reviewer_keys,
+            )
+            identities[-1]["reviewer_id"] = review["reviewer_id"]
+            identities[-1]["reviewer_public_key"] = review["reviewer_public_key"]
             release_context.add(
                 (
                     str(manifest["network_id"]),
@@ -615,6 +692,16 @@ def _run_g6(evidence_dirs: list[Path]) -> dict[str, Any]:
         return _gate("INCOMPLETE", reason="G6 requires at least two distinct operator identities")
     if len({item["control_group_id"] for item in identities}) < 2:
         return _gate("INCOMPLETE", reason="G6 requires at least two distinct control groups")
+    operator_ids = {item["operator_id"] for item in identities}
+    operator_keys = {item["operator_public_key"] for item in identities}
+    reviewer_ids = {item["reviewer_id"] for item in identities}
+    reviewer_public_keys = {item["reviewer_public_key"] for item in identities}
+    if operator_ids & reviewer_ids or operator_keys & reviewer_public_keys:
+        return _gate(
+            "FAIL",
+            reason="G6 reviewer identity must be distinct from every operator identity and key",
+            details={"attestations": identities},
+        )
     if len(release_context) != 1:
         return _gate(
             "FAIL",
@@ -688,6 +775,13 @@ def main() -> int:
         default=[],
         help="verify one EVD-0001 operator bundle; repeat for the G6 quorum",
     )
+    parser.add_argument(
+        "--g6-review-key",
+        action="append",
+        default=[],
+        metavar="REVIEWER_ID=ed25519:<64-hex>",
+        help="trusted reviewer key for G6 independence reviews; repeatable",
+    )
     parser.add_argument("--require-evidence", action="append", default=[])
     parser.add_argument(
         "--allow-incomplete",
@@ -701,6 +795,27 @@ def main() -> int:
         selected_profile = _load_profile(args.profile)
     except ValueError:
         selected_profile = None
+    try:
+        reviewer_keys: dict[str, str] = {}
+        for value in args.g6_review_key:
+            reviewer_id, separator, public_key = value.partition("=")
+            if (
+                not separator
+                or not reviewer_id
+                or not public_key.startswith("ed25519:")
+                or len(public_key.removeprefix("ed25519:")) != 64
+            ):
+                raise ValueError("G6 reviewer key must use REVIEWER_ID=ed25519:<64-hex>")
+            bytes.fromhex(public_key.removeprefix("ed25519:"))
+            if reviewer_id in reviewer_keys:
+                raise ValueError(f"duplicate G6 reviewer key: {reviewer_id}")
+            reviewer_keys[reviewer_id] = public_key
+    except ValueError as error:
+        reviewer_keys = {}
+        reviewer_key_error = str(error)
+    else:
+        reviewer_key_error = None
+
     gates = {
         "G0": _run_g0(args.profile, args.g0_report),
         "G1": (
@@ -716,7 +831,11 @@ def main() -> int:
         "G3": _run_g3(args.g3_report),
         "G4": _run_g4(args.g4_report),
         "G5": _run_g5(args.g5_report),
-        "G6": _run_g6(args.g6_evidence_dir),
+        "G6": (
+            _gate("FAIL", reason=reviewer_key_error)
+            if reviewer_key_error is not None
+            else _run_g6(args.g6_evidence_dir, reviewer_keys)
+        ),
     }
     if args.evidence_dir is None:
         gates["G7"] = _not_run("use --evidence-dir to verify an EVD-0001 bundle")

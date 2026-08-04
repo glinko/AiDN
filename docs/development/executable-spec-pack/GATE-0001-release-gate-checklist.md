@@ -137,6 +137,8 @@ Before public production:
 [ ] at least 1 operator followed OPS-0001 from a clean host
 [ ] no private developer intervention was required
 [ ] each attestation contains an EVD-0001 evidence root
+[ ] each bundle contains a signed `attestations/independence-review.json`
+[ ] the trusted release-reviewer public key is supplied to the gate verifier
 ```
 
 Threshold may be raised for mainnet.
@@ -272,6 +274,7 @@ uv run python tools/build-release-evidence-bundle.py \
   --g5-report ./g5-report.json \
   --g6-evidence-dir ./operator-a \
   --g6-evidence-dir ./operator-b \
+  --g6-review-key release-reviewer=ed25519:<64-hex-public-key> \
   --operator-id operator-a \
   --control-group-id control-group-a \
   --private-key /secure/operator-ed25519.key \
