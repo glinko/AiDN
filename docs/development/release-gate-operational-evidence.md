@@ -39,9 +39,10 @@ uv run python tools/verify-cometbft-external-testnet.py \
 
 The final G4 gate remains incomplete until the report also references reviewed
 out-of-band operator/control-group evidence. Matching HTTPS responses alone do
-not establish independent operators. The report must include true checks for
-`lan_acceptance`, `public_p2p_acceptance`, `bootstrap_diversity`,
-`public_rpc_observable` and `tls_validated`.
+not establish independent operators. Every check for `lan_acceptance`,
+`public_p2p_acceptance`, `bootstrap_diversity`, `public_rpc_observable` and
+`tls_validated` must be an object with `status: PASS` and a non-empty
+`evidence_reference`; bare boolean `true` is rejected.
 
 Combine the three source reports before passing G4 to the release gate:
 

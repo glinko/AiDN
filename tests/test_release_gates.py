@@ -243,11 +243,14 @@ def test_release_gate_accepts_complete_g4_report(tmp_path: Path) -> None:
                 "finality_evidence": {"operation_id": "op-1"},
                 "ownership_evidence": {"status": "OUT_OF_BAND_VERIFIED"},
                 "checks": {
-                    "lan_acceptance": True,
-                    "public_p2p_acceptance": True,
-                    "bootstrap_diversity": True,
-                    "public_rpc_observable": True,
-                    "tls_validated": True,
+                    name: {"status": "PASS", "evidence_reference": f"{name}.json"}
+                    for name in (
+                        "lan_acceptance",
+                        "public_p2p_acceptance",
+                        "bootstrap_diversity",
+                        "public_rpc_observable",
+                        "tls_validated",
+                    )
                 },
             }
         ),
@@ -272,11 +275,14 @@ def test_release_gate_keeps_structurally_valid_incomplete_g4_report_incomplete(t
                 "finality_evidence": {"operation_id": "op-1"},
                 "ownership_evidence": {"status": "OUT_OF_BAND_DECLARED"},
                 "checks": {
-                    "lan_acceptance": True,
-                    "public_p2p_acceptance": True,
-                    "bootstrap_diversity": True,
-                    "public_rpc_observable": True,
-                    "tls_validated": True,
+                    name: {"status": "PASS", "evidence_reference": f"{name}.json"}
+                    for name in (
+                        "lan_acceptance",
+                        "public_p2p_acceptance",
+                        "bootstrap_diversity",
+                        "public_rpc_observable",
+                        "tls_validated",
+                    )
                 },
             }
         ),

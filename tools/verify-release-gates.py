@@ -296,6 +296,15 @@ def _gate_result_status(value: object) -> str | None:
     return None
 
 
+def _g4_check_passes(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("status") == "PASS"
+        and isinstance(value.get("evidence_reference"), str)
+        and bool(value["evidence_reference"])
+    )
+
+
 def _verify_gate_result_control(evidence_dir: Path) -> dict[str, Any]:
     """Verify the final gate decision stored as EVD control metadata."""
     gate_path = evidence_dir.joinpath(*GATE_RESULT_PATH.split("/"))
@@ -487,7 +496,9 @@ def _run_g4(report_path: Path | None) -> dict[str, Any]:
             reason="public finality is present but the complete G4 network checklist is missing",
             details={"rpc_endpoints": endpoints, "required_checks": sorted(required_checks)},
         )
-    failed_checks = sorted(name for name in required_checks if checks.get(name) is not True)
+    failed_checks = sorted(
+        name for name in required_checks if not _g4_check_passes(checks.get(name))
+    )
     if failed_checks:
         return _gate(
             "INCOMPLETE",

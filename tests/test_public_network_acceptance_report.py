@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "tools/build-public-network-acceptance-report.py"
@@ -35,9 +39,12 @@ def _source_reports(tmp_path: Path, *, ownership_status: str) -> tuple[Path, Pat
         tmp_path / "deployment.json",
         {
             "checks": {
-                "public_p2p_acceptance": True,
+                "public_p2p_acceptance": {
+                    "status": "PASS",
+                    "evidence_reference": "p2p.json",
+                },
                 "bootstrap_diversity": {"status": "PASS", "evidence_reference": "peers.json"},
-                "tls_validated": True,
+                "tls_validated": {"status": "PASS", "evidence_reference": "tls.json"},
             }
         },
     )
@@ -65,3 +72,37 @@ def test_public_network_report_passes_after_independence_review(tmp_path: Path) 
 
     assert report["status"] == "ok"
     assert report["gate_status"] == "PASS"
+
+
+def test_public_network_report_rejects_unreferenced_boolean_check(tmp_path: Path) -> None:
+    paths = _source_reports(tmp_path, ownership_status="OUT_OF_BAND_VERIFIED")
+    deployment = json.loads(paths[2].read_text(encoding="utf-8"))
+    deployment["checks"]["tls_validated"] = True
+    paths[2].write_text(json.dumps(deployment), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="PASS object with evidence_reference"):
+        MODULE.build_report(
+            lan_path=paths[0], external_path=paths[1], deployment_path=paths[2]
+        )
+
+
+def test_public_network_report_cli_uses_gate_status_for_exit_code(tmp_path: Path) -> None:
+    paths = _source_reports(tmp_path, ownership_status="OUT_OF_BAND_VERIFIED")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(TOOL),
+            "--lan-report",
+            str(paths[0]),
+            "--external-report",
+            str(paths[1]),
+            "--deployment-report",
+            str(paths[2]),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["gate_status"] == "PASS"

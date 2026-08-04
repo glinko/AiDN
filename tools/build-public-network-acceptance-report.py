@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,7 +21,7 @@ REQUIRED_CHECKS = (
 
 def _load(path: Path, label: str) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ValueError(f"cannot load {label}: {error}") from error
     if not isinstance(value, dict):
@@ -29,8 +30,6 @@ def _load(path: Path, label: str) -> dict[str, Any]:
 
 
 def _check_value(value: object, *, name: str) -> bool:
-    if value is True:
-        return True
     if isinstance(value, dict):
         if value.get("status") != "PASS":
             return False
@@ -38,7 +37,11 @@ def _check_value(value: object, *, name: str) -> bool:
         if not isinstance(reference, str) or not reference:
             raise ValueError(f"G4 check lacks evidence_reference: {name}")
         return True
-    raise ValueError(f"G4 check has invalid shape: {name}")
+    raise ValueError(f"G4 check must be a PASS object with evidence_reference: {name}")
+
+
+def _file_evidence_reference(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) -> dict[str, Any]:
@@ -62,7 +65,16 @@ def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) 
     deployment_checks = deployment.get("checks")
     if not isinstance(deployment_checks, dict):
         raise ValueError("public deployment report must contain checks")
-    checks: dict[str, bool] = {"lan_acceptance": True, "public_rpc_observable": True}
+    checks: dict[str, dict[str, str]] = {
+        "lan_acceptance": {
+            "status": "PASS",
+            "evidence_reference": _file_evidence_reference(lan_path),
+        },
+        "public_rpc_observable": {
+            "status": "PASS",
+            "evidence_reference": _file_evidence_reference(external_path),
+        },
+    }
     evidence: dict[str, Any] = {"lan": lan, "external": external, "deployment": deployment}
     for name in ("public_p2p_acceptance", "bootstrap_diversity", "tls_validated"):
         if name not in deployment_checks:
@@ -107,7 +119,7 @@ def main() -> int:
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(encoded, encoding="utf-8")
-    return 0 if report["status"] == "PASS" else 2
+    return 0 if report["gate_status"] == "PASS" else 2
 
 
 if __name__ == "__main__":
