@@ -869,8 +869,8 @@ Exit criteria:
 ### GATE-0001 release status (local verification, 2026-08-03)
 
 The deterministic and controlled operational portions of the release gate are
-now executable and fail closed. The verified local evidence is bound to commit
-`3ffd991ef01df97d0ae1367a4514917473996512` and profile commitment
+now executable and fail closed. The verified local evidence is bound to the
+latest clean release-candidate commit and profile commitment
 `sha256:4ebeab687d3871534b96399b77d26ccd8e53414a7c1882631e82e6dbb30af190`.
 
 - [x] G0 Build Integrity: clean-tree package build, artifact hashes, signed
