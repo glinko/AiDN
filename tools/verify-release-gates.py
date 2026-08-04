@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from aidn_hypervisor.consensus.coverage import (
     ACTIVE_OPERATION_TYPES,
@@ -49,29 +53,144 @@ def _load_profile(path: Path) -> dict[str, Any]:
     return value
 
 
-def _run_g0(profile_path: Path) -> dict[str, Any]:
+def _canonical_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    return _sha256_bytes(path.read_bytes())
+
+
+def _verify_signed_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    payload = manifest.get("payload")
+    payload_hash = manifest.get("payload_hash")
+    public_key = manifest.get("signer_public_key")
+    signature = manifest.get("signature")
+    if not isinstance(payload, dict):
+        raise ValueError("G0 release manifest payload is missing")
+    if not isinstance(payload_hash, str) or payload_hash != _sha256_bytes(_canonical_bytes(payload)):
+        raise ValueError("G0 release manifest payload hash is invalid")
+    if (
+        not isinstance(public_key, str)
+        or not public_key.startswith("ed25519:")
+        or not isinstance(signature, str)
+        or not signature.startswith("ed25519:")
+    ):
+        raise ValueError("G0 release manifest signature fields are invalid")
+    try:
+        Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key[8:])).verify(
+            bytes.fromhex(signature[8:]),
+            _canonical_bytes(payload),
+        )
+    except (ValueError, InvalidSignature) as error:
+        raise ValueError("G0 release manifest signature verification failed") from error
+    return payload
+
+
+def _run_g0(profile_path: Path, report_path: Path | None) -> dict[str, Any]:
     try:
         profile = _load_profile(profile_path)
     except ValueError as error:
         return _gate("FAIL", reason=str(error))
+    profile_details = {
+        "profile_id": profile["profile_id"],
+        "profile_version": profile["profile_version"],
+        "profile_status": profile["status"],
+        "activation_state": profile["activation_state"],
+        "profile_commitment": profile["profile_commitment"],
+    }
+    if report_path is None:
+        return _gate(
+            "INCOMPLETE",
+            reason="implementation profile is valid but G0 release-integrity evidence is not supplied",
+            details=profile_details,
+        )
+    try:
+        report = _load_json_object(report_path, label="G0 release-integrity report")
+        if report.get("schema_version") != 1:
+            raise ValueError("G0 release-integrity report schema_version is unsupported")
+        report_status = report.get("status")
+        if report_status not in {"PASS", "FAIL"}:
+            raise ValueError("G0 release-integrity report status is invalid")
+        if report.get("profile_id") != profile["profile_id"]:
+            raise ValueError("G0 report profile_id does not match the selected profile")
+        if report.get("profile_commitment") != profile["profile_commitment"]:
+            raise ValueError("G0 report profile_commitment does not match the selected profile")
+        checks = report.get("checks")
+        required_checks = {
+            "provenance_build",
+            "package_hashes",
+            "signed_release_manifest",
+            "implementation_profile",
+            "operation_catalog",
+            "fixture_manifest",
+            "dependency_license_scan",
+        }
+        if not isinstance(checks, dict) or not required_checks.issubset(checks):
+            raise ValueError("G0 report is missing required integrity checks")
+        if any(checks[name] is not True for name in required_checks):
+            return _gate(
+                "FAIL" if report_status == "FAIL" else "INCOMPLETE",
+                reason="G0 release-integrity checks are not all passed",
+                details=report,
+            )
+        manifest_payload = _verify_signed_manifest(report.get("release_manifest", {}))
+        if manifest_payload.get("profile_id") != profile["profile_id"]:
+            raise ValueError("G0 release manifest profile_id does not match the selected profile")
+        if manifest_payload.get("profile_commitment") != profile["profile_commitment"]:
+            raise ValueError("G0 release manifest profile_commitment does not match the selected profile")
+        expected_catalog_hash = profile["operation_catalog"]["operation_catalog_hash"]
+        if manifest_payload.get("operation_catalog_hash") != expected_catalog_hash:
+            raise ValueError("G0 release manifest operation catalog hash does not match the profile")
+        fixture_manifest = Path(str(manifest_payload.get("fixture_manifest_path", "")))
+        if not fixture_manifest.is_file():
+            raise ValueError("G0 release manifest fixture manifest is missing")
+        if manifest_payload.get("fixture_manifest_hash") != _sha256_file(fixture_manifest):
+            raise ValueError("G0 release manifest fixture manifest hash is invalid")
+        artifacts = manifest_payload.get("artifacts")
+        if not isinstance(artifacts, list) or not artifacts:
+            raise ValueError("G0 release manifest has no package artifacts")
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                raise ValueError("G0 release manifest artifact is invalid")
+            path = Path(str(artifact.get("path", "")))
+            if not path.is_file() or artifact.get("sha256") != _sha256_file(path):
+                raise ValueError(f"G0 package artifact hash is invalid: {path}")
+        report_hash = report.get("report_hash")
+        unsigned_report = dict(report)
+        unsigned_report.pop("report_hash", None)
+        if report_hash != _sha256_bytes(_canonical_bytes(unsigned_report)):
+            raise ValueError("G0 report_hash is invalid")
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+        return _gate("FAIL", reason=str(error))
+    if report_status == "FAIL":
+        return _gate("FAIL", reason="G0 release-integrity report contains failed checks")
     return _gate(
         "PASS",
-        details={
-            "profile_id": profile["profile_id"],
-            "profile_version": profile["profile_version"],
-            "profile_status": profile["status"],
-            "activation_state": profile["activation_state"],
-            "profile_commitment": profile["profile_commitment"],
-        },
+        details={**profile_details, "report": str(report_path)},
     )
 
 
-def _run_g1(fixture_manifest: Path) -> dict[str, Any]:
+def _run_g1(
+    fixture_manifest: Path,
+    profile: dict[str, Any],
+    report_path: Path | None,
+) -> dict[str, Any]:
     coverage_errors = {
         operation_type: strict_operation_coverage_error(operation_type)
         for operation_type in sorted(ACTIVE_OPERATION_TYPES)
         if strict_operation_coverage_error(operation_type) is not None
     }
+    fixture_details: dict[str, Any]
     try:
         fixtures = run_fixture_set(fixture_manifest, strict=True)
     except FixtureError as error:
@@ -80,26 +199,78 @@ def _run_g1(fixture_manifest: Path) -> dict[str, Any]:
             reason=str(error),
             details={"strict_operation_coverage_errors": coverage_errors},
         )
+    fixture_details = {
+        "strict_operation_coverage": {
+            "active": len(ACTIVE_OPERATION_TYPES),
+            "supported": len(CONSENSUS_APPLIED_OPERATION_TYPES & ACTIVE_OPERATION_TYPES),
+            "legacy_excluded": len(LEGACY_OPERATION_TYPES),
+        },
+        "fixture_count": len(fixtures),
+        "fixture_manifest_hash": _sha256_file(fixture_manifest),
+    }
     if coverage_errors:
         return _gate(
             "INCOMPLETE",
             reason="known operation types remain outside strict consensus coverage",
             details={
                 "strict_operation_coverage_errors": coverage_errors,
-                "fixture_count": len(fixtures),
+                **fixture_details,
                 "fixture_status": "PASS",
             },
         )
+    if report_path is None:
+        return _gate(
+            "INCOMPLETE",
+            reason="fixtures and strict coverage pass but G1 conformance evidence is not supplied",
+            details=fixture_details,
+        )
+    try:
+        report = _load_json_object(report_path, label="G1 protocol-conformance report")
+        if report.get("schema_version") != 1:
+            raise ValueError("G1 protocol-conformance report schema_version is unsupported")
+        report_status = report.get("status")
+        if report_status not in {"PASS", "FAIL"}:
+            raise ValueError("G1 protocol-conformance report status is invalid")
+        if report.get("profile_id") != profile["profile_id"]:
+            raise ValueError("G1 report profile_id does not match the selected profile")
+        if report.get("profile_commitment") != profile["profile_commitment"]:
+            raise ValueError("G1 report profile_commitment does not match the selected profile")
+        if report.get("fixture_manifest_hash") != fixture_details["fixture_manifest_hash"]:
+            raise ValueError("G1 report fixture manifest hash is invalid")
+        checks = report.get("checks")
+        required_checks = {
+            "unit_tests",
+            "fix_0001_fixtures",
+            "strict_operation_coverage",
+            "unknown_operation_rejection",
+            "unsupported_operation_version",
+            "duplicate_operation_idempotency",
+            "predecessor_mismatch",
+            "monetary_boundaries",
+            "canonical_json_hash_vectors",
+        }
+        if not isinstance(checks, dict) or not required_checks.issubset(checks):
+            raise ValueError("G1 report is missing required conformance checks")
+        failed_checks = sorted(
+            name
+            for name in required_checks
+            if not isinstance(checks[name], dict) or checks[name].get("status") != "PASS"
+        )
+        unsigned_report = dict(report)
+        report_hash = unsigned_report.pop("report_hash", None)
+        if report_hash != _sha256_bytes(_canonical_bytes(unsigned_report)):
+            raise ValueError("G1 report_hash is invalid")
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+        return _gate("FAIL", reason=str(error))
+    if failed_checks or report_status == "FAIL":
+        return _gate(
+            "FAIL",
+            reason="G1 protocol conformance checks are not all passed",
+            details={"failed_checks": failed_checks, **fixture_details},
+        )
     return _gate(
         "PASS",
-        details={
-            "strict_operation_coverage": {
-                "active": len(ACTIVE_OPERATION_TYPES),
-                "supported": len(CONSENSUS_APPLIED_OPERATION_TYPES & ACTIVE_OPERATION_TYPES),
-                "legacy_excluded": len(LEGACY_OPERATION_TYPES),
-            },
-            "fixture_count": len(fixtures),
-        },
+        details={**fixture_details, "report": str(report_path)},
     )
 
 
@@ -471,6 +642,16 @@ def main() -> int:
         default=Path("profiles/aidn-mainnet-candidate-1.json"),
     )
     parser.add_argument("--fixture-manifest", type=Path, default=Path("fixtures/manifest.json"))
+    parser.add_argument(
+        "--g0-report",
+        type=Path,
+        help="verify the signed build/provenance evidence required by G0",
+    )
+    parser.add_argument(
+        "--g1-report",
+        type=Path,
+        help="verify the deterministic protocol-conformance evidence required by G1",
+    )
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument(
         "--g2-report",
@@ -501,8 +682,12 @@ def main() -> int:
     except ValueError:
         selected_profile = None
     gates = {
-        "G0": _run_g0(args.profile),
-        "G1": _run_g1(args.fixture_manifest),
+        "G0": _run_g0(args.profile, args.g0_report),
+        "G1": (
+            _run_g1(args.fixture_manifest, selected_profile, args.g1_report)
+            if selected_profile is not None
+            else _gate("FAIL", reason="cannot validate G1 without a valid implementation profile")
+        ),
         "G2": (
             _run_g2(args.g2_report, selected_profile)
             if selected_profile is not None

@@ -182,6 +182,59 @@ public-network, fault-drill, and independent-operator evidence respectively.
 `--allow-incomplete` is permitted for local development only; it does not
 convert an incomplete report into a release approval.
 
+## 10.2 G0 and G1 evidence generation
+
+G0 and G1 require source reports. A valid implementation profile alone is not
+enough to pass either gate.
+
+Build the package, hash the artifacts, sign the release manifest, and run the
+dependency/license scan:
+
+```bash
+uv sync --all-extras --frozen
+uv run python tools/build-release-integrity-report.py \
+  --profile profiles/aidn-mainnet-candidate-1.json \
+  --fixture-manifest fixtures/manifest.json \
+  --signing-key ./release-signing-seed.hex \
+  --report ./g0-integrity.json
+```
+
+The signing key is a 32-byte Ed25519 private seed kept outside the repository.
+Omitting `--signing-key` is allowed only for disposable local evidence and
+uses an ephemeral key.
+
+The G0 builder requires a clean Git worktree so the package artifacts cannot
+be attributed to a commit while containing uncommitted source changes.
+
+Run the strict protocol suite and its machine-readable probes:
+
+```bash
+uv run python tools/run-protocol-conformance.py \
+  --profile profiles/aidn-mainnet-candidate-1.json \
+  --fixture-manifest fixtures/manifest.json \
+  --report ./g1-conformance.json
+```
+
+Verify these reports together with the controlled operational evidence:
+
+```bash
+uv run python tools/verify-release-gates.py \
+  --profile profiles/aidn-mainnet-candidate-1.json \
+  --fixture-manifest fixtures/manifest.json \
+  --g0-report ./g0-integrity.json \
+  --g1-report ./g1-conformance.json \
+  --g2-report ./g2-report.json \
+  --g3-report ./g3-report.json \
+  --g5-report ./g5-report.json \
+  --allow-incomplete \
+  --report ./release-gates.json
+```
+
+The verifier returns `INCOMPLETE`, not `PASS`, when required reports are
+missing. A report with failed G0 or G1 checks is a hard `FAIL`. G4 and G6
+remain external gates and require public-network and independent-operator
+evidence; `--allow-incomplete` does not weaken those requirements.
+
 ## 11. Hard blockers
 
 Any of the following blocks release:

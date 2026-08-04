@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aidn-hypervisor"
 version = "0.1.0"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = [
     "cryptography>=43",

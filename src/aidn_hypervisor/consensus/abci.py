@@ -18,6 +18,7 @@ from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.coverage import (
     VALIDATION_EVIDENCE_OPERATION_TYPES,
     strict_operation_coverage_error,
+    strict_operation_version_error,
 )
 from aidn_hypervisor.consensus.execution import compute_execution_state_root
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
@@ -981,6 +982,12 @@ class AIDNABCIApplication:
         coverage_error = self._operation_coverage_error(envelope.operation_type)
         if coverage_error is not None:
             return coverage_error
+        version_error = strict_operation_version_error(
+            envelope.operation_type,
+            envelope.operation_version,
+        )
+        if version_error is not None:
+            return version_error
         try:
             if envelope.operation_type == "WALLET_TRANSFER" and self._strict_operation_coverage:
                 self.ledger.validate_consensus_wallet_transfer(envelope)

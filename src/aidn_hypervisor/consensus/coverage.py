@@ -8,6 +8,12 @@ from aidn_hypervisor.consensus.models import KNOWN_OPERATION_TYPES
 
 OperationCoverage = Literal["IMPLEMENTED", "DECLARED_UNIMPLEMENTED", "EXTENSION"]
 
+# The current implementation profile has one consensus operation schema
+# version.  Keeping this at the consensus boundary prevents a permissive
+# envelope model from silently accepting a version that execution cannot
+# interpret.
+SUPPORTED_OPERATION_VERSIONS = frozenset({"1.0.0"})
+
 # These names remain in the historical RFC-0059 catalog so old clients can
 # receive a deterministic rejection. They are not active operations in the
 # current implementation profile and must not be implemented as aliases for
@@ -119,3 +125,14 @@ def strict_operation_coverage_error(
     if coverage == "DECLARED_UNIMPLEMENTED":
         return f"consensus operation transition is not implemented: {operation_type}"
     return f"consensus operation type is not registered: {operation_type}"
+
+
+def strict_operation_version_error(
+    operation_type: str,
+    operation_version: str,
+) -> str | None:
+    """Return a stable error for an unsupported consensus schema version."""
+
+    if operation_version in SUPPORTED_OPERATION_VERSIONS:
+        return None
+    return f"unsupported operation version: {operation_type}:{operation_version}"

@@ -38,15 +38,105 @@ def _run_gate(*extra: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_release_gate_reports_active_g1_as_pass_and_operational_gates_missing() -> None:
+def _report_hash(payload: dict) -> str:
+    return "sha256:" + hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+
+
+def _write_g1_report(path: Path) -> None:
+    profile = json.loads((ROOT / "profiles/aidn-mainnet-candidate-1.json").read_text(encoding="utf-8"))
+    fixture_manifest = ROOT / "fixtures/manifest.json"
+    checks = {
+        name: {"status": "PASS", "evidence": "tests/consensus/test_release_conformance.py"}
+        for name in (
+            "unit_tests",
+            "fix_0001_fixtures",
+            "strict_operation_coverage",
+            "unknown_operation_rejection",
+            "unsupported_operation_version",
+            "duplicate_operation_idempotency",
+            "predecessor_mismatch",
+            "monetary_boundaries",
+            "canonical_json_hash_vectors",
+        )
+    }
+    payload = {
+        "schema_version": 1,
+        "status": "PASS",
+        "profile_id": profile["profile_id"],
+        "profile_commitment": profile["profile_commitment"],
+        "fixture_manifest_hash": "sha256:" + hashlib.sha256(fixture_manifest.read_bytes()).hexdigest(),
+        "checks": checks,
+    }
+    payload["report_hash"] = _report_hash(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _write_g0_report(path: Path, artifact_root: Path) -> None:
+    profile = json.loads((ROOT / "profiles/aidn-mainnet-candidate-1.json").read_text(encoding="utf-8"))
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    artifact = artifact_root / "aidn-hypervisor-0.1.0.whl"
+    source = artifact_root / "aidn-hypervisor-0.1.0.tar.gz"
+    artifact.write_bytes(b"wheel")
+    source.write_bytes(b"source")
+    artifacts = [
+        {
+            "path": str(item.resolve()),
+            "sha256": "sha256:" + hashlib.sha256(item.read_bytes()).hexdigest(),
+        }
+        for item in (artifact, source)
+    ]
+    manifest_payload = {
+        "schema_version": 1,
+        "release_id": "test-release",
+        "source_commit": "a" * 40,
+        "profile_id": profile["profile_id"],
+        "profile_commitment": profile["profile_commitment"],
+        "operation_catalog_hash": profile["operation_catalog"]["operation_catalog_hash"],
+        "fixture_manifest_path": str((ROOT / "fixtures/manifest.json").resolve()),
+        "fixture_manifest_hash": "sha256:" + hashlib.sha256(
+            (ROOT / "fixtures/manifest.json").read_bytes()
+        ).hexdigest(),
+        "artifacts": artifacts,
+    }
+    private_key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+    public_key = private_key.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    release_manifest = {
+        "payload": manifest_payload,
+        "payload_hash": _report_hash(manifest_payload),
+        "signer_public_key": "ed25519:" + public_key.hex(),
+        "signature": "ed25519:" + private_key.sign(canonical_json_bytes(manifest_payload)).hex(),
+    }
+    payload = {
+        "schema_version": 1,
+        "status": "PASS",
+        "profile_id": profile["profile_id"],
+        "profile_commitment": profile["profile_commitment"],
+        "checks": {
+            "provenance_build": True,
+            "package_hashes": True,
+            "signed_release_manifest": True,
+            "implementation_profile": True,
+            "operation_catalog": True,
+            "fixture_manifest": True,
+            "dependency_license_scan": True,
+        },
+        "release_manifest": release_manifest,
+    }
+    payload["report_hash"] = _report_hash(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_release_gate_requires_g0_and_g1_evidence_reports() -> None:
     result = _run_gate("--allow-incomplete")
     payload = json.loads(result.stdout)
 
     assert result.returncode == 0
     assert payload["status"] == "INCOMPLETE"
-    assert payload["gates"]["G0"]["status"] == "PASS"
-    assert payload["gates"]["G1"]["status"] == "PASS"
-    assert payload["gates"]["G1"]["details"]["strict_operation_coverage"]["legacy_excluded"] == 11
+    assert payload["gates"]["G0"]["status"] == "INCOMPLETE"
+    assert payload["gates"]["G1"]["status"] == "INCOMPLETE"
     assert payload["gates"]["G2"]["status"] == "NOT_RUN"
 
 
@@ -56,6 +146,26 @@ def test_release_gate_fails_closed_without_allow_incomplete() -> None:
 
     assert result.returncode == 2
     assert payload["status"] == "INCOMPLETE"
+    assert payload["gates"]["G1"]["status"] == "INCOMPLETE"
+
+
+def test_release_gate_accepts_verified_g0_and_g1_reports(tmp_path: Path) -> None:
+    g0_path = tmp_path / "g0-report.json"
+    g1_path = tmp_path / "g1-report.json"
+    _write_g0_report(g0_path, tmp_path / "artifacts")
+    _write_g1_report(g1_path)
+
+    result = _run_gate(
+        "--g0-report",
+        str(g0_path),
+        "--g1-report",
+        str(g1_path),
+        "--allow-incomplete",
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 0
+    assert payload["gates"]["G0"]["status"] == "PASS"
     assert payload["gates"]["G1"]["status"] == "PASS"
 
 

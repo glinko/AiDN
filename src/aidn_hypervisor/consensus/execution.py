@@ -12,6 +12,7 @@ from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.coverage import (
     VALIDATION_EVIDENCE_OPERATION_TYPES,
     strict_operation_coverage_error,
+    strict_operation_version_error,
 )
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 
@@ -588,6 +589,18 @@ class ExecutionEngine:
                 success=False,
                 envelope=envelope,
                 error=coverage_error,
+            )
+        version_error = strict_operation_version_error(
+            envelope.operation_type,
+            envelope.operation_version,
+        )
+        if version_error is not None:
+            return ExecutionEvent(
+                operation_id=envelope.operation_id,
+                operation_type=envelope.operation_type,
+                success=False,
+                envelope=envelope,
+                error=version_error,
             )
 
         # 3. Per-operation gas check

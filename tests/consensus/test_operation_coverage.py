@@ -11,6 +11,7 @@ from aidn_hypervisor.consensus.coverage import (
     VALIDATION_EVIDENCE_OPERATION_TYPES,
     operation_coverage,
     strict_operation_coverage_error,
+    strict_operation_version_error,
 )
 from aidn_hypervisor.consensus.execution import ExecutionEngine
 from aidn_hypervisor.consensus.models import KNOWN_OPERATION_TYPES, LedgerOperationEnvelope
@@ -101,3 +102,25 @@ def test_strict_execution_allows_explicit_custom_handler() -> None:
 
     assert result.operations_executed == 1
     assert result.operations_rejected == 0
+
+
+def test_strict_profile_rejects_unsupported_operation_version() -> None:
+    app = AIDNABCIApplication(
+        ledger_service=LedgerOperationService(),
+        admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
+        strict_operation_coverage=True,
+    )
+    envelope = LedgerOperationEnvelope(
+        operation_type="WALLET_TRANSFER",
+        operation_version="9.9.9",
+        origin_type="protocol",
+        created_at="2030-01-01T00:00:00Z",
+    )
+
+    result = app.process_proposal_transaction(
+        json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
+    )
+
+    assert result.code == "rejected"
+    assert result.log == "unsupported operation version: WALLET_TRANSFER:9.9.9"
+    assert strict_operation_version_error("WALLET_TRANSFER", "9.9.9") == result.log
