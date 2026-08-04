@@ -123,6 +123,15 @@ tools/provision-validator-replacement.sh start
 tools/provision-validator-replacement.sh status
 ```
 
+For a controlled abrupt-process drill, use the isolated action below. It
+terminates only the CometBFT and ABCI PIDs recorded by this replacement root;
+the operator must invoke `start` separately to make recovery explicit:
+
+```bash
+tools/provision-validator-replacement.sh abrupt
+tools/provision-validator-replacement.sh start
+```
+
 The replacement RPC must converge with the validator set and retain the
 preserved node ID and chain ID before it can be used in G5 evidence. If State
 Sync cannot obtain chunks from healthy P2P peers, stop the replacement and
