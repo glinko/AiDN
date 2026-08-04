@@ -291,6 +291,7 @@ if [[ "$non_interactive" != 'true' ]]; then
   api_port="$(prompt_value 'Hypervisor API port' "$api_port")"
 fi
 valid_port "$api_port" || die 'API port must be between 1 and 65535'
+[[ -n "$api_host" && "$api_host" != *[[:space:]]* ]] || die 'API bind address is invalid'
 if ! is_loopback_host "$api_host" && [[ "$allow_public_api" != 'true' ]]; then
   if [[ "$non_interactive" == 'true' ]]; then
     die 'non-loopback API requires --allow-public-api because the MVP API has no public auth boundary'
@@ -316,9 +317,13 @@ else
   registry_listen_host='127.0.0.1'
 fi
 valid_port "$registry_port" || die 'Registry port must be between 1 and 65535'
+if [[ "$enable_registry" == 'true' && "$registry_port" == "$api_port" ]]; then
+  die 'API and Registry ports must differ when both services run on one host'
+fi
 if [[ -z "$advertise_host" ]]; then
   advertise_host="$(detect_advertise_host)"
 fi
+[[ -n "$registry_listen_host" && "$registry_listen_host" != *[[:space:]]* ]] || die 'Registry bind address is invalid'
 [[ -n "$advertise_host" && "$advertise_host" != *[[:space:]]* ]] || die 'advertise host is invalid'
 
 if [[ "$EUID" -eq 0 ]]; then
