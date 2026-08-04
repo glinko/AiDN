@@ -35,8 +35,17 @@ def test_graceful_path_stops_comet_before_restarting_abci() -> None:
 def test_current_runtime_control_has_all_g5_actions() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
 
-    for action in ("status", "diagnose", "graceful", "abrupt", "reboot", "recover"):
+    for action in ("status", "diagnose", "stop", "start", "graceful", "abrupt", "reboot", "recover"):
         assert action in source
+
+
+def test_stop_and_start_paths_keep_the_outage_explicit() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+
+    stop = source[source.index("  stop)"):source.index("  start)")]
+    start = source[source.index("  start)"):source.index("  graceful)")]
+    assert stop.index("stop_comet") < stop.index('remote sudo -n /usr/bin/docker stop "$container"')
+    assert start.index("start_container") < start.index("start_comet_if_needed")
 
 
 def test_diagnose_path_is_read_only_and_classifies_reprovision_boundary() -> None:

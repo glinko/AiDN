@@ -5,7 +5,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: g5-current-runtime-control.sh {status|diagnose|graceful|abrupt|reboot|recover}
+Usage: g5-current-runtime-control.sh {status|diagnose|stop|start|graceful|abrupt|reboot|recover}
 
 Environment:
   AIDN_G5_TARGET_SSH       SSH target for the validator host
@@ -18,7 +18,7 @@ EOF
 
 action="${1:-}"
 case "$action" in
-  status|diagnose|graceful|abrupt|reboot|recover) ;;
+  status|diagnose|stop|start|graceful|abrupt|reboot|recover) ;;
   *) usage >&2; exit 2 ;;
 esac
 
@@ -191,6 +191,14 @@ else
   printf '%s\n' 'recovery_class=NO_STARTUP_LOG'
 fi
 REMOTE
+    ;;
+  stop)
+    stop_comet
+    remote sudo -n /usr/bin/docker stop "$container"
+    ;;
+  start)
+    start_container
+    start_comet_if_needed
     ;;
   graceful)
     stop_comet

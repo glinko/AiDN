@@ -126,6 +126,13 @@ both processes with a bounded outage before restarting them. `recover` fails
 closed when the named ABCI container is missing; it does not silently turn a
 missing deployment into a successful recovery claim.
 
+For the controlled one-validator-offline G3 drill, use `stop` and `start` as
+separate commands. `stop` leaves both the ABCI container and CometBFT down so
+the collector can observe the target RPC outage; `start` restores the same
+deployment explicitly. Do not substitute `graceful`, because that action
+performs stop and restart in one command and cannot provide a sustained
+offline interval to the drill.
+
 The ABCI application MUST be built from a revision where `FinalizeBlock`
 returns only a preview hash and durable application state is persisted by the
 subsequent `Commit` call. A deployment that persisted ABCI state during
