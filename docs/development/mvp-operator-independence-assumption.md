@@ -7,9 +7,11 @@ Effective date: 2026-08-01
 ## Decision
 
 For the functional MVP acceptance gate, the project accepts `hv-node10`
-(`192.168.88.126`) as an independent AiDN operator by explicit out-of-band
-project declaration. Tests requiring a second organizationally independent
-operator are therefore waived for the MVP controlled testnet.
+(`192.168.88.126`) and `node4` (`192.168.88.127`) as separate independent
+AiDN test operators by explicit out-of-band project declaration. The two
+domains use distinct host-local operator identities, control groups and
+Registry peer identities. Tests requiring a second organizationally
+independent operator are therefore waived for the MVP controlled testnet.
 
 This decision is an administrative acceptance assumption. It does not change
 the Registry protocol, the mTLS or Ed25519 verification rules, the Ledger
@@ -23,6 +25,8 @@ The assumption is sufficient to close the MVP acceptance gate for:
 - persistent inventory exchange;
 - immutable object replication;
 - reconnect and restart recovery;
+- independent-domain operation of `operator-node4-127` on the pinned release
+  checkout `51483a9131482fee0526ca1f691016b7d5cd6385`;
 - the current controlled-testnet Hypervisor profile.
 
 It is not a claim that the protocol has cryptographically proven separate
@@ -34,6 +38,13 @@ The live technical evidence remains the evidence recorded in
 [Independent Operator Onboarding and Acceptance](./independent-operator-onboarding-and-acceptance.md):
 mutual peer approval, authenticated transport, inventory convergence, and
 restart/re-authentication without loss of replicated objects.
+
+The `operator-node4-127` controlled evidence bundle is additionally bound to
+its host-local attestation key and records the public operator identity,
+Registry peer, pinned checkout, Hypervisor health and CometBFT synchronization
+observation. Its attestation remains `OUT_OF_BAND_DECLARED`; this policy
+assumption is not a replacement for the trusted reviewer signatures required
+by the G6 verifier for a public release claim.
 
 The technical verifier SHALL continue to report
 `ownership_evidence: NOT_PROVEN_BY_PROTOCOL`. The MVP policy layer may accept
