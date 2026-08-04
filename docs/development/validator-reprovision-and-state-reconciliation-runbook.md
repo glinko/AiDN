@@ -97,6 +97,38 @@ verified plan only while the validator is offline, with an explicit backup and
 `--confirm-offline`. This tool cannot repair a CometBFT blockstore/ABCI
 response-store mismatch; use the reprovision sequence instead.
 
+## Isolated replacement helper
+
+The repository includes `tools/provision-validator-replacement.sh` for a
+non-root operator deployment. It refuses an existing replacement root, copies
+only `genesis.json`, `node_key.json` and `priv_validator_key.json`, creates a
+zeroed `priv_validator_state.json`, and enables CometBFT State Sync. It never
+copies `blockstore.db`, `state.db`, `evidence.db` or old ABCI response state.
+
+Run it only after obtaining a trusted block height/hash and a peer list from
+healthy validators:
+
+```bash
+export AIDN_REPROVISION_ROOT="$HOME/aidn-g5-reprovision-<timestamp>"
+export AIDN_REPROVISION_REPO="$HOME/aidn/AiDN"
+export AIDN_SOURCE_COMET_HOME="$HOME/aidn-g5-clean/node"
+export AIDN_COMET_BIN="$HOME/aidn-g5-clean/cometbft"
+export AIDN_TRUST_HEIGHT=12745
+export AIDN_TRUST_HASH=<trusted-block-hash>
+export AIDN_RPC_SERVERS=tcp://validator-1:26657,tcp://validator-2:26657
+export AIDN_PERSISTENT_PEERS=<healthy-peer-list-without-the-replacement>
+
+tools/provision-validator-replacement.sh prepare
+tools/provision-validator-replacement.sh start
+tools/provision-validator-replacement.sh status
+```
+
+The replacement RPC must converge with the validator set and retain the
+preserved node ID and chain ID before it can be used in G5 evidence. If State
+Sync cannot obtain chunks from healthy P2P peers, stop the replacement and
+repair peer reachability; do not copy old databases or mark the drill as
+successful. Use a new root for every retry.
+
 ## Evidence Rules
 
 - A failed recovery attempt remains evidence of `RECOVERY_REQUIRED`, not G5
