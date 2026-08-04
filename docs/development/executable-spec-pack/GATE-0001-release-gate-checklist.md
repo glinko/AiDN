@@ -235,6 +235,23 @@ missing. A report with failed G0 or G1 checks is a hard `FAIL`. G4 and G6
 remain external gates and require public-network and independent-operator
 evidence; `--allow-incomplete` does not weaken those requirements.
 
+Before combining G4 source reports, collect the public deployment observation
+from at least two credential-free HTTPS RPC endpoints:
+
+```bash
+uv run python tools/verify-public-network-deployment.py \
+  --rpc-url https://rpc-a.example \
+  --rpc-url https://rpc-b.example \
+  --minimum-peers 1 \
+  --minimum-bootstrap-peers 2 \
+  --minimum-bootstrap-hosts 2 \
+  --output ./public-deployment.json
+```
+
+The collector is read-only and checks `/status`, `/net_info`, TLS, peer
+reachability and observed peer diversity. Its checks are hash-bound and do not
+claim independent operator ownership.
+
 For final publication, use the fail-closed orchestrator after G0-G6 evidence
 exists. It refuses to create an output directory until every pre-publication
 gate is `PASS`, writes `gates/release-gate-result.json` outside the Evidence

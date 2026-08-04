@@ -37,6 +37,24 @@ uv run python tools/verify-cometbft-external-testnet.py \
   > evidence/network/external-finality.json
 ```
 
+Collect the deployment observations separately. The collector performs
+read-only `/status` and `/net_info` requests, relies on normal HTTPS
+certificate validation, and emits hash-bound checks for peer reachability,
+bootstrap diversity and TLS:
+
+```bash
+uv run python tools/verify-public-network-deployment.py \
+  --rpc-url https://rpc-a.example \
+  --rpc-url https://rpc-b.example \
+  --minimum-peers 1 \
+  --minimum-bootstrap-peers 2 \
+  --minimum-bootstrap-hosts 2 \
+  --output evidence/network/public-deployment.json
+```
+
+The collector does not prove that the endpoints belong to independent
+operators; that remains an out-of-band G6 concern.
+
 The final G4 gate remains incomplete until the report also references reviewed
 out-of-band operator/control-group evidence. Matching HTTPS responses alone do
 not establish independent operators. Every check for `lan_acceptance`,

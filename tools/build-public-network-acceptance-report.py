@@ -52,6 +52,11 @@ def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) 
         raise ValueError("LAN report is not a valid controlled testnet acceptance")
     if external.get("status") != "ok":
         raise ValueError("external finality report is not ok")
+    if (
+        deployment.get("status") != "ok"
+        or deployment.get("scope") != "PUBLIC_NETWORK_DEPLOYMENT"
+    ):
+        raise ValueError("public deployment report is not a verified deployment observation")
     endpoints = external.get("rpc_endpoints")
     finality = external.get("finality_evidence")
     if (

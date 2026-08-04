@@ -888,6 +888,9 @@ latest clean release-candidate commit and profile commitment
   snapshot restore, State Sync, invalid snapshot and stale-predecessor drills.
 - [ ] G4 Public Networking: live public RPC/P2P, bootstrap diversity and
   public finality evidence are still absent.
+- [x] G4 collection plumbing: a read-only HTTPS `/status` and `/net_info`
+  collector now emits hash-bound deployment checks and rejects unreferenced
+  boolean observations; live public endpoints are still required.
 - [ ] G6 Independent Operator: out-of-band attestations from distinct operator
   identities/control groups are still absent. The functional controlled-testnet
   MVP assumption for `hv-node10` remains narrower than this public-release gate.

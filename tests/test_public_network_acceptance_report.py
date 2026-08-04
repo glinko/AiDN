@@ -45,6 +45,8 @@ def _source_reports(tmp_path: Path, *, ownership_status: str) -> tuple[Path, Pat
     deployment = _write(
         tmp_path / "deployment.json",
         {
+            "status": "ok",
+            "scope": "PUBLIC_NETWORK_DEPLOYMENT",
             "checks": {
                 "public_p2p_acceptance": {
                     "status": "PASS",
