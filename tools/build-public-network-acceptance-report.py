@@ -29,14 +29,14 @@ def _load(path: Path, label: str) -> dict[str, Any]:
     return value
 
 
-def _check_value(value: object, *, name: str) -> bool:
+def _check_value(value: object, *, name: str) -> dict[str, str]:
     if isinstance(value, dict):
         if value.get("status") != "PASS":
-            return False
+            raise ValueError(f"G4 check must have status PASS: {name}")
         reference = value.get("evidence_reference")
         if not isinstance(reference, str) or not reference:
             raise ValueError(f"G4 check lacks evidence_reference: {name}")
-        return True
+        return {"status": "PASS", "evidence_reference": reference}
     raise ValueError(f"G4 check must be a PASS object with evidence_reference: {name}")
 
 
@@ -95,7 +95,14 @@ def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) 
         raise ValueError(
             "verified ownership evidence must include ownership_evidence_root"
         )
-    gate_status = "PASS" if all(checks.values()) and ownership.get("status") == "OUT_OF_BAND_VERIFIED" else "INCOMPLETE"
+    checks_pass = all(
+        isinstance(check, dict)
+        and check.get("status") == "PASS"
+        and isinstance(check.get("evidence_reference"), str)
+        and bool(check["evidence_reference"])
+        for check in checks.values()
+    )
+    gate_status = "PASS" if checks_pass and ownership.get("status") == "OUT_OF_BAND_VERIFIED" else "INCOMPLETE"
     return {
         "schema_version": 1,
         "status": "ok",

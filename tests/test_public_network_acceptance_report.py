@@ -69,7 +69,7 @@ def test_public_network_report_is_structurally_ok_but_incomplete_without_review(
 
     assert report["status"] == "ok"
     assert report["gate_status"] == "INCOMPLETE"
-    assert all(report["checks"].values())
+    assert all(check["status"] == "PASS" for check in report["checks"].values())
 
 
 def test_public_network_report_passes_after_independence_review(tmp_path: Path) -> None:
@@ -90,6 +90,18 @@ def test_public_network_report_rejects_unreferenced_boolean_check(tmp_path: Path
     paths[2].write_text(json.dumps(deployment), encoding="utf-8")
 
     with pytest.raises(ValueError, match="PASS object with evidence_reference"):
+        MODULE.build_report(
+            lan_path=paths[0], external_path=paths[1], deployment_path=paths[2]
+        )
+
+
+def test_public_network_report_rejects_failed_deployment_check(tmp_path: Path) -> None:
+    paths = _source_reports(tmp_path, ownership_status="OUT_OF_BAND_VERIFIED")
+    deployment = json.loads(paths[2].read_text(encoding="utf-8"))
+    deployment["checks"]["public_p2p_acceptance"]["status"] = "FAIL"
+    paths[2].write_text(json.dumps(deployment), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="status PASS"):
         MODULE.build_report(
             lan_path=paths[0], external_path=paths[1], deployment_path=paths[2]
         )
