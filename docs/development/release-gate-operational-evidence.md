@@ -111,6 +111,21 @@ or `docker inspect aidn-comet-3`; it MUST NOT restart, stop, kill, reboot,
 submit transactions or mutate state. Raw execution commands are fingerprinted
 in the report and are never executed by the preflight tool.
 
+For the current controlled deployment profile (`aidn-g5-abci` plus a host
+CometBFT process), the repository also provides
+`tools/g5-current-runtime-control.sh`. Copy it to the operator jump host and
+provision a dedicated SSH key plus narrowly scoped `sudo -n` rules for only
+the named container and `/usr/sbin/reboot`. The script deliberately contains
+no password fallback and supports `status`, `graceful`, `abrupt`, `reboot` and
+`recover`; configure its `AIDN_G5_*` variables rather than editing credentials
+into it.
+
+For this profile, `graceful` stops the host CometBFT process before the ABCI
+container restart and starts CometBFT again afterward. `abrupt` terminates
+both processes with a bounded outage before restarting them. `recover` fails
+closed when the named ABCI container is missing; it does not silently turn a
+missing deployment into a successful recovery claim.
+
 Then collect the live restart, abrupt termination, host reboot and stale
 predecessor observations on the operator host. Host reboot MUST stop the ABCI
 application and CometBFT before reboot, then explicitly start the ABCI
