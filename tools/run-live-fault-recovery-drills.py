@@ -89,6 +89,45 @@ def _run_ssh(command: str, *, ssh_target: str, timeout_seconds: int, allow_disco
         }
 
 
+def _run_ssh_with_outage_observation(
+    command: str,
+    *,
+    ssh_target: str,
+    target_endpoint: str,
+    timeout_seconds: int,
+    allow_disconnect: bool,
+) -> tuple[dict[str, Any], bool]:
+    process = subprocess.Popen(
+        ["ssh", ssh_target, command],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    outage_observed = False
+    deadline = time.monotonic() + max(timeout_seconds, 10)
+    while process.poll() is None:
+        if not outage_observed:
+            try:
+                _status(target_endpoint)
+            except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+                outage_observed = True
+        if time.monotonic() >= deadline:
+            process.kill()
+            stdout, stderr = process.communicate()
+            raise RuntimeError(
+                f"SSH command timed out: {command}; "
+                f"stdout={stdout[-1000:]}; stderr={stderr[-1000:]}"
+            )
+        time.sleep(0.5)
+    stdout, stderr = process.communicate()
+    return {
+        "returncode": process.returncode,
+        "stdout": stdout[-4000:],
+        "stderr": stderr[-4000:],
+        "disconnect_allowed": allow_disconnect,
+    }, outage_observed
+
+
 def _observe_unreachable(endpoint: str, *, timeout_seconds: int) -> bool:
     deadline = time.monotonic() + min(timeout_seconds, 15)
     while time.monotonic() < deadline:
@@ -113,15 +152,28 @@ def _run_live_action(
 ) -> dict[str, Any]:
     before = _converge(endpoints, timeout_seconds=timeout_seconds, greater_than=0)
     before_target = next(item for item in before if item["rpc_url"] == target_endpoint)
-    command_result = _run_ssh(
-        command,
-        ssh_target=ssh_target,
-        timeout_seconds=timeout_seconds,
-        allow_disconnect=allow_disconnect,
-    )
+    observe_during_command = name in {"graceful_restart", "abrupt_process_termination"}
+    if observe_during_command:
+        command_result, command_outage_observed = _run_ssh_with_outage_observation(
+            command,
+            ssh_target=ssh_target,
+            target_endpoint=target_endpoint,
+            timeout_seconds=timeout_seconds,
+            allow_disconnect=allow_disconnect,
+        )
+    else:
+        command_result = _run_ssh(
+            command,
+            ssh_target=ssh_target,
+            timeout_seconds=timeout_seconds,
+            allow_disconnect=allow_disconnect,
+        )
+        command_outage_observed = False
     if command_result.get("returncode") not in (0, None) and not allow_disconnect:
         raise RuntimeError(f"{name} command failed: {command_result}")
-    outage_observed = _observe_unreachable(target_endpoint, timeout_seconds=timeout_seconds)
+    outage_observed = command_outage_observed or _observe_unreachable(
+        target_endpoint, timeout_seconds=timeout_seconds
+    )
     if name == "host_reboot" and not outage_observed:
         raise RuntimeError("host_reboot did not make the target RPC unavailable")
     recovery_result: dict[str, Any] | None = None
@@ -149,6 +201,7 @@ def _run_live_action(
         "evidence_reference": "pending",
         "command": command,
         "command_result": command_result,
+        "command_outage_observed": command_outage_observed,
         "outage_observed": outage_observed,
         "recovery_command": post_recovery_command,
         "recovery_result": recovery_result,

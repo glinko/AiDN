@@ -80,3 +80,76 @@ def test_stale_command_accepts_pretty_json_report(monkeypatch) -> None:
     monkeypatch.setattr(MODULE.subprocess, "run", lambda *args, **kwargs: Completed())
 
     assert MODULE._run_stale_command("stale-command") == expected
+
+
+def test_restart_action_records_outage_seen_during_command(monkeypatch) -> None:
+    endpoints = [f"http://validator-{index}" for index in range(4)]
+    convergence_count = 0
+
+    def converge(*args, **kwargs):
+        nonlocal convergence_count
+        convergence_count += 1
+        height = 20 if convergence_count == 1 else 21
+        return [_status(endpoint, height) for endpoint in endpoints]
+
+    monkeypatch.setattr(MODULE, "_converge", converge)
+    monkeypatch.setattr(
+        MODULE,
+        "_run_ssh_with_outage_observation",
+        lambda *args, **kwargs: (
+            {"returncode": 0, "stdout": "", "stderr": ""},
+            True,
+        ),
+    )
+    monkeypatch.setattr(MODULE, "_observe_unreachable", lambda *args, **kwargs: False)
+
+    report = MODULE._run_live_action(
+        name="abrupt_process_termination",
+        command="kill-and-recover",
+        ssh_target="operator@jump",
+        endpoints=endpoints,
+        target_endpoint=endpoints[0],
+        timeout_seconds=30,
+        allow_disconnect=False,
+    )
+
+    assert report["command_outage_observed"] is True
+    assert report["outage_observed"] is True
+
+
+def test_ssh_observer_detects_rpc_failure_before_action_finishes(monkeypatch) -> None:
+    class Process:
+        returncode = 0
+
+        def __init__(self) -> None:
+            self.poll_count = 0
+
+        def poll(self):
+            self.poll_count += 1
+            return None if self.poll_count == 1 else self.returncode
+
+        def communicate(self):
+            return "out", "err"
+
+        def kill(self):
+            self.returncode = -9
+
+    process = Process()
+    monkeypatch.setattr(MODULE.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(
+        MODULE,
+        "_status",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("RPC down")),
+    )
+    monkeypatch.setattr(MODULE.time, "sleep", lambda seconds: None)
+
+    result, outage_observed = MODULE._run_ssh_with_outage_observation(
+        "kill-and-recover",
+        ssh_target="operator@jump",
+        target_endpoint="http://validator-0",
+        timeout_seconds=30,
+        allow_disconnect=False,
+    )
+
+    assert result["returncode"] == 0
+    assert outage_observed is True
