@@ -16,7 +16,7 @@ from aidn_hypervisor.consensus.implementation_profile import (
     canonical_json_bytes,
 )
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
-from aidn_hypervisor.consensus.state_store import ABCIStateStore
+from aidn_hypervisor.consensus.state_store import ABCIStateStore, ABCIStateStoreError
 from aidn_hypervisor.ledger.service import LedgerOperationService
 
 SNAPSHOT_ACCEPTANCE_VERSION = 1
@@ -73,6 +73,10 @@ def _finalize(application: AIDNABCIApplication, *, height: int, block_byte: byte
     if result.code != "ok" or len(tx_results) != 1 or tx_results[0].code != "ok":
         detail = tx_results[0].log if tx_results else result.log
         raise SnapshotAcceptanceError(f"G2 block {height} did not finalize: {detail}")
+    try:
+        application.commit()
+    except ABCIStateStoreError as error:
+        raise SnapshotAcceptanceError(f"G2 block {height} did not commit: {error}") from error
 
 
 def _app_hash(application: AIDNABCIApplication) -> str:
