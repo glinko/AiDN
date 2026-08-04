@@ -80,6 +80,10 @@ separate `gate_status` field. `gate_status: INCOMPLETE` is expected until the
 public operator/control-group ownership review is complete; it is not a
 substitute for that review.
 
+The canonical G4 report MUST declare `schema_version: 1` and
+`scope: PUBLIC_NETWORK`. The release verifier rejects reports that omit these
+context fields, even when their endpoint and checklist objects look valid.
+
 ## G5 fault recovery
 
 First produce the controlled local snapshot report:

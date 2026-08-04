@@ -363,7 +363,9 @@ def test_release_gate_accepts_complete_g4_report(tmp_path: Path) -> None:
     report_path.write_text(
         json.dumps(
             {
+                "schema_version": 1,
                 "status": "ok",
+                "scope": "PUBLIC_NETWORK",
                 "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
                 "finality_evidence": {"operation_id": "op-1"},
                 "ownership_evidence": {
@@ -388,8 +390,10 @@ def test_release_gate_keeps_structurally_valid_incomplete_g4_report_incomplete(t
     report_path.write_text(
         json.dumps(
             {
+                "schema_version": 1,
                 "status": "ok",
                 "gate_status": "INCOMPLETE",
+                "scope": "PUBLIC_NETWORK",
                 "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
                 "finality_evidence": {"operation_id": "op-1"},
                 "ownership_evidence": {"status": "OUT_OF_BAND_DECLARED"},
@@ -411,7 +415,9 @@ def test_release_gate_rejects_credentialed_g4_rpc_endpoint(tmp_path: Path) -> No
     report_path.write_text(
         json.dumps(
             {
+                "schema_version": 1,
                 "status": "ok",
+                "scope": "PUBLIC_NETWORK",
                 "rpc_endpoints": ["https://user:secret@rpc-a.example", "https://rpc-b.example"],
                 "finality_evidence": {"operation_id": "op-1"},
                 "ownership_evidence": {
@@ -430,6 +436,32 @@ def test_release_gate_rejects_credentialed_g4_rpc_endpoint(tmp_path: Path) -> No
     assert result.returncode == 2
     assert payload["gates"]["G4"]["status"] == "FAIL"
     assert "credential-free HTTPS" in payload["gates"]["G4"]["reason"]
+
+
+def test_release_gate_g4_rejects_missing_schema_and_scope(tmp_path: Path) -> None:
+    report_path = tmp_path / "g4-report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
+                "finality_evidence": {"operation_id": "op-1"},
+                "ownership_evidence": {
+                    "status": "OUT_OF_BAND_VERIFIED",
+                    "ownership_evidence_root": "sha256:" + "a" * 64,
+                },
+                "checks": _g4_checks(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gate("--g4-report", str(report_path), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G4"]["status"] == "FAIL"
+    assert "schema_version" in payload["gates"]["G4"]["reason"]
 
 
 def _write_g6_bundle(root: Path, *, index: int) -> None:

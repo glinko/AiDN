@@ -543,6 +543,10 @@ def _run_g4(report_path: Path | None) -> dict[str, Any]:
         return _not_run("public networking evidence is not supplied")
     try:
         report = _load_json_object(report_path, label="G4 report")
+        if report.get("schema_version") != 1:
+            raise ValueError("G4 report schema_version is unsupported")
+        if report.get("scope") != "PUBLIC_NETWORK":
+            raise ValueError("G4 report must declare PUBLIC_NETWORK scope")
         report_status = report.get("status")
         if report_status not in {"ok", "PASS", "INCOMPLETE"}:
             raise ValueError("G4 report status is invalid")
