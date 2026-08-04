@@ -381,6 +381,19 @@ def _verify_gate_result_control(evidence_dir: Path, *, evidence_root: str) -> di
     )
     if failed:
         raise ValueError("G7 release-gate-result contains non-PASS gates: " + ", ".join(failed))
+    manifest = _load_json_object(evidence_dir / "manifest.json", label="evidence manifest")
+    if result.get("schema_version") != 1:
+        raise ValueError("G7 release-gate-result schema_version is unsupported")
+    expected_context = {
+        "network_id": manifest.get("network_id"),
+        "release": manifest.get("release_version"),
+        "profile_id": manifest.get("profile_id"),
+    }
+    for field, expected in expected_context.items():
+        if not isinstance(expected, str) or not expected:
+            raise ValueError(f"evidence manifest {field} is missing")
+        if result.get(field) != expected:
+            raise ValueError(f"G7 release-gate-result {field} does not match the evidence manifest")
     return {
         "status": result["status"],
         "release": result.get("release"),

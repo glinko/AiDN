@@ -282,8 +282,11 @@ uv run python tools/build-release-evidence-bundle.py \
 `gates/release-gate-result.json` are control files. The latter is written after
 the artifact root is fixed and is therefore excluded from that root. The
 orchestrator requires at least two G6 bundles and emits a final control file
-with passing G0 through G7 entries. A bundle without the embedded gate result
-is not G7-complete.
+with `schema_version: 1`, the same `network_id`, `release` and `profile_id` as
+the bundle manifest, and passing G0 through G7 entries. The verifier binds
+these fields before accepting the embedded result, so a control file cannot be
+copied between releases or implementation profiles. A bundle without the
+embedded gate result is not G7-complete.
 
 `tools/build-public-evidence-bundle.py` remains available as a low-level
 development primitive, but it does not evaluate release gates and MUST NOT be

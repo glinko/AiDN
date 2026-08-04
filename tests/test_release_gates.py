@@ -559,7 +559,11 @@ def test_release_gate_g7_requires_a_passing_embedded_gate_result(tmp_path: Path)
     gate_path.write_text(
         json.dumps(
             {
+                "schema_version": 1,
                 "status": "PASS",
+                "network_id": manifest["network_id"],
+                "release": manifest["release_version"],
+                "profile_id": manifest["profile_id"],
                 "evidence_root": manifest["evidence_root"],
                 "gates": {f"G{index}": "PASS" for index in range(8)},
             }
@@ -572,6 +576,63 @@ def test_release_gate_g7_requires_a_passing_embedded_gate_result(tmp_path: Path)
 
     assert result.returncode == 0
     assert payload["gates"]["G7"]["status"] == "PASS"
+
+
+def test_release_gate_g7_rejects_context_mismatch(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    _write_g6_bundle(evidence_dir, index=1)
+    manifest = json.loads((evidence_dir / "manifest.json").read_text(encoding="utf-8"))
+    gate_path = evidence_dir / "gates/release-gate-result.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "PASS",
+                "network_id": manifest["network_id"],
+                "release": "wrong-release",
+                "profile_id": manifest["profile_id"],
+                "evidence_root": manifest["evidence_root"],
+                "gates": {f"G{index}": "PASS" for index in range(8)},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gate("--evidence-dir", str(evidence_dir), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G7"]["status"] == "FAIL"
+    assert "release does not match" in payload["gates"]["G7"]["reason"]
+
+
+def test_release_gate_g7_rejects_missing_control_schema_version(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    _write_g6_bundle(evidence_dir, index=1)
+    manifest = json.loads((evidence_dir / "manifest.json").read_text(encoding="utf-8"))
+    gate_path = evidence_dir / "gates/release-gate-result.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text(
+        json.dumps(
+            {
+                "status": "PASS",
+                "network_id": manifest["network_id"],
+                "release": manifest["release_version"],
+                "profile_id": manifest["profile_id"],
+                "evidence_root": manifest["evidence_root"],
+                "gates": {f"G{index}": "PASS" for index in range(8)},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gate("--evidence-dir", str(evidence_dir), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G7"]["status"] == "FAIL"
+    assert "schema_version" in payload["gates"]["G7"]["reason"]
 
 
 def test_release_gate_g7_rejects_missing_g7_entry(tmp_path: Path) -> None:
