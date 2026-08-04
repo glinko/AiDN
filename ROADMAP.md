@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-03`
+Last updated: `2026-08-04`
 
 This is the main public roadmap for the repository.
 
@@ -893,6 +893,10 @@ latest clean release-candidate commit and profile commitment
   MVP assumption for `hv-node10` remains narrower than this public-release gate.
 - [ ] G7 Evidence Publication: final EVD-0001 bundle cannot be published until
   G4 and G6 evidence is available and the release-gate result is PASS.
+- [x] G7 publication plumbing: `tools/build-release-evidence-bundle.py` now
+  verifies G0-G6 before building, writes the excluded release-gate control file,
+  and reruns strict EVD-0001 verification. This closes the implementation
+  path, but does not manufacture the missing G4/G6 evidence.
 
 Order of work right now:
 

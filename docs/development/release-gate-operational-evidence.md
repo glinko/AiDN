@@ -140,15 +140,27 @@ addresses.
 
 ## G7 bundle creation
 
-Build a bundle from explicitly selected files. The private key is read only for
-signing and is never copied into the output:
+Use the release orchestrator instead of assembling the final bundle manually.
+It first verifies G0-G6, refuses to build when any gate is `INCOMPLETE` or
+`FAIL`, writes the G7 control file outside the Evidence Root, and runs the
+strict verifier again after signing. The private key is read only for signing
+and is never copied into the output:
 
 ```bash
-uv run python tools/build-public-evidence-bundle.py \
+uv run python tools/build-release-evidence-bundle.py \
   --output evidence/release-candidate \
   --network-id aidn-controlled-lan \
   --release-version 0.1.0-rc1 \
-  --profile-id aidn-mainnet-candidate-1 \
+  --profile profiles/aidn-mainnet-candidate-1.json \
+  --fixture-manifest fixtures/manifest.json \
+  --g0-report evidence/gates/g0-release-integrity.json \
+  --g1-report evidence/gates/g1-protocol-conformance.json \
+  --g2-report evidence/drills/g2-snapshot.json \
+  --g3-report evidence/drills/g3-multivalidator.json \
+  --g4-report evidence/network/g4-public-network.json \
+  --g5-report evidence/drills/g5-fault-recovery.json \
+  --g6-evidence-dir evidence/operator-a \
+  --g6-evidence-dir evidence/operator-b \
   --operator-id operator-a \
   --control-group-id control-group-a \
   --independence-status OUT_OF_BAND_DECLARED \
@@ -160,8 +172,12 @@ uv run python tools/build-public-evidence-bundle.py \
 ```
 
 `manifest.json`, the operator attestation and
-`gates/release-gate-result.json` are control files. The latter may be written
-after the artifact root is fixed and is therefore excluded from that root.
-The final control file must declare `status: PASS` and passing G0 through G6
-entries. Always run the final gate command with explicit `--require-evidence`
-paths; a bundle without the embedded gate result is not G7-complete.
+`gates/release-gate-result.json` are control files. The latter is written after
+the artifact root is fixed and is therefore excluded from that root. The
+orchestrator requires at least two G6 bundles and emits a final control file
+with passing G0 through G7 entries. A bundle without the embedded gate result
+is not G7-complete.
+
+`tools/build-public-evidence-bundle.py` remains available as a low-level
+development primitive, but it does not evaluate release gates and MUST NOT be
+used as the final release path.
