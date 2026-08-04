@@ -135,8 +135,15 @@ uv run python tools/repair-validator-state-from-abci.py \
   --abci-state /state/abci \
   --discard-operation-id OPERATION_ID \
   --backup-path /state/backups/hypervisor.pre-recovery.json \
+  --confirm-offline \
   --apply
 ```
+
+`--apply` is intentionally blocked unless `--confirm-offline` is present.
+The flag is an operator declaration that both CometBFT and the ABCI process
+are stopped; it is not a substitute for checking the process list and the
+service/container status. Applying a projection while the validator is live
+can create a second state writer and invalidate recovery evidence.
 
 This changes only the Hypervisor's consensus projection fields. Local operator
 configuration remains intact, while the next validator startup still fails
