@@ -332,10 +332,10 @@ echo "Installing AiDN operator '$operator_id' from ref '$ref'" >&2
 "${sudo_cmd[@]}" apt-get update
 "${sudo_cmd[@]}" apt-get install -y --no-install-recommends ca-certificates curl git python3 python3-venv
 
+export PATH="$HOME/.local/bin:$PATH"
 if ! command -v uv >/dev/null 2>&1; then
   curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/install.sh | sh
 fi
-export PATH="$HOME/.local/bin:$PATH"
 uv_bin="$(command -v uv || true)"
 [[ -n "$uv_bin" ]] || die 'uv installation did not produce an executable'
 
