@@ -207,6 +207,9 @@ The review file is control metadata, is excluded from the artifact Merkle
 root, and MUST bind the operator, control group and Evidence Root exactly.
 G6 release verification MUST receive the trusted reviewer public key before it
 can report `PASS`.
+The trusted reviewer identity and public key MUST be distinct from every
+operator identity and public key in the quorum; a reviewer key reused by an
+operator is not independent review evidence.
 
 For G6 independent-operator review, the attestation MUST additionally carry
 the operator's declared `control_group_id`. The value is an out-of-band claim;
