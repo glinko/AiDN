@@ -34,3 +34,19 @@ def test_systemd_replication_installer_keeps_master_key_out_of_unit() -> None:
     assert '< "\\$root/master-key.b64")' in script
     assert '\\"$root/master-key.b64\\"' not in script
     assert "EnvironmentFile" not in script
+
+
+def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> None:
+    script = Path("tools/aidn-operator-bootstrap-ubuntu.sh").read_text(encoding="utf-8")
+
+    assert "exec 3</dev/tty" in script
+    assert "--non-interactive" in script
+    assert "--allow-public-api" in script
+    assert "--enable-registry" in script
+    assert "systemctl --user enable --now" in script
+    assert "loginctl enable-linger" in script
+    assert "master-key.b64" in script
+    assert "AIDN_SECRET_MANAGER_MASTER_KEY" in script
+    assert "operator-attestation-key.raw" in script
+    assert "raw.githubusercontent.com/glinko/AiDN/<reviewed-ref>" in script
+    assert "sudo password was used only by sudo" in script

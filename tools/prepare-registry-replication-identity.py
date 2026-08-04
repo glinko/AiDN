@@ -138,7 +138,7 @@ def init(args: argparse.Namespace) -> None:
     config = {
         "local_peer_id": args.peer_id,
         "signing_key_handle": f"{handle_prefix}/ed25519",
-        "listener": {"host": "0.0.0.0", "port": args.port, "tls": tls},
+        "listener": {"host": args.listen_host, "port": args.port, "tls": tls},
         "outbound_peers": [],
         "network_id": args.network_id,
         "chain_id": args.chain_id,
@@ -161,6 +161,33 @@ def init(args: argparse.Namespace) -> None:
                 "config": str(config_path),
                 "public_bundle": str(bundle_path),
                 "peer_id": args.peer_id,
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def update_listener(args: argparse.Namespace) -> None:
+    """Change only the bind address or port without rotating identity keys."""
+    root = args.root.resolve()
+    config_path = root / "registry-replication.json"
+    if not config_path.exists():
+        raise ValueError("local identity is not initialized")
+    config = _load_config(config_path)
+    listener = config.get("listener")
+    if not isinstance(listener, dict):
+        raise ValueError("local identity does not contain a listener")
+    listener["host"] = args.listen_host
+    listener["port"] = args.port
+    config["listener"] = listener
+    _write_json(config_path, config)
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "config": str(config_path),
+                "listen_host": args.listen_host,
+                "port": args.port,
             },
             sort_keys=True,
         )
@@ -212,12 +239,18 @@ def main() -> None:
     init_parser.add_argument("--root", type=Path, required=True)
     init_parser.add_argument("--peer-id", required=True)
     init_parser.add_argument("--host", required=True)
+    init_parser.add_argument("--listen-host", default="0.0.0.0")
     init_parser.add_argument("--port", type=int, default=9444)
     init_parser.add_argument("--network-id", default="aidn")
     init_parser.add_argument("--chain-id", default="aidn-testnet-1")
     init_parser.add_argument("--network-revision", default="1.0")
     init_parser.add_argument("--force", action="store_true")
     init_parser.set_defaults(handler=init)
+    listener_parser = subs.add_parser("update-listener")
+    listener_parser.add_argument("--root", type=Path, required=True)
+    listener_parser.add_argument("--listen-host", required=True)
+    listener_parser.add_argument("--port", type=int, required=True)
+    listener_parser.set_defaults(handler=update_listener)
     add_parser = subs.add_parser("add-peer")
     add_parser.add_argument("--root", type=Path, required=True)
     add_parser.add_argument("--bundle", type=Path, required=True)

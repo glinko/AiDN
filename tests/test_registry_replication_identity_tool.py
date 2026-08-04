@@ -9,3 +9,5 @@ def test_identity_tool_keeps_private_material_out_of_public_bundle() -> None:
     assert "private_key" in script
     assert "secret://registry/" in script
     assert "RegistryService(snapshot_path=snapshot)" in script
+    assert "--listen-host" in script
+    assert "update-listener" in script
