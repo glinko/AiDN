@@ -23,6 +23,19 @@ Collect read-only evidence first:
 - the CometBFT startup log;
 - the running application image and source/profile version.
 
+For the current controlled deployment, run the credential-free diagnostic
+action before any state-changing action:
+
+```bash
+AIDN_G5_TARGET_SSH=user@validator-host \\
+  AIDN_G5_SSH_KEY=~/.ssh/aidn-g5-operator_ed25519 \\
+  tools/g5-current-runtime-control.sh diagnose
+```
+
+The action only inspects the container, process, RPC and startup log. It
+prints hashes and a small failure classification; it does not restart, kill,
+reboot, mutate state or print container environment variables.
+
 The following startup pattern is a hard reprovision signal:
 
 ```text

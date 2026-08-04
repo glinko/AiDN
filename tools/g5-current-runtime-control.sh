@@ -5,7 +5,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: g5-current-runtime-control.sh {status|graceful|abrupt|reboot|recover}
+Usage: g5-current-runtime-control.sh {status|diagnose|graceful|abrupt|reboot|recover}
 
 Environment:
   AIDN_G5_TARGET_SSH       SSH target for the validator host
@@ -18,7 +18,7 @@ EOF
 
 action="${1:-}"
 case "$action" in
-  status|graceful|abrupt|reboot|recover) ;;
+  status|diagnose|graceful|abrupt|reboot|recover) ;;
   *) usage >&2; exit 2 ;;
 esac
 
@@ -130,6 +130,66 @@ sudo -n /usr/bin/docker inspect "$container" >/dev/null
 pgrep -x cometbft >/dev/null
 curl -fsS --max-time 3 http://127.0.0.1:26657/status >/dev/null
 printf '%s\n' 'current-runtime-ready'
+REMOTE
+    ;;
+  diagnose)
+    remote_script "$container" "$comet_bin" "$comet_home" <<'REMOTE'
+set -euo pipefail
+container="$1"
+comet_bin="$2"
+comet_home="$3"
+
+printf '%s\n' 'diagnostic_scope=read-only'
+printf 'container='
+if sudo -n /usr/bin/docker inspect "$container" | python3 -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+item = payload[0]
+state = item.get("State") or {}
+config = item.get("Config") or {}
+status = state.get("Status", "unknown")
+image = config.get("Image", "unknown")
+print("{} image={}".format(status, image))
+'; then
+  :
+else
+  printf '%s\n' 'unavailable'
+fi
+
+if pgrep -x cometbft >/dev/null 2>&1; then
+  printf '%s\n' 'cometbft_process=running'
+else
+  printf '%s\n' 'cometbft_process=stopped'
+fi
+
+if curl -fsS --max-time 3 http://127.0.0.1:26657/status >/tmp/aidn-g5-status.json 2>/dev/null; then
+  printf '%s\n' 'rpc=reachable'
+else
+  printf '%s\n' 'rpc=unreachable'
+fi
+rm -f /tmp/aidn-g5-status.json
+
+printf 'comet_binary='
+[[ -x "$comet_bin" ]] && printf '%s\n' 'present' || printf '%s\n' 'missing'
+printf 'comet_home='
+[[ -d "$comet_home" ]] && printf '%s\n' 'present' || printf '%s\n' 'missing'
+
+log_path=/tmp/aidn-g5-comet.log
+if [[ -f "$log_path" ]]; then
+  printf 'comet_log_sha256='
+  sha256sum "$log_path" | awk '{print $1}'
+  if grep -Eq 'expected height .*last stored abci responses|error during handshake: error on replay' "$log_path"; then
+    printf '%s\n' 'recovery_class=REPROVISION_REQUIRED'
+    grep -E 'ABCI Handshake App Info|ABCI Replay Blocks|expected height|failed to create node|error during handshake' "$log_path" | tail -n 20 || true
+  else
+    printf '%s\n' 'recovery_class=RECOVERY_REQUIRED'
+    tail -n 20 "$log_path" || true
+  fi
+else
+  printf '%s\n' 'recovery_class=NO_STARTUP_LOG'
+fi
 REMOTE
     ;;
   graceful)

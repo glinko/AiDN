@@ -35,5 +35,16 @@ def test_graceful_path_stops_comet_before_restarting_abci() -> None:
 def test_current_runtime_control_has_all_g5_actions() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
 
-    for action in ("status", "graceful", "abrupt", "reboot", "recover"):
+    for action in ("status", "diagnose", "graceful", "abrupt", "reboot", "recover"):
         assert action in source
+
+
+def test_diagnose_path_is_read_only_and_classifies_reprovision_boundary() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+
+    diagnose = source[source.index("  diagnose)"):source.index("  graceful)")]
+    assert "sudo -n /usr/bin/docker inspect" in diagnose
+    assert "sudo -n /usr/bin/docker restart" not in diagnose
+    assert "sudo -n /usr/bin/docker kill" not in diagnose
+    assert "REPROVISION_REQUIRED" in diagnose
+    assert "expected height .*last stored abci responses" in diagnose
