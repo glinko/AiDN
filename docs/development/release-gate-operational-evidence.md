@@ -133,6 +133,14 @@ deployment explicitly. Do not substitute `graceful`, because that action
 performs stop and restart in one command and cannot provide a sustained
 offline interval to the drill.
 
+For an isolated replacement root, use
+`tools/g5-replacement-runtime-control.sh` on the operator jump host. Its
+`stop`, `start` and `abrupt` actions proxy only to the replacement helper with
+explicit root, binary and port variables; unlike the G5 convenience wrappers,
+they do not append an automatic restart. Keep the replacement root separate
+from the predecessor and pass the exact target paths through environment
+variables on the control host.
+
 The ABCI application MUST be built from a revision where `FinalizeBlock`
 returns only a preview hash and durable application state is persisted by the
 subsequent `Commit` call. A deployment that persisted ABCI state during
