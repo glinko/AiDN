@@ -866,6 +866,34 @@ Exit criteria:
 
 ## Immediate Priorities
 
+### GATE-0001 release status (local verification, 2026-08-03)
+
+The deterministic and controlled operational portions of the release gate are
+now executable and fail closed. The verified local evidence is bound to commit
+`3ffd991ef01df97d0ae1367a4514917473996512` and profile commitment
+`sha256:4ebeab687d3871534b96399b77d26ccd8e53414a7c1882631e82e6dbb30af190`.
+
+- [x] G0 Build Integrity: clean-tree package build, artifact hashes, signed
+  release manifest, profile/catalog/fixture bindings, and dependency/license
+  evidence.
+- [x] G1 Deterministic Protocol: strict FIX-0001 fixtures, 49/49 active
+  operation coverage, unsupported-version rejection, idempotency,
+  predecessor, monetary-boundary and canonical-vector probes; 660 scoped
+  consensus/settlement/ledger tests pass.
+- [x] G2 State/Snapshot Integrity: controlled local snapshot restore and State
+  Sync acceptance with identical StateRoot/AppHash and next-block transition.
+- [x] G3 Multi-Node Consensus: four-validator controlled Ubuntu LAN evidence,
+  transaction inclusion proofs, AppHash convergence and restart continuity.
+- [x] G5 Fault Recovery: graceful restart, abrupt termination, host reboot,
+  snapshot restore, State Sync, invalid snapshot and stale-predecessor drills.
+- [ ] G4 Public Networking: live public RPC/P2P, bootstrap diversity and
+  public finality evidence are still absent.
+- [ ] G6 Independent Operator: out-of-band attestations from distinct operator
+  identities/control groups are still absent. The functional controlled-testnet
+  MVP assumption for `hv-node10` remains narrower than this public-release gate.
+- [ ] G7 Evidence Publication: final EVD-0001 bundle cannot be published until
+  G4 and G6 evidence is available and the release-gate result is PASS.
+
 Order of work right now:
 
 1. Operator deployment configuration and encrypted local Secret Manager-backed certificate/signing-key handles now compose the explicitly injected Registry replication runtime. Automated local acceptance proves real mTLS, signed peer authentication, inventory exchange and object transfer between distinct local secret stores, and fixed timeout/sequence/concurrent-close defects. A host-separated Windows-to-Linux acceptance harness now proves the same flow over an SSH-forwarded mTLS connection with independently generated test credentials. A production verifier now runs the actual configured runtime against its durable Registry snapshot, requires authenticated inventory exchange and can require a declared immutable object transfer; its report explicitly does not claim organizational independence. A peer owned by an independent operator remains required before a directory trust claim.
