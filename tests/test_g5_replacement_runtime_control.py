@@ -26,3 +26,5 @@ def test_replacement_control_passes_paths_and_ports_as_fixed_arguments() -> None
     assert '"$action" "$root" "$repo" "$source_home" "$comet_bin"' in source
     assert 'export AIDN_REPROVISION_ROOT="$root"' in source
     assert 'export AIDN_RPC_PORT="$rpc_port"' in source
+    assert 'root="${AIDN_G5_REPLACEMENT_ROOT:-/home/user/aidn-g5-reprovision}"' in source
+    assert 'repo="${AIDN_G5_REPLACEMENT_REPO:-/home/user/aidn/AiDN}"' in source
