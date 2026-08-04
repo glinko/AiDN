@@ -89,6 +89,28 @@ uv run python tools/run-consensus-snapshot-acceptance.py \
   --report evidence/drills/g2-snapshot.json
 ```
 
+Before running any state-changing live drill, create a preflight config with
+read-only checks for the exact operator scripts, service units or containers
+used by that deployment. The preflight does not execute the declared drill or
+recovery commands; it only checks RPC reachability, SSH access and the
+operator-supplied read-only checks. This catches stale paths and renamed
+containers before a restart or reboot is attempted:
+
+```bash
+uv run python tools/preflight-live-fault-recovery.py \
+  --config evidence/drills/g5-preflight.json \
+  --output evidence/drills/g5-preflight-report.json
+```
+
+The config MUST use `schema_version: 1`, declare four or more validator RPC
+URLs, identify one target URL, and provide a non-empty `preflight` object for
+each required drill. The `host_reboot` entry additionally requires
+`recovery_command` and `recovery_preflight`. A preflight command is an
+operator-owned read-only check such as `test -x /opt/aidn/restart-validator`
+or `docker inspect aidn-comet-3`; it MUST NOT restart, stop, kill, reboot,
+submit transactions or mutate state. Raw execution commands are fingerprinted
+in the report and are never executed by the preflight tool.
+
 Then collect the live restart, abrupt termination, host reboot and stale
 predecessor observations on the operator host. Host reboot MUST stop the ABCI
 application and CometBFT before reboot, then explicitly start the ABCI

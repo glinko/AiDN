@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "scope": "CONTROLLED_LAN_TESTNET",
+  "ssh_target": "operator-jump",
+  "validator_rpc_urls": [
+    "http://validator-1:26657",
+    "http://validator-2:26657",
+    "http://validator-3:26657",
+    "http://validator-4:26657"
+  ],
+  "target_rpc_url": "http://validator-1:26657",
+  "commands": {
+    "graceful_restart": {
+      "command": "/opt/aidn/restart-validator",
+      "preflight": {
+        "transport": "ssh",
+        "command": "test -x /opt/aidn/restart-validator"
+      }
+    },
+    "abrupt_process_termination": {
+      "command": "/opt/aidn/terminate-validator",
+      "preflight": {
+        "transport": "ssh",
+        "command": "test -x /opt/aidn/terminate-validator"
+      }
+    },
+    "host_reboot": {
+      "command": "/opt/aidn/reboot-validator-host",
+      "preflight": {
+        "transport": "ssh",
+        "command": "test -x /opt/aidn/reboot-validator-host"
+      },
+      "recovery_command": "/opt/aidn/start-abci-then-comet",
+      "recovery_preflight": {
+        "transport": "ssh",
+        "command": "test -x /opt/aidn/start-abci-then-comet"
+      }
+    },
+    "stale_predecessor_rejected": {
+      "command": "uv run python tools/run-cometbft-stale-predecessor-drill.py ...",
+      "preflight": {
+        "transport": "local",
+        "command": "test -f tools/run-cometbft-stale-predecessor-drill.py"
+      }
+    }
+  }
+}
