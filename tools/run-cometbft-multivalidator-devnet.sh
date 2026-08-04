@@ -2,6 +2,8 @@
 set -euo pipefail
 
 # Requires Docker and a checkout with .venv or a Python image able to install AiDN.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 ROOT="${1:?usage: $0 <state-root>}"
 IMAGE="${AIDN_COMETBFT_IMAGE:-cometbft/cometbft:v0.38.19}"
 NETWORK="aidn-cometbft-devnet"
@@ -30,7 +32,7 @@ COPY . /app
 RUN pip install --no-cache-dir .
 CMD ["python", "-m", "uvicorn", "aidn_hypervisor.main:build_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
 EOF
-docker build -t "$APP_IMAGE" -f "$ROOT/Dockerfile" "$(pwd)" >/dev/null
+docker build -t "$APP_IMAGE" -f "$ROOT/Dockerfile" "$REPO_ROOT" >/dev/null
 rm "$ROOT/Dockerfile"
 
 docker run --rm --user 0 --entrypoint /bin/sh -v "$ROOT:/work" "$IMAGE" -c 'rm -rf /work/testnet /work/state; mkdir -p /work/testnet /work/state; chmod 777 /work/testnet /work/state' >/dev/null
