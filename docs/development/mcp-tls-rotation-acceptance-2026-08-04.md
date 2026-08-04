@@ -33,6 +33,15 @@ new listener and session behavior.
 The run produced two distinct disposable certificate serials and returned the
 machine-readable result `{"status":"ok"}`.
 
+## Published Clean-Checkout Acceptance
+
+The acceptance was repeated from a disposable clone of the published branch
+`codex/remaining-release-gates` at commit
+`91d831cc22caf25ff73ca0f502b9572d48f59ce0`. The clone was created on the same
+Ubuntu host, its commit was checked before execution, and the temporary clone
+was removed after the run. The result was again `{"status":"ok"}` with all
+checks above passing.
+
 ## Reproduction
 
 Once the current checkout is available on the target host:
