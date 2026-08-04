@@ -315,6 +315,20 @@ def _g4_checks() -> dict[str, dict[str, str]]:
     }
 
 
+def _g4_finality() -> dict[str, object]:
+    return {
+        "operation_id": "op-1",
+        "chain_id": "aidn-testnet-1",
+        "block_height": 2,
+        "block_id": "b" * 64,
+        "app_hash": "c" * 64,
+        "commit_hash": "d" * 64,
+        "finalized_at": "2030-01-01T00:00:01Z",
+        "verifier_id": "g4-verifier",
+        "proof_version": "consensus-finality-evidence.v1",
+    }
+
+
 def test_release_gate_accepts_integrity_bound_g5_report(tmp_path: Path) -> None:
     report_path = tmp_path / "g5-report.json"
     report_path.write_text(json.dumps(_g5_report(tmp_path)), encoding="utf-8")
@@ -367,7 +381,7 @@ def test_release_gate_accepts_complete_g4_report(tmp_path: Path) -> None:
                 "status": "ok",
                 "scope": "PUBLIC_NETWORK",
                 "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
-                "finality_evidence": {"operation_id": "op-1"},
+                "finality_evidence": _g4_finality(),
                 "ownership_evidence": {
                     "status": "OUT_OF_BAND_VERIFIED",
                     "ownership_evidence_root": "sha256:" + "a" * 64,
@@ -395,7 +409,7 @@ def test_release_gate_keeps_structurally_valid_incomplete_g4_report_incomplete(t
                 "gate_status": "INCOMPLETE",
                 "scope": "PUBLIC_NETWORK",
                 "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
-                "finality_evidence": {"operation_id": "op-1"},
+                "finality_evidence": _g4_finality(),
                 "ownership_evidence": {"status": "OUT_OF_BAND_DECLARED"},
                 "checks": _g4_checks(),
             }
@@ -419,7 +433,7 @@ def test_release_gate_rejects_credentialed_g4_rpc_endpoint(tmp_path: Path) -> No
                 "status": "ok",
                 "scope": "PUBLIC_NETWORK",
                 "rpc_endpoints": ["https://user:secret@rpc-a.example", "https://rpc-b.example"],
-                "finality_evidence": {"operation_id": "op-1"},
+                "finality_evidence": _g4_finality(),
                 "ownership_evidence": {
                     "status": "OUT_OF_BAND_VERIFIED",
                     "ownership_evidence_root": "sha256:" + "a" * 64,
@@ -462,6 +476,34 @@ def test_release_gate_g4_rejects_missing_schema_and_scope(tmp_path: Path) -> Non
     assert result.returncode == 2
     assert payload["gates"]["G4"]["status"] == "FAIL"
     assert "schema_version" in payload["gates"]["G4"]["reason"]
+
+
+def test_release_gate_g4_rejects_truncated_finality_evidence(tmp_path: Path) -> None:
+    report_path = tmp_path / "g4-report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "ok",
+                "scope": "PUBLIC_NETWORK",
+                "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
+                "finality_evidence": {"operation_id": "op-1"},
+                "ownership_evidence": {
+                    "status": "OUT_OF_BAND_VERIFIED",
+                    "ownership_evidence_root": "sha256:" + "a" * 64,
+                },
+                "checks": _g4_checks(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gate("--g4-report", str(report_path), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G4"]["status"] == "FAIL"
+    assert "missing required fields" in payload["gates"]["G4"]["reason"]
 
 
 def _write_g6_bundle(root: Path, *, index: int) -> None:

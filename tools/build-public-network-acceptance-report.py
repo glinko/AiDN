@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
+
 REQUIRED_CHECKS = (
     "lan_acceptance",
     "public_p2p_acceptance",
@@ -76,6 +78,32 @@ def _credential_free_https_endpoints(value: object) -> list[str]:
     return normalized
 
 
+def _validate_finality(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("external report lacks operation-bound finality evidence")
+    required = {
+        "operation_id",
+        "chain_id",
+        "block_height",
+        "block_id",
+        "app_hash",
+        "commit_hash",
+        "finalized_at",
+        "verifier_id",
+        "proof_version",
+    }
+    if not required.issubset(value):
+        raise ValueError("external finality evidence is missing required fields")
+    try:
+        evidence = ConsensusFinalityEvidence(**value)
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError("external finality evidence is invalid") from error
+    for field in ("block_id", "app_hash", "commit_hash"):
+        if re.fullmatch(r"[0-9A-Fa-f]{64}", getattr(evidence, field)) is None:
+            raise ValueError(f"external finality evidence {field} is not a 64-hex hash")
+    return evidence.model_dump()
+
+
 def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) -> dict[str, Any]:
     lan = _load(lan_path, "LAN report")
     external = _load(external_path, "external finality report")
@@ -90,12 +118,7 @@ def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) 
     ):
         raise ValueError("public deployment report is not a verified deployment observation")
     endpoints = _credential_free_https_endpoints(external.get("rpc_endpoints"))
-    finality = external.get("finality_evidence")
-    if (
-        not isinstance(finality, dict)
-        or not finality.get("operation_id")
-    ):
-        raise ValueError("external report lacks two credential-free HTTPS finality endpoints")
+    finality = _validate_finality(external.get("finality_evidence"))
     deployment_checks = deployment.get("checks")
     if not isinstance(deployment_checks, dict):
         raise ValueError("public deployment report must contain checks")

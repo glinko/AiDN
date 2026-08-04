@@ -22,6 +22,7 @@ from aidn_hypervisor.consensus.coverage import (
     LEGACY_OPERATION_TYPES,
     strict_operation_coverage_error,
 )
+from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
 from aidn_hypervisor.consensus.fixture_runner import FixtureError, run_fixture_set
 from aidn_hypervisor.consensus.implementation_profile import verify_implementation_profile
 from aidn_hypervisor.consensus.snapshot_acceptance import (
@@ -361,6 +362,32 @@ def _valid_g4_rpc_endpoints(value: object) -> bool:
     return len(set(normalized)) == len(normalized)
 
 
+def _validate_g4_finality(value: object) -> ConsensusFinalityEvidence:
+    if not isinstance(value, dict):
+        raise ValueError("G4 finality_evidence must be an object")
+    required = {
+        "operation_id",
+        "chain_id",
+        "block_height",
+        "block_id",
+        "app_hash",
+        "commit_hash",
+        "finalized_at",
+        "verifier_id",
+        "proof_version",
+    }
+    if not required.issubset(value):
+        raise ValueError("G4 finality_evidence is missing required fields")
+    try:
+        evidence = ConsensusFinalityEvidence(**value)
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError("G4 finality_evidence is invalid") from error
+    for field in ("block_id", "app_hash", "commit_hash"):
+        if re.fullmatch(r"[0-9A-Fa-f]{64}", getattr(evidence, field)) is None:
+            raise ValueError(f"G4 finality_evidence {field} is not a 64-hex hash")
+    return evidence
+
+
 def _verify_gate_result_control(evidence_dir: Path, *, evidence_root: str) -> dict[str, Any]:
     """Verify the final gate decision stored as EVD control metadata."""
     gate_path = evidence_dir.joinpath(*GATE_RESULT_PATH.split("/"))
@@ -559,9 +586,7 @@ def _run_g4(report_path: Path | None) -> dict[str, Any]:
         endpoints = report.get("rpc_endpoints")
         if not _valid_g4_rpc_endpoints(endpoints):
             raise ValueError("G4 report must contain at least two credential-free HTTPS RPC endpoints")
-        finality = report.get("finality_evidence")
-        if not isinstance(finality, dict) or not finality.get("operation_id"):
-            raise ValueError("G4 report lacks operation-bound finality evidence")
+        finality = _validate_g4_finality(report.get("finality_evidence"))
         ownership = report.get("ownership_evidence")
         if not isinstance(ownership, dict):
             raise ValueError("G4 report lacks ownership evidence status")
@@ -613,7 +638,10 @@ def _run_g4(report_path: Path | None) -> dict[str, Any]:
             reason="verified public ownership evidence lacks ownership_evidence_root",
             details={"rpc_endpoints": endpoints, "ownership_evidence": ownership},
         )
-    return _gate("PASS", details={"rpc_endpoints": endpoints, "operation_id": finality["operation_id"]})
+    return _gate(
+        "PASS",
+        details={"rpc_endpoints": endpoints, "operation_id": finality.operation_id},
+    )
 
 
 def _run_g5(report_path: Path | None) -> dict[str, Any]:

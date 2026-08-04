@@ -264,6 +264,11 @@ The combined G4 report MUST declare `schema_version: 1` and
 `scope: PUBLIC_NETWORK`. The release verifier rejects a checklist-shaped
 report that omits either context field.
 
+Its `finality_evidence` MUST be a complete
+`consensus-finality-evidence.v1` record bound to an operation, chain, block
+height, block/AppHash/commit hashes, finalization time and verifier identity;
+an `operation_id` alone is insufficient.
+
 For final publication, use the fail-closed orchestrator after G0-G6 evidence
 exists. It refuses to create an output directory until every pre-publication
 gate is `PASS`, writes `gates/release-gate-result.json` outside the Evidence

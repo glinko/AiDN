@@ -31,7 +31,17 @@ def _source_reports(tmp_path: Path, *, ownership_status: str) -> tuple[Path, Pat
         {
             "status": "ok",
             "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
-            "finality_evidence": {"operation_id": "operation-1"},
+            "finality_evidence": {
+                "operation_id": "operation-1",
+                "chain_id": "aidn-testnet-1",
+                "block_height": 2,
+                "block_id": "b" * 64,
+                "app_hash": "c" * 64,
+                "commit_hash": "d" * 64,
+                "finalized_at": "2030-01-01T00:00:01Z",
+                "verifier_id": "g4-verifier",
+                "proof_version": "consensus-finality-evidence.v1",
+            },
             "ownership_evidence": {
                 "status": ownership_status,
                 **(
@@ -144,6 +154,18 @@ def test_public_network_report_rejects_credentialed_rpc_endpoint(tmp_path: Path)
     paths[1].write_text(json.dumps(external), encoding="utf-8")
 
     with pytest.raises(ValueError, match="credential-free HTTPS"):
+        MODULE.build_report(
+            lan_path=paths[0], external_path=paths[1], deployment_path=paths[2]
+        )
+
+
+def test_public_network_report_rejects_truncated_finality_evidence(tmp_path: Path) -> None:
+    paths = _source_reports(tmp_path, ownership_status="OUT_OF_BAND_VERIFIED")
+    external = json.loads(paths[1].read_text(encoding="utf-8"))
+    external["finality_evidence"] = {"operation_id": "operation-1"}
+    paths[1].write_text(json.dumps(external), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="missing required fields"):
         MODULE.build_report(
             lan_path=paths[0], external_path=paths[1], deployment_path=paths[2]
         )

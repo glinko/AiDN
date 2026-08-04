@@ -55,6 +55,12 @@ uv run python tools/verify-public-network-deployment.py \
 The collector does not prove that the endpoints belong to independent
 operators; that remains an out-of-band G6 concern.
 
+The external finality report must contain the complete
+`ConsensusFinalityEvidence` object: operation and chain identity, positive
+block height, block/AppHash/commit hashes, finalization timestamp, verifier ID
+and `consensus-finality-evidence.v1`. A report containing only an
+`operation_id` is rejected.
+
 The final G4 gate remains incomplete until the report also references reviewed
 out-of-band operator/control-group evidence. Matching HTTPS responses alone do
 not establish independent operators. Every check for `lan_acceptance`,
