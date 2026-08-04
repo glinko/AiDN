@@ -95,17 +95,27 @@ application and CometBFT before reboot, then explicitly start the ABCI
 application before CometBFT after the host returns. Pass that post-reboot
 operator command through `--host-reboot-recovery-command`; a host that merely
 returns SSH while its service remains stopped is not recovered. The live
-report must use this
-shape for every drill:
+report must use `schema_version: 1`, `scope: CONTROLLED_LAN_TESTNET`, four or
+more unique validator URLs, a target URL from that set, and a canonical
+`report_hash`. Each restart/termination/reboot record must include the command
+result, outage observation, converged before/after snapshots for all
+validators, and checks for target identity and chain preservation. The host
+reboot record additionally requires the explicit successful recovery command.
+The stale-predecessor record must include the target URL, complete identity
+snapshots, source and rejection transaction hashes, a non-zero rejection code
+and the three rejection checks. The compact shape below shows the required
+drill names; it is not sufficient evidence by itself:
 
 ```json
 {
+  "schema_version": 1,
   "status": "PASS",
+  "report_hash": "sha256:<64 lowercase hex>",
   "drills": {
-    "graceful_restart": {"status": "PASS", "evidence_reference": "..."},
-    "abrupt_process_termination": {"status": "PASS", "evidence_reference": "..."},
-    "host_reboot": {"status": "PASS", "evidence_reference": "..."},
-    "stale_predecessor_rejected": {"status": "PASS", "evidence_reference": "..."}
+    "graceful_restart": {"status": "PASS", "evidence_reference": "sha256:<64 lowercase hex>"},
+    "abrupt_process_termination": {"status": "PASS", "evidence_reference": "sha256:<64 lowercase hex>"},
+    "host_reboot": {"status": "PASS", "evidence_reference": "sha256:<64 lowercase hex>"},
+    "stale_predecessor_rejected": {"status": "PASS", "evidence_reference": "sha256:<64 lowercase hex>"}
   }
 }
 ```

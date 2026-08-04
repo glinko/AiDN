@@ -237,6 +237,12 @@ missing. A report with failed G0 or G1 checks is a hard `FAIL`. G4 and G6
 remain external gates and require public-network and independent-operator
 evidence; `--allow-incomplete` does not weaken those requirements.
 
+The G5 report is accepted only when its canonical `report_hash` and source
+report hashes verify. A live PASS report must contain the structured
+four-validator recovery snapshots, explicit host-reboot recovery result and
+target-bound stale-predecessor rejection evidence described in EVD-0001.
+Older compact reports must be recollected rather than edited in place.
+
 Before combining G4 source reports, collect the public deployment observation
 from at least two credential-free HTTPS RPC endpoints:
 

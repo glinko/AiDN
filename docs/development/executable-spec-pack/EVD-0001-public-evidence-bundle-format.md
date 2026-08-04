@@ -222,6 +222,23 @@ complete; only the reviewed release evidence may use `OUT_OF_BAND_VERIFIED`.
 inside the bundle, but it is excluded from the artifact Merkle root so the
 final gate result can be written after the immutable artifact manifest and
 operator attestation have been created.
+The control file MUST contain passing entries for every gate `G0` through `G7`
+and its `evidence_root` MUST exactly match the bundle manifest's
+`evidence_root`; otherwise it is not a valid G7 result.
+
+G5 fault-recovery evidence has an additional machine-verifiable contract. The
+combined report MUST use `schema_version: 1`, include a `report_hash` over the
+canonical report body, and include hash references for both the controlled G2
+source report and the live fault report. A passing live report MUST declare at
+least four validator RPC URLs and one target URL, and its graceful restart,
+abrupt termination and host reboot records MUST contain converged before/after
+validator snapshots with node identity and chain ID preserved. The host reboot
+record MUST also contain an observed outage and a successful explicit recovery
+command. The stale-predecessor record MUST bind to the target URL, include
+before/after identity snapshots, transaction hashes, a non-zero rejection code
+and checks proving the funding-predecessor rejection. A stale or older report
+without these fields is evidence that must be recollected, not upgraded by
+editing the JSON.
 
 ## 10. Verification command
 

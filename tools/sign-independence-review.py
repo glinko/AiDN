@@ -39,6 +39,8 @@ def sign_review(
     review_basis: str,
     private_key_path: Path,
 ) -> dict[str, str]:
+    if not review_basis.strip():
+        raise ValueError("review basis must not be empty")
     verified = verify_public_evidence_bundle(evidence_dir, require_attestation=True)
     output = evidence_dir / Path(*INDEPENDENCE_REVIEW_PATH.split("/"))
     if output.exists():

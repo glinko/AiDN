@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -81,3 +82,12 @@ def test_independence_review_signer_binds_review_to_verified_bundle(tmp_path: Pa
     assert review["reviewed_control_group_id"] == "group-a"
     assert review["reviewed_evidence_root"] == built["evidence_root"]
 
+    with pytest.raises(ValueError, match="review basis must not be empty"):
+        REVIEW_TOOL.sign_review(
+            evidence_dir=evidence_dir,
+            reviewer_id="release-reviewer",
+            operator_id="operator-a",
+            control_group_id="group-a",
+            review_basis=" ",
+            private_key_path=reviewer_key_path,
+        )

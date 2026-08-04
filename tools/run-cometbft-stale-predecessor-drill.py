@@ -45,6 +45,7 @@ def _status(endpoint: str) -> dict[str, Any]:
     if not isinstance(sync_info, dict) or not isinstance(node_info, dict):
         raise RuntimeError("CometBFT status is incomplete")
     return {
+        "rpc_url": endpoint.rstrip("/"),
         "height": int(sync_info.get("latest_block_height") or 0),
         "app_hash": str(sync_info.get("latest_app_hash") or "").upper(),
         "node_id": str(node_info.get("id") or ""),

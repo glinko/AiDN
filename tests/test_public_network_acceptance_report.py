@@ -35,7 +35,7 @@ def _source_reports(tmp_path: Path, *, ownership_status: str) -> tuple[Path, Pat
             "ownership_evidence": {
                 "status": ownership_status,
                 **(
-                    {"ownership_evidence_root": "sha256:reviewed-ownership"}
+                    {"ownership_evidence_root": "sha256:" + "a" * 64}
                     if ownership_status == "OUT_OF_BAND_VERIFIED"
                     else {}
                 ),
@@ -50,10 +50,16 @@ def _source_reports(tmp_path: Path, *, ownership_status: str) -> tuple[Path, Pat
             "checks": {
                 "public_p2p_acceptance": {
                     "status": "PASS",
-                    "evidence_reference": "p2p.json",
+                    "evidence_reference": "sha256:" + "1" * 64,
                 },
-                "bootstrap_diversity": {"status": "PASS", "evidence_reference": "peers.json"},
-                "tls_validated": {"status": "PASS", "evidence_reference": "tls.json"},
+                "bootstrap_diversity": {
+                    "status": "PASS",
+                    "evidence_reference": "sha256:" + "2" * 64,
+                },
+                "tls_validated": {
+                    "status": "PASS",
+                    "evidence_reference": "sha256:" + "3" * 64,
+                },
             }
         },
     )
@@ -102,6 +108,18 @@ def test_public_network_report_rejects_failed_deployment_check(tmp_path: Path) -
     paths[2].write_text(json.dumps(deployment), encoding="utf-8")
 
     with pytest.raises(ValueError, match="status PASS"):
+        MODULE.build_report(
+            lan_path=paths[0], external_path=paths[1], deployment_path=paths[2]
+        )
+
+
+def test_public_network_report_rejects_unbound_check_reference(tmp_path: Path) -> None:
+    paths = _source_reports(tmp_path, ownership_status="OUT_OF_BAND_VERIFIED")
+    deployment = json.loads(paths[2].read_text(encoding="utf-8"))
+    deployment["checks"]["tls_validated"]["evidence_reference"] = "tls.json"
+    paths[2].write_text(json.dumps(deployment), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="valid evidence_reference"):
         MODULE.build_report(
             lan_path=paths[0], external_path=paths[1], deployment_path=paths[2]
         )

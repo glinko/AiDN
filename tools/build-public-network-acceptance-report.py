@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ REQUIRED_CHECKS = (
     "public_rpc_observable",
     "tls_validated",
 )
+_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def _load(path: Path, label: str) -> dict[str, Any]:
@@ -35,8 +37,8 @@ def _check_value(value: object, *, name: str) -> dict[str, str]:
         if value.get("status") != "PASS":
             raise ValueError(f"G4 check must have status PASS: {name}")
         reference = value.get("evidence_reference")
-        if not isinstance(reference, str) or not reference:
-            raise ValueError(f"G4 check lacks evidence_reference: {name}")
+        if not isinstance(reference, str) or _HASH_RE.fullmatch(reference) is None:
+            raise ValueError(f"G4 check lacks a valid evidence_reference: {name}")
         return {"status": "PASS", "evidence_reference": reference}
     raise ValueError(f"G4 check must be a PASS object with evidence_reference: {name}")
 
@@ -117,7 +119,7 @@ def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) 
         raise ValueError("external report lacks ownership evidence")
     if ownership.get("status") == "OUT_OF_BAND_VERIFIED" and not (
         isinstance(ownership.get("ownership_evidence_root"), str)
-        and ownership["ownership_evidence_root"]
+        and _HASH_RE.fullmatch(ownership["ownership_evidence_root"]) is not None
     ):
         raise ValueError(
             "verified ownership evidence must include ownership_evidence_root"
@@ -126,7 +128,7 @@ def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) 
         isinstance(check, dict)
         and check.get("status") == "PASS"
         and isinstance(check.get("evidence_reference"), str)
-        and bool(check["evidence_reference"])
+        and _HASH_RE.fullmatch(check["evidence_reference"]) is not None
         for check in checks.values()
     )
     gate_status = "PASS" if checks_pass and ownership.get("status") == "OUT_OF_BAND_VERIFIED" else "INCOMPLETE"

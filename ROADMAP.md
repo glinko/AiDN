@@ -885,12 +885,17 @@ latest clean release-candidate commit and profile commitment
 - [x] G3 Multi-Node Consensus: four-validator controlled Ubuntu LAN evidence,
   transaction inclusion proofs, AppHash convergence and restart continuity.
 - [x] G5 Fault Recovery: graceful restart, abrupt termination, host reboot,
-  snapshot restore, State Sync, invalid snapshot and stale-predecessor drills.
+  snapshot restore, State Sync, invalid snapshot and stale-predecessor drills;
+  the aggregate and live reports are now hash-bound and require structured
+  four-validator convergence, target identity/chain continuity and explicit
+  host-reboot recovery evidence. Existing pre-hardening live reports must be
+  recollected rather than edited.
 - [ ] G4 Public Networking: live public RPC/P2P, bootstrap diversity and
   public finality evidence are still absent.
 - [x] G4 collection plumbing: a read-only HTTPS `/status` and `/net_info`
   collector now emits hash-bound deployment checks and rejects unreferenced
-  boolean observations; live public endpoints are still required.
+  boolean/failed observations and non-credential-free RPC URLs; live public
+  endpoints are still required.
 - [x] G6 review plumbing: EVD-0001 supports a signed
   `attestations/independence-review.json`; the verifier requires a trusted
   reviewer key and exact operator, control-group and evidence-root binding.

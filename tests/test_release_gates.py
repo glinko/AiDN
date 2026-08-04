@@ -237,6 +237,120 @@ def test_release_gate_keeps_partial_g3_report_incomplete(tmp_path: Path) -> None
     assert payload["gates"]["G3"]["status"] == "INCOMPLETE"
 
 
+def test_release_gate_rejects_g3_snapshots_without_validator_identity(tmp_path: Path) -> None:
+    report = _g3_report()
+    report["validator_status_before"][0].pop("node_id")
+    report_path = tmp_path / "g3-report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    result = _run_gate("--g3-report", str(report_path), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G3"]["status"] == "FAIL"
+    assert "invalid validator snapshot" in payload["gates"]["G3"]["reason"]
+
+
+def test_release_gate_rejects_duplicate_g3_transaction_hashes(tmp_path: Path) -> None:
+    report = _g3_report()
+    report["operations"][1]["transaction_hash"] = report["operations"][0]["transaction_hash"]
+    report_path = tmp_path / "g3-report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    result = _run_gate("--g3-report", str(report_path), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G3"]["status"] == "FAIL"
+    assert "duplicate transaction hashes" in payload["gates"]["G3"]["reason"]
+
+
+def test_release_gate_rejects_non_string_g3_transaction_hash(tmp_path: Path) -> None:
+    report = _g3_report()
+    report["operations"][0]["transaction_hash"] = 123
+    report_path = tmp_path / "g3-report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    result = _run_gate("--g3-report", str(report_path), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G3"]["status"] == "FAIL"
+    assert "invalid transaction hash" in payload["gates"]["G3"]["reason"]
+
+
+def _g5_report() -> dict:
+    drills = {
+        name: {
+            "status": "PASS",
+            "evidence_reference": "sha256:" + str(index + 1) * 64,
+        }
+        for index, name in enumerate(
+            (
+                "graceful_restart",
+                "abrupt_process_termination",
+                "host_reboot",
+                "snapshot_restore",
+                "state_sync",
+                "invalid_snapshot_rejected",
+                "stale_predecessor_rejected",
+            )
+        )
+    }
+    report = {
+        "schema_version": 1,
+        "status": "PASS",
+        "g2_report_hash": "sha256:" + "a" * 64,
+        "live_report_hash": "sha256:" + "b" * 64,
+        "drills": drills,
+    }
+    report["report_hash"] = _report_hash(report)
+    return report
+
+
+def _g4_checks() -> dict[str, dict[str, str]]:
+    return {
+        name: {
+            "status": "PASS",
+            "evidence_reference": "sha256:" + str(index + 1) * 64,
+        }
+        for index, name in enumerate(
+            (
+                "lan_acceptance",
+                "public_p2p_acceptance",
+                "bootstrap_diversity",
+                "public_rpc_observable",
+                "tls_validated",
+            )
+        )
+    }
+
+
+def test_release_gate_accepts_integrity_bound_g5_report(tmp_path: Path) -> None:
+    report_path = tmp_path / "g5-report.json"
+    report_path.write_text(json.dumps(_g5_report()), encoding="utf-8")
+
+    result = _run_gate("--g5-report", str(report_path), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 0
+    assert payload["gates"]["G5"]["status"] == "PASS"
+
+
+def test_release_gate_rejects_tampered_g5_report(tmp_path: Path) -> None:
+    report = _g5_report()
+    report["drills"]["host_reboot"]["status"] = "FAIL"
+    report_path = tmp_path / "g5-report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    result = _run_gate("--g5-report", str(report_path), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G5"]["status"] == "FAIL"
+    assert "G5 report hash is invalid" in payload["gates"]["G5"]["reason"]
+
+
 def test_release_gate_accepts_complete_g4_report(tmp_path: Path) -> None:
     report_path = tmp_path / "g4-report.json"
     report_path.write_text(
@@ -247,18 +361,9 @@ def test_release_gate_accepts_complete_g4_report(tmp_path: Path) -> None:
                 "finality_evidence": {"operation_id": "op-1"},
                 "ownership_evidence": {
                     "status": "OUT_OF_BAND_VERIFIED",
-                    "ownership_evidence_root": "sha256:reviewed-ownership",
+                    "ownership_evidence_root": "sha256:" + "a" * 64,
                 },
-                "checks": {
-                    name: {"status": "PASS", "evidence_reference": f"{name}.json"}
-                    for name in (
-                        "lan_acceptance",
-                        "public_p2p_acceptance",
-                        "bootstrap_diversity",
-                        "public_rpc_observable",
-                        "tls_validated",
-                    )
-                },
+                "checks": _g4_checks(),
             }
         ),
         encoding="utf-8",
@@ -281,16 +386,7 @@ def test_release_gate_keeps_structurally_valid_incomplete_g4_report_incomplete(t
                 "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
                 "finality_evidence": {"operation_id": "op-1"},
                 "ownership_evidence": {"status": "OUT_OF_BAND_DECLARED"},
-                "checks": {
-                    name: {"status": "PASS", "evidence_reference": f"{name}.json"}
-                    for name in (
-                        "lan_acceptance",
-                        "public_p2p_acceptance",
-                        "bootstrap_diversity",
-                        "public_rpc_observable",
-                        "tls_validated",
-                    )
-                },
+                "checks": _g4_checks(),
             }
         ),
         encoding="utf-8",
@@ -313,18 +409,9 @@ def test_release_gate_rejects_credentialed_g4_rpc_endpoint(tmp_path: Path) -> No
                 "finality_evidence": {"operation_id": "op-1"},
                 "ownership_evidence": {
                     "status": "OUT_OF_BAND_VERIFIED",
-                    "ownership_evidence_root": "sha256:reviewed-ownership",
+                    "ownership_evidence_root": "sha256:" + "a" * 64,
                 },
-                "checks": {
-                    name: {"status": "PASS", "evidence_reference": f"{name}.json"}
-                    for name in (
-                        "lan_acceptance",
-                        "public_p2p_acceptance",
-                        "bootstrap_diversity",
-                        "public_rpc_observable",
-                        "tls_validated",
-                    )
-                },
+                "checks": _g4_checks(),
             }
         ),
         encoding="utf-8",
@@ -459,13 +546,15 @@ def test_release_gate_rejects_reviewer_key_reused_by_operator(tmp_path: Path) ->
 def test_release_gate_g7_requires_a_passing_embedded_gate_result(tmp_path: Path) -> None:
     evidence_dir = tmp_path / "evidence"
     _write_g6_bundle(evidence_dir, index=1)
+    manifest = json.loads((evidence_dir / "manifest.json").read_text(encoding="utf-8"))
     gate_path = evidence_dir / "gates/release-gate-result.json"
     gate_path.parent.mkdir(parents=True, exist_ok=True)
     gate_path.write_text(
         json.dumps(
             {
                 "status": "PASS",
-                "gates": {f"G{index}": "PASS" for index in range(7)},
+                "evidence_root": manifest["evidence_root"],
+                "gates": {f"G{index}": "PASS" for index in range(8)},
             }
         ),
         encoding="utf-8",
@@ -476,6 +565,55 @@ def test_release_gate_g7_requires_a_passing_embedded_gate_result(tmp_path: Path)
 
     assert result.returncode == 0
     assert payload["gates"]["G7"]["status"] == "PASS"
+
+
+def test_release_gate_g7_rejects_missing_g7_entry(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    _write_g6_bundle(evidence_dir, index=1)
+    manifest = json.loads((evidence_dir / "manifest.json").read_text(encoding="utf-8"))
+    gate_path = evidence_dir / "gates/release-gate-result.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text(
+        json.dumps(
+            {
+                "status": "PASS",
+                "evidence_root": manifest["evidence_root"],
+                "gates": {f"G{index}": "PASS" for index in range(7)},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gate("--evidence-dir", str(evidence_dir), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G7"]["status"] == "FAIL"
+    assert "missing gates: G7" in payload["gates"]["G7"]["reason"]
+
+
+def test_release_gate_g7_rejects_unbound_evidence_root(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    _write_g6_bundle(evidence_dir, index=1)
+    gate_path = evidence_dir / "gates/release-gate-result.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text(
+        json.dumps(
+            {
+                "status": "PASS",
+                "evidence_root": "sha256:" + "0" * 64,
+                "gates": {f"G{index}": "PASS" for index in range(8)},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gate("--evidence-dir", str(evidence_dir), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G7"]["status"] == "FAIL"
+    assert "evidence_root" in payload["gates"]["G7"]["reason"]
 
 
 def test_release_gate_g7_rejects_missing_embedded_gate_result(tmp_path: Path) -> None:

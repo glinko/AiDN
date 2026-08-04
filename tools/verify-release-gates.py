@@ -36,6 +36,8 @@ from aidn_hypervisor.evidence import (
     verify_public_evidence_bundle,
 )
 
+_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
 
 def _gate(status: str, *, reason: str | None = None, details: Any = None) -> dict[str, Any]:
     result: dict[str, Any] = {"status": status}
@@ -305,7 +307,7 @@ def _g4_check_passes(value: object) -> bool:
         isinstance(value, dict)
         and value.get("status") == "PASS"
         and isinstance(value.get("evidence_reference"), str)
-        and bool(value["evidence_reference"])
+        and _HASH_RE.fullmatch(value["evidence_reference"]) is not None
     )
 
 
@@ -336,7 +338,7 @@ def _valid_g4_rpc_endpoints(value: object) -> bool:
     return len(set(normalized)) == len(normalized)
 
 
-def _verify_gate_result_control(evidence_dir: Path) -> dict[str, Any]:
+def _verify_gate_result_control(evidence_dir: Path, *, evidence_root: str) -> dict[str, Any]:
     """Verify the final gate decision stored as EVD control metadata."""
     gate_path = evidence_dir.joinpath(*GATE_RESULT_PATH.split("/"))
     result = _load_json_object(gate_path, label="G7 release-gate-result")
@@ -345,7 +347,9 @@ def _verify_gate_result_control(evidence_dir: Path) -> dict[str, Any]:
     gates = result.get("gates")
     if not isinstance(gates, dict):
         raise ValueError("G7 release-gate-result must contain gates")
-    required = {f"G{index}" for index in range(7)}
+    if result.get("evidence_root") != evidence_root:
+        raise ValueError("G7 release-gate-result evidence_root does not match the Evidence Root")
+    required = {f"G{index}" for index in range(8)}
     missing = sorted(required - gates.keys())
     if missing:
         raise ValueError("G7 release-gate-result is missing gates: " + ", ".join(missing))
@@ -354,8 +358,6 @@ def _verify_gate_result_control(evidence_dir: Path) -> dict[str, Any]:
     )
     if failed:
         raise ValueError("G7 release-gate-result contains non-PASS gates: " + ", ".join(failed))
-    if "G7" in gates and _gate_result_status(gates["G7"]) != "PASS":
-        raise ValueError("G7 release-gate-result contains a non-PASS G7 entry")
     return {
         "status": result["status"],
         "release": result.get("release"),
@@ -379,13 +381,20 @@ def _validate_validator_snapshots(
         rpc_url = snapshot.get("rpc_url")
         height = snapshot.get("height")
         app_hash = snapshot.get("app_hash")
+        node_id = snapshot.get("node_id")
+        chain_id = snapshot.get("chain_id")
         if (
             not isinstance(rpc_url, str)
             or not rpc_url
             or not isinstance(height, int)
+            or isinstance(height, bool)
             or height < 1
             or not isinstance(app_hash, str)
             or not re.fullmatch(r"[0-9A-Fa-f]{64}", app_hash)
+            or not isinstance(node_id, str)
+            or not node_id
+            or not isinstance(chain_id, str)
+            or not chain_id
         ):
             raise ValueError(f"{label} contains an invalid validator snapshot")
         normalized.append(snapshot)
@@ -395,19 +404,11 @@ def _validate_validator_snapshots(
     app_hashes = {str(item["app_hash"]).upper() for item in normalized}
     if len(heights) != 1 or len(app_hashes) != 1:
         raise ValueError(f"{label} validators do not converge on one height and AppHash")
-    node_ids = {
-        item.get("node_id")
-        for item in normalized
-        if isinstance(item.get("node_id"), str) and item.get("node_id")
-    }
-    if node_ids and len(node_ids) != len(normalized):
+    node_ids = {item["node_id"] for item in normalized}
+    if len(node_ids) != len(normalized):
         raise ValueError(f"{label} contains duplicate validator node IDs")
-    chain_ids = {
-        item.get("chain_id")
-        for item in normalized
-        if isinstance(item.get("chain_id"), str) and item.get("chain_id")
-    }
-    if chain_ids and len(chain_ids) != 1:
+    chain_ids = {item["chain_id"] for item in normalized}
+    if len(chain_ids) != 1:
         raise ValueError(f"{label} validators disagree on chain ID")
     return normalized, {
         "validator_count": len(normalized),
@@ -430,15 +431,33 @@ def _run_g3(report_path: Path | None) -> dict[str, Any]:
         operations = report.get("operations")
         if not isinstance(operations, list) or len(operations) < 8:
             raise ValueError("G3 report must contain the complete eight-operation drill")
+        transaction_hashes: set[str] = set()
         for operation in operations:
             if not isinstance(operation, dict):
                 raise ValueError("G3 operation record must be an object")
-            if not re.fullmatch(r"[0-9A-Fa-f]{64}", str(operation.get("transaction_hash") or "")):
+            transaction_hash_value = operation.get("transaction_hash")
+            if not isinstance(transaction_hash_value, str):
                 raise ValueError("G3 operation record has an invalid transaction hash")
-            if not isinstance(operation.get("transaction_height"), int):
+            transaction_hash = transaction_hash_value.upper()
+            if not re.fullmatch(r"[0-9A-Fa-f]{64}", transaction_hash):
+                raise ValueError("G3 operation record has an invalid transaction hash")
+            if transaction_hash in transaction_hashes:
+                raise ValueError("G3 operation records contain duplicate transaction hashes")
+            transaction_hashes.add(transaction_hash)
+            transaction_height = operation.get("transaction_height")
+            if (
+                not isinstance(transaction_height, int)
+                or isinstance(transaction_height, bool)
+                or transaction_height < 1
+            ):
                 raise ValueError("G3 operation record has no committed height")
         coverage = report.get("strict_operation_coverage_probe")
-        if not isinstance(coverage, dict) or int(coverage.get("code", -1)) != 1:
+        if (
+            not isinstance(coverage, dict)
+            or not isinstance(coverage.get("code"), int)
+            or isinstance(coverage["code"], bool)
+            or coverage["code"] != 1
+        ):
             raise ValueError("G3 strict unsupported-operation rejection probe is missing")
         _, before = _validate_validator_snapshots(
             report.get("validator_status_before"),
@@ -547,7 +566,7 @@ def _run_g4(report_path: Path | None) -> dict[str, Any]:
         )
     if not (
         isinstance(ownership.get("ownership_evidence_root"), str)
-        and ownership["ownership_evidence_root"]
+        and _HASH_RE.fullmatch(ownership["ownership_evidence_root"]) is not None
     ):
         return _gate(
             "INCOMPLETE",
@@ -562,8 +581,24 @@ def _run_g5(report_path: Path | None) -> dict[str, Any]:
         return _not_run("fault-recovery drill evidence is not supplied")
     try:
         report = _load_json_object(report_path, label="G5 report")
+        if report.get("schema_version") != 1:
+            raise ValueError("G5 report schema_version is unsupported")
+        report_hash = report.get("report_hash")
+        unsigned_report = dict(report)
+        unsigned_report.pop("report_hash", None)
+        if (
+            not isinstance(report_hash, str)
+            or not _HASH_RE.fullmatch(report_hash)
+            or report_hash != _sha256_bytes(_canonical_bytes(unsigned_report))
+        ):
+            raise ValueError("G5 report hash is invalid")
         if report.get("status") not in {"PASS", "INCOMPLETE"}:
             raise ValueError("G5 report status must be PASS or INCOMPLETE")
+        if report.get("status") == "PASS" and any(
+            not isinstance(report.get(field), str) or not _HASH_RE.fullmatch(report[field])
+            for field in ("g2_report_hash", "live_report_hash")
+        ):
+            raise ValueError("G5 PASS report is missing source report hashes")
         if report.get("status") == "INCOMPLETE":
             return _gate(
                 "INCOMPLETE",
@@ -593,7 +628,7 @@ def _run_g5(report_path: Path | None) -> dict[str, Any]:
             if not isinstance(drills.get(name), dict)
             or drills[name].get("status") != "PASS"
             or not isinstance(drills[name].get("evidence_reference"), str)
-            or not drills[name]["evidence_reference"]
+            or not _HASH_RE.fullmatch(drills[name]["evidence_reference"])
         )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
         return _gate("FAIL", reason=str(error))
@@ -626,6 +661,11 @@ def _verify_g6_review(
     }
     if review.get("review_version") != 1 or not required.issubset(review):
         raise ValueError("G6 independence review is missing required fields")
+    if not all(
+        isinstance(review.get(field), str) and review[field]
+        for field in ("review_basis", "reviewed_at")
+    ):
+        raise ValueError("G6 independence review basis and timestamp are invalid")
     reviewer_id = review["reviewer_id"]
     reviewer_public_key = review["reviewer_public_key"]
     if not isinstance(reviewer_id, str) or not reviewer_id:
@@ -871,7 +911,10 @@ def main() -> int:
                 required_paths=args.require_evidence,
                 require_attestation=True,
             )
-            gate_result = _verify_gate_result_control(args.evidence_dir)
+            gate_result = _verify_gate_result_control(
+                args.evidence_dir,
+                evidence_root=result.evidence_root,
+            )
         except EvidenceBundleError as error:
             gates["G7"] = _gate("FAIL", reason=str(error))
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
