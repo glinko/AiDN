@@ -133,6 +133,11 @@ def build_report(
     ):
         raise ValueError("public deployment report is not a verified deployment observation")
     endpoints = _credential_free_https_endpoints(external.get("rpc_endpoints"))
+    deployment_endpoints = _credential_free_https_endpoints(deployment.get("rpc_endpoints"))
+    if set(deployment_endpoints) != set(endpoints):
+        raise ValueError(
+            "public deployment RPC endpoints do not match external finality RPC endpoints"
+        )
     finality = _validate_finality(external.get("finality_evidence"))
     deployment_checks = deployment.get("checks")
     if not isinstance(deployment_checks, dict):
