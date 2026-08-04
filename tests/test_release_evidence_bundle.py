@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -8,6 +9,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "tools" / "build-release-evidence-bundle.py"
+SPEC = importlib.util.spec_from_file_location("build_release_evidence_bundle", TOOL)
+assert SPEC is not None and SPEC.loader is not None
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
 
 
 def _run_tool(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess[str]:
@@ -88,3 +93,30 @@ def test_release_bundle_rejects_signing_key_inside_output(tmp_path: Path) -> Non
     payload = json.loads(result.stdout)
     assert payload["status"] == "INCOMPLETE"
     assert "inside the output bundle" in payload["reason"]
+
+
+def test_release_bundle_rejects_g6_context_mismatch(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "operator-a"
+    evidence_dir.mkdir()
+    (evidence_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "network_id": "old-network",
+                "release_version": "0.1.0-old",
+                "profile_id": "old-profile",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        MODULE._validate_g6_context(
+            [evidence_dir],
+            network_id="new-network",
+            release_version="0.1.0-new",
+            profile_id="new-profile",
+        )
+    except ValueError as error:
+        assert "context does not match" in str(error)
+    else:
+        raise AssertionError("stale G6 context was accepted")

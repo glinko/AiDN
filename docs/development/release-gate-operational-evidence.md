@@ -292,6 +292,10 @@ these fields before accepting the embedded result, so a control file cannot be
 copied between releases or implementation profiles. A bundle without the
 embedded gate result is not G7-complete.
 
+Before building, the orchestrator also requires every supplied G6 operator
+manifest to match the requested network ID, release version and implementation
+profile. A quorum from a different release is rejected rather than reused.
+
 `tools/build-public-evidence-bundle.py` remains available as a low-level
 development primitive, but it does not evaluate release gates and MUST NOT be
 used as the final release path.

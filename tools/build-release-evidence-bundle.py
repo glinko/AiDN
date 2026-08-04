@@ -134,6 +134,33 @@ def _require_pre_bundle_pass(gate_result: dict[str, Any]) -> None:
         )
 
 
+def _validate_g6_context(
+    evidence_dirs: list[Path],
+    *,
+    network_id: str,
+    release_version: str,
+    profile_id: str,
+) -> None:
+    expected = {
+        "network_id": network_id,
+        "release_version": release_version,
+        "profile_id": profile_id,
+    }
+    for evidence_dir in evidence_dirs:
+        try:
+            manifest = json.loads((evidence_dir / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise ValueError(f"cannot load G6 evidence manifest: {error}") from error
+        if not isinstance(manifest, dict):
+            raise ValueError("G6 evidence manifest must be a JSON object")
+        actual = {field: manifest.get(field) for field in expected}
+        if actual != expected:
+            raise ValueError(
+                "G6 evidence bundle context does not match the requested release: "
+                + json.dumps({"expected": expected, "actual": actual}, sort_keys=True)
+            )
+
+
 def _build_bundle(args: argparse.Namespace, profile_id: str) -> dict[str, Any]:
     command = [
         sys.executable,
@@ -271,6 +298,12 @@ def main() -> int:
         profile = _load_profile(args.profile)
         gate_result = _run_gate_verifier(args, evidence_dir=None, allow_incomplete=True)
         _require_pre_bundle_pass(gate_result)
+        _validate_g6_context(
+            args.g6_evidence_dir,
+            network_id=args.network_id,
+            release_version=args.release_version,
+            profile_id=profile["profile_id"],
+        )
         bundle_result = _build_bundle(args, profile["profile_id"])
         _write_gate_control(
             args.output.expanduser().resolve(),
