@@ -76,6 +76,8 @@ def _converged_status(
 ) -> tuple[int, str] | None:
     if not statuses:
         return None
+    if any(item.get("catching_up") is not False for item in statuses):
+        return None
     heights = {item.get("height") for item in statuses}
     app_hashes = {item.get("app_hash") for item in statuses}
     if len(heights) != 1 or len(app_hashes) != 1:

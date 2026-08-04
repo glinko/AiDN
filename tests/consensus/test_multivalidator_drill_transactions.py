@@ -65,9 +65,9 @@ def test_multivalidator_drill_covers_failure_and_session_lifecycle_chains() -> N
 
 def test_multivalidator_convergence_accepts_matching_fresh_statuses() -> None:
     statuses = [
-        {"rpc_url": "http://validator-0", "height": 12, "app_hash": "AA"},
-        {"rpc_url": "http://validator-1", "height": 12, "app_hash": "AA"},
-        {"rpc_url": "http://validator-2", "height": 12, "app_hash": "AA"},
+        {"rpc_url": "http://validator-0", "height": 12, "app_hash": "AA", "catching_up": False},
+        {"rpc_url": "http://validator-1", "height": 12, "app_hash": "AA", "catching_up": False},
+        {"rpc_url": "http://validator-2", "height": 12, "app_hash": "AA", "catching_up": False},
     ]
 
     assert _DRILL._converged_status(statuses, greater_than=11) == (12, "AA")
@@ -75,8 +75,8 @@ def test_multivalidator_convergence_accepts_matching_fresh_statuses() -> None:
 
 def test_multivalidator_convergence_rejects_divergent_or_stale_statuses() -> None:
     matching = [
-        {"rpc_url": "http://validator-0", "height": 12, "app_hash": "AA"},
-        {"rpc_url": "http://validator-1", "height": 12, "app_hash": "AA"},
+        {"rpc_url": "http://validator-0", "height": 12, "app_hash": "AA", "catching_up": False},
+        {"rpc_url": "http://validator-1", "height": 12, "app_hash": "AA", "catching_up": False},
     ]
 
     assert _DRILL._converged_status(
@@ -86,6 +86,9 @@ def test_multivalidator_convergence_rejects_divergent_or_stale_statuses() -> Non
         [*matching[:-1], {**matching[1], "app_hash": "BB"}], greater_than=10
     ) is None
     assert _DRILL._converged_status(matching, greater_than=12) is None
+    assert _DRILL._converged_status(
+        [*matching[:-1], {**matching[1], "catching_up": True}], greater_than=10
+    ) is None
 
 
 def test_multivalidator_drill_supports_reduced_disposable_escrow() -> None:
