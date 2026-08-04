@@ -190,29 +190,93 @@ def test_release_gate_accepts_verified_controlled_local_g2_report(tmp_path: Path
 
 
 def _g3_report(*, restart_status: str = "PASS", offline_status: str = "PASS") -> dict:
-    snapshots = [
+    endpoints = [f"http://validator-{index}" for index in range(4)]
+    before_snapshots = [
         {
-            "rpc_url": f"http://validator-{index}",
+            "rpc_url": endpoint,
             "height": 100,
             "app_hash": "A" * 64,
             "node_id": f"node-{index}",
             "chain_id": "chain-test",
+            "catching_up": False,
         }
-        for index in range(4)
+        for index, endpoint in enumerate(endpoints)
     ]
+    after_transaction_snapshots = [
+        {**snapshot, "height": 109, "app_hash": "B" * 64}
+        for snapshot in before_snapshots
+    ]
+    after_restart_snapshots = [
+        {**snapshot, "height": 110}
+        for snapshot in after_transaction_snapshots
+    ]
+    offline_before = [
+        {**snapshot, "height": 200, "app_hash": "C" * 64}
+        for snapshot in before_snapshots
+    ]
+    offline_during = [dict(snapshot) for snapshot in offline_before[:3]]
+    for snapshot in offline_during:
+        snapshot["height"] = 202
+    offline_after = [
+        {**snapshot, "height": 203}
+        for snapshot in offline_before
+    ]
+    offline_evidence = {
+        "schema_version": 1,
+        "status": "PASS",
+        "scope": "CONTROLLED_LAN_TESTNET",
+        "drill": "ONE_VALIDATOR_OFFLINE",
+        "ssh_target": "operator-jump",
+        "offline_rpc_url": endpoints[3],
+        "validator_rpc_urls": endpoints,
+        "before": offline_before,
+        "during_offline": offline_during,
+        "after_recovery": offline_after,
+        "checks": {
+            "survivor_quorum_progressed": True,
+            "all_validators_reconverged": True,
+            "offline_validator_rejoined": True,
+        },
+    }
+    offline_evidence["report_hash"] = _report_hash(offline_evidence)
+    stages = (
+        "lock",
+        "failure",
+        "force",
+        "lifecycle_lock",
+        "lifecycle_open",
+        "lifecycle_accept",
+        "service_verification",
+        "reputation_profile_update",
+    )
+    session_ids = ("failure-session",) * 3 + ("lifecycle-session",) * 3 + ("reputation-endpoint",) * 2
     return {
         "status": "ok",
         "scope": "CONTROLLED_LAN_TESTNET",
-        "strict_operation_coverage_probe": {"code": 1},
+        "validator_rpc_urls": endpoints,
+        "strict_operation_coverage_probe": {
+            "operation_type": "REGISTRY_UPSERT",
+            "code": 1,
+            "log": "consensus operation transition is not implemented: REGISTRY_UPSERT",
+        },
         "operations": [
-            {"transaction_hash": f"{index:064X}", "transaction_height": 90 + index}
-            for index in range(8)
+            {
+                "stage": stage,
+                "session_id": session_id,
+                "transaction_hash": f"{index + 1:064X}",
+                "transaction_height": 101 + index,
+            }
+            for index, (stage, session_id) in enumerate(zip(stages, session_ids, strict=True))
         ],
-        "validator_status_before": snapshots,
-        "validator_status_after_transactions": snapshots,
-        "validator_status_after_restart": snapshots,
+        "validator_status_before": before_snapshots,
+        "validator_status_after_transactions": after_transaction_snapshots,
+        "validator_status_after_restart": after_restart_snapshots,
         "restart_status": restart_status,
+        "restart_mode": "SSH_COMMAND",
         "offline_status": offline_status,
+        "offline_evidence": offline_evidence,
+        "height_after_restart": 110,
+        "app_hash": "B" * 64,
     }
 
 
@@ -278,6 +342,34 @@ def test_release_gate_rejects_non_string_g3_transaction_hash(tmp_path: Path) -> 
     assert result.returncode == 2
     assert payload["gates"]["G3"]["status"] == "FAIL"
     assert "invalid transaction hash" in payload["gates"]["G3"]["reason"]
+
+
+def test_release_gate_rejects_g3_operation_stage_reordering(tmp_path: Path) -> None:
+    report = _g3_report()
+    report["operations"][1]["stage"] = "force"
+    report_path = tmp_path / "g3-report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    result = _run_gate("--g3-report", str(report_path), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G3"]["status"] == "FAIL"
+    assert "stages are incomplete" in payload["gates"]["G3"]["reason"]
+
+
+def test_release_gate_rejects_g3_snapshot_set_from_another_rpc_topology(tmp_path: Path) -> None:
+    report = _g3_report()
+    report["validator_status_after_restart"][0]["rpc_url"] = "http://other-validator"
+    report_path = tmp_path / "g3-report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    result = _run_gate("--g3-report", str(report_path), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G3"]["status"] == "FAIL"
+    assert "does not match the declared validator RPC set" in payload["gates"]["G3"]["reason"]
 
 
 def _g5_report(tmp_path: Path) -> dict:

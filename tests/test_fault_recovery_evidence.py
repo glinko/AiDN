@@ -50,6 +50,7 @@ def _live_report() -> dict:
         "evidence_reference": "sha256:" + "1" * 64,
         "command": "restart-validator",
         "command_result": {"returncode": 0},
+        "command_outage_observed": True,
         "outage_observed": True,
         "before": before,
         "after": after,
@@ -134,6 +135,22 @@ def test_fault_recovery_report_rejects_tampered_live_report(tmp_path: Path) -> N
     live_path.write_text(json.dumps(live), encoding="utf-8")
 
     with pytest.raises(ValueError, match="live fault report hash is invalid"):
+        MODULE.verify_fault_recovery_evidence(
+            g2_report_path=g2_path,
+            live_report_path=live_path,
+        )
+
+
+def test_fault_recovery_report_requires_successful_action_returncode(tmp_path: Path) -> None:
+    g2_path = tmp_path / "g2.json"
+    live_path = tmp_path / "live.json"
+    _write_g2_report(g2_path)
+    live = _live_report()
+    live["drills"]["graceful_restart"]["command_result"].pop("returncode")
+    live["report_hash"] = MODULE._report_hash({key: value for key, value in live.items() if key != "report_hash"})
+    live_path.write_text(json.dumps(live), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="live fault drill command failed: graceful_restart"):
         MODULE.verify_fault_recovery_evidence(
             g2_report_path=g2_path,
             live_report_path=live_path,

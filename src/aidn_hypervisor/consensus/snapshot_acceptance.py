@@ -22,6 +22,18 @@ from aidn_hypervisor.ledger.service import LedgerOperationService
 SNAPSHOT_ACCEPTANCE_VERSION = 1
 SNAPSHOT_ACCEPTANCE_MODE = "CONTROLLED_LOCAL"
 _CURRENT_TIME = "2030-01-01T00:00:00Z"
+_SHA256_HEX = "0123456789abcdefABCDEF"
+_REQUIRED_CHECKS = frozenset(
+    {
+        "snapshot_export_succeeds",
+        "snapshot_verification_succeeds",
+        "restore_yields_identical_state_root",
+        "restore_yields_identical_app_hash",
+        "state_sync_yields_identical_app_hash",
+        "restored_and_state_synced_advance_identically",
+        "corrupt_snapshot_rejected",
+    }
+)
 
 
 class SnapshotAcceptanceError(ValueError):
@@ -91,6 +103,78 @@ def _build_report(body: dict[str, Any]) -> dict[str, Any]:
     report = dict(body)
     report["report_hash"] = _hash_report(report)
     return report
+
+
+def _require_sha256_hex(value: object, *, label: str) -> None:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in _SHA256_HEX for character in value)
+    ):
+        raise SnapshotAcceptanceError(f"G2 {label} must be a 64-character SHA-256 hex value")
+
+
+def _validate_report_shape(report: dict[str, Any]) -> None:
+    """Reject malformed evidence before executing the expensive reproduction."""
+    if report.get("schema_version") != SNAPSHOT_ACCEPTANCE_VERSION:
+        raise SnapshotAcceptanceError("G2 report schema_version is unsupported")
+    if report.get("status") != "PASS":
+        raise SnapshotAcceptanceError("G2 acceptance report is not passing")
+    if report.get("mode") != SNAPSHOT_ACCEPTANCE_MODE:
+        raise SnapshotAcceptanceError("G2 report mode is unsupported")
+    for field in ("profile_id", "profile_commitment"):
+        if not isinstance(report.get(field), str) or not report[field]:
+            raise SnapshotAcceptanceError(f"G2 report {field} is missing")
+    if report.get("state_root_algorithm") != "aidn-execution-state-root.v1":
+        raise SnapshotAcceptanceError("G2 state-root algorithm is unsupported")
+
+    snapshot = report.get("snapshot")
+    if not isinstance(snapshot, dict):
+        raise SnapshotAcceptanceError("G2 snapshot evidence is missing")
+    height = snapshot.get("height")
+    chunks = snapshot.get("chunks")
+    if not isinstance(height, int) or isinstance(height, bool) or height < 1:
+        raise SnapshotAcceptanceError("G2 snapshot height is invalid")
+    if snapshot.get("format") != 1:
+        raise SnapshotAcceptanceError("G2 snapshot format is unsupported")
+    if not isinstance(chunks, int) or isinstance(chunks, bool) or chunks < 1:
+        raise SnapshotAcceptanceError("G2 snapshot chunk count is invalid")
+    for field in ("payload_hash", "app_hash", "state_root"):
+        _require_sha256_hex(snapshot.get(field), label=f"snapshot.{field}")
+    state_sync_statuses = snapshot.get("state_sync_statuses")
+    if (
+        not isinstance(state_sync_statuses, list)
+        or len(state_sync_statuses) != chunks
+        or any(status != "accept" for status in state_sync_statuses)
+    ):
+        raise SnapshotAcceptanceError("G2 State Sync status evidence is incomplete")
+    corrupt_statuses = snapshot.get("corrupt_state_sync_statuses")
+    if (
+        not isinstance(corrupt_statuses, list)
+        or not corrupt_statuses
+        or corrupt_statuses[-1] == "accept"
+    ):
+        raise SnapshotAcceptanceError("G2 corrupt-snapshot rejection evidence is incomplete")
+
+    for height_label in ("height_one", "height_two"):
+        height_evidence = report.get(height_label)
+        if not isinstance(height_evidence, dict):
+            raise SnapshotAcceptanceError(f"G2 {height_label} evidence is missing")
+        for field in (
+            "state_root",
+            "source_app_hash",
+            "restored_app_hash",
+            "state_synced_app_hash",
+        ):
+            _require_sha256_hex(height_evidence.get(field), label=f"{height_label}.{field}")
+
+    checks = report.get("checks")
+    if not isinstance(checks, dict) or set(checks) != _REQUIRED_CHECKS:
+        raise SnapshotAcceptanceError("G2 report checks are incomplete")
+    if any(type(value) is not bool for value in checks.values()):
+        raise SnapshotAcceptanceError("G2 report checks must be boolean")
+    if not all(checks.values()):
+        raise SnapshotAcceptanceError("G2 report contains a failed acceptance check")
 
 
 def run_snapshot_acceptance() -> dict[str, Any]:
@@ -239,6 +323,7 @@ def verify_snapshot_acceptance_report(report: dict[str, Any]) -> dict[str, Any]:
     """Verify report integrity and reproduce its deterministic acceptance run."""
     if not isinstance(report, dict):
         raise SnapshotAcceptanceError("G2 report must be a JSON object")
+    _validate_report_shape(report)
     report_hash = report.get("report_hash")
     if not isinstance(report_hash, str):
         raise SnapshotAcceptanceError("G2 report hash is missing")
@@ -248,8 +333,6 @@ def verify_snapshot_acceptance_report(report: dict[str, Any]) -> dict[str, Any]:
     expected = run_snapshot_acceptance()
     if report != expected:
         raise SnapshotAcceptanceError("G2 report does not match a fresh deterministic acceptance run")
-    if report.get("status") != "PASS":
-        raise SnapshotAcceptanceError("G2 acceptance report is not passing")
     return report
 
 

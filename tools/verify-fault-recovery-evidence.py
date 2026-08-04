@@ -67,7 +67,12 @@ def _finish_report(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _validate_snapshot(snapshot: object, *, label: str) -> dict[str, Any]:
+def _validate_snapshot(
+    snapshot: object,
+    *,
+    label: str,
+    require_caught_up: bool = False,
+) -> dict[str, Any]:
     if not isinstance(snapshot, dict):
         raise ValueError(f"{label} must be an object")
     height = snapshot.get("height")
@@ -88,6 +93,8 @@ def _validate_snapshot(snapshot: object, *, label: str) -> dict[str, Any]:
         raise ValueError(f"{label} is invalid")
     if "catching_up" in snapshot and not isinstance(snapshot["catching_up"], bool):
         raise ValueError(f"{label} catching_up field is invalid")
+    if require_caught_up and snapshot.get("catching_up") is not False:
+        raise ValueError(f"{label} must explicitly prove catching_up=false")
     return snapshot
 
 
@@ -96,10 +103,18 @@ def _validate_snapshot_set(
     *,
     label: str,
     expected_urls: set[str],
+    require_caught_up: bool = False,
 ) -> list[dict[str, Any]]:
     if not isinstance(value, list) or len(value) != len(expected_urls):
         raise ValueError(f"{label} must contain every validator snapshot exactly once")
-    snapshots = [_validate_snapshot(item, label=f"{label}[{index}]") for index, item in enumerate(value)]
+    snapshots = [
+        _validate_snapshot(
+            item,
+            label=f"{label}[{index}]",
+            require_caught_up=require_caught_up,
+        )
+        for index, item in enumerate(value)
+    ]
     urls = {item["rpc_url"].rstrip("/") for item in snapshots}
     if urls != expected_urls:
         raise ValueError(f"{label} does not match the declared validator RPC set")
@@ -134,9 +149,21 @@ def _verify_action_drill(
     if not isinstance(command_result, dict):
         raise ValueError(f"live fault drill lacks command result: {name}")
     returncode = command_result.get("returncode")
-    if returncode is not None and (not isinstance(returncode, int) or isinstance(returncode, bool) or returncode != 0):
+    if name == "host_reboot":
+        returncode_valid = returncode == 0 or (
+            returncode is None and command_result.get("disconnect_allowed") is True
+        )
+    else:
+        returncode_valid = (
+            isinstance(returncode, int)
+            and not isinstance(returncode, bool)
+            and returncode == 0
+        )
+    if not returncode_valid:
         raise ValueError(f"live fault drill command failed: {name}")
-    if not isinstance(value.get("outage_observed"), bool):
+    if not isinstance(value.get("command_outage_observed"), bool):
+        raise ValueError(f"live fault drill command outage observation is invalid: {name}")
+    if value.get("outage_observed") is not True:
         raise ValueError(f"live fault drill outage observation is invalid: {name}")
     checks = value.get("checks")
     required_checks = {
@@ -146,8 +173,18 @@ def _verify_action_drill(
     }
     if not isinstance(checks, dict) or any(checks.get(check) is not True for check in required_checks):
         raise ValueError(f"live fault drill checks are incomplete: {name}")
-    before = _validate_snapshot_set(value.get("before"), label=f"{name}.before", expected_urls=expected_urls)
-    after = _validate_snapshot_set(value.get("after"), label=f"{name}.after", expected_urls=expected_urls)
+    before = _validate_snapshot_set(
+        value.get("before"),
+        label=f"{name}.before",
+        expected_urls=expected_urls,
+        require_caught_up=True,
+    )
+    after = _validate_snapshot_set(
+        value.get("after"),
+        label=f"{name}.after",
+        expected_urls=expected_urls,
+        require_caught_up=True,
+    )
     if min(item["height"] for item in after) <= max(item["height"] for item in before):
         raise ValueError(f"live fault drill did not advance after recovery: {name}")
     before_target = next(item for item in before if item["rpc_url"].rstrip("/") == target_url)
@@ -196,6 +233,7 @@ def _verify_stale_predecessor(value: object, *, target_url: str) -> dict[str, An
         or not isinstance(rejection, dict)
         or not isinstance(rejection.get("transaction_hash"), str)
         or not re.fullmatch(r"[0-9A-Fa-f]{64}", rejection["transaction_hash"])
+        or source_hash.upper() == rejection["transaction_hash"].upper()
         or not isinstance(rejection.get("code"), int)
         or isinstance(rejection["code"], bool)
         or rejection["code"] == 0
@@ -235,7 +273,7 @@ def _verify_live_drills(path: Path) -> dict[str, dict[str, Any]]:
     if not isinstance(report_hash, str) or report_hash != _report_hash(unsigned_report):
         raise ValueError("live fault report hash is invalid")
     drills = report.get("drills")
-    if not isinstance(drills, dict):
+    if not isinstance(drills, dict) or set(drills) != set(REQUIRED_LIVE_DRILLS):
         raise ValueError("live fault report must contain a drills object")
     result: dict[str, dict[str, Any]] = {}
     for name in REQUIRED_LIVE_DRILLS[:-1]:

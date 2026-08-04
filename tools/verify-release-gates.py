@@ -39,6 +39,16 @@ from aidn_hypervisor.evidence import (
 )
 
 _HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_G3_OPERATION_STAGES = (
+    "lock",
+    "failure",
+    "force",
+    "lifecycle_lock",
+    "lifecycle_open",
+    "lifecycle_accept",
+    "service_verification",
+    "reputation_profile_update",
+)
 
 
 def _gate(status: str, *, reason: str | None = None, details: Any = None) -> dict[str, Any]:
@@ -442,6 +452,8 @@ def _validate_validator_snapshots(
     *,
     label: str,
     minimum_validators: int = 4,
+    expected_rpc_urls: set[str] | None = None,
+    require_caught_up: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not isinstance(snapshots, list) or len(snapshots) < minimum_validators:
         raise ValueError(f"{label} must contain at least {minimum_validators} validator snapshots")
@@ -454,9 +466,10 @@ def _validate_validator_snapshots(
         app_hash = snapshot.get("app_hash")
         node_id = snapshot.get("node_id")
         chain_id = snapshot.get("chain_id")
+        normalized_rpc_url = rpc_url.rstrip("/") if isinstance(rpc_url, str) else ""
         if (
             not isinstance(rpc_url, str)
-            or not rpc_url
+            or not normalized_rpc_url
             or not isinstance(height, int)
             or isinstance(height, bool)
             or height < 1
@@ -468,9 +481,17 @@ def _validate_validator_snapshots(
             or not chain_id
         ):
             raise ValueError(f"{label} contains an invalid validator snapshot")
+        if require_caught_up and snapshot.get("catching_up") is not False:
+            raise ValueError(f"{label} contains a validator without caught-up evidence")
         normalized.append(snapshot)
-    if len({item["rpc_url"] for item in normalized}) != len(normalized):
+    snapshot_rpc_urls = {
+        str(item["rpc_url"]).rstrip("/")
+        for item in normalized
+    }
+    if len(snapshot_rpc_urls) != len(normalized):
         raise ValueError(f"{label} contains duplicate RPC endpoints")
+    if expected_rpc_urls is not None and snapshot_rpc_urls != expected_rpc_urls:
+        raise ValueError(f"{label} does not match the declared validator RPC set")
     heights = {item["height"] for item in normalized}
     app_hashes = {str(item["app_hash"]).upper() for item in normalized}
     if len(heights) != 1 or len(app_hashes) != 1:
@@ -497,15 +518,34 @@ def _run_g3(report_path: Path | None) -> dict[str, Any]:
         report = _load_json_object(report_path, label="G3 report")
         if report.get("status") != "ok":
             raise ValueError("G3 report status is not ok")
-        if report.get("scope") not in {None, "CONTROLLED_LAN_TESTNET"}:
+        if report.get("scope") != "CONTROLLED_LAN_TESTNET":
             raise ValueError("G3 report must declare CONTROLLED_LAN_TESTNET scope")
+        validator_rpc_urls = report.get("validator_rpc_urls")
+        if not isinstance(validator_rpc_urls, list) or len(validator_rpc_urls) < 4:
+            raise ValueError("G3 report must declare at least four validator RPC URLs")
+        if any(not isinstance(url, str) or not url.strip() for url in validator_rpc_urls):
+            raise ValueError("G3 validator RPC URLs are invalid")
+        expected_rpc_urls = {url.rstrip("/") for url in validator_rpc_urls}
+        if len(expected_rpc_urls) != len(validator_rpc_urls):
+            raise ValueError("G3 validator RPC URLs contain duplicates")
         operations = report.get("operations")
-        if not isinstance(operations, list) or len(operations) < 8:
+        if not isinstance(operations, list) or len(operations) != len(_G3_OPERATION_STAGES):
             raise ValueError("G3 report must contain the complete eight-operation drill")
         transaction_hashes: set[str] = set()
-        for operation in operations:
+        transaction_heights: list[int] = []
+        session_ids: list[str] = []
+        for operation, expected_stage in zip(operations, _G3_OPERATION_STAGES, strict=True):
             if not isinstance(operation, dict):
                 raise ValueError("G3 operation record must be an object")
+            if operation.get("stage") != expected_stage:
+                raise ValueError(
+                    "G3 operation stages are incomplete or out of order: "
+                    f"expected {expected_stage}"
+                )
+            session_id = operation.get("session_id")
+            if not isinstance(session_id, str) or not session_id:
+                raise ValueError("G3 operation record has no session identity")
+            session_ids.append(session_id)
             transaction_hash_value = operation.get("transaction_hash")
             if not isinstance(transaction_hash_value, str):
                 raise ValueError("G3 operation record has an invalid transaction hash")
@@ -522,34 +562,69 @@ def _run_g3(report_path: Path | None) -> dict[str, Any]:
                 or transaction_height < 1
             ):
                 raise ValueError("G3 operation record has no committed height")
+            transaction_heights.append(transaction_height)
+        if (
+            transaction_heights != sorted(transaction_heights)
+            or len(set(transaction_heights)) != len(transaction_heights)
+        ):
+            raise ValueError("G3 operation records are not in committed dependency order")
+        if not (
+            len(set(session_ids[:3])) == 1
+            and len(set(session_ids[3:6])) == 1
+            and len(set(session_ids[6:])) == 1
+            and len({session_ids[0], session_ids[3], session_ids[6]}) == 3
+        ):
+            raise ValueError("G3 operation records do not preserve the three drill chains")
         coverage = report.get("strict_operation_coverage_probe")
         if (
             not isinstance(coverage, dict)
             or not isinstance(coverage.get("code"), int)
             or isinstance(coverage["code"], bool)
             or coverage["code"] != 1
+            or coverage.get("operation_type") != "REGISTRY_UPSERT"
+            or not isinstance(coverage.get("log"), str)
+            or "consensus operation transition is not implemented: REGISTRY_UPSERT"
+            not in coverage["log"]
         ):
             raise ValueError("G3 strict unsupported-operation rejection probe is missing")
         _, before = _validate_validator_snapshots(
             report.get("validator_status_before"),
             label="G3 validator_status_before",
+            expected_rpc_urls=expected_rpc_urls,
+            require_caught_up=True,
         )
         _, after_transactions = _validate_validator_snapshots(
             report.get("validator_status_after_transactions"),
             label="G3 validator_status_after_transactions",
+            expected_rpc_urls=expected_rpc_urls,
+            require_caught_up=True,
         )
         _, after_restart = _validate_validator_snapshots(
             report.get("validator_status_after_restart"),
             label="G3 validator_status_after_restart",
+            expected_rpc_urls=expected_rpc_urls,
+            require_caught_up=True,
         )
+        if before["chain_ids"] != after_transactions["chain_ids"] or before["chain_ids"] != after_restart["chain_ids"]:
+            raise ValueError("G3 validators changed chain ID during the drill")
+        if before["node_ids"] != after_transactions["node_ids"] or before["node_ids"] != after_restart["node_ids"]:
+            raise ValueError("G3 validators changed identity during the drill")
+        if after_transactions["height"] <= before["height"]:
+            raise ValueError("G3 accepted operations did not advance the committed height")
+        if after_restart["height"] <= after_transactions["height"]:
+            raise ValueError("G3 restart evidence did not advance the committed height")
+        if before["app_hash"] == after_transactions["app_hash"]:
+            raise ValueError("G3 accepted operations did not change the application hash")
+        if after_restart["app_hash"] != after_transactions["app_hash"]:
+            raise ValueError("G3 validator restart changed the application hash")
+        if transaction_heights[0] <= before["height"] or transaction_heights[-1] > after_transactions["height"]:
+            raise ValueError("G3 transaction heights are outside the observed acceptance window")
+        if report.get("height_after_restart") != after_restart["height"]:
+            raise ValueError("G3 height_after_restart does not match validator snapshots")
+        if report.get("app_hash") != after_restart["app_hash"]:
+            raise ValueError("G3 app_hash does not match validator snapshots")
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
         return _gate("FAIL", reason=str(error))
-    if report.get("scope") is None:
-        return _gate(
-            "INCOMPLETE",
-            reason="G3 report predates the controlled-network evidence schema",
-            details={"before": before, "after_transactions": after_transactions, "after_restart": after_restart},
-        )
     if report.get("restart_status") != "PASS":
         return _gate(
             "INCOMPLETE",
@@ -562,6 +637,64 @@ def _run_g3(report_path: Path | None) -> dict[str, Any]:
             reason="G3 transaction evidence is valid but one-validator-offline evidence is missing",
             details={"before": before, "after_transactions": after_transactions, "after_restart": after_restart},
         )
+    offline_evidence = report.get("offline_evidence")
+    try:
+        if not isinstance(offline_evidence, dict):
+            raise ValueError("G3 offline evidence is missing")
+        offline_hash = offline_evidence.get("report_hash")
+        unsigned_offline = dict(offline_evidence)
+        unsigned_offline.pop("report_hash", None)
+        if not isinstance(offline_hash, str) or offline_hash != _sha256_bytes(_canonical_bytes(unsigned_offline)):
+            raise ValueError("G3 offline evidence hash is invalid")
+        if (
+            offline_evidence.get("schema_version") != 1
+            or offline_evidence.get("status") != "PASS"
+            or offline_evidence.get("scope") != "CONTROLLED_LAN_TESTNET"
+            or offline_evidence.get("drill") != "ONE_VALIDATOR_OFFLINE"
+        ):
+            raise ValueError("G3 offline evidence schema is invalid")
+        offline_urls = offline_evidence.get("validator_rpc_urls")
+        normalized_offline_urls = {
+            url.rstrip("/") for url in offline_urls if isinstance(url, str)
+        } if isinstance(offline_urls, list) else set()
+        if (
+            not isinstance(offline_urls, list)
+            or len(offline_urls) != len(expected_rpc_urls)
+            or any(not isinstance(url, str) or not url.strip() for url in offline_urls)
+            or normalized_offline_urls != expected_rpc_urls
+        ):
+            raise ValueError("G3 offline evidence does not match the declared validator RPC set")
+        offline_target = offline_evidence.get("offline_rpc_url")
+        if not isinstance(offline_target, str) or offline_target.rstrip("/") not in expected_rpc_urls:
+            raise ValueError("G3 offline evidence target is invalid")
+        offline_checks = offline_evidence.get("checks")
+        if not isinstance(offline_checks, dict) or any(
+            offline_checks.get(name) is not True
+            for name in ("survivor_quorum_progressed", "all_validators_reconverged", "offline_validator_rejoined")
+        ):
+            raise ValueError("G3 offline evidence checks are incomplete")
+        _, offline_before = _validate_validator_snapshots(
+            offline_evidence.get("before"),
+            label="G3 offline before",
+            expected_rpc_urls=expected_rpc_urls,
+        )
+        _, offline_after = _validate_validator_snapshots(
+            offline_evidence.get("after_recovery"),
+            label="G3 offline after_recovery",
+            expected_rpc_urls=expected_rpc_urls,
+        )
+        during_urls = offline_evidence.get("during_offline")
+        survivor_urls = expected_rpc_urls - {offline_target.rstrip("/")}
+        _, offline_during = _validate_validator_snapshots(
+            during_urls,
+            label="G3 offline during_offline",
+            minimum_validators=3,
+            expected_rpc_urls=survivor_urls,
+        )
+        if offline_during["height"] <= offline_before["height"] or offline_after["height"] <= offline_during["height"]:
+            raise ValueError("G3 offline evidence does not prove quorum progress and rejoin")
+    except (ValueError, TypeError) as error:
+        return _gate("FAIL", reason=str(error))
     return _gate(
         "PASS",
         details={
