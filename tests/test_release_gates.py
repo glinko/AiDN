@@ -241,7 +241,10 @@ def test_release_gate_accepts_complete_g4_report(tmp_path: Path) -> None:
                 "status": "ok",
                 "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
                 "finality_evidence": {"operation_id": "op-1"},
-                "ownership_evidence": {"status": "OUT_OF_BAND_VERIFIED"},
+                "ownership_evidence": {
+                    "status": "OUT_OF_BAND_VERIFIED",
+                    "ownership_evidence_root": "sha256:reviewed-ownership",
+                },
                 "checks": {
                     name: {"status": "PASS", "evidence_reference": f"{name}.json"}
                     for name in (

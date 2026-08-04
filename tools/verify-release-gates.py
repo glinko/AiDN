@@ -517,6 +517,15 @@ def _run_g4(report_path: Path | None) -> dict[str, Any]:
             reason="public RPC finality is present but operator/control-group independence is not verified",
             details={"rpc_endpoints": endpoints, "ownership_evidence": ownership},
         )
+    if not (
+        isinstance(ownership.get("ownership_evidence_root"), str)
+        and ownership["ownership_evidence_root"]
+    ):
+        return _gate(
+            "INCOMPLETE",
+            reason="verified public ownership evidence lacks ownership_evidence_root",
+            details={"rpc_endpoints": endpoints, "ownership_evidence": ownership},
+        )
     return _gate("PASS", details={"rpc_endpoints": endpoints, "operation_id": finality["operation_id"]})
 
 

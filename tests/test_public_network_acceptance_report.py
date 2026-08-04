@@ -32,7 +32,14 @@ def _source_reports(tmp_path: Path, *, ownership_status: str) -> tuple[Path, Pat
             "status": "ok",
             "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
             "finality_evidence": {"operation_id": "operation-1"},
-            "ownership_evidence": {"status": ownership_status},
+            "ownership_evidence": {
+                "status": ownership_status,
+                **(
+                    {"ownership_evidence_root": "sha256:reviewed-ownership"}
+                    if ownership_status == "OUT_OF_BAND_VERIFIED"
+                    else {}
+                ),
+            },
         },
     )
     deployment = _write(
@@ -81,6 +88,18 @@ def test_public_network_report_rejects_unreferenced_boolean_check(tmp_path: Path
     paths[2].write_text(json.dumps(deployment), encoding="utf-8")
 
     with pytest.raises(ValueError, match="PASS object with evidence_reference"):
+        MODULE.build_report(
+            lan_path=paths[0], external_path=paths[1], deployment_path=paths[2]
+        )
+
+
+def test_public_network_report_rejects_verified_ownership_without_root(tmp_path: Path) -> None:
+    paths = _source_reports(tmp_path, ownership_status="OUT_OF_BAND_VERIFIED")
+    external = json.loads(paths[1].read_text(encoding="utf-8"))
+    external["ownership_evidence"].pop("ownership_evidence_root")
+    paths[1].write_text(json.dumps(external), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="ownership_evidence_root"):
         MODULE.build_report(
             lan_path=paths[0], external_path=paths[1], deployment_path=paths[2]
         )

@@ -43,6 +43,9 @@ not establish independent operators. Every check for `lan_acceptance`,
 `public_p2p_acceptance`, `bootstrap_diversity`, `public_rpc_observable` and
 `tls_validated` must be an object with `status: PASS` and a non-empty
 `evidence_reference`; bare boolean `true` is rejected.
+When ownership is marked `OUT_OF_BAND_VERIFIED`, the ownership object must
+also include a non-empty `ownership_evidence_root` for the reviewed
+out-of-band record.
 
 Combine the three source reports before passing G4 to the release gate:
 

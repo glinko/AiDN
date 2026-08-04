@@ -83,6 +83,13 @@ def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) 
     ownership = external.get("ownership_evidence")
     if not isinstance(ownership, dict):
         raise ValueError("external report lacks ownership evidence")
+    if ownership.get("status") == "OUT_OF_BAND_VERIFIED" and not (
+        isinstance(ownership.get("ownership_evidence_root"), str)
+        and ownership["ownership_evidence_root"]
+    ):
+        raise ValueError(
+            "verified ownership evidence must include ownership_evidence_root"
+        )
     gate_status = "PASS" if all(checks.values()) and ownership.get("status") == "OUT_OF_BAND_VERIFIED" else "INCOMPLETE"
     return {
         "schema_version": 1,
