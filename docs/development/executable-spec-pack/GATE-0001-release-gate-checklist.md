@@ -260,6 +260,10 @@ The collector is read-only and checks `/status`, `/net_info`, TLS, peer
 reachability and observed peer diversity. Its checks are hash-bound and do not
 claim independent operator ownership.
 
+The combined G4 report MUST declare `schema_version: 1` and
+`scope: PUBLIC_NETWORK`. The release verifier rejects a checklist-shaped
+report that omits either context field.
+
 For final publication, use the fail-closed orchestrator after G0-G6 evidence
 exists. It refuses to create an output directory until every pre-publication
 gate is `PASS`, writes `gates/release-gate-result.json` outside the Evidence
@@ -291,6 +295,11 @@ uv run python tools/build-release-evidence-bundle.py \
 
 The low-level `build-public-evidence-bundle.py` command remains useful for
 operator-level evidence, but it is not a release approval mechanism.
+
+The release orchestrator also checks that every G6 operator manifest matches
+the requested `network-id`, `release-version` and implementation profile. It
+rejects a quorum collected for a different release instead of silently
+reusing it.
 
 ## 11. Hard blockers
 
