@@ -264,6 +264,10 @@ The combined G4 report MUST declare `schema_version: 1` and
 `scope: PUBLIC_NETWORK`. The release verifier rejects a checklist-shaped
 report that omits either context field.
 
+The report MUST also carry the target `network_id`, `release_version` and
+`profile_id`; the final release orchestrator compares all three values with
+the EVD-0001 bundle arguments.
+
 Its `finality_evidence` MUST be a complete
 `consensus-finality-evidence.v1` record bound to an operation, chain, block
 height, block/AppHash/commit hashes, finalization time and verifier identity;

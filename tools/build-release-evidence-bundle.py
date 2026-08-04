@@ -161,6 +161,32 @@ def _validate_g6_context(
             )
 
 
+def _validate_g4_context(
+    report_path: Path,
+    *,
+    network_id: str,
+    release_version: str,
+    profile_id: str,
+) -> None:
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot load G4 report: {error}") from error
+    if not isinstance(report, dict):
+        raise ValueError("G4 report must be a JSON object")
+    expected = {
+        "network_id": network_id,
+        "release_version": release_version,
+        "profile_id": profile_id,
+    }
+    actual = {field: report.get(field) for field in expected}
+    if actual != expected:
+        raise ValueError(
+            "G4 report context does not match the requested release: "
+            + json.dumps({"expected": expected, "actual": actual}, sort_keys=True)
+        )
+
+
 def _build_bundle(args: argparse.Namespace, profile_id: str) -> dict[str, Any]:
     command = [
         sys.executable,
@@ -300,6 +326,12 @@ def main() -> int:
         _require_pre_bundle_pass(gate_result)
         _validate_g6_context(
             args.g6_evidence_dir,
+            network_id=args.network_id,
+            release_version=args.release_version,
+            profile_id=profile["profile_id"],
+        )
+        _validate_g4_context(
+            args.g4_report,
             network_id=args.network_id,
             release_version=args.release_version,
             profile_id=profile["profile_id"],

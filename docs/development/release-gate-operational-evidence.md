@@ -78,6 +78,9 @@ uv run python tools/build-public-network-acceptance-report.py \
   --lan-report evidence/network/lan.json \
   --external-report evidence/network/external-finality.json \
   --deployment-report evidence/network/public-deployment.json \
+  --network-id aidn-public-testnet \
+  --release-version 0.1.0-rc1 \
+  --profile-id aidn-mainnet-candidate-1 \
   --output evidence/network/g4-public-network.json
 ```
 
@@ -89,6 +92,8 @@ substitute for that review.
 The canonical G4 report MUST declare `schema_version: 1` and
 `scope: PUBLIC_NETWORK`. The release verifier rejects reports that omit these
 context fields, even when their endpoint and checklist objects look valid.
+The release orchestrator also requires these three context values to match the
+final EVD-0001 bundle arguments.
 
 ## G5 fault recovery
 

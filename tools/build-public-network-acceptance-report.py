@@ -104,7 +104,22 @@ def _validate_finality(value: object) -> dict[str, Any]:
     return evidence.model_dump()
 
 
-def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) -> dict[str, Any]:
+def build_report(
+    *,
+    lan_path: Path,
+    external_path: Path,
+    deployment_path: Path,
+    network_id: str,
+    release_version: str,
+    profile_id: str,
+) -> dict[str, Any]:
+    context = {
+        "network_id": network_id,
+        "release_version": release_version,
+        "profile_id": profile_id,
+    }
+    if any(not isinstance(value, str) or not value.strip() for value in context.values()):
+        raise ValueError("G4 report context fields must be non-empty strings")
     lan = _load(lan_path, "LAN report")
     external = _load(external_path, "external finality report")
     deployment = _load(deployment_path, "public deployment report")
@@ -160,6 +175,7 @@ def build_report(*, lan_path: Path, external_path: Path, deployment_path: Path) 
         "status": "ok",
         "gate_status": gate_status,
         "scope": "PUBLIC_NETWORK",
+        **context,
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "rpc_endpoints": endpoints,
         "finality_evidence": finality,
@@ -174,6 +190,9 @@ def main() -> int:
     parser.add_argument("--lan-report", type=Path, required=True)
     parser.add_argument("--external-report", type=Path, required=True)
     parser.add_argument("--deployment-report", type=Path, required=True)
+    parser.add_argument("--network-id", required=True)
+    parser.add_argument("--release-version", required=True)
+    parser.add_argument("--profile-id", required=True)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
@@ -181,6 +200,9 @@ def main() -> int:
             lan_path=args.lan_report,
             external_path=args.external_report,
             deployment_path=args.deployment_report,
+            network_id=args.network_id,
+            release_version=args.release_version,
+            profile_id=args.profile_id,
         )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "FAIL", "reason": str(error)}, sort_keys=True))

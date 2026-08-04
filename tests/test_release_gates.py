@@ -329,6 +329,14 @@ def _g4_finality() -> dict[str, object]:
     }
 
 
+def _g4_context() -> dict[str, str]:
+    return {
+        "network_id": "aidn-testnet",
+        "release_version": "0.1.0-test",
+        "profile_id": "test-profile",
+    }
+
+
 def test_release_gate_accepts_integrity_bound_g5_report(tmp_path: Path) -> None:
     report_path = tmp_path / "g5-report.json"
     report_path.write_text(json.dumps(_g5_report(tmp_path)), encoding="utf-8")
@@ -380,6 +388,7 @@ def test_release_gate_accepts_complete_g4_report(tmp_path: Path) -> None:
                 "schema_version": 1,
                 "status": "ok",
                 "scope": "PUBLIC_NETWORK",
+                **_g4_context(),
                 "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
                 "finality_evidence": _g4_finality(),
                 "ownership_evidence": {
@@ -408,6 +417,7 @@ def test_release_gate_keeps_structurally_valid_incomplete_g4_report_incomplete(t
                 "status": "ok",
                 "gate_status": "INCOMPLETE",
                 "scope": "PUBLIC_NETWORK",
+                **_g4_context(),
                 "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
                 "finality_evidence": _g4_finality(),
                 "ownership_evidence": {"status": "OUT_OF_BAND_DECLARED"},
@@ -432,6 +442,7 @@ def test_release_gate_rejects_credentialed_g4_rpc_endpoint(tmp_path: Path) -> No
                 "schema_version": 1,
                 "status": "ok",
                 "scope": "PUBLIC_NETWORK",
+                **_g4_context(),
                 "rpc_endpoints": ["https://user:secret@rpc-a.example", "https://rpc-b.example"],
                 "finality_evidence": _g4_finality(),
                 "ownership_evidence": {
@@ -486,6 +497,7 @@ def test_release_gate_g4_rejects_truncated_finality_evidence(tmp_path: Path) -> 
                 "schema_version": 1,
                 "status": "ok",
                 "scope": "PUBLIC_NETWORK",
+                **_g4_context(),
                 "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
                 "finality_evidence": {"operation_id": "op-1"},
                 "ownership_evidence": {

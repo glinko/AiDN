@@ -574,6 +574,12 @@ def _run_g4(report_path: Path | None) -> dict[str, Any]:
             raise ValueError("G4 report schema_version is unsupported")
         if report.get("scope") != "PUBLIC_NETWORK":
             raise ValueError("G4 report must declare PUBLIC_NETWORK scope")
+        g4_context = {
+            field: report.get(field)
+            for field in ("network_id", "release_version", "profile_id")
+        }
+        if any(not isinstance(value, str) or not value for value in g4_context.values()):
+            raise ValueError("G4 report context fields must be non-empty strings")
         report_status = report.get("status")
         if report_status not in {"ok", "PASS", "INCOMPLETE"}:
             raise ValueError("G4 report status is invalid")
@@ -640,7 +646,11 @@ def _run_g4(report_path: Path | None) -> dict[str, Any]:
         )
     return _gate(
         "PASS",
-        details={"rpc_endpoints": endpoints, "operation_id": finality.operation_id},
+        details={
+            "rpc_endpoints": endpoints,
+            "operation_id": finality.operation_id,
+            "context": g4_context,
+        },
     )
 
 

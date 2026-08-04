@@ -120,3 +120,29 @@ def test_release_bundle_rejects_g6_context_mismatch(tmp_path: Path) -> None:
         assert "context does not match" in str(error)
     else:
         raise AssertionError("stale G6 context was accepted")
+
+
+def test_release_bundle_rejects_g4_context_mismatch(tmp_path: Path) -> None:
+    report_path = tmp_path / "g4.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "network_id": "old-network",
+                "release_version": "0.1.0-old",
+                "profile_id": "old-profile",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        MODULE._validate_g4_context(
+            report_path,
+            network_id="new-network",
+            release_version="0.1.0-new",
+            profile_id="new-profile",
+        )
+    except ValueError as error:
+        assert "context does not match" in str(error)
+    else:
+        raise AssertionError("stale G4 context was accepted")
