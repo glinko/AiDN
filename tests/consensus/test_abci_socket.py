@@ -248,7 +248,6 @@ def test_abci_socket_exposes_durable_state_sync_snapshots(tmp_path):
                 _fields(
                     _varint_field(1, height),
                     _varint_field(2, format_value),
-                    _varint_field(3, 0),
                 ),
             )
             assert _field_values(chunk, 1)[0]
@@ -266,7 +265,9 @@ def test_abci_socket_applies_verified_state_sync_snapshot(tmp_path):
     server.start()
 
     try:
-        with socket.create_connection(("127.0.0.1", server.port), timeout=2) as connection:
+        # Snapshot restore includes a durable write on the final chunk and is
+        # materially slower under coverage instrumentation on Windows.
+        with socket.create_connection(("127.0.0.1", server.port), timeout=10) as connection:
             offered = _request(
                 connection,
                 13,
@@ -286,20 +287,22 @@ def test_abci_socket_applies_verified_state_sync_snapshot(tmp_path):
             assert _field_values(offered, 1) == [1]
 
             for index in range(snapshot.chunks):
+                apply_fields = [
+                    _bytes_field(
+                        2,
+                        source.load_state_snapshot_chunk(
+                            height=snapshot.height,
+                            format=snapshot.format,
+                            chunk=index,
+                        ),
+                    ),
+                ]
+                if index:
+                    apply_fields.insert(0, _varint_field(1, index))
                 applied = _request(
                     connection,
                     15,
-                    _fields(
-                        _varint_field(1, index),
-                        _bytes_field(
-                            2,
-                            source.load_state_snapshot_chunk(
-                                height=snapshot.height,
-                                format=snapshot.format,
-                                chunk=index,
-                            ),
-                        ),
-                    ),
+                    _fields(*apply_fields),
                 )
                 assert _field_values(applied, 1) == [1]
     finally:
