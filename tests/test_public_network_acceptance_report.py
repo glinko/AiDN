@@ -58,6 +58,7 @@ def _source_reports(tmp_path: Path, *, ownership_status: str) -> tuple[Path, Pat
             "status": "ok",
             "scope": "PUBLIC_NETWORK_DEPLOYMENT",
             "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
+            "network_ids": ["aidn-testnet-1"],
             "checks": {
                 "public_p2p_acceptance": {
                     "status": "PASS",
@@ -114,6 +115,16 @@ def test_public_network_report_rejects_mismatched_deployment_endpoints(tmp_path:
     paths[2].write_text(json.dumps(deployment), encoding="utf-8")
 
     with pytest.raises(ValueError, match="do not match external finality"):
+        _build_report(paths)
+
+
+def test_public_network_report_rejects_mismatched_deployment_network(tmp_path: Path) -> None:
+    paths = _source_reports(tmp_path, ownership_status="OUT_OF_BAND_VERIFIED")
+    deployment = json.loads(paths[2].read_text(encoding="utf-8"))
+    deployment["network_ids"] = ["other-chain"]
+    paths[2].write_text(json.dumps(deployment), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not match external finality"):
         _build_report(paths)
 
 

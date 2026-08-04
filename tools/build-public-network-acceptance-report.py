@@ -139,6 +139,18 @@ def build_report(
             "public deployment RPC endpoints do not match external finality RPC endpoints"
         )
     finality = _validate_finality(external.get("finality_evidence"))
+    deployment_network_ids = deployment.get("network_ids")
+    if (
+        not isinstance(deployment_network_ids, list)
+        or len(deployment_network_ids) != 1
+        or not isinstance(deployment_network_ids[0], str)
+        or not deployment_network_ids[0]
+    ):
+        raise ValueError("public deployment report must declare exactly one network_id")
+    if deployment_network_ids[0] != finality["chain_id"]:
+        raise ValueError(
+            "public deployment network_id does not match external finality chain_id"
+        )
     deployment_checks = deployment.get("checks")
     if not isinstance(deployment_checks, dict):
         raise ValueError("public deployment report must contain checks")

@@ -58,6 +58,8 @@ operators; that remains an out-of-band G6 concern.
 The combined G4 builder requires the deployment report's `rpc_endpoints` set
 to match the external-finality report exactly. Evidence collected from another
 RPC set is rejected instead of being combined under one public-network claim.
+It also requires the deployment report to expose exactly one `network_ids`
+value equal to `finality_evidence.chain_id`.
 
 The external finality report must contain the complete
 `ConsensusFinalityEvidence` object: operation and chain identity, positive
