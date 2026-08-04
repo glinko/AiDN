@@ -421,6 +421,14 @@ def _verify_gate_result_control(evidence_dir: Path, *, evidence_root: str) -> di
             raise ValueError(f"evidence manifest {field} is missing")
         if result.get(field) != expected:
             raise ValueError(f"G7 release-gate-result {field} does not match the evidence manifest")
+    source_gate_statuses = result.get("source_gate_statuses")
+    source_gates = {f"G{index}" for index in range(7)}
+    if (
+        not isinstance(source_gate_statuses, dict)
+        or set(source_gate_statuses) != source_gates
+        or any(_gate_result_status(source_gate_statuses.get(name)) != "PASS" for name in source_gates)
+    ):
+        raise ValueError("G7 release-gate-result source_gate_statuses must mark G0-G6 PASS")
     return {
         "status": result["status"],
         "release": result.get("release"),
@@ -565,7 +573,11 @@ def _run_g3(report_path: Path | None) -> dict[str, Any]:
     )
 
 
-def _run_g4(report_path: Path | None) -> dict[str, Any]:
+def _run_g4(
+    report_path: Path | None,
+    *,
+    expected_context: dict[str, str] | None = None,
+) -> dict[str, Any]:
     if report_path is None:
         return _not_run("public networking evidence is not supplied")
     try:
@@ -580,6 +592,14 @@ def _run_g4(report_path: Path | None) -> dict[str, Any]:
         }
         if any(not isinstance(value, str) or not value for value in g4_context.values()):
             raise ValueError("G4 report context fields must be non-empty strings")
+        if expected_context is not None and g4_context != expected_context:
+            raise ValueError(
+                "G4 report context does not match the requested release: "
+                + json.dumps(
+                    {"expected": expected_context, "actual": g4_context},
+                    sort_keys=True,
+                )
+            )
         report_status = report.get("status")
         if report_status not in {"ok", "PASS", "INCOMPLETE"}:
             raise ValueError("G4 report status is invalid")
@@ -807,7 +827,12 @@ def _verify_g6_review(
     }
 
 
-def _run_g6(evidence_dirs: list[Path], reviewer_keys: dict[str, str]) -> dict[str, Any]:
+def _run_g6(
+    evidence_dirs: list[Path],
+    reviewer_keys: dict[str, str],
+    *,
+    expected_context: dict[str, str] | None = None,
+) -> dict[str, Any]:
     if not evidence_dirs:
         return _not_run("independent operator attestations are not supplied")
     if not reviewer_keys:
@@ -847,11 +872,25 @@ def _run_g6(evidence_dirs: list[Path], reviewer_keys: dict[str, str]) -> dict[st
             )
             identities[-1]["reviewer_id"] = review["reviewer_id"]
             identities[-1]["reviewer_public_key"] = review["reviewer_public_key"]
+            manifest_context: dict[str, str] = {}
+            for field in ("network_id", "release_version", "profile_id"):
+                value = manifest.get(field)
+                if not isinstance(value, str) or not value:
+                    raise ValueError(f"G6 evidence manifest {field} is missing")
+                manifest_context[field] = value
+            if expected_context is not None and manifest_context != expected_context:
+                raise ValueError(
+                    "G6 evidence bundle context does not match the requested release: "
+                    + json.dumps(
+                        {"expected": expected_context, "actual": manifest_context},
+                        sort_keys=True,
+                    )
+                )
             release_context.add(
                 (
-                    str(manifest["network_id"]),
-                    str(manifest["release_version"]),
-                    str(manifest["profile_id"]),
+                    manifest_context["network_id"],
+                    manifest_context["release_version"],
+                    manifest_context["profile_id"],
                 )
             )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError, EvidenceBundleError) as error:
@@ -929,6 +968,14 @@ def main() -> int:
         type=Path,
         help="verify the deterministic protocol-conformance evidence required by G1",
     )
+    parser.add_argument(
+        "--network-id",
+        help="bind G4/G6 evidence to the requested network context",
+    )
+    parser.add_argument(
+        "--release-version",
+        help="bind G4/G6 evidence to the requested release context",
+    )
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument(
         "--g2-report",
@@ -965,6 +1012,20 @@ def main() -> int:
         selected_profile = _load_profile(args.profile)
     except ValueError:
         selected_profile = None
+    context_values = (args.network_id, args.release_version)
+    if any(value is not None for value in context_values) and not all(
+        isinstance(value, str) and value.strip() for value in context_values
+    ):
+        parser.error("--network-id and --release-version must be supplied together and non-empty")
+    expected_context = (
+        {
+            "network_id": args.network_id,
+            "release_version": args.release_version,
+            "profile_id": selected_profile["profile_id"],
+        }
+        if all(value is not None for value in context_values) and selected_profile is not None
+        else None
+    )
     try:
         reviewer_keys: dict[str, str] = {}
         for value in args.g6_review_key:
@@ -999,12 +1060,16 @@ def main() -> int:
             else _gate("FAIL", reason="cannot validate G2 without a valid implementation profile")
         ),
         "G3": _run_g3(args.g3_report),
-        "G4": _run_g4(args.g4_report),
+        "G4": _run_g4(args.g4_report, expected_context=expected_context),
         "G5": _run_g5(args.g5_report),
         "G6": (
             _gate("FAIL", reason=reviewer_key_error)
             if reviewer_key_error is not None
-            else _run_g6(args.g6_evidence_dir, reviewer_keys)
+            else _run_g6(
+                args.g6_evidence_dir,
+                reviewer_keys,
+                expected_context=expected_context,
+            )
         ),
     }
     if args.evidence_dir is None:

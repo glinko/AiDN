@@ -236,6 +236,8 @@ signature. Verify the quorum with repeated inputs:
 
 ```bash
 uv run python tools/verify-release-gates.py \
+  --network-id aidn-public-testnet \
+  --release-version 0.1.0-rc1 \
   --g6-evidence-dir evidence/operator-a \
   --g6-evidence-dir evidence/operator-b \
   --g6-review-key release-reviewer=ed25519:<64-hex-public-key>
@@ -244,7 +246,10 @@ uv run python tools/verify-release-gates.py \
 The gate requires distinct public keys, operator IDs and declared control
 groups, a signed `attestations/independence-review.json` for every bundle, and
 all bundles must refer to the same network, release version and implementation
-profile. Create each review only after the operator evidence has been checked:
+profile. When `--network-id` and `--release-version` are supplied, the verifier
+also binds every G4/G6 input to that requested release; the selected
+implementation profile supplies the expected `profile_id`. Create each review
+only after the operator evidence has been checked:
 
 ```bash
 uv run python tools/sign-independence-review.py \
@@ -299,9 +304,10 @@ the artifact root is fixed and is therefore excluded from that root. The
 orchestrator requires at least two G6 bundles and emits a final control file
 with `schema_version: 1`, the same `network_id`, `release` and `profile_id` as
 the bundle manifest, and passing G0 through G7 entries. The verifier binds
-these fields before accepting the embedded result, so a control file cannot be
-copied between releases or implementation profiles. A bundle without the
-embedded gate result is not G7-complete.
+these fields and requires `source_gate_statuses` to mark G0 through G6 as PASS
+before accepting the embedded result, so a control file cannot be copied
+between releases or implementation profiles. A bundle without the embedded
+gate result is not G7-complete.
 
 Before building, the orchestrator also requires every supplied G6 operator
 manifest to match the requested network ID, release version and implementation

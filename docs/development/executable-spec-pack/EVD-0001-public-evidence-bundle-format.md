@@ -223,8 +223,10 @@ inside the bundle, but it is excluded from the artifact Merkle root so the
 final gate result can be written after the immutable artifact manifest and
 operator attestation have been created.
 The control file MUST contain passing entries for every gate `G0` through `G7`
-and its `evidence_root` MUST exactly match the bundle manifest's
-`evidence_root`; otherwise it is not a valid G7 result.
+and a `source_gate_statuses` object with passing entries for every gate `G0`
+through `G6`. Its `evidence_root` MUST exactly match the bundle manifest's
+`evidence_root`; otherwise it is not a valid G7 result. The release verifier
+also binds the control context to the manifest's network, release and profile.
 
 G5 fault-recovery evidence has an additional machine-verifiable contract. The
 combined report MUST use `schema_version: 1`, include a `report_hash` over the

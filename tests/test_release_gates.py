@@ -463,6 +463,43 @@ def test_release_gate_rejects_credentialed_g4_rpc_endpoint(tmp_path: Path) -> No
     assert "credential-free HTTPS" in payload["gates"]["G4"]["reason"]
 
 
+def test_release_gate_rejects_g4_context_bound_to_another_release(tmp_path: Path) -> None:
+    report_path = tmp_path / "g4-report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "ok",
+                "scope": "PUBLIC_NETWORK",
+                **_g4_context(),
+                "rpc_endpoints": ["https://rpc-a.example", "https://rpc-b.example"],
+                "finality_evidence": _g4_finality(),
+                "ownership_evidence": {
+                    "status": "OUT_OF_BAND_VERIFIED",
+                    "ownership_evidence_root": "sha256:" + "a" * 64,
+                },
+                "checks": _g4_checks(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gate(
+        "--g4-report",
+        str(report_path),
+        "--network-id",
+        "other-network",
+        "--release-version",
+        "0.1.0-test",
+        "--allow-incomplete",
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G4"]["status"] == "FAIL"
+    assert "requested release" in payload["gates"]["G4"]["reason"]
+
+
 def test_release_gate_g4_rejects_missing_schema_and_scope(tmp_path: Path) -> None:
     report_path = tmp_path / "g4-report.json"
     report_path.write_text(
@@ -602,6 +639,70 @@ def test_release_gate_requires_distinct_verified_g6_operators(tmp_path: Path) ->
     assert payload["gates"]["G6"]["status"] == "PASS"
 
 
+def test_release_gate_rejects_g6_context_bound_to_another_release(tmp_path: Path) -> None:
+    first = tmp_path / "operator-a"
+    second = tmp_path / "operator-b"
+    _write_g6_bundle(first, index=1)
+    _write_g6_bundle(second, index=2)
+    reviewer_public_key = (
+        Ed25519PrivateKey.from_private_bytes(bytes(range(101, 133)))
+        .public_key()
+        .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        .hex()
+    )
+
+    result = _run_gate(
+        "--g6-evidence-dir",
+        str(first),
+        "--g6-evidence-dir",
+        str(second),
+        "--g6-review-key",
+        "release-reviewer-1=ed25519:" + reviewer_public_key,
+        "--network-id",
+        "other-network",
+        "--release-version",
+        "0.1.0-test",
+        "--allow-incomplete",
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G6"]["status"] == "FAIL"
+    assert "requested release" in payload["gates"]["G6"]["reason"]
+
+
+def test_release_gate_reports_missing_g6_manifest_context_as_json_error(tmp_path: Path) -> None:
+    first = tmp_path / "operator-a"
+    second = tmp_path / "operator-b"
+    _write_g6_bundle(first, index=1)
+    _write_g6_bundle(second, index=2)
+    manifest_path = first / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.pop("profile_id")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    reviewer_public_key = (
+        Ed25519PrivateKey.from_private_bytes(bytes(range(101, 133)))
+        .public_key()
+        .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        .hex()
+    )
+
+    result = _run_gate(
+        "--g6-evidence-dir",
+        str(first),
+        "--g6-evidence-dir",
+        str(second),
+        "--g6-review-key",
+        "release-reviewer-1=ed25519:" + reviewer_public_key,
+        "--allow-incomplete",
+    )
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G6"]["status"] == "FAIL"
+    assert "manifest field is required: profile_id" in payload["gates"]["G6"]["reason"]
+
+
 def test_release_gate_rejects_reviewer_key_reused_by_operator(tmp_path: Path) -> None:
     first = tmp_path / "operator-a"
     second = tmp_path / "operator-b"
@@ -651,6 +752,7 @@ def test_release_gate_g7_requires_a_passing_embedded_gate_result(tmp_path: Path)
                 "release": manifest["release_version"],
                 "profile_id": manifest["profile_id"],
                 "evidence_root": manifest["evidence_root"],
+                "source_gate_statuses": {f"G{index}": "PASS" for index in range(7)},
                 "gates": {f"G{index}": "PASS" for index in range(8)},
             }
         ),
@@ -662,6 +764,35 @@ def test_release_gate_g7_requires_a_passing_embedded_gate_result(tmp_path: Path)
 
     assert result.returncode == 0
     assert payload["gates"]["G7"]["status"] == "PASS"
+
+
+def test_release_gate_g7_rejects_missing_source_gate_statuses(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    _write_g6_bundle(evidence_dir, index=1)
+    manifest = json.loads((evidence_dir / "manifest.json").read_text(encoding="utf-8"))
+    gate_path = evidence_dir / "gates/release-gate-result.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "PASS",
+                "network_id": manifest["network_id"],
+                "release": manifest["release_version"],
+                "profile_id": manifest["profile_id"],
+                "evidence_root": manifest["evidence_root"],
+                "gates": {f"G{index}": "PASS" for index in range(8)},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gate("--evidence-dir", str(evidence_dir), "--allow-incomplete")
+    payload = json.loads(result.stdout)
+
+    assert result.returncode == 2
+    assert payload["gates"]["G7"]["status"] == "FAIL"
+    assert "source_gate_statuses" in payload["gates"]["G7"]["reason"]
 
 
 def test_release_gate_g7_rejects_context_mismatch(tmp_path: Path) -> None:

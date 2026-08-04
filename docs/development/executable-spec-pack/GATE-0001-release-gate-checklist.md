@@ -167,6 +167,8 @@ The local machine-checkable subset is run with:
 uv run python tools/verify-release-gates.py \
   --profile profiles/aidn-mainnet-candidate-1.json \
   --fixture-manifest fixtures/manifest.json \
+  --network-id aidn-public-testnet \
+  --release-version 0.1.0-rc1 \
   --g2-report ./g2-report.json \
   --evidence-dir ./evidence
 ```
@@ -223,6 +225,8 @@ Verify these reports together with the controlled operational evidence:
 uv run python tools/verify-release-gates.py \
   --profile profiles/aidn-mainnet-candidate-1.json \
   --fixture-manifest fixtures/manifest.json \
+  --network-id aidn-public-testnet \
+  --release-version 0.1.0-rc1 \
   --g0-report ./g0-integrity.json \
   --g1-report ./g1-conformance.json \
   --g2-report ./g2-report.json \
@@ -305,10 +309,12 @@ uv run python tools/build-release-evidence-bundle.py \
 The low-level `build-public-evidence-bundle.py` command remains useful for
 operator-level evidence, but it is not a release approval mechanism.
 
-The release orchestrator also checks that every G6 operator manifest matches
-the requested `network-id`, `release-version` and implementation profile. It
-rejects a quorum collected for a different release instead of silently
-reusing it.
+The standalone verifier accepts the same `network-id` and `release-version`
+arguments and derives the expected `profile_id` from `--profile`; when these
+arguments are supplied, G4 and G6 evidence must match all three values. The
+release orchestrator also checks that every G6 operator manifest matches the
+requested context. It rejects a quorum collected for a different release
+instead of silently reusing it.
 
 ## 11. Hard blockers
 
@@ -333,8 +339,18 @@ Machine-readable result:
 
 ```json
 {
+  "network_id": "...",
   "release": "...",
   "profile_id": "...",
+  "source_gate_statuses": {
+    "G0": "PASS",
+    "G1": "PASS",
+    "G2": "PASS",
+    "G3": "PASS",
+    "G4": "PASS",
+    "G5": "PASS",
+    "G6": "PASS"
+  },
   "gates": {
     "G0": "PASS",
     "G1": "PASS",

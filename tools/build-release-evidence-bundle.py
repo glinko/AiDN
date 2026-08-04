@@ -77,6 +77,10 @@ def _run_gate_verifier(
         str(args.profile),
         "--fixture-manifest",
         str(args.fixture_manifest),
+        "--network-id",
+        args.network_id,
+        "--release-version",
+        args.release_version,
     ]
     if allow_incomplete:
         command.append("--allow-incomplete")
