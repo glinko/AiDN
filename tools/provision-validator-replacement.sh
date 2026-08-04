@@ -5,7 +5,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: provision-validator-replacement.sh {prepare|start|stop|status}
+Usage: provision-validator-replacement.sh {prepare|start|stop|abrupt|status}
 
 Environment:
   AIDN_REPROVISION_ROOT       replacement root (default: $HOME/aidn-g5-reprovision)
@@ -25,7 +25,7 @@ EOF
 
 action="${1:-}"
 case "$action" in
-  prepare|start|stop|status) ;;
+  prepare|start|stop|abrupt|status) ;;
   *) usage >&2; exit 2 ;;
 esac
 
@@ -247,6 +247,28 @@ stop_pid() {
   fi
 }
 
+abrupt_stop_pid() {
+  local pid_file="$1"
+  local marker="$2"
+  local pid
+  pid="$(read_pid "$pid_file" || true)"
+  if pid_matches "$pid" "$marker"; then
+    kill -KILL "$pid"
+    for _ in $(seq 1 10); do
+      pid_matches "$pid" "$marker" || return 0
+      sleep 1
+    done
+    die "process did not terminate after SIGKILL: $marker pid=$pid"
+  fi
+}
+
+abrupt() {
+  # Kill only the two processes owned by this replacement root. The caller
+  # explicitly starts them again to make the outage and recovery observable.
+  abrupt_stop_pid "$comet_pid_file" "$comet_bin"
+  abrupt_stop_pid "$abci_pid_file" "$repo/.venv/bin/python"
+}
+
 status() {
   printf 'root=%s\n' "$root"
   printf 'abci='; pid_matches "$(read_pid "$abci_pid_file" || true)" "$repo/.venv/bin/python" && echo running || echo stopped
@@ -258,5 +280,6 @@ case "$action" in
   prepare) prepare ;;
   start) start ;;
   stop) stop_pid "$comet_pid_file" "$comet_bin"; stop_pid "$abci_pid_file" "$repo/.venv/bin/python" ;;
+  abrupt) abrupt ;;
   status) status ;;
 esac

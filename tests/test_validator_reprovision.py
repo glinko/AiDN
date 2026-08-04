@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools/provision-validator-replacement.sh"
 
@@ -31,5 +30,7 @@ def test_validator_reprovision_only_stops_its_own_pids() -> None:
 
     assert 'pid_matches "$pid" "$marker"' in source
     assert 'kill -TERM "$pid"' in source
+    assert 'kill -KILL "$pid"' in source
+    assert "abrupt) abrupt" in source
     assert "pkill" not in source
     assert "killall" not in source
