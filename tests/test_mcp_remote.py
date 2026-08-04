@@ -369,6 +369,7 @@ def _write_tls_material(tmp_path: Path) -> McpRemoteTlsConfig:
             serialization.NoEncryption(),
         )
     )
+    private_key_file.chmod(0o600)
     return McpRemoteTlsConfig(
         certificate_file=certificate_file,
         private_key_file=private_key_file,
