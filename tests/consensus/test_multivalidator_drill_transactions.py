@@ -86,3 +86,16 @@ def test_multivalidator_convergence_rejects_divergent_or_stale_statuses() -> Non
         [*matching[:-1], {**matching[1], "app_hash": "BB"}], greater_than=10
     ) is None
     assert _DRILL._converged_status(matching, greater_than=12) is None
+
+
+def test_multivalidator_drill_supports_reduced_disposable_escrow() -> None:
+    failure = _DRILL._failure_chain_transactions(total_locked_amount_q_atoms=500)
+    lifecycle = _DRILL._session_lifecycle_transactions(total_locked_amount_q_atoms=150)
+
+    failure_lock = LedgerOperationEnvelope.model_validate(json.loads(failure[0][2]))
+    failure_force = LedgerOperationEnvelope.model_validate(json.loads(failure[2][2]))
+    lifecycle_lock = LedgerOperationEnvelope.model_validate(json.loads(lifecycle[0][2]))
+
+    assert failure_lock.payload["total_locked_amount_q_atoms"] == 500
+    assert failure_force.payload["requested_refund_q_atoms"] == 500
+    assert lifecycle_lock.payload["total_locked_amount_q_atoms"] == 150

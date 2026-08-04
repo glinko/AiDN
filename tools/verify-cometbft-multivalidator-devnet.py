@@ -180,8 +180,12 @@ def _failure_chain_transactions(
     *,
     consumer_wallet: str = "wallet:acceptance-consumer",
     consumer_sequence: int = 1,
+    total_locked_amount_q_atoms: int = 1_100,
 ) -> list[tuple[str, str, bytes]]:
     """Create one disposable canonical RFC-0060 failure chain."""
+    if total_locked_amount_q_atoms <= 100:
+        raise ValueError("failure-chain lock amount must exceed the 100 q_atoms fee reserve")
+    endpoint_payment_reserve = total_locked_amount_q_atoms - 100
     now = datetime.now(UTC).replace(microsecond=0)
     session_id = f"session-cometbft-drill-{uuid.uuid4()}"
     failure_root = f"sha256:cometbft-failure-{uuid.uuid4()}"
@@ -194,10 +198,10 @@ def _failure_chain_transactions(
         consumer_funding_account=consumer_wallet,
         endpoint_payment_beneficiary="wallet:acceptance-endpoint",
         consumer_refund_beneficiary=consumer_wallet,
-        total_locked_amount_q_atoms=1_100,
-        endpoint_payment_reserve_q_atoms=1_000,
+        total_locked_amount_q_atoms=total_locked_amount_q_atoms,
+        endpoint_payment_reserve_q_atoms=endpoint_payment_reserve,
         network_fee_reserve_q_atoms=100,
-        unsettled_payment_reserve_q_atoms=1_000,
+        unsettled_payment_reserve_q_atoms=endpoint_payment_reserve,
         unsettled_fee_reserve_q_atoms=100,
     )
     lock = LedgerOperationEnvelope(
@@ -241,10 +245,10 @@ def _failure_chain_transactions(
         previously_refunded_to_consumer_q_atoms=0,
         previously_consumed_network_fees_q_atoms=0,
         credit_endpoint_q_atoms=0,
-        credit_consumer_q_atoms=1_100,
+        credit_consumer_q_atoms=total_locked_amount_q_atoms,
         consume_network_fees_q_atoms=0,
         retain_dispute_reserve_q_atoms=0,
-        total_locked_amount_q_atoms=1_100,
+        total_locked_amount_q_atoms=total_locked_amount_q_atoms,
     )
     force = LedgerOperationEnvelope(
         operation_type="SESSION_FORCE_SETTLE",
@@ -266,7 +270,7 @@ def _failure_chain_transactions(
             "failure_evidence_operation_id": failure.operation_id,
             "funding_lock_operation_id": lock.operation_id,
             "requested_payment_q_atoms": 0,
-            "requested_refund_q_atoms": 1_100,
+            "requested_refund_q_atoms": total_locked_amount_q_atoms,
             "request_settlement_root": "sha256:cometbft-empty-requests",
             "usage_chain_root": "sha256:cometbft-empty-usage",
             "checkpoint_root": "sha256:cometbft-empty-checkpoints",
@@ -295,8 +299,12 @@ def _session_lifecycle_transactions(
     consumer_sequence: int = 2,
     endpoint_wallet: str = "wallet:acceptance-endpoint",
     endpoint_sequence: int = 1,
+    total_locked_amount_q_atoms: int = 300,
 ) -> list[tuple[str, str, bytes]]:
     """Create a disposable lock -> open -> accept lifecycle chain."""
+    if total_locked_amount_q_atoms <= 50:
+        raise ValueError("lifecycle lock amount must exceed the 50 q_atoms fee reserve")
+    endpoint_payment_reserve = total_locked_amount_q_atoms - 50
     now = datetime.now(UTC).replace(microsecond=0)
     session_id = f"session-cometbft-lifecycle-{uuid.uuid4()}"
     expires_at = (now + timedelta(minutes=10)).isoformat()
@@ -307,10 +315,10 @@ def _session_lifecycle_transactions(
         consumer_funding_account=consumer_wallet,
         endpoint_payment_beneficiary=endpoint_wallet,
         consumer_refund_beneficiary=consumer_wallet,
-        total_locked_amount_q_atoms=300,
-        endpoint_payment_reserve_q_atoms=250,
+        total_locked_amount_q_atoms=total_locked_amount_q_atoms,
+        endpoint_payment_reserve_q_atoms=endpoint_payment_reserve,
         network_fee_reserve_q_atoms=50,
-        unsettled_payment_reserve_q_atoms=250,
+        unsettled_payment_reserve_q_atoms=endpoint_payment_reserve,
         unsettled_fee_reserve_q_atoms=50,
     )
     lock = LedgerOperationEnvelope(
@@ -570,6 +578,18 @@ def main() -> None:
     )
     parser.add_argument("--endpoint-wallet", default="wallet:acceptance-endpoint")
     parser.add_argument(
+        "--failure-lock-amount-q-atoms",
+        type=int,
+        default=1_100,
+        help="Disposable failure-chain escrow amount (default: 1100).",
+    )
+    parser.add_argument(
+        "--lifecycle-lock-amount-q-atoms",
+        type=int,
+        default=300,
+        help="Disposable lifecycle escrow amount (default: 300).",
+    )
+    parser.add_argument(
         "--endpoint-sequence",
         type=int,
         help="Next endpoint sender sequence; defaults to a live ABCI query.",
@@ -651,12 +671,14 @@ def main() -> None:
         *_failure_chain_transactions(
             consumer_wallet=args.consumer_wallet,
             consumer_sequence=consumer_sequence,
+            total_locked_amount_q_atoms=args.failure_lock_amount_q_atoms,
         ),
         *_session_lifecycle_transactions(
             consumer_wallet=args.consumer_wallet,
             consumer_sequence=consumer_sequence + 1,
             endpoint_wallet=args.endpoint_wallet,
             endpoint_sequence=endpoint_sequence,
+            total_locked_amount_q_atoms=args.lifecycle_lock_amount_q_atoms,
         ),
         *_reputation_profile_transactions(),
     ]:

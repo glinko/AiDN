@@ -68,7 +68,12 @@ uv run python tools/run-consensus-snapshot-acceptance.py \
 ```
 
 Then collect the live restart, abrupt termination, host reboot and stale
-predecessor observations on the operator host. The live report must use this
+predecessor observations on the operator host. Host reboot MUST stop the ABCI
+application and CometBFT before reboot, then explicitly start the ABCI
+application before CometBFT after the host returns. Pass that post-reboot
+operator command through `--host-reboot-recovery-command`; a host that merely
+returns SSH while its service remains stopped is not recovered. The live
+report must use this
 shape for every drill:
 
 ```json
@@ -81,6 +86,26 @@ shape for every drill:
     "stale_predecessor_rejected": {"status": "PASS", "evidence_reference": "..."}
   }
 }
+```
+
+The live collector is intentionally explicit about all state-changing commands:
+
+```bash
+uv run python tools/run-live-fault-recovery-drills.py \\
+  --rpc-url http://validator-1:26657 \\
+  --rpc-url http://validator-2:26657 \\
+  --rpc-url http://validator-3:26657 \\
+  --rpc-url http://validator-4:26657 \\
+  --target-rpc-url http://validator-1:26657 \\
+  --ssh-target operator-jump \\
+  --graceful-command /path/to/graceful-restart \\
+  --abrupt-command /path/to/abrupt-termination \\
+  --host-reboot-command /path/to/clean-host-reboot \\
+  --host-reboot-recovery-command /path/to/start-abci-then-comet \\
+  --stale-predecessor-command \\
+    "uv run python tools/run-cometbft-stale-predecessor-drill.py ..." \\
+  --timeout-seconds 900 \\
+  --output evidence/drills/live-faults.json
 ```
 
 Combine and validate the reports:
