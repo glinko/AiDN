@@ -28,6 +28,12 @@ from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.endpoints.api import build_endpoint_router
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
+from aidn_hypervisor.mcp import (
+    McpPersistentStateStore,
+    McpRemoteGateway,
+    build_mcp_remote_router,
+    build_mcp_server,
+)
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.ollama import OllamaPlugin
@@ -173,6 +179,37 @@ def build_app(
     app.state.registry_replication_runtime = resolved_registry_replication_runtime
     app.state.remote_trust_anchor_runtime = resolved_remote_trust_anchor_runtime
     app.state.contribution_service = resolved_contribution_service
+    app.state.endpoint_service = resolved_endpoint_service
+    app.state.endpoint_publication_service = resolved_endpoint_publication_service
+    app.state.remote_endpoint_service = resolved_remote_endpoint_service
+    app.state.session_service = resolved_session_service
+    app.state.validation_service = resolved_validation_service
+    app.state.registry_service = resolved_registry_service
+    mcp_state_store = McpPersistentStateStore.from_hypervisor_state_store(state_store)
+    app.state.state_store = state_store
+    app.state.mcp_state_store = mcp_state_store
+    app.state.mcp_server = build_mcp_server(
+        resolved_service,
+        endpoint_service=resolved_endpoint_service,
+        endpoint_publication_service=resolved_endpoint_publication_service,
+        validation_service=resolved_validation_service,
+        registry_service=resolved_registry_service,
+        mcp_state_store=mcp_state_store,
+    )
+    mcp_remote_enabled = _env_bool("AIDN_MCP_REMOTE_ENABLED", default=False)
+    mcp_remote_token = os.getenv("AIDN_MCP_REMOTE_TOKEN") if mcp_remote_enabled else None
+    if mcp_remote_enabled and not mcp_remote_token:
+        raise ValueError("AIDN_MCP_REMOTE_ENABLED requires AIDN_MCP_REMOTE_TOKEN")
+    mcp_remote_tls_required = _env_bool("AIDN_MCP_REMOTE_TLS_REQUIRED", default=False)
+    mcp_remote_gateway = McpRemoteGateway(
+        app.state.mcp_server.control,
+        agent_token=mcp_remote_token,
+        operator_token=os.getenv("AIDN_MCP_OPERATOR_TOKEN") if mcp_remote_enabled else None,
+        require_tls=mcp_remote_tls_required,
+    )
+    app.state.mcp_remote_gateway = mcp_remote_gateway
+    if mcp_remote_gateway.enabled:
+        app.include_router(build_mcp_remote_router(mcp_remote_gateway))
 
     @app.middleware("http")
     async def validator_write_boundary(request: Request, call_next):
@@ -243,6 +280,10 @@ def build_app(
 def _is_validator_consensus_write_path(path: str) -> bool:
     """Allow only consensus-managed validator Session writes through HTTP."""
     parts = path.strip("/").split("/")
+    if parts and parts[0] == "mcp":
+        # MCP remote control is a separately authenticated local operator
+        # boundary; it does not submit consensus transactions directly.
+        return True
     if (
         len(parts) == 5
         and parts[:3] == ["api", "v1", "endpoints"]

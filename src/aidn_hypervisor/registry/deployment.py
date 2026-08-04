@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import shutil
@@ -16,6 +15,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from aidn_hypervisor.dispatcher.transport.tls import TlsListener, TlsTransport
 from aidn_hypervisor.secrets import FileSecretManager, SecretManagerError
+from aidn_hypervisor.secrets import (
+    load_file_secret_manager_from_environment as _load_file_secret_manager_from_environment,
+)
 
 from .bridge import RegistryServiceAdapter, envelope_to_legacy_record
 from .listener import RegistryReplicationTlsListener
@@ -87,6 +89,11 @@ class RegistryReplicationDeploymentConfig(BaseModel, frozen=True):
         return self
 
 
+def load_file_secret_manager_from_environment() -> FileSecretManager | None:
+    """Preserve the deployment-module import path for existing callers."""
+    return _load_file_secret_manager_from_environment()
+
+
 class RegistryReplicationSecretMaterializer:
     """Materialize TLS inputs as short-lived mode-0600 files for ssl.SSLContext."""
 
@@ -112,23 +119,6 @@ class RegistryReplicationSecretMaterializer:
         path.write_bytes(self._secret_manager.get(handle))
         os.chmod(path, 0o600)
         return path
-
-
-def load_file_secret_manager_from_environment() -> FileSecretManager | None:
-    """Build the local encrypted store only when both deployment variables exist."""
-    path = os.getenv("AIDN_SECRET_MANAGER_PATH")
-    encoded_key = os.getenv("AIDN_SECRET_MANAGER_MASTER_KEY")
-    if path is None and encoded_key is None:
-        return None
-    if not path or not encoded_key:
-        raise ValueError(
-            "AIDN_SECRET_MANAGER_PATH and AIDN_SECRET_MANAGER_MASTER_KEY are both required"
-        )
-    try:
-        master_key = base64.b64decode(encoded_key, validate=True)
-    except ValueError as exc:
-        raise ValueError("AIDN_SECRET_MANAGER_MASTER_KEY must be base64-encoded") from exc
-    return FileSecretManager(path=Path(path), master_key=master_key)
 
 
 def load_registry_replication_deployment_config(path: Path) -> RegistryReplicationDeploymentConfig:

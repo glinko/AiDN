@@ -43,6 +43,11 @@ Capability Runtime service boundaries, Runtime identity, Runtime ownership, and 
 
 Hypervisor-to-Runtime registration, Session execution, streaming, usage-report transport, health, and recovery semantics must also stay aligned with [docs/product/RFC-0054-capability-runtime-protocol.md](./docs/product/RFC-0054-capability-runtime-protocol.md).
 
+Agent control-plane lifecycle, scopes, plan/apply semantics, resource exposure,
+approval boundaries, and MCP transport behavior must also stay aligned with
+[the MCP-0001 implementation profile](./docs/product/MCP-0001-node-control-server-implementation-profile.md)
+and the attached MCP-0001 normative document pack.
+
 Provider-plugin manifests, Provider Instance lifecycle, Model Deployment lifecycle, installation recipes, and plugin trust boundaries must also stay aligned with [docs/product/RFC-0055-provider-plugin-system-and-directory.md](./docs/product/RFC-0055-provider-plugin-system-and-directory.md).
 
 Provider-plugin control-plane and execution-plane runtime adapter semantics must also stay aligned with [docs/product/RFC-0056-provider-plugin-runtime-interface.md](./docs/product/RFC-0056-provider-plugin-runtime-interface.md).
@@ -200,6 +205,8 @@ Product alignment summary:
 - the canonical Ledger operation inventory is now documented in `RFC-0059`, so future consensus, settlement, reward, Faucet, validation, and suspension work can land on one state-transition catalog instead of duplicating operation semantics across RFCs;
 - the Capability Runtime service model is now documented in `RFC-0053`, so future runtime packaging, runtime authorization, runtime replacement, and multi-runtime capability work can share one architectural contract before wire-level protocol details;
 - the Hypervisor-to-Runtime boundary is now documented in `RFC-0054`, and its first durable protocol core now enforces approved Binding/route identity, handshake version negotiation, semantic replay protection, Request admission/idempotency, Usage chains and explicit recovery plans/results;
+- the first `MCP-0001` node-control slice is now implemented as a local stdio JSON-RPC server plus an opt-in bearer-token HTTP gateway over the existing Hypervisor service. It exposes scope-filtered read models and Bundle plan/apply mutations with persistent Control Sessions, atomic plans/idempotency, revision checks, hash-linked audit events, a separate operator approval channel, and an operator emergency stop. The production HTTP profile now adds mandatory mTLS, TLS 1.2+, HTTPS enforcement, private-key permission checks, a single-worker launcher, Secret Manager-backed TLS handles, hash-only rotation detection, valid-bundle gating, and graceful certificate reload; QUIC hardening, shell execution, wallet signing, public Endpoint actions, and consensus writes remain deferred. See [the MCP implementation profile](./docs/product/MCP-0001-node-control-server-implementation-profile.md) and [the quickstart](./docs/development/mcp-server-quickstart.md);
+- the production MCP TLS profile has controlled Ubuntu acceptance on `192.168.88.127`: a real client certificate, encrypted Secret Manager handles, certificate serial rotation, graceful restart, stale transport-session rejection and new-session reconnect all passed. The evidence is [MCP TLS rotation acceptance](./docs/development/mcp-tls-rotation-acceptance-2026-08-04.md); it is technical interoperability evidence only and does not prove organizational independence;
 - registry replication is now documented in `RFC-0061`, so future Full Registry eligibility, anti-entropy, completeness proofs, challenge evidence, and repair synchronization can build on one deterministic storage and retrieval model instead of scattered service-local heuristics;
 - snapshot and fast State Sync are now documented in `RFC-0062`, so future node bootstrap, corruption recovery, trusted checkpoint handling, and portable state restoration can build on one verification-first protocol instead of ad hoc database-copy assumptions;
 - validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
@@ -1047,6 +1054,9 @@ This work is intentionally outside the functional MVP. It must not alter current
   CometBFT Merkle proofs, four-way AppHash convergence and remote validator
   restart continuity all passed on the live Ubuntu hosts. This is controlled
   lab evidence only; the detailed record is [here](./docs/development/cometbft-lan-acceptance-2026-08-02.md).
+- MCP TLS rotation acceptance (2026-08-04): the actual Secret Manager-backed
+  production HTTP launcher passed certificate rotation and MCP reconnect on
+  `192.168.88.127`; the detailed record is [here](./docs/development/mcp-tls-rotation-acceptance-2026-08-04.md).
 - Validator AppHash compatibility now treats empty post-MVP Ledger extensions as absent during canonical hashing, so upgrades do not invalidate historical snapshots merely by adding empty stake, penalty, checkpoint, dispute, or correction fields; populated extensions remain committed.
 - The functional controlled-testnet MVP gate is now closed. Remaining priorities in this section are public-network/post-MVP claims: independent-operator evidence, public directory authority, external multi-validator finality, and enforceable production trust policy.
 
