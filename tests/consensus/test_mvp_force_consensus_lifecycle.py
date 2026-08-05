@@ -47,6 +47,17 @@ class _Transport:
         }
 
 
+class _FailedTransport:
+    def broadcast_tx_sync(self, transaction: bytes, *, timeout_seconds: int) -> dict:
+        del transaction, timeout_seconds
+        return {
+            "result": {
+                "code": 1,
+                "log": "consensus operation type is not registered: OPERATOR_WALLET_BIND",
+            }
+        }
+
+
 class _FinalitySource:
     def __init__(self, chain_id: str) -> None:
         self.chain_id = chain_id
@@ -429,6 +440,33 @@ def test_validator_wallet_bootstrap_applies_only_after_canonical_block_finality(
     assert refreshed.json()["configured"] is True
     assert hypervisor.owner_wallet_state()["configured"] is True
     assert hypervisor.ledger_operation_service.snapshot_operations()[-1]["operation_id"] == operation_id
+
+
+def test_failed_validator_wallet_bootstrap_is_readable_and_replaceable():
+    hypervisor, client, _endpoint, _session, consensus, _source = _context(
+        open_session=False
+    )
+    consensus.config.mode = ConsensusMode.VALIDATOR
+    consensus._submission_transport = _FailedTransport()
+
+    failed = client.post(
+        "/operators/wallet/bootstrap/create",
+        json={"label": "failed wallet"},
+    )
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "CONSENSUS_FAILED"
+    assert "not registered" in failed.json()["consensus"]["error"]
+    assert hypervisor.owner_wallet_state()["pending_consensus"]["status"] == "failed"
+    assert client.get("/operators/wallet/bootstrap").status_code == 200
+
+    consensus._submission_transport = _Transport()
+    retried = client.post(
+        "/operators/wallet/bootstrap/create",
+        json={"label": "retry wallet"},
+    )
+    assert retried.status_code == 202
+    assert retried.json()["status"] == "CONSENSUS_PENDING"
+    assert retried.json()["consensus"]["operation_id"] != failed.json()["consensus"]["operation_id"]
 
 
 def test_validator_force_projections_do_not_enter_canonical_operation_log():
