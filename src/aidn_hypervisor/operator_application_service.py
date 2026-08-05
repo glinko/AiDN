@@ -209,6 +209,82 @@ class OperatorApplicationService:
         if submission.status.value == "failed":
             raise ValueError(submission.error or "wallet bind consensus submission failed")
 
+    def _owner_wallet_binding_operation(self) -> tuple[dict, LedgerOperationEnvelope] | None:
+        owner = self._host._owner_wallet
+        if owner is None:
+            return None
+        for operation in reversed(self._host.ledger_operation_service.snapshot_operations()):
+            if operation.get("operation_type") != "OPERATOR_WALLET_BIND":
+                continue
+            payload = operation.get("payload") or {}
+            if (
+                payload.get("node_id") != self._host.node_id
+                or payload.get("operator_id") != self._host.operator_id
+                or payload.get("wallet_id") != owner.get("wallet_id")
+                or payload.get("public_key") != owner.get("public_key")
+            ):
+                continue
+            try:
+                return operation, LedgerOperationEnvelope.model_validate(operation)
+            except ValueError:
+                return None
+        return None
+
+    def _owner_wallet_binding_is_finalized(self) -> bool:
+        binding = self._owner_wallet_binding_operation()
+        consensus = getattr(self._host, "consensus_service", None)
+        finality_source = getattr(self._host, "consensus_finality_source", None)
+        restore_submission = getattr(consensus, "restore_submission", None)
+        if binding is None or consensus is None or finality_source is None or restore_submission is None:
+            return False
+        _, envelope = binding
+        try:
+            restore_submission(envelope)
+            consensus.reconcile_finality(
+                envelope.operation_id,
+                finality_source=finality_source,
+            )
+        except Exception:
+            return False
+        return consensus.is_finalized(envelope.operation_id)
+
+    def _stage_unfinalized_owner_wallet_recovery(self) -> bool:
+        if self._host._owner_wallet is None or self._host._pending_owner_wallet_bootstraps:
+            return False
+        binding = self._owner_wallet_binding_operation()
+        if binding is None:
+            return False
+        _, envelope = binding
+        self._host.stage_pending_consensus_envelope(envelope)
+        self._host._pending_owner_wallet_bootstraps.append(
+            {
+                "operation_id": envelope.operation_id,
+                "payload": dict(envelope.payload),
+                "owner_wallet": dict(self._host._owner_wallet),
+            }
+        )
+        self._host._owner_wallet = None
+        return True
+
+    @staticmethod
+    def _is_retryable_consensus_error(error: str | None) -> bool:
+        message = (error or "").lower()
+        return any(
+            marker in message
+            for marker in (
+                "connection refused",
+                "connection reset",
+                "connection aborted",
+                "timed out",
+                "timeout",
+                "urlopen error",
+                "http error 5",
+                "internal server error",
+                "rpc error",
+                "temporarily unavailable",
+            )
+        )
+
     def _discard_pending_owner_wallet_bootstrap(self, operation_id: str) -> None:
         """Remove one failed local intent so an explicit retry can start cleanly."""
         self._host._pending_owner_wallet_bootstraps = [
@@ -222,9 +298,6 @@ class OperatorApplicationService:
     def _reconcile_pending_owner_wallet_bootstraps(self) -> None:
         if self._reconciling_owner_wallet_bootstraps:
             return
-        pending = list(getattr(self._host, "_pending_owner_wallet_bootstraps", []))
-        if not pending:
-            return
         consensus = getattr(self._host, "consensus_service", None)
         if consensus is None or not consensus.is_validator:
             return
@@ -232,19 +305,35 @@ class OperatorApplicationService:
         self._reconciling_owner_wallet_bootstraps = True
         changed = False
         try:
+            if (
+                self._host._owner_wallet is not None
+                and not self._owner_wallet_binding_is_finalized()
+            ):
+                changed = self._stage_unfinalized_owner_wallet_recovery() or changed
+            pending = list(getattr(self._host, "_pending_owner_wallet_bootstraps", []))
+            if not pending:
+                if changed:
+                    self._host._persist_state()
+                return
             canonical_operations = {
                 operation.get("operation_id"): operation
                 for operation in self._host.ledger_operation_service.snapshot_operations()
             }
+            pending = list(getattr(self._host, "_pending_owner_wallet_bootstraps", []))
             for intent in pending:
                 operation_id = intent["operation_id"]
                 submission = consensus.get_submission(operation_id)
                 if submission is not None and submission.status.value == "failed":
-                    # A failed CheckTx must remain inspectable, but it must not
-                    # make every read of the wallet state fail or be retried
-                    # forever. The next explicit bootstrap attempt can replace
-                    # this failed intent.
                     error = submission.error or "consensus submission failed"
+                    if self._is_retryable_consensus_error(error):
+                        try:
+                            self._submit_pending_owner_wallet_bootstrap(intent)
+                        except ValueError as retry_error:
+                            error = str(retry_error)
+                        else:
+                            intent.pop("last_error", None)
+                            changed = True
+                            continue
                     if intent.get("last_error") != error:
                         intent["last_error"] = error
                         changed = True
@@ -269,6 +358,18 @@ class OperatorApplicationService:
                     raise ValueError("wallet bootstrap operation type mismatch")
                 if operation.get("payload") != intent["payload"]:
                     raise ValueError("wallet bootstrap consensus payload mismatch")
+                submission = consensus.get_submission(operation_id)
+                if submission is None or submission.status.value != "finalized":
+                    try:
+                        self._submit_pending_owner_wallet_bootstrap(intent)
+                    except ValueError as error:
+                        message = str(error)
+                        if intent.get("last_error") != message:
+                            intent["last_error"] = message
+                            changed = True
+                    else:
+                        changed = True
+                    continue
                 self._host._owner_wallet = dict(intent["owner_wallet"])
                 self._host._pending_owner_wallet_bootstraps = [
                     item
@@ -321,6 +422,8 @@ class OperatorApplicationService:
             raise ValueError(f"Unsupported wallet bootstrap mode: {mode}")
         if mode == "import" and not private_key:
             raise ValueError("Private key is required for wallet import")
+        if self._requires_consensus_wallet_bind():
+            self._reconcile_pending_owner_wallet_bootstraps()
         material = self._prepare_wallet_material(
             mode=mode,
             label=label,

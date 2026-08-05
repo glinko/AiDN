@@ -316,6 +316,31 @@ class ConsensusService:
         """Return the exact envelope retained for an idempotent retry."""
         return self._submitted_envelopes.get(operation_id)
 
+    def restore_submission(self, envelope: LedgerOperationEnvelope) -> SubmissionRecord:
+        """Restore submission identity before checking external finality.
+
+        A restart may retain a canonical operation in the local ledger while
+        losing the in-memory submission index.  Reconstructing the exact
+        transaction hash lets the verified finality source inspect the chain
+        before recovery decides whether a rebroadcast is necessary.
+        """
+        transaction_bytes = self._serialize_envelope(envelope)
+        transaction_hash = cometbft_transaction_hash(transaction_bytes)
+        self._submitted_envelopes[envelope.operation_id] = envelope
+        existing = self._submissions.get(envelope.operation_id)
+        if existing is not None:
+            if existing.transaction_hash != transaction_hash:
+                raise ValueError("operation_id is already bound to another transaction")
+            return existing
+        record = SubmissionRecord(
+            operation_id=envelope.operation_id,
+            status=SubmissionStatus.PENDING,
+            submitted_at=self._time_now(),
+            transaction_hash=transaction_hash,
+        )
+        self._submissions[envelope.operation_id] = record
+        return record
+
     def find_submitted_envelope(
         self,
         operation_type: str,

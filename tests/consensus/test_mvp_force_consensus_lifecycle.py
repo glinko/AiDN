@@ -442,6 +442,31 @@ def test_validator_wallet_bootstrap_applies_only_after_canonical_block_finality(
     assert hypervisor.ledger_operation_service.snapshot_operations()[-1]["operation_id"] == operation_id
 
 
+def test_validator_reconciles_stale_local_wallet_binding_only_after_finality():
+    hypervisor, client, _endpoint, _session, consensus, source = _context(
+        open_session=False
+    )
+    consensus.config.mode = ConsensusMode.VALIDATOR
+    facade = hypervisor._operator_application_facade()
+    material = facade._prepare_wallet_material(mode="create", label="stale wallet", private_key=None)
+    envelope = facade._wallet_bind_envelope(material, mode="create")
+    hypervisor.ledger_operation_service.record_admitted_envelope(envelope)
+    hypervisor._owner_wallet = dict(material["wallet"])
+
+    pending = hypervisor.owner_wallet_state()
+
+    assert pending["configured"] is False
+    assert pending["pending_consensus"]["operation_id"] == envelope.operation_id
+    assert consensus.get_submission(envelope.operation_id).status.value == "admitted"
+
+    source.finalize(envelope.operation_id, 1)
+    recovered = client.get("/operators/wallet/bootstrap")
+
+    assert recovered.status_code == 200
+    assert recovered.json()["configured"] is True
+    assert recovered.json()["wallet_id"] == material["wallet"]["wallet_id"]
+
+
 def test_failed_validator_wallet_bootstrap_is_readable_and_replaceable():
     hypervisor, client, _endpoint, _session, consensus, _source = _context(
         open_session=False

@@ -100,6 +100,23 @@ def test_submission_retains_exact_transaction_hash_for_finality_lookup():
     )
 
 
+def test_restore_submission_reconstructs_operation_identity_without_rebroadcast():
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    svc = ConsensusService(cfg)
+    env = _make_envelope()
+
+    first = svc.restore_submission(env)
+    second = svc.restore_submission(env)
+
+    expected_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    assert first is second
+    assert first.status == SubmissionStatus.PENDING
+    assert svc.get_operation_envelope(env.operation_id) == env
+    assert svc.transaction_hash_for_operation(env.operation_id) == cometbft_transaction_hash(
+        expected_bytes
+    )
+
+
 def test_http_submission_transport_marks_only_checktx_admission():
     env = _make_envelope()
     transaction_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
