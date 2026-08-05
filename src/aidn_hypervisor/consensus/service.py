@@ -8,11 +8,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
+from urllib.parse import urlsplit, urlunsplit
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.cometbft import (
     CometBftSubmissionTransport,
+    HttpCometBftRpcTransport,
     HttpCometBftSubmissionTransport,
     cometbft_transaction_hash,
 )
@@ -131,6 +133,67 @@ class ConsensusService:
     @property
     def is_enabled(self) -> bool:
         return self.config.mode != ConsensusMode.DISABLED
+
+    def status(self) -> dict:
+        """Return bounded local and CometBFT synchronization status.
+
+        The Hypervisor may configure a ``tcp://`` submission endpoint while
+        CometBFT exposes its read-only RPC over HTTP on the same authority.
+        Convert only that transport label; never follow redirects or expose
+        remote exception details through the control plane.
+        """
+        payload = {
+            "enabled": self.is_enabled,
+            "mode": self.config.mode.value,
+            "node_id": self.config.node_id,
+            "chain_id": self.config.chain_id,
+            "metrics": self.get_metrics(),
+            "rpc": {"available": False},
+        }
+        if not self.is_enabled:
+            payload["rpc"] = {"available": False, "reason": "consensus_disabled"}
+            return payload
+
+        parsed = urlsplit(self.config.cometbft_endpoint)
+        rpc_endpoint = self.config.cometbft_endpoint
+        if parsed.scheme not in {"http", "https"}:
+            if not parsed.netloc:
+                payload["rpc"] = {"available": False, "reason": "invalid_rpc_endpoint"}
+                return payload
+            rpc_endpoint = urlunsplit(("http", parsed.netloc, "", "", ""))
+
+        try:
+            transport = HttpCometBftRpcTransport(rpc_endpoint)
+            status = transport.get("/status", params={}, timeout_seconds=2)
+            net_info = transport.get("/net_info", params={}, timeout_seconds=2)
+            status_result = status.get("result", {})
+            sync_info = status_result.get("sync_info", {})
+            node_info = status_result.get("node_info", {})
+            net_result = net_info.get("result", {})
+            height_raw = sync_info.get("latest_block_height")
+            try:
+                height = int(height_raw) if height_raw is not None else None
+            except (TypeError, ValueError):
+                height = None
+            peer_count_raw = net_result.get("n_peers")
+            try:
+                peer_count = int(peer_count_raw) if peer_count_raw is not None else None
+            except (TypeError, ValueError):
+                peer_count = None
+            payload["rpc"] = {
+                "available": True,
+                "catching_up": bool(sync_info.get("catching_up", False)),
+                "latest_block_height": height,
+                "chain_id": node_info.get("network"),
+                "peer_count": peer_count,
+                "listening": bool(net_result.get("listening", False)),
+            }
+        except Exception as error:  # pragma: no cover - defensive RPC boundary
+            payload["rpc"] = {
+                "available": False,
+                "error_type": type(error).__name__,
+            }
+        return payload
 
     # ---- Submission ----
 

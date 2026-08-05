@@ -220,6 +220,52 @@ def test_metrics_non_validator_mode():
     assert m["mode"] == "non_validator"
 
 
+def test_status_reads_cometbft_rpc_state(monkeypatch):
+    class FakeRpcTransport:
+        def __init__(self, endpoint):
+            assert endpoint == "http://127.0.0.1:26657"
+
+        def get(self, path, *, params, timeout_seconds):
+            assert params == {}
+            assert timeout_seconds == 2
+            if path == "/status":
+                return {
+                    "result": {
+                        "sync_info": {
+                            "catching_up": False,
+                            "latest_block_height": "42",
+                        },
+                        "node_info": {"network": "chain-test"},
+                    }
+                }
+            assert path == "/net_info"
+            return {"result": {"n_peers": "3", "listening": True}}
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.consensus.service.HttpCometBftRpcTransport",
+        FakeRpcTransport,
+    )
+    service = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.VALIDATOR,
+            cometbft_endpoint="tcp://127.0.0.1:26657",
+        )
+    )
+
+    status = service.status()
+
+    assert status["enabled"] is True
+    assert status["mode"] == "validator"
+    assert status["rpc"] == {
+        "available": True,
+        "catching_up": False,
+        "latest_block_height": 42,
+        "chain_id": "chain-test",
+        "peer_count": 3,
+        "listening": True,
+    }
+
+
 # ---- participation rate ----
 
 
