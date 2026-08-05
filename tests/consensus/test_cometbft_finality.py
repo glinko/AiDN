@@ -1,5 +1,7 @@
 import base64
 import json
+from io import BytesIO
+from urllib import error as urllib_error
 
 import pytest
 
@@ -201,6 +203,37 @@ def test_http_cometbft_submission_transport_rejects_unsafe_endpoint_configuratio
         HttpCometBftSubmissionTransport("https://token@example.test")
     with pytest.raises(ValueError, match="path"):
         HttpCometBftSubmissionTransport("https://example.test/rpc")
+
+
+def test_http_cometbft_submission_transport_preserves_json_http_error_body(monkeypatch):
+    response = {
+        "error": {
+            "code": -32603,
+            "message": "Internal error",
+            "data": "tx already exists in cache",
+        }
+    }
+    error = urllib_error.HTTPError(
+        "https://example.test/broadcast_tx_sync",
+        500,
+        "Internal Server Error",
+        {},
+        BytesIO(json.dumps(response).encode("utf-8")),
+    )
+
+    class _Opener:
+        def open(self, request, *, timeout):
+            del request, timeout
+            raise error
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.consensus.cometbft.urllib_request.build_opener",
+        lambda *_: _Opener(),
+    )
+
+    transport = HttpCometBftSubmissionTransport("https://example.test")
+
+    assert transport.broadcast_tx_sync(b"tx", timeout_seconds=2) == response
 
 
 def test_validator_set_provider_fetches_every_page_for_current_and_next_sets():

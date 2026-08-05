@@ -13,6 +13,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from typing import Protocol
+from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
@@ -194,8 +195,16 @@ class HttpCometBftSubmissionTransport:
             data=b"",
         )
         opener = urllib_request.build_opener(_RejectRedirects())
-        with opener.open(request, timeout=timeout_seconds) as response:
-            body = response.read(self._max_response_bytes + 1)
+        try:
+            with opener.open(request, timeout=timeout_seconds) as response:
+                body = response.read(self._max_response_bytes + 1)
+        except urllib_error.HTTPError as error:
+            # CometBFT may use HTTP 500 for a JSON-RPC CheckTx error.  Keep
+            # the JSON body so the submission layer can distinguish a real
+            # rejection from an idempotent cache admission.
+            body = error.read(self._max_response_bytes + 1)
+            if not body:
+                raise ValueError(f"CometBFT submission HTTP error {error.code}") from error
         if len(body) > self._max_response_bytes:
             raise ValueError("CometBFT submission response exceeds configured limit")
         decoded = json.loads(body.decode("utf-8"))
