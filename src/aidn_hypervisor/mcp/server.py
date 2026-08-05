@@ -477,6 +477,35 @@ class McpControlPlane:
             requested.approval_policy,
             requested.budget.to_record() if requested.budget else None,
         )
+        persisted_policy = dict(restored.approval_policy)
+        requested_policy = dict(requested.approval_policy)
+        if persisted_policy != requested_policy:
+            # A release may add a new mutating tool after an older control
+            # session was persisted.  Allow only additive, restrictive
+            # defaults; changing an existing rule or adding AUTO would weaken
+            # the operator's previously persisted authority.
+            persisted_keys = set(persisted_policy)
+            existing_policy_unchanged = all(
+                requested_policy.get(key) == value
+                for key, value in persisted_policy.items()
+            )
+            additive_policy = {
+                key: value
+                for key, value in requested_policy.items()
+                if key not in persisted_keys
+            }
+            if (
+                existing_policy_unchanged
+                and additive_policy
+                and all(value != "AUTO" for value in additive_policy.values())
+                and set(requested_policy) == persisted_keys | set(additive_policy)
+            ):
+                restored.approval_policy.update(additive_policy)
+            else:
+                raise McpPersistenceError(
+                    "MCP_INTERNAL_ERROR",
+                    "Control Session identity or delegation does not match persisted state",
+                )
         persisted_identity = (
             restored.agent_identity,
             restored.operator_identity,

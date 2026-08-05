@@ -513,3 +513,29 @@ def test_mcp_corrupt_persisted_audit_chain_fails_closed(tmp_path) -> None:
 
     with pytest.raises(McpPersistenceError):
         _server("BUNDLE:ACTIVATE", mcp_state_store=store)
+
+
+def test_mcp_persistence_migrates_new_restrictive_approval_defaults(tmp_path) -> None:
+    state_path = tmp_path / "mcp-control-state.json"
+    store = McpPersistentStateStore(state_path)
+    _server(
+        "PROVIDER:READ",
+        approval_policy={"bundle_activate": "AUTO", "bundle_retire": "OPERATOR_CONFIRMATION"},
+        mcp_state_store=store,
+    )
+
+    migrated = _server(
+        "PROVIDER:READ",
+        approval_policy={
+            "bundle_activate": "AUTO",
+            "bundle_retire": "OPERATOR_CONFIRMATION",
+            "provider_attach": "OPERATOR_CONFIRMATION",
+        },
+        mcp_state_store=store,
+    )
+
+    assert migrated.control.session.approval_policy["provider_attach"] == "OPERATOR_CONFIRMATION"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["sessions"]["acs-test"]["approval_policy"]["provider_attach"] == (
+        "OPERATOR_CONFIRMATION"
+    )
