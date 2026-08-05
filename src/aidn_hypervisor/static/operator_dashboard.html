@@ -842,6 +842,32 @@
       background: rgba(7, 19, 30, 0.82);
     }
 
+    .wallet-setup {
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid var(--line-strong);
+      background: linear-gradient(145deg, rgba(11, 31, 47, 0.96), rgba(7, 19, 30, 0.9));
+    }
+
+    .wallet-setup-status {
+      display: grid;
+      gap: 4px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(7, 18, 28, 0.72);
+    }
+
+    .wallet-setup-status.good {
+      border-color: rgba(73, 209, 125, 0.42);
+      background: rgba(73, 209, 125, 0.08);
+    }
+
+    .wallet-setup-status.bad {
+      border-color: rgba(255, 107, 107, 0.42);
+      background: rgba(255, 107, 107, 0.08);
+    }
+
     .wallet-summary-value {
       margin-top: 10px;
       font-family: "Manrope", "IBM Plex Sans", sans-serif;
@@ -8605,6 +8631,54 @@
       `;
     }
 
+    function operatorWalletBootstrap() {
+      return state.payloads.home?.bootstrap || {};
+    }
+
+    function operatorWalletReady(bootstrap = operatorWalletBootstrap()) {
+      return Boolean(bootstrap.wallet_ready || bootstrap.owner_wallet?.configured);
+    }
+
+    function renderWalletSetupPanel() {
+      const bootstrap = operatorWalletBootstrap();
+      const ownerWallet = bootstrap.owner_wallet || {};
+      const walletReady = operatorWalletReady(bootstrap);
+      const recommendation = homeRecommendedAction(bootstrap);
+      const nextScreen = recommendation.type === "endpoint" ? "endpoints" : recommendation.type === "screen" ? recommendation.action : null;
+      return `
+        <section class="wallet-form wallet-setup">
+          <div>
+            <div class="panel-heading">Operator Wallet Setup</div>
+            <div class="drawer-title">${walletReady ? "Wallet is configured" : "Bind node ownership"}</div>
+            <div class="inspector-copy">${walletReady ? "This wallet signs network-facing management and publication actions for this Hypervisor." : "Create a new owner wallet or import an existing private key before publishing an Endpoint."}</div>
+          </div>
+          <div class="wallet-setup-status ${walletReady ? "good" : "bad"}">
+            <strong>${walletReady ? (ownerWallet.label || "Owner wallet ready") : "Wallet configuration required"}</strong>
+            <span>${walletReady ? `Wallet ${ownerWallet.wallet_id || "configured"} is bound to this node.` : "The Readiness Wizard will continue automatically after this step completes."}</span>
+          </div>
+          ${
+            walletReady
+              ? `
+                ${state.bootstrapMessage ? `<div class="wallet-message ${state.bootstrapMessage.kind}">${state.bootstrapMessage.text}</div>` : ""}
+                ${nextScreen ? `<div class="wallet-inline-actions"><button class="primary-button" type="button" data-wallet-next-screen="${nextScreen}">Continue to ${nextScreen === "endpoints" ? "Endpoints" : "Providers"}</button></div>` : ""}
+              `
+              : `
+                <div class="wallet-form-grid">
+                  <label>Wallet label<input type="text" data-bootstrap-field="walletLabel" value="${escapeHtml(state.bootstrapDrafts.walletLabel)}" placeholder="Primary Wallet" autocomplete="off"></label>
+                  <button class="primary-button" type="button" data-bootstrap-action="create-wallet">${state.bootstrapPending === "create-wallet" ? "Creating..." : "Create Wallet"}</button>
+                </div>
+                <div class="wallet-form-grid">
+                  <label>Existing private key<input type="password" data-bootstrap-field="walletPrivateKey" value="${escapeHtml(state.bootstrapDrafts.walletPrivateKey)}" placeholder="Paste private key to import" autocomplete="off"></label>
+                  <button class="secondary-button" type="button" data-bootstrap-action="import-wallet">${state.bootstrapPending === "import-wallet" ? "Importing..." : "Import Wallet"}</button>
+                </div>
+                ${state.bootstrapMessage ? `<div class="wallet-message ${state.bootstrapMessage.kind}">${state.bootstrapMessage.text}</div>` : ""}
+                <div class="notice">The private key is sent only to this node's wallet bootstrap endpoint. Save a newly generated key before leaving this screen.</div>
+              `
+          }
+        </section>
+      `;
+    }
+
     function renderWalletUsageDetail() {
       const event = selectedWalletUsageEvent();
       if (!event) {
@@ -8969,6 +9043,9 @@
     }
 
     function renderWalletDrawerBody() {
+      if (state.walletTab === "setup") {
+        return renderWalletSetupPanel();
+      }
       if (state.walletLoading && !state.walletLoaded) {
         return `<div class="empty-state">Loading wallet ledger and settlement streams...</div>`;
       }
@@ -9047,6 +9124,12 @@
         return;
       }
 
+      const bootstrap = operatorWalletBootstrap();
+      const setupFocused =
+        state.walletDrawerSource === "readiness" &&
+        state.walletTab === "setup" &&
+        (!operatorWalletReady(bootstrap) || Boolean(state.bootstrapMessage));
+
       root.innerHTML = `
         <div class="drawer-header">
           <div>
@@ -9059,8 +9142,9 @@
             <button type="button" class="icon-button" data-wallet-close="true" aria-label="Close wallet drawer">×</button>
           </div>
         </div>
-        ${renderWalletSummaryCards()}
+        ${setupFocused ? "" : renderWalletSummaryCards()}
         <div class="wallet-tabs">
+          <button type="button" data-wallet-tab="setup" class="${state.walletTab === "setup" ? "active" : ""}">Setup</button>
           <button type="button" data-wallet-tab="usage" class="${state.walletTab === "usage" ? "active" : ""}">Usage</button>
           <button type="button" data-wallet-tab="settlements" class="${state.walletTab === "settlements" ? "active" : ""}">Settlements</button>
           <button type="button" data-wallet-tab="disputes" class="${state.walletTab === "disputes" ? "active" : ""}">Disputes</button>
@@ -10729,6 +10813,9 @@
     function openWalletDrawer(source) {
       state.walletDrawerOpen = true;
       state.walletDrawerSource = source;
+      if (source === "readiness") {
+        state.walletTab = "setup";
+      }
       renderWalletDrawer();
       bindInteractiveElements();
       if (!state.walletLoaded && !state.walletLoading) {
@@ -13390,6 +13477,15 @@
           } else if (button.dataset.walletAction === "resolve") {
             void resolveSelectedWalletDispute();
           }
+        });
+      });
+
+      document.querySelectorAll("[data-wallet-next-screen]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.walletDrawerOpen = false;
+          state.walletDrawerSource = null;
+          state.screen = button.dataset.walletNextScreen;
+          render();
         });
       });
 

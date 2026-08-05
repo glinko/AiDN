@@ -4097,6 +4097,20 @@ def test_operator_dashboard_wallet_has_a_single_mobile_scroll_owner() -> None:
     assert ".wallet-body" in response.text
 
 
+def test_operator_dashboard_readiness_wallet_action_opens_wallet_setup_flow() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert 'state.walletTab = "setup";' in response.text
+    assert 'data-wallet-tab="setup"' in response.text
+    assert "function renderWalletSetupPanel()" in response.text
+    assert 'data-bootstrap-action="create-wallet"' in response.text
+    assert 'data-bootstrap-action="import-wallet"' in response.text
+    assert 'data-wallet-next-screen="' in response.text
+
+
 def test_operator_dashboard_home_targets_drifted_endpoint_over_older_in_sync_endpoint() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
