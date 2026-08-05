@@ -205,7 +205,7 @@ class OperatorApplicationService:
         envelope = self._host.get_pending_consensus_envelope(intent["operation_id"])
         if envelope is None:
             raise ValueError("pending wallet bootstrap envelope is missing")
-        submission = consensus.submit_operation(envelope)
+        submission = consensus.submit_operation(envelope, retry_existing=True)
         if submission.status.value == "failed":
             raise ValueError(submission.error or "wallet bind consensus submission failed")
 

@@ -166,6 +166,43 @@ def test_submission_is_idempotent_for_the_same_operation_and_transaction():
     assert svc.get_metrics()["total_submitted"] == 1
 
 
+def test_retry_existing_submission_rebroadcasts_and_accepts_cometbft_cache():
+    env = _make_envelope()
+    transaction_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    transport = RecordingSubmissionTransport(
+        {
+            "result": {
+                "code": 0,
+                "hash": cometbft_transaction_hash(transaction_bytes),
+            }
+        }
+    )
+    svc = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.NON_VALIDATOR,
+            cometbft_endpoint="http://cometbft.test",
+        ),
+        submission_transport=transport,
+    )
+
+    first = svc.submit_operation(env)
+    transport.response = {
+        "error": {
+            "code": -32603,
+            "message": "Internal error",
+            "data": "tx already exists in cache",
+        }
+    }
+    second = svc.submit_operation(env, retry_existing=True)
+
+    assert second is first
+    assert second.status == SubmissionStatus.ADMITTED
+    assert second.error is None
+    assert len(transport.calls) == 2
+    assert svc.get_metrics()["total_submitted"] == 1
+    assert svc.get_metrics()["total_failed"] == 0
+
+
 def test_reconcile_finality_requires_matching_chain_and_is_idempotent():
     transport = RecordingSubmissionTransport({"result": {"code": 0}})
     svc = ConsensusService(

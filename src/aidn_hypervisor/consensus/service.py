@@ -209,12 +209,21 @@ class ConsensusService:
 
     # ---- Submission ----
 
-    def submit_operation(self, envelope: LedgerOperationEnvelope) -> SubmissionRecord:
+    def submit_operation(
+        self,
+        envelope: LedgerOperationEnvelope,
+        *,
+        retry_existing: bool = False,
+    ) -> SubmissionRecord:
         """
         RFC-0047 §28 — Submit a signed Ledger Operation to consensus.
 
         For non-validators: sends to CometBFT mempool.
         For validators: includes in next proposal.
+
+        Existing submissions remain idempotent by default. Recovery callers
+        may opt into rebroadcasting the exact same transaction after a
+        restart, because CometBFT mempool admission is not durable state.
         """
         transaction_bytes = self._serialize_envelope(envelope)
         transaction_hash = cometbft_transaction_hash(transaction_bytes)
@@ -223,8 +232,10 @@ class ConsensusService:
         if existing is not None:
             if existing.transaction_hash != transaction_hash:
                 raise ValueError("operation_id is already bound to another transaction")
-            return existing
-        if not self.is_enabled:
+            if existing.status == SubmissionStatus.FINALIZED or not retry_existing:
+                return existing
+            record = existing
+        elif not self.is_enabled:
             # Local processing — no consensus
             record = SubmissionRecord(
                 operation_id=envelope.operation_id,
@@ -238,15 +249,15 @@ class ConsensusService:
             self._total_submitted += 1
             self._total_finalized += 1
             return record
-
-        record = SubmissionRecord(
-            operation_id=envelope.operation_id,
-            status=SubmissionStatus.PENDING,
-            submitted_at=self._time_now(),
-            transaction_hash=transaction_hash,
-        )
-        self._submissions[envelope.operation_id] = record
-        self._total_submitted += 1
+        else:
+            record = SubmissionRecord(
+                operation_id=envelope.operation_id,
+                status=SubmissionStatus.PENDING,
+                submitted_at=self._time_now(),
+                transaction_hash=transaction_hash,
+            )
+            self._submissions[envelope.operation_id] = record
+            self._total_submitted += 1
 
         # A validator may have a local ABCI application and an HTTP CometBFT
         # RPC at the same time. The RPC path is canonical: local CheckTx is
@@ -257,24 +268,33 @@ class ConsensusService:
                     transaction_bytes,
                     timeout_seconds=max(1, int(self.config.submission_timeout_seconds)),
                 )
-                submission_result = self._submission_result(response)
-                code = self._submission_code(submission_result.get("code"))
-                if code != 0:
-                    raise ValueError(
-                        str(
-                            submission_result.get("log")
-                            or submission_result.get("info")
-                            or f"CometBFT CheckTx code {code}"
+                if self._is_cached_transaction_response(response):
+                    # CometBFT can report an already-admitted transaction as
+                    # an RPC error when a recovered node rebroadcasts it.
+                    # The transaction hash is already bound to this record,
+                    # so this is an idempotent admission, not a failure.
+                    record.status = SubmissionStatus.ADMITTED
+                    record.admitted_at = self._time_now()
+                    record.error = None
+                else:
+                    submission_result = self._submission_result(response)
+                    code = self._submission_code(submission_result.get("code"))
+                    if code != 0:
+                        raise ValueError(
+                            str(
+                                submission_result.get("log")
+                                or submission_result.get("info")
+                                or f"CometBFT CheckTx code {code}"
+                            )
                         )
-                    )
-                response_hash = submission_result.get("hash")
-                if response_hash is not None and not self._matches_transaction_hash(
-                    response_hash,
-                    transaction_hash,
-                ):
-                    raise ValueError("CometBFT submission hash does not match transaction")
-                record.status = SubmissionStatus.ADMITTED
-                record.admitted_at = self._time_now()
+                    response_hash = submission_result.get("hash")
+                    if response_hash is not None and not self._matches_transaction_hash(
+                        response_hash,
+                        transaction_hash,
+                    ):
+                        raise ValueError("CometBFT submission hash does not match transaction")
+                    record.status = SubmissionStatus.ADMITTED
+                    record.admitted_at = self._time_now()
             except Exception as error:
                 record.status = SubmissionStatus.FAILED
                 record.error = str(error) or error.__class__.__name__
@@ -709,6 +729,19 @@ class ConsensusService:
         if not isinstance(result, dict):
             raise ValueError("CometBFT submission result is invalid")
         return result
+
+    def _is_cached_transaction_response(self, response: object) -> bool:
+        """Return whether CometBFT reports an idempotently cached transaction."""
+        if not isinstance(response, dict):
+            return False
+        fragments: list[str] = []
+        error = response.get("error")
+        if isinstance(error, dict):
+            fragments.extend(str(error.get(key, "")) for key in ("message", "data"))
+        result = response.get("result")
+        if isinstance(result, dict):
+            fragments.extend(str(result.get(key, "")) for key in ("log", "info"))
+        return "tx already exists in cache" in " ".join(fragments).lower()
 
     def _submission_code(self, value: object) -> int:
         if isinstance(value, bool):
