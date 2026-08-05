@@ -310,6 +310,14 @@ class OperatorApplicationService:
                 and not self._owner_wallet_binding_is_finalized()
             ):
                 changed = self._stage_unfinalized_owner_wallet_recovery() or changed
+                if self._host._owner_wallet is not None:
+                    pending_wallets = {
+                        item.get("owner_wallet", {}).get("wallet_id")
+                        for item in getattr(self._host, "_pending_owner_wallet_bootstraps", [])
+                    }
+                    if self._host._owner_wallet.get("wallet_id") in pending_wallets:
+                        self._host._owner_wallet = None
+                        changed = True
             pending = list(getattr(self._host, "_pending_owner_wallet_bootstraps", []))
             if not pending:
                 if changed:
@@ -361,6 +369,9 @@ class OperatorApplicationService:
                 submission = consensus.get_submission(operation_id)
                 if submission is None or submission.status.value != "finalized":
                     try:
+                        envelope = LedgerOperationEnvelope.model_validate(operation)
+                        self._host.stage_pending_consensus_envelope(envelope)
+                        consensus.restore_submission(envelope)
                         self._submit_pending_owner_wallet_bootstrap(intent)
                     except ValueError as error:
                         message = str(error)
