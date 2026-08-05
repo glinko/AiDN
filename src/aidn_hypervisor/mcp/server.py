@@ -34,6 +34,8 @@ from aidn_hypervisor.operator_views import (
 MCP_PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_MCP_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26")
 MCP_SERVER_VERSION = "0.1.0"
+DEFAULT_CONTROL_SESSION_TTL_SECONDS = 3600
+MIN_CONTROL_SESSION_TTL_SECONDS = 60
 
 JSONRPC_INVALID_REQUEST = -32600
 JSONRPC_METHOD_NOT_FOUND = -32601
@@ -72,6 +74,18 @@ def _parse_datetime(value: Any, field_name: str) -> datetime:
     if parsed.tzinfo is None:
         raise McpPersistenceError("MCP_INTERNAL_ERROR", f"Persisted {field_name} must include a timezone")
     return parsed.astimezone(UTC)
+
+
+def _env_bool(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
 
 
 def _json_safe(value: Any) -> Any:
@@ -403,13 +417,22 @@ class McpControlPlane:
         registry_service=None,
         session: ControlSession,
         mcp_state_store: McpPersistentStateStore | None = None,
+        control_session_auto_renew: bool = False,
+        control_session_ttl_seconds: int = DEFAULT_CONTROL_SESSION_TTL_SECONDS,
     ) -> None:
+        if control_session_ttl_seconds < MIN_CONTROL_SESSION_TTL_SECONDS:
+            raise ValueError(
+                "control_session_ttl_seconds must be at least "
+                f"{MIN_CONTROL_SESSION_TTL_SECONDS}"
+            )
         self.service = service
         self.endpoint_service = endpoint_service
         self.endpoint_publication_service = endpoint_publication_service
         self.validation_service = validation_service
         self.registry_service = registry_service
         self.mcp_state_store = mcp_state_store
+        self.control_session_auto_renew = control_session_auto_renew
+        self.control_session_ttl_seconds = control_session_ttl_seconds
         persisted_state = mcp_state_store.load() if mcp_state_store is not None else {
             "sessions": {},
             "audit_events": [],
@@ -539,6 +562,48 @@ class McpControlPlane:
         }
         state["emergency_stop"] = _json_safe(self._emergency_stop)
         self.mcp_state_store.save(state)
+
+    def renew_control_session(self, *, source: str) -> dict[str, Any]:
+        """Renew an authenticated session lease without changing authority.
+
+        Renewal is deliberately outside ``ControlSession.require_active`` so a
+        valid bearer credential can recover a persisted session after an idle
+        period. It never changes identity, scopes, budget or approvals.
+        """
+
+        now = _now()
+        if not self.control_session_auto_renew:
+            return {
+                "renewed": False,
+                "control_session_id": self.session.control_session_id,
+                "expires_at": _iso(self.session.expires_at),
+            }
+        renewal_window = timedelta(seconds=max(1, self.control_session_ttl_seconds // 2))
+        if self.session.expires_at > now + renewal_window:
+            return {
+                "renewed": False,
+                "control_session_id": self.session.control_session_id,
+                "expires_at": _iso(self.session.expires_at),
+            }
+
+        previous_expires_at = self.session.expires_at
+        self.session.expires_at = now + timedelta(seconds=self.control_session_ttl_seconds)
+        self.audit.append(
+            event_type="MCP_CONTROL_SESSION_RENEWED",
+            agent_identity=self.session.agent_identity,
+            operator_identity=self.session.operator_identity,
+            source=source,
+            control_session_id=self.session.control_session_id,
+            previous_expires_at=_iso(previous_expires_at),
+            expires_at=_iso(self.session.expires_at),
+            result="RENEWED",
+        )
+        return {
+            "renewed": True,
+            "control_session_id": self.session.control_session_id,
+            "previous_expires_at": _iso(previous_expires_at),
+            "expires_at": _iso(self.session.expires_at),
+        }
 
     def approve_plan(
         self,
@@ -1637,6 +1702,8 @@ def build_mcp_server(
     registry_service=None,
     session: ControlSession | None = None,
     mcp_state_store: McpPersistentStateStore | None = None,
+    control_session_auto_renew: bool | None = None,
+    control_session_ttl_seconds: int | None = None,
 ) -> McpJsonRpcServer:
     """Build an MCP server around an already constructed Hypervisor service."""
 
@@ -1659,6 +1726,16 @@ def build_mcp_server(
             "provider_attach": "OPERATOR_CONFIRMATION",
         },
     )
+    resolved_auto_renew = (
+        _env_bool("AIDN_MCP_CONTROL_SESSION_AUTO_RENEW", default=False)
+        if control_session_auto_renew is None
+        else control_session_auto_renew
+    )
+    resolved_ttl_seconds = (
+        int(os.environ.get("AIDN_MCP_CONTROL_SESSION_TTL_SECONDS", DEFAULT_CONTROL_SESSION_TTL_SECONDS))
+        if control_session_ttl_seconds is None
+        else control_session_ttl_seconds
+    )
     control = McpControlPlane(
         service,
         endpoint_service=endpoint_service,
@@ -1667,6 +1744,8 @@ def build_mcp_server(
         registry_service=registry_service,
         session=resolved_session,
         mcp_state_store=mcp_state_store,
+        control_session_auto_renew=resolved_auto_renew,
+        control_session_ttl_seconds=resolved_ttl_seconds,
     )
     return McpJsonRpcServer(control)
 

@@ -5,6 +5,8 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.mcp import (
@@ -12,6 +14,8 @@ from aidn_hypervisor.mcp import (
     DelegatedBudget,
     McpPersistenceError,
     McpPersistentStateStore,
+    McpRemoteGateway,
+    build_mcp_remote_router,
     build_mcp_server,
 )
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
@@ -434,6 +438,55 @@ def test_mcp_operator_approval_survives_restart_without_agent_self_approval(tmp_
 
     assert applied["structuredContent"]["status"] == "activated"
     assert restarted.control.audit.query()["items"][-1]["event_type"] == "MCP_TOOL_APPLIED"
+
+
+def test_remote_gateway_renews_expired_control_session_after_bearer_authentication() -> None:
+    session = _session("NODE:READ")
+    session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    server = build_mcp_server(
+        _service(),
+        session=session,
+        control_session_auto_renew=True,
+        control_session_ttl_seconds=60,
+    )
+    gateway = McpRemoteGateway(server.control, agent_token="agent-secret")
+    app = FastAPI()
+    app.include_router(build_mcp_remote_router(gateway))
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer agent-secret"}
+
+    initialize = client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-03-26"},
+        },
+    )
+    assert initialize.status_code == 200
+    transport_session_id = initialize.headers["mcp-session-id"]
+    client.post(
+        "/mcp",
+        headers={**headers, "Mcp-Session-Id": transport_session_id},
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+    )
+
+    health = client.post(
+        "/mcp",
+        headers={**headers, "Mcp-Session-Id": transport_session_id},
+        json={
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "aidn.node.health", "arguments": {}},
+        },
+    )
+    assert health.status_code == 200
+    assert health.json()["result"]["isError"] is False
+    assert server.control.session.expires_at > datetime.now(UTC)
+    assert server.control.audit.query()["items"][-1]["event_type"] == "MCP_CONTROL_SESSION_RENEWED"
 
 
 def test_mcp_corrupt_persisted_audit_chain_fails_closed(tmp_path) -> None:

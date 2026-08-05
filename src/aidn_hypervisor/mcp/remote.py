@@ -353,6 +353,19 @@ class McpRemoteGateway:
             ),
         )
 
+    def _renew_control_session(self, *, source: str) -> JSONResponse | None:
+        try:
+            self.control.renew_control_session(source=source)
+        except Exception:
+            return JSONResponse(
+                status_code=500,
+                content=_json_error(
+                    "MCP_CONTROL_SESSION_RENEW_FAILED",
+                    "Control Session renewal failed safely",
+                ),
+            )
+        return None
+
     async def _read_json_object(self, request: Request) -> tuple[dict[str, Any] | None, JSONResponse | None]:
         body = await request.body()
         if len(body) > self.max_body_bytes:
@@ -406,6 +419,9 @@ class McpRemoteGateway:
             return self._unauthorized()
         if self._origin_is_rejected(request):
             return self._forbidden_origin()
+        renewal_error = self._renew_control_session(source="agent")
+        if renewal_error is not None:
+            return renewal_error
 
         session_id = request.headers.get(MCP_SESSION_HEADER)
         if request.method == "DELETE":
@@ -476,6 +492,9 @@ class McpRemoteGateway:
             return self._unauthorized()
         if self._origin_is_rejected(request):
             return self._forbidden_origin()
+        renewal_error = self._renew_control_session(source="operator")
+        if renewal_error is not None:
+            return renewal_error
         payload, error_response = await self._read_json_object(request)
         if error_response is not None:
             return error_response

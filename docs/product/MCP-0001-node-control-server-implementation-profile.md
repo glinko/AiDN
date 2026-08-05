@@ -144,6 +144,14 @@ and new remote plan approvals while preserving read access and the operator
 clear action. Browser-origin requests are rejected; configure TLS or a
 private reverse proxy before exposing the route outside a trusted LAN.
 
+`AIDN_MCP_CONTROL_SESSION_AUTO_RENEW=true` enables a sliding lease for the
+already-bound Control Session. `AIDN_MCP_CONTROL_SESSION_TTL_SECONDS` sets the
+lease duration and defaults to one hour. A valid authenticated Agent or
+Operator request may renew an expired persisted lease, but renewal never
+changes identity, scopes, budget, approvals or emergency-stop state. Invalid
+credentials cannot renew a session, and an idle session still expires until a
+valid credential reconnects.
+
 The production launcher additionally requires either `--certfile`, `--keyfile`,
 and `--ca-file`, or the corresponding Secret Manager handles. It configures
 Uvicorn with `CERT_REQUIRED` and rejects a private key readable by group or

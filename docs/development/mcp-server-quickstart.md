@@ -110,6 +110,8 @@ $env:AIDN_MCP_REMOTE_TOKEN = "replace-with-a-long-agent-secret"
 $env:AIDN_MCP_OPERATOR_TOKEN = "replace-with-a-different-operator-secret"
 # Use a new value when changing the persisted scope set for an existing node.
 $env:AIDN_MCP_CONTROL_SESSION_ID = "acs-node-operator-1"
+$env:AIDN_MCP_CONTROL_SESSION_AUTO_RENEW = "true"
+$env:AIDN_MCP_CONTROL_SESSION_TTL_SECONDS = "3600"
 uv run uvicorn aidn_hypervisor.main:build_app --factory --host 127.0.0.1 --port 8766
 ```
 
@@ -117,6 +119,13 @@ The Agent calls `POST /mcp` with `Authorization: Bearer <agent-token>`.
 `initialize` returns an `Mcp-Session-Id`; send that header on subsequent
 requests. The transport session is ephemeral, while the bound Control Session
 and audit/plan state use the persistent MCP state file described above.
+
+When enabled, an authenticated Agent or Operator request renews the bound
+Control Session lease when it enters its renewal window. Renewal does not
+change the session identity, scopes, delegated budget or approved plans. An
+idle session still expires after the configured TTL, and the next request with
+the valid bearer credential can establish a fresh lease without changing
+authority.
 
 Operator actions use the separate token and never appear as Agent tools:
 
