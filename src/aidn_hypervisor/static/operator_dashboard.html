@@ -1254,6 +1254,217 @@
       line-height: 1.5;
     }
 
+    .readiness-wizard {
+      position: relative;
+      overflow: hidden;
+      border-color: rgba(98, 182, 255, 0.28);
+      background:
+        radial-gradient(circle at 100% 0%, rgba(98, 182, 255, 0.12), transparent 34%),
+        linear-gradient(180deg, rgba(14, 35, 55, 0.96), rgba(7, 19, 31, 0.98));
+    }
+
+    .readiness-wizard::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: linear-gradient(180deg, var(--blue), var(--accent));
+    }
+
+    .readiness-wizard-header,
+    .readiness-next-header,
+    .readiness-step-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .readiness-wizard-header h2,
+    .readiness-next h3 {
+      margin: 6px 0 0;
+      font-family: "Manrope", "IBM Plex Sans", sans-serif;
+      letter-spacing: -0.025em;
+    }
+
+    .readiness-wizard-header h2 {
+      font-size: 22px;
+    }
+
+    .readiness-progress {
+      min-width: 150px;
+      text-align: right;
+    }
+
+    .readiness-progress strong {
+      display: block;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 18px;
+      color: var(--blue);
+    }
+
+    .readiness-progress span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .readiness-progress-track {
+      height: 5px;
+      margin-top: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(142, 176, 214, 0.13);
+    }
+
+    .readiness-progress-track i {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--blue), var(--good));
+    }
+
+    .readiness-next {
+      margin-top: 18px;
+      padding: 14px;
+      border: 1px solid rgba(255, 174, 87, 0.28);
+      border-radius: 16px;
+      background: rgba(255, 174, 87, 0.08);
+    }
+
+    .readiness-next h3 {
+      font-size: 16px;
+    }
+
+    .readiness-next-copy,
+    .readiness-step-copy,
+    .readiness-agent-note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .readiness-next-copy {
+      margin-top: 6px;
+      max-width: 70ch;
+    }
+
+    .readiness-step-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .readiness-step {
+      min-width: 0;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: rgba(5, 15, 24, 0.68);
+    }
+
+    .readiness-step.ready {
+      border-color: rgba(73, 209, 125, 0.28);
+    }
+
+    .readiness-step.blocked,
+    .readiness-step.manual {
+      border-color: rgba(255, 107, 107, 0.28);
+    }
+
+    .readiness-step.attention {
+      border-color: rgba(255, 174, 87, 0.28);
+    }
+
+    .readiness-step-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .readiness-step-title span:first-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .readiness-step-status {
+      flex: 0 0 auto;
+      padding: 3px 7px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(142, 176, 214, 0.12);
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .readiness-step.ready .readiness-step-status {
+      color: var(--good);
+      background: var(--good-soft);
+    }
+
+    .readiness-step.blocked .readiness-step-status,
+    .readiness-step.manual .readiness-step-status {
+      color: var(--bad);
+      background: var(--bad-soft);
+    }
+
+    .readiness-step.attention .readiness-step-status {
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .readiness-step-copy {
+      margin-top: 8px;
+    }
+
+    .readiness-step-action {
+      margin-top: 10px;
+    }
+
+    .readiness-step-action button {
+      min-height: 32px;
+      padding: 6px 10px;
+      border-radius: 10px;
+      font-size: 12px;
+    }
+
+    .readiness-manual-action {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      color: var(--accent);
+      font-size: 11px;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .readiness-agent-note {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(142, 176, 214, 0.12);
+    }
+
+    .readiness-message {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .readiness-message.bad {
+      color: var(--bad);
+    }
+
+    .readiness-message.good {
+      color: var(--good);
+    }
+
     @media (max-width: 1380px) {
       .metrics-strip {
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2577,6 +2788,7 @@
 
     @media (max-width: 1350px) {
       .home-stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .readiness-step-list { grid-template-columns: 1fr; }
       .overview-quick-context { display: none; }
     }
 
@@ -2755,6 +2967,7 @@
   <script>
     const endpoints = {
       home: "/operators/dashboard/home",
+      readiness: "/operators/dashboard/readiness",
       fleet: "/operators/dashboard/fleet",
       providers: "/operators/dashboard/providers",
       bundles: "/operators/dashboard/bundles",
@@ -3011,6 +3224,9 @@
       walletMessage: null,
       walletActionPending: null,
       sessionRequestPending: false,
+      readinessWizardOpen: true,
+      readinessPending: false,
+      readinessMessage: null,
     };
 
     function formatCount(value) {
@@ -5921,6 +6137,104 @@
         .join("");
     }
 
+    function readinessStatusLabel(status) {
+      switch (status) {
+        case "ready":
+          return "ready";
+        case "blocked":
+          return "blocked";
+        case "manual":
+          return "manual";
+        case "attention":
+          return "attention";
+        default:
+          return "unknown";
+      }
+    }
+
+    function renderReadinessActionButton(action) {
+      if (!action) {
+        return "";
+      }
+      const interactive = ["refresh", "wallet", "screen", "discover-provider"].includes(action.kind);
+      if (!interactive) {
+        return `<span class="readiness-manual-action">Operator action: ${escapeHtml(action.label || "Manual step")}</span>`;
+      }
+      return `
+        <button
+          class="secondary-button"
+          type="button"
+          data-readiness-action="${escapeHtml(action.kind)}"
+          data-readiness-screen="${escapeHtml(action.screen || "")}"
+          data-readiness-provider="${escapeHtml(action.provider_instance_id || "")}">
+          ${escapeHtml(action.label || "Continue")}
+        </button>
+      `;
+    }
+
+    function renderReadinessWizard() {
+      const payload = state.payloads.readiness || {};
+      const steps = payload.steps || [];
+      const progress = payload.progress || { ready: 0, total: steps.length, percent: 0 };
+      const nextAction = payload.next_action;
+      const overallState = payload.overall_state || "unknown";
+      if (!steps.length) {
+        return `
+          <section class="readiness-wizard subpanel" aria-labelledby="readiness-heading">
+            <div class="readiness-wizard-header">
+              <div><div class="panel-heading">Operator setup</div><h2 id="readiness-heading">Readiness Wizard</h2></div>
+              <button class="secondary-button" type="button" data-readiness-action="refresh">Check readiness</button>
+            </div>
+            <div class="readiness-message">Readiness data is not available yet. Refresh the dashboard to run the checks.</div>
+          </section>
+        `;
+      }
+      return `
+        <section class="readiness-wizard subpanel" aria-labelledby="readiness-heading">
+          <div class="readiness-wizard-header">
+            <div>
+              <div class="panel-heading">Operator setup</div>
+              <h2 id="readiness-heading">Readiness Wizard</h2>
+              <div class="readiness-next-copy">One guided path from host prerequisites to a publishable Bundle. Every status below comes from the node's current inventory.</div>
+            </div>
+            <div class="readiness-progress">
+              <strong>${escapeHtml(String(progress.percent || 0))}%</strong>
+              <span>${formatCount(progress.ready)} of ${formatCount(progress.total)} checks ready · ${escapeHtml(overallState)}</span>
+              <div class="readiness-progress-track"><i style="width:${Math.max(0, Math.min(100, Number(progress.percent || 0)))}%"></i></div>
+              <button class="secondary-button" style="margin-top:10px; width:auto;" type="button" data-readiness-toggle>${state.readinessWizardOpen ? "Hide details" : "Open setup wizard"}</button>
+            </div>
+          </div>
+          ${state.readinessWizardOpen ? `
+            <div class="readiness-next">
+              <div class="readiness-next-header">
+                <div>
+                  <div class="panel-heading">Next safe action</div>
+                  <h3>${escapeHtml(nextAction?.label || "Review readiness")}</h3>
+                  <div class="readiness-next-copy">${escapeHtml(nextAction?.detail || "Refresh the report and inspect the first unresolved step.")}</div>
+                </div>
+                <div class="readiness-step-action">${renderReadinessActionButton(nextAction)}</div>
+              </div>
+            </div>
+            <div class="readiness-step-list">
+              ${steps.map((step) => `
+                <article class="readiness-step ${escapeHtml(step.status || "unknown")}">
+                  <div class="readiness-step-header">
+                    <div class="readiness-step-title"><span>${escapeHtml(step.title || step.key)}</span><span class="readiness-step-status">${escapeHtml(readinessStatusLabel(step.status))}</span></div>
+                  </div>
+                  <div class="readiness-step-copy"><strong>${escapeHtml(step.summary || "No summary")}</strong><br>${escapeHtml(step.detail || "")}</div>
+                  <div class="readiness-step-action">${renderReadinessActionButton(step.action)}</div>
+                </article>
+              `).join("")}
+            </div>
+            <div class="readiness-agent-note">
+              Agent control stays honest: if an MCP mutation is not advertised by this node, the wizard does not emulate it. Use the linked operator UI action or complete the marked manual infrastructure step, then refresh.
+            </div>
+          ` : ""}
+          ${state.readinessMessage ? `<div class="readiness-message ${escapeHtml(state.readinessMessage.kind || "")}">${escapeHtml(state.readinessMessage.text || "")}</div>` : ""}
+        </section>
+      `;
+    }
+
     function renderHomeWorkspace() {
       {
         const home = state.payloads.home || {};
@@ -5968,6 +6282,8 @@
               <section class="home-stat"><span class="home-stat-label">Reputation</span><strong class="home-stat-value">${rating.score ? formatRating(rating.score) : "--"}</strong><span class="home-stat-note neutral">${escapeHtml(rating.tier || "Not rated")}</span></section>
               <section class="home-stat"><span class="home-stat-label">Validation</span><strong class="home-stat-value">${formatCount(validatedEndpointCount)} / ${formatCount(endpointItems.length)}</strong><span class="home-stat-note ${validatedEndpointCount === endpointItems.length && endpointItems.length ? "" : "pending"}">Endpoint status</span></section>
             </div>
+
+            ${renderReadinessWizard()}
 
             <section class="home-surface" aria-labelledby="active-bundles-heading">
               <div class="home-surface-heading">
@@ -10304,6 +10620,7 @@
     async function refreshBootstrapPayloads() {
       await Promise.all([
         loadScreen("home"),
+        loadScreen("readiness"),
         loadScreen("fleet"),
         loadScreen("providers"),
         loadScreen("bundles"),
@@ -12867,6 +13184,37 @@
 
       document.querySelectorAll("[data-policy-toggle]").forEach((button) => {
         button.addEventListener("click", () => togglePolicy(button.dataset.policyToggle));
+      });
+
+      document.querySelectorAll("[data-readiness-toggle]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.readinessWizardOpen = !state.readinessWizardOpen;
+          renderWorkspace();
+          bindInteractiveElements();
+        });
+      });
+
+      document.querySelectorAll("[data-readiness-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const action = button.dataset.readinessAction;
+          if (action === "refresh") {
+            state.readinessMessage = null;
+            void refreshBootstrapPayloads();
+            return;
+          }
+          if (action === "wallet") {
+            openWalletDrawer("readiness");
+            return;
+          }
+          if (action === "screen") {
+            state.screen = button.dataset.readinessScreen || "home";
+            render();
+            return;
+          }
+          if (action === "discover-provider") {
+            void discoverModelsForProviderInstance(button.dataset.readinessProvider);
+          }
+        });
       });
 
       document.querySelectorAll("[data-screen-jump]").forEach((button) => {

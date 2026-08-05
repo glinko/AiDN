@@ -1057,6 +1057,12 @@ This work is intentionally outside the functional MVP. It must not alter current
 - MCP TLS rotation acceptance (2026-08-04): the actual Secret Manager-backed
   production HTTP launcher passed certificate rotation and MCP reconnect on
   `192.168.88.127`; the detailed record is [here](./docs/development/mcp-tls-rotation-acceptance-2026-08-04.md).
+- Operator readiness wizard (2026-08-05): the Hypervisor Overview now exposes
+  one canonical, read-only readiness projection for Consensus RPC, owner
+  Wallet, host capacity, Provider Instance, Model Deployment, Runtime Binding,
+  Bundle and Endpoint. It separates local execution readiness from network
+  readiness, gives bounded next actions, and explicitly reports unavailable
+  probes instead of guessing. See [UX-0003](./docs/product/UX-0003-operator-readiness-wizard.md).
 - Validator AppHash compatibility now treats empty post-MVP Ledger extensions as absent during canonical hashing, so upgrades do not invalidate historical snapshots merely by adding empty stake, penalty, checkpoint, dispute, or correction fields; populated extensions remain committed.
 - The functional controlled-testnet MVP gate is now closed. Remaining priorities in this section are public-network/post-MVP claims: independent-operator evidence, public directory authority, external multi-validator finality, and enforceable production trust policy.
 

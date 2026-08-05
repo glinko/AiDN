@@ -29,6 +29,7 @@ from aidn_hypervisor.endpoint_publications.service import (
     EndpointPublicationReadinessError,
 )
 from aidn_hypervisor.endpoint_publications.signing import verify_publication_signature
+from aidn_hypervisor.operator_readiness import build_operator_readiness_payload
 from aidn_hypervisor.operator_views import (
     build_operator_bundles_payload,
     build_operator_endpoints_payload,
@@ -1205,6 +1206,27 @@ def build_api_router(
             endpoint_publication_service=endpoint_publication_service,
             validation_service=validation_service,
             market_candidates=market["candidates"],
+        )
+
+    @router.get("/operators/dashboard/readiness")
+    async def operator_dashboard_readiness() -> dict:
+        endpoint_payload = _operator_dashboard_endpoints_payload(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            validation_service=validation_service,
+        )
+        consensus = getattr(service, "consensus_service", None)
+        consensus_status = None
+        if consensus is not None and callable(getattr(consensus, "status", None)):
+            try:
+                consensus_status = consensus.status()
+            except Exception:  # pragma: no cover - defensive operator projection boundary
+                consensus_status = None
+        return build_operator_readiness_payload(
+            service=service,
+            endpoint_items=endpoint_payload.get("items", []),
+            consensus_status=consensus_status,
         )
 
     @router.get("/operators/dashboard/fleet")
