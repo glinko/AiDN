@@ -311,11 +311,7 @@ class OperatorApplicationService:
             ):
                 changed = self._stage_unfinalized_owner_wallet_recovery() or changed
                 if self._host._owner_wallet is not None:
-                    pending_wallets = {
-                        item.get("owner_wallet", {}).get("wallet_id")
-                        for item in getattr(self._host, "_pending_owner_wallet_bootstraps", [])
-                    }
-                    if self._host._owner_wallet.get("wallet_id") in pending_wallets:
+                    if getattr(self._host, "_pending_owner_wallet_bootstraps", []):
                         self._host._owner_wallet = None
                         changed = True
             pending = list(getattr(self._host, "_pending_owner_wallet_bootstraps", []))
