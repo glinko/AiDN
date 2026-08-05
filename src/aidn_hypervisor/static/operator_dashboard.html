@@ -2837,6 +2837,54 @@
       .home-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .home-stat { min-height: 94px; }
     }
+
+    /* Wallet is a long-form mobile workflow, not a fixed desktop grid. Keep
+       one scroll owner so Safari can move past the summary cards and tabs. */
+    @media (max-width: 640px) {
+      .wallet-drawer {
+        display: block;
+        overflow-x: hidden;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+      }
+
+      #wallet-drawer-root {
+        min-height: 0;
+      }
+
+      .wallet-drawer .drawer-header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        padding-bottom: 12px;
+        background: linear-gradient(180deg, rgba(11, 23, 37, 0.98), rgba(11, 23, 37, 0.88));
+      }
+
+      .wallet-summary-grid,
+      .wallet-body {
+        display: grid;
+        grid-template-columns: 1fr;
+        min-height: auto;
+      }
+
+      .wallet-body {
+        overflow: visible;
+      }
+
+      .wallet-ledger,
+      .wallet-detail,
+      .wallet-form {
+        min-height: auto;
+        overflow: visible;
+      }
+
+      .wallet-list {
+        max-height: none;
+        overflow: visible;
+      }
+    }
   </style>
 </head>
 <body data-ui-mode="basic">

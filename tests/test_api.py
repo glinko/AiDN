@@ -4086,6 +4086,17 @@ def test_operator_dashboard_home_shell_highlights_publish_configuration_recommen
     assert 'recommendation.action === "publish-configuration" ? "action-focus" : ""' in response.text
 
 
+def test_operator_dashboard_wallet_has_a_single_mobile_scroll_owner() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "overflow-y: auto" in response.text
+    assert "-webkit-overflow-scrolling: touch" in response.text
+    assert ".wallet-body" in response.text
+
+
 def test_operator_dashboard_home_targets_drifted_endpoint_over_older_in_sync_endpoint() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
