@@ -136,6 +136,13 @@ def test_mcp_initialize_and_tools_are_scope_filtered() -> None:
     assert "aidn.bundle.activate" not in names
 
 
+def test_mcp_default_web_session_can_use_an_explicit_persisted_identity(monkeypatch) -> None:
+    monkeypatch.setenv("AIDN_MCP_CONTROL_SESSION_ID", "acs-explicit-web")
+    server = build_mcp_server(_service())
+
+    assert server.control.session.control_session_id == "acs-explicit-web"
+
+
 def test_mcp_resources_read_existing_operator_state_without_private_keys() -> None:
     server = _server("NODE:READ", "BUNDLE:READ", "CAPABILITIES:READ")
     _initialize(server)
@@ -260,6 +267,48 @@ def test_mcp_disruptive_mutation_requires_approved_plan() -> None:
     )
     assert result["isError"] is True
     assert result["structuredContent"]["error"]["code"] == "MCP_APPROVAL_REQUIRED"
+
+
+def test_mcp_provider_attach_requires_plan_and_operator_approval() -> None:
+    server = _server(
+        "PROVIDER:READ",
+        "PROVIDER:WRITE",
+        approval_policy={"provider_attach": "OPERATOR_CONFIRMATION"},
+    )
+    _initialize(server)
+    request = {
+        "plugin_id": "fake-managed",
+        "display_name": "Test Provider",
+        "configuration": {"base_url": "http://127.0.0.1:9999"},
+        "mode": "plan",
+        "request_id": "request-provider-attach",
+        "idempotency_key": "idem-provider-attach",
+    }
+    plan = _call(server, "aidn.provider.attach", request)["structuredContent"]
+    assert plan["changes"] == [
+        "attach one existing Provider endpoint",
+        "bind it to Plugin fake-managed",
+    ]
+
+    denied = _call(
+        server,
+        "aidn.provider.attach",
+        {**request, "mode": "apply", "plan_hash": plan["plan_hash"]},
+    )
+    assert denied["structuredContent"]["error"]["code"] == "MCP_APPROVAL_REQUIRED"
+
+    server.control.approve_plan(
+        plan["plan_hash"],
+        approval_reference="operator-provider-attach-test",
+        approver_identity="operator:test",
+    )
+    applied = _call(
+        server,
+        "aidn.provider.attach",
+        {**request, "mode": "apply", "plan_hash": plan["plan_hash"]},
+    )
+    assert applied["structuredContent"]["status"] == "attached"
+    assert applied["structuredContent"]["provider_instance"]["plugin_id"] == "fake-managed"
 
 
 def test_mcp_stdio_emits_only_json_rpc_responses() -> None:

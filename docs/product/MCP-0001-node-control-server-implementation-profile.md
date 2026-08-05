@@ -97,8 +97,9 @@ hash-linked local audit event.
 
 ## Mutation Contract
 
-The first mutation slice exposes only:
+The first mutation slice exposes:
 
+- `aidn.provider.attach` for an already reachable endpoint;
 - `aidn.bundle.activate`;
 - `aidn.bundle.retire`.
 
@@ -116,10 +117,15 @@ revision and rejects a stale expected revision. Repeated apply with the same
 session and idempotency key returns the original result; a different request
 under that key is rejected.
 
+Provider attachment is deliberately narrower than Plugin installation: it
+accepts only a validated configuration for an already reachable endpoint and
+does not download packages, execute host commands, manage models, or expose
+credentials. It requires `PROVIDER:WRITE` and an explicit operator approval.
+
 The current implementation does not expose wallet transfers, private keys,
 arbitrary shell execution, consensus bypass, validation bypass, Provider
-installation, model deployment, public Endpoint publication, or network join
-operations.
+Plugin installation, model deployment, public Endpoint publication, or network
+join operations.
 
 ## Remote Gateway and Emergency Stop
 

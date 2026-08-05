@@ -83,6 +83,21 @@ trusted operator approval boundary; it must not be fabricated by an Agent.
 Approved plan hashes survive a process restart when the persistent state path
 is configured.
 
+### Attach an existing Provider
+
+The MCP mutation boundary also supports attaching an already reachable
+Provider endpoint. The session must be granted `PROVIDER:WRITE`; the default
+policy requires the separate operator token to approve the plan.
+
+```json
+{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"aidn.provider.attach","arguments":{"plugin_id":"llama.cpp","display_name":"Local llama.cpp","configuration":{"endpoint":"http://192.168.88.20:8080"},"mode":"plan","request_id":"req-provider-1","idempotency_key":"idem-provider-1"}}}
+```
+
+Approve the returned plan through `/mcp/operator/approve`, then repeat the
+same arguments with `mode: "apply"` and the returned `plan_hash`. This action
+registers only the Provider instance; model discovery and Runtime Binding
+remain separate operations.
+
 ## Optional remote gateway
 
 The HTTP gateway is disabled by default. Enable it only for a private LAN or
@@ -93,6 +108,8 @@ to be exposed directly to the public Internet.
 $env:AIDN_MCP_REMOTE_ENABLED = "true"
 $env:AIDN_MCP_REMOTE_TOKEN = "replace-with-a-long-agent-secret"
 $env:AIDN_MCP_OPERATOR_TOKEN = "replace-with-a-different-operator-secret"
+# Use a new value when changing the persisted scope set for an existing node.
+$env:AIDN_MCP_CONTROL_SESSION_ID = "acs-node-operator-1"
 uv run uvicorn aidn_hypervisor.main:build_app --factory --host 127.0.0.1 --port 8766
 ```
 

@@ -993,6 +993,37 @@ class McpControlPlane:
                     after_sequence=int(args.get("after_sequence", 0)),
                 ),
             ),
+            "aidn.provider.attach": McpTool(
+                "aidn.provider.attach",
+                "Plan or attach one already reachable Provider endpoint through a validated built-in Plugin.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "plugin_id": {"type": "string", "minLength": 1},
+                        "display_name": {"type": "string", "minLength": 1},
+                        "configuration": {"type": "object"},
+                        "mode": {"enum": ["plan", "apply"]},
+                        "request_id": {"type": "string", "minLength": 1},
+                        "idempotency_key": {"type": "string", "minLength": 1},
+                        "plan_hash": {"type": "string"},
+                        "approval_reference": {"type": "string"},
+                    },
+                    "required": [
+                        "plugin_id",
+                        "display_name",
+                        "configuration",
+                        "mode",
+                        "request_id",
+                        "idempotency_key",
+                    ],
+                    "additionalProperties": False,
+                },
+                ("PROVIDER:WRITE",),
+                "PROVIDER_MUTATION",
+                lambda args: self._attach_provider(args),
+                mutating=True,
+                approval_key="provider_attach",
+            ),
             "aidn.bundle.activate": McpTool(
                 "aidn.bundle.activate",
                 "Plan or activate one existing Bundle without editing its immutable revision.",
@@ -1304,13 +1335,41 @@ class McpControlPlane:
             return [f"start runtime for Bundle {bundle_id}"]
         if tool_name == "aidn.bundle.retire":
             return [f"stop runtime and disable Bundle {bundle_id}"]
+        if tool_name == "aidn.provider.attach":
+            return [
+                "attach one existing Provider endpoint",
+                f"bind it to Plugin {arguments.get('plugin_id', 'unknown')}",
+            ]
         return [tool_name]
 
     @staticmethod
     def _planned_risks(tool_name: str) -> list[str]:
         if tool_name == "aidn.bundle.retire":
             return ["active requests may be interrupted after the runtime stop"]
+        if tool_name == "aidn.provider.attach":
+            return ["the configured endpoint becomes available to local Runtime flows"]
         return []
+
+    def _attach_provider(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        plugin_id = self._required_string(arguments, "plugin_id")
+        display_name = self._required_string(arguments, "display_name")
+        configuration = arguments.get("configuration")
+        if not isinstance(configuration, dict):
+            raise McpDomainError(
+                "MCP_INVALID_ARGUMENTS",
+                "configuration must be a JSON object",
+            )
+        if arguments.get("mode") == "plan":
+            return self._build_plan(self._tools["aidn.provider.attach"], arguments)
+        instance = self.service.attach_provider_instance(
+            plugin_id=plugin_id,
+            display_name=display_name,
+            configuration=configuration,
+        )
+        return {
+            "provider_instance": _json_safe(instance),
+            "status": "attached",
+        }
 
     def _activate_bundle(self, arguments: dict[str, Any]) -> dict[str, Any]:
         bundle_id = self._required_string(arguments, "bundle_id")
@@ -1582,7 +1641,7 @@ def build_mcp_server(
     """Build an MCP server around an already constructed Hypervisor service."""
 
     resolved_session = session or ControlSession(
-        control_session_id="acs-local-default",
+        control_session_id=os.environ.get("AIDN_MCP_CONTROL_SESSION_ID", "acs-local-default"),
         agent_identity=os.environ.get("AIDN_MCP_AGENT_IDENTITY", "agent:local"),
         operator_identity=os.environ.get("AIDN_MCP_OPERATOR_IDENTITY", service.operator_id),
         scopes=frozenset(
@@ -1594,7 +1653,11 @@ def build_mcp_server(
             if item.strip()
         ),
         expires_at=_now() + timedelta(hours=1),
-        approval_policy={"bundle_activate": "AUTO", "bundle_retire": "OPERATOR_CONFIRMATION"},
+        approval_policy={
+            "bundle_activate": "AUTO",
+            "bundle_retire": "OPERATOR_CONFIRMATION",
+            "provider_attach": "OPERATOR_CONFIRMATION",
+        },
     )
     control = McpControlPlane(
         service,
@@ -1649,7 +1712,11 @@ def main(argv: list[str] | None = None) -> None:
         operator_identity=args.operator_identity or service.operator_id,
         scopes=frozenset(args.scopes or default_scopes),
         expires_at=_now() + timedelta(seconds=max(1, args.expires_in_seconds)),
-        approval_policy={"bundle_activate": "AUTO", "bundle_retire": "OPERATOR_CONFIRMATION"},
+        approval_policy={
+            "bundle_activate": "AUTO",
+            "bundle_retire": "OPERATOR_CONFIRMATION",
+            "provider_attach": "OPERATOR_CONFIRMATION",
+        },
     )
     server = build_mcp_server(
         service,
