@@ -868,6 +868,11 @@
       background: rgba(255, 107, 107, 0.08);
     }
 
+    .wallet-setup-status.pending {
+      border-color: rgba(243, 185, 93, 0.5);
+      background: rgba(243, 185, 93, 0.08);
+    }
+
     .wallet-summary-value {
       margin-top: 10px;
       font-family: "Manrope", "IBM Plex Sans", sans-serif;
@@ -8643,18 +8648,19 @@
       const bootstrap = operatorWalletBootstrap();
       const ownerWallet = bootstrap.owner_wallet || {};
       const walletReady = operatorWalletReady(bootstrap);
+      const pendingWallet = ownerWallet.pending_consensus || null;
       const recommendation = homeRecommendedAction(bootstrap);
       const nextScreen = recommendation.type === "endpoint" ? "endpoints" : recommendation.type === "screen" ? recommendation.action : null;
       return `
         <section class="wallet-form wallet-setup">
           <div>
             <div class="panel-heading">Operator Wallet Setup</div>
-            <div class="drawer-title">${walletReady ? "Wallet is configured" : "Bind node ownership"}</div>
-            <div class="inspector-copy">${walletReady ? "This wallet signs network-facing management and publication actions for this Hypervisor." : "Create a new owner wallet or import an existing private key before publishing an Endpoint."}</div>
+            <div class="drawer-title">${walletReady ? "Wallet is configured" : pendingWallet ? "Wallet binding is pending" : "Bind node ownership"}</div>
+            <div class="inspector-copy">${walletReady ? "This wallet signs network-facing management and publication actions for this Hypervisor." : pendingWallet ? "The public wallet binding was submitted to consensus. The private key remains local to this node." : "Create a new owner wallet or import an existing private key before publishing an Endpoint."}</div>
           </div>
-          <div class="wallet-setup-status ${walletReady ? "good" : "bad"}">
-            <strong>${walletReady ? (ownerWallet.label || "Owner wallet ready") : "Wallet configuration required"}</strong>
-            <span>${walletReady ? `Wallet ${ownerWallet.wallet_id || "configured"} is bound to this node.` : "The Readiness Wizard will continue automatically after this step completes."}</span>
+          <div class="wallet-setup-status ${walletReady ? "good" : pendingWallet ? "pending" : "bad"}">
+            <strong>${walletReady ? (ownerWallet.label || "Owner wallet ready") : pendingWallet ? "Waiting for consensus" : "Wallet configuration required"}</strong>
+            <span>${walletReady ? `Wallet ${ownerWallet.wallet_id || "configured"} is bound to this node.` : pendingWallet ? `Operation ${pendingWallet.operation_id || "pending"} is awaiting block finality.` : "The Readiness Wizard will continue automatically after this step completes."}</span>
           </div>
           ${
             walletReady
@@ -8662,7 +8668,13 @@
                 ${state.bootstrapMessage ? `<div class="wallet-message ${state.bootstrapMessage.kind}">${state.bootstrapMessage.text}</div>` : ""}
                 ${nextScreen ? `<div class="wallet-inline-actions"><button class="primary-button" type="button" data-wallet-next-screen="${nextScreen}">Continue to ${nextScreen === "endpoints" ? "Endpoints" : "Providers"}</button></div>` : ""}
               `
-              : `
+              : pendingWallet
+                ? `
+                ${state.bootstrapMessage ? `<div class="wallet-message ${state.bootstrapMessage.kind}">${state.bootstrapMessage.text}</div>` : ""}
+                <div class="wallet-inline-actions"><button class="secondary-button" type="button" data-bootstrap-action="refresh-wallet">Check consensus</button></div>
+                <div class="notice">Keep the generated private key saved. This screen can be refreshed safely while the transaction is pending.</div>
+              `
+                : `
                 <div class="wallet-form-grid">
                   <label>Wallet label<input type="text" data-bootstrap-field="walletLabel" value="${escapeHtml(state.bootstrapDrafts.walletLabel)}" placeholder="Primary Wallet" autocomplete="off"></label>
                   <button class="primary-button" type="button" data-bootstrap-action="create-wallet">${state.bootstrapPending === "create-wallet" ? "Creating..." : "Create Wallet"}</button>
@@ -11038,7 +11050,10 @@
         });
         state.bootstrapMessage = {
           kind: "good",
-          text: `Wallet ${result.wallet.wallet_id} created. Save private key: ${result.private_key || "-"}`,
+          text:
+            result.status === "CONSENSUS_PENDING"
+              ? `Wallet binding submitted to consensus (${result.consensus?.operation_id || "pending"}). Save private key: ${result.private_key || "-"}`
+              : `Wallet ${result.wallet?.wallet_id || "created"} created. Save private key: ${result.private_key || "-"}`,
         };
         await refreshBootstrapPayloads();
       } catch (error) {
@@ -11062,8 +11077,26 @@
         state.bootstrapDrafts.walletPrivateKey = "";
         state.bootstrapMessage = {
           kind: "good",
-          text: `Wallet ${result.wallet.wallet_id} imported and bound to this node.`,
+          text:
+            result.status === "CONSENSUS_PENDING"
+              ? `Wallet binding submitted to consensus (${result.consensus?.operation_id || "pending"}). Refresh this screen after finality.`
+              : `Wallet ${result.wallet?.wallet_id || "imported"} imported and bound to this node.`,
         };
+        await refreshBootstrapPayloads();
+      } catch (error) {
+        state.bootstrapMessage = { kind: "bad", text: String(error) };
+      } finally {
+        state.bootstrapPending = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function refreshBootstrapWalletConsensus() {
+      state.bootstrapPending = "refresh-wallet";
+      state.bootstrapMessage = null;
+      render();
+      try {
         await refreshBootstrapPayloads();
       } catch (error) {
         state.bootstrapMessage = { kind: "bad", text: String(error) };
@@ -13503,6 +13536,8 @@
             void createBootstrapWallet();
           } else if (button.dataset.bootstrapAction === "import-wallet") {
             void importBootstrapWallet();
+          } else if (button.dataset.bootstrapAction === "refresh-wallet") {
+            void refreshBootstrapWalletConsensus();
           }
         });
       });

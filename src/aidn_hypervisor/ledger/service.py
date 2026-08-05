@@ -7,6 +7,9 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 from aidn_hypervisor.consensus.replay import FinalizedOperationRegistry
 from aidn_hypervisor.ledger.models import (
     LedgerFeeClass,
@@ -44,6 +47,7 @@ SESSION_SETTLEMENT_DISPUTE_OPERATION = "SESSION_SETTLEMENT_DISPUTE"
 SESSION_SETTLEMENT_PARTIAL_FINALIZE_OPERATION = "SESSION_SETTLEMENT_PARTIAL_FINALIZE"
 SESSION_SETTLEMENT_CORRECT_OPERATION = "SESSION_SETTLEMENT_CORRECT"
 CONSENSUS_PENALTY_APPLY_OPERATION = "PENALTY_APPLY"
+OPERATOR_WALLET_BIND_OPERATION = "OPERATOR_WALLET_BIND"
 VALIDATION_REPORT_COMMIT_OPERATION = "VALIDATION_REPORT_COMMIT"
 VALIDATION_REPORT_STORAGE_RECEIPT_OPERATION = "VALIDATION_REPORT_STORAGE_RECEIPT"
 VALIDATION_REPORT_STORAGE_FAILURE_OPERATION = "VALIDATION_REPORT_STORAGE_FAILURE"
@@ -1559,6 +1563,96 @@ class LedgerOperationService:
         return self.record_admitted_envelope(
             envelope,
             emitted_events=["SessionFailureEvidenceCommitted"],
+        )
+
+    def validate_consensus_operator_wallet_bind(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Validate the public, consensus-bound half of wallet bootstrap."""
+        if envelope.operation_type != OPERATOR_WALLET_BIND_OPERATION:
+            raise ValueError("operator wallet bind requires OPERATOR_WALLET_BIND")
+        if envelope.origin_type != "protocol":
+            raise ValueError("operator wallet bind requires protocol origin")
+        if envelope.sender_wallet is not None or envelope.fee_payer is not None:
+            raise ValueError("operator wallet bind cannot be wallet-originated")
+        if envelope.fee_class != "onboarding_exempt":
+            raise ValueError("operator wallet bind requires onboarding-exempt fee class")
+
+        payload = dict(envelope.payload)
+        required_fields = (
+            "node_id",
+            "operator_id",
+            "wallet_id",
+            "public_key",
+            "bootstrap_mode",
+            "wallet_binding_version",
+            "created_at",
+        )
+        for field_name in required_fields:
+            value = payload.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"operator wallet bind field is invalid: {field_name}")
+        if envelope.initiator_id != payload["node_id"]:
+            raise ValueError("operator wallet bind initiator does not match node")
+        if payload["created_at"] != envelope.created_at:
+            raise ValueError("operator wallet bind timestamp does not match envelope")
+        if payload["bootstrap_mode"] not in {"create", "import"}:
+            raise ValueError("operator wallet bootstrap mode is invalid")
+        if payload["wallet_binding_version"] != "1":
+            raise ValueError("operator wallet binding version is unsupported")
+        label = payload.get("label")
+        if label is not None and (not isinstance(label, str) or len(label) > 256):
+            raise ValueError("operator wallet label is invalid")
+
+        public_key = payload["public_key"]
+        if not public_key.startswith("ed25519:"):
+            raise ValueError("operator wallet public key must use ed25519:<32-byte hex>")
+        try:
+            public_key_bytes = bytes.fromhex(public_key.removeprefix("ed25519:"))
+        except ValueError as error:
+            raise ValueError("operator wallet public key is invalid") from error
+        if len(public_key_bytes) != 32:
+            raise ValueError("operator wallet public key must contain 32 bytes")
+        expected_wallet_id = "wallet-" + hashlib.sha256(public_key.encode("utf-8")).hexdigest()[:12]
+        if payload["wallet_id"] != expected_wallet_id:
+            raise ValueError("operator wallet id does not match public key")
+
+        if len(envelope.signatures) != 1:
+            raise ValueError("operator wallet bind requires exactly one wallet signature")
+        signature = envelope.signatures[0]
+        if not signature.startswith("ed25519:"):
+            raise ValueError("operator wallet bind signature is invalid")
+        try:
+            signature_bytes = bytes.fromhex(signature.removeprefix("ed25519:"))
+            Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(
+                signature_bytes,
+                envelope.signing_bytes(),
+            )
+        except (ValueError, InvalidSignature) as error:
+            raise ValueError("operator wallet bind signature verification failed") from error
+
+        for operation in self._operations:
+            if operation.get("operation_type") != OPERATOR_WALLET_BIND_OPERATION:
+                continue
+            existing_payload = operation.get("payload") or {}
+            if existing_payload.get("node_id") == payload["node_id"]:
+                if existing_payload == payload:
+                    raise ValueError("operator wallet bind is already committed")
+                raise ValueError("operator already has a different wallet binding")
+            if existing_payload.get("wallet_id") == payload["wallet_id"]:
+                raise ValueError("operator wallet is already bound to another node")
+        return {"payload": payload}
+
+    def apply_consensus_operator_wallet_bind(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Validate and persist one canonical operator wallet binding."""
+        self.validate_consensus_operator_wallet_bind(envelope)
+        return self.record_admitted_envelope(
+            envelope,
+            emitted_events=["OperatorWalletBound"],
         )
 
     def validator_set_update_commitment(

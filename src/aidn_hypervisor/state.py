@@ -458,6 +458,7 @@ class HypervisorStateSnapshot(BaseModel):
     ledger_operations: list[LedgerOperationRecord] = Field(default_factory=list)
     pending_consensus_operations: list[LedgerOperationRecord] = Field(default_factory=list)
     pending_consensus_envelopes: list[LedgerOperationEnvelope] = Field(default_factory=list)
+    pending_owner_wallet_bootstraps: list[dict] = Field(default_factory=list)
     wallet_operation_sequences: dict[str, int] = Field(default_factory=dict)
     wallet_q_atom_balances: dict[str, int] = Field(default_factory=dict)
     recyclable_q_atoms: int = 0

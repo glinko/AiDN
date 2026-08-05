@@ -278,11 +278,15 @@ def build_app(
 
 
 def _is_validator_consensus_write_path(path: str) -> bool:
-    """Allow only consensus-managed validator Session writes through HTTP."""
+    """Allow only endpoints that submit canonical validator transactions."""
     parts = path.strip("/").split("/")
     if parts and parts[0] == "mcp":
         # MCP remote control is a separately authenticated local operator
         # boundary; it does not submit consensus transactions directly.
+        return True
+    if parts == ["operators", "wallet", "bootstrap", "create"]:
+        return True
+    if parts == ["operators", "wallet", "bootstrap", "import"]:
         return True
     if (
         len(parts) == 5

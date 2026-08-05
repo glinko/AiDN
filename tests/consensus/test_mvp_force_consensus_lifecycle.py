@@ -369,7 +369,7 @@ def test_validator_hypervisor_requires_canonical_open_authentication():
     assert hypervisor.session_service.store.list_sessions() == []
 
 
-def test_validator_http_writes_are_rejected_outside_consensus_session_open():
+def test_validator_wallet_bootstrap_enters_canonical_consensus_path():
     hypervisor, client, _endpoint, _session, _consensus, _source = _context(
         open_session=False
     )
@@ -381,11 +381,54 @@ def test_validator_http_writes_are_rejected_outside_consensus_session_open():
         json={"label": "must use consensus"},
     )
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "validator_consensus_required"
+    assert response.status_code == 202
+    body = response.json()
+    assert body["status"] == "CONSENSUS_PENDING"
+    assert body["consensus"]["status"] == "admitted"
+    assert body["proposed_wallet"]["wallet_id"].startswith("wallet-")
+    assert "private_key" not in body["proposed_wallet"]
     assert hypervisor.owner_wallet_state()["configured"] is False
     assert hypervisor.ledger_operation_service.snapshot_operations() == operations_before
+    pending = list(hypervisor._pending_consensus_envelopes.values())
+    assert len(pending) == 1
+    assert pending[0]["operation_type"] == "OPERATOR_WALLET_BIND"
+    assert "private_key" not in pending[0]["payload"]
     assert client.get("/operators/wallet/bootstrap").status_code == 200
+
+
+def test_validator_wallet_bootstrap_applies_only_after_canonical_block_finality(tmp_path):
+    hypervisor, client, _endpoint, _session, consensus, _source = _context(
+        open_session=False
+    )
+    consensus.config.mode = ConsensusMode.VALIDATOR
+    consensus.config.strict_operation_coverage = True
+    consensus.config.abci_state_path = str(tmp_path / "abci-state.json")
+    consensus.bootstrap_validator_abci(
+        ledger_service=hypervisor.ledger_operation_service,
+        restore_state_from_store=False,
+        state_checkpoint_callback=hypervisor._persist_state,
+    )
+
+    response = client.post(
+        "/operators/wallet/bootstrap/create",
+        json={"label": "canonical wallet"},
+    )
+    assert response.status_code == 202
+    operation_id = response.json()["consensus"]["operation_id"]
+    envelope = hypervisor.get_pending_consensus_envelope(operation_id)
+    assert envelope is not None
+
+    proposed = consensus.propose_block(
+        [envelope.model_dump_json().encode("utf-8")],
+        block_height=1,
+        block_hash=b"w" * 32,
+    )
+    assert proposed["code"] == "ok"
+    refreshed = client.get("/operators/wallet/bootstrap")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["configured"] is True
+    assert hypervisor.owner_wallet_state()["configured"] is True
+    assert hypervisor.ledger_operation_service.snapshot_operations()[-1]["operation_id"] == operation_id
 
 
 def test_validator_force_projections_do_not_enter_canonical_operation_log():

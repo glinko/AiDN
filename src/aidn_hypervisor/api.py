@@ -2427,27 +2427,35 @@ def build_api_router(
     @router.post("/operators/wallet/bootstrap/create")
     async def create_owner_wallet(
         request: WalletBootstrapCreateRequest,
-    ) -> dict:
+    ) -> JSONResponse:
         try:
-            return service.configure_owner_wallet(
+            result = service.configure_owner_wallet(
                 mode="create",
                 label=request.label,
             )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+        return JSONResponse(
+            status_code=202 if result.get("status") == "CONSENSUS_PENDING" else 200,
+            content=result,
+        )
 
     @router.post("/operators/wallet/bootstrap/import")
     async def import_owner_wallet(
         request: WalletBootstrapImportRequest,
-    ) -> dict:
+    ) -> JSONResponse:
         try:
-            return service.configure_owner_wallet(
+            result = service.configure_owner_wallet(
                 mode="import",
                 private_key=request.private_key,
                 label=request.label,
             )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+        return JSONResponse(
+            status_code=202 if result.get("status") == "CONSENSUS_PENDING" else 200,
+            content=result,
+        )
 
     @router.post("/operators/remote-endpoints/attach")
     async def attach_remote_endpoint(

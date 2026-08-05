@@ -12,16 +12,24 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+
 
 class OperatorApplicationService:
     """Operator-facing wallet, onboarding, and dashboard orchestration."""
 
     def __init__(self, host) -> None:
         self._host = host
+        self._reconciling_owner_wallet_bootstraps = False
 
     def owner_wallet_state(self) -> dict:
+        if not self._reconciling_owner_wallet_bootstraps:
+            self._reconcile_pending_owner_wallet_bootstraps()
+        return self._owner_wallet_public_state()
+
+    def _owner_wallet_public_state(self) -> dict:
         if self._host._owner_wallet is None:
-            return {
+            state = {
                 "configured": False,
                 "wallet_id": None,
                 "public_key": None,
@@ -29,14 +37,200 @@ class OperatorApplicationService:
                 "created_at": None,
                 "imported": False,
             }
+        else:
+            state = {
+                "configured": True,
+                "wallet_id": self._host._owner_wallet["wallet_id"],
+                "public_key": self._host._owner_wallet["public_key"],
+                "label": self._host._owner_wallet.get("label"),
+                "created_at": self._host._owner_wallet["created_at"],
+                "imported": bool(self._host._owner_wallet.get("imported", False)),
+            }
+        pending = getattr(self._host, "_pending_owner_wallet_bootstraps", [])
+        if pending and not state["configured"]:
+            intent = pending[0]
+            proposed = dict(intent["owner_wallet"])
+            proposed.pop("private_key", None)
+            state["pending_consensus"] = {
+                "operation_id": intent["operation_id"],
+                "wallet": proposed,
+            }
+        return state
+
+    def _requires_consensus_wallet_bind(self) -> bool:
+        consensus = getattr(self._host, "consensus_service", None)
+        return bool(consensus is not None and consensus.is_validator)
+
+    def _prepare_wallet_material(
+        self,
+        *,
+        mode: str,
+        label: str | None,
+        private_key: str | None,
+    ) -> dict:
+        if private_key is None:
+            private_key_object = Ed25519PrivateKey.generate()
+            resolved_private_key = "ed25519:" + private_key_object.private_bytes(
+                Encoding.Raw,
+                PrivateFormat.Raw,
+                NoEncryption(),
+            ).hex()
+        else:
+            if not private_key.startswith("ed25519:"):
+                raise ValueError(
+                    "Owner wallet private key must use ed25519:<32-byte hex>"
+                )
+            try:
+                private_key_object = Ed25519PrivateKey.from_private_bytes(
+                    bytes.fromhex(private_key.removeprefix("ed25519:"))
+                )
+            except ValueError as error:
+                raise ValueError(
+                    "Owner wallet private key must use ed25519:<32-byte hex>"
+                ) from error
+            resolved_private_key = private_key
+        public_key = "ed25519:" + private_key_object.public_key().public_bytes(
+            Encoding.Raw,
+            PublicFormat.Raw,
+        ).hex()
+        digest = hashlib.sha256(public_key.encode("utf-8")).hexdigest()
+        created_at = datetime.now(UTC).isoformat()
         return {
-            "configured": True,
-            "wallet_id": self._host._owner_wallet["wallet_id"],
-            "public_key": self._host._owner_wallet["public_key"],
-            "label": self._host._owner_wallet.get("label"),
-            "created_at": self._host._owner_wallet["created_at"],
-            "imported": bool(self._host._owner_wallet.get("imported", False)),
+            "wallet": {
+                "wallet_id": f"wallet-{digest[:12]}",
+                "public_key": public_key,
+                "private_key": resolved_private_key,
+                "label": label,
+                "created_at": created_at,
+                "imported": mode == "import",
+            },
+            "private_key_object": private_key_object,
         }
+
+    def _wallet_bind_envelope(self, material: dict, *, mode: str) -> LedgerOperationEnvelope:
+        wallet = material["wallet"]
+        payload = {
+            "node_id": self._host.node_id,
+            "operator_id": self._host.operator_id,
+            "wallet_id": wallet["wallet_id"],
+            "public_key": wallet["public_key"],
+            "label": wallet["label"],
+            "bootstrap_mode": mode,
+            "wallet_binding_version": "1",
+            "created_at": wallet["created_at"],
+        }
+        unsigned = LedgerOperationEnvelope(
+            operation_type="OPERATOR_WALLET_BIND",
+            origin_type="protocol",
+            initiator_id=self._host.node_id,
+            fee_class="onboarding_exempt",
+            created_at=wallet["created_at"],
+            payload=payload,
+        )
+        signature = "ed25519:" + material["private_key_object"].sign(
+            unsigned.signing_bytes()
+        ).hex()
+        return LedgerOperationEnvelope(
+            operation_type=unsigned.operation_type,
+            operation_version=unsigned.operation_version,
+            protocol_version=unsigned.protocol_version,
+            origin_type=unsigned.origin_type,
+            initiator_id=unsigned.initiator_id,
+            sender_wallet=unsigned.sender_wallet,
+            sender_sequence=unsigned.sender_sequence,
+            fee_payer=unsigned.fee_payer,
+            fee_class=unsigned.fee_class,
+            created_at=unsigned.created_at,
+            expires_at=unsigned.expires_at,
+            target_epoch=unsigned.target_epoch,
+            payload=unsigned.payload,
+            evidence_references=unsigned.evidence_references,
+            signatures=[signature],
+            operation_id=unsigned.operation_id,
+        )
+
+    def _pending_owner_wallet_result(self, intent: dict) -> dict:
+        consensus = getattr(self._host, "consensus_service", None)
+        submission = (
+            consensus.get_submission(intent["operation_id"])
+            if consensus is not None
+            else None
+        )
+        proposed = dict(intent["owner_wallet"])
+        proposed.pop("private_key", None)
+        return {
+            "status": "CONSENSUS_PENDING",
+            "wallet": self._owner_wallet_public_state(),
+            "proposed_wallet": proposed,
+            "private_key": (
+                intent["owner_wallet"]["private_key"]
+                if not intent["owner_wallet"].get("imported", False)
+                else None
+            ),
+            "consensus": {
+                "operation_id": intent["operation_id"],
+                "status": submission.status.value if submission is not None else "pending",
+            },
+        }
+
+    def _submit_pending_owner_wallet_bootstrap(self, intent: dict) -> None:
+        consensus = getattr(self._host, "consensus_service", None)
+        if consensus is None or not consensus.is_validator:
+            raise ValueError("validator wallet bootstrap requires consensus service")
+        envelope = self._host.get_pending_consensus_envelope(intent["operation_id"])
+        if envelope is None:
+            raise ValueError("pending wallet bootstrap envelope is missing")
+        submission = consensus.submit_operation(envelope)
+        if submission.status.value == "failed":
+            raise ValueError(submission.error or "wallet bind consensus submission failed")
+
+    def _reconcile_pending_owner_wallet_bootstraps(self) -> None:
+        if self._reconciling_owner_wallet_bootstraps:
+            return
+        pending = list(getattr(self._host, "_pending_owner_wallet_bootstraps", []))
+        if not pending:
+            return
+        consensus = getattr(self._host, "consensus_service", None)
+        if consensus is None or not consensus.is_validator:
+            return
+
+        self._reconciling_owner_wallet_bootstraps = True
+        changed = False
+        try:
+            canonical_operations = {
+                operation.get("operation_id"): operation
+                for operation in self._host.ledger_operation_service.snapshot_operations()
+            }
+            for intent in pending:
+                operation_id = intent["operation_id"]
+                finality_source = getattr(self._host, "consensus_finality_source", None)
+                if finality_source is not None:
+                    consensus.reconcile_finality(
+                        operation_id,
+                        finality_source=finality_source,
+                    )
+                operation = canonical_operations.get(operation_id)
+                if operation is None:
+                    self._submit_pending_owner_wallet_bootstrap(intent)
+                    continue
+                if operation.get("operation_type") != "OPERATOR_WALLET_BIND":
+                    raise ValueError("wallet bootstrap operation type mismatch")
+                if operation.get("payload") != intent["payload"]:
+                    raise ValueError("wallet bootstrap consensus payload mismatch")
+                self._host._owner_wallet = dict(intent["owner_wallet"])
+                self._host._pending_owner_wallet_bootstraps = [
+                    item
+                    for item in self._host._pending_owner_wallet_bootstraps
+                    if item["operation_id"] != operation_id
+                ]
+                self._host.discard_pending_consensus_envelopes(operation_id)
+                self._host.discard_pending_consensus_operations(operation_id)
+                self._host._operator_onboarding = None
+                changed = True
+            if changed:
+                self.sync_operator_onboarding_state(endpoint_items=[])
+        finally:
+            self._reconciling_owner_wallet_bootstraps = False
 
     def owner_wallet_private_key(self) -> str:
         if self._host._owner_wallet is None:
@@ -74,47 +268,45 @@ class OperatorApplicationService:
             raise ValueError(f"Unsupported wallet bootstrap mode: {mode}")
         if mode == "import" and not private_key:
             raise ValueError("Private key is required for wallet import")
+        material = self._prepare_wallet_material(
+            mode=mode,
+            label=label,
+            private_key=private_key,
+        )
+        if self._requires_consensus_wallet_bind():
+            if self._host._pending_owner_wallet_bootstraps:
+                intent = self._host._pending_owner_wallet_bootstraps[0]
+                if mode == "import" and intent["owner_wallet"]["public_key"] != material["wallet"]["public_key"]:
+                    raise ValueError("another owner wallet bootstrap is already pending")
+                self._submit_pending_owner_wallet_bootstrap(intent)
+                self._reconcile_pending_owner_wallet_bootstraps()
+                return (
+                    self._pending_owner_wallet_result(intent)
+                    if self._host._owner_wallet is None
+                    else {"wallet": self.owner_wallet_state(), "private_key": None}
+                )
 
-        if private_key is None:
-            private_key_object = Ed25519PrivateKey.generate()
-            resolved_private_key = "ed25519:" + private_key_object.private_bytes(
-                Encoding.Raw,
-                PrivateFormat.Raw,
-                NoEncryption(),
-            ).hex()
-        else:
-            if not private_key.startswith("ed25519:"):
-                raise ValueError(
-                    "Owner wallet private key must use ed25519:<32-byte hex>"
-                )
-            try:
-                private_key_object = Ed25519PrivateKey.from_private_bytes(
-                    bytes.fromhex(private_key.removeprefix("ed25519:"))
-                )
-            except ValueError as error:
-                raise ValueError(
-                    "Owner wallet private key must use ed25519:<32-byte hex>"
-                ) from error
-            resolved_private_key = private_key
-        public_key = "ed25519:" + private_key_object.public_key().public_bytes(
-            Encoding.Raw,
-            PublicFormat.Raw,
-        ).hex()
-        digest = hashlib.sha256(public_key.encode("utf-8")).hexdigest()
-        created_at = datetime.now(UTC).isoformat()
-        self._host._owner_wallet = {
-            "wallet_id": f"wallet-{digest[:12]}",
-            "public_key": public_key,
-            "private_key": resolved_private_key,
-            "label": label,
-            "created_at": created_at,
-            "imported": mode == "import",
-        }
+            envelope = self._wallet_bind_envelope(material, mode=mode)
+            intent = {
+                "operation_id": envelope.operation_id,
+                "payload": dict(envelope.payload),
+                "owner_wallet": dict(material["wallet"]),
+            }
+            self._host._pending_owner_wallet_bootstraps.append(intent)
+            self._host.stage_pending_consensus_envelope(envelope)
+            self._host._persist_state()
+            self._submit_pending_owner_wallet_bootstrap(intent)
+            self._reconcile_pending_owner_wallet_bootstraps()
+            if self._host._owner_wallet is None:
+                return self._pending_owner_wallet_result(intent)
+            return {"wallet": self.owner_wallet_state(), "private_key": None}
+
+        self._host._owner_wallet = material["wallet"]
         self._host._operator_onboarding = None
         self.sync_operator_onboarding_state(endpoint_items=[])
         return {
             "wallet": self.owner_wallet_state(),
-            "private_key": resolved_private_key if mode == "create" else None,
+            "private_key": material["wallet"]["private_key"] if mode == "create" else None,
         }
 
     def operator_onboarding_state(self) -> dict:

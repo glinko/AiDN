@@ -96,6 +96,7 @@ class ExecutionEngine:
     # Default gas costs per operation category (class-level, read-only reference)
     _DEFAULT_GAS_COSTS: dict[str, int] = {
         "WALLET_TRANSFER": 200,
+        "OPERATOR_WALLET_BIND": 150,
         "SESSION_OPEN": 500,
         "DEPOSIT_LOCK": 300,
         "SESSION_ESCROW_LOCK": 300,
@@ -224,6 +225,8 @@ class ExecutionEngine:
                     try:
                         if result.envelope.operation_type == "WALLET_TRANSFER" and self._strict_operation_coverage:
                             self.ledger.apply_consensus_wallet_transfer(result.envelope)
+                        elif result.envelope.operation_type == "OPERATOR_WALLET_BIND":
+                            self.ledger.apply_consensus_operator_wallet_bind(result.envelope)
                         elif result.envelope.operation_type == "SESSION_OPEN" and self._strict_operation_coverage:
                             self.ledger.apply_consensus_session_open(
                                 result.envelope,
@@ -641,6 +644,20 @@ class ExecutionEngine:
                     )
                 )
                 emitted.extend(["WalletTransferred", "NetworkFeeRecycled"])
+            elif envelope.operation_type == "OPERATOR_WALLET_BIND":
+                self.ledger.validate_consensus_operator_wallet_bind(envelope)
+                state_changes.append(
+                    StateChange(
+                        entity_type="operator_wallet",
+                        entity_id=str(envelope.payload["node_id"]),
+                        change_type="bind",
+                        after={
+                            "wallet_id": envelope.payload["wallet_id"],
+                            "public_key": envelope.payload["public_key"],
+                        },
+                    )
+                )
+                emitted.append("OperatorWalletBound")
             elif envelope.operation_type == "SESSION_OPEN" and self._strict_operation_coverage:
                 self.ledger.validate_consensus_session_open(
                     envelope,

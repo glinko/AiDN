@@ -108,6 +108,13 @@ class ConsensusService:
             self._submission_transport = HttpCometBftSubmissionTransport(
                 config.cometbft_endpoint
             )
+        elif config.mode == ConsensusMode.VALIDATOR:
+            parsed_endpoint = urlsplit(config.cometbft_endpoint)
+            if parsed_endpoint.scheme in {"tcp", "tcp4", "tcp6"} and parsed_endpoint.netloc:
+                # Operator profiles historically use tcp:// for the CometBFT
+                # authority even though its RPC submission API is HTTP.
+                http_endpoint = urlunsplit(("http", parsed_endpoint.netloc, "", "", ""))
+                self._submission_transport = HttpCometBftSubmissionTransport(http_endpoint)
         else:
             self._submission_transport = None
 
@@ -241,18 +248,10 @@ class ConsensusService:
         self._submissions[envelope.operation_id] = record
         self._total_submitted += 1
 
-        # Simulate admission
-        if self.abci:
-            result = self.abci.process_proposal_transaction(transaction_bytes)
-
-            if result.code == "ok":
-                record.status = SubmissionStatus.ADMITTED
-                record.admitted_at = self._time_now()
-            else:
-                record.status = SubmissionStatus.FAILED
-                record.error = result.log
-                self._total_failed += 1
-        elif self._submission_transport is not None:
+        # A validator may have a local ABCI application and an HTTP CometBFT
+        # RPC at the same time. The RPC path is canonical: local CheckTx is
+        # only a fallback for isolated tests or explicitly local deployments.
+        if self._submission_transport is not None:
             try:
                 response = self._submission_transport.broadcast_tx_sync(
                     transaction_bytes,
@@ -279,6 +278,16 @@ class ConsensusService:
             except Exception as error:
                 record.status = SubmissionStatus.FAILED
                 record.error = str(error) or error.__class__.__name__
+                self._total_failed += 1
+        elif self.abci:
+            result = self.abci.process_proposal_transaction(transaction_bytes)
+
+            if result.code == "ok":
+                record.status = SubmissionStatus.ADMITTED
+                record.admitted_at = self._time_now()
+            else:
+                record.status = SubmissionStatus.FAILED
+                record.error = result.log
                 self._total_failed += 1
 
         return record

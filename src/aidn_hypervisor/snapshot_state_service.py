@@ -279,6 +279,9 @@ class SnapshotStateService:
                 LedgerOperationEnvelope.model_validate(item)
                 for item in self._host._pending_consensus_envelopes.values()
             ],
+            pending_owner_wallet_bootstraps=[
+                dict(item) for item in self._host._pending_owner_wallet_bootstraps
+            ],
             wallet_operation_sequences=self._host._ledger_operation_service.snapshot_wallet_sequences(),
             **self._host._ledger_operation_service.snapshot_settlement_state(),
             events=[event.model_copy(deep=True) for event in self._host._events],
@@ -346,6 +349,9 @@ class SnapshotStateService:
         self._host._pending_consensus_envelopes = {
             item.operation_id: item.model_dump(mode="json") for item in snapshot.pending_consensus_envelopes
         }
+        self._host._pending_owner_wallet_bootstraps = [
+            dict(item) for item in snapshot.pending_owner_wallet_bootstraps
+        ]
         self._host._wallet_identities = {item["wallet_id"]: dict(item) for item in snapshot.wallet_identities}
         self._host._consumed_wallet_authorization_nonces = set(snapshot.consumed_wallet_authorization_nonces)
         self._host._bundle_states = {state.bundle_id: state.model_dump(mode="json") for state in snapshot.bundle_states}

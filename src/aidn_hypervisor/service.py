@@ -255,6 +255,9 @@ class HypervisorService:
         # Unlike the projection records above, these are the exact immutable
         # network envelopes needed to retry an admitted operation after restart.
         self._pending_consensus_envelopes: dict[str, dict] = {}
+        # Wallet bootstrap keeps private material local while the public bind
+        # transaction is waiting for canonical consensus finality.
+        self._pending_owner_wallet_bootstraps: list[dict] = []
         self._mvp_session_economics_service = MvpSessionEconomicsService(self)
         self._wallet_economics_service = WalletEconomicsService(self)
         self._wallet_allocation_service = WalletAllocationService(self)
