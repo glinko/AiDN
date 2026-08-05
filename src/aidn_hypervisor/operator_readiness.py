@@ -75,13 +75,19 @@ def _consensus_step(consensus_status: Mapping[str, Any] | None) -> dict[str, Any
             blocking=True,
             action=_action(
                 kind="manual",
-                label="Check CometBFT",
-                detail="Start or configure CometBFT with its RPC available on port 26657, then refresh.",
+                label="Run operator bootstrap",
+                detail=(
+                    "This node does not expose consensus management metadata. On a fresh Ubuntu host, "
+                    "run the reviewed operator bootstrap; it installs CometBFT, creates a fixed user-systemd "
+                    "unit, starts it after the Hypervisor ABCI listener, and then refresh this wizard."
+                ),
             ),
             evidence={"available": False, "reason": "status_unavailable"},
         )
 
     rpc = consensus_status.get("rpc") or {}
+    management = consensus_status.get("management") or {}
+    managed_service = management.get("service")
     if not consensus_status.get("enabled", False):
         return _step(
             key="consensus",
@@ -97,11 +103,12 @@ def _consensus_step(consensus_status: Mapping[str, Any] | None) -> dict[str, Any
                 kind="manual",
                 label="Enable consensus",
                 detail=(
-                    "Configure validator or participant mode, then make the CometBFT "
-                    "RPC available before joining the network."
+                    "Re-run the operator bootstrap with --consensus-mode validator or "
+                    "--consensus-mode non_validator. The installer provisions CometBFT "
+                    "automatically; use --consensus-mode disabled only for local-only work."
                 ),
             ),
-            evidence={"enabled": False, "rpc": dict(rpc)},
+            evidence={"enabled": False, "rpc": dict(rpc), "management": dict(management)},
         )
     if rpc.get("available"):
         return _step(
@@ -119,7 +126,19 @@ def _consensus_step(consensus_status: Mapping[str, Any] | None) -> dict[str, Any
                 label="Recheck status",
                 detail="Refresh the readiness report.",
             ),
-            evidence={"enabled": True, "rpc": dict(rpc)},
+            evidence={"enabled": True, "rpc": dict(rpc), "management": dict(management)},
+        )
+    if managed_service:
+        action_label = "Restart CometBFT"
+        action_detail = (
+            f"This node is managed by user-systemd unit {managed_service}. Run "
+            f"systemctl --user restart {managed_service}, then press Recheck status."
+        )
+    else:
+        action_label = "Install CometBFT"
+        action_detail = (
+            "This legacy node has no managed consensus unit. Re-run the reviewed Ubuntu "
+            "operator bootstrap; it installs and starts CometBFT automatically, then refresh."
         )
     return _step(
         key="consensus",
@@ -133,10 +152,10 @@ def _consensus_step(consensus_status: Mapping[str, Any] | None) -> dict[str, Any
         blocking=True,
         action=_action(
             kind="manual",
-            label="Fix CometBFT",
-            detail="Start or repair the CometBFT service on the configured RPC port, usually 26657, then refresh.",
+            label=action_label,
+            detail=action_detail,
         ),
-        evidence={"enabled": True, "rpc": dict(rpc)},
+        evidence={"enabled": True, "rpc": dict(rpc), "management": dict(management)},
     )
 
 

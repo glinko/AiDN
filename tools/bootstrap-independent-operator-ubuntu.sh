@@ -14,6 +14,10 @@ Options:
   --install-dir DIR  Checkout location (default: $HOME/aidn/AiDN)
   --data-dir DIR     Local state and operator kit location (default: $HOME/.local/share/aidn)
   --port PORT        Loopback API port (default: 8766)
+  --chain-id ID      Local CometBFT chain ID (default: aidn-testnet-1)
+  --consensus-mode MODE  validator, non_validator, or disabled (default: validator)
+  --cometbft-version TAG CometBFT release tag (default: v0.38.19)
+  --no-consensus     Disable automatic local CometBFT installation
   --no-start         Install and prepare only; do not start the loopback API
   -h, --help         Show this help
 
@@ -27,6 +31,9 @@ ref='main'
 install_dir="${HOME}/aidn/AiDN"
 data_dir="${HOME}/.local/share/aidn"
 port='8766'
+chain_id='aidn-testnet-1'
+consensus_mode='validator'
+cometbft_version='v0.38.19'
 start_local='true'
 
 while [[ $# -gt 0 ]]; do
@@ -36,6 +43,10 @@ while [[ $# -gt 0 ]]; do
     --install-dir) install_dir="$2"; shift 2 ;;
     --data-dir) data_dir="$2"; shift 2 ;;
     --port) port="$2"; shift 2 ;;
+    --chain-id) chain_id="$2"; shift 2 ;;
+    --consensus-mode) consensus_mode="$2"; shift 2 ;;
+    --cometbft-version) cometbft_version="$2"; shift 2 ;;
+    --no-consensus) consensus_mode='disabled'; shift ;;
     --no-start) start_local='false'; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -46,6 +57,13 @@ done
 [[ "$peer_id" =~ ^[A-Za-z0-9._-]+$ ]] || { echo '--peer-id contains unsupported characters' >&2; exit 2; }
 [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) || {
   echo '--port must be between 1 and 65535' >&2; exit 2;
+}
+[[ "$chain_id" =~ ^[A-Za-z0-9._-]+$ ]] || { echo '--chain-id contains unsupported characters' >&2; exit 2; }
+[[ "$consensus_mode" == 'validator' || "$consensus_mode" == 'non_validator' || "$consensus_mode" == 'disabled' ]] || {
+  echo '--consensus-mode must be validator, non_validator, or disabled' >&2; exit 2;
+}
+[[ "$cometbft_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo '--cometbft-version must look like v0.38.19' >&2; exit 2;
 }
 
 if [[ ! -r /etc/os-release ]]; then
@@ -81,12 +99,44 @@ fi
 
 commit="$(git -C "$install_dir" rev-parse HEAD)"
 "$uv_bin" --directory "$install_dir" sync --all-extras --frozen
+
+consensus_service_name=''
+consensus_home=''
+consensus_binary_path=''
+consensus_rpc_host='127.0.0.1'
+consensus_rpc_port='26657'
+consensus_abci_host='127.0.0.1'
+consensus_abci_port='26658'
+if [[ "$consensus_mode" != 'disabled' ]]; then
+  consensus_service_name="aidn-cometbft-$peer_id.service"
+  consensus_home="$data_dir/consensus/cometbft"
+  consensus_binary_path="$data_dir/consensus/bin/cometbft"
+  consensus_abci_args=()
+  if [[ "$consensus_mode" == 'non_validator' ]]; then
+    consensus_abci_args=(--no-abci)
+  fi
+  bash "$install_dir/tools/install-cometbft-ubuntu.sh" \
+    --version "$cometbft_version" \
+    --home "$consensus_home" \
+    --binary-path "$consensus_binary_path" \
+    --service-name "$consensus_service_name" \
+    --chain-id "$chain_id" \
+    --moniker "$peer_id" \
+    --rpc-host "$consensus_rpc_host" \
+    --rpc-port "$consensus_rpc_port" \
+    --p2p-host '127.0.0.1' \
+    --p2p-port '26656' \
+    --abci-host "$consensus_abci_host" \
+    --abci-port "$consensus_abci_port" \
+    "${consensus_abci_args[@]}" \
+    --no-start >/dev/null
+fi
 "$uv_bin" --directory "$install_dir" run python tools/prepare-independent-operator-kit.py init \
   --output "$data_dir/operator-kit" --peer-id "$peer_id" --force
 
 mkdir -p "$data_dir/logs"
 cat > "$data_dir/bootstrap-state.json" <<EOF
-{"peer_id":"$peer_id","commit":"$commit","api":"http://127.0.0.1:$port","replication":"disabled_until_mutual_peer_approval"}
+{"peer_id":"$peer_id","commit":"$commit","api":"http://127.0.0.1:$port","replication":"disabled_until_mutual_peer_approval","consensus":{"mode":"$consensus_mode","service":"$consensus_service_name","home":"$consensus_home","binary":"$consensus_binary_path","rpc":"http://$consensus_rpc_host:$consensus_rpc_port","automatic_install":$([[ "$consensus_mode" != 'disabled' ]] && printf true || printf false)}}
 EOF
 chmod 600 "$data_dir/bootstrap-state.json"
 
@@ -95,7 +145,20 @@ if [[ "$start_local" == 'true' ]]; then
     echo "AiDN Hypervisor is already running with PID $(cat "$data_dir/hypervisor.pid")" >&2
     exit 1
   fi
+  consensus_env=("AIDN_CONSENSUS_MODE=$consensus_mode")
+  if [[ "$consensus_mode" != 'disabled' ]]; then
+    consensus_env+=(
+      "AIDN_CONSENSUS_NODE_ID=$peer_id"
+      "AIDN_COMETBFT_ENDPOINT=tcp://$consensus_rpc_host:$consensus_rpc_port"
+      "AIDN_COMETBFT_CHAIN_ID=$chain_id"
+      "AIDN_COMETBFT_SERVICE=$consensus_service_name"
+      "AIDN_COMETBFT_ABCI_STATE_PATH=$data_dir/consensus/abci-state"
+      "AIDN_COMETBFT_ABCI_HOST=$consensus_abci_host"
+      "AIDN_COMETBFT_ABCI_PORT=$consensus_abci_port"
+    )
+  fi
   nohup env \
+    "${consensus_env[@]}" \
     AIDN_HYPERVISOR_STATE_PATH="$data_dir/hypervisor-state.json" \
     AIDN_HYPERVISOR_BUNDLES_PATH="$data_dir/bundles.json" \
     "$uv_bin" --directory "$install_dir" run uvicorn aidn_hypervisor.main:build_app --factory \
@@ -109,7 +172,30 @@ if [[ "$start_local" == 'true' ]]; then
   curl --fail --silent "http://127.0.0.1:$port/health" >/dev/null || {
     echo "Hypervisor did not become healthy; inspect $data_dir/logs/hypervisor.log" >&2; exit 1;
   }
+  if [[ "$consensus_mode" != 'disabled' ]]; then
+    sudo loginctl enable-linger "$USER"
+    uid="$(id -u)"
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"
+    systemctl --user daemon-reload
+    systemctl --user enable --now "$consensus_service_name"
+    for _ in $(seq 1 30); do
+      if curl --fail --silent "http://$consensus_rpc_host:$consensus_rpc_port/status" >/dev/null; then
+        break
+      fi
+      sleep 1
+    done
+    curl --fail --silent "http://$consensus_rpc_host:$consensus_rpc_port/status" >/dev/null || {
+      systemctl --user --no-pager --full status "$consensus_service_name" >&2 || true
+      echo "CometBFT RPC did not become healthy; inspect journalctl --user -u $consensus_service_name" >&2
+      exit 1
+    }
+  fi
 fi
 
-printf '{"status":"ok","commit":"%s","operator_workspace":"%s","api":"http://127.0.0.1:%s","replication":"disabled_until_mutual_peer_approval"}\n' \
-  "$commit" "$data_dir/operator-kit" "$port"
+if [[ "$consensus_mode" == 'disabled' ]]; then
+  consensus_json='{"mode":"disabled","automatic_install":false}'
+else
+  consensus_json="{\"mode\":\"$consensus_mode\",\"service\":\"$consensus_service_name\",\"home\":\"$consensus_home\",\"binary\":\"$consensus_binary_path\",\"rpc\":\"http://$consensus_rpc_host:$consensus_rpc_port\",\"automatic_install\":true}"
+fi
+printf '{"status":"ok","commit":"%s","operator_workspace":"%s","api":"http://127.0.0.1:%s","replication":"disabled_until_mutual_peer_approval","consensus":%s}\n' \
+  "$commit" "$data_dir/operator-kit" "$port" "$consensus_json"

@@ -6227,7 +6227,7 @@
               `).join("")}
             </div>
             <div class="readiness-agent-note">
-              Agent control stays honest: if an MCP mutation is not advertised by this node, the wizard does not emulate it. Use the linked operator UI action or complete the marked manual infrastructure step, then refresh.
+              Host services are provisioned by the reviewed operator installer, not by an unauthenticated dashboard shell. Fresh installs start CometBFT automatically; legacy nodes show the exact bounded recovery instruction, after which this wizard can recheck the live state.
             </div>
           ` : ""}
           ${state.readinessMessage ? `<div class="readiness-message ${escapeHtml(state.readinessMessage.kind || "")}">${escapeHtml(state.readinessMessage.text || "")}</div>` : ""}

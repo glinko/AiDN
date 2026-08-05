@@ -1,0 +1,80 @@
+# Operator Consensus Provisioning
+
+Status: `Draft`
+
+## Scope
+
+The Ubuntu operator bootstrap provisions CometBFT automatically. The operator
+does not need to discover a binary, create a user-systemd unit, or manually
+start the process for a fresh installation.
+
+The supported fresh-host path is:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/glinko/AiDN/main/tools/aidn-operator-bootstrap-ubuntu.sh \
+  | bash -s -- --operator-id node-a --consensus-mode validator
+```
+
+The installer prompts for the operator identity and safe local paths. It then:
+
+1. installs the pinned CometBFT toolchain;
+2. creates `data-dir/consensus/cometbft` only when it is empty;
+3. writes `aidn-cometbft-<operator>.service` as a user-systemd unit;
+4. configures RPC `127.0.0.1:26657` and AiDN ABCI `127.0.0.1:26658`;
+5. starts the Hypervisor first so its ABCI listener is available;
+6. starts CometBFT and verifies `/status` before reporting success.
+
+The default fresh-host profile is a local single-validator chain. It proves
+that the local consensus process and the AiDN ABCI bridge work; it is not an
+implicit claim that the node has joined a public validator set. An approved
+genesis and peer/network profile remain required for a multi-operator network.
+
+## Modes
+
+- `validator`: starts the local AiDN ABCI application and CometBFT validator.
+- `non_validator`: starts CometBFT with `proxy_app = "nil"`; it does not claim
+  local validator participation.
+- `disabled`: leaves consensus disabled for explicitly local-only work.
+
+`--no-consensus` is an alias for `--consensus-mode disabled`.
+
+## Readiness Wizard Behavior
+
+The dashboard readiness projection remains read-only. It never executes an
+arbitrary shell command received over HTTP.
+
+- A fresh bootstrap exposes the managed unit name in consensus status.
+- If RPC is down, the wizard shows the exact bounded recovery command:
+  `systemctl --user restart aidn-cometbft-<operator>.service`.
+- A legacy node with no management metadata shows `Install CometBFT` and
+  instructs the operator to rerun the reviewed bootstrap rather than implying
+  that a browser button can install host software.
+
+After recovery, press `Recheck status`. The consensus step is ready only after
+both `/status` and `/net_info` respond through the configured RPC endpoint.
+
+## Existing Host Migration
+
+Rerun the bootstrap with the same operator ID, data directory, and chain ID:
+
+```bash
+bash tools/aidn-operator-bootstrap-ubuntu.sh \
+  --operator-id node-a \
+  --data-dir "$HOME/.local/share/aidn/node-a" \
+  --consensus-mode validator
+```
+
+The installer refuses to rewrite an existing `genesis.json` when its chain ID
+does not match the requested value. Stop and reconcile the network profile
+explicitly instead of deleting the CometBFT home.
+
+Inspect the managed process with:
+
+```bash
+systemctl --user status aidn-cometbft-node-a.service
+journalctl --user -u aidn-cometbft-node-a.service -n 100 --no-pager
+curl --fail http://127.0.0.1:26657/status
+```
+
+The installer never stores the sudo password in a unit or environment file.

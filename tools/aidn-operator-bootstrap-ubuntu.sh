@@ -36,6 +36,9 @@ Options:
   --network-id ID           Network ID (default: aidn)
   --chain-id ID             Chain ID (default: aidn-testnet-1)
   --network-revision REV    Network revision (default: 1.0)
+  --consensus-mode MODE     validator, non_validator, or disabled (default: validator)
+  --cometbft-version TAG   CometBFT release tag (default: v0.38.19)
+  --no-consensus             Disable automatic local CometBFT installation
   --no-start                Install and write the user service, but do not start it
   --non-interactive         Use defaults and supplied flags; fail if a value is unsafe
   -h, --help                Show this help
@@ -153,10 +156,13 @@ advertise_host=''
 network_id='aidn'
 chain_id='aidn-testnet-1'
 network_revision='1.0'
+consensus_mode='validator'
+cometbft_version='v0.38.19'
 no_start='false'
 non_interactive='false'
 operator_id_supplied='false'
 enable_registry_supplied='false'
+consensus_mode_supplied='false'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -241,6 +247,22 @@ while [[ $# -gt 0 ]]; do
       network_revision="$2"
       shift 2
       ;;
+    --consensus-mode)
+      require_value "$1" "$@"
+      consensus_mode="$2"
+      consensus_mode_supplied='true'
+      shift 2
+      ;;
+    --cometbft-version)
+      require_value "$1" "$@"
+      cometbft_version="$2"
+      shift 2
+      ;;
+    --no-consensus)
+      consensus_mode='disabled'
+      consensus_mode_supplied='true'
+      shift
+      ;;
     --no-start)
       no_start='true'
       shift
@@ -274,6 +296,11 @@ valid_identifier "$operator_id" || die 'operator ID contains unsupported charact
 valid_identifier "$peer_id" || die 'peer ID contains unsupported characters'
 [[ -n "$control_group_id" ]] || control_group_id="control-group-$operator_id"
 valid_identifier "$control_group_id" || die 'control group ID contains unsupported characters'
+case "$consensus_mode" in
+  validator|non_validator|disabled) ;;
+  *) die 'consensus mode must be validator, non_validator, or disabled' ;;
+esac
+[[ "$cometbft_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'CometBFT version must look like v0.38.19'
 
 default_install_dir="$HOME/aidn/$operator_id/AiDN"
 default_data_dir="$HOME/.local/share/aidn/$operator_id"
@@ -285,6 +312,14 @@ if [[ -z "$data_dir" ]]; then
 fi
 valid_path "$install_dir" || die 'install directory must be an absolute path'
 valid_path "$data_dir" || die 'data directory must be an absolute path'
+
+if [[ "$non_interactive" != 'true' && "$consensus_mode_supplied" != 'true' ]]; then
+  consensus_mode="$(prompt_value 'Consensus mode (validator/non_validator/disabled)' "$consensus_mode")"
+fi
+case "$consensus_mode" in
+  validator|non_validator|disabled) ;;
+  *) die 'consensus mode must be validator, non_validator, or disabled' ;;
+esac
 
 if [[ "$non_interactive" != 'true' ]]; then
   api_host="$(prompt_value 'Hypervisor API bind address' "$api_host")"
@@ -378,6 +413,41 @@ identity_result="$("$uv_bin" --directory "$install_dir" run python tools/prepare
   --network-revision "$network_revision")"
 python_bin="$install_dir/.venv/bin/python"
 [[ -x "$python_bin" ]] || die "prepared venv is missing: $python_bin"
+
+consensus_service_name=''
+consensus_home=''
+consensus_binary_path=''
+consensus_rpc_host='127.0.0.1'
+consensus_rpc_port='26657'
+consensus_abci_host='127.0.0.1'
+consensus_abci_port='26658'
+if [[ "$consensus_mode" != 'disabled' ]]; then
+  consensus_service_name="aidn-cometbft-$operator_id.service"
+  consensus_home="$data_dir/consensus/cometbft"
+  consensus_binary_path="$data_dir/consensus/bin/cometbft"
+  [[ -x "$install_dir/tools/install-cometbft-ubuntu.sh" || -f "$install_dir/tools/install-cometbft-ubuntu.sh" ]] || {
+    die "CometBFT installer is missing from checkout: $install_dir/tools/install-cometbft-ubuntu.sh"
+  }
+  consensus_abci_args=()
+  if [[ "$consensus_mode" == 'non_validator' ]]; then
+    consensus_abci_args=(--no-abci)
+  fi
+  bash "$install_dir/tools/install-cometbft-ubuntu.sh" \
+    --version "$cometbft_version" \
+    --home "$consensus_home" \
+    --binary-path "$consensus_binary_path" \
+    --service-name "$consensus_service_name" \
+    --chain-id "$chain_id" \
+    --moniker "$operator_id" \
+    --rpc-host "$consensus_rpc_host" \
+    --rpc-port "$consensus_rpc_port" \
+    --p2p-host '127.0.0.1' \
+    --p2p-port '26656' \
+    --abci-host "$consensus_abci_host" \
+    --abci-port "$consensus_abci_port" \
+    "${consensus_abci_args[@]}" \
+    --no-start >/dev/null
+fi
 operator_public_key="$($python_bin - "$identity_root/operator-identity.json" <<'PY'
 import json
 import sys
@@ -427,6 +497,22 @@ export AIDN_HYPERVISOR_STATE_PATH="\$data/hypervisor-state.json"
 export AIDN_HYPERVISOR_BUNDLES_PATH="\$data/bundles.json"
 export PYTHONUNBUFFERED=1
 EOF
+if [[ "$consensus_mode" != 'disabled' ]]; then
+  cat >> "$wrapper" <<EOF
+export AIDN_CONSENSUS_MODE=$(shell_quote "$consensus_mode")
+export AIDN_CONSENSUS_NODE_ID=$(shell_quote "$operator_id")
+export AIDN_COMETBFT_ENDPOINT=$(shell_quote "tcp://$consensus_rpc_host:$consensus_rpc_port")
+export AIDN_COMETBFT_CHAIN_ID=$(shell_quote "$chain_id")
+export AIDN_COMETBFT_SERVICE=$(shell_quote "$consensus_service_name")
+export AIDN_COMETBFT_ABCI_STATE_PATH="\$data/consensus/abci-state"
+export AIDN_COMETBFT_ABCI_HOST=$(shell_quote "$consensus_abci_host")
+export AIDN_COMETBFT_ABCI_PORT=$(shell_quote "$consensus_abci_port")
+EOF
+else
+  cat >> "$wrapper" <<'EOF'
+export AIDN_CONSENSUS_MODE=disabled
+EOF
+fi
 if [[ "$enable_registry" == 'true' ]]; then
   cat >> "$wrapper" <<'EOF'
 export AIDN_REGISTRY_REPLICATION_CONFIG="$registry_config"
@@ -442,11 +528,16 @@ chmod 700 "$wrapper"
 service_name="aidn-hypervisor-$operator_id.service"
 unit_path="$HOME/.config/systemd/user/$service_name"
 wrapper_q="$(shell_quote "$wrapper")"
+consensus_unit_dependency=''
+if [[ "$consensus_mode" != 'disabled' ]]; then
+  consensus_unit_dependency="Wants=$consensus_service_name"
+fi
 cat > "$unit_path" <<EOF
 [Unit]
 Description=AiDN Hypervisor operator $operator_id
 After=network-online.target
 Wants=network-online.target
+$consensus_unit_dependency
 
 [Service]
 Type=simple
@@ -464,6 +555,16 @@ WorkingDirectory=$repo_q
 WantedBy=default.target
 EOF
 chmod 600 "$unit_path"
+if [[ "$consensus_mode" != 'disabled' ]]; then
+  consensus_dropin_dir="$HOME/.config/systemd/user/$consensus_service_name.d"
+  mkdir -p "$consensus_dropin_dir"
+  cat > "$consensus_dropin_dir/10-aidn-hypervisor.conf" <<EOF
+[Unit]
+After=$service_name
+Wants=$service_name
+EOF
+  chmod 600 "$consensus_dropin_dir/10-aidn-hypervisor.conf"
+fi
 
 if command -v loginctl >/dev/null 2>&1 && [[ "$EUID" -ne 0 ]]; then
   "${sudo_cmd[@]}" loginctl enable-linger "$USER"
@@ -488,6 +589,19 @@ if [[ "$no_start" != 'true' ]]; then
     systemctl --user --no-pager --full status "$service_name" >&2 || true
     die "Hypervisor did not become healthy; inspect journalctl --user -u $service_name"
   }
+  if [[ "$consensus_mode" != 'disabled' ]]; then
+    systemctl --user enable --now "$consensus_service_name"
+    for _ in $(seq 1 30); do
+      if curl --fail --silent "http://$consensus_rpc_host:$consensus_rpc_port/status" >/dev/null; then
+        break
+      fi
+      sleep 1
+    done
+    curl --fail --silent "http://$consensus_rpc_host:$consensus_rpc_port/status" >/dev/null || {
+      systemctl --user --no-pager --full status "$consensus_service_name" >&2 || true
+      die "CometBFT RPC did not become healthy; inspect journalctl --user -u $consensus_service_name"
+    }
+  fi
 fi
 
 state_path="$data_dir/bootstrap-state.json"
@@ -497,7 +611,9 @@ if [[ "$enable_registry" == 'true' ]]; then
 fi
 "$python_bin" - "$state_path" "$operator_id" "$peer_id" "$control_group_id" "$commit" \
   "$api_host" "$api_port" "$registry_state" "$service_name" "$identity_root" \
-  "$registry_root" "$operator_public_key" "$ref" <<'PY'
+  "$registry_root" "$operator_public_key" "$ref" "$consensus_mode" \
+  "$consensus_service_name" "$consensus_home" "$consensus_binary_path" \
+  "$consensus_rpc_host" "$consensus_rpc_port" <<'PY'
 import json
 import os
 import sys
@@ -516,6 +632,12 @@ import sys
     registry_root,
     operator_public_key,
     ref,
+    consensus_mode,
+    consensus_service_name,
+    consensus_home,
+    consensus_binary_path,
+    consensus_rpc_host,
+    consensus_rpc_port,
 ) = sys.argv[1:]
 payload = {
     "status": "ok",
@@ -532,6 +654,14 @@ payload = {
     "registry_root": registry_root,
     "registry_public_bundle": os.path.join(registry_root, "public-peer.json"),
     "replication": registry_state,
+    "consensus": {
+        "mode": consensus_mode,
+        "service": consensus_service_name or None,
+        "home": consensus_home or None,
+        "binary": consensus_binary_path or None,
+        "rpc": f"http://{consensus_rpc_host}:{consensus_rpc_port}" if consensus_service_name else None,
+        "automatic_install": consensus_mode != "disabled",
+    },
 }
 os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
 with open(path, "w", encoding="utf-8") as stream:
@@ -548,6 +678,11 @@ echo "  state:    $data_dir" >&2
 echo "  service:  $service_name" >&2
 echo "  API:      http://$api_host:$api_port" >&2
 echo "  Registry: $registry_state" >&2
+if [[ "$consensus_mode" != 'disabled' ]]; then
+  echo "  CometBFT: $consensus_service_name ($consensus_rpc_host:$consensus_rpc_port)" >&2
+else
+  echo '  CometBFT: disabled (--no-consensus)' >&2
+fi
 echo "  public peer bundle: $registry_root/public-peer.json" >&2
 echo "  public operator identity: $identity_root/operator-public-identity.json" >&2
 echo >&2

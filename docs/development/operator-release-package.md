@@ -3,7 +3,8 @@
 This is the supported one-command installation path for a fresh Ubuntu 24.04+
 or later host. It installs the Hypervisor checkout, creates persistent local
 state, provisions a host-local operator identity and encrypted Registry secret
-store, and manages the Hypervisor with a user-level systemd service.
+store, provisions a pinned CometBFT process, and manages both processes with
+user-level systemd services.
 
 The installer is intentionally safe by default:
 
@@ -41,6 +42,13 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 
 The non-interactive form still requires the caller's ordinary sudo access. It
 does not silently enable a public API or a Registry listener.
+
+Consensus is enabled as a local validator by default. Use
+`--consensus-mode non_validator` for a participant without local validator
+execution, or `--no-consensus` for an explicitly local-only installation. See
+[Operator Consensus Provisioning](./operator-consensus-provisioning.md) for
+startup ordering, legacy migration, and the boundary between a local genesis
+and a joined multi-validator network.
 
 ## Enabling peer onboarding
 
@@ -89,8 +97,12 @@ For operator `operator-example-1`, defaults are:
     secrets.json                                    encrypted private store
     master-key.b64                                  PRIVATE, mode 0600
   run-hypervisor.sh                                 PRIVATE launcher
+  consensus/
+    bin/cometbft                                    pinned executable
+    cometbft/                                        CometBFT home and genesis
   logs/
 ~/.config/systemd/user/aidn-hypervisor-operator-example-1.service
+~/.config/systemd/user/aidn-cometbft-operator-example-1.service
 ```
 
 `bootstrap-state.json` contains the exact checkout commit, operator ID, public
@@ -99,7 +111,9 @@ key. Verify the service with:
 
 ```bash
 systemctl --user status aidn-hypervisor-operator-example-1.service
+systemctl --user status aidn-cometbft-operator-example-1.service
 curl --fail http://127.0.0.1:8766/health
+curl --fail http://127.0.0.1:26657/status
 ```
 
 The installer enables user lingering so the service can return after reboot.
@@ -117,6 +131,7 @@ To stop and disable one installed operator without deleting evidence or keys:
 
 ```bash
 systemctl --user disable --now aidn-hypervisor-operator-example-1.service
+systemctl --user disable --now aidn-cometbft-operator-example-1.service
 ```
 
 Do not delete `master-key.b64`, `secrets.json`, or

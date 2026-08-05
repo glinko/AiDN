@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-04`
+Last updated: `2026-08-05`
 
 This is the main public roadmap for the repository.
 
@@ -82,6 +82,13 @@ The distributed registry is a target architecture, not the first milestone.
 Status: `M1-M10 complete, M8 target architecture`
 
 Current implementation slice:
+- [x] Ubuntu operator bootstrap now provisions the pinned CometBFT toolchain,
+  creates a fixed user-systemd unit, starts the Hypervisor ABCI listener before
+  consensus, verifies RPC health, and persists management metadata for the
+  Readiness Wizard. Fresh nodes no longer require a separate manual
+  “start CometBFT” step. Existing `genesis.json` state is validated and never
+  overwritten; joining a multi-validator network still requires an approved
+  network profile.
 - [x] Consensus-enabled MVP Forced Settlement now uses an ordered, idempotent
   `SESSION_ESCROW_LOCK` -> `SESSION_FAILURE_EVIDENCE` -> `SESSION_FORCE_SETTLE`
   chain. Local preparation is separated from local economic application, and
@@ -1063,6 +1070,11 @@ This work is intentionally outside the functional MVP. It must not alter current
   Bundle and Endpoint. It separates local execution readiness from network
   readiness, gives bounded next actions, and explicitly reports unavailable
   probes instead of guessing. See [UX-0003](./docs/product/UX-0003-operator-readiness-wizard.md).
+- Consensus provisioning (2026-08-05): both Ubuntu operator entry points now
+  install and manage CometBFT automatically. Legacy nodes without management
+  metadata receive a concrete migration instruction; the dashboard remains
+  read-only and does not expose arbitrary host command execution. See
+  [operator consensus provisioning](./docs/development/operator-consensus-provisioning.md).
 - Validator AppHash compatibility now treats empty post-MVP Ledger extensions as absent during canonical hashing, so upgrades do not invalidate historical snapshots merely by adding empty stake, penalty, checkpoint, dispute, or correction fields; populated extensions remain committed.
 - The functional controlled-testnet MVP gate is now closed. Remaining priorities in this section are public-network/post-MVP claims: independent-operator evidence, public directory authority, external multi-validator finality, and enforceable production trust policy.
 

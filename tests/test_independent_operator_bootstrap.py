@@ -6,6 +6,10 @@ def test_ubuntu_bootstrap_is_loopback_only_and_requires_explicit_peer_identity()
 
     assert "--peer-id is required" in script
     assert "--host 127.0.0.1" in script
+    assert "install-cometbft-ubuntu.sh" in script
+    assert "--consensus-mode MODE" in script
+    assert "AIDN_COMETBFT_ENDPOINT" in script
+    assert "systemctl --user enable --now \"$consensus_service_name\"" in script
     assert "replication\":\"disabled_until_mutual_peer_approval" in script
     assert "AIDN_REGISTRY_REPLICATION_CONFIG" not in script
 
@@ -48,5 +52,22 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "master-key.b64" in script
     assert "AIDN_SECRET_MANAGER_MASTER_KEY" in script
     assert "operator-attestation-key.raw" in script
+    assert "--consensus-mode MODE" in script
+    assert "install-cometbft-ubuntu.sh" in script
+    assert "AIDN_COMETBFT_SERVICE" in script
+    assert "systemctl --user enable --now \"$consensus_service_name\"" in script
     assert "raw.githubusercontent.com/glinko/AiDN/<reviewed-ref>" in script
     assert "sudo password was used only by sudo" in script
+
+
+def test_cometbft_installer_is_pinned_idempotent_and_preserves_genesis() -> None:
+    script = Path("tools/install-cometbft-ubuntu.sh").read_text(encoding="utf-8")
+
+    assert "DEFAULT_VERSION='v0.38.19'" in script
+    assert "go install \"github.com/cometbft/cometbft/cmd/cometbft@$version\"" in script
+    assert "refusing to rewrite it" in script
+    assert "systemctl --user enable --now \"$service_name\"" in script
+    assert "ProtectSystem=strict" in script
+    assert "ReadWritePaths=$home" in script
+    assert "--no-start" in script
+    assert "--no-abci" in script

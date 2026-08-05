@@ -50,6 +50,20 @@ def test_service_disabled_mode_finalizes_locally():
     assert svc._total_finalized == 1
 
 
+def test_status_exposes_managed_consensus_unit() -> None:
+    service = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.VALIDATOR,
+            managed_service_name="aidn-cometbft-node-a.service",
+        )
+    )
+
+    assert service.status()["management"] == {
+        "managed": True,
+        "service": "aidn-cometbft-node-a.service",
+    }
+
+
 # ---- non-validator mode ----
 
 

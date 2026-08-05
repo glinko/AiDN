@@ -57,9 +57,18 @@ The wizard SHALL NOT:
 
 Interactive actions navigate to existing operator routes, open the Wallet
 console, refresh the readiness projection, or invoke the existing model
-discovery route. Host-level work such as enabling CometBFT or configuring a
-resource probe remains explicitly manual until a separately authorized
-installer is implemented.
+discovery route. Fresh Ubuntu installation is responsible for host-level
+consensus provisioning: the reviewed operator bootstrap installs the pinned
+CometBFT toolchain, creates a fixed user-systemd unit, starts the Hypervisor
+ABCI listener before CometBFT, and verifies RPC health. The dashboard never
+executes arbitrary host commands. A legacy node without managed consensus
+metadata receives a concrete migration instruction instead of a misleading
+in-dashboard shell action.
+
+The installer supports `validator`, `non_validator` and `disabled` modes. A
+new local genesis is created only when the CometBFT home is empty; an existing
+`genesis.json` is checked against the requested chain ID and is never rewritten
+by a rerun.
 
 ## 4. Readiness Projection
 

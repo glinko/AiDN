@@ -526,6 +526,7 @@ def _build_default_consensus_service(
         cometbft_endpoint=os.getenv("AIDN_COMETBFT_ENDPOINT", "tcp://localhost:26657"),
         validator_pubkey=os.getenv("AIDN_CONSENSUS_VALIDATOR_PUBKEY", ""),
         chain_id=os.getenv("AIDN_COMETBFT_CHAIN_ID", "aidn-localnet-1"),
+        managed_service_name=os.getenv("AIDN_COMETBFT_SERVICE") or None,
         abci_state_path=os.getenv("AIDN_COMETBFT_ABCI_STATE_PATH"),
         abci_listen_host=os.getenv("AIDN_COMETBFT_ABCI_HOST", "127.0.0.1"),
         abci_listen_port=int(os.getenv("AIDN_COMETBFT_ABCI_PORT", "26658")),

@@ -69,7 +69,8 @@ def test_readiness_reports_real_prerequisite_blockers() -> None:
     assert payload["overall_state"] == "blocked"
     assert payload["execution_ready"] is False
     assert payload["network_ready"] is False
-    assert payload["next_action"]["label"] == "Fix CometBFT"
+    assert payload["next_action"]["label"] == "Install CometBFT"
+    assert "legacy node has no managed consensus unit" in payload["next_action"]["detail"]
     assert {step["key"] for step in payload["steps"] if step["blocking"]} == {
         "consensus",
         "wallet",
@@ -151,3 +152,18 @@ def test_readiness_reaches_ready_only_after_runtime_and_publication_chain_exists
     assert payload["execution_ready"] is True
     assert payload["network_ready"] is True
     assert payload["progress"] == {"ready": 8, "total": 8, "percent": 100}
+
+
+def test_readiness_names_the_managed_cometbft_unit_for_recovery() -> None:
+    payload = build_operator_readiness_payload(
+        service=_empty_service(),
+        consensus_status={
+            "enabled": True,
+            "rpc": {"available": False},
+            "management": {"managed": True, "service": "aidn-cometbft-node.service"},
+        },
+    )
+
+    action = payload["next_action"]
+    assert action["label"] == "Restart CometBFT"
+    assert "systemctl --user restart aidn-cometbft-node.service" in action["detail"]

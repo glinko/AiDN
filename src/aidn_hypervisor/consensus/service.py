@@ -48,6 +48,7 @@ class ConsensusServiceConfig:
     cometbft_endpoint: str = "tcp://localhost:26657"
     validator_pubkey: str = ""
     chain_id: str = "aidn-localnet-1"
+    managed_service_name: str | None = None
     gas_limit: int = 1_000_000
     max_mempool_size: int = 1000
     submission_timeout_seconds: float = 30.0
@@ -147,6 +148,10 @@ class ConsensusService:
             "mode": self.config.mode.value,
             "node_id": self.config.node_id,
             "chain_id": self.config.chain_id,
+            "management": {
+                "managed": bool(self.config.managed_service_name),
+                "service": self.config.managed_service_name,
+            },
             "metrics": self.get_metrics(),
             "rpc": {"available": False},
         }
