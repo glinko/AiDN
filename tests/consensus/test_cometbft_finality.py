@@ -222,6 +222,57 @@ def test_cometbft_finality_recovers_legacy_transaction_hash_from_recent_blocks()
     ]
 
 
+def test_cometbft_finality_reuses_recovered_hash_across_sources():
+    envelope = LedgerOperationEnvelope(
+        operation_type="REGISTRY_UPSERT",
+        origin_type="protocol",
+        created_at="2030-01-01T00:00:00Z",
+    )
+    transaction_bytes = json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
+    transaction_hash = cometbft_transaction_hash(transaction_bytes)
+    transaction_response, commit_response = _responses(
+        transaction_bytes=transaction_bytes,
+        transaction_hash=transaction_hash,
+    )
+    recovered_hashes: dict[str, str] = {}
+    first_transport = LegacyRecoveryTransport(
+        transaction_response=transaction_response,
+        commit_response=commit_response,
+        transaction_bytes=transaction_bytes,
+    )
+    second_transport = LegacyRecoveryTransport(
+        transaction_response=transaction_response,
+        commit_response=commit_response,
+        transaction_bytes=transaction_bytes,
+    )
+    first_source = CometBftRpcFinalitySource(
+        chain_id="aidn-testnet-1",
+        transaction_hash_for_operation=lambda operation_id: None,
+        proof_verifier=AcceptingProofVerifier(),
+        transport=first_transport,
+        verifier_id="test-light-client:0",
+        transaction_scan_window=4,
+        recovered_transaction_hashes=recovered_hashes,
+    )
+    second_source = CometBftRpcFinalitySource(
+        chain_id="aidn-testnet-1",
+        transaction_hash_for_operation=lambda operation_id: None,
+        proof_verifier=AcceptingProofVerifier(),
+        transport=second_transport,
+        verifier_id="test-light-client:1",
+        transaction_scan_window=4,
+        recovered_transaction_hashes=recovered_hashes,
+    )
+
+    assert first_source.finality_evidence(envelope.operation_id) is not None
+    assert second_source.finality_evidence(envelope.operation_id) is not None
+    assert recovered_hashes == {envelope.operation_id: transaction_hash}
+    assert second_transport.calls == [
+        ("/tx", {"hash": f"0x{transaction_hash}", "prove": "true"}),
+        ("/commit", {"height": "11"}),
+    ]
+
+
 @pytest.mark.parametrize("accept_transaction,accept_commit", [(False, True), (True, False)])
 def test_cometbft_finality_source_fails_closed_when_a_proof_verification_fails(
     accept_transaction: bool,

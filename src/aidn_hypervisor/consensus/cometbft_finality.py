@@ -130,6 +130,7 @@ def build_cometbft_finality_source(
         per_page=config.validator_page_size,
         maximum_validators=config.maximum_validators,
     )
+    recovered_transaction_hashes: dict[str, str] = {}
     external_source = CometBftRpcFinalitySource(
         chain_id=config.chain_id,
         transaction_hash_for_operation=transaction_hash_for_operation,
@@ -138,6 +139,7 @@ def build_cometbft_finality_source(
         verifier_id=config.verifier_id,
         timeout_seconds=config.timeout_seconds,
         transaction_scan_window=config.transaction_scan_window,
+        recovered_transaction_hashes=recovered_transaction_hashes,
     )
     if abci_application is None:
         return external_source
@@ -156,6 +158,7 @@ def build_cometbft_multi_rpc_finality_source(
     if transports is not None and len(transports) != len(config.rpc_endpoints):
         raise ValueError("multi-RPC transports must match endpoint count")
     backend = cryptography or Zip215CometBftEd25519Backend()
+    recovered_transaction_hashes: dict[str, str] = {}
     sources = []
     source_ids = []
     for index, endpoint in enumerate(config.rpc_endpoints):
@@ -188,6 +191,7 @@ def build_cometbft_multi_rpc_finality_source(
                 verifier_id=f"{config.verifier_id}:{index}",
                 timeout_seconds=config.timeout_seconds,
                 transaction_scan_window=config.transaction_scan_window,
+                recovered_transaction_hashes=recovered_transaction_hashes,
             )
         )
         source_ids.append(endpoint)

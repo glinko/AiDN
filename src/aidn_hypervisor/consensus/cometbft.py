@@ -357,6 +357,7 @@ class CometBftRpcFinalitySource:
         verifier_id: str,
         timeout_seconds: int = 10,
         transaction_scan_window: int = 512,
+        recovered_transaction_hashes: dict[str, str] | None = None,
     ) -> None:
         if not chain_id.strip() or not verifier_id.strip():
             raise ValueError("CometBFT chain_id and verifier_id are required")
@@ -371,15 +372,20 @@ class CometBftRpcFinalitySource:
         self._verifier_id = verifier_id
         self._timeout_seconds = timeout_seconds
         self._transaction_scan_window = transaction_scan_window
+        self._recovered_transaction_hashes = recovered_transaction_hashes
 
     def finality_evidence(self, operation_id: str) -> ConsensusFinalityEvidence | None:
         """Return evidence only after both inclusion and commit proof verification."""
         try:
             expected_tx_hash = self._transaction_hash_for_operation(operation_id)
+            if expected_tx_hash is None and self._recovered_transaction_hashes is not None:
+                expected_tx_hash = self._recovered_transaction_hashes.get(operation_id)
             if expected_tx_hash is None:
                 expected_tx_hash = self._recover_transaction_hash(operation_id)
                 if expected_tx_hash is None:
                     return None
+                if self._recovered_transaction_hashes is not None:
+                    self._recovered_transaction_hashes[operation_id] = expected_tx_hash
             transaction_hash = _normalise_hash(expected_tx_hash)
             transaction_result = self._rpc_result(
                 self._transport.get(
