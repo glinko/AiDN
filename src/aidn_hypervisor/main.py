@@ -22,7 +22,6 @@ from aidn_hypervisor.consensus.service import (
 from aidn_hypervisor.contribution_api import build_contribution_router
 from aidn_hypervisor.contributions.service import ContributionAccountingService
 from aidn_hypervisor.contributions.store import ContributionEvidenceStore
-from aidn_hypervisor.domain.models import NodeCapacity
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.endpoints.api import build_endpoint_router
@@ -53,6 +52,7 @@ from aidn_hypervisor.registry_api import build_registry_router
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointService
 from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
+from aidn_hypervisor.resource_probe import load_resource_probe_from_environment
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
@@ -288,6 +288,10 @@ def _is_validator_consensus_write_path(path: str) -> bool:
         return True
     if parts == ["operators", "wallet", "bootstrap", "import"]:
         return True
+    if parts == ["operators", "resources", "probe"]:
+        # This bounded local operation accepts no caller-provided capacity and
+        # only refreshes host measurements. It has no Ledger effect.
+        return True
     if (
         len(parts) == 5
         and parts[:3] == ["api", "v1", "endpoints"]
@@ -333,10 +337,14 @@ def _build_default_service(
     plugins.register(WhisperPlugin())
     bundles = _default_bundle_registry(plugins).load(plugins)
     plugin_host_secret_manager = load_file_secret_manager_from_environment()
+    resource_probe = load_resource_probe_from_environment()
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
-        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=0.0, ram_mb=0)),
+        resources=ResourceOrchestrator(
+            resource_probe.capacity,
+            probe=resource_probe.metadata(),
+        ),
         bundles=bundles,
         plugins=plugins,
         runtimes=ProviderProcessManager(enable_subprocesses=True),

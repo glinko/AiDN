@@ -56,6 +56,9 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "install-cometbft-ubuntu.sh" in script
     assert "AIDN_COMETBFT_SERVICE" in script
     assert "systemctl --user enable --now \"$consensus_service_name\"" in script
+    assert "aidn_hypervisor.resource_probe" in script
+    assert "AIDN_RESOURCE_CAPACITY_PATH" in script
+    assert "resource-capacity.json" in script
     assert "Restart=always" in script
     assert "raw.githubusercontent.com/glinko/AiDN/<reviewed-ref>" in script
     assert "sudo password was used only by sudo" in script

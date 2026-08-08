@@ -170,6 +170,7 @@ def build_operator_readiness_payload(
     wallet = service.owner_wallet_state()
     resources = service.resources.summary() if service.resources is not None else {}
     totals = resources.get("total", {})
+    probe = resources.get("probe", {})
     reported_resources = any(_number(totals.get(key)) > 0 for key in ("cpu", "ram_mb", "vram_mb"))
     provider_instances = list(service.list_provider_instances())
     model_deployments = list(service.list_model_deployments())
@@ -235,13 +236,17 @@ def build_operator_readiness_payload(
             title="Host Capacity",
             status="ready" if reported_resources else "blocked",
             summary=(
-                "CPU, RAM or VRAM capacity is reported."
+                (
+                    f"Detected {_number(totals.get('cpu')):g} CPU cores and "
+                    f"{int(_number(totals.get('ram_mb')))} MB RAM."
+                )
                 if reported_resources
-                else "Host capacity is reported as zero or is not probed."
+                else "Automatic host capacity detection did not return CPU or RAM."
             ),
             detail=(
-                "The scheduler must distinguish unknown capacity from an empty host. "
-                "The wizard will not guess resource values from a provider process."
+                "Capacity is measured during operator bootstrap and loaded at every "
+                "Hypervisor start. GPU VRAM is reported only when the host exposes "
+                "nvidia-smi or an explicit operator override."
             ),
             blocking=not reported_resources,
             action=(
@@ -252,12 +257,20 @@ def build_operator_readiness_payload(
                 )
                 if reported_resources
                 else _action(
-                    kind="manual",
-                    label="Configure resource probe",
-                    detail="Configure the node capacity probe for CPU, RAM and GPU memory, then refresh this wizard.",
+                    kind="resource-probe",
+                    label="Run automatic probe",
+                    detail=(
+                        "Measure CPU, RAM and visible GPU VRAM now. If detection still "
+                        "fails, re-run the reviewed operator bootstrap to restore the "
+                        "capacity report and host permissions."
+                    ),
                 )
             ),
-            evidence={"reported": reported_resources, "resources": dict(resources)},
+            evidence={
+                "reported": reported_resources,
+                "resources": dict(resources),
+                "probe": dict(probe) if isinstance(probe, Mapping) else {},
+            },
         )
     )
     steps.append(

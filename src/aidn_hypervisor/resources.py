@@ -1,4 +1,6 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from aidn_hypervisor.domain.models import NodeCapacity
 
@@ -12,9 +14,33 @@ class Reservation:
 
 
 class ResourceOrchestrator:
-    def __init__(self, capacity: NodeCapacity) -> None:
+    def __init__(
+        self,
+        capacity: NodeCapacity,
+        *,
+        probe: Mapping[str, Any] | None = None,
+    ) -> None:
         self.capacity = capacity
+        self.probe = dict(probe or {})
         self._reservations: dict[str, Reservation] = {}
+
+    def replace_capacity(
+        self,
+        capacity: NodeCapacity,
+        *,
+        probe: Mapping[str, Any] | None = None,
+    ) -> None:
+        reserved_cpu = sum(item.cpu for item in self._reservations.values())
+        reserved_ram = sum(item.ram_mb for item in self._reservations.values())
+        reserved_vram = sum(item.vram_mb for item in self._reservations.values())
+        if (
+            reserved_cpu > capacity.cpu_cores
+            or reserved_ram > capacity.ram_mb
+            or reserved_vram > sum(capacity.vram_mb.values())
+        ):
+            raise ValueError("probed capacity is below active reservations")
+        self.capacity = capacity
+        self.probe = dict(probe or {})
 
     def _validate_request(self, cpu: float, ram_mb: int, vram_mb: int) -> None:
         if cpu < 0 or ram_mb < 0 or vram_mb < 0:
@@ -68,13 +94,13 @@ class ResourceOrchestrator:
     def release(self, reservation_id: str) -> None:
         self._reservations.pop(reservation_id, None)
 
-    def summary(self) -> dict[str, dict[str, float | int]]:
+    def summary(self) -> dict[str, object]:
         reserved_cpu = sum(item.cpu for item in self._reservations.values())
         reserved_ram = sum(item.ram_mb for item in self._reservations.values())
         reserved_vram = sum(item.vram_mb for item in self._reservations.values())
         total_vram = sum(self.capacity.vram_mb.values())
 
-        return {
+        summary: dict[str, object] = {
             "total": {
                 "cpu": self.capacity.cpu_cores,
                 "ram_mb": self.capacity.ram_mb,
@@ -91,3 +117,6 @@ class ResourceOrchestrator:
                 "vram_mb": total_vram - reserved_vram,
             },
         }
+        if self.probe:
+            summary["probe"] = dict(self.probe)
+        return summary

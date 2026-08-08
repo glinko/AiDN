@@ -413,6 +413,11 @@ identity_result="$("$uv_bin" --directory "$install_dir" run python tools/prepare
   --network-revision "$network_revision")"
 python_bin="$install_dir/.venv/bin/python"
 [[ -x "$python_bin" ]] || die "prepared venv is missing: $python_bin"
+resource_capacity_path="$data_dir/resource-capacity.json"
+"$python_bin" -m aidn_hypervisor.resource_probe \
+  --output "$resource_capacity_path" \
+  --source operator-bootstrap >/dev/null
+chmod 600 "$resource_capacity_path"
 
 consensus_service_name=''
 consensus_home=''
@@ -495,6 +500,8 @@ registry_config=$registry_q
 python_bin=$python_q
 export AIDN_HYPERVISOR_STATE_PATH="\$data/hypervisor-state.json"
 export AIDN_HYPERVISOR_BUNDLES_PATH="\$data/bundles.json"
+export AIDN_RESOURCE_PROBE_MODE=auto
+export AIDN_RESOURCE_CAPACITY_PATH="\$data/resource-capacity.json"
 export PYTHONUNBUFFERED=1
 EOF
 if [[ "$consensus_mode" != 'disabled' ]]; then
@@ -613,7 +620,7 @@ fi
   "$api_host" "$api_port" "$registry_state" "$service_name" "$identity_root" \
   "$registry_root" "$operator_public_key" "$ref" "$consensus_mode" \
   "$consensus_service_name" "$consensus_home" "$consensus_binary_path" \
-  "$consensus_rpc_host" "$consensus_rpc_port" <<'PY'
+  "$consensus_rpc_host" "$consensus_rpc_port" "$resource_capacity_path" <<'PY'
 import json
 import os
 import sys
@@ -638,6 +645,7 @@ import sys
     consensus_binary_path,
     consensus_rpc_host,
     consensus_rpc_port,
+    resource_capacity_path,
 ) = sys.argv[1:]
 payload = {
     "status": "ok",
@@ -662,6 +670,11 @@ payload = {
         "rpc": f"http://{consensus_rpc_host}:{consensus_rpc_port}" if consensus_service_name else None,
         "automatic_install": consensus_mode != "disabled",
     },
+    "resource_probe": {
+        "mode": "auto",
+        "capacity_report": resource_capacity_path,
+        "automatic_install": True,
+    },
 }
 os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
 with open(path, "w", encoding="utf-8") as stream:
@@ -677,6 +690,7 @@ echo "  checkout: $install_dir" >&2
 echo "  state:    $data_dir" >&2
 echo "  service:  $service_name" >&2
 echo "  API:      http://$api_host:$api_port" >&2
+echo "  Capacity: $resource_capacity_path (automatic host probe)" >&2
 echo "  Registry: $registry_state" >&2
 if [[ "$consensus_mode" != 'disabled' ]]; then
   echo "  CometBFT: $consensus_service_name ($consensus_rpc_host:$consensus_rpc_port)" >&2

@@ -3057,6 +3057,7 @@
       remote: "/operators/dashboard/remote-endpoints",
       requests: "/operators/dashboard/requests",
     };
+    const resourceProbePath = "/operators/resources/probe";
 
     const walletEndpoints = {
       dashboard: "/operators/dashboard/wallet",
@@ -6235,7 +6236,7 @@
       if (!action) {
         return "";
       }
-      const interactive = ["refresh", "wallet", "screen", "discover-provider"].includes(action.kind);
+      const interactive = ["refresh", "wallet", "screen", "discover-provider", "resource-probe"].includes(action.kind);
       if (!interactive) {
         return `<span class="readiness-manual-action">Operator action: ${escapeHtml(action.label || "Manual step")}</span>`;
       }
@@ -6306,7 +6307,7 @@
               `).join("")}
             </div>
             <div class="readiness-agent-note">
-              Host services are provisioned by the reviewed operator installer, not by an unauthenticated dashboard shell. Fresh installs start CometBFT automatically; legacy nodes show the exact bounded recovery instruction, after which this wizard can recheck the live state.
+              The reviewed operator installer starts CometBFT and measures host capacity automatically. Dashboard recovery can safely repeat the resource measurement, but it never accepts caller-supplied CPU, RAM or GPU values.
             </div>
           ` : ""}
           ${state.readinessMessage ? `<div class="readiness-message ${escapeHtml(state.readinessMessage.kind || "")}">${escapeHtml(state.readinessMessage.text || "")}</div>` : ""}
@@ -13392,7 +13393,7 @@
       });
 
       document.querySelectorAll("[data-readiness-action]").forEach((button) => {
-        button.addEventListener("click", () => {
+        button.addEventListener("click", async () => {
           const action = button.dataset.readinessAction;
           if (action === "refresh") {
             state.readinessMessage = null;
@@ -13401,6 +13402,30 @@
           }
           if (action === "wallet") {
             openWalletDrawer("readiness");
+            return;
+          }
+          if (action === "resource-probe") {
+            state.readinessMessage = {
+              kind: "",
+              text: "Measuring CPU, RAM and visible GPU memory...",
+            };
+            renderWorkspace();
+            bindInteractiveElements();
+            try {
+              await postJson(resourceProbePath, {});
+              state.readinessMessage = {
+                kind: "good",
+                text: "Host capacity was measured and applied to the scheduler.",
+              };
+              await refreshBootstrapPayloads();
+            } catch (error) {
+              state.readinessMessage = {
+                kind: "bad",
+                text: `Automatic resource probe failed: ${String(error)}`,
+              };
+              renderWorkspace();
+              bindInteractiveElements();
+            }
             return;
           }
           if (action === "screen") {

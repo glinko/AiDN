@@ -64,3 +64,22 @@ def test_returned_reservation_cannot_be_mutated() -> None:
 
     with pytest.raises(FrozenInstanceError):
         reservation.cpu = 4.0
+
+
+def test_capacity_refresh_cannot_invalidate_active_reservations() -> None:
+    orchestrator = ResourceOrchestrator(NodeCapacity(cpu_cores=8, ram_mb=4096))
+    orchestrator.reserve("task-1", cpu=2.0, ram_mb=1024, vram_mb=0)
+
+    with pytest.raises(ValueError, match="below active reservations"):
+        orchestrator.replace_capacity(NodeCapacity(cpu_cores=1, ram_mb=4096))
+
+
+def test_capacity_refresh_exposes_measurement_source() -> None:
+    orchestrator = ResourceOrchestrator(NodeCapacity(cpu_cores=1, ram_mb=1024))
+
+    orchestrator.replace_capacity(
+        NodeCapacity(cpu_cores=4, ram_mb=8192),
+        probe={"source": "operator-refresh"},
+    )
+
+    assert orchestrator.summary()["probe"] == {"source": "operator-refresh"}

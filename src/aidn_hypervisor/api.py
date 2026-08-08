@@ -51,6 +51,7 @@ from aidn_hypervisor.registry_models import (
 )
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointDependencyError
+from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environment
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
 from aidn_hypervisor.session_application_service import SessionApplicationService
 from aidn_hypervisor.session_read_models import (
@@ -1228,6 +1229,21 @@ def build_api_router(
             endpoint_items=endpoint_payload.get("items", []),
             consensus_status=consensus_status,
         )
+
+    @router.post("/operators/resources/probe")
+    async def refresh_operator_resources() -> dict:
+        try:
+            report = refresh_resource_probe_from_environment()
+            service.resources.replace_capacity(
+                report.capacity,
+                probe=report.metadata(),
+            )
+        except (OSError, TypeError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return {
+            "status": "ok",
+            "resources": service.resources.summary(),
+        }
 
     @router.get("/operators/dashboard/fleet")
     async def operator_dashboard_fleet() -> dict:

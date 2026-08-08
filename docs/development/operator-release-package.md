@@ -4,7 +4,8 @@ This is the supported one-command installation path for a fresh Ubuntu 24.04+
 or later host. It installs the Hypervisor checkout, creates persistent local
 state, provisions a host-local operator identity and encrypted Registry secret
 store, provisions a pinned CometBFT process, and manages both processes with
-user-level systemd services.
+user-level systemd services. It also measures scheduler capacity from the host
+and records the result before the Hypervisor first starts.
 
 The installer is intentionally safe by default:
 
@@ -88,6 +89,7 @@ For operator `operator-example-1`, defaults are:
 ~/aidn/operator-example-1/AiDN/                    immutable checkout
 ~/.local/share/aidn/operator-example-1/            persistent state
   bootstrap-state.json                              secret-free summary
+  resource-capacity.json                            CPU, RAM and visible GPU capacity
   operator-identity/                                local identity metadata
     operator-attestation-key.raw                    PRIVATE, mode 0600
     operator-identity.json                          PRIVATE metadata, mode 0600
@@ -107,7 +109,11 @@ For operator `operator-example-1`, defaults are:
 
 `bootstrap-state.json` contains the exact checkout commit, operator ID, public
 key, service name and public bundle path. It contains no private key or master
-key. Verify the service with:
+key. `resource-capacity.json` contains no credentials or process payloads. It
+records CPU affinity/cgroup limits, RAM capacity, and GPU VRAM when
+`nvidia-smi` is available. Unknown GPU capacity remains explicitly unreported.
+
+Verify the service with:
 
 ```bash
 systemctl --user status aidn-hypervisor-operator-example-1.service
@@ -117,8 +123,13 @@ curl --fail http://127.0.0.1:26657/status
 ```
 
 The installer enables user lingering so the service can return after reboot.
-The generated unit uses restart-on-failure and restricts writable state to the
+The generated unit uses automatic restart and restricts writable state to the
 operator data directory.
+
+The readiness wizard normally marks Host Capacity ready on first load. If host
+visibility changes after installation, **Run automatic probe** repeats the same
+bounded measurement and atomically refreshes `resource-capacity.json`; it does
+not accept capacity numbers from the browser.
 
 ## Re-running and removal
 
