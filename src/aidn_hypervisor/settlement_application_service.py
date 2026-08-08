@@ -308,12 +308,33 @@ class SettlementApplicationService:
             )
             if supplied_payload != funding.model_dump(mode="json"):
                 raise ValueError("consensus escrow funding does not match local lock")
+        canonical_lock_envelope = None
+        session_service = getattr(self._host, "session_service", None)
+        if session_service is not None:
+            try:
+                session = session_service.store.get_session(funding.session_id)
+            except (KeyError, AttributeError):
+                session = None
+            if session is not None:
+                submission = session.canonical_funding_submission
+                if isinstance(submission, dict) and submission:
+                    envelope_payload = submission.get("envelope")
+                    if isinstance(envelope_payload, dict):
+                        from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+
+                        candidate = LedgerOperationEnvelope.model_validate(envelope_payload)
+                        if (
+                            candidate.operation_type == "SESSION_ESCROW_LOCK"
+                            and candidate.operation_id == session.canonical_funding_operation_id
+                        ):
+                            canonical_lock_envelope = candidate
         return ConsensusSessionOperationOrchestrator(
             consensus,
             finality_source=self._host.consensus_finality_source,
         ).submit_failure_chain(
             **operations,
             funding=funding,
+            canonical_lock_envelope=canonical_lock_envelope,
             **kwargs,
         )
 

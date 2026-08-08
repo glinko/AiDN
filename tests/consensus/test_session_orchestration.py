@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any
 
 from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.service import (
     ConsensusMode,
     ConsensusService,
@@ -222,3 +224,53 @@ def test_enabled_consensus_does_not_advance_on_admission_only() -> None:
     )
     assert result["status"] == "finalized"
     assert result["blocked_on"] is None
+
+
+def test_recovery_reuses_persisted_lock_envelope_serialization() -> None:
+    lock, funding, failure, force, transition = _fixture()
+    payload = dict(reversed(list(funding.model_dump(mode="json").items())))
+    persisted_envelope = LedgerOperationEnvelope(
+        operation_type="SESSION_ESCROW_LOCK",
+        operation_version="1.0.0",
+        protocol_version="0.1",
+        origin_type="wallet",
+        initiator_id=funding.session_id,
+        sender_wallet=funding.consumer_funding_account,
+        sender_sequence=1,
+        fee_payer=funding.consumer_funding_account,
+        fee_class="session",
+        created_at=lock["created_at"],
+        expires_at=lock.get("expires_at"),
+        target_epoch=lock.get("target_epoch"),
+        payload=payload,
+        evidence_references=list(lock["evidence_references"]),
+        signatures=["ed25519:original-lock"],
+    )
+    consensus = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.NON_VALIDATOR,
+            chain_id="aidn-testnet-1",
+        ),
+        submission_transport=_SubmissionTransport(),
+    )
+
+    result = ConsensusSessionOperationOrchestrator(consensus).submit_failure_chain(
+        local_lock_operation=lock,
+        funding=funding,
+        canonical_lock_envelope=persisted_envelope,
+        sender_sequence=1,
+        lock_signatures=["ed25519:replacement-signature"],
+        local_failure_operation=failure,
+        failure_signatures=["ed25519:operator"],
+        local_force_operation=force,
+        initiator_wallet="wallet:consumer",
+        initiator_signature="ed25519:consumer-force",
+        observed_at="2030-01-01T02:00:00Z",
+        transition=transition,
+    )
+
+    expected_hash = hashlib.sha256(
+        json.dumps(persisted_envelope.model_dump(mode="json")).encode("utf-8")
+    ).hexdigest().upper()
+    assert result["canonical_operation_ids"]["lock"] == persisted_envelope.operation_id
+    assert result["submissions"]["lock"]["transaction_hash"] == expected_hash

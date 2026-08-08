@@ -112,6 +112,7 @@ class ConsensusSessionOperationOrchestrator:
         *,
         local_lock_operation: Mapping[str, object],
         funding: Mapping[str, object] | object,
+        canonical_lock_envelope: LedgerOperationEnvelope | None = None,
         sender_sequence: int,
         lock_signatures: Sequence[str],
         local_failure_operation: Mapping[str, object],
@@ -162,12 +163,24 @@ class ConsensusSessionOperationOrchestrator:
         canonical_ids: dict[str, str] = {}
         submissions: dict[str, dict] = {}
 
-        lock_envelope = build_session_escrow_lock_envelope(
-            local_lock_operation,
-            funding=funding,
-            sender_sequence=sender_sequence,
-            signatures=lock_signatures,
-        )
+        if canonical_lock_envelope is not None:
+            self._validate_restored_lock_envelope(
+                canonical_lock_envelope,
+                local_lock_operation=local_lock_operation,
+                funding=funding,
+                sender_sequence=sender_sequence,
+            )
+            # Reuse the exact persisted envelope, including nested mapping
+            # order and original signatures.  Re-serializing an older
+            # envelope from a Ledger record can produce a different tx hash.
+            lock_envelope = canonical_lock_envelope
+        else:
+            lock_envelope = build_session_escrow_lock_envelope(
+                local_lock_operation,
+                funding=funding,
+                sender_sequence=sender_sequence,
+                signatures=lock_signatures,
+            )
         canonical_ids["lock"] = lock_envelope.operation_id
         lock_record, lock_final = self._submit_and_reconcile(lock_envelope)
         submissions["lock"] = _submission_dict(lock_record)
@@ -226,6 +239,11 @@ class ConsensusSessionOperationOrchestrator:
         # Verify external finality before rebroadcasting: wallet sequence
         # validation can reject an already-finalized transaction even though
         # replaying it is otherwise idempotent.
+        if not self._consensus.is_enabled:
+            # Disabled mode has no external submission index to restore. Let
+            # ConsensusService create its local finalized record directly.
+            record = self._consensus.submit_operation(envelope, retry_existing=True)
+            return record, record.status == SubmissionStatus.FINALIZED
         existing = self._consensus.get_submission(envelope.operation_id)
         if existing is None:
             record = self._consensus.restore_submission(envelope)
@@ -252,6 +270,35 @@ class ConsensusSessionOperationOrchestrator:
                 record = reconciled
         finalized = record.status == SubmissionStatus.FINALIZED
         return record, finalized
+
+    @staticmethod
+    def _validate_restored_lock_envelope(
+        envelope: LedgerOperationEnvelope,
+        *,
+        local_lock_operation: Mapping[str, object],
+        funding: Mapping[str, object] | object,
+        sender_sequence: int,
+    ) -> None:
+        """Verify that a persisted lock envelope belongs to this recovery."""
+        if envelope.operation_type != "SESSION_ESCROW_LOCK":
+            raise ValueError("restored consensus lock envelope has an invalid operation type")
+        if envelope.sender_sequence != sender_sequence:
+            raise ValueError("restored consensus lock sender sequence does not match")
+        local_payload = local_lock_operation.get("payload")
+        envelope_payload = envelope.payload
+        if not isinstance(local_payload, Mapping):
+            raise ValueError("local escrow lock payload is invalid")
+        if envelope_payload.get("session_id") != local_payload.get("session_id"):
+            raise ValueError("restored consensus lock Session does not match")
+        if isinstance(funding, Mapping):
+            expected_funding = dict(funding)
+        else:
+            model_dump = getattr(funding, "model_dump", None)
+            if not callable(model_dump):
+                raise ValueError("funding must be a mapping or SessionFundingAccount")
+            expected_funding = model_dump(mode="json")
+        if envelope_payload != expected_funding:
+            raise ValueError("restored consensus lock funding does not match")
 
     @staticmethod
     def _blocked_status(record: SubmissionRecord) -> str:
