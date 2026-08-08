@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.abci_finality import ABCICommittedFinalitySource
@@ -38,7 +38,8 @@ class CometBftFinalityConfig:
     validator_page_size: int = 100
     maximum_validators: int = 10_000
     max_response_bytes: int = 1_000_000
-    transaction_scan_window: int = 512
+    transaction_scan_window: int = 0
+    legacy_transaction_hashes: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.rpc_endpoint.strip() or not self.chain_id.strip() or not self.verifier_id.strip():
@@ -71,7 +72,8 @@ class CometBftMultiRpcFinalityConfig:
     validator_page_size: int = 100
     maximum_validators: int = 10_000
     max_response_bytes: int = 1_000_000
-    transaction_scan_window: int = 512
+    transaction_scan_window: int = 0
+    legacy_transaction_hashes: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if len(self.rpc_endpoints) < 2:
@@ -139,6 +141,7 @@ def build_cometbft_finality_source(
         verifier_id=config.verifier_id,
         timeout_seconds=config.timeout_seconds,
         transaction_scan_window=config.transaction_scan_window,
+        legacy_transaction_hashes=config.legacy_transaction_hashes,
         recovered_transaction_hashes=recovered_transaction_hashes,
     )
     if abci_application is None:
@@ -191,6 +194,7 @@ def build_cometbft_multi_rpc_finality_source(
                 verifier_id=f"{config.verifier_id}:{index}",
                 timeout_seconds=config.timeout_seconds,
                 transaction_scan_window=config.transaction_scan_window,
+                legacy_transaction_hashes=config.legacy_transaction_hashes,
                 recovered_transaction_hashes=recovered_transaction_hashes,
             )
         )

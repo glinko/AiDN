@@ -12,7 +12,7 @@ import base64
 import binascii
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 from urllib import error as urllib_error
@@ -356,7 +356,8 @@ class CometBftRpcFinalitySource:
         transport: CometBftRpcTransport,
         verifier_id: str,
         timeout_seconds: int = 10,
-        transaction_scan_window: int = 512,
+        transaction_scan_window: int = 0,
+        legacy_transaction_hashes: Mapping[str, str] | None = None,
         recovered_transaction_hashes: dict[str, str] | None = None,
     ) -> None:
         if not chain_id.strip() or not verifier_id.strip():
@@ -372,12 +373,15 @@ class CometBftRpcFinalitySource:
         self._verifier_id = verifier_id
         self._timeout_seconds = timeout_seconds
         self._transaction_scan_window = transaction_scan_window
+        self._legacy_transaction_hashes = legacy_transaction_hashes or {}
         self._recovered_transaction_hashes = recovered_transaction_hashes
 
     def finality_evidence(self, operation_id: str) -> ConsensusFinalityEvidence | None:
         """Return evidence only after both inclusion and commit proof verification."""
         try:
             expected_tx_hash = self._transaction_hash_for_operation(operation_id)
+            if expected_tx_hash is None:
+                expected_tx_hash = self._legacy_transaction_hashes.get(operation_id)
             if expected_tx_hash is None and self._recovered_transaction_hashes is not None:
                 expected_tx_hash = self._recovered_transaction_hashes.get(operation_id)
             if expected_tx_hash is None:

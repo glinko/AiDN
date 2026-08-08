@@ -273,6 +273,39 @@ def test_cometbft_finality_reuses_recovered_hash_across_sources():
     ]
 
 
+def test_cometbft_finality_uses_operator_approved_legacy_hash_hint():
+    envelope = LedgerOperationEnvelope(
+        operation_type="REGISTRY_UPSERT",
+        origin_type="protocol",
+        created_at="2030-01-01T00:00:00Z",
+    )
+    transaction_bytes = json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
+    transaction_hash = cometbft_transaction_hash(transaction_bytes)
+    transaction_response, commit_response = _responses(
+        transaction_bytes=transaction_bytes,
+        transaction_hash=transaction_hash,
+    )
+    transport = LegacyRecoveryTransport(
+        transaction_response=transaction_response,
+        commit_response=commit_response,
+        transaction_bytes=transaction_bytes,
+    )
+    source = CometBftRpcFinalitySource(
+        chain_id="aidn-testnet-1",
+        transaction_hash_for_operation=lambda operation_id: None,
+        proof_verifier=AcceptingProofVerifier(),
+        transport=transport,
+        verifier_id="test-light-client",
+        legacy_transaction_hashes={envelope.operation_id: transaction_hash},
+    )
+
+    assert source.finality_evidence(envelope.operation_id) is not None
+    assert transport.calls == [
+        ("/tx", {"hash": f"0x{transaction_hash}", "prove": "true"}),
+        ("/commit", {"height": "11"}),
+    ]
+
+
 @pytest.mark.parametrize("accept_transaction,accept_commit", [(False, True), (True, False)])
 def test_cometbft_finality_source_fails_closed_when_a_proof_verification_fails(
     accept_transaction: bool,
