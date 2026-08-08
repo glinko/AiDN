@@ -10,6 +10,7 @@ from aidn_hypervisor.settlement.models import (
     RequestSettlementInput,
     SessionFundingAccount,
     SessionSettlementAcceptance,
+    SessionSettlementProposal,
     SettlementAccountingTerms,
     SettlementChargeComponent,
     TerminalChargePolicy,
@@ -813,6 +814,13 @@ class MvpSessionEconomicsService:
         consensus_observed_at: str | None = None,
         consensus_force_signatures: list[str] | None = None,
     ):
+        recovered = self._reconcile_canonical_force_settlement(
+            session_service=session_service,
+            session_id=session_id,
+            reason=reason,
+        )
+        if recovered is not None:
+            return recovered
         if reason == "ENDPOINT_UNAVAILABLE":
             evaluation = self.build_mvp_endpoint_unavailable_refund_evaluation(
                 session_service=session_service,
@@ -1001,5 +1009,162 @@ class MvpSessionEconomicsService:
             "proposal": proposal,
             "funding": funding,
             **({"consensus": consensus_result} if consensus_enabled else {}),
+            "session_result": session_result,
+        }
+
+    def _reconcile_canonical_force_settlement(
+        self,
+        *,
+        session_service,
+        session_id: str,
+        reason: str,
+    ) -> dict | None:
+        """Finish a force Settlement committed while the request was pending.
+
+        A validator may commit the canonical force transaction after the HTTP
+        request has already returned ``CONSENSUS_PENDING``.  The ABCI Ledger
+        then has the final Funding Account, but the application Session still
+        needs its local terminal projection.  Reconcile only an applied,
+        Session-bound force operation and never infer closure from Funding
+        state alone.
+        """
+        try:
+            session = session_service.store.get_session(session_id)
+            funding = self._host.get_session_funding_account(session_id)
+        except KeyError:
+            return None
+        if funding.funding_state not in {"RELEASED", "REFUNDED"}:
+            return None
+
+        force_operation = None
+        for operation in reversed(self._host._ledger_operation_service.list_operations()):
+            if operation.get("operation_type") != "SESSION_FORCE_SETTLE":
+                continue
+            payload = operation.get("payload")
+            result = operation.get("result")
+            if not isinstance(payload, dict) or not isinstance(result, dict):
+                continue
+            if (
+                payload.get("session_id") == session_id
+                and result.get("status") == "applied"
+            ):
+                force_operation = operation
+                break
+        if force_operation is None:
+            return None
+
+        payload = force_operation["payload"]
+        failure_class = payload.get("failure_class")
+        allowed_failure_classes = (
+            {"ENDPOINT_UNAVAILABLE", "ENDPOINT_FAILURE"}
+            if reason == "ENDPOINT_UNAVAILABLE"
+            else {reason}
+        )
+        if failure_class not in allowed_failure_classes:
+            return None
+        settlement_id = payload.get("settlement_id")
+        settlement_input_root = payload.get("settlement_input_root")
+        request_settlement_root = payload.get("request_settlement_root")
+        usage_chain_root = payload.get("usage_chain_root")
+        checkpoint_root = payload.get("checkpoint_root")
+        failure_evidence_root = payload.get("failure_evidence_root")
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (
+                settlement_id,
+                settlement_input_root,
+                request_settlement_root,
+                usage_chain_root,
+                checkpoint_root,
+                failure_evidence_root,
+            )
+        ):
+            raise ValueError("canonical Forced Settlement evidence is incomplete")
+
+        requested_payment = payload.get("requested_payment_q_atoms")
+        requested_refund = payload.get("requested_refund_q_atoms")
+        if (
+            isinstance(requested_payment, bool)
+            or not isinstance(requested_payment, int)
+            or requested_payment < 0
+            or isinstance(requested_refund, bool)
+            or not isinstance(requested_refund, int)
+            or requested_refund < 0
+        ):
+            raise ValueError("canonical Forced Settlement amounts are invalid")
+
+        consumer_payment_refund = funding.consumer_payment_refund_q_atoms
+        consumer_fee_refund = funding.consumer_fee_refund_q_atoms
+        if requested_refund != consumer_payment_refund + consumer_fee_refund:
+            raise ValueError("canonical Forced Settlement refund does not match Funding")
+        actual_network_fees = funding.consumed_network_fees_q_atoms
+        final_endpoint_payment = funding.released_to_endpoint_q_atoms
+        proposal = SessionSettlementProposal(
+            settlement_id=settlement_id,
+            settlement_sequence=1,
+            session_id=session_id,
+            settlement_input_root=settlement_input_root,
+            request_settlement_root=request_settlement_root,
+            usage_chain_root=usage_chain_root,
+            checkpoint_root=checkpoint_root,
+            gross_session_charge_q_atoms=final_endpoint_payment + actual_network_fees,
+            capped_session_charge_q_atoms=final_endpoint_payment + actual_network_fees,
+            final_endpoint_payment_q_atoms=final_endpoint_payment,
+            requested_endpoint_payment_q_atoms=requested_payment,
+            consumer_payment_refund_q_atoms=consumer_payment_refund,
+            actual_network_fees_q_atoms=actual_network_fees,
+            consumer_fee_refund_q_atoms=consumer_fee_refund,
+            disputed_amount_q_atoms=funding.active_dispute_reserve_q_atoms,
+            dispute_reserve_q_atoms=funding.active_dispute_reserve_q_atoms,
+            endpoint_absorbed_amount_q_atoms=0,
+            settlement_mode="FORCED",
+            proposal_expiration=None,
+        )
+
+        consensus = getattr(self._host, "consensus_service", None)
+        consensus_enabled = bool(consensus is not None and consensus.is_enabled)
+        finality = self._host.ledger_operation_finality(force_operation["operation_id"])
+        consensus_finalized = (
+            not consensus_enabled
+            or finality.get("consensus_finalized") is True
+        )
+        consensus_payload = {
+            "status": "finalized" if consensus_finalized else "awaiting_verified_finality",
+            "blocked_on": None if consensus_finalized else "force",
+            "canonical_operation_ids": {
+                "force": force_operation["operation_id"],
+            },
+            "finality": finality,
+        }
+        if session.canonical_funding_operation_id:
+            consensus_payload["canonical_operation_ids"]["lock"] = (
+                session.canonical_funding_operation_id
+            )
+
+        if not consensus_finalized:
+            return {
+                "status": "CONSENSUS_PENDING",
+                "proposal": proposal,
+                "funding": funding,
+                "consensus": consensus_payload,
+                "session_result": None,
+            }
+
+        session_result = session_service.mark_canonical_settlement_finalized(
+            session_id,
+            settlement_evidence_root=settlement_input_root,
+            endpoint_payment_q_atoms=final_endpoint_payment,
+            consumer_refund_q_atoms=consumer_payment_refund + consumer_fee_refund,
+            network_fee_q_atoms=actual_network_fees,
+            failure_evidence_root=failure_evidence_root,
+            close_reason=f"forced_{reason.lower()}",
+            no_request=reason == "ENDPOINT_UNAVAILABLE",
+        )
+        self._host._persist_state()
+        return {
+            "status": "FINALIZED",
+            "proposal": proposal,
+            "funding": funding,
+            "consensus": consensus_payload,
             "session_result": session_result,
         }

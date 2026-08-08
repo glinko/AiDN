@@ -361,6 +361,46 @@ def test_consensus_force_finalize_applies_local_economics_only_after_finality():
     assert consensus.get_submission(force_id).status.value == "finalized"
 
 
+def test_force_retry_reconciles_funding_committed_before_http_finality():
+    hypervisor, client, endpoint, session, consensus, source = _context()
+
+    first = _force(client, endpoint, session)
+    lock_id = first.json()["data"]["consensus"]["canonical_operation_ids"]["lock"]
+    source.finalize(lock_id, 10)
+    second = _force(client, endpoint, session)
+    failure_id = second.json()["data"]["consensus"]["canonical_operation_ids"]["failure"]
+    source.finalize(failure_id, 11)
+    third = _force(client, endpoint, session)
+    force_id = third.json()["data"]["consensus"]["canonical_operation_ids"]["force"]
+    force_envelope = consensus.get_operation_envelope(force_id)
+    assert force_envelope is not None
+
+    # Model the validator's ABCI commit arriving after the HTTP request but
+    # before the external finality verifier has caught up.
+    # The test harness opened the Session through the non-validator path, so
+    # reset the synthetic Ledger sequence to the canonical lock pre-state.
+    hypervisor.ledger_operation_service._wallet_next_sequences["wallet-consumer"] = 1
+    for operation_id in (lock_id, failure_id):
+        envelope = consensus.get_operation_envelope(operation_id)
+        assert envelope is not None
+        hypervisor.ledger_operation_service.record_admitted_envelope(envelope)
+    hypervisor.ledger_operation_service.apply_consensus_force_settle(
+        force_envelope,
+        finalized_operation_ids={lock_id, failure_id},
+    )
+    pending = _force(client, endpoint, session)
+    assert pending.status_code == 202
+    assert pending.json()["data"]["status"] == "CONSENSUS_PENDING"
+    assert hypervisor.session_service.store.get_session(session["session_id"]).status == "active"
+
+    source.finalize(force_id, 12)
+    finalized = _force(client, endpoint, session)
+    assert finalized.status_code == 200
+    assert finalized.json()["data"]["status"] == "FINALIZED"
+    assert finalized.json()["data"]["session"]["status"] == "force_settled"
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 1_000
+
+
 def test_validator_hypervisor_requires_canonical_open_authentication():
     hypervisor, client, endpoint, _session, _consensus, _source = _context(
         open_session=False
