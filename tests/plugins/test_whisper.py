@@ -39,7 +39,7 @@ class StubWhisperPlugin(WhisperPlugin):
         self.calls.append((method, url, payload))
         if self.raise_error is not None:
             raise self.raise_error
-        if url.endswith("/health"):
+        if url.endswith("/health") or url.endswith("/openapi.json"):
             return self.health_payload or {"status": "ok"}
         if url.endswith("/v1/audio/transcriptions"):
             return self.transcribe_payload or {"text": ""}
@@ -61,6 +61,10 @@ def test_whisper_plugin_describes_speech_to_text_capability() -> None:
         "CAN_DISCOVER_MODELS",
     ]
     assert description["installation_recipes"][0]["recipe_id"] == "whisper-local-http"
+    assert (
+        description["installation_recipes"][0]["provider_configuration"]["api_format"]
+        == "whisper_asr_webservice"
+    )
     assert description["usage_contract"] == {
         "supports_exact": False,
         "supports_estimated": True,
@@ -96,6 +100,19 @@ def test_whisper_plugin_builds_bounded_managed_install_plan() -> None:
     ]
     assert plan["required_permissions"][0]["permission_id"] == "network.private"
     assert plugin.plugin_manifest()["package_digest"].startswith("sha256:")
+
+
+def test_whisper_managed_plan_checks_native_asr_openapi() -> None:
+    plan = WhisperPlugin().build_installation_plan(
+        {
+            "display_name": "Managed Whisper",
+            "endpoint": "http://127.0.0.1:9000",
+            "model_id": "base",
+            "api_format": "whisper_asr_webservice",
+        }
+    )
+
+    assert plan["health_checks"][0]["url"] == "http://127.0.0.1:9000/openapi.json"
 
 
 def test_whisper_plugin_discovers_declared_model_and_builds_attached_binding() -> None:
@@ -243,6 +260,24 @@ def test_whisper_plugin_health_check_calls_health_endpoint() -> None:
 
     assert plugin.health_check(runtime) is True
     assert plugin.calls == [("GET", "http://127.0.0.1:9000/health", None)]
+
+
+def test_whisper_native_asr_health_check_uses_openapi_contract() -> None:
+    plugin = StubWhisperPlugin(health_payload={"paths": {"/asr": {}}})
+    runtime = RuntimeHandle(
+        runtime_id="rt-1",
+        command=["whisper-server"],
+        status="running",
+        bundle_id="whisper-local",
+        metadata={
+            "endpoint": "http://127.0.0.1:9000",
+            "model_id": "base",
+            "api_format": "whisper_asr_webservice",
+        },
+    )
+
+    assert plugin.health_check(runtime) is True
+    assert plugin.calls == [("GET", "http://127.0.0.1:9000/openapi.json", None)]
 
 
 def test_whisper_plugin_health_check_returns_false_on_transport_error() -> None:

@@ -10,6 +10,8 @@ class WhisperPlugin(ProviderPlugin):
     plugin_version = "0.2.0"
     _default_endpoint = "http://127.0.0.1:9000"
     _default_model = "small"
+    _managed_api_format = "whisper_asr_webservice"
+    _supported_api_formats = {"aidn_json", "whisper_asr_webservice"}
     _circuit_breaker_policy = {
         "failure_threshold": 2,
         "cooldown_seconds": 30.0,
@@ -72,6 +74,7 @@ class WhisperPlugin(ProviderPlugin):
                         "display_name": "Local Whisper",
                         "endpoint": self._default_endpoint,
                         "model_id": self._default_model,
+                        "api_format": self._managed_api_format,
                     },
                     "model_configuration": {
                         "provider_model_reference": self._default_model,
@@ -114,6 +117,20 @@ class WhisperPlugin(ProviderPlugin):
                     "required": True,
                     "default": self._default_model,
                 },
+                {
+                    "id": "api_format",
+                    "type": "select",
+                    "label": "Whisper API format",
+                    "required": False,
+                    "default": "aidn_json",
+                    "options": [
+                        {"value": "aidn_json", "label": "AiDN JSON adapter"},
+                        {
+                            "value": "whisper_asr_webservice",
+                            "label": "Whisper ASR Webservice",
+                        },
+                    ],
+                },
             ],
         }
 
@@ -133,10 +150,19 @@ class WhisperPlugin(ProviderPlugin):
             raise ValueError("endpoint must be an absolute HTTP URL")
         if not model_id:
             raise ValueError("model_id is required")
+        api_format = str(configuration.get("api_format") or "aidn_json").strip()
+        if api_format not in self._supported_api_formats:
+            raise ValueError("api_format is unsupported")
 
     def build_installation_plan(self, configuration: dict) -> dict:
         self.validate_provider_configuration(configuration)
         endpoint = str(configuration["endpoint"]).rstrip("/")
+        api_format = str(configuration.get("api_format") or "aidn_json")
+        health_url = (
+            f"{endpoint}/openapi.json"
+            if api_format == self._managed_api_format
+            else f"{endpoint}/health"
+        )
         return {
             "plan_id": "plan-whisper-http-v1",
             "plugin_id": self.plugin_id,
@@ -152,7 +178,7 @@ class WhisperPlugin(ProviderPlugin):
             "health_checks": [
                 {
                     "type": "http",
-                    "url": f"{endpoint}/health",
+                    "url": health_url,
                     "timeout_seconds": 5,
                 }
             ],
@@ -242,6 +268,11 @@ class WhisperPlugin(ProviderPlugin):
 
     def health_check(self, runtime_handle) -> bool:
         try:
+            if self._api_format(runtime_handle) == self._managed_api_format:
+                payload = self._request_json(
+                    "GET", f"{self._endpoint(runtime_handle)}/openapi.json"
+                )
+                return "/asr" in payload.get("paths", {})
             payload = self._request_json("GET", f"{self._endpoint(runtime_handle)}/health")
         except Exception:
             return False
@@ -325,6 +356,12 @@ class WhisperPlugin(ProviderPlugin):
         if not model_id:
             raise ValueError("Whisper runtime metadata is missing model_id")
         return model_id
+
+    def _api_format(self, runtime_handle) -> str:
+        api_format = str(runtime_handle.metadata.get("api_format") or "aidn_json")
+        if api_format not in self._supported_api_formats:
+            raise ValueError("Whisper runtime metadata has unsupported api_format")
+        return api_format
 
     def _request_json(self, method: str, url: str, payload: dict | None = None) -> dict:
         body = None
