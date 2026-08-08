@@ -221,7 +221,25 @@ class ConsensusSessionOperationOrchestrator:
         self,
         envelope: LedgerOperationEnvelope,
     ) -> tuple[SubmissionRecord, bool]:
-        record = self._consensus.submit_operation(envelope)
+        # A recovered canonical operation may already be finalized while the
+        # local submission index is stale or records an earlier CheckTx error.
+        # Verify external finality before rebroadcasting: wallet sequence
+        # validation can reject an already-finalized transaction even though
+        # replaying it is otherwise idempotent.
+        existing = self._consensus.get_submission(envelope.operation_id)
+        if existing is None:
+            record = self._consensus.restore_submission(envelope)
+        else:
+            record = existing
+        if self._finality_source is not None:
+            reconciled = self._consensus.reconcile_finality(
+                envelope.operation_id,
+                finality_source=self._finality_source,
+            )
+            if reconciled is not None:
+                record = reconciled
+                return record, record.status == SubmissionStatus.FINALIZED
+        record = self._consensus.submit_operation(envelope, retry_existing=True)
         if (
             record.status in {SubmissionStatus.ADMITTED, SubmissionStatus.INCLUDED}
             and self._finality_source is not None
