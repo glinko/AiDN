@@ -10,11 +10,14 @@ from aidn_hypervisor.consensus.finality import (
 
 
 class ABCICommittedFinalitySource:
-    """Expose evidence only when the local ABCI commitment exactly agrees.
+    """Expose evidence only when the local ABCI commitment agrees.
 
     The external source establishes consensus inclusion and commit validity. The
-    ABCI application establishes that this Hypervisor's Ledger state committed
-    the same block and application root. Neither input is sufficient alone.
+    ABCI application establishes that this Hypervisor's Ledger state was at the
+    pre-block application root and committed the same block. CometBFT places
+    the pre-block root in ``header.app_hash`` for block H, while the local
+    commitment recorded for H contains the post-block root. Neither input is
+    sufficient alone.
     """
 
     def __init__(
@@ -31,11 +34,20 @@ class ABCICommittedFinalitySource:
             evidence = self._source.finality_evidence(operation_id)
             if evidence is None or evidence.operation_id != operation_id:
                 return None
-            commitment = self._abci_application.commitment_at(evidence.block_height)
-            if commitment is None:
+            block_commitment = self._abci_application.commitment_at(evidence.block_height)
+            if block_commitment is None or block_commitment.block_hash != evidence.block_id:
                 return None
-            if commitment.block_hash != evidence.block_id or commitment.app_hash != evidence.app_hash:
-                return None
+
+            # Tendermint/CometBFT header AppHash is the application root before
+            # the transactions in that block.  The local commitment at H is
+            # the root after H, so bind the external pre-state to H - 1.
+            if evidence.block_height == 1:
+                if evidence.app_hash:
+                    return None
+            else:
+                previous_commitment = self._abci_application.commitment_at(evidence.block_height - 1)
+                if previous_commitment is None or previous_commitment.app_hash != evidence.app_hash:
+                    return None
             return evidence
         except Exception:
             return None

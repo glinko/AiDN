@@ -18,16 +18,20 @@ class StaticEvidenceSource:
 
 def _app_and_evidence() -> tuple[AIDNABCIApplication, ConsensusFinalityEvidence]:
     app = AIDNABCIApplication(ledger_service=LedgerOperationService())
+    previous_block_hash = b"\xAA" * 32
+    app.finalize_block(block_height=6, block_hash=previous_block_hash, txs=[])
     block_hash = b"\xAB" * 32
     app.finalize_block(block_height=7, block_hash=block_hash, txs=[])
+    previous_commitment = app.commitment_at(6)
     commitment = app.commitment_at(7)
+    assert previous_commitment is not None
     assert commitment is not None
     return app, ConsensusFinalityEvidence(
         operation_id="operation-1",
         chain_id="aidn-testnet-1",
         block_height=7,
         block_id=commitment.block_hash,
-        app_hash=commitment.app_hash,
+        app_hash=previous_commitment.app_hash,
         commit_hash="C" * 64,
         finalized_at="2030-01-01T00:00:00Z",
         verifier_id="zip215-light-client",
