@@ -1,12 +1,15 @@
+import hashlib
 import json
-from urllib import error, request
+from urllib import error, parse, request
 
 from aidn_hypervisor.plugins.base import ProviderPlugin
 
 
 class WhisperPlugin(ProviderPlugin):
     plugin_id = "whisper"
+    plugin_version = "0.2.0"
     _default_endpoint = "http://127.0.0.1:9000"
+    _default_model = "small"
     _circuit_breaker_policy = {
         "failure_threshold": 2,
         "cooldown_seconds": 30.0,
@@ -23,9 +26,186 @@ class WhisperPlugin(ProviderPlugin):
     def describe(self) -> dict:
         return {
             "plugin_id": self.plugin_id,
+            "plugin_version": self.plugin_version,
+            "display_name": "Whisper HTTP Provider",
+            "publisher": "AiDN Built-in",
+            "package_digest": (
+                "sha256:e31e667a78a007570c26933d553812143f6f436e36f017ae5697375f25f8a959"
+            ),
+            "provider_type": "whisper",
+            "provider_families": ["whisper"],
+            "plugin_capability_flags": [
+                "CAN_ATTACH_EXISTING",
+                "CAN_INSTALL_PROVIDER",
+                "CAN_DISCOVER_MODELS",
+            ],
+            "required_permissions": [
+                {
+                    "permission_id": "network.private",
+                    "label": "Private provider network",
+                    "risk_level": "low",
+                    "reason": "Connect to the operator-selected Whisper HTTP endpoint",
+                }
+            ],
+            "trust_status": "AIDN_CURATED",
+            "sandbox_policy": {
+                "execution_mode": "RECORDED_ONLY",
+                "filesystem_scope": "NONE",
+                "network_scope": "NONE",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+                "notes": (
+                    "The MVP apply records local provider inventory only; it does not "
+                    "install packages or start a host process."
+                ),
+            },
+            "supported_platforms": ["linux", "darwin", "windows"],
+            "supported_architectures": ["x86_64", "arm64"],
+            "supported_accelerators": ["cpu", "cuda"],
+            "installation_recipes": [
+                {
+                    "recipe_id": "whisper-local-http",
+                    "display_name": "Local Whisper HTTP",
+                    "description": (
+                        "Register an operator-managed Whisper HTTP service on this host"
+                    ),
+                    "provider_configuration": {
+                        "display_name": "Local Whisper",
+                        "endpoint": self._default_endpoint,
+                        "model_id": self._default_model,
+                    },
+                    "model_configuration": {
+                        "provider_model_reference": self._default_model,
+                    },
+                    "endpoint_defaults": {
+                        "capability_id": "speech_to_text",
+                    },
+                }
+            ],
+            "supported_aidn_capabilities": ["speech_to_text"],
             "workload_types": ["speech_to_text"],
             "usage_contract": self.usage_contract(),
         }
+
+    def attach_provider_schema(self) -> dict:
+        return self.install_provider_schema().copy() | {"schema_id": "whisper.attach.v1"}
+
+    def install_provider_schema(self) -> dict:
+        return {
+            "schema_id": "whisper.install.v1",
+            "fields": [
+                {
+                    "id": "display_name",
+                    "type": "text",
+                    "label": "Provider name",
+                    "required": True,
+                    "default": "Local Whisper",
+                },
+                {
+                    "id": "endpoint",
+                    "type": "url",
+                    "label": "Whisper HTTP endpoint",
+                    "required": True,
+                    "default": self._default_endpoint,
+                },
+                {
+                    "id": "model_id",
+                    "type": "text",
+                    "label": "Provider model ID",
+                    "required": True,
+                    "default": self._default_model,
+                },
+            ],
+        }
+
+    def validate_provider_configuration(self, configuration: dict) -> None:
+        display_name = str(configuration.get("display_name", "")).strip()
+        endpoint = str(configuration.get("endpoint", "")).strip()
+        model_id = str(configuration.get("model_id", "")).strip()
+        if not display_name:
+            raise ValueError("display_name is required")
+        parsed_endpoint = parse.urlsplit(endpoint)
+        if (
+            parsed_endpoint.scheme not in {"http", "https"}
+            or not parsed_endpoint.netloc
+            or parsed_endpoint.username
+            or parsed_endpoint.password
+        ):
+            raise ValueError("endpoint must be an absolute HTTP URL")
+        if not model_id:
+            raise ValueError("model_id is required")
+
+    def build_installation_plan(self, configuration: dict) -> dict:
+        self.validate_provider_configuration(configuration)
+        endpoint = str(configuration["endpoint"]).rstrip("/")
+        return {
+            "plan_id": "plan-whisper-http-v1",
+            "plugin_id": self.plugin_id,
+            "plan_version": "1.0.0",
+            "summary": "Register an operator-managed Whisper HTTP provider",
+            "containers": [],
+            "processes": [],
+            "model_downloads": [],
+            "volumes": [],
+            "networks": [{"name": "whisper-provider", "scope": "private"}],
+            "environment": {},
+            "resource_limits": {"cpu": "operator-managed"},
+            "health_checks": [
+                {
+                    "type": "http",
+                    "url": f"{endpoint}/health",
+                    "timeout_seconds": 5,
+                }
+            ],
+            "required_permissions": self.plugin_manifest()["required_permissions"],
+            "secret_references": [],
+            "unsupported_actions": [],
+        }
+
+    def discover_models(self, provider_instance: dict) -> list[dict]:
+        configuration = provider_instance.get("configuration") or {}
+        model_id = str(configuration.get("model_id") or self._default_model)
+        provider_instance_id = provider_instance["provider_instance_id"]
+        model_suffix = hashlib.sha256(model_id.encode("utf-8")).hexdigest()[:12]
+        return [
+            {
+                "model_deployment_id": f"md-{provider_instance_id}-{model_suffix}",
+                "provider_instance_id": provider_instance_id,
+                "provider_model_reference": model_id,
+                "operator_display_name": model_id,
+                "declared_model_name": model_id,
+                "metadata_sources": {
+                    "declared_model_name": "OPERATOR_DECLARED",
+                    "provider_model_reference": "OPERATOR_DECLARED",
+                },
+                "capability_bindings": ["speech_to_text"],
+                "operational_state": "ready",
+            }
+        ]
+
+    def create_runtime_binding(
+        self,
+        *,
+        model_deployment: dict,
+        capability_id: str,
+        capability_version: str,
+        capability_definition_hash: str,
+    ) -> dict:
+        binding = super().create_runtime_binding(
+            model_deployment=model_deployment,
+            capability_id=capability_id,
+            capability_version=capability_version,
+            capability_definition_hash=capability_definition_hash,
+        )
+        binding["compatibility_bundle"].update(
+            {
+                "plugin_id": self.plugin_id,
+                "provider_type": "whisper",
+                "workload_type": "speech_to_text",
+                "launch_mode": "attached_service",
+                "device_affinity": "cpu",
+            }
+        )
+        return binding
 
     def validate_bundle(self, bundle_config) -> None:
         if bundle_config.workload_type != "speech_to_text":

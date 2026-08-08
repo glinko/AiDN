@@ -3582,7 +3582,7 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert "/operators/provider-installation-approvals" in response.text
     assert "/operators/provider-installation-jobs" in response.text
     assert "/operators/provider-installation-artifacts" in response.text
-    assert "Apply approved plan" in response.text
+    assert "Configure" in response.text
     assert "controlled executor" in response.text
     assert "Approve Install Plan" in response.text
     assert "Run Dry-Run Diagnostics" in response.text
@@ -3599,6 +3599,10 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert 'data-provider-action="apply-installation"' in response.text
     assert "/operators/provider-plugins/" in response.text
     assert "/installation-diagnostics" in response.text
+    assert "renderProviderActionMessage()" in response.text
+    assert 'aria-live="${isError ? "assertive" : "polite"}"' in response.text
+    assert "Managed installation unavailable" in response.text
+    assert "canInstallProvider && state.providerDiagnosticsPendingId" in response.text
     assert "Provider Installation Apply Jobs" in response.text
     assert "/operators/provider-instances/" in response.text
     assert "/discover-models" in response.text

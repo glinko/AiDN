@@ -1,8 +1,11 @@
 import pytest
 
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile, TaskRequest
+from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.plugins.whisper import WhisperPlugin
 from aidn_hypervisor.process_manager import RuntimeHandle
+from aidn_hypervisor.providers.service import ProviderInventoryService
+from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 
 
 def _bundle(
@@ -46,20 +49,110 @@ class StubWhisperPlugin(WhisperPlugin):
 def test_whisper_plugin_describes_speech_to_text_capability() -> None:
     plugin = WhisperPlugin()
 
-    assert plugin.describe() == {
-        "plugin_id": "whisper",
-        "workload_types": ["speech_to_text"],
-        "usage_contract": {
-            "supports_exact": False,
-            "supports_estimated": True,
-            "supported_billing_units": ["audio_input_seconds"],
-            "supported_accounting_modes": ["fixed_price", "observable"],
-            "default_measurement_source": "provider_request",
-            "fallback_measurement_source": "provider_request",
-            "fallback_policy": "fixed_request_estimate",
-            "missing_usage_behavior": "skip",
+    description = plugin.describe()
+
+    assert description["plugin_id"] == "whisper"
+    assert description["plugin_version"] == "0.2.0"
+    assert description["workload_types"] == ["speech_to_text"]
+    assert description["supported_aidn_capabilities"] == ["speech_to_text"]
+    assert description["plugin_capability_flags"] == [
+        "CAN_ATTACH_EXISTING",
+        "CAN_INSTALL_PROVIDER",
+        "CAN_DISCOVER_MODELS",
+    ]
+    assert description["installation_recipes"][0]["recipe_id"] == "whisper-local-http"
+    assert description["usage_contract"] == {
+        "supports_exact": False,
+        "supports_estimated": True,
+        "supported_billing_units": ["audio_input_seconds"],
+        "supported_accounting_modes": ["fixed_price", "observable"],
+        "default_measurement_source": "provider_request",
+        "fallback_measurement_source": "provider_request",
+        "fallback_policy": "fixed_request_estimate",
+        "missing_usage_behavior": "skip",
+    }
+
+
+def test_whisper_plugin_builds_bounded_managed_install_plan() -> None:
+    plugin = WhisperPlugin()
+    configuration = {
+        "display_name": "Local Whisper",
+        "endpoint": "http://127.0.0.1:9000",
+        "model_id": "small",
+    }
+
+    plan = plugin.build_installation_plan(configuration)
+
+    assert plan["plugin_id"] == "whisper"
+    assert plan["containers"] == []
+    assert plan["processes"] == []
+    assert plan["unsupported_actions"] == []
+    assert plan["health_checks"] == [
+        {
+            "type": "http",
+            "url": "http://127.0.0.1:9000/health",
+            "timeout_seconds": 5,
+        }
+    ]
+    assert plan["required_permissions"][0]["permission_id"] == "network.private"
+    assert plugin.plugin_manifest()["package_digest"].startswith("sha256:")
+
+
+def test_whisper_plugin_discovers_declared_model_and_builds_attached_binding() -> None:
+    plugin = WhisperPlugin()
+    instance = {
+        "provider_instance_id": "pi-whisper",
+        "configuration": {
+            "endpoint": "http://127.0.0.1:9000",
+            "model_id": "small",
         },
     }
+
+    deployment = plugin.discover_models(instance)[0]
+    binding = plugin.create_runtime_binding(
+        model_deployment=deployment,
+        capability_id="speech_to_text",
+        capability_version="1.0.0",
+        capability_definition_hash="sha256:capability",
+    )
+
+    assert deployment["provider_model_reference"] == "small"
+    assert deployment["capability_bindings"] == ["speech_to_text"]
+    assert binding["compatibility_bundle"]["workload_type"] == "speech_to_text"
+    assert binding["compatibility_bundle"]["launch_mode"] == "attached_service"
+
+
+def test_whisper_managed_plan_can_be_approved_applied_and_discovered() -> None:
+    registry = PluginRegistry()
+    registry.register(WhisperPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+    configuration = {
+        "display_name": "Local Whisper",
+        "endpoint": "http://127.0.0.1:9000",
+        "model_id": "small",
+    }
+
+    diagnostics = service.run_installation_diagnostics(
+        plugin_id="whisper",
+        configuration=configuration,
+        approved_permissions=["network.private"],
+    )
+    approval = service.approve_installation_plan(
+        "whisper",
+        configuration,
+        approved_permissions=["network.private"],
+    )
+    job = service.apply_installation_approval(approval.approval_id)
+    models = service.discover_models(job.provider_instance_id)
+
+    assert diagnostics.readiness_status == "ACTION_REQUIRED"
+    assert approval.acknowledged_package_verification["status"] == "UNVERIFIED"
+    assert job.status == "SUCCEEDED"
+    assert job.provider_instance_id is not None
+    assert models[0].provider_model_reference == "small"
 
 
 def test_whisper_plugin_validate_bundle_requires_endpoint() -> None:

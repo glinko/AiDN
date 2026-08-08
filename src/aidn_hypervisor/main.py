@@ -278,7 +278,7 @@ def build_app(
 
 
 def _is_validator_consensus_write_path(path: str) -> bool:
-    """Allow only endpoints that submit canonical validator transactions."""
+    """Allow canonical transactions and explicitly bounded local operations."""
     parts = path.strip("/").split("/")
     if parts and parts[0] == "mcp":
         # MCP remote control is a separately authenticated local operator
@@ -291,6 +291,28 @@ def _is_validator_consensus_write_path(path: str) -> bool:
     if parts == ["operators", "resources", "probe"]:
         # This bounded local operation accepts no caller-provided capacity and
         # only refreshes host measurements. It has no Ledger effect.
+        return True
+    if (
+        len(parts) == 4
+        and parts[:2] == ["operators", "provider-plugins"]
+        and parts[3]
+        in {"installation-plan", "installation-approvals", "installation-diagnostics"}
+    ):
+        # Provider installation plans, diagnostics and approvals affect only
+        # local operational inventory. They cannot publish an Endpoint, move Q
+        # or execute arbitrary host mutations through this bounded executor.
+        return True
+    if (
+        len(parts) == 4
+        and parts[:2] == ["operators", "provider-installation-approvals"]
+        and parts[3] == "apply"
+    ):
+        return True
+    if (
+        len(parts) == 4
+        and parts[:2] == ["operators", "provider-installation-jobs"]
+        and parts[3] == "rollback"
+    ):
         return True
     if (
         len(parts) == 5

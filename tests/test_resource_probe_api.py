@@ -44,3 +44,37 @@ def test_dashboard_exposes_automatic_resource_probe_recovery() -> None:
 def test_validator_write_boundary_allows_only_bounded_resource_measurement() -> None:
     assert _is_validator_consensus_write_path("/operators/resources/probe") is True
     assert _is_validator_consensus_write_path("/operators/resources/configure") is False
+
+
+def test_validator_write_boundary_allows_bounded_local_provider_installation() -> None:
+    assert (
+        _is_validator_consensus_write_path(
+            "/operators/provider-plugins/whisper/installation-plan"
+        )
+        is True
+    )
+    assert (
+        _is_validator_consensus_write_path(
+            "/operators/provider-plugins/whisper/installation-diagnostics"
+        )
+        is True
+    )
+    assert (
+        _is_validator_consensus_write_path(
+            "/operators/provider-plugins/whisper/installation-approvals"
+        )
+        is True
+    )
+    assert (
+        _is_validator_consensus_write_path(
+            "/operators/provider-installation-approvals/pia-1/apply"
+        )
+        is True
+    )
+    assert (
+        _is_validator_consensus_write_path(
+            "/operators/provider-installation-jobs/pij-1/rollback"
+        )
+        is True
+    )
+    assert _is_validator_consensus_write_path("/operators/providers/arbitrary-write") is False
