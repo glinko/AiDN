@@ -21,9 +21,18 @@ class EndpointStateError(ValueError):
 
 
 class EndpointService:
-    def __init__(self, store, *, operation_recorder=None) -> None:
+    def __init__(
+        self,
+        store,
+        *,
+        operation_recorder=None,
+        record_creation_operation: bool = True,
+    ) -> None:
         self.store = store
         self.operation_recorder = operation_recorder
+        # Validator-mode Endpoint creation is a local draft operation. The
+        # canonical ENDPOINT_PUBLISH transaction is submitted separately.
+        self.record_creation_operation = record_creation_operation
 
     def list_endpoints(self) -> list[EndpointManifest]:
         return self.store.list_manifests()
@@ -88,7 +97,8 @@ class EndpointService:
         )
         self.store.save_manifest(manifest)
         self.store.save_configuration_snapshot(snapshot)
-        self._record_endpoint_publish(manifest)
+        if self.record_creation_operation:
+            self._record_endpoint_publish(manifest)
         return CreateEndpointResult(endpoint=manifest, snapshot=snapshot)
 
     def update_endpoint(self, cmd: UpdateEndpointCommand) -> UpdateEndpointResult:

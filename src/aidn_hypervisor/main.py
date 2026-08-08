@@ -137,6 +137,13 @@ def build_app(
         raise ValueError("Hypervisor is already bound to another ConsensusService")
     if resolved_consensus_service is not None:
         resolved_service.consensus_service = resolved_consensus_service
+        if resolved_consensus_service.is_validator:
+            # Local drafts and pending Session metadata must not mutate the
+            # consensus Ledger/AppHash before their canonical transactions
+            # reach finality. Their durable projections remain available to
+            # the operator and are reconciled after consensus confirmation.
+            resolved_endpoint_service.record_creation_operation = False
+            resolved_session_service.record_open_operation = False
     resolved_finality_source = consensus_finality_source or getattr(resolved_service, "consensus_finality_source", None)
     if resolved_finality_source is None:
         resolved_finality_source = _build_default_consensus_finality_source(

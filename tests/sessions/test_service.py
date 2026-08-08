@@ -74,6 +74,31 @@ def test_open_session_rejects_deposit_below_minimum() -> None:
         )
 
 
+def test_validator_pending_session_does_not_record_local_open_operation() -> None:
+    recorded: list[dict] = []
+    service = SessionService(
+        SessionStore(),
+        operation_recorder=lambda **kwargs: recorded.append(kwargs),
+        record_open_operation=False,
+    )
+
+    service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-client",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        deposit_q_atoms=10_000_000,
+        fixed_price_q_atoms=1_000_000,
+        request_charge_ceiling_q_atoms=1_000_000,
+        economic_profile="MVP-0001",
+        canonical_funding_status="PENDING_FINALITY",
+        session_policy=_session_policy(),
+    )
+
+    assert recorded == []
+
+
 def test_runtime_terminal_evidence_is_session_bound_and_replay_safe() -> None:
     service = _session_service()
     opened = service.open_session(

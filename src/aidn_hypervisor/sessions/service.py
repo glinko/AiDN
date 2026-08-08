@@ -64,10 +64,14 @@ class SessionService:
         failure_handler: SessionFailureHandler | None = None,
         recovery_config: RecoveryWindowConfig | None = None,
         funding_amendment_verifier=None,
+        record_open_operation: bool = True,
     ) -> None:
         self.store = store
         self.event_recorder = event_recorder
         self.operation_recorder = operation_recorder
+        # In validator mode the economic Session-open intent is kept in the
+        # local Session projection until its canonical transaction is final.
+        self.record_open_operation = record_open_operation
         self.network_fee_q = max(0.0, float(network_fee_q))
         self.registry_service = registry_service or RegistryService()
         self._funding_amendment_verifier = funding_amendment_verifier
@@ -1295,14 +1299,15 @@ class SessionService:
         except Exception:
             self.store.discard_open_session(session.session_id)
             raise
-        self._record_open_session_operation(
-            session=session,
-            node_id=node_id,
-            endpoint_id=endpoint_id,
-            deposit_q=deposit_q,
-            session_policy_snapshot=session_policy_snapshot,
-            client_wallet=client_wallet,
-        )
+        if self.record_open_operation:
+            self._record_open_session_operation(
+                session=session,
+                node_id=node_id,
+                endpoint_id=endpoint_id,
+                deposit_q=deposit_q,
+                session_policy_snapshot=session_policy_snapshot,
+                client_wallet=client_wallet,
+            )
         self._emit_open_session_deposit_locked(
             session=session,
             endpoint_id=endpoint_id,

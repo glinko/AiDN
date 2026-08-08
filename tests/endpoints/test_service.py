@@ -28,6 +28,28 @@ def test_create_endpoint_generates_initial_configuration_snapshot() -> None:
     assert created.snapshot.configuration_hash == created.endpoint.configuration_hash
 
 
+def test_validator_endpoint_draft_does_not_record_publish_operation() -> None:
+    recorded: list[dict] = []
+    service = EndpointService(
+        EndpointStore(),
+        operation_recorder=lambda **kwargs: recorded.append(kwargs),
+        record_creation_operation=False,
+    )
+
+    service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Draft Endpoint",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+
+    assert recorded == []
+
+
 def test_endpoint_application_delete_schedules_validation_custody_retirement() -> None:
     endpoint_service = EndpointService(EndpointStore())
     created = endpoint_service.create_endpoint(
