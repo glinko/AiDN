@@ -401,6 +401,17 @@ class SnapshotStateService:
             self._host.provider_inventory.store.save_model_deployment(deployment)
         for binding in snapshot.runtime_bindings:
             self._host.provider_inventory.store.save_runtime_binding(binding)
+        # Compatibility Bundles are derived from Runtime Bindings and must be
+        # rebuilt after restart. They are intentionally not treated as an
+        # independent source of truth: Provider configuration plus the
+        # persisted binding is the durable input for this projection.
+        for binding in snapshot.runtime_bindings:
+            self._host._replace_bundle(
+                self._host.provider_inventory.bundle_config_for_runtime_binding(
+                    binding.runtime_binding_id
+                )
+            )
+        self._host._persist_bundle_config_if_available()
         for materialization in snapshot.provider_artifact_materializations:
             self._host.provider_inventory.store.save_artifact_materialization(materialization)
         for approval in snapshot.provider_installation_approvals:

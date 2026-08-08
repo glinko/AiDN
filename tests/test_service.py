@@ -413,6 +413,10 @@ def test_provider_inventory_survives_state_restore() -> None:
     assert restored.list_provider_instances()[0]["display_name"] == "Local Fake"
     assert restored.list_model_deployments()[0]["provider_instance_id"] == attached["provider_instance_id"]
     assert restored.list_runtime_bindings()[0]["runtime_binding_id"] == binding["runtime_binding_id"]
+    assert any(
+        bundle.bundle_id == binding["compatibility_bundle_id"]
+        for bundle in restored.bundles
+    )
 
 
 def test_provider_artifact_materialization_survives_state_restore(tmp_path) -> None:
