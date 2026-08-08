@@ -299,6 +299,23 @@ def _accounting_contract_for_publication(service, publication) -> dict:
                 rounding="per_minute",
             )
         )
+    fixed_price_only = (
+        pricing.get("fixed_price") is not None
+        and pricing.get("input_price") is None
+        and pricing.get("output_price") is None
+        and pricing.get("audio_input_second_price") is None
+        and float(session.get("idle_fee_per_minute", 0.0) or 0.0) == 0.0
+    )
+    maximum_request_charge = (
+        float(pricing["fixed_price"])
+        if fixed_price_only
+        else (
+            float(session["recommended_deposit"])
+            if session.get("recommended_deposit") is not None
+            else float(session.get("minimum_deposit", 0.0) or 0.0)
+        )
+    )
+
     contract = AccountingContract(
         contract_version=contract_version,
         capability_id=capability_id,
@@ -307,11 +324,7 @@ def _accounting_contract_for_publication(service, publication) -> dict:
         billable_units=billable_units,
         checkpoint_policy="per_request",
         maximum_unreported_usage=float(session.get("minimum_deposit", 0.0) or 0.0),
-        maximum_request_charge=(
-            float(session["recommended_deposit"])
-            if session.get("recommended_deposit") is not None
-            else float(session.get("minimum_deposit", 0.0) or 0.0)
-        ),
+        maximum_request_charge=maximum_request_charge,
         failure_pricing_policy="reject_unpriced_usage",
     )
     return contract.model_dump(mode="json")

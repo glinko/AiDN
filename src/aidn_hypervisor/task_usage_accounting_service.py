@@ -403,6 +403,23 @@ class TaskUsageAccountingService:
                 )
             )
 
+        fixed_price_only = (
+            endpoint.pricing.fixed_price is not None
+            and endpoint.pricing.input_price is None
+            and endpoint.pricing.output_price is None
+            and endpoint.pricing.audio_input_second_price is None
+            and endpoint.session.idle_fee_per_minute == 0.0
+        )
+        maximum_request_charge = (
+            float(endpoint.pricing.fixed_price)
+            if fixed_price_only
+            else (
+                float(endpoint.session.recommended_deposit)
+                if endpoint.session.recommended_deposit is not None
+                else float(endpoint.session.minimum_deposit)
+            )
+        )
+
         contract = AccountingContract(
             contract_version=contract_version,
             capability_id=capability_id,
@@ -411,11 +428,7 @@ class TaskUsageAccountingService:
             billable_units=billable_units,
             checkpoint_policy="per_request",
             maximum_unreported_usage=float(endpoint.session.minimum_deposit),
-            maximum_request_charge=(
-                float(endpoint.session.recommended_deposit)
-                if endpoint.session.recommended_deposit is not None
-                else float(endpoint.session.minimum_deposit)
-            ),
+            maximum_request_charge=maximum_request_charge,
             failure_pricing_policy="reject_unpriced_usage",
         )
         return contract.model_dump(mode="json")
