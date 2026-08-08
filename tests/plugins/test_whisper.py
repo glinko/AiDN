@@ -427,6 +427,8 @@ def test_whisper_native_invoke_posts_bounded_multipart_audio() -> None:
     assert url == "http://127.0.0.1:9000/asr?task=transcribe&output=json"
     assert content_type.startswith("multipart/form-data; boundary=aidn-whisper-")
     assert b'name="audio_file"' in body
+    assert b"\r\n" in body
+    assert b"\\r\\n" not in body
     assert audio_bytes in body
 
 

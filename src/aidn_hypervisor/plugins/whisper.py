@@ -398,16 +398,16 @@ class WhisperPlugin(ProviderPlugin):
         content_type, filename, audio_bytes = self._decode_inline_audio(audio_ref)
         boundary = f"aidn-whisper-{hashlib.sha256(audio_bytes).hexdigest()[:24]}"
         body = bytearray()
-        body.extend(f"--{boundary}\\r\\n".encode("ascii"))
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
         body.extend(
             (
                 f'Content-Disposition: form-data; name="audio_file"; '
-                f'filename="{filename}"\\r\\n'
-                f"Content-Type: {content_type}\\r\\n\\r\\n"
+                f'filename="{filename}"\r\n'
+                f"Content-Type: {content_type}\r\n\r\n"
             ).encode("ascii")
         )
         body.extend(audio_bytes)
-        body.extend(f"\\r\\n--{boundary}--\\r\\n".encode("ascii"))
+        body.extend(f"\r\n--{boundary}--\r\n".encode("ascii"))
         return self._request_multipart(
             "POST",
             f"{endpoint}/asr?{parse.urlencode({'task': 'transcribe', 'output': 'json'})}",
@@ -417,7 +417,7 @@ class WhisperPlugin(ProviderPlugin):
 
     def _decode_inline_audio(self, audio_ref: str) -> tuple[str, str, bytes]:
         match = re.fullmatch(
-            r"data:(?P<mime>[^;,]+);base64,(?P<data>[A-Za-z0-9+/=\\s]+)",
+            r"data:(?P<mime>[^;,]+);base64,(?P<data>[A-Za-z0-9+/=\s]+)",
             audio_ref,
             flags=re.IGNORECASE,
         )
@@ -432,7 +432,7 @@ class WhisperPlugin(ProviderPlugin):
             raise ValueError(f"native Whisper does not accept audio MIME type: {content_type}")
         try:
             audio_bytes = base64.b64decode(
-                re.sub(r"\\s+", "", match.group("data")), validate=True
+                re.sub(r"\s+", "", match.group("data")), validate=True
             )
         except (ValueError, binascii.Error) as exc:
             raise ValueError("audio_ref contains invalid base64 audio data") from exc
