@@ -126,7 +126,7 @@ class OperatorApplicationService:
                 "label": binding.get("label") or wallet.get("label"),
                 "created_at": binding.get("created_at") or wallet["created_at"],
                 "imported": True,
-                "binding_recovered": True,
+                "canonical_binding_confirmed": True,
             }
         )
         for intent in list(self._host._pending_owner_wallet_bootstraps):
@@ -303,7 +303,7 @@ class OperatorApplicationService:
         if (
             binding is not None
             and self._host._owner_wallet is not None
-            and self._host._owner_wallet.get("binding_recovered") is True
+            and self._host._owner_wallet.get("canonical_binding_confirmed") is True
         ):
             return True
         consensus = getattr(self._host, "consensus_service", None)
@@ -402,6 +402,23 @@ class OperatorApplicationService:
             for intent in pending:
                 operation_id = intent["operation_id"]
                 if canonical_binding is not None:
+                    if self._wallet_matches_binding(
+                        intent["owner_wallet"], canonical_binding
+                    ) and self._local_abci_has_committed_state():
+                        self._host._owner_wallet = {
+                            **intent["owner_wallet"],
+                            "canonical_binding_confirmed": True,
+                        }
+                        self._host._pending_owner_wallet_bootstraps = [
+                            item
+                            for item in self._host._pending_owner_wallet_bootstraps
+                            if item["operation_id"] != operation_id
+                        ]
+                        self._host.discard_pending_consensus_envelopes(operation_id)
+                        self._host.discard_pending_consensus_operations(operation_id)
+                        self._host._operator_onboarding = None
+                        changed = True
+                        continue
                     if not self._wallet_matches_binding(
                         intent["owner_wallet"], canonical_binding
                     ):
@@ -479,6 +496,16 @@ class OperatorApplicationService:
                 self._host._persist_state()
         finally:
             self._reconciling_owner_wallet_bootstraps = False
+
+    def _local_abci_has_committed_state(self) -> bool:
+        consensus = getattr(self._host, "consensus_service", None)
+        abci = getattr(consensus, "abci", None)
+        if abci is None:
+            return False
+        try:
+            return abci.info().last_block_height > 0
+        except Exception:
+            return False
 
     def owner_wallet_private_key(self) -> str:
         if self._host._owner_wallet is None:
