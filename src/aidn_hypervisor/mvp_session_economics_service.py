@@ -319,7 +319,12 @@ class MvpSessionEconomicsService:
         consensus = self._host.consensus_service
         submission = consensus.get_submission(envelope.operation_id)
         if submission is None:
-            submission = consensus.submit_operation(envelope)
+            # A restart can discard the in-memory submission index even though
+            # CometBFT already finalized the exact transaction. Restore its
+            # identity first so finality verification can inspect the existing
+            # transaction before any rebroadcast. Rebroadcasting first can
+            # produce a misleading sender-sequence rejection.
+            submission = consensus.restore_submission(envelope)
         if submission.status.value == "failed":
             raise ValueError(submission.error or "canonical Session lock was rejected")
         finality_source = getattr(self._host, "consensus_finality_source", None)
@@ -330,6 +335,15 @@ class MvpSessionEconomicsService:
             )
             if reconciled is not None:
                 submission = reconciled
+        if submission.status.value not in {"finalized", "included"}:
+            submission = consensus.submit_operation(envelope, retry_existing=True)
+            if finality_source is not None:
+                reconciled = consensus.reconcile_finality(
+                    envelope.operation_id,
+                    finality_source=finality_source,
+                )
+                if reconciled is not None:
+                    submission = reconciled
         if submission.status.value != "finalized":
             return (
                 session,

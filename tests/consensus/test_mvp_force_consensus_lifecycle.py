@@ -37,8 +37,12 @@ from aidn_hypervisor.sessions.store import SessionStore
 
 
 class _Transport:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def broadcast_tx_sync(self, transaction: bytes, *, timeout_seconds: int) -> dict:
         del timeout_seconds
+        self.calls += 1
         return {
             "result": {
                 "code": 0,
@@ -666,3 +670,52 @@ def test_validator_session_open_resumes_after_canonical_funding_finality():
         ),
     )
     assert consensus.get_submission(envelope.operation_id).status.value == "finalized"
+
+
+def test_validator_session_recovery_checks_finality_before_rebroadcast():
+    hypervisor, client, endpoint, _session, consensus, source = _context(
+        open_session=False
+    )
+    hypervisor.consensus_service.config.mode = ConsensusMode.VALIDATOR
+    hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer-2", amount_q_atoms=1_000)
+
+    open_path = f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions"
+    open_payload = {
+        "client_wallet": "wallet-consumer-2",
+        "deposit_q_atoms": 1_000,
+        "fixed_price_q_atoms": 900,
+        "network_fee_reserve_q_atoms": 100,
+        "consensus_sender_sequence": 2,
+        "consensus_lock_signatures": ["sig-lock"],
+    }
+    pending = client.post(open_path, json=open_payload)
+    assert pending.status_code == 202
+    session_id = pending.json()["data"]["session"]["session_id"]
+    stored = hypervisor.session_service.store.get_session(session_id)
+    envelope = LedgerOperationEnvelope.model_validate(
+        stored.canonical_funding_submission["envelope"]
+    )
+
+    hypervisor.ledger_operation_service.apply_consensus_session_escrow_lock(envelope)
+    source.finalize(envelope.operation_id, 20)
+    transport = consensus._submission_transport
+    assert transport is not None
+    calls_before_restart = transport.calls
+    consensus._submissions.clear()
+    consensus._submitted_envelopes.clear()
+
+    resumed = client.post(
+        open_path,
+        json={
+            **{
+                key: value
+                for key, value in open_payload.items()
+                if not key.startswith("consensus_")
+            },
+            "session_id": session_id,
+        },
+    )
+
+    assert resumed.status_code == 201
+    assert resumed.json()["data"]["consensus"]["status"] == "finalized"
+    assert transport.calls == calls_before_restart
