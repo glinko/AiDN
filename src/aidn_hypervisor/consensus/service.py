@@ -378,7 +378,18 @@ class ConsensusService:
         if not isinstance(operation, dict):
             return None
         transaction_hash = operation.get("transaction_hash")
-        return transaction_hash if isinstance(transaction_hash, str) else None
+        if isinstance(transaction_hash, str):
+            return transaction_hash
+        # Legacy Ledger snapshots contain the complete envelope but predate
+        # the persisted transaction_hash field. Recreate the exact bytes used
+        # by broadcast_tx_sync before falling back to an RPC block scan.
+        try:
+            envelope = LedgerOperationEnvelope.model_validate(operation)
+            if envelope.operation_id != operation_id:
+                return None
+            return cometbft_transaction_hash(self._serialize_envelope(envelope))
+        except (TypeError, ValueError):
+            return None
 
     def list_submissions(
         self,

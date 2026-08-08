@@ -123,6 +123,12 @@ def test_transaction_hash_lookup_falls_back_to_persisted_consensus_ledger_record
     svc = ConsensusService(cfg, abci_app=abci)
     env = _make_envelope(origin_type="protocol")
     abci.ledger.record_admitted_envelope(env)
+    legacy_operation = abci.ledger.snapshot_operations()[-1]
+    legacy_operation.pop("transaction_hash", None)
+    abci.ledger.restore(
+        operations=[legacy_operation],
+        wallet_sequences=abci.ledger.snapshot_wallet_sequences(),
+    )
 
     expected_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
     assert svc.transaction_hash_for_operation(env.operation_id) == cometbft_transaction_hash(
