@@ -13,6 +13,7 @@ import binascii
 import hashlib
 import json
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
@@ -480,7 +481,32 @@ class CometBftRpcFinalitySource:
             return None
         latest_height = _positive_height(sync_info.get("latest_block_height"))
         first_height = max(1, latest_height - self._transaction_scan_window + 1)
-        for height in range(latest_height, first_height - 1, -1):
+        heights = range(latest_height, first_height - 1, -1)
+        if self._transaction_scan_window <= 8:
+            for height in heights:
+                transaction_hash = self._scan_block_for_operation(height, operation_id)
+                if transaction_hash is not None:
+                    return transaction_hash
+            return None
+
+        # Legacy recovery is rare, but a sequential scan would block the
+        # operator API for every historical block in a wide migration window.
+        # Keep the search bounded while fetching independent block bodies in
+        # small batches; results are consumed in descending height order.
+        height_list = list(heights)
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            for offset in range(0, len(height_list), 16):
+                batch = height_list[offset : offset + 16]
+                for transaction_hash in executor.map(
+                    lambda height: self._scan_block_for_operation(height, operation_id),
+                    batch,
+                ):
+                    if transaction_hash is not None:
+                        return transaction_hash
+        return None
+
+    def _scan_block_for_operation(self, height: int, operation_id: str) -> str | None:
+        try:
             block_result = self._rpc_result(
                 self._transport.get(
                     "/block",
@@ -490,13 +516,13 @@ class CometBftRpcFinalitySource:
             )
             block = block_result.get("block")
             if not isinstance(block, dict):
-                continue
+                return None
             data = block.get("data")
             if not isinstance(data, dict):
-                continue
+                return None
             transactions = data.get("txs") or []
             if not isinstance(transactions, list):
-                continue
+                return None
             for encoded_transaction in transactions:
                 if not isinstance(encoded_transaction, str):
                     continue
@@ -509,6 +535,8 @@ class CometBftRpcFinalitySource:
                     continue
                 if envelope.operation_id == operation_id:
                     return cometbft_transaction_hash(transaction_bytes)
+        except Exception:
+            return None
         return None
 
     def _rpc_result(self, response: dict) -> dict:

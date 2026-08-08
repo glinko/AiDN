@@ -123,6 +123,19 @@ def test_transaction_hash_lookup_falls_back_to_persisted_consensus_ledger_record
     svc = ConsensusService(cfg, abci_app=abci)
     env = _make_envelope(origin_type="protocol")
     abci.ledger.record_admitted_envelope(env)
+
+    expected_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    assert svc.transaction_hash_for_operation(env.operation_id) == cometbft_transaction_hash(
+        expected_bytes
+    )
+
+
+def test_legacy_consensus_record_without_transaction_hash_requires_rpc_recovery():
+    abci = _make_abci()
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    svc = ConsensusService(cfg, abci_app=abci)
+    env = _make_envelope(origin_type="protocol")
+    abci.ledger.record_admitted_envelope(env)
     legacy_operation = abci.ledger.snapshot_operations()[-1]
     legacy_operation.pop("transaction_hash", None)
     abci.ledger.restore(
@@ -130,10 +143,7 @@ def test_transaction_hash_lookup_falls_back_to_persisted_consensus_ledger_record
         wallet_sequences=abci.ledger.snapshot_wallet_sequences(),
     )
 
-    expected_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
-    assert svc.transaction_hash_for_operation(env.operation_id) == cometbft_transaction_hash(
-        expected_bytes
-    )
+    assert svc.transaction_hash_for_operation(env.operation_id) is None
 
 
 def test_http_submission_transport_marks_only_checktx_admission():

@@ -378,18 +378,12 @@ class ConsensusService:
         if not isinstance(operation, dict):
             return None
         transaction_hash = operation.get("transaction_hash")
-        if isinstance(transaction_hash, str):
-            return transaction_hash
-        # Legacy Ledger snapshots contain the complete envelope but predate
-        # the persisted transaction_hash field. Recreate the exact bytes used
-        # by broadcast_tx_sync before falling back to an RPC block scan.
-        try:
-            envelope = LedgerOperationEnvelope.model_validate(operation)
-            if envelope.operation_id != operation_id:
-                return None
-            return cometbft_transaction_hash(self._serialize_envelope(envelope))
-        except (TypeError, ValueError):
-            return None
+        # Legacy snapshots may contain the complete envelope but not the
+        # original transaction bytes. Canonical snapshot JSON sorts nested
+        # keys, so reserializing that dict cannot reproduce the CometBFT hash.
+        # Return only an actually persisted hash; the RPC finality source owns
+        # its bounded legacy block-scan fallback.
+        return transaction_hash if isinstance(transaction_hash, str) else None
 
     def list_submissions(
         self,
