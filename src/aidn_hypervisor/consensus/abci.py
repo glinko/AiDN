@@ -1216,7 +1216,7 @@ class AIDNABCIApplication:
         consensus_state = self.ledger.snapshot_consensus_state()
         settlement_state = self._canonical_settlement_state_for_hash(self.ledger.snapshot_settlement_state())
         state = {
-            "operations": self.ledger.snapshot_operations(),
+            "operations": self._canonical_operations_for_hash(self.ledger.snapshot_operations()),
             "wallet_sequences": self.ledger.snapshot_wallet_sequences(),
             "settlement_state": settlement_state,
         }
@@ -1228,6 +1228,23 @@ class AIDNABCIApplication:
             state["consensus_state"] = consensus_state
         canonical = json.dumps(state, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).digest()
+
+    @staticmethod
+    def _canonical_operations_for_hash(operations: list[dict]) -> list[dict]:
+        """Keep AppHash compatible with records written before tx hashes.
+
+        ``transaction_hash`` is durable metadata, not a new state transition.
+        Old ABCI snapshots omit it entirely; omitting a null value from the
+        new representation preserves their AppHash while still committing the
+        hash for newly admitted consensus transactions.
+        """
+        canonical_operations: list[dict] = []
+        for operation in operations:
+            canonical = dict(operation)
+            if canonical.get("transaction_hash") is None:
+                canonical.pop("transaction_hash", None)
+            canonical_operations.append(canonical)
+        return canonical_operations
 
     @staticmethod
     def _canonical_settlement_state_for_hash(settlement_state: dict) -> dict:

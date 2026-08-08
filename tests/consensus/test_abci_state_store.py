@@ -53,6 +53,33 @@ def test_finalized_state_survives_application_restart(tmp_path) -> None:
     assert len(restored.ledger.snapshot_operations()) == 1
 
 
+def test_legacy_snapshot_without_transaction_hash_remains_restorable(tmp_path) -> None:
+    store = ABCIStateStore(tmp_path / "abci")
+    application = _app(store)
+    transaction = _operation_bytes()
+
+    assert application.finalize_block(
+        block_height=1,
+        block_hash=b"l" * 32,
+        txs=[transaction],
+    ).code == "ok"
+    legacy_snapshot = application.prepare_snapshot()
+    for operation in legacy_snapshot["ledger_operations"]:
+        operation.pop("transaction_hash", None)
+    legacy_application = _app()
+    legacy_application.ledger.restore(
+        operations=legacy_snapshot["ledger_operations"],
+        wallet_sequences=legacy_snapshot["wallet_sequences"],
+    )
+    legacy_snapshot["app_hash"] = legacy_application._compute_state_hash().hex()
+    store.persist(legacy_snapshot)
+
+    restored = _app(store)
+
+    assert restored.info().last_block_height == 1
+    assert restored.info().last_block_app_hash == bytes.fromhex(legacy_snapshot["app_hash"])
+
+
 def test_finalize_block_defers_durable_state_until_commit(tmp_path) -> None:
     store = ABCIStateStore(tmp_path / "abci")
     application = _app(store)
