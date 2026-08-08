@@ -336,6 +336,12 @@ def _is_validator_consensus_write_path(path: str) -> bool:
         and parts[4] in {"mvp-sessions", "public-mvp-sessions"}
     ):
         return True
+    if parts == ["api", "v1", "endpoints"]:
+        # Creating an Endpoint draft only records local operator inventory. It
+        # does not publish an advertisement, move Q, or create a Session. The
+        # publication route remains outside this allow-list until its typed
+        # consensus transaction is finalized.
+        return True
     return (
         len(parts) == 7
         and parts[:3] == ["api", "v1", "endpoints"]

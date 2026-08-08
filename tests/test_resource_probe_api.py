@@ -90,3 +90,9 @@ def test_validator_write_boundary_allows_bounded_local_provider_installation() -
         is True
     )
     assert _is_validator_consensus_write_path("/operators/providers/arbitrary-write") is False
+
+
+def test_validator_write_boundary_allows_local_endpoint_draft_creation() -> None:
+    assert _is_validator_consensus_write_path("/api/v1/endpoints") is True
+    assert _is_validator_consensus_write_path("/api/v1/endpoints/ep-1") is False
+    assert _is_validator_consensus_write_path("/api/v1/endpoints/ep-1/publish-configuration") is False
