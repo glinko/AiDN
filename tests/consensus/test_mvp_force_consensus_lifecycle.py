@@ -467,7 +467,7 @@ def test_validator_reconciles_stale_local_wallet_binding_only_after_finality():
     assert recovered.json()["wallet_id"] == material["wallet"]["wallet_id"]
 
 
-def test_failed_validator_wallet_bootstrap_is_readable_and_replaceable():
+def test_failed_validator_wallet_bootstrap_retries_the_same_binding():
     hypervisor, client, _endpoint, _session, consensus, _source = _context(
         open_session=False
     )
@@ -491,7 +491,56 @@ def test_failed_validator_wallet_bootstrap_is_readable_and_replaceable():
     )
     assert retried.status_code == 202
     assert retried.json()["status"] == "CONSENSUS_PENDING"
-    assert retried.json()["consensus"]["operation_id"] != failed.json()["consensus"]["operation_id"]
+    assert retried.json()["consensus"]["operation_id"] == failed.json()["consensus"]["operation_id"]
+    assert retried.json()["proposed_wallet"] == failed.json()["proposed_wallet"]
+
+
+def test_validator_wallet_recovers_only_the_canonically_bound_private_key():
+    hypervisor, client, _endpoint, _session, consensus, _source = _context(
+        open_session=False
+    )
+    consensus.config.mode = ConsensusMode.VALIDATOR
+    facade = hypervisor._operator_application_facade()
+    material = facade._prepare_wallet_material(
+        mode="create", label="canonical wallet", private_key=None
+    )
+    envelope = facade._wallet_bind_envelope(material, mode="create")
+    hypervisor.ledger_operation_service.record_admitted_envelope(envelope)
+    operations_after_binding = hypervisor.ledger_operation_service.snapshot_operations()
+
+    state = client.get("/operators/wallet/bootstrap").json()
+    assert state["configured"] is False
+    assert state["recovery_required"] is True
+    assert state["canonical_binding"]["wallet_id"] == material["wallet"]["wallet_id"]
+
+    rejected_create = client.post(
+        "/operators/wallet/bootstrap/create", json={"label": "different wallet"}
+    )
+    assert rejected_create.status_code == 409
+    assert "already bound by consensus" in rejected_create.json()["detail"]
+
+    wrong_key = facade._prepare_wallet_material(
+        mode="create", label="wrong", private_key=None
+    )["wallet"]["private_key"]
+    rejected_import = client.post(
+        "/operators/wallet/bootstrap/import",
+        json={"label": "wrong", "private_key": wrong_key},
+    )
+    assert rejected_import.status_code == 409
+    assert "does not match" in rejected_import.json()["detail"]
+
+    recovered = client.post(
+        "/operators/wallet/bootstrap/import",
+        json={
+            "label": "ignored local label",
+            "private_key": material["wallet"]["private_key"],
+        },
+    )
+    assert recovered.status_code == 200
+    assert recovered.json()["status"] == "RECOVERED"
+    assert recovered.json()["wallet"]["configured"] is True
+    assert recovered.json()["wallet"]["wallet_id"] == material["wallet"]["wallet_id"]
+    assert hypervisor.ledger_operation_service.snapshot_operations() == operations_after_binding
 
 
 def test_validator_force_projections_do_not_enter_canonical_operation_log():

@@ -224,7 +224,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=$binary_path start --home $home
-Restart=on-failure
+# CometBFT can exit cleanly when its ABCI peer restarts. A clean exit is not
+# an operator request to leave consensus offline.
+Restart=always
 RestartSec=5
 NoNewPrivileges=yes
 PrivateTmp=yes

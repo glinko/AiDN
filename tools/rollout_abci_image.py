@@ -103,6 +103,8 @@ def _create_command(
         if restart_name == "on-failure" and restart.get("MaximumRetryCount"):
             restart_name = f"on-failure:{restart['MaximumRetryCount']}"
         arguments.extend(("--restart", restart_name))
+    else:
+        arguments.extend(("--restart", "unless-stopped"))
 
     if config.get("WorkingDir"):
         arguments.extend(("--workdir", config["WorkingDir"]))
@@ -182,6 +184,9 @@ def _rollout_host(
     expected_mount: tuple[str, str] | None,
     health_url: str,
     health_timeout: int,
+    consensus_container: str | None,
+    consensus_service: str | None,
+    consensus_rpc_url: str,
 ) -> dict[str, Any]:
     remote = RemoteHost(host, username=username, password=password)
     try:
@@ -230,7 +235,49 @@ def _rollout_host(
                     f"{host}: unexpected running image {running_image}; "
                     f"expected {expected_image_id}"
                 )
-            return {"host": host, "health": health, "image": running_image, "backup": backup}
+            consensus_runtime = None
+            if consensus_service is not None:
+                remote.run(
+                    "XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart "
+                    + shlex.quote(consensus_service),
+                    sudo=False,
+                    timeout=90,
+                )
+                consensus_runtime = f"service:{consensus_service}"
+            elif consensus_container is not None and remote.exists(consensus_container):
+                remote.run(
+                    "docker update --restart unless-stopped "
+                    + shlex.quote(consensus_container),
+                    timeout=60,
+                )
+                remote.run(
+                    "docker container start " + shlex.quote(consensus_container),
+                    timeout=60,
+                )
+                consensus_runtime = f"container:{consensus_container}"
+            if consensus_runtime is not None:
+                deadline = time.monotonic() + health_timeout
+                while time.monotonic() < deadline:
+                    try:
+                        remote.run(
+                            f"curl -fsS --max-time 3 {shlex.quote(consensus_rpc_url)}",
+                            sudo=False,
+                            timeout=10,
+                        )
+                        break
+                    except RemoteCommandError:
+                        time.sleep(2)
+                else:
+                    raise RemoteCommandError(
+                        f"{host}: consensus RPC did not recover: {consensus_rpc_url}"
+                    )
+            return {
+                "host": host,
+                "health": health,
+                "image": running_image,
+                "backup": backup,
+                "consensus_runtime": consensus_runtime,
+            }
         except Exception:
             _rollback(remote, container=container, backup=backup)
             raise
@@ -248,6 +295,19 @@ def main() -> int:
     parser.add_argument("--backup-suffix", required=True)
     parser.add_argument("--health-url", default="http://127.0.0.1:8000/health")
     parser.add_argument("--health-timeout", type=int, default=120)
+    parser.add_argument("--consensus-container", default="aidn-g5-comet")
+    parser.add_argument(
+        "--consensus-service",
+        action="append",
+        default=[],
+        metavar="HOST=SERVICE",
+    )
+    parser.add_argument(
+        "--consensus-rpc-url",
+        action="append",
+        default=[],
+        metavar="HOST=URL",
+    )
     parser.add_argument("--ssh-user", default=os.environ.get("AIDN_SSH_USER", "user"))
     parser.add_argument(
         "--ssh-password-env",
@@ -257,6 +317,8 @@ def main() -> int:
     args = parser.parse_args()
     password = os.environ.get(args.ssh_password_env) or getpass.getpass("SSH/sudo password: ")
     expected_mounts = _parse_expected_mounts(args.expected_mount)
+    consensus_services = dict(value.split("=", 1) for value in args.consensus_service)
+    consensus_rpc_urls = dict(value.split("=", 1) for value in args.consensus_rpc_url)
     backup = f"{args.container}-prev-{args.backup_suffix}"
 
     results = []
@@ -272,6 +334,11 @@ def main() -> int:
             expected_mount=expected_mounts.get(host),
             health_url=args.health_url,
             health_timeout=args.health_timeout,
+            consensus_container=args.consensus_container or None,
+            consensus_service=consensus_services.get(host),
+            consensus_rpc_url=consensus_rpc_urls.get(
+                host, "http://127.0.0.1:26657/status"
+            ),
         )
         results.append(result)
         print(json.dumps(result, sort_keys=True))

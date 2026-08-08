@@ -47,6 +47,19 @@ class OperatorApplicationService:
                 "imported": bool(self._host._owner_wallet.get("imported", False)),
             }
         pending = getattr(self._host, "_pending_owner_wallet_bootstraps", [])
+        canonical_binding = self._canonical_owner_wallet_binding_payload()
+        if canonical_binding is not None:
+            state["canonical_binding"] = {
+                key: canonical_binding.get(key)
+                for key in (
+                    "wallet_id",
+                    "public_key",
+                    "label",
+                    "created_at",
+                    "wallet_binding_version",
+                )
+            }
+            state["recovery_required"] = not state["configured"]
         if pending and not state["configured"]:
             intent = pending[0]
             proposed = dict(intent["owner_wallet"])
@@ -72,6 +85,61 @@ class OperatorApplicationService:
                 ),
             }
         return state
+
+    def _canonical_owner_wallet_binding_payload(self) -> dict | None:
+        """Return this node's immutable wallet binding from canonical ledger state."""
+        binding: dict | None = None
+        for operation in self._host.ledger_operation_service.snapshot_operations():
+            if operation.get("operation_type") != "OPERATOR_WALLET_BIND":
+                continue
+            payload = operation.get("payload") or {}
+            if (
+                payload.get("node_id") != self._host.node_id
+                or payload.get("operator_id") != self._host.operator_id
+            ):
+                continue
+            if binding is not None and (
+                payload.get("wallet_id") != binding.get("wallet_id")
+                or payload.get("public_key") != binding.get("public_key")
+            ):
+                raise ValueError("canonical operator wallet binding is conflicting")
+            binding = dict(payload)
+        return binding
+
+    @staticmethod
+    def _wallet_matches_binding(wallet: dict, binding: dict) -> bool:
+        return (
+            wallet.get("wallet_id") == binding.get("wallet_id")
+            and wallet.get("public_key") == binding.get("public_key")
+        )
+
+    def _recover_owner_wallet_from_binding(self, material: dict, binding: dict) -> dict:
+        wallet = dict(material["wallet"])
+        if not self._wallet_matches_binding(wallet, binding):
+            raise ValueError(
+                "private key does not match the operator wallet already bound by consensus"
+            )
+        wallet.update(
+            {
+                "wallet_id": binding["wallet_id"],
+                "public_key": binding["public_key"],
+                "label": binding.get("label") or wallet.get("label"),
+                "created_at": binding.get("created_at") or wallet["created_at"],
+                "imported": True,
+                "binding_recovered": True,
+            }
+        )
+        for intent in list(self._host._pending_owner_wallet_bootstraps):
+            self._discard_pending_owner_wallet_bootstrap(intent["operation_id"])
+        self._host._owner_wallet = wallet
+        self._host._operator_onboarding = None
+        self.sync_operator_onboarding_state(endpoint_items=[])
+        self._host._persist_state()
+        return {
+            "status": "RECOVERED",
+            "wallet": self.owner_wallet_state(),
+            "private_key": None,
+        }
 
     def _requires_consensus_wallet_bind(self) -> bool:
         consensus = getattr(self._host, "consensus_service", None)
@@ -232,6 +300,12 @@ class OperatorApplicationService:
 
     def _owner_wallet_binding_is_finalized(self) -> bool:
         binding = self._owner_wallet_binding_operation()
+        if (
+            binding is not None
+            and self._host._owner_wallet is not None
+            and self._host._owner_wallet.get("binding_recovered") is True
+        ):
+            return True
         consensus = getattr(self._host, "consensus_service", None)
         finality_source = getattr(self._host, "consensus_finality_source", None)
         restore_submission = getattr(consensus, "restore_submission", None)
@@ -324,8 +398,21 @@ class OperatorApplicationService:
                 for operation in self._host.ledger_operation_service.snapshot_operations()
             }
             pending = list(getattr(self._host, "_pending_owner_wallet_bootstraps", []))
+            canonical_binding = self._canonical_owner_wallet_binding_payload()
             for intent in pending:
                 operation_id = intent["operation_id"]
+                if canonical_binding is not None:
+                    if not self._wallet_matches_binding(
+                        intent["owner_wallet"], canonical_binding
+                    ):
+                        conflict = (
+                            "operator wallet recovery is required because consensus "
+                            f"already binds {canonical_binding['wallet_id']}"
+                        )
+                        if intent.get("last_error") != conflict:
+                            intent["last_error"] = conflict
+                            changed = True
+                        continue
                 submission = consensus.get_submission(operation_id)
                 if submission is not None and submission.status.value == "failed":
                     error = submission.error or "consensus submission failed"
@@ -431,41 +518,57 @@ class OperatorApplicationService:
             raise ValueError("Private key is required for wallet import")
         if self._requires_consensus_wallet_bind():
             self._reconcile_pending_owner_wallet_bootstraps()
+            canonical_binding = self._canonical_owner_wallet_binding_payload()
+            if canonical_binding is not None and self._host._owner_wallet is None:
+                if mode != "import":
+                    raise ValueError(
+                        "operator wallet is already bound by consensus; import the "
+                        f"private key for {canonical_binding['wallet_id']}"
+                    )
+                material = self._prepare_wallet_material(
+                    mode=mode,
+                    label=label,
+                    private_key=private_key,
+                )
+                return self._recover_owner_wallet_from_binding(
+                    material, canonical_binding
+                )
+        if self._host._owner_wallet is not None:
+            raise ValueError("Owner wallet is already configured")
+        if self._requires_consensus_wallet_bind():
+            if self._host._pending_owner_wallet_bootstraps:
+                intent = self._host._pending_owner_wallet_bootstraps[0]
+                if mode == "import":
+                    material = self._prepare_wallet_material(
+                        mode=mode,
+                        label=label,
+                        private_key=private_key,
+                    )
+                    if (
+                        intent["owner_wallet"]["public_key"]
+                        != material["wallet"]["public_key"]
+                    ):
+                        raise ValueError("another owner wallet bootstrap is already pending")
+                try:
+                    self._submit_pending_owner_wallet_bootstrap(intent)
+                except ValueError as error:
+                    intent["last_error"] = str(error)
+                    self._host._persist_state()
+                else:
+                    intent.pop("last_error", None)
+                self._reconcile_pending_owner_wallet_bootstraps()
+                return (
+                    self._pending_owner_wallet_result(intent)
+                    if self._host._owner_wallet is None
+                    else {"wallet": self.owner_wallet_state(), "private_key": None}
+                )
+
         material = self._prepare_wallet_material(
             mode=mode,
             label=label,
             private_key=private_key,
         )
         if self._requires_consensus_wallet_bind():
-            if self._host._pending_owner_wallet_bootstraps:
-                intent = self._host._pending_owner_wallet_bootstraps[0]
-                existing_submission = self._host.consensus_service.get_submission(
-                    intent["operation_id"]
-                )
-                if (
-                    intent.get("last_error")
-                    or (
-                        existing_submission is not None
-                        and existing_submission.status.value == "failed"
-                    )
-                ):
-                    self._discard_pending_owner_wallet_bootstrap(intent["operation_id"])
-                    self._host._persist_state()
-                else:
-                    if mode == "import" and intent["owner_wallet"]["public_key"] != material["wallet"]["public_key"]:
-                        raise ValueError("another owner wallet bootstrap is already pending")
-                    try:
-                        self._submit_pending_owner_wallet_bootstrap(intent)
-                    except ValueError as error:
-                        intent["last_error"] = str(error)
-                        self._host._persist_state()
-                    self._reconcile_pending_owner_wallet_bootstraps()
-                    return (
-                        self._pending_owner_wallet_result(intent)
-                        if self._host._owner_wallet is None
-                        else {"wallet": self.owner_wallet_state(), "private_key": None}
-                    )
-
             envelope = self._wallet_bind_envelope(material, mode=mode)
             intent = {
                 "operation_id": envelope.operation_id,

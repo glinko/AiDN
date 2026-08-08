@@ -8650,18 +8650,20 @@
       const walletReady = operatorWalletReady(bootstrap);
       const pendingWallet = ownerWallet.pending_consensus || null;
       const pendingWalletFailed = pendingWallet?.status === "failed";
+      const canonicalWallet = ownerWallet.canonical_binding || null;
+      const recoveryRequired = Boolean(ownerWallet.recovery_required && canonicalWallet);
       const recommendation = homeRecommendedAction(bootstrap);
       const nextScreen = recommendation.type === "endpoint" ? "endpoints" : recommendation.type === "screen" ? recommendation.action : null;
       return `
         <section class="wallet-form wallet-setup">
           <div>
             <div class="panel-heading">Operator Wallet Setup</div>
-            <div class="drawer-title">${walletReady ? "Wallet is configured" : pendingWalletFailed ? "Wallet binding was rejected" : pendingWallet ? "Wallet binding is pending" : "Bind node ownership"}</div>
-            <div class="inspector-copy">${walletReady ? "This wallet signs network-facing management and publication actions for this Hypervisor." : pendingWalletFailed ? "The consensus transaction was rejected. Correct the consensus service and retry the wallet binding." : pendingWallet ? "The public wallet binding was submitted to consensus. The private key remains local to this node." : "Create a new owner wallet or import an existing private key before publishing an Endpoint."}</div>
+            <div class="drawer-title">${walletReady ? "Wallet is configured" : recoveryRequired ? "Recover the bound wallet" : pendingWalletFailed ? "Wallet binding needs attention" : pendingWallet ? "Wallet binding is pending" : "Bind node ownership"}</div>
+            <div class="inspector-copy">${walletReady ? "This wallet signs network-facing management and publication actions for this Hypervisor." : recoveryRequired ? `Consensus already recognizes ${escapeHtml(canonicalWallet.wallet_id)}. Import that wallet's private key to restore local signing access.` : pendingWalletFailed ? "The signed transaction did not reach finality. Restore consensus, then retry the same binding without generating another wallet." : pendingWallet ? "The public wallet binding was submitted to consensus. The private key remains local to this node." : "Create a new owner wallet or import an existing private key before publishing an Endpoint."}</div>
           </div>
-          <div class="wallet-setup-status ${walletReady ? "good" : pendingWalletFailed ? "bad" : pendingWallet ? "pending" : "bad"}">
-            <strong>${walletReady ? (ownerWallet.label || "Owner wallet ready") : pendingWalletFailed ? "Consensus rejected the binding" : pendingWallet ? "Waiting for consensus" : "Wallet configuration required"}</strong>
-            <span>${walletReady ? `Wallet ${ownerWallet.wallet_id || "configured"} is bound to this node.` : pendingWalletFailed ? `${escapeHtml(pendingWallet.error || "The transaction was rejected before finality.")}` : pendingWallet ? `Operation ${pendingWallet.operation_id || "pending"} is awaiting block finality.` : "The Readiness Wizard will continue automatically after this step completes."}</span>
+          <div class="wallet-setup-status ${walletReady ? "good" : recoveryRequired ? "pending" : pendingWalletFailed ? "bad" : pendingWallet ? "pending" : "bad"}">
+            <strong>${walletReady ? (ownerWallet.label || "Owner wallet ready") : recoveryRequired ? "Canonical binding found" : pendingWalletFailed ? "Binding is not finalized" : pendingWallet ? "Waiting for consensus" : "Wallet configuration required"}</strong>
+            <span>${walletReady ? `Wallet ${ownerWallet.wallet_id || "configured"} is bound to this node.` : recoveryRequired ? `${escapeHtml(canonicalWallet.wallet_id)} is already bound to this node. Creating a different wallet is disabled.` : pendingWalletFailed ? `${escapeHtml(pendingWallet.error || "The transaction was not finalized.")}` : pendingWallet ? `Operation ${pendingWallet.operation_id || "pending"} is awaiting block finality.` : "The Readiness Wizard will continue automatically after this step completes."}</span>
           </div>
           ${
             walletReady
@@ -8669,14 +8671,23 @@
                 ${state.bootstrapMessage ? `<div class="wallet-message ${state.bootstrapMessage.kind}">${state.bootstrapMessage.text}</div>` : ""}
                 ${nextScreen ? `<div class="wallet-inline-actions"><button class="primary-button" type="button" data-wallet-next-screen="${nextScreen}">Continue to ${nextScreen === "endpoints" ? "Endpoints" : "Providers"}</button></div>` : ""}
               `
+              : recoveryRequired
+                ? `
+                <div class="wallet-form-grid">
+                  <label>Private key for ${escapeHtml(canonicalWallet.wallet_id)}<input type="password" data-bootstrap-field="walletPrivateKey" value="${escapeHtml(state.bootstrapDrafts.walletPrivateKey)}" placeholder="Paste the bound wallet private key" autocomplete="off"></label>
+                  <button class="primary-button" type="button" data-bootstrap-action="import-wallet">${state.bootstrapPending === "import-wallet" ? "Recovering..." : "Recover Wallet"}</button>
+                </div>
+                ${state.bootstrapMessage ? `<div class="wallet-message ${state.bootstrapMessage.kind}">${state.bootstrapMessage.text}</div>` : ""}
+                <div class="notice">A different wallet requires an authorized rotation operation. This recovery only restores the private key matching the existing consensus binding.</div>
+              `
               : pendingWallet
                 ? `
                 ${state.bootstrapMessage ? `<div class="wallet-message ${state.bootstrapMessage.kind}">${state.bootstrapMessage.text}</div>` : ""}
                 <div class="wallet-inline-actions">
-                  ${pendingWalletFailed ? `<button class="primary-button" type="button" data-bootstrap-action="retry-wallet">Retry wallet binding</button>` : ""}
+                  ${pendingWalletFailed ? `<button class="primary-button" type="button" data-bootstrap-action="retry-wallet">Retry same binding</button>` : ""}
                   <button class="secondary-button" type="button" data-bootstrap-action="refresh-wallet">${pendingWalletFailed ? "Refresh status" : "Check consensus"}</button>
                 </div>
-                <div class="notice">${pendingWalletFailed ? "The rejected transaction is retained for diagnostics. Retrying creates a fresh consensus operation; the node never treats a rejected bind as configured." : "Keep the generated private key saved. This screen can be refreshed safely while the transaction is pending."}</div>
+                <div class="notice">${pendingWalletFailed ? "The signed transaction and private key remain unchanged. Retry resubmits the same operation ID after consensus becomes healthy." : "Keep the generated private key saved. This screen can be refreshed safely while the transaction is pending."}</div>
               `
                 : `
                 <div class="wallet-form-grid">

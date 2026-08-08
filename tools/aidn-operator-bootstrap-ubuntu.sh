@@ -542,7 +542,7 @@ $consensus_unit_dependency
 [Service]
 Type=simple
 ExecStart=$wrapper_q
-Restart=on-failure
+Restart=always
 RestartSec=5
 NoNewPrivileges=yes
 PrivateTmp=yes

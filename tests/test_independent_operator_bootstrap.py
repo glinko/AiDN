@@ -56,6 +56,7 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "install-cometbft-ubuntu.sh" in script
     assert "AIDN_COMETBFT_SERVICE" in script
     assert "systemctl --user enable --now \"$consensus_service_name\"" in script
+    assert "Restart=always" in script
     assert "raw.githubusercontent.com/glinko/AiDN/<reviewed-ref>" in script
     assert "sudo password was used only by sudo" in script
 
@@ -71,3 +72,16 @@ def test_cometbft_installer_is_pinned_idempotent_and_preserves_genesis() -> None
     assert "ReadWritePaths=$home" in script
     assert "--no-start" in script
     assert "--no-abci" in script
+    assert "Restart=always" in script
+
+
+def test_existing_cometbft_runtime_can_be_supervised_without_state_rewrite() -> None:
+    script = Path("tools/install-existing-cometbft-user-service.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Restart=always" in script
+    assert "systemctl --user enable" in script
+    assert "systemctl --user restart" in script
+    assert "ReadWritePaths=$home" in script
+    assert "config.toml" not in script
