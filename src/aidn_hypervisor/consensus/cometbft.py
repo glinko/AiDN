@@ -345,6 +345,8 @@ class CometBftRpcFinalitySource:
     RPC endpoint alone is deliberately insufficient.
     """
 
+    _LEGACY_SCAN_BATCH_SIZE = 64
+
     def __init__(
         self,
         *,
@@ -494,9 +496,10 @@ class CometBftRpcFinalitySource:
         # Keep the search bounded while fetching independent block bodies in
         # small batches; results are consumed in descending height order.
         height_list = list(heights)
-        with ThreadPoolExecutor(max_workers=16) as executor:
-            for offset in range(0, len(height_list), 16):
-                batch = height_list[offset : offset + 16]
+        batch_size = self._LEGACY_SCAN_BATCH_SIZE
+        with ThreadPoolExecutor(max_workers=batch_size) as executor:
+            for offset in range(0, len(height_list), batch_size):
+                batch = height_list[offset : offset + batch_size]
                 for transaction_hash in executor.map(
                     lambda height: self._scan_block_for_operation(height, operation_id),
                     batch,
