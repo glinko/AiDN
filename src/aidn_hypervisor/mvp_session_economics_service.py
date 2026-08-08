@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 
 from aidn_hypervisor.session_failure.models import FailureClass
 from aidn_hypervisor.settlement.models import (
@@ -26,6 +27,40 @@ def _canonical_hash(payload: dict) -> str:
         ensure_ascii=True,
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _maximum_request_charge_q_atoms(
+    accounting_contract: dict | None,
+    *,
+    fixed_price_q_atoms: int,
+) -> int:
+    """Return the accepted Accounting Contract request ceiling in q_atoms."""
+    if accounting_contract is None:
+        return fixed_price_q_atoms
+    raw_value = accounting_contract.get("maximum_request_charge")
+    if raw_value is None:
+        return fixed_price_q_atoms
+    try:
+        q_value = Decimal(str(raw_value)) * Q_ATOMS_PER_Q
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError(
+            "Accounting Contract maximum request charge is invalid"
+        ) from error
+    if not q_value.is_finite() or q_value != q_value.to_integral_value():
+        raise ValueError(
+            "Accounting Contract maximum request charge must map to whole q_atoms"
+        )
+    maximum = int(q_value)
+    if maximum == 0:
+        # Older endpoint profiles used zero to mean that no explicit request
+        # ceiling was published. A fixed-price Session still needs its price
+        # as the effective ceiling.
+        return fixed_price_q_atoms
+    if maximum < fixed_price_q_atoms:
+        raise ValueError(
+            "Accounting Contract maximum request charge cannot be below fixed price"
+        )
+    return maximum
 
 
 class MvpSessionEconomicsService:
@@ -76,6 +111,14 @@ class MvpSessionEconomicsService:
         payment_reserve = deposit_q_atoms - network_fee_reserve_q_atoms
         if payment_reserve < fixed_price_q_atoms:
             raise ValueError("MVP Session deposit cannot cover fixed price")
+        maximum_request_charge_q_atoms = _maximum_request_charge_q_atoms(
+            accounting_contract,
+            fixed_price_q_atoms=fixed_price_q_atoms,
+        )
+        if resumable_session is None and payment_reserve < maximum_request_charge_q_atoms:
+            raise ValueError(
+                "MVP Session deposit cannot cover Accounting Contract maximum request charge"
+            )
         if (
             resumable_session is None
             and self._host.wallet_q_atom_balance(client_wallet) < deposit_q_atoms

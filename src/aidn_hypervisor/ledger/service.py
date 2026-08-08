@@ -836,7 +836,32 @@ class LedgerOperationService:
             "evidence_references": model.evidence_references,
             "signatures": model.signatures,
         }
-        if model.operation_id != _hash_dict(unsigned):
+        local_operation_id = _hash_dict(unsigned)
+
+        # Locally-created records hash their authorization signatures. Records
+        # projected from a canonical consensus envelope preserve the envelope
+        # identity, whose hash intentionally excludes signatures. Recovery and
+        # consensus settlement must accept both representations.
+        from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+
+        canonical_operation_id = LedgerOperationEnvelope(
+            operation_type=model.operation_type,
+            operation_version=model.operation_version,
+            protocol_version=model.protocol_version,
+            origin_type=model.origin_type,
+            initiator_id=model.initiator_id,
+            sender_wallet=model.sender_wallet,
+            sender_sequence=model.sender_sequence,
+            fee_payer=model.fee_payer,
+            fee_class=model.fee_class,
+            created_at=model.created_at,
+            expires_at=model.expires_at,
+            target_epoch=model.target_epoch,
+            payload=model.payload,
+            evidence_references=model.evidence_references,
+            signatures=model.signatures,
+        ).operation_id
+        if model.operation_id not in {local_operation_id, canonical_operation_id}:
             raise ValueError("Ledger operation record identity is invalid")
         expected_state_changes_root = _hash_dict(
             {

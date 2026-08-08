@@ -471,6 +471,29 @@ def test_validator_reconciles_stale_local_wallet_binding_only_after_finality():
     assert recovered.json()["wallet_id"] == material["wallet"]["wallet_id"]
 
 
+def test_consensus_operation_records_are_valid_for_projection_after_recovery():
+    ledger = LedgerOperationService()
+    envelope = LedgerOperationEnvelope(
+        operation_type="SESSION_FAILURE_EVIDENCE",
+        operation_version="1.0.0",
+        protocol_version="0.1",
+        origin_type="evidence_triggered",
+        initiator_id="session-recovered",
+        fee_class="session",
+        created_at="2030-01-01T00:00:00+00:00",
+        payload={
+            "session_id": "session-recovered",
+            "failure_class": "ENDPOINT_FAILURE",
+            "failure_evidence_root": "sha256:evidence",
+        },
+        evidence_references=["sha256:evidence"],
+        signatures=["signature-a"],
+    )
+    record = ledger.record_admitted_envelope(envelope)
+
+    LedgerOperationService.verify_operation_record(record)
+
+
 def test_failed_validator_wallet_bootstrap_retries_the_same_binding():
     hypervisor, client, _endpoint, _session, consensus, _source = _context(
         open_session=False

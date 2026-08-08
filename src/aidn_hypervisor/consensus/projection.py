@@ -153,6 +153,29 @@ def build_session_escrow_lock_envelope(
         if local_value is not None and local_value != canonical_value:
             raise ValueError(f"local and canonical escrow fields conflict: {field_name}")
 
+    # A canonical record may be restored from ABCI after the in-memory
+    # submission index was lost. Reconstruct that exact envelope instead of
+    # adding a local correlation field or normalizing its evidence order.
+    canonical_record = LedgerOperationEnvelope(
+        operation_type=_required_text(operation.get("operation_type"), "operation_type"),
+        operation_version=_required_text(operation.get("operation_version"), "operation_version"),
+        protocol_version=_required_text(operation.get("protocol_version"), "protocol_version"),
+        origin_type=_required_text(operation.get("origin_type"), "origin_type"),
+        initiator_id=operation.get("initiator_id"),
+        sender_wallet=operation.get("sender_wallet"),
+        sender_sequence=sender_sequence,
+        fee_payer=operation.get("fee_payer"),
+        fee_class=_required_text(operation.get("fee_class"), "fee_class"),
+        created_at=_required_text(operation.get("created_at"), "created_at"),
+        expires_at=_optional_text(operation.get("expires_at"), "expires_at"),
+        target_epoch=_optional_text(operation.get("target_epoch"), "target_epoch"),
+        payload=payload,
+        evidence_references=list(operation.get("evidence_references") or []),
+        signatures=list(operation.get("signatures") or []),
+    )
+    if canonical_record.operation_id == local_operation_id:
+        return canonical_record.model_copy(update={"signatures": _signatures(signatures)})
+
     projected_payload = dict(funding_payload)
     projected_payload["local_operation_id"] = local_operation_id
     sender_wallet = canonical_funding.consumer_funding_account

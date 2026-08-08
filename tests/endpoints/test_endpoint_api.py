@@ -403,6 +403,29 @@ def test_open_mvp_fixed_price_session_locks_canonical_escrow() -> None:
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
 
 
+def test_open_mvp_fixed_price_session_rejects_deposit_below_accounting_ceiling() -> None:
+    hypervisor, client, endpoint, _ = _mvp_executable_api_context(open_session=False)
+    updated = client.patch(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}",
+        json={"session": {"recommended_deposit": 0.002}},
+    )
+    assert updated.status_code == 200
+
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions",
+        json={
+            "client_wallet": "wallet-consumer",
+            "deposit_q_atoms": 1_000,
+            "fixed_price_q_atoms": 900,
+            "network_fee_reserve_q_atoms": 0,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "maximum request charge" in response.json()["error"]["message"]
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 1_000
+
+
 def test_open_public_mvp_fixed_price_session_requires_wallet_bound_authorization() -> None:
     hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
     endpoint_service = EndpointService(EndpointStore())
