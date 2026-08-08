@@ -77,4 +77,16 @@ def test_validator_write_boundary_allows_bounded_local_provider_installation() -
         )
         is True
     )
+    assert (
+        _is_validator_consensus_write_path(
+            "/operators/provider-instances/pi-1/discover-models"
+        )
+        is True
+    )
+    assert (
+        _is_validator_consensus_write_path(
+            "/operators/model-deployments/md-1/runtime-bindings"
+        )
+        is True
+    )
     assert _is_validator_consensus_write_path("/operators/providers/arbitrary-write") is False

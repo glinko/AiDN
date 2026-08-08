@@ -315,6 +315,22 @@ def _is_validator_consensus_write_path(path: str) -> bool:
     ):
         return True
     if (
+        len(parts) == 4
+        and parts[:2] == ["operators", "provider-instances"]
+        and parts[3] == "discover-models"
+    ):
+        # Discovery records only the provider's local model inventory. It does
+        # not publish a model or create a Consumer-facing economic obligation.
+        return True
+    if (
+        len(parts) == 4
+        and parts[:2] == ["operators", "model-deployments"]
+        and parts[3] == "runtime-bindings"
+    ):
+        # A binding is local compatibility metadata. Endpoint publication stays
+        # behind the canonical consensus transaction path.
+        return True
+    if (
         len(parts) == 5
         and parts[:3] == ["api", "v1", "endpoints"]
         and parts[4] in {"mvp-sessions", "public-mvp-sessions"}
