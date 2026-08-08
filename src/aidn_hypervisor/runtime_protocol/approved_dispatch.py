@@ -8,11 +8,13 @@ from aidn_hypervisor.accounting.models import AccountingContract
 from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
 from aidn_hypervisor.accounting.proxy import build_proxy_opaque_usage_profile
 from aidn_hypervisor.accounting.vllm import build_vllm_usage_profile
+from aidn_hypervisor.accounting.whisper import build_whisper_usage_profile
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.runtime_protocol.adapters.llamacpp import LlamaCppOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.adapters.ollama import OllamaGenerateAdapter
 from aidn_hypervisor.runtime_protocol.adapters.proxy import ProxyOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.adapters.vllm import VllmOpenAIAdapter
+from aidn_hypervisor.runtime_protocol.adapters.whisper import WhisperHttpAdapter
 from aidn_hypervisor.runtime_protocol.models import (
     RuntimeExecuteRequest,
     RuntimeHello,
@@ -69,6 +71,7 @@ class ApprovedRuntimeDispatcher:
             "ollama-generate",
             "proxy-openai",
             "vllm-openai",
+            "whisper-http",
         }:
             raise ApprovedRuntimeDispatchError(
                 f"Unsupported approved Runtime Adapter: {binding.adapter_id}"
@@ -171,12 +174,23 @@ class ApprovedRuntimeDispatcher:
             "ollama-generate": OllamaGenerateAdapter,
             "proxy-openai": ProxyOpenAIAdapter,
             "vllm-openai": VllmOpenAIAdapter,
+            "whisper-http": WhisperHttpAdapter,
         }[binding.adapter_id]
-        adapter = adapter_class(
-            endpoint=endpoint_url,
-            model=deployment.provider_model_reference,
-            runtime_signature=runtime_signature,
-        )
+        adapter_kwargs = {
+            "endpoint": endpoint_url,
+            "model": deployment.provider_model_reference,
+            "runtime_signature": runtime_signature,
+        }
+        if binding.adapter_id == "whisper-http":
+            adapter_kwargs["api_format"] = str(
+                provider.configuration.get("api_format")
+                or "whisper_asr_webservice"
+            )
+        adapter = adapter_class(**adapter_kwargs)
+        if streaming and "streaming" not in binding.supported_features:
+            raise ApprovedRuntimeDispatchError(
+                f"Runtime Adapter {binding.adapter_id} does not support streaming"
+            )
         if streaming:
             return adapter.execute_streaming(protocol, connection.runtime_connection_id, request)
         return adapter.execute(protocol, connection.runtime_connection_id, request)
@@ -203,6 +217,13 @@ class ApprovedRuntimeDispatcher:
                 runtime_generation=binding.runtime_generation,
                 runtime_configuration_hash=binding.runtime_configuration_hash,
                 adapter_version=binding.adapter_version or "proxy-openai.v1",
+            )
+        if binding.adapter_id == "whisper-http":
+            return build_whisper_usage_profile(
+                runtime_id=binding.runtime_id,
+                runtime_generation=binding.runtime_generation,
+                runtime_configuration_hash=binding.runtime_configuration_hash,
+                adapter_version=binding.adapter_version or "whisper-http.v1",
             )
         return build_vllm_usage_profile(
             runtime_id=binding.runtime_id,

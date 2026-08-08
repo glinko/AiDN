@@ -22,6 +22,20 @@ The current installer is an operator-owned runtime boundary. A later host
 controller will make the same bounded operation callable from an approved
 dashboard plan without granting the Hypervisor Docker access.
 
+## Approved Runtime path
+
+The standard Provider workflow creates a `whisper-http` Runtime Binding and
+uses the RFC-0054 Approved Runtime Dispatcher. The binding carries the selected
+`api_format` (`whisper_asr_webservice` by default) and the
+`whisper-http.v1` Usage Profile. Fixed-price requests therefore remain valid
+when Whisper does not expose token or audio-duration measurements; the final
+Usage Report records those dimensions as `UNAVAILABLE` rather than inventing
+zeros.
+
+The dashboard selects the provider's `whisper-local-http` recipe automatically.
+An already successful approval is displayed as `Already Applied` and cannot be
+submitted again unless its job is rolled back.
+
 ## Request audio transport
 
 For the native `whisper_asr_webservice` adapter, `audio_ref` is a restricted

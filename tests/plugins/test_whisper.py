@@ -105,7 +105,7 @@ def test_whisper_plugin_builds_bounded_managed_install_plan() -> None:
     assert plan["health_checks"] == [
         {
             "type": "http",
-            "url": "http://127.0.0.1:9000/health",
+            "url": "http://127.0.0.1:9000/openapi.json",
             "timeout_seconds": 5,
         }
     ]

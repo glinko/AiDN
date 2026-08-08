@@ -4869,6 +4869,10 @@
           acknowledgedUpgradeReview: false,
           upgradeSignature: "",
         };
+        const defaultRecipe = providerInstallationRecipes(provider)[0];
+        if (defaultRecipe) {
+          applyProviderInstallationRecipe(provider, defaultRecipe.recipe_id);
+        }
       }
       const upgradeReview = providerUpgradeReview(provider);
       const nextSignature = providerUpgradeReviewSignature(upgradeReview);
@@ -9502,6 +9506,11 @@
         canInstallProvider &&
         Boolean(latestApproval?.approval_id) &&
         latestApproval.status === "APPROVED" &&
+        !(
+          latestJob?.approval_id === latestApproval.approval_id &&
+          latestJob.status === "SUCCEEDED" &&
+          latestJob.rollback_status !== "COMPLETED"
+        ) &&
         state.providerActionPending !== "apply-installation";
       const canRollbackLatestInstallation =
         Boolean(latestJob?.job_id) &&
@@ -9693,7 +9702,7 @@
             </div>
             <div class="wallet-inline-actions" style="margin-top: 10px;">
               <button class="secondary-button" type="button" data-provider-action="run-installation-diagnostics" ${canRunInstallationDiagnostics ? "" : "disabled"}>${state.providerDiagnosticsPendingId === provider.plugin_id ? "Running Diagnostics..." : "Run Dry-Run Diagnostics"}</button>
-              <button class="secondary-button" type="button" data-provider-action="apply-installation" ${canApplyInstallation ? "" : "disabled"}>${state.providerActionPending === "apply-installation" ? "Applying..." : "Apply Latest Approval"}</button>
+              <button class="secondary-button" type="button" data-provider-action="apply-installation" ${canApplyInstallation ? "" : "disabled"}>${state.providerActionPending === "apply-installation" ? "Applying..." : (latestJob?.approval_id === latestApproval?.approval_id && latestJob?.status === "SUCCEEDED" && latestJob?.rollback_status !== "COMPLETED" ? "Already Applied" : "Apply Latest Approval")}</button>
               <button class="secondary-button" type="button" data-provider-action="rollback-installation" ${canRollbackLatestInstallation ? "" : "disabled"}>${state.providerActionPending === `rollback-installation:${latestJob?.job_id || ""}` ? "Rolling Back..." : "Rollback Latest Job"}</button>
             </div>
             ${renderProviderActionMessage()}

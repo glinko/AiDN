@@ -12,6 +12,7 @@ from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
 from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
 from aidn_hypervisor.accounting.proxy import build_proxy_opaque_usage_profile
 from aidn_hypervisor.accounting.vllm import build_vllm_usage_profile
+from aidn_hypervisor.accounting.whisper import build_whisper_usage_profile
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
 from aidn_hypervisor.plugins.container import DockerPluginHostLauncher
 from aidn_hypervisor.plugins.host import (
@@ -2240,6 +2241,7 @@ class ProviderInventoryService:
             "ollama-generate": build_ollama_usage_profile,
             "proxy-openai": build_proxy_opaque_usage_profile,
             "vllm-openai": build_vllm_usage_profile,
+            "whisper-http": build_whisper_usage_profile,
         }.get(binding.adapter_id)
         if profile_builder is not None:
             profile = profile_builder(

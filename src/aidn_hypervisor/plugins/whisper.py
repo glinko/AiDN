@@ -136,7 +136,7 @@ class WhisperPlugin(ProviderPlugin):
                     "type": "select",
                     "label": "Whisper API format",
                     "required": False,
-                    "default": "aidn_json",
+                    "default": self._managed_api_format,
                     "options": [
                         {"value": "aidn_json", "label": "AiDN JSON adapter"},
                         {
@@ -164,14 +164,18 @@ class WhisperPlugin(ProviderPlugin):
             raise ValueError("endpoint must be an absolute HTTP URL")
         if not model_id:
             raise ValueError("model_id is required")
-        api_format = str(configuration.get("api_format") or "aidn_json").strip()
+        api_format = str(
+            configuration.get("api_format") or self._managed_api_format
+        ).strip()
         if api_format not in self._supported_api_formats:
             raise ValueError("api_format is unsupported")
 
     def build_installation_plan(self, configuration: dict) -> dict:
         self.validate_provider_configuration(configuration)
         endpoint = str(configuration["endpoint"]).rstrip("/")
-        api_format = str(configuration.get("api_format") or "aidn_json")
+        api_format = str(
+            configuration.get("api_format") or self._managed_api_format
+        )
         health_url = (
             f"{endpoint}/openapi.json"
             if api_format == self._managed_api_format
@@ -246,10 +250,21 @@ class WhisperPlugin(ProviderPlugin):
             }
         )
         provider_configuration = model_deployment.get("provider_configuration") or {}
-        api_format = str(provider_configuration.get("api_format") or "aidn_json").strip()
+        api_format = str(
+            provider_configuration.get("api_format") or self._managed_api_format
+        ).strip()
         if api_format not in self._supported_api_formats:
             raise ValueError("api_format is unsupported")
         binding["compatibility_bundle"]["provider_api_format"] = api_format
+        binding.update(
+            {
+                "adapter_id": "whisper-http",
+                "adapter_version": "whisper-http.v1",
+                "supported_features": ["cancellation"],
+                "supported_modalities": ["audio", "text"],
+                "supported_accounting_modes": ["fixed_price", "observable"],
+            }
+        )
         return binding
 
     def validate_bundle(self, bundle_config) -> None:
