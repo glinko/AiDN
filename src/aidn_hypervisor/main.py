@@ -342,6 +342,10 @@ def _is_validator_consensus_write_path(path: str) -> bool:
         # publication route remains outside this allow-list until its typed
         # consensus transaction is finalized.
         return True
+    if parts == ["tasks"]:
+        # Runtime task submission is a local execution operation. Its Session
+        # and Settlement effects still use their own consensus-bound routes.
+        return True
     return (
         len(parts) == 7
         and parts[:3] == ["api", "v1", "endpoints"]

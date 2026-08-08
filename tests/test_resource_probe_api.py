@@ -96,3 +96,8 @@ def test_validator_write_boundary_allows_local_endpoint_draft_creation() -> None
     assert _is_validator_consensus_write_path("/api/v1/endpoints") is True
     assert _is_validator_consensus_write_path("/api/v1/endpoints/ep-1") is False
     assert _is_validator_consensus_write_path("/api/v1/endpoints/ep-1/publish-configuration") is False
+
+
+def test_validator_write_boundary_allows_local_runtime_task_submission() -> None:
+    assert _is_validator_consensus_write_path("/tasks") is True
+    assert _is_validator_consensus_write_path("/tasks/task-1") is False
