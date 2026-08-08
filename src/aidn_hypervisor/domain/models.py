@@ -28,6 +28,7 @@ class BundleConfig(BaseModel):
     model_id: str
     launch_mode: LaunchMode
     endpoint: str | None = None
+    provider_api_format: str | None = None
     device_affinity: str
     resource_profile: ResourceProfile
     warm_policy: WarmPolicy

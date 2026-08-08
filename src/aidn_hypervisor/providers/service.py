@@ -2168,8 +2168,12 @@ class ProviderInventoryService:
         self._ensure_model_deployment_artifacts_ready(deployment)
         instance = self.store.get_provider_instance(deployment.provider_instance_id)
         plugin = self._get_plugin(instance.plugin_id)
+        model_deployment_payload = deployment.model_dump(mode="json")
+        model_deployment_payload["provider_configuration"] = dict(
+            instance.configuration
+        )
         projection = plugin.create_runtime_binding(
-            model_deployment=deployment.model_dump(mode="json"),
+            model_deployment=model_deployment_payload,
             capability_id=capability_id,
             capability_version=capability_version,
             capability_definition_hash=capability_definition_hash,
@@ -2277,6 +2281,7 @@ class ProviderInventoryService:
             model_id=projection.get("model_id", deployment.provider_model_reference),
             launch_mode=projection.get("launch_mode", "managed_process"),
             endpoint=endpoint,
+            provider_api_format=projection.get("provider_api_format"),
             device_affinity=projection.get("device_affinity", "cpu"),
             resource_profile=ResourceProfile(),
             warm_policy="auto",
@@ -2294,8 +2299,13 @@ class ProviderInventoryService:
         deployment: ModelDeployment,
     ) -> dict:
         plugin = self._get_plugin(binding.plugin_id)
+        instance = self.store.get_provider_instance(binding.provider_instance_id)
+        model_deployment_payload = deployment.model_dump(mode="json")
+        model_deployment_payload["provider_configuration"] = dict(
+            instance.configuration
+        )
         projection = plugin.create_runtime_binding(
-            model_deployment=deployment.model_dump(mode="json"),
+            model_deployment=model_deployment_payload,
             capability_id=binding.capability_id,
             capability_version=binding.capability_version,
             capability_definition_hash=binding.capability_definition_hash,

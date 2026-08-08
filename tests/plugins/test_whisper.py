@@ -1,3 +1,5 @@
+import base64
+
 import pytest
 
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile, TaskRequest
@@ -34,6 +36,7 @@ class StubWhisperPlugin(WhisperPlugin):
         self.transcribe_payload = transcribe_payload
         self.raise_error = raise_error
         self.calls: list[tuple[str, str, dict | None]] = []
+        self.multipart_calls: list[tuple[str, bytes, str]] = []
 
     def _request_json(self, method: str, url: str, payload: dict | None = None) -> dict:
         self.calls.append((method, url, payload))
@@ -44,6 +47,14 @@ class StubWhisperPlugin(WhisperPlugin):
         if url.endswith("/v1/audio/transcriptions"):
             return self.transcribe_payload or {"text": ""}
         raise AssertionError(f"unexpected url: {url}")
+
+    def _request_multipart(
+        self, method: str, url: str, body: bytes, *, content_type: str
+    ) -> dict:
+        self.multipart_calls.append((url, body, content_type))
+        if self.raise_error is not None:
+            raise self.raise_error
+        return self.transcribe_payload or {"text": ""}
 
 
 def test_whisper_plugin_describes_speech_to_text_capability() -> None:
@@ -137,6 +148,26 @@ def test_whisper_plugin_discovers_declared_model_and_builds_attached_binding() -
     assert deployment["capability_bindings"] == ["speech_to_text"]
     assert binding["compatibility_bundle"]["workload_type"] == "speech_to_text"
     assert binding["compatibility_bundle"]["launch_mode"] == "attached_service"
+
+
+def test_whisper_managed_binding_preserves_provider_api_format() -> None:
+    binding = WhisperPlugin().create_runtime_binding(
+        model_deployment={
+            "model_deployment_id": "md-whisper",
+            "provider_instance_id": "pi-whisper",
+            "provider_model_reference": "base",
+            "provider_configuration": {
+                "api_format": "whisper_asr_webservice",
+            },
+        },
+        capability_id="speech_to_text",
+        capability_version="1.0.0",
+        capability_definition_hash="sha256:capability",
+    )
+
+    assert binding["compatibility_bundle"]["provider_api_format"] == (
+        "whisper_asr_webservice"
+    )
 
 
 def test_whisper_managed_plan_can_be_approved_applied_and_discovered() -> None:
@@ -355,6 +386,72 @@ def test_whisper_plugin_records_provider_duration_without_inventing_tokens() -> 
         "measurement_kind": "estimated",
         "measurement_source": "provider_response.duration",
     }
+
+
+def test_whisper_native_launch_spec_preserves_api_format() -> None:
+    plugin = WhisperPlugin()
+
+    launch_spec = plugin.build_launch_spec(
+        _bundle().model_copy(update={"provider_api_format": "whisper_asr_webservice"})
+    )
+
+    assert launch_spec["metadata"]["api_format"] == "whisper_asr_webservice"
+
+
+def test_whisper_native_invoke_posts_bounded_multipart_audio() -> None:
+    audio_bytes = b"RIFF\x00\x00\x00\x00WAVEfmt "
+    audio_ref = "data:audio/wav;base64," + base64.b64encode(audio_bytes).decode("ascii")
+    plugin = StubWhisperPlugin(
+        transcribe_payload={"text": "hello native", "language": "en"}
+    )
+    runtime = RuntimeHandle(
+        runtime_id="rt-native",
+        command=["whisper-server"],
+        status="running",
+        bundle_id="whisper-local",
+        metadata={
+            "endpoint": "http://127.0.0.1:9000",
+            "model_id": "base",
+            "api_format": "whisper_asr_webservice",
+        },
+    )
+
+    result = plugin.invoke(
+        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": audio_ref}),
+        runtime,
+    )
+
+    assert result["text"] == "hello native"
+    assert len(plugin.multipart_calls) == 1
+    url, body, content_type = plugin.multipart_calls[0]
+    assert url == "http://127.0.0.1:9000/asr?task=transcribe&output=json"
+    assert content_type.startswith("multipart/form-data; boundary=aidn-whisper-")
+    assert b'name="audio_file"' in body
+    assert audio_bytes in body
+
+
+def test_whisper_native_invoke_rejects_filesystem_audio_ref() -> None:
+    plugin = StubWhisperPlugin()
+    runtime = RuntimeHandle(
+        runtime_id="rt-native",
+        command=["whisper-server"],
+        status="running",
+        bundle_id="whisper-local",
+        metadata={
+            "endpoint": "http://127.0.0.1:9000",
+            "model_id": "base",
+            "api_format": "whisper_asr_webservice",
+        },
+    )
+
+    with pytest.raises(ValueError, match="base64 data URI"):
+        plugin.invoke(
+            TaskRequest(
+                task_type="audio.transcribe",
+                payload={"audio_ref": "/srv/private/audio.wav"},
+            ),
+            runtime,
+        )
 
 
 def test_whisper_plugin_invoke_requires_audio_ref_payload() -> None:

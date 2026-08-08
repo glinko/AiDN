@@ -1,5 +1,8 @@
+import base64
+import binascii
 import hashlib
 import json
+import re
 from urllib import error, parse, request
 
 from aidn_hypervisor.plugins.base import ProviderPlugin
@@ -12,6 +15,17 @@ class WhisperPlugin(ProviderPlugin):
     _default_model = "small"
     _managed_api_format = "whisper_asr_webservice"
     _supported_api_formats = {"aidn_json", "whisper_asr_webservice"}
+    _max_inline_audio_bytes = 25 * 1024 * 1024
+    _audio_mime_extensions = {
+        "audio/flac": "flac",
+        "audio/mpeg": "mp3",
+        "audio/mp4": "m4a",
+        "audio/ogg": "ogg",
+        "audio/wav": "wav",
+        "audio/webm": "webm",
+        "audio/x-flac": "flac",
+        "audio/x-wav": "wav",
+    }
     _circuit_breaker_policy = {
         "failure_threshold": 2,
         "cooldown_seconds": 30.0,
@@ -231,6 +245,11 @@ class WhisperPlugin(ProviderPlugin):
                 "device_affinity": "cpu",
             }
         )
+        provider_configuration = model_deployment.get("provider_configuration") or {}
+        api_format = str(provider_configuration.get("api_format") or "aidn_json").strip()
+        if api_format not in self._supported_api_formats:
+            raise ValueError("api_format is unsupported")
+        binding["compatibility_bundle"]["provider_api_format"] = api_format
         return binding
 
     def validate_bundle(self, bundle_config) -> None:
@@ -258,13 +277,17 @@ class WhisperPlugin(ProviderPlugin):
 
     def build_launch_spec(self, bundle_config) -> dict:
         self.validate_bundle(bundle_config)
-        return {
+        launch_spec = {
             "command": ["whisper-server"],
             "metadata": {
                 "endpoint": bundle_config.endpoint or self._default_endpoint,
                 "model_id": bundle_config.model_id,
             },
         }
+        api_format = getattr(bundle_config, "provider_api_format", None)
+        if api_format:
+            launch_spec["metadata"]["api_format"] = api_format
+        return launch_spec
 
     def health_check(self, runtime_handle) -> bool:
         try:
@@ -283,14 +306,20 @@ class WhisperPlugin(ProviderPlugin):
         if not audio_ref:
             raise ValueError("Whisper invocation requires an audio_ref payload")
 
-        response = self._request_json(
-            "POST",
-            f"{self._endpoint(runtime_handle)}/v1/audio/transcriptions",
-            {
-                "model": self._model_id(runtime_handle),
-                "audio_ref": audio_ref,
-            },
-        )
+        if self._api_format(runtime_handle) == self._managed_api_format:
+            response = self._invoke_native_asr(
+                endpoint=self._endpoint(runtime_handle),
+                audio_ref=str(audio_ref),
+            )
+        else:
+            response = self._request_json(
+                "POST",
+                f"{self._endpoint(runtime_handle)}/v1/audio/transcriptions",
+                {
+                    "model": self._model_id(runtime_handle),
+                    "audio_ref": audio_ref,
+                },
+            )
         usage = {
             "fixed_request_count": 1,
             "measurement_kind": "estimated",
@@ -363,6 +392,58 @@ class WhisperPlugin(ProviderPlugin):
             raise ValueError("Whisper runtime metadata has unsupported api_format")
         return api_format
 
+    def _invoke_native_asr(
+        self, *, endpoint: str, audio_ref: str
+    ) -> dict:
+        content_type, filename, audio_bytes = self._decode_inline_audio(audio_ref)
+        boundary = f"aidn-whisper-{hashlib.sha256(audio_bytes).hexdigest()[:24]}"
+        body = bytearray()
+        body.extend(f"--{boundary}\\r\\n".encode("ascii"))
+        body.extend(
+            (
+                f'Content-Disposition: form-data; name="audio_file"; '
+                f'filename="{filename}"\\r\\n'
+                f"Content-Type: {content_type}\\r\\n\\r\\n"
+            ).encode("ascii")
+        )
+        body.extend(audio_bytes)
+        body.extend(f"\\r\\n--{boundary}--\\r\\n".encode("ascii"))
+        return self._request_multipart(
+            "POST",
+            f"{endpoint}/asr?{parse.urlencode({'task': 'transcribe', 'output': 'json'})}",
+            bytes(body),
+            content_type=f"multipart/form-data; boundary={boundary}",
+        )
+
+    def _decode_inline_audio(self, audio_ref: str) -> tuple[str, str, bytes]:
+        match = re.fullmatch(
+            r"data:(?P<mime>[^;,]+);base64,(?P<data>[A-Za-z0-9+/=\\s]+)",
+            audio_ref,
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            raise ValueError(
+                "native Whisper requires audio_ref as a base64 data URI; "
+                "arbitrary filesystem paths are not permitted"
+            )
+        content_type = match.group("mime").lower()
+        extension = self._audio_mime_extensions.get(content_type)
+        if extension is None:
+            raise ValueError(f"native Whisper does not accept audio MIME type: {content_type}")
+        try:
+            audio_bytes = base64.b64decode(
+                re.sub(r"\\s+", "", match.group("data")), validate=True
+            )
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("audio_ref contains invalid base64 audio data") from exc
+        if not audio_bytes:
+            raise ValueError("audio_ref contains empty audio data")
+        if len(audio_bytes) > self._max_inline_audio_bytes:
+            raise ValueError(
+                f"inline audio exceeds {self._max_inline_audio_bytes} byte limit"
+            )
+        return content_type, f"input.{extension}", audio_bytes
+
     def _request_json(self, method: str, url: str, payload: dict | None = None) -> dict:
         body = None
         headers = {}
@@ -375,3 +456,34 @@ class WhisperPlugin(ProviderPlugin):
                 return json.loads(response.read().decode("utf-8"))
         except error.URLError as exc:
             raise RuntimeError(str(exc)) from exc
+
+    def _request_multipart(
+        self,
+        method: str,
+        url: str,
+        body: bytes,
+        *,
+        content_type: str,
+    ) -> dict:
+        req = request.Request(
+            url=url,
+            method=method,
+            data=body,
+            headers={
+                "Content-Type": content_type,
+                "Content-Length": str(len(body)),
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with request.urlopen(req, timeout=60) as response:
+                raw = response.read().decode("utf-8")
+        except error.URLError as exc:
+            raise RuntimeError(str(exc)) from exc
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("native Whisper returned a non-JSON response") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("native Whisper returned an invalid JSON response")
+        return payload

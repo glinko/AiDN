@@ -21,3 +21,18 @@ Hypervisor's Whisper Provider should use `http://127.0.0.1:9000` as its endpoint
 The current installer is an operator-owned runtime boundary. A later host
 controller will make the same bounded operation callable from an approved
 dashboard plan without granting the Hypervisor Docker access.
+
+## Request audio transport
+
+For the native `whisper_asr_webservice` adapter, `audio_ref` is a restricted
+inline data URI, for example:
+
+```text
+data:audio/wav;base64,<base64-audio>
+```
+
+The adapter accepts common audio MIME types and limits inline payloads to 25 MiB.
+It never opens an arbitrary filesystem path from a Request. The adapter converts
+the bytes to the native `/asr?task=transcribe&output=json` multipart contract using the
+`audio_file` field. A future artifact store can replace the inline transport
+without changing the provider boundary.
