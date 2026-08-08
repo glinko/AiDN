@@ -60,6 +60,7 @@ class RuntimeExecutionService:
             "ollama-generate",
             "proxy-openai",
             "vllm-openai",
+            "whisper-http",
         }
 
     def uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:

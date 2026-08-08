@@ -234,6 +234,10 @@ def test_approved_whisper_binding_executes_native_audio_through_runtime_protocol
             pricing={"billing_unit": "request", "fixed_price": 1.0},
         )
     ).endpoint
+    from aidn_hypervisor.runtime_execution_service import RuntimeExecutionService
+
+    host = type("Host", (), {"provider_inventory": inventory})()
+    assert RuntimeExecutionService(host).uses_approved_runtime(endpoint)
     contract = AccountingContract(
         accounting_mode="fixed_price",
         contract_version="contract.v1",
