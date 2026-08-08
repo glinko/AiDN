@@ -360,9 +360,25 @@ class ConsensusService:
         return self._submissions.get(operation_id)
 
     def transaction_hash_for_operation(self, operation_id: str) -> str | None:
-        """Return the exact transaction hash submitted for one operation."""
+        """Return an exact transaction hash, including after a restart.
+
+        Submission tracking is in-memory, but the canonical Ledger record is
+        durable. Falling back to that record lets finality verification inspect
+        an already committed transaction without rebroadcasting it.
+        """
         record = self._submissions.get(operation_id)
-        return record.transaction_hash if record is not None else None
+        if record is not None and record.transaction_hash is not None:
+            return record.transaction_hash
+        abci = self.abci
+        ledger = getattr(abci, "ledger", None) if abci is not None else None
+        get_operation = getattr(ledger, "get_operation", None)
+        if not callable(get_operation):
+            return None
+        operation = get_operation(operation_id)
+        if not isinstance(operation, dict):
+            return None
+        transaction_hash = operation.get("transaction_hash")
+        return transaction_hash if isinstance(transaction_hash, str) else None
 
     def list_submissions(
         self,

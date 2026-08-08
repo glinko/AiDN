@@ -9,6 +9,7 @@ when either proof cannot be validated.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 from collections.abc import Callable
@@ -352,24 +353,30 @@ class CometBftRpcFinalitySource:
         transport: CometBftRpcTransport,
         verifier_id: str,
         timeout_seconds: int = 10,
+        transaction_scan_window: int = 512,
     ) -> None:
         if not chain_id.strip() or not verifier_id.strip():
             raise ValueError("CometBFT chain_id and verifier_id are required")
         if timeout_seconds < 1:
             raise ValueError("CometBFT timeout_seconds must be positive")
+        if transaction_scan_window < 0:
+            raise ValueError("CometBFT transaction_scan_window cannot be negative")
         self._chain_id = chain_id
         self._transaction_hash_for_operation = transaction_hash_for_operation
         self._proof_verifier = proof_verifier
         self._transport = transport
         self._verifier_id = verifier_id
         self._timeout_seconds = timeout_seconds
+        self._transaction_scan_window = transaction_scan_window
 
     def finality_evidence(self, operation_id: str) -> ConsensusFinalityEvidence | None:
         """Return evidence only after both inclusion and commit proof verification."""
         try:
             expected_tx_hash = self._transaction_hash_for_operation(operation_id)
             if expected_tx_hash is None:
-                return None
+                expected_tx_hash = self._recover_transaction_hash(operation_id)
+                if expected_tx_hash is None:
+                    return None
             transaction_hash = _normalise_hash(expected_tx_hash)
             transaction_result = self._rpc_result(
                 self._transport.get(
@@ -445,6 +452,64 @@ class CometBftRpcFinalitySource:
             )
         except Exception:
             return None
+
+    def _recover_transaction_hash(self, operation_id: str) -> str | None:
+        """Find a committed legacy transaction when the local hash was lost.
+
+        Older state snapshots did not persist transaction hashes and the local
+        CometBFT instance may not index operation IDs when ABCI events are
+        unavailable. A bounded block scan reconstructs the hash from signed
+        transaction bytes; the normal proof and commit checks still run after
+        discovery.
+        """
+        if (
+            self._transaction_scan_window == 0
+            or len(operation_id) != 64
+            or any(character not in "0123456789abcdefABCDEF" for character in operation_id)
+        ):
+            return None
+        status = self._rpc_result(
+            self._transport.get(
+                "/status",
+                params={},
+                timeout_seconds=self._timeout_seconds,
+            )
+        )
+        sync_info = status.get("sync_info")
+        if not isinstance(sync_info, dict):
+            return None
+        latest_height = _positive_height(sync_info.get("latest_block_height"))
+        first_height = max(1, latest_height - self._transaction_scan_window + 1)
+        for height in range(latest_height, first_height - 1, -1):
+            block_result = self._rpc_result(
+                self._transport.get(
+                    "/block",
+                    params={"height": str(height)},
+                    timeout_seconds=self._timeout_seconds,
+                )
+            )
+            block = block_result.get("block")
+            if not isinstance(block, dict):
+                continue
+            data = block.get("data")
+            if not isinstance(data, dict):
+                continue
+            transactions = data.get("txs") or []
+            if not isinstance(transactions, list):
+                continue
+            for encoded_transaction in transactions:
+                if not isinstance(encoded_transaction, str):
+                    continue
+                try:
+                    transaction_bytes = base64.b64decode(encoded_transaction, validate=True)
+                    envelope = LedgerOperationEnvelope.model_validate(
+                        json.loads(transaction_bytes.decode("utf-8"))
+                    )
+                except (ValueError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error):
+                    continue
+                if envelope.operation_id == operation_id:
+                    return cometbft_transaction_hash(transaction_bytes)
+        return None
 
     def _rpc_result(self, response: dict) -> dict:
         if response.get("error") not in {None, ""}:

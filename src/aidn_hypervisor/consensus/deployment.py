@@ -51,6 +51,7 @@ class CometBftFinalityDeploymentConfig(BaseModel, frozen=True):
     validator_page_size: int = Field(default=100, ge=1, le=100)
     maximum_validators: int = Field(default=10_000, ge=1, le=100_000)
     max_response_bytes: int = Field(default=1_000_000, gt=0, le=10_000_000)
+    transaction_scan_window: int = Field(default=512, ge=0, le=10_000)
 
     @field_validator("rpc_endpoints")
     @classmethod
@@ -114,6 +115,7 @@ class CometBftFinalityDeploymentConfig(BaseModel, frozen=True):
             validator_page_size=self.validator_page_size,
             maximum_validators=self.maximum_validators,
             max_response_bytes=self.max_response_bytes,
+            transaction_scan_window=self.transaction_scan_window,
         )
 
 

@@ -30,6 +30,35 @@ class RecordingTransport:
         raise AssertionError(f"unexpected path: {path}")
 
 
+class LegacyRecoveryTransport:
+    def __init__(self, *, transaction_response: dict, commit_response: dict, transaction_bytes: bytes) -> None:
+        self.transaction_response = transaction_response
+        self.commit_response = commit_response
+        self.transaction_bytes = transaction_bytes
+        self.calls: list[tuple[str, dict[str, str]]] = []
+
+    def get(self, path: str, *, params: dict[str, str], timeout_seconds: int) -> dict:
+        del timeout_seconds
+        self.calls.append((path, params))
+        if path == "/status":
+            return {"result": {"sync_info": {"latest_block_height": "11"}}}
+        if path == "/block":
+            return {
+                "result": {
+                    "block": {
+                        "data": {
+                            "txs": [base64.b64encode(self.transaction_bytes).decode("ascii")]
+                        }
+                    }
+                }
+            }
+        if path == "/tx":
+            return self.transaction_response
+        if path == "/commit":
+            return self.commit_response
+        raise AssertionError(f"unexpected path: {path}")
+
+
 class AcceptingProofVerifier:
     def __init__(self, *, accept_transaction: bool = True, accept_commit: bool = True) -> None:
         self.accept_transaction = accept_transaction
@@ -153,6 +182,44 @@ def test_cometbft_finality_source_requires_verified_transaction_and_commit_proof
     assert verifier.transaction_calls[0]["transaction_hash"] == transport.calls[0][1]["hash"][2:]
     assert verifier.transaction_calls[0]["data_hash"] == "C" * 64
     assert verifier.commit_calls[0]["chain_id"] == "aidn-testnet-1"
+
+
+def test_cometbft_finality_recovers_legacy_transaction_hash_from_recent_blocks():
+    envelope = LedgerOperationEnvelope(
+        operation_type="REGISTRY_UPSERT",
+        origin_type="protocol",
+        created_at="2030-01-01T00:00:00Z",
+    )
+    transaction_bytes = json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
+    transaction_hash = cometbft_transaction_hash(transaction_bytes)
+    transaction_response, commit_response = _responses(
+        transaction_bytes=transaction_bytes,
+        transaction_hash=transaction_hash,
+    )
+    transport = LegacyRecoveryTransport(
+        transaction_response=transaction_response,
+        commit_response=commit_response,
+        transaction_bytes=transaction_bytes,
+    )
+    source = CometBftRpcFinalitySource(
+        chain_id="aidn-testnet-1",
+        transaction_hash_for_operation=lambda operation_id: None,
+        proof_verifier=AcceptingProofVerifier(),
+        transport=transport,
+        verifier_id="test-light-client",
+        transaction_scan_window=4,
+    )
+
+    evidence = source.finality_evidence(envelope.operation_id)
+
+    assert evidence is not None
+    assert evidence.operation_id == envelope.operation_id
+    assert transport.calls == [
+        ("/status", {}),
+        ("/block", {"height": "11"}),
+        ("/tx", {"hash": f"0x{transaction_hash}", "prove": "true"}),
+        ("/commit", {"height": "11"}),
+    ]
 
 
 @pytest.mark.parametrize("accept_transaction,accept_commit", [(False, True), (True, False)])

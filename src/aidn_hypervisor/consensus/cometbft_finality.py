@@ -38,6 +38,7 @@ class CometBftFinalityConfig:
     validator_page_size: int = 100
     maximum_validators: int = 10_000
     max_response_bytes: int = 1_000_000
+    transaction_scan_window: int = 512
 
     def __post_init__(self) -> None:
         if not self.rpc_endpoint.strip() or not self.chain_id.strip() or not self.verifier_id.strip():
@@ -52,6 +53,8 @@ class CometBftFinalityConfig:
             raise ValueError("CometBFT finality maximum_validators is too small")
         if self.max_response_bytes < 1:
             raise ValueError("CometBFT finality max_response_bytes must be positive")
+        if self.transaction_scan_window < 0:
+            raise ValueError("CometBFT transaction_scan_window cannot be negative")
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,7 @@ class CometBftMultiRpcFinalityConfig:
     validator_page_size: int = 100
     maximum_validators: int = 10_000
     max_response_bytes: int = 1_000_000
+    transaction_scan_window: int = 512
 
     def __post_init__(self) -> None:
         if len(self.rpc_endpoints) < 2:
@@ -90,6 +94,8 @@ class CometBftMultiRpcFinalityConfig:
             raise ValueError("multi-RPC finality maximum_validators is too small")
         if self.max_response_bytes < 1:
             raise ValueError("multi-RPC finality max_response_bytes must be positive")
+        if self.transaction_scan_window < 0:
+            raise ValueError("CometBFT transaction_scan_window cannot be negative")
 
 
 def build_cometbft_finality_source(
@@ -131,6 +137,7 @@ def build_cometbft_finality_source(
         transport=rpc_transport,
         verifier_id=config.verifier_id,
         timeout_seconds=config.timeout_seconds,
+        transaction_scan_window=config.transaction_scan_window,
     )
     if abci_application is None:
         return external_source
@@ -180,6 +187,7 @@ def build_cometbft_multi_rpc_finality_source(
                 transport=transport,
                 verifier_id=f"{config.verifier_id}:{index}",
                 timeout_seconds=config.timeout_seconds,
+                transaction_scan_window=config.transaction_scan_window,
             )
         )
         source_ids.append(endpoint)

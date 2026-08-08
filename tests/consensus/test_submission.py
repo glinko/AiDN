@@ -117,6 +117,19 @@ def test_restore_submission_reconstructs_operation_identity_without_rebroadcast(
     )
 
 
+def test_transaction_hash_lookup_falls_back_to_persisted_consensus_ledger_record():
+    abci = _make_abci()
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    svc = ConsensusService(cfg, abci_app=abci)
+    env = _make_envelope(origin_type="protocol")
+    abci.ledger.record_admitted_envelope(env)
+
+    expected_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    assert svc.transaction_hash_for_operation(env.operation_id) == cometbft_transaction_hash(
+        expected_bytes
+    )
+
+
 def test_http_submission_transport_marks_only_checktx_admission():
     env = _make_envelope()
     transaction_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")

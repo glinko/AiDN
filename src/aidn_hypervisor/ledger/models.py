@@ -40,5 +40,9 @@ class LedgerOperationRecord(BaseModel):
     payload: dict = Field(default_factory=dict)
     evidence_references: list[str] = Field(default_factory=list)
     signatures: list[str] = Field(default_factory=list)
+    # Persist the exact CometBFT transaction identity when this record was
+    # admitted from a consensus envelope. Local-only projections leave it
+    # unset and must never be treated as externally finalized.
+    transaction_hash: str | None = None
     result: LedgerOperationResult
     wallet_next_sequence: int | None = Field(default=None, ge=1)

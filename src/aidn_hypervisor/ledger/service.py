@@ -59,6 +59,15 @@ DEFAULT_UNBONDING_PERIOD_EPOCHS = 14
 STANDARD_NETWORK_FEE_Q_ATOMS = 10_000
 
 
+def _consensus_transaction_hash(envelope: object) -> str:
+    """Hash the exact JSON form used by the consensus submission transport."""
+    model_dump = getattr(envelope, "model_dump", None)
+    if not callable(model_dump):
+        raise ValueError("consensus envelope serializer is unavailable")
+    transaction_bytes = json.dumps(model_dump(mode="json")).encode("utf-8")
+    return hashlib.sha256(transaction_bytes).hexdigest().upper()
+
+
 def _failure_evidence_classes_for_force_settlement(failure_class: str) -> set[str]:
     if failure_class in {"ENDPOINT_UNAVAILABLE", "ENDPOINT_FAILURE"}:
         return {"ENDPOINT_UNAVAILABLE", "ENDPOINT_FAILURE"}
@@ -7715,6 +7724,7 @@ class LedgerOperationService:
             payload=dict(envelope.payload),
             evidence_references=list(envelope.evidence_references),
             signatures=list(envelope.signatures),
+            transaction_hash=_consensus_transaction_hash(envelope),
             result=result,
             wallet_next_sequence=wallet_next_sequence,
         ).model_dump(mode="json")
