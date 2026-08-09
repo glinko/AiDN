@@ -19,7 +19,7 @@ from aidn_hypervisor.consensus.service import (
     ConsensusService,
     ConsensusServiceConfig,
 )
-from aidn_hypervisor.consensus.state_store import ABCIStateStore
+from aidn_hypervisor.consensus.state_store import ABCIStateStore, ABCIStateStoreError
 from aidn_hypervisor.contribution_api import build_contribution_router
 from aidn_hypervisor.contributions.service import ContributionAccountingService
 from aidn_hypervisor.contributions.store import ContributionEvidenceStore
@@ -719,7 +719,21 @@ def _build_default_consensus_service(
         restore_state_from_store=False,
         state_checkpoint_callback=hypervisor_service._persist_state,
     )
-    consensus.restore_validator_abci_state_if_matching_ledger()
+    try:
+        consensus.restore_validator_abci_state_if_matching_ledger()
+    except ABCIStateStoreError as error:
+        if "durable ABCI state does not match the restored Hypervisor Ledger" not in str(error):
+            raise
+        # A previous release could persist the same operation history without
+        # consensus-owned derived fields. Reconcile only from a verified ABCI
+        # snapshot; unsafe local-only operations still fail closed there.
+        try:
+            consensus.reconcile_validator_abci_state_to_canonical_ledger()
+        except ABCIStateStoreError as reconciliation_error:
+            raise ABCIStateStoreError(
+                f"{error}; safe reconciliation refused: {reconciliation_error}"
+            ) from reconciliation_error
+        state_migrated = True
     if state_migrated:
         hypervisor_service._persist_state()
     return consensus

@@ -180,6 +180,94 @@ class AIDNABCIApplication:
         self._restored_from_store = True
         return True
 
+    def reconcile_durable_state_to_canonical_ledger(self) -> bool:
+        """Restore a verified durable Ledger projection when local state lags.
+
+        A validator restart may load an older Hypervisor snapshot that has the
+        same operation history but is missing consensus-owned derived state.
+        In that case comparing roots alone is too strict, while blindly
+        replacing local state is unsafe.  The durable ABCI snapshot is the
+        canonical source for the Ledger projection, so reconciliation is
+        allowed only when local operations are a subset of the durable set and
+        no legacy local-only operation is present.
+
+        Provider, Bundle and other Hypervisor-local objects are intentionally
+        left untouched; ``apply_snapshot`` replaces only the bound Ledger and
+        ABCI metadata.  A caller must persist the resulting Hypervisor state.
+        """
+        if self._state_store is None:
+            raise ABCIStateStoreError("durable ABCI state is disabled")
+        snapshot = self._state_store.load_current()
+        if snapshot is None:
+            return False
+
+        local_operations = self.ledger.snapshot_operations()
+        durable_operations = snapshot.get("ledger_operations", [])
+        if not isinstance(durable_operations, list):
+            raise ABCIStateStoreError("durable ABCI Ledger projection is invalid")
+
+        def normalized_operations(operations: list[dict]) -> dict[str, dict]:
+            result: dict[str, dict] = {}
+            for operation in operations:
+                if not isinstance(operation, dict) or not operation.get("operation_id"):
+                    raise ABCIStateStoreError("ABCI Ledger operation is invalid")
+                operation_id = str(operation["operation_id"])
+                result[operation_id] = {
+                    key: value for key, value in operation.items() if key != "transaction_hash"
+                }
+            return result
+
+        local_by_id = normalized_operations(local_operations)
+        durable_by_id = normalized_operations(durable_operations)
+        for operation_id, operation in local_by_id.items():
+            if durable_by_id.get(operation_id) != operation:
+                raise ABCIStateStoreError(
+                    "local Hypervisor Ledger contains operations absent from durable ABCI state"
+                )
+        if any(
+            operation.get("operation_type") == "ENDPOINT_UPDATE"
+            for operation in durable_operations
+            if isinstance(operation, dict)
+        ):
+            raise ABCIStateStoreError(
+                "durable ABCI state contains a non-canonical Endpoint update"
+            )
+
+        current_projection = self.prepare_snapshot()
+        if current_projection["wallet_sequences"] != snapshot.get("wallet_sequences", {}):
+            raise ABCIStateStoreError(
+                "local Hypervisor Ledger wallet sequences do not match durable ABCI state"
+            )
+        current_settlement = dict(current_projection["settlement_state"])
+        durable_settlement = dict(snapshot.get("settlement_state", {}))
+        current_ready = current_settlement.pop("settlement_ready_commits", [])
+        durable_ready = durable_settlement.pop("settlement_ready_commits", [])
+        if current_settlement != durable_settlement:
+            raise ABCIStateStoreError(
+                "local Hypervisor Ledger settlement state does not match durable ABCI state"
+            )
+        if current_ready not in ([], durable_ready):
+            raise ABCIStateStoreError(
+                "local Hypervisor Ledger checkpoint state does not match durable ABCI state"
+            )
+        current_consensus = current_projection.get("consensus_state") or {}
+        durable_consensus = snapshot.get("consensus_state") or {}
+        current_has_consensus_state = bool(
+            current_consensus.get("active_validator_set")
+            or current_consensus.get("active_validator_set_epoch") is not None
+            or current_consensus.get("activated_validator_set_epochs")
+        )
+        if current_has_consensus_state and current_consensus != durable_consensus:
+            raise ABCIStateStoreError(
+                "local Hypervisor Ledger consensus state does not match durable ABCI state"
+            )
+
+        result = self.apply_snapshot(snapshot)
+        if result.code != "ok":
+            raise ABCIStateStoreError(result.log or "could not reconcile durable ABCI state")
+        self._restored_from_store = True
+        return True
+
     def _restore_snapshot_metadata(
         self,
         snapshot: dict[str, Any],

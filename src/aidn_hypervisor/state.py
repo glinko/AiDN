@@ -474,6 +474,7 @@ class HypervisorStateSnapshot(BaseModel):
     settlement_disputes: list[SettlementDispute] = Field(default_factory=list)
     settlement_corrections: list[SettlementCorrection] = Field(default_factory=list)
     settlement_transition_hashes: dict[str, str] = Field(default_factory=dict)
+    consensus_state: dict = Field(default_factory=dict)
     development_pool_allocations: list[dict] = Field(default_factory=list)
     development_pool_carryovers: list[dict] = Field(default_factory=list)
     development_bounty_states: list[dict] = Field(default_factory=list)

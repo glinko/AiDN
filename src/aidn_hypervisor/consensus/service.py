@@ -507,6 +507,12 @@ class ConsensusService:
             raise ValueError("bootstrap validator ABCI before restoring its durable state")
         return self.abci.restore_durable_state_if_matching_ledger()
 
+    def reconcile_validator_abci_state_to_canonical_ledger(self) -> bool:
+        """Repair a lagging local Ledger from the verified ABCI snapshot."""
+        if self.abci is None:
+            raise ValueError("bootstrap validator ABCI before reconciling durable state")
+        return self.abci.reconcile_durable_state_to_canonical_ledger()
+
     def start_validator_abci_server(self):
         """Start the local CometBFT ABCI socket after durable bootstrap."""
         if self.abci is None:

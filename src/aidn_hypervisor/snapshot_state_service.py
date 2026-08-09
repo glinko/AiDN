@@ -283,6 +283,7 @@ class SnapshotStateService:
                 dict(item) for item in self._host._pending_owner_wallet_bootstraps
             ],
             wallet_operation_sequences=self._host._ledger_operation_service.snapshot_wallet_sequences(),
+            consensus_state=self._host._ledger_operation_service.snapshot_consensus_state(),
             **self._host._ledger_operation_service.snapshot_settlement_state(),
             events=[event.model_copy(deep=True) for event in self._host._events],
         )
@@ -329,6 +330,7 @@ class SnapshotStateService:
             settlement_disputes=[item.model_dump(mode="json") for item in snapshot.settlement_disputes],
             settlement_corrections=[item.model_dump(mode="json") for item in snapshot.settlement_corrections],
             settlement_transition_hashes=dict(snapshot.settlement_transition_hashes),
+            consensus_state=dict(snapshot.consensus_state),
             development_pool_allocations=[dict(item) for item in snapshot.development_pool_allocations],
             development_pool_carryovers=[dict(item) for item in snapshot.development_pool_carryovers],
             development_bounty_states=[dict(item) for item in snapshot.development_bounty_states],

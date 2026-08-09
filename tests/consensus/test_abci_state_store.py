@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 
@@ -121,6 +122,35 @@ def test_validator_bootstrap_migrates_metadata_inclusive_app_hash(tmp_path) -> N
     assert restored.restore_durable_state_if_matching_ledger()
     assert restored.info().last_block_app_hash == source._compute_state_hash()
     assert store.load_current()["app_hash"] == source._compute_state_hash().hex()
+
+
+def test_reconcile_restores_missing_consensus_projection_from_durable_state(tmp_path) -> None:
+    store = ABCIStateStore(tmp_path / "abci")
+    source = _app()
+    assert source.finalize_block(block_height=1, block_hash=b"r" * 32, txs=[]).code == "ok"
+    source.ledger.restore_consensus_state(
+        {
+            "active_validator_set": {
+                "node-1": {
+                    "consensus_public_key": "ed25519:" + base64.b64encode(bytes(range(32))).decode("ascii"),
+                    "voting_power": 1,
+                }
+            },
+            "active_validator_set_epoch": 0,
+            "activated_validator_set_epochs": [0],
+        }
+    )
+    store.persist(source.prepare_snapshot())
+
+    restored = AIDNABCIApplication(
+        ledger_service=LedgerOperationService(),
+        state_store=store,
+        restore_state_from_store=False,
+    )
+
+    assert restored.reconcile_durable_state_to_canonical_ledger()
+    assert restored.info().last_block_height == 1
+    assert restored.ledger.active_validator_set() == source.ledger.active_validator_set()
 
 
 def test_finalize_block_defers_durable_state_until_commit(tmp_path) -> None:
