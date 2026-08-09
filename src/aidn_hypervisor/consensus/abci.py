@@ -28,6 +28,11 @@ from aidn_hypervisor.consensus.state_store import (
     ABCIStateStoreError,
 )
 
+# Runtime evidence is persisted in the Hypervisor Ledger for local recovery,
+# but it is not a consensus transition. It must not change the CometBFT AppHash
+# or make a validator restart discard newer local execution evidence.
+LOCAL_ONLY_OPERATION_TYPES = frozenset({"SESSION_RUNTIME_EVIDENCE_COMMIT"})
+
 
 @dataclass(frozen=True)
 class ABCICanonicalCommitment:
@@ -161,11 +166,45 @@ class AIDNABCIApplication:
         actual_hash = self._compute_state_hash()
         if expected_hash != actual_hash:
             raise ABCIStateStoreError("durable ABCI state does not match the restored Hypervisor Ledger")
-        result = self.apply_snapshot(snapshot)
-        if result.code != "ok":
-            raise ABCIStateStoreError(result.log or "could not restore durable ABCI state")
+        self._restore_snapshot_metadata(snapshot)
         self._restored_from_store = True
         return True
+
+    def _restore_snapshot_metadata(self, snapshot: dict[str, Any]) -> None:
+        """Restore consensus metadata without overwriting local Hypervisor state."""
+        try:
+            last_block_height = int(snapshot["last_block_height"])
+            last_block_hash = bytes.fromhex(str(snapshot["last_block_hash"]))
+            app_hash = self._snapshot_app_hash(snapshot)
+        except (KeyError, TypeError, ValueError) as error:
+            raise ABCIStateStoreError("durable ABCI metadata is invalid") from error
+        if last_block_height < 0 or len(last_block_hash) != 32 or len(app_hash) != 32:
+            raise ABCIStateStoreError("durable ABCI metadata hash or height is invalid")
+        try:
+            commitments = {
+                commitment["height"]: ABCICanonicalCommitment(**commitment)
+                for commitment in snapshot.get("commitments", [])
+            }
+        except (KeyError, TypeError, ValueError) as error:
+            raise ABCIStateStoreError("durable ABCI commitments are invalid") from error
+
+        self._last_block_height = last_block_height
+        self._last_block_hash = last_block_hash
+        self._app_hash = app_hash
+        self._genesis_time = snapshot.get("genesis_time", self._genesis_time)
+        self._commitments = commitments
+        # The Hypervisor Ledger is the authoritative local snapshot here. Local
+        # evidence may be newer than the last committed ABCI snapshot, so do not
+        # replace its wallet sequence state while restoring consensus metadata.
+        self._admission.restore_state(
+            {
+                "finalized_ids": set(),
+                "wallet_sequences": {
+                    str(wallet_id): int(sequence)
+                    for wallet_id, sequence in self.ledger.snapshot_wallet_sequences().items()
+                },
+            }
+        )
 
     def _compute_initial_hash(self) -> bytes:
         return hashlib.sha256(b"AiDN-genesis").digest()
@@ -1241,6 +1280,8 @@ class AIDNABCIApplication:
         canonical_operations: list[dict] = []
         for operation in operations:
             canonical = dict(operation)
+            if canonical.get("operation_type") in LOCAL_ONLY_OPERATION_TYPES:
+                continue
             if canonical.get("transaction_hash") is None:
                 canonical.pop("transaction_hash", None)
             canonical_operations.append(canonical)

@@ -75,6 +75,38 @@ def test_validator_lifecycle_fails_closed_when_abci_ledger_differs(monkeypatch, 
         build_app()
 
 
+def test_validator_lifecycle_retains_local_runtime_evidence_after_restart(
+    monkeypatch, tmp_path
+):
+    _configure_validator(monkeypatch, tmp_path)
+
+    app = build_app()
+    consensus = app.state.consensus_service
+    assert consensus is not None
+    assert consensus.abci is not None
+    assert consensus.abci.finalize_block(
+        block_height=1,
+        block_hash=hashlib.sha256(b"runtime-evidence-block").digest(),
+        txs=[],
+    ).code == "ok"
+
+    evidence = app.state.hypervisor_service.ledger_operation_service.record_operation(
+        operation_type="SESSION_RUNTIME_EVIDENCE_COMMIT",
+        origin_type="multi_party",
+        fee_class="session",
+        initiator_id="session-local",
+        payload={"request_id": "request-local"},
+    )
+    app.state.hypervisor_service._persist_state()
+
+    restored = build_app()
+    restored_consensus = restored.state.consensus_service
+    assert restored_consensus is not None
+    assert restored_consensus.abci is not None
+    assert restored_consensus.abci.info().last_block_height == 1
+    assert evidence in restored.state.hypervisor_service.ledger_operation_service.snapshot_operations()
+
+
 def test_validator_mode_requires_both_durable_state_paths(monkeypatch, tmp_path):
     monkeypatch.setenv("AIDN_CONSENSUS_MODE", "validator")
     monkeypatch.setenv("AIDN_COMETBFT_ABCI_STATE_PATH", str(tmp_path / "abci"))
