@@ -137,6 +137,18 @@ docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container"
     done > "$env_file"
 chmod 600 "$env_file"
 
+consensus_endpoint=$(sed -n 's/^AIDN_COMETBFT_ENDPOINT=//p' "$env_file" | head -n 1)
+if [[ -z "$consensus_endpoint" ]]; then
+  consensus_status_url='http://127.0.0.1:26657/status'
+elif [[ "$consensus_endpoint" == tcp://* ]]; then
+  consensus_status_url="http://${consensus_endpoint#tcp://}/status"
+elif [[ "$consensus_endpoint" == http://* || "$consensus_endpoint" == https://* ]]; then
+  consensus_status_url="${consensus_endpoint%/}/status"
+else
+  echo "unsupported AIDN_COMETBFT_ENDPOINT: $consensus_endpoint" >&2
+  exit 1
+fi
+
 echo "building source_commit=${commit_short} image=${image}"
 docker build --pull --file "$repo/tools/lan-testnet.Dockerfile" --tag "$image" "$repo"
 
@@ -154,7 +166,7 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 curl --fail --silent --max-time 3 http://127.0.0.1:8000/health >/tmp/aidn-dashboard-health.json
-curl --fail --silent --max-time 3 http://127.0.0.1:26657/status >/dev/null
+curl --fail --silent --max-time 3 "$consensus_status_url" >/dev/null
 curl --fail --silent --max-time 3 http://127.0.0.1:8000/operators/dashboard/react >/tmp/aidn-dashboard-react.html
 grep -q 'id="root"' /tmp/aidn-dashboard-react.html
 asset_path=$(grep -oE '/operators/dashboard/react/assets/[^" ]+\.js' /tmp/aidn-dashboard-react.html | head -n 1)
