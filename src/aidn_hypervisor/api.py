@@ -632,6 +632,12 @@ def build_api_router(
         for envelope in service.list_pending_consensus_envelopes():
             if envelope.operation_type != "ENDPOINT_PUBLISH":
                 continue
+            # Pending envelopes survive a restart, while the in-memory
+            # submission index does not. Restore the exact transaction hash
+            # before asking the verified finality source to inspect the chain.
+            consensus = service.consensus_service
+            if consensus is not None:
+                consensus.restore_submission(envelope)
             finality = service.ledger_operation_finality(envelope.operation_id)
             if not finality.get("consensus_finalized"):
                 continue
