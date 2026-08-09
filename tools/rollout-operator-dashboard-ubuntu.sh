@@ -121,7 +121,10 @@ actual_command=$(docker inspect --format '{{json .Config.Cmd}}' "$container")
   exit 1
 }
 
-mapfile -t mount_lines < <(docker inspect --format '{{range .Mounts}}{{.Destination}}|{{.Source}}|{{.RW}}{{"\n"}}{{end}}' "$container")
+mapfile -t mount_lines < <(
+  docker inspect --format '{{range .Mounts}}{{.Destination}}|{{.Source}}|{{.RW}}{{"\n"}}{{end}}' "$container" \
+    | sed '/^$/d'
+)
 [[ "${#mount_lines[@]}" -eq 1 ]] || { echo 'refusing to replace a container with unexpected mounts' >&2; exit 1; }
 IFS='|' read -r mount_destination state_source mount_rw <<< "${mount_lines[0]}"
 [[ "$mount_destination" == /state && "$mount_rw" == true && -d "$state_source" ]] || {
