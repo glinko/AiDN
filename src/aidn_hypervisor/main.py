@@ -138,7 +138,7 @@ def build_app(
         raise ValueError("Hypervisor is already bound to another ConsensusService")
     if resolved_consensus_service is not None:
         resolved_service.consensus_service = resolved_consensus_service
-        if resolved_consensus_service.is_validator:
+        if resolved_consensus_service.is_enabled:
             # Local drafts and pending Session metadata must not mutate the
             # consensus Ledger/AppHash before their canonical transactions
             # reach finality. Their durable projections remain available to
@@ -638,6 +638,11 @@ def _build_default_consensus_service(
     )
     consensus = ConsensusService(config)
     if mode != ConsensusMode.VALIDATOR:
+        removed_operation_ids = hypervisor_service.ledger_operation_service.remove_noncanonical_operations(
+            {"ENDPOINT_UPDATE"}
+        )
+        if removed_operation_ids:
+            hypervisor_service._persist_state()
         return consensus
     if state_store is None:
         raise ValueError("validator mode requires AIDN_HYPERVISOR_STATE_PATH")
@@ -671,31 +676,23 @@ def _build_default_consensus_service(
         for operation in hypervisor_service.ledger_operation_service.snapshot_operations()
         if operation.get("operation_id")
     }
-    missing_durable_legacy_operations = [
+    unexpected_durable_legacy_operations = [
         operation
         for operation in durable_operations
         if operation.get("operation_type") == "ENDPOINT_UPDATE"
         and operation.get("operation_id") not in local_operation_ids
     ]
-    if missing_legacy_operation_ids and missing_durable_legacy_operations:
+    if missing_legacy_operation_ids and unexpected_durable_legacy_operations:
         raise ValueError(
             "validator legacy Endpoint migration found changes on both sides"
         )
-    state_migrated = False
-    if missing_durable_legacy_operations:
-        restored_operation_ids = hypervisor_service.ledger_operation_service.restore_missing_operation_records(
-            missing_durable_legacy_operations,
-            {"ENDPOINT_UPDATE"},
+    if unexpected_durable_legacy_operations:
+        raise ValueError(
+            "validator durable ABCI state contains a local-only Endpoint update; "
+            "refusing to restore a non-canonical operation"
         )
-        if set(restored_operation_ids) != {
-            str(operation["operation_id"])
-            for operation in missing_durable_legacy_operations
-        }:
-            raise ValueError(
-                "validator legacy Endpoint migration did not restore the expected operations"
-            )
-        state_migrated = True
-    elif missing_legacy_operation_ids:
+    state_migrated = False
+    if missing_legacy_operation_ids:
         if missing_legacy_operation_ids != legacy_operation_ids:
             raise ValueError(
                 "validator legacy Endpoint migration found a partially committed operation set"

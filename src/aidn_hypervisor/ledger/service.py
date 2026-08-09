@@ -8003,63 +8003,6 @@ class LedgerOperationService:
             )
         return [str(operation["operation_id"]) for operation in removed]
 
-    def restore_missing_operation_records(
-        self,
-        operations: list[dict],
-        operation_types: set[str],
-    ) -> list[str]:
-        """Restore allow-listed records present in the durable consensus view.
-
-        This is used only for recovery of a partially completed validator
-        migration. The records are copied from the verified ABCI projection,
-        never synthesized locally.
-        """
-        if not operations:
-            return []
-        existing_by_id = {
-            str(operation["operation_id"]): operation
-            for operation in self._operations
-        }
-        missing: list[dict] = []
-        for operation in operations:
-            operation_type = operation.get("operation_type")
-            operation_id = operation.get("operation_id")
-            if operation_type not in operation_types or not isinstance(operation_id, str):
-                raise ValueError("validator operation recovery contains an unauthorized record")
-            existing = existing_by_id.get(operation_id)
-            if existing is not None:
-                if existing != operation:
-                    raise ValueError("validator operation recovery found a conflicting record")
-                continue
-            missing.append(LedgerOperationRecord(**operation).model_dump(mode="json"))
-
-        if not missing:
-            return []
-        occupied_sequence_ids = {
-            int(operation["sequence_id"]) for operation in self._operations
-        }
-        if any(int(operation["sequence_id"]) in occupied_sequence_ids for operation in missing):
-            raise ValueError("validator operation recovery found a sequence conflict")
-        self._operations.extend(missing)
-        self._operations.sort(key=lambda operation: int(operation["sequence_id"]))
-        self._finalized_operation_registry = FinalizedOperationRegistry.from_records(
-            self._operations
-        )
-        self._operation_ids = self._finalized_operation_registry.operation_ids()
-        self._next_sequence_id = max(
-            (int(operation["sequence_id"]) for operation in self._operations),
-            default=0,
-        ) + 1
-        for operation in missing:
-            wallet_id = operation.get("sender_wallet")
-            sender_sequence = operation.get("sender_sequence")
-            if isinstance(wallet_id, str) and sender_sequence is not None:
-                self._wallet_next_sequences[wallet_id] = max(
-                    self.wallet_next_sequence(wallet_id),
-                    int(sender_sequence) + 1,
-                )
-        return [str(operation["operation_id"]) for operation in missing]
-
     def snapshot_wallet_sequences(self) -> dict[str, int]:
         return dict(self._wallet_next_sequences)
 
