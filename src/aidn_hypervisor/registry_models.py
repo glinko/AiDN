@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from aidn_hypervisor.canonical_models import (
@@ -78,7 +80,9 @@ class RegistryNodeAdvertisement(BaseModel):
     heartbeat_at: str
     heartbeat_ttl_seconds: int = 30
     status: str = "ready"
-    resources: dict[str, dict[str, float | int]]
+    # Resource probe metadata is intentionally heterogeneous: measurements are
+    # numeric, while source, timestamp, and limitations are diagnostic values.
+    resources: dict[str, dict[str, Any]]
     providers: list[str]
     can_host_custom_model: bool
     pricing: RegistryPricing

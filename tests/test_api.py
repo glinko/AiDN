@@ -3991,6 +3991,38 @@ def test_operator_dashboard_home_bootstrap_prefers_endpoint_service_state() -> N
     assert home.json()["bootstrap"]["next_step"] == "Review your configured endpoint and publish it"
 
 
+def test_operator_dashboard_home_accepts_runtime_resource_probe_metadata() -> None:
+    hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
+    hypervisor.resources.replace_capacity(
+        hypervisor.resources.capacity,
+        probe={
+            "source": "runtime-auto-probe",
+            "observed_at": "2026-08-09T05:56:30.774430+00:00",
+            "limitations": ["nvidia-smi is not installed"],
+        },
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-local",
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Operator STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    client = TestClient(build_app(service=hypervisor, endpoint_service=endpoint_service))
+
+    response = client.get("/operators/dashboard/home")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["bootstrap"]["bundle_count"] == len(hypervisor.bundles)
+    assert payload["bootstrap"]["endpoint_count"] == 1
+    assert payload["bootstrap"]["items"][0]["endpoint_id"] == created.endpoint.endpoint_id
+
+
 def test_operator_dashboard_home_exposes_endpoint_pipeline_create_action() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     hypervisor.configure_owner_wallet(mode="create", label="Primary Wallet")
