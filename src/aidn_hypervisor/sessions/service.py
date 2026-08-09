@@ -1493,6 +1493,102 @@ class SessionService:
         self._promote_next_waiting_session(endpoint_id=current.endpoint_id)
         return SessionResult(session=closed, deposit=released, settlement=settlement)
 
+    def reconcile_canonical_settlement_projections(self, ledger_service) -> list[str]:
+        """Restore Session read models from already-applied Ledger transitions.
+
+        A restart can restore the canonical Ledger after the SessionStore
+        snapshot was written, leaving an active local projection for a
+        settlement that has already released escrow.  Only transitions whose
+        hash is present in the restored Ledger state are eligible here; this
+        method never creates an economic operation or changes wallet balances.
+        """
+        reconciled: list[str] = []
+        for operation in ledger_service.list_operations():
+            if operation.get("operation_type") not in {
+                "SESSION_SETTLEMENT_FINALIZE",
+                "SESSION_FORCE_SETTLE",
+            }:
+                continue
+            payload = operation.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            # Canonical consensus records may retain the full transition or
+            # the flattened finalization payload produced by the Ledger log.
+            transition = payload.get("transition")
+            if not isinstance(transition, dict):
+                transition = payload
+            session_id = transition.get("session_id") or payload.get("session_id")
+            settlement_id = transition.get("settlement_id") or payload.get("settlement_id")
+            transition_hash = transition.get("transition_hash") or payload.get("transition_hash")
+            settlement_input_root = (
+                transition.get("settlement_input_root")
+                or payload.get("settlement_input_root")
+            )
+            if not all(
+                isinstance(value, str) and value.strip()
+                for value in (
+                    session_id,
+                    settlement_id,
+                    transition_hash,
+                    settlement_input_root,
+                )
+            ):
+                continue
+            try:
+                current = self.store.get_session(session_id)
+                self.store.get_deposit_for_session(session_id)
+                funding = ledger_service.get_session_funding_account(session_id)
+            except KeyError:
+                # The local node may not own a remote Session projection.
+                continue
+            if funding.funding_state not in {"RELEASED", "REFUNDED"}:
+                continue
+            if ledger_service.get_settlement_transition_hash(settlement_id) != transition_hash:
+                # The operation may only be admitted locally; do not project
+                # it before the Ledger has applied the immutable transition.
+                continue
+            if (
+                transition.get("endpoint_payment_beneficiary", funding.endpoint_payment_beneficiary)
+                != current.endpoint_payment_beneficiary
+                or transition.get("consumer_refund_beneficiary", funding.consumer_refund_beneficiary)
+                != current.consumer_refund_beneficiary
+            ):
+                raise ValueError(
+                    f"canonical Settlement beneficiary mismatch for Session {session_id}"
+                )
+            if current.status in {"closed", "force_settled"}:
+                existing = current.settlement_snapshot or {}
+                if existing.get("settlement_evidence_root") != settlement_input_root:
+                    raise ValueError(
+                        f"canonical Settlement evidence mismatch for Session {session_id}"
+                    )
+                continue
+            self.mark_canonical_settlement_finalized(
+                session_id,
+                settlement_evidence_root=settlement_input_root,
+                endpoint_payment_q_atoms=int(
+                    transition.get(
+                        "credit_endpoint_q_atoms",
+                        payload.get("endpoint_payment_q_atoms", 0),
+                    )
+                ),
+                consumer_refund_q_atoms=int(
+                    transition.get(
+                        "credit_consumer_q_atoms",
+                        payload.get("consumer_refund_q_atoms", 0),
+                    )
+                ),
+                network_fee_q_atoms=int(
+                    transition.get(
+                        "consume_network_fees_q_atoms",
+                        payload.get("network_fees_q_atoms", 0),
+                    )
+                ),
+                close_reason="canonical_settlement_recovered",
+            )
+            reconciled.append(session_id)
+        return reconciled
+
     def touch_session(self, session_id: str) -> EndpointSession:
         current = self.store.get_session(session_id)
         if current.status != "active":

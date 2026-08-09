@@ -1601,6 +1601,71 @@ def test_finalize_mvp_fixed_price_session_survives_restore_without_double_pay(
     )
 
 
+def test_restore_reconciles_stale_session_projection_from_canonical_settlement(
+    tmp_path,
+) -> None:
+    state_store, hypervisor, client, endpoint, session = _mvp_persistent_api_context(
+        tmp_path
+    )
+    request, _ = _seed_terminal_runtime_evidence(
+        hypervisor,
+        endpoint=endpoint,
+        session=session,
+    )
+
+    response = _finalize_mvp_session(
+        client,
+        endpoint=endpoint,
+        session=session,
+        request_id=request.request_id,
+    )
+    assert response.status_code == 200
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+    # Simulate a crash after Ledger finality but before the SessionStore
+    # projection was flushed. Canonical operations and balances stay intact.
+    root = state_store.load()
+    stale_sessions = [
+        item.model_copy(
+            update={
+                "status": "active",
+                "close_reason": None,
+                "settlement_snapshot": {},
+            }
+        )
+        if item.session_id == session["session_id"]
+        else item
+        for item in root.endpoint_sessions
+    ]
+    stale_deposits = [
+        item.model_copy(update={"status": "locked", "consumed_q": 0.0, "refunded_q": 0.0})
+        if item.session_id == session["session_id"]
+        else item
+        for item in root.locked_deposits
+    ]
+    state_store.save(
+        root.model_copy(
+            update={
+                "endpoint_sessions": stale_sessions,
+                "locked_deposits": stale_deposits,
+            }
+        )
+    )
+
+    restored, _, _, restored_session_service = _restored_mvp_api_context(state_store)
+    recovered_session = restored_session_service.store.get_session(session["session_id"])
+    recovered_deposit = restored_session_service.store.get_deposit_for_session(
+        session["session_id"]
+    )
+
+    assert recovered_session.status == "closed"
+    assert recovered_deposit.status == "released"
+    assert restored.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert restored.wallet_q_atom_balance("wallet-consumer") == 100
+    assert _ledger_operation_count(restored, "SESSION_SETTLEMENT_FINALIZE") == 1
+
+
 def test_force_finalize_mvp_endpoint_unavailable_refunds_after_timeout() -> None:
     hypervisor, client, endpoint, session = _mvp_api_context()
 
