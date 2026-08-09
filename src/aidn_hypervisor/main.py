@@ -1,5 +1,6 @@
 import json
 import os
+import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -34,6 +35,9 @@ from aidn_hypervisor.mcp import (
     build_mcp_remote_router,
     build_mcp_server,
 )
+from aidn_hypervisor.mcp.credentials import McpCredentialStore
+from aidn_hypervisor.operator_access import DashboardAccessService
+from aidn_hypervisor.operator_access_api import build_operator_access_router
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.ollama import OllamaPlugin
@@ -217,18 +221,59 @@ def build_app(
     )
     mcp_remote_enabled = _env_bool("AIDN_MCP_REMOTE_ENABLED", default=False)
     mcp_remote_token = os.getenv("AIDN_MCP_REMOTE_TOKEN") if mcp_remote_enabled else None
-    if mcp_remote_enabled and not mcp_remote_token:
-        raise ValueError("AIDN_MCP_REMOTE_ENABLED requires AIDN_MCP_REMOTE_TOKEN")
+    mcp_operator_token = os.getenv("AIDN_MCP_OPERATOR_TOKEN") if mcp_remote_enabled else None
+    if mcp_remote_token and mcp_operator_token and hmac.compare_digest(
+        mcp_remote_token,
+        mcp_operator_token,
+    ):
+        raise ValueError("MCP agent and operator tokens must be different")
+    mcp_secret_manager = load_file_secret_manager_from_environment() if mcp_remote_enabled else None
+    mcp_credential_store = (
+        McpCredentialStore(secret_manager=mcp_secret_manager)
+        if mcp_secret_manager is not None
+        else None
+    )
+    if mcp_credential_store is not None and mcp_remote_token:
+        mcp_credential_store.import_legacy_token(
+            token=mcp_remote_token,
+            label="Legacy MCP agent token",
+            scopes=tuple(sorted(app.state.mcp_server.control.session.scopes)),
+        )
+    if mcp_remote_enabled and not mcp_remote_token and mcp_credential_store is None:
+        raise ValueError(
+            "AIDN_MCP_REMOTE_ENABLED requires AIDN_MCP_REMOTE_TOKEN or the configured secret manager"
+        )
     mcp_remote_tls_required = _env_bool("AIDN_MCP_REMOTE_TLS_REQUIRED", default=False)
+    dashboard_access_insecure_lan = _env_bool(
+        "AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN",
+        default=False,
+    )
     mcp_remote_gateway = McpRemoteGateway(
         app.state.mcp_server.control,
-        agent_token=mcp_remote_token,
-        operator_token=os.getenv("AIDN_MCP_OPERATOR_TOKEN") if mcp_remote_enabled else None,
+        agent_token=None if mcp_credential_store is not None else mcp_remote_token,
+        credential_resolver=mcp_credential_store,
+        operator_token=mcp_operator_token,
         require_tls=mcp_remote_tls_required,
     )
+    dashboard_access_service = (
+        DashboardAccessService(store=mcp_credential_store)
+        if mcp_credential_store is not None
+        else None
+    )
     app.state.mcp_remote_gateway = mcp_remote_gateway
+    app.state.mcp_credential_store = mcp_credential_store
+    app.state.dashboard_access_service = dashboard_access_service
     if mcp_remote_gateway.enabled:
         app.include_router(build_mcp_remote_router(mcp_remote_gateway))
+    app.include_router(
+        build_operator_access_router(
+            access_service=dashboard_access_service,
+            credential_store=mcp_credential_store,
+            allow_insecure_lan=dashboard_access_insecure_lan,
+            operator_fingerprint=mcp_remote_gateway.operator_fingerprint,
+            invalidate_credential_sessions=mcp_remote_gateway.invalidate_credential_sessions,
+        )
+    )
 
     @app.middleware("http")
     async def validator_write_boundary(request: Request, call_next):
@@ -313,6 +358,38 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
     if parts == ["operators", "resources", "probe"]:
         # This bounded local operation accepts no caller-provided capacity and
         # only refreshes host measurements. It has no Ledger effect.
+        return True
+    if (
+        parts == ["operators", "dashboard", "access", "pair"]
+        and (method is None or method == "POST")
+    ):
+        # Pairing only creates a short-lived local browser session. The code is
+        # minted from the host terminal and never reaches consensus state.
+        return True
+    if (
+        parts == ["operators", "dashboard", "access", "logout"]
+        and (method is None or method == "POST")
+    ):
+        return True
+    if (
+        parts == ["operators", "dashboard", "access", "credentials"]
+        and (method is None or method == "POST")
+    ):
+        # Credential lifecycle records are encrypted local operator secrets;
+        # they cannot create a Ledger effect or alter network ownership.
+        return True
+    if (
+        len(parts) == 6
+        and parts[:4] == ["operators", "dashboard", "access", "credentials"]
+        and parts[5] == "rotate"
+        and (method is None or method == "POST")
+    ):
+        return True
+    if (
+        len(parts) == 5
+        and parts[:4] == ["operators", "dashboard", "access", "credentials"]
+        and (method is None or method == "DELETE")
+    ):
         return True
     if (
         len(parts) == 4

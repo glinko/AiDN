@@ -15,6 +15,25 @@ export class DashboardApiError extends Error {
   }
 }
 
+export type AccessCredential = {
+  credential_id: string
+  label: string
+  scopes: string[]
+  fingerprint: string
+  state: 'active' | 'revoked' | string
+  created_at: string
+  last_used_at: string | null
+  token?: string
+}
+
+export type DashboardAccessStatus = {
+  enabled: boolean
+  session: { active: boolean; expires_at: string | null }
+  transport: { insecure_lan: boolean }
+  operator_authority: { configured: boolean; fingerprint: string | null }
+  credentials: AccessCredential[]
+}
+
 async function readDashboard<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
@@ -54,10 +73,38 @@ async function readDashboard<T>(path: string, schema: z.ZodType<T>, signal?: Abo
   }
 }
 
+async function writeDashboard<T>(path: string, init: RequestInit): Promise<T | undefined> {
+  const response = await fetch(`${apiRoot}${path}`, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
+    ...init,
+  })
+  const text = await response.text()
+  let payload: unknown
+  try {
+    payload = text ? JSON.parse(text) : undefined
+  } catch {
+    throw new DashboardApiError(`The Hypervisor returned invalid JSON for ${path}.`, response.status)
+  }
+  if (!response.ok) {
+    const error = typeof payload === 'object' && payload !== null && 'error' in payload
+      ? String((payload as { error?: { code?: string } }).error?.code ?? 'request rejected')
+      : response.statusText
+    throw new DashboardApiError(`${path} failed: ${error || 'request rejected'}`, response.status)
+  }
+  return payload as T | undefined
+}
+
 export const dashboardApi = {
   home: (signal?: AbortSignal): Promise<DashboardHome> => readDashboard('/operators/dashboard/home', dashboardSchemas.home, signal),
   readiness: (signal?: AbortSignal): Promise<Readiness> => readDashboard('/operators/dashboard/readiness', dashboardSchemas.readiness, signal),
   fleet: (signal?: AbortSignal): Promise<Fleet> => readDashboard('/operators/dashboard/fleet', dashboardSchemas.fleet, signal),
   bundles: (signal?: AbortSignal): Promise<BundlePayload> => readDashboard('/operators/dashboard/bundles', dashboardSchemas.bundles, signal),
   endpoints: (signal?: AbortSignal): Promise<EndpointPayload> => readDashboard('/operators/dashboard/endpoints', dashboardSchemas.endpoints, signal),
+  accessStatus: (): Promise<DashboardAccessStatus> => writeDashboard('/operators/dashboard/access/status', { method: 'GET' }) as Promise<DashboardAccessStatus>,
+  pairDashboard: (code: string) => writeDashboard('/operators/dashboard/access/pair', { method: 'POST', body: JSON.stringify({ code }) }),
+  createAgentCredential: (label: string) => writeDashboard<AccessCredential>('/operators/dashboard/access/credentials', { method: 'POST', body: JSON.stringify({ label, scopes: ['CONTROL_SESSION'] }) }),
+  rotateAgentCredential: (credentialId: string) => writeDashboard<AccessCredential>(`/operators/dashboard/access/credentials/${credentialId}/rotate`, { method: 'POST' }),
+  revokeAgentCredential: (credentialId: string) => writeDashboard(`/operators/dashboard/access/credentials/${credentialId}`, { method: 'DELETE' }),
+  logoutDashboardAccess: () => writeDashboard('/operators/dashboard/access/logout', { method: 'POST' }),
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 
 from fastapi import FastAPI
@@ -44,3 +45,31 @@ def test_credential_mutation_requires_pairing_and_reveals_only_new_value(tmp_pat
     status = client.get("/operators/dashboard/access/status")
     assert status.status_code == 200
     assert "token" not in status.text
+
+    rotated = client.post(f"/operators/dashboard/access/credentials/{created.json()['credential_id']}/rotate")
+    assert rotated.status_code == 201
+    assert rotated.json()["token"]
+
+    revoked = client.delete(f"/operators/dashboard/access/credentials/{rotated.json()['credential_id']}")
+    assert revoked.status_code == 204
+    assert client.post("/operators/dashboard/access/logout").status_code == 204
+
+
+def test_build_app_wires_secret_backed_access_management(monkeypatch, tmp_path) -> None:
+    from aidn_hypervisor.main import build_app
+
+    monkeypatch.setenv("AIDN_STATE_STORE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setenv("AIDN_MCP_REMOTE_ENABLED", "true")
+    monkeypatch.setenv("AIDN_MCP_REMOTE_TOKEN", "legacy-token")
+    monkeypatch.setenv("AIDN_SECRET_MANAGER_PATH", str(tmp_path / "secrets.json"))
+    monkeypatch.setenv("AIDN_SECRET_MANAGER_MASTER_KEY", base64.b64encode(os.urandom(32)).decode("ascii"))
+    monkeypatch.setenv("AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN", "true")
+    app = build_app()
+    client = TestClient(app)
+
+    pairing = app.state.dashboard_access_service.create_pairing(ttl_seconds=60)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    status = client.get("/operators/dashboard/access/status")
+    assert status.status_code == 200
+    assert status.json()["enabled"] is True
+    assert status.json()["credentials"][0]["label"] == "Legacy MCP agent token"

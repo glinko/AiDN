@@ -324,6 +324,13 @@ class McpRemoteGateway:
     def operator_enabled(self) -> bool:
         return self._operator_token_hash is not None
 
+    @property
+    def operator_fingerprint(self) -> str | None:
+        """Expose a non-secret operator-token fingerprint for operator UI."""
+        if self._operator_token_hash is None:
+            return None
+        return "sha256:" + self._operator_token_hash.hex()[:16]
+
     def _authorized(self, request: Request, expected: bytes | None) -> bool:
         if expected is None:
             return False

@@ -37,6 +37,7 @@ def build_operator_access_router(
     access_service: DashboardAccessService | None,
     credential_store: McpCredentialStore | None,
     allow_insecure_lan: bool,
+    operator_fingerprint: str | None = None,
     invalidate_credential_sessions: Callable[[str], None] | None = None,
 ) -> APIRouter:
     """Build a browser-only credential management boundary."""
@@ -61,13 +62,23 @@ def build_operator_access_router(
             "enabled": access_service is not None and credential_store is not None,
             "session": {"active": active, "expires_at": session_expiry(request)},
             "transport": {"insecure_lan": allow_insecure_lan},
-            "credentials": [] if credential_store is None else [_credential_payload(item) for item in credential_store.list_credentials()],
+            "operator_authority": {
+                "configured": operator_fingerprint is not None,
+                "fingerprint": operator_fingerprint,
+            },
+            "credentials": (
+                []
+                if credential_store is None or not active
+                else [_credential_payload(item) for item in credential_store.list_credentials()]
+            ),
         }
 
     @router.post("/pair", status_code=204)
-    async def pair(payload: PairingRequest, response: Response) -> Response:
+    async def pair(payload: PairingRequest, request: Request, response: Response) -> Response:
         if access_service is None:
             return JSONResponse(status_code=404, content={"error": {"code": "DASHBOARD_ACCESS_DISABLED"}})
+        if not allow_insecure_lan and request.url.scheme != "https":
+            return JSONResponse(status_code=426, content={"error": {"code": "DASHBOARD_ACCESS_TLS_REQUIRED"}})
         session = access_service.exchange_pairing_code(payload.code)
         if session is None:
             return JSONResponse(status_code=403, content={"error": {"code": "DASHBOARD_PAIRING_INVALID"}})
@@ -89,5 +100,38 @@ def build_operator_access_router(
         assert credential_store is not None
         issued = credential_store.create_credential(label=payload.label, scopes=tuple(payload.scopes))
         return JSONResponse(status_code=201, content=_credential_payload(issued, reveal=True))
+
+    @router.post("/credentials/{credential_id}/rotate", status_code=201)
+    async def rotate_credential(credential_id: str, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        assert credential_store is not None
+        try:
+            issued = credential_store.rotate_credential(credential_id)
+        except ValueError:
+            return JSONResponse(status_code=404, content={"error": {"code": "MCP_CREDENTIAL_NOT_ACTIVE"}})
+        if invalidate_credential_sessions is not None:
+            invalidate_credential_sessions(credential_id)
+        return JSONResponse(status_code=201, content=_credential_payload(issued, reveal=True))
+
+    @router.delete("/credentials/{credential_id}", status_code=204)
+    async def revoke_credential(credential_id: str, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        assert credential_store is not None
+        if not credential_store.revoke_credential(credential_id):
+            return JSONResponse(status_code=404, content={"error": {"code": "MCP_CREDENTIAL_NOT_ACTIVE"}})
+        if invalidate_credential_sessions is not None:
+            invalidate_credential_sessions(credential_id)
+        return Response(status_code=204)
+
+    @router.post("/logout", status_code=204)
+    async def logout(request: Request, response: Response) -> Response:
+        if access_service is not None:
+            access_service.revoke_session(request.cookies.get(_COOKIE_NAME))
+        response.delete_cookie(_COOKIE_NAME, path=_COOKIE_PATH)
+        return Response(status_code=204, headers=dict(response.headers))
 
     return router

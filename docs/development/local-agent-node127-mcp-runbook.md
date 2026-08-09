@@ -102,10 +102,18 @@ Node operator secret store
     -> model calls named MCP tools without receiving the token text
 ```
 
-The operator provisions the value of the node's dedicated
-`AIDN_MCP_REMOTE_TOKEN` as `AIDN_NODE127_MCP_AGENT_TOKEN` on the agent host.
-This is a copy of an already-scoped Agent credential, not a new Wallet,
-operator token or consensus key. The two following values must never be equal:
+The operator creates a dedicated credential from the node's React dashboard:
+
+1. On the node terminal, run `aidn-operator pair`.
+2. Open `Settings` in the React dashboard and paste the one-time pairing code.
+3. Choose **Issue token**, label it for the receiving agent, and copy the value
+   while it is displayed. The dashboard never displays it again.
+4. Transfer that value once to the agent host's secret store and close the
+   reveal notice.
+
+The resulting value becomes `AIDN_NODE127_MCP_AGENT_TOKEN` on the agent host.
+It is a dedicated Agent credential, not a Wallet, operator token or consensus
+key. The two following values must never be equal:
 
 ```text
 Agent host: AIDN_NODE127_MCP_AGENT_TOKEN
@@ -180,10 +188,12 @@ reference with a literal token.
 
 ### Rotation and Revocation
 
-Rotate the Agent token when the agent host, its configuration or an operator
-session might have been exposed. The node operator installs a new remote Agent
-token, restarts or reloads the MCP gateway through the approved deployment
-procedure, updates the agent-host secret entry, and then restarts the agent.
+Rotate the Agent token from **Settings -> Agent credentials** when the agent
+host, its configuration or an operator session might have been exposed. The
+replacement value is shown once and the previous credential is revoked
+immediately, including its active MCP transport sessions. Use **Revoke** when
+no replacement is needed. The node operator then updates the agent-host secret
+entry through the approved deployment procedure and then restarts the agent.
 The old token must stop authenticating. The agent reconnects with a new MCP
 transport session and repeats its required first-read sequence.
 

@@ -58,6 +58,29 @@ def test_rotation_and_revoke_make_predecessor_unusable(tmp_path) -> None:
     assert store.resolve(replacement.token) is None
 
 
+def test_legacy_token_import_happens_once_and_never_restores_a_revoked_credential(tmp_path) -> None:
+    manager = _manager(tmp_path)
+    store = McpCredentialStore(secret_manager=manager)
+
+    imported = store.import_legacy_token(
+        token="legacy-agent-token",
+        label="Legacy agent token",
+        scopes=("NODE:READ",),
+    )
+
+    assert imported is not None
+    assert store.resolve("legacy-agent-token") is not None
+    assert store.revoke_credential(imported.credential_id) is True
+
+    restored = McpCredentialStore(secret_manager=manager)
+    assert restored.import_legacy_token(
+        token="legacy-agent-token",
+        label="Legacy agent token",
+        scopes=("NODE:READ",),
+    ) is None
+    assert restored.resolve("legacy-agent-token") is None
+
+
 def test_pairing_code_is_single_use_without_persisting_raw_value(tmp_path) -> None:
     manager = _manager(tmp_path)
     store = McpCredentialStore(secret_manager=manager)

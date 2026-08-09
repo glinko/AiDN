@@ -21,6 +21,10 @@ def test_react_dashboard_navigation_stays_inside_react_workspace() -> None:
     assert "window.history.pushState" in app_source
     for screen in ("agents", "market", "catalog", "wallet", "settings", "providers", "models", "validation", "network"):
         assert f"id: '{screen}'" in app_source
+    assert "aidn-operator pair" in app_source
+    assert "Issue a new agent token" in app_source
+    assert "Rotate" in app_source
+    assert "Revoke" in app_source
 
 
 def test_react_dashboard_asset_resolver_requires_a_regular_file(

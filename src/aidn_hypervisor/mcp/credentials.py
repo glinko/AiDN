@@ -69,6 +69,42 @@ class McpCredentialStore:
         self._save_state(state)
         return self._credential(record, token=token)
 
+    def import_legacy_token(
+        self,
+        *,
+        token: str,
+        label: str,
+        scopes: tuple[str, ...],
+    ) -> McpCredential | None:
+        """Import one environment-provided token without making it permanent authority.
+
+        Deployments prior to dashboard credential management used a single
+        environment token. Import it exactly once so the operator can rotate
+        or revoke it from the new control surface. A revoked import must never
+        reappear merely because the old environment variable still exists.
+        """
+        normalized_label = self._normalize_label(label)
+        normalized_scopes = self._normalize_scopes(scopes)
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError("MCP legacy token must be a non-empty string")
+        state = self._load_state()
+        if state["legacy_imported"]:
+            return None
+        record = {
+            "credential_id": "mcpcred-" + secrets.token_urlsafe(12),
+            "label": normalized_label,
+            "scopes": list(normalized_scopes),
+            "token_digest": self._digest(token.strip()),
+            "fingerprint": self._fingerprint(token.strip()),
+            "state": "active",
+            "created_at": self._timestamp(),
+            "last_used_at": None,
+        }
+        state["credentials"].append(record)
+        state["legacy_imported"] = True
+        self._save_state(state)
+        return self._credential(record)
+
     def list_credentials(self) -> list[McpCredential]:
         state = self._load_state()
         return [self._credential(record) for record in state["credentials"]]
@@ -160,7 +196,12 @@ class McpCredentialStore:
 
     def _load_state(self) -> dict:
         if not self._secret_manager.has(MCP_ACCESS_STATE_HANDLE):
-            return {"version": _STATE_VERSION, "credentials": [], "pairing": None}
+            return {
+                "version": _STATE_VERSION,
+                "credentials": [],
+                "pairing": None,
+                "legacy_imported": False,
+            }
         try:
             raw = self._secret_manager.get(MCP_ACCESS_STATE_HANDLE)
             import json
@@ -175,8 +216,12 @@ class McpCredentialStore:
             raise SecretManagerError("MCP credential state is invalid")
         if "pairing" not in state:
             state["pairing"] = None
+        if "legacy_imported" not in state:
+            state["legacy_imported"] = False
         if state["pairing"] is not None and not isinstance(state["pairing"], dict):
             raise SecretManagerError("MCP credential pairing state is invalid")
+        if not isinstance(state["legacy_imported"], bool):
+            raise SecretManagerError("MCP credential legacy import state is invalid")
         return state
 
     def _save_state(self, state: dict) -> None:

@@ -7,20 +7,25 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleDot,
+  Copy,
   Cpu,
   Database,
   Gauge,
   Layers3,
+  KeyRound,
+  LogOut,
   Menu,
   Network,
   PanelsTopLeft,
   RadioTower,
   RefreshCw,
+  RotateCcw,
   ServerCog,
   Settings,
   ShieldCheck,
   Sparkles,
   WalletCards,
+  Trash2,
   XCircle,
   Zap,
   type LucideIcon,
@@ -57,6 +62,7 @@ import {
   shortId,
 } from '@/lib/format'
 import { useDashboardData } from '@/hooks/use-dashboard'
+import { DashboardApiError, dashboardApi, type AccessCredential, type DashboardAccessStatus } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
 import type { Bundle, Endpoint, ReadinessStep } from '@/lib/types'
 
@@ -101,14 +107,13 @@ const statusClassNames: Record<string, string> = {
   error: 'border-rose-300/25 bg-rose-300/10 text-rose-200',
 }
 
-type OperationsScreen = Exclude<DashboardScreen, 'overview' | 'bundles' | 'endpoints'>
+type OperationsScreen = Exclude<DashboardScreen, 'overview' | 'bundles' | 'endpoints' | 'settings'>
 
 const operationsScreens: readonly OperationsScreen[] = [
   'agents',
   'market',
   'catalog',
   'wallet',
-  'settings',
   'providers',
   'models',
   'validation',
@@ -196,6 +201,7 @@ function App() {
           {activeScreen === 'endpoints' ? (
             <EndpointsScreen endpoints={data.endpoints.data?.items ?? []} isLoading={data.endpoints.isLoading} error={data.endpoints.error} onNavigate={navigate} />
           ) : null}
+          {activeScreen === 'settings' ? <SettingsAccessWorkspace /> : null}
           {isOperationsScreen(activeScreen) ? (
             <OperationsWorkspace screen={activeScreen} data={data} onNavigate={navigate} onRefresh={refreshAll} />
           ) : null}
@@ -616,6 +622,104 @@ function EndpointTable({ endpoints }: { endpoints: Endpoint[] }) {
   ]
   const table = useReactTable({ data: endpoints, columns, getCoreRowModel: getCoreRowModel() })
   return <DataTable table={table} />
+}
+
+function SettingsAccessWorkspace() {
+  const [status, setStatus] = useState<DashboardAccessStatus | null>(null)
+  const [pairingCode, setPairingCode] = useState('')
+  const [label, setLabel] = useState('Local agent')
+  const [revealedToken, setRevealedToken] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  async function refreshAccess() {
+    try {
+      setError(null)
+      setStatus(await dashboardApi.accessStatus())
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The access control service did not respond.')
+    }
+  }
+
+  useEffect(() => { void refreshAccess() }, [])
+
+  async function pair() {
+    if (!pairingCode.trim()) return
+    setBusy('pair')
+    try {
+      setError(null)
+      await dashboardApi.pairDashboard(pairingCode.trim())
+      setPairingCode('')
+      await refreshAccess()
+    } catch (cause) {
+      setError(cause instanceof DashboardApiError ? cause.message : 'Pairing was rejected.')
+    } finally { setBusy(null) }
+  }
+
+  async function issueCredential() {
+    if (!label.trim()) return
+    setBusy('create')
+    try {
+      setError(null)
+      const issued = await dashboardApi.createAgentCredential(label.trim())
+      setRevealedToken(issued?.token ?? null)
+      await refreshAccess()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Credential creation failed.')
+    } finally { setBusy(null) }
+  }
+
+  async function rotate(credential: AccessCredential) {
+    setBusy(credential.credential_id)
+    try {
+      setError(null)
+      const issued = await dashboardApi.rotateAgentCredential(credential.credential_id)
+      setRevealedToken(issued?.token ?? null)
+      await refreshAccess()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Credential rotation failed.')
+    } finally { setBusy(null) }
+  }
+
+  async function revoke(credential: AccessCredential) {
+    if (!window.confirm(`Revoke ${credential.label}? Any connected agent using it will lose access.`)) return
+    setBusy(credential.credential_id)
+    try {
+      setError(null)
+      await dashboardApi.revokeAgentCredential(credential.credential_id)
+      await refreshAccess()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Credential revocation failed.')
+    } finally { setBusy(null) }
+  }
+
+  async function logout() {
+    setBusy('logout')
+    try {
+      await dashboardApi.logoutDashboardAccess()
+      setRevealedToken(null)
+      await refreshAccess()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Dashboard sign-out failed.')
+    } finally { setBusy(null) }
+  }
+
+  return (
+    <div className="space-y-4">
+      <ScreenHeading eyebrow="Local access boundary" title="Settings" detail="Pair this browser from the node terminal, then manage agent credentials without exposing existing secret values." />
+      {error ? <PanelError title="Access action was not completed" detail={error} onRetry={() => void refreshAccess()} /> : null}
+      {!status ? <PanelSkeleton rows={4} /> : null}
+      {status ? <>
+        {status.transport.insecure_lan ? <Card className="border-amber-300/25 bg-amber-300/[0.04] py-0 shadow-none"><CardContent className="flex gap-3 p-4"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-amber-200" /><div><p className="text-sm font-semibold text-amber-100">Private LAN transport</p><p className="mt-1 text-xs leading-5 text-amber-100/75">This node explicitly allows browser access over HTTP. Do not expose this dashboard outside the controlled LAN; production access requires HTTPS.</p></div></CardContent></Card> : null}
+        {!status.enabled ? <PanelError title="Credential management is unavailable" detail="This Hypervisor was started without the encrypted local secret store. Re-run the supported operator bootstrap or configure the secret manager before enabling remote MCP access." /> : null}
+        {status.enabled && !status.session.active ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Terminal-to-browser pairing</p><CardTitle className="mt-1 text-lg font-semibold">Unlock this Settings session</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">On the Hypervisor host, run <code className="rounded bg-black/20 px-1.5 py-0.5 font-mono text-xs text-cyan-100">aidn-operator pair</code>. Paste the short-lived code here. It is single-use and never stored by the browser.</p></CardHeader><CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-end"><label className="grid flex-1 gap-2"><span className="eyebrow">Pairing code</span><input value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void pair() }} autoComplete="one-time-code" placeholder="Paste code from the node terminal" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none transition focus:border-cyan-300" /></label><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!pairingCode.trim() || busy === 'pair'} onClick={() => void pair()}>{busy === 'pair' ? 'Pairing...' : 'Pair dashboard'}<ChevronRight /></Button></CardContent></Card> : null}
+        {status.enabled && status.session.active ? <>
+          <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-start justify-between gap-4 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">MCP agent credentials</p><CardTitle className="mt-1 text-lg font-semibold">Issue a new agent token</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">The token is shown once. An agent authenticates to this node with it; existing values cannot be displayed again.</p></div><Button variant="outline" size="sm" className="shrink-0 border-border bg-[#091725]" disabled={busy === 'logout'} onClick={() => void logout()}><LogOut />Sign out</Button></CardHeader><CardContent className="space-y-4 p-5"><p className="rounded-md border border-border/70 bg-[#07111d] px-3 py-2 font-mono text-[11px] text-slate-400">Operator authority: {status.operator_authority.configured ? status.operator_authority.fingerprint : 'not configured'} · never shared with agents</p><div className="flex flex-col gap-3 sm:flex-row sm:items-end"><label className="grid flex-1 gap-2"><span className="eyebrow">Agent label</span><input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={96} placeholder="For example: coding-agent-node127" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none transition focus:border-cyan-300" /></label><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!label.trim() || busy === 'create'} onClick={() => void issueCredential()}><KeyRound />{busy === 'create' ? 'Issuing...' : 'Issue token'}</Button></div>{revealedToken ? <div className="rounded-lg border border-cyan-300/30 bg-cyan-300/[0.06] p-4"><div className="flex items-start justify-between gap-4"><div><p className="eyebrow text-cyan-100">Copy now</p><p className="mt-1 text-sm font-semibold text-cyan-50">New token is visible once</p></div><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725]" onClick={() => void navigator.clipboard.writeText(revealedToken)}><Copy />Copy</Button></div><code className="mt-3 block break-all rounded-md bg-black/25 p-3 font-mono text-xs leading-5 text-cyan-50">{revealedToken}</code><p className="mt-2 text-xs leading-5 text-cyan-100/75">Close this notice after transferring the value through an approved secret channel. Rotation immediately revokes the prior token.</p><Button variant="outline" size="sm" className="mt-3 border-border bg-[#091725]" onClick={() => setRevealedToken(null)}>I stored it</Button></div> : null}</CardContent></Card>
+          <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Active inventory</p><CardTitle className="mt-1 text-lg font-semibold">Agent credentials</CardTitle></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => void refreshAccess()}><RefreshCw />Refresh</Button></CardHeader><CardContent className="p-0">{status.credentials.length === 0 ? <EmptyState title="No agent credentials" detail="Issue a dedicated token for each agent or remote Hypervisor connection." actionLabel="Issue token" onAction={() => void issueCredential()} /> : <div className="divide-y divide-border/70">{status.credentials.map((credential) => <div key={credential.credential_id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{credential.label}</p><StatusBadge value={credential.state} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{credential.fingerprint} · last used {credential.last_used_at ? new Date(credential.last_used_at).toLocaleString() : 'never'}</p></div>{credential.state === 'active' ? <div className="flex gap-2"><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === credential.credential_id} onClick={() => void rotate(credential)}><RotateCcw />Rotate</Button><Button variant="outline" size="sm" className="border-rose-300/25 bg-transparent text-rose-100 hover:bg-rose-300/10" disabled={busy === credential.credential_id} onClick={() => void revoke(credential)}><Trash2 />Revoke</Button></div> : null}</div>)}</div>}</CardContent></Card>
+        </> : null}
+      </> : null}
+    </div>
+  )
 }
 
 function OperationsWorkspace({ screen, data, onNavigate, onRefresh }: { screen: OperationsScreen; data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
