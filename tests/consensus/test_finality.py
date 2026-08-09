@@ -178,7 +178,9 @@ def test_quorum_finality_source_rejects_invalid_configuration():
 
 
 def test_hypervisor_reports_local_consensus_state_without_claiming_finality():
-    consensus = ConsensusService(ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR))
+    consensus = ConsensusService(
+        ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
+    )
     envelope = LedgerOperationEnvelope(
         operation_type="REGISTRY_UPSERT",
         origin_type="protocol",
@@ -224,6 +226,7 @@ def test_hypervisor_reconciles_verified_finality_into_submission_state():
         ConsensusServiceConfig(
             mode=ConsensusMode.NON_VALIDATOR,
             chain_id="aidn-testnet-1",
+            cometbft_endpoint="",
         )
     )
     envelope = LedgerOperationEnvelope(

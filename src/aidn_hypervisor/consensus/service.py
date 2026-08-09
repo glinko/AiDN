@@ -108,11 +108,13 @@ class ConsensusService:
             self._submission_transport = HttpCometBftSubmissionTransport(
                 config.cometbft_endpoint
             )
-        elif config.mode == ConsensusMode.VALIDATOR:
+        elif config.mode != ConsensusMode.DISABLED:
             parsed_endpoint = urlsplit(config.cometbft_endpoint)
             if parsed_endpoint.scheme in {"tcp", "tcp4", "tcp6"} and parsed_endpoint.netloc:
                 # Operator profiles historically use tcp:// for the CometBFT
-                # authority even though its RPC submission API is HTTP.
+                # authority even though its RPC submission API is HTTP.  This
+                # applies to non-validators as well: they submit transactions
+                # to a remote validator without hosting an ABCI application.
                 http_endpoint = urlunsplit(("http", parsed_endpoint.netloc, "", "", ""))
                 self._submission_transport = HttpCometBftSubmissionTransport(http_endpoint)
         else:

@@ -54,7 +54,7 @@ class RecordingSubmissionTransport:
 
 def test_submit_accepted_to_admitted():
     abci = _make_abci()
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg, abci_app=abci)
     env = _make_envelope()
     rec = svc.submit_operation(env)
@@ -67,7 +67,7 @@ def test_submit_accepted_to_admitted():
 
 def test_submit_rejected_to_failed():
     abci = _make_abci()
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg, abci_app=abci)
     # expired envelope → admission rejects
     env = _make_envelope(expires_at="2024-01-01T00:00:00Z")
@@ -80,7 +80,7 @@ def test_submit_rejected_to_failed():
 
 
 def test_submit_without_abci():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     env = _make_envelope()
     rec = svc.submit_operation(env)
@@ -88,7 +88,7 @@ def test_submit_without_abci():
 
 
 def test_submission_retains_exact_transaction_hash_for_finality_lookup():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     env = _make_envelope()
 
@@ -101,7 +101,7 @@ def test_submission_retains_exact_transaction_hash_for_finality_lookup():
 
 
 def test_restore_submission_reconstructs_operation_identity_without_rebroadcast():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     env = _make_envelope()
 
@@ -119,7 +119,7 @@ def test_restore_submission_reconstructs_operation_identity_without_rebroadcast(
 
 def test_transaction_hash_lookup_falls_back_to_persisted_consensus_ledger_record():
     abci = _make_abci()
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg, abci_app=abci)
     env = _make_envelope(origin_type="protocol")
     abci.ledger.record_admitted_envelope(env)
@@ -132,7 +132,7 @@ def test_transaction_hash_lookup_falls_back_to_persisted_consensus_ledger_record
 
 def test_legacy_consensus_record_without_transaction_hash_requires_rpc_recovery():
     abci = _make_abci()
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg, abci_app=abci)
     env = _make_envelope(origin_type="protocol")
     abci.ledger.record_admitted_envelope(env)
@@ -172,6 +172,44 @@ def test_http_submission_transport_marks_only_checktx_admission():
     assert record.admitted_at is not None
     assert record.finalized_at is None
     assert transport.calls == [(transaction_bytes, 2)]
+
+
+def test_non_validator_tcp_endpoint_configures_http_submission_transport(monkeypatch):
+    env = _make_envelope()
+    transaction_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    transport = RecordingSubmissionTransport(
+        {
+            "result": {
+                "code": 0,
+                "hash": cometbft_transaction_hash(transaction_bytes),
+            }
+        }
+    )
+    endpoints: list[str] = []
+
+    class FakeHttpSubmissionTransport:
+        def __init__(self, endpoint: str) -> None:
+            endpoints.append(endpoint)
+
+        def broadcast_tx_sync(self, tx_data: bytes, *, timeout_seconds: int) -> dict:
+            return transport.broadcast_tx_sync(tx_data, timeout_seconds=timeout_seconds)
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.consensus.service.HttpCometBftSubmissionTransport",
+        FakeHttpSubmissionTransport,
+    )
+    svc = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.NON_VALIDATOR,
+            cometbft_endpoint="tcp://cometbft.test:26657",
+        )
+    )
+
+    record = svc.submit_operation(env)
+
+    assert endpoints == ["http://cometbft.test:26657"]
+    assert record.status == SubmissionStatus.ADMITTED
+    assert transport.calls == [(transaction_bytes, 30)]
 
 
 def test_http_submission_transport_rejects_checktx_failure():
@@ -298,7 +336,7 @@ def _make_finalizable_envelope(**kw) -> LedgerOperationEnvelope:
 
 
 def test_resubmit_pending():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     env = _make_finalizable_envelope()
     svc.submit_operation(env)
@@ -310,7 +348,7 @@ def test_resubmit_pending():
 
 
 def test_resubmit_max_retries():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     env = _make_finalizable_envelope()
     svc.submit_operation(env)
@@ -335,7 +373,7 @@ def test_resubmit_no_effect_when_finalized():
 
 
 def test_monitor_inclusion_returns_pending():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     env = _make_envelope()
     svc.submit_operation(env)
@@ -520,7 +558,7 @@ def test_snapshot_and_restore():
 
 
 def test_submission_retry_count_increments():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     env = _make_envelope()
     svc.submit_operation(env)
@@ -534,7 +572,7 @@ def test_submission_retry_count_increments():
 
 
 def test_submission_status_transitions():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     env = _make_envelope()
     svc.submit_operation(env)

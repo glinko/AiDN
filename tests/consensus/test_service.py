@@ -68,7 +68,7 @@ def test_status_exposes_managed_consensus_unit() -> None:
 
 
 def test_service_non_validator_mode_pending():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     env = _make_envelope()
     rec = svc.submit_operation(env)
@@ -137,7 +137,7 @@ def test_list_submissions_filtered():
     svc = ConsensusService(cfg)
     svc.submit_operation(_make_envelope())
     # non-validator to get PENDING
-    cfg2 = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg2 = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc2 = ConsensusService(cfg2)
     svc2.submit_operation(_make_envelope())
     assert len(svc2.list_submissions(status=SubmissionStatus.PENDING)) == 1
@@ -156,7 +156,7 @@ def test_list_submissions_limited():
 
 
 def test_mark_included():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     env = _make_envelope()
     svc.submit_operation(env)
@@ -168,7 +168,7 @@ def test_mark_included():
 
 
 def test_mark_finalized():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     env = _make_envelope()
     svc.submit_operation(env)
@@ -197,7 +197,7 @@ def test_is_finalized_false():
 
 
 def test_submit_unknown_operation():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     assert svc.get_submission("no-such-id") is None
 
@@ -228,7 +228,7 @@ def test_metrics_validator_mode():
 
 
 def test_metrics_non_validator_mode():
-    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR)
+    cfg = ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
     svc = ConsensusService(cfg)
     m = svc.get_metrics()
     assert m["mode"] == "non_validator"
@@ -322,7 +322,9 @@ def test_config_defaults():
 
 
 def test_validator_abci_bootstrap_requires_validator_mode_and_durable_path(tmp_path):
-    service = ConsensusService(ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR))
+    service = ConsensusService(
+        ConsensusServiceConfig(mode=ConsensusMode.NON_VALIDATOR, cometbft_endpoint="")
+    )
     with pytest.raises(ValueError, match="only validator"):
         service.bootstrap_validator_abci(ledger_service=LedgerOperationService())
 
