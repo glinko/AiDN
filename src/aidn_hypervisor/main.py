@@ -649,10 +649,15 @@ def _build_default_consensus_service(
     # happen before ABCI bootstrap so local and canonical wallet sequences
     # start from the same state.
     durable_snapshot = ABCIStateStore(config.abci_state_path).load_current()
+    durable_operations = [
+        operation
+        for operation in (durable_snapshot or {}).get("ledger_operations", [])
+        if isinstance(operation, dict)
+    ]
     durable_operation_ids = {
         str(operation.get("operation_id"))
-        for operation in (durable_snapshot or {}).get("ledger_operations", [])
-        if isinstance(operation, dict) and operation.get("operation_id")
+        for operation in durable_operations
+        if operation.get("operation_id")
     }
     legacy_operation_ids = {
         str(operation.get("operation_id"))
@@ -661,7 +666,36 @@ def _build_default_consensus_service(
         and operation.get("operation_id")
     }
     missing_legacy_operation_ids = legacy_operation_ids - durable_operation_ids
-    if missing_legacy_operation_ids:
+    local_operation_ids = {
+        str(operation.get("operation_id"))
+        for operation in hypervisor_service.ledger_operation_service.snapshot_operations()
+        if operation.get("operation_id")
+    }
+    missing_durable_legacy_operations = [
+        operation
+        for operation in durable_operations
+        if operation.get("operation_type") == "ENDPOINT_UPDATE"
+        and operation.get("operation_id") not in local_operation_ids
+    ]
+    if missing_legacy_operation_ids and missing_durable_legacy_operations:
+        raise ValueError(
+            "validator legacy Endpoint migration found changes on both sides"
+        )
+    state_migrated = False
+    if missing_durable_legacy_operations:
+        restored_operation_ids = hypervisor_service.ledger_operation_service.restore_missing_operation_records(
+            missing_durable_legacy_operations,
+            {"ENDPOINT_UPDATE"},
+        )
+        if set(restored_operation_ids) != {
+            str(operation["operation_id"])
+            for operation in missing_durable_legacy_operations
+        }:
+            raise ValueError(
+                "validator legacy Endpoint migration did not restore the expected operations"
+            )
+        state_migrated = True
+    elif missing_legacy_operation_ids:
         if missing_legacy_operation_ids != legacy_operation_ids:
             raise ValueError(
                 "validator legacy Endpoint migration found a partially committed operation set"
@@ -673,7 +707,7 @@ def _build_default_consensus_service(
             raise ValueError(
                 "validator legacy Endpoint migration did not remove the expected operations"
             )
-        hypervisor_service._persist_state()
+        state_migrated = True
 
     genesis_accounts = _consensus_genesis_accounts()
     # Hypervisor state is restored before ABCI bootstrap.  Never reapply the
@@ -689,6 +723,8 @@ def _build_default_consensus_service(
         state_checkpoint_callback=hypervisor_service._persist_state,
     )
     consensus.restore_validator_abci_state_if_matching_ledger()
+    if state_migrated:
+        hypervisor_service._persist_state()
     return consensus
 
 

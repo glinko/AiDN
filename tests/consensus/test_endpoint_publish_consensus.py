@@ -161,3 +161,26 @@ def test_validator_migration_removes_legacy_local_endpoint_updates() -> None:
     assert len(removed) == 1
     assert ledger.snapshot_operations() == []
     assert ledger.wallet_next_sequence("wallet-legacy") == 1
+
+
+def test_validator_migration_restores_legacy_endpoint_update_from_consensus_snapshot() -> None:
+    ledger = LedgerOperationService()
+    record = ledger.record_operation(
+        operation_type="ENDPOINT_UPDATE",
+        origin_type="wallet",
+        fee_class="standard",
+        initiator_id="wallet-legacy",
+        sender_wallet="wallet-legacy",
+        fee_payer="wallet-legacy",
+        payload={"endpoint_id": "endpoint-whisper"},
+    )
+    local = LedgerOperationService()
+
+    restored = local.restore_missing_operation_records(
+        [record],
+        {"ENDPOINT_UPDATE"},
+    )
+
+    assert restored == [record["operation_id"]]
+    assert local.snapshot_operations() == [record]
+    assert local.wallet_next_sequence("wallet-legacy") == 2
