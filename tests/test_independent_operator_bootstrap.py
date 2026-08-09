@@ -101,6 +101,9 @@ def test_dashboard_rollout_accepts_the_canonical_image_command() -> None:
 
     assert 'CMD ["python", "-m", "uvicorn", "aidn_hypervisor.main:build_app"' in dockerfile
     assert f"expected_command='{canonical_command}'" in rollout
+    assert "--enable-dashboard-access" in rollout
+    assert "mcp-dashboard-access-master-key.b64" in rollout
+    assert "AIDN_SECRET_MANAGER_PATH=/state/mcp-dashboard-access-secrets.json" in rollout
 
 
 def test_cometbft_installer_is_pinned_idempotent_and_preserves_genesis() -> None:

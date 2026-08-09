@@ -14,6 +14,8 @@ Options:
   --image REPOSITORY   Image repository (default: aidn-hypervisor-lan-testnet-strict)
   --allow-dashboard-access-insecure-lan
                      Explicitly permit HTTP dashboard pairing on a controlled LAN
+  --enable-dashboard-access
+                     Provision persistent encrypted credential storage for this node
   --help               Show this help
 
 The script requires root because it recreates a Docker container. It preserves
@@ -27,6 +29,7 @@ requested_commit=''
 container='aidn-g5-abci'
 image_repository='aidn-hypervisor-lan-testnet-strict'
 allow_dashboard_access_insecure_lan=false
+enable_dashboard_access=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,6 +51,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --allow-dashboard-access-insecure-lan)
       allow_dashboard_access_insecure_lan=true
+      shift
+      ;;
+    --enable-dashboard-access)
+      enable_dashboard_access=true
       shift
       ;;
     --help|-h)
@@ -151,6 +158,23 @@ if [[ "$allow_dashboard_access_insecure_lan" == true ]]; then
   # It is only for a controlled test LAN; production pairing requires HTTPS.
   sed -i '/^AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN=/d' "$env_file"
   printf '%s\n' 'AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN=true' >> "$env_file"
+fi
+if [[ "$enable_dashboard_access" == true ]]; then
+  master_key_file="$state_source/mcp-dashboard-access-master-key.b64"
+  if [[ ! -f "$master_key_file" ]]; then
+    umask 077
+    openssl rand -base64 32 | tr -d '\n' > "$master_key_file"
+    printf '\n' >> "$master_key_file"
+    chmod 600 "$master_key_file"
+  fi
+  master_key=$(tr -d '\r\n' < "$master_key_file")
+  [[ "$master_key" =~ ^[A-Za-z0-9+/]{43}=$ ]] || {
+    echo "invalid dashboard access master key: $master_key_file" >&2
+    exit 1
+  }
+  sed -i '/^AIDN_SECRET_MANAGER_PATH=/d; /^AIDN_SECRET_MANAGER_MASTER_KEY=/d' "$env_file"
+  printf '%s\n' 'AIDN_SECRET_MANAGER_PATH=/state/mcp-dashboard-access-secrets.json' >> "$env_file"
+  printf 'AIDN_SECRET_MANAGER_MASTER_KEY=%s\n' "$master_key" >> "$env_file"
 fi
 
 consensus_endpoint=$(sed -n 's/^AIDN_COMETBFT_ENDPOINT=//p' "$env_file" | head -n 1)
