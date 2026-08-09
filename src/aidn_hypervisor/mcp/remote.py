@@ -21,7 +21,8 @@ import tempfile
 import threading
 from argparse import ArgumentParser
 from collections.abc import Callable
-from dataclasses import dataclass
+from copy import copy
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -49,6 +50,83 @@ class McpAgentCredentialResolver(Protocol):
     def resolve(self, token: str | None) -> Any | None: ...
 
     def record_use(self, credential_id: str) -> None: ...
+
+
+@dataclass(frozen=True)
+class McpAuthenticatedCredential:
+    """Credential facts used to bind one remote MCP transport session."""
+
+    credential_id: str
+    scopes: tuple[str, ...]
+
+
+class _ScopedMcpControlPlane:
+    """Apply one credential's scopes without changing the shared operator plane.
+
+    Mutating plans, approvals and audit history still belong to the canonical
+    control plane.  A short-lived shallow view only replaces the authority
+    context used by one remote transport session.
+    """
+
+    def __init__(self, control: McpControlPlane, credential: McpAuthenticatedCredential) -> None:
+        self._control = control
+        self._credential = credential
+        self._control_session_id = f"{control.session.control_session_id}:credential:{credential.credential_id}"
+
+    def _view(self) -> McpControlPlane:
+        base_session = self._control.session
+        view = copy(self._control)
+        view.session = replace(
+            base_session,
+            control_session_id=self._control_session_id,
+            agent_identity=f"mcp-credential:{self._credential.credential_id}",
+            scopes=frozenset(self._credential.scopes),
+            # Approval is held canonically by the operator control session.
+            approved_plan_hashes=base_session.approved_plan_hashes,
+        )
+        # A remote credential is a transport authority, not another persisted
+        # operator session. Plans and audit events are still persisted through
+        # the shared stores by the copied view.
+        view._persist_session = False
+        return view
+
+    def tool_definitions(self) -> list[dict[str, Any]]:
+        return self._view().tool_definitions()
+
+    def resource_definitions(self) -> list[dict[str, Any]]:
+        return self._view().resource_definitions()
+
+    def capabilities(self) -> dict[str, Any]:
+        view = self._view()
+        payload = view.capabilities()
+        # ``tools/list`` is the MCP discovery authority. Keep the capability
+        # summary consistent so a credential cannot infer a denied mutation
+        # from a global implementation inventory.
+        payload["implemented_tools"] = [item["name"] for item in view.tool_definitions()]
+        payload["implemented_resources"] = [item["uri"] for item in view.resource_definitions()]
+        return payload
+
+    def call_tool(self, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
+        view = self._view()
+        if name == "aidn.capabilities.get":
+            # Tool handlers are built once on the canonical plane. Handle this
+            # self-referential read explicitly so it cannot disclose the
+            # unfiltered global implementation inventory.
+            return view.success(self.capabilities())
+        return view.call_tool(name, arguments)
+
+    def read_resource(self, uri: str) -> dict[str, Any]:
+        if uri == "aidn://capabilities":
+            return {
+                "contents": [
+                    {
+                        "uri": uri,
+                        "mimeType": "application/json",
+                        "text": json.dumps(self.capabilities(), sort_keys=True, separators=(",", ":")),
+                    }
+                ]
+            }
+        return self._view().read_resource(uri)
 
 
 @dataclass(frozen=True)
@@ -340,9 +418,14 @@ class McpRemoteGateway:
             return False
         return hmac.compare_digest(_digest_token(token.strip()), expected)
 
-    def _agent_credential_id(self, request: Request) -> str | None:
+    def _agent_credential(self, request: Request) -> McpAuthenticatedCredential | None:
         if self._credential_resolver is None:
-            return "legacy-agent" if self._authorized(request, self._agent_token_hash) else None
+            if not self._authorized(request, self._agent_token_hash):
+                return None
+            return McpAuthenticatedCredential(
+                credential_id="legacy-agent",
+                scopes=tuple(sorted(self.control.session.scopes)),
+            )
         authorization = request.headers.get("authorization", "")
         scheme, separator, token = authorization.partition(" ")
         if not separator or scheme.lower() != "bearer" or not token.strip():
@@ -351,10 +434,16 @@ class McpRemoteGateway:
         if credential is None:
             return None
         credential_id = getattr(credential, "credential_id", None)
-        if not isinstance(credential_id, str) or not credential_id:
+        scopes = getattr(credential, "scopes", None)
+        if (
+            not isinstance(credential_id, str)
+            or not credential_id
+            or not isinstance(scopes, tuple)
+            or not all(isinstance(scope, str) and scope for scope in scopes)
+        ):
             return None
         self._credential_resolver.record_use(credential_id)
-        return credential_id
+        return McpAuthenticatedCredential(credential_id=credential_id, scopes=scopes)
 
     @staticmethod
     def _origin_is_rejected(request: Request) -> bool:
@@ -435,12 +524,12 @@ class McpRemoteGateway:
             return Response(status_code=status_code, headers=headers)
         return JSONResponse(status_code=status_code, headers=headers, content=payload)
 
-    def _new_transport_session(self, credential_id: str) -> tuple[str, McpJsonRpcServer] | None:
+    def _new_transport_session(self, credential: McpAuthenticatedCredential) -> tuple[str, McpJsonRpcServer] | None:
         if len(self._sessions) >= self.max_transport_sessions:
             return None
         session_id = "mcp-" + secrets.token_urlsafe(24)
-        server = McpJsonRpcServer(self.control)
-        self._sessions[session_id] = (credential_id, server)
+        server = McpJsonRpcServer(_ScopedMcpControlPlane(self.control, credential))
+        self._sessions[session_id] = (credential.credential_id, server)
         return session_id, server
 
     async def handle_agent(self, request: Request) -> Response:
@@ -448,8 +537,8 @@ class McpRemoteGateway:
             return JSONResponse(status_code=404, content=_json_error("MCP_REMOTE_DISABLED", "Remote MCP is disabled"))
         if self.require_tls and request.url.scheme != "https":
             return self._tls_required_response()
-        credential_id = self._agent_credential_id(request)
-        if credential_id is None:
+        credential = self._agent_credential(request)
+        if credential is None:
             return self._unauthorized()
         if self._origin_is_rejected(request):
             return self._forbidden_origin()
@@ -481,7 +570,7 @@ class McpRemoteGateway:
                         "initialize must not include an existing MCP session header",
                     ),
                 )
-            created = self._new_transport_session(credential_id)
+            created = self._new_transport_session(credential)
             if created is None:
                 return JSONResponse(
                     status_code=429,

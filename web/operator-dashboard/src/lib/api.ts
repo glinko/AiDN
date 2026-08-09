@@ -43,6 +43,21 @@ export type EnrollmentRequest = {
   expires_at: string
 }
 
+export type AgentPermission = {
+  scope: string
+  label: string
+  description: string
+  category: 'Read' | 'Actions' | string
+  risk: 'low' | 'high' | 'critical' | string
+  tool_names: string[]
+}
+
+export type AgentPermissionCatalog = {
+  items: AgentPermission[]
+  default_scopes: string[]
+  note: string
+}
+
 async function readDashboard<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
@@ -112,7 +127,9 @@ export const dashboardApi = {
   endpoints: (signal?: AbortSignal): Promise<EndpointPayload> => readDashboard('/operators/dashboard/endpoints', dashboardSchemas.endpoints, signal),
   accessStatus: (): Promise<DashboardAccessStatus> => writeDashboard('/operators/dashboard/access/status', { method: 'GET' }) as Promise<DashboardAccessStatus>,
   pairDashboard: (code: string) => writeDashboard('/operators/dashboard/access/pair', { method: 'POST', body: JSON.stringify({ code }) }),
-  createAgentCredential: (label: string) => writeDashboard<AccessCredential>('/operators/dashboard/access/credentials', { method: 'POST', body: JSON.stringify({ label, scopes: ['CONTROL_SESSION'] }) }),
+  createAgentCredential: (label: string, scopes?: string[]) => writeDashboard<AccessCredential>('/operators/dashboard/access/credentials', { method: 'POST', body: JSON.stringify({ label, ...(scopes ? { scopes } : {}) }) }),
+  agentPermissionCatalog: () => writeDashboard<AgentPermissionCatalog>('/operators/dashboard/access/permission-catalog', { method: 'GET' }),
+  updateAgentCredentialScopes: (credentialId: string, scopes: string[]) => writeDashboard<AccessCredential>(`/operators/dashboard/access/credentials/${credentialId}/scopes`, { method: 'PUT', body: JSON.stringify({ scopes }) }),
   rotateAgentCredential: (credentialId: string) => writeDashboard<AccessCredential>(`/operators/dashboard/access/credentials/${credentialId}/rotate`, { method: 'POST' }),
   revokeAgentCredential: (credentialId: string) => writeDashboard(`/operators/dashboard/access/credentials/${credentialId}`, { method: 'DELETE' }),
   logoutDashboardAccess: () => writeDashboard('/operators/dashboard/access/logout', { method: 'POST' }),

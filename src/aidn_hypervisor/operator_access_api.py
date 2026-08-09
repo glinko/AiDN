@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict
-from typing import Callable
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
@@ -11,6 +11,11 @@ from pydantic import BaseModel, Field
 
 from aidn_hypervisor.mcp.credentials import McpCredential, McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
+from aidn_hypervisor.mcp.permissions import (
+    DEFAULT_AGENT_READ_SCOPES,
+    normalize_agent_scopes,
+    permission_catalog_payload,
+)
 from aidn_hypervisor.operator_access import DashboardAccessService
 
 _COOKIE_NAME = "aidn_dashboard_access"
@@ -23,6 +28,10 @@ class PairingRequest(BaseModel):
 
 class CredentialCreateRequest(BaseModel):
     label: str = Field(min_length=1, max_length=96)
+    scopes: list[str] = Field(default_factory=lambda: list(DEFAULT_AGENT_READ_SCOPES), min_length=1, max_length=64)
+
+
+class CredentialScopeUpdateRequest(BaseModel):
     scopes: list[str] = Field(min_length=1, max_length=64)
 
 
@@ -108,8 +117,50 @@ def build_operator_access_router(
         if denied is not None:
             return denied
         assert credential_store is not None
-        issued = credential_store.create_credential(label=payload.label, scopes=tuple(payload.scopes))
+        try:
+            scopes = normalize_agent_scopes(payload.scopes)
+        except ValueError:
+            return JSONResponse(status_code=422, content={"error": {"code": "MCP_CREDENTIAL_SCOPE_INVALID"}})
+        issued = credential_store.create_credential(label=payload.label, scopes=scopes)
         return JSONResponse(status_code=201, content=_credential_payload(issued, reveal=True))
+
+    @router.get("/permission-catalog")
+    async def permission_catalog(request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        return JSONResponse(
+            status_code=200,
+            content={
+                "items": permission_catalog_payload(),
+                "default_scopes": list(DEFAULT_AGENT_READ_SCOPES),
+                "note": (
+                    "Permissions control MCP tool visibility and execution. They do not bypass "
+                    "operator plan approval or enable deferred tools."
+                ),
+            },
+        )
+
+    @router.put("/credentials/{credential_id}/scopes")
+    async def update_credential_scopes(
+        credential_id: str,
+        payload: CredentialScopeUpdateRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        assert credential_store is not None
+        try:
+            updated = credential_store.update_scopes(
+                credential_id,
+                scopes=normalize_agent_scopes(payload.scopes),
+            )
+        except ValueError:
+            return JSONResponse(status_code=422, content={"error": {"code": "MCP_CREDENTIAL_SCOPE_INVALID"}})
+        if invalidate_credential_sessions is not None:
+            invalidate_credential_sessions(credential_id)
+        return JSONResponse(status_code=200, content=_credential_payload(updated))
 
     @router.post("/credentials/{credential_id}/rotate", status_code=201)
     async def rotate_credential(credential_id: str, request: Request) -> Response:
@@ -176,7 +227,10 @@ def build_operator_access_router(
             return denied
         if enrollment_service is None:
             return JSONResponse(status_code=404, content={"error": {"code": "MCP_ENROLLMENT_DISABLED"}})
-        return JSONResponse(status_code=200, content={"items": [enrollment_payload(item) for item in enrollment_service.list_requests()]})
+        return JSONResponse(
+            status_code=200,
+            content={"items": [enrollment_payload(item) for item in enrollment_service.list_requests()]},
+        )
 
     @router.post("/enrollment-requests/{request_id}/approve")
     async def approve_enrollment(request_id: str, request: Request) -> Response:

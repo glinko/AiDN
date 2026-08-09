@@ -53,3 +53,15 @@ def test_approved_enrollment_seals_agent_token_to_request_public_key(tmp_path) -
 
     assert credentials.resolve(token) is not None
     assert service.retrieve(request_id=created.request_id, retrieval_secret="wrong") is None
+
+
+def test_legacy_control_session_scope_migrates_to_safe_read_permissions(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    credentials.create_credential(label="legacy agent", scopes=("CONTROL_SESSION",))
+
+    migrated = credentials.list_credentials()[0]
+
+    assert "CONTROL_SESSION" not in migrated.scopes
+    assert "NODE:READ" in migrated.scopes
+    assert "BUNDLE:ACTIVATE" not in migrated.scopes

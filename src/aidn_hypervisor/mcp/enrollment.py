@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
+from aidn_hypervisor.mcp.permissions import DEFAULT_AGENT_READ_SCOPES
 from aidn_hypervisor.secrets import FileSecretManager, SecretManagerError
 
 MCP_ENROLLMENT_STATE_HANDLE = "secret://mcp/enrollment-state"
@@ -90,7 +91,7 @@ class McpEnrollmentService:
         record = self._pending(state, request_id)
         issued = self._credential_store.create_credential(
             label=f"enrolled:{record['label']}",
-            scopes=("CONTROL_SESSION",),
+            scopes=DEFAULT_AGENT_READ_SCOPES,
         )
         assert issued.token is not None
         try:

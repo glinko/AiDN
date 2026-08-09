@@ -284,6 +284,20 @@ Continue only when node health is healthy and the intended operation has a
 clear resource, Provider and Endpoint relationship. A successful dashboard
 readiness check is useful context, but it does not grant the Agent new scope.
 
+## Agent Permission Boundary
+
+Each Dashboard credential has an explicit allow-listed MCP permission set.
+The operator changes it in **Settings -> Agent credentials -> Permissions**.
+The Dashboard closes existing MCP transport sessions when it saves a change;
+the Agent SHALL initialize again and use `tools/list` as the authoritative
+inventory. Granting a permission only exposes a corresponding implemented
+tool. It never bypasses plan approval, enables a deferred tool, exposes a
+private key, grants arbitrary shell access, or creates consensus authority.
+
+For Bundle activation the exact permission is `BUNDLE:ACTIVATE`. The Agent
+still creates a plan first and follows the returned approval policy before it
+applies that plan.
+
 ## Allowed Mutation Workflow
 
 ### Attach an already running Provider

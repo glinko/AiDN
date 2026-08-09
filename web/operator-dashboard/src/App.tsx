@@ -62,7 +62,7 @@ import {
   shortId,
 } from '@/lib/format'
 import { useDashboardData } from '@/hooks/use-dashboard'
-import { DashboardApiError, dashboardApi, type AccessCredential, type DashboardAccessStatus, type EnrollmentRequest } from '@/lib/api'
+import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type EnrollmentRequest } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
 import type { Bundle, Endpoint, ReadinessStep } from '@/lib/types'
 
@@ -630,15 +630,28 @@ function SettingsAccessWorkspace() {
   const [label, setLabel] = useState('Local agent')
   const [revealedToken, setRevealedToken] = useState<string | null>(null)
   const [enrollments, setEnrollments] = useState<EnrollmentRequest[]>([])
+  const [permissionCatalog, setPermissionCatalog] = useState<AgentPermissionCatalog | null>(null)
+  const [selectedCredentialId, setSelectedCredentialId] = useState<string | null>(null)
+  const [draftScopes, setDraftScopes] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
 
   async function refreshAccess() {
     try {
       setError(null)
-      setStatus(await dashboardApi.accessStatus())
-      const enrollmentResponse = await dashboardApi.enrollmentRequests().catch(() => undefined)
-      setEnrollments(enrollmentResponse?.items ?? [])
+      const nextStatus = await dashboardApi.accessStatus()
+      setStatus(nextStatus)
+      if (nextStatus.session.active) {
+        const [enrollmentResponse, catalog] = await Promise.all([
+          dashboardApi.enrollmentRequests().catch(() => undefined),
+          dashboardApi.agentPermissionCatalog().catch(() => undefined),
+        ])
+        setEnrollments(enrollmentResponse?.items ?? [])
+        setPermissionCatalog(catalog ?? null)
+      } else {
+        setEnrollments([])
+        setPermissionCatalog(null)
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The access control service did not respond.')
     }
@@ -664,7 +677,7 @@ function SettingsAccessWorkspace() {
     setBusy('create')
     try {
       setError(null)
-      const issued = await dashboardApi.createAgentCredential(label.trim())
+      const issued = await dashboardApi.createAgentCredential(label.trim(), permissionCatalog?.default_scopes)
       setRevealedToken(issued?.token ?? null)
       await refreshAccess()
     } catch (cause) {
@@ -696,6 +709,34 @@ function SettingsAccessWorkspace() {
     } finally { setBusy(null) }
   }
 
+  function openPermissions(credential: AccessCredential) {
+    setSelectedCredentialId(credential.credential_id)
+    setDraftScopes(credential.scopes)
+    setError(null)
+  }
+
+  function toggleScope(scope: string) {
+    setDraftScopes((current) => current.includes(scope)
+      ? current.filter((item) => item !== scope)
+      : [...current, scope])
+  }
+
+  async function savePermissions(credential: AccessCredential) {
+    if (draftScopes.length === 0) {
+      setError('Select at least one permission before saving.')
+      return
+    }
+    setBusy(`permissions:${credential.credential_id}`)
+    try {
+      setError(null)
+      await dashboardApi.updateAgentCredentialScopes(credential.credential_id, draftScopes)
+      setSelectedCredentialId(null)
+      await refreshAccess()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Permission update failed.')
+    } finally { setBusy(null) }
+  }
+
   async function logout() {
     setBusy('logout')
     try {
@@ -720,6 +761,18 @@ function SettingsAccessWorkspace() {
     } finally { setBusy(null) }
   }
 
+  const selectedCredential = status?.credentials.find((credential) => credential.credential_id === selectedCredentialId) ?? null
+  if (selectedCredential) {
+    const permissions = permissionCatalog?.items ?? []
+    return <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><ScreenHeading eyebrow="Agent authority" title={`Permissions: ${selectedCredential.label}`} detail="Select the MCP tools this credential may discover and execute. Saving closes its current MCP sessions, so the agent must reconnect." /><Button variant="outline" className="border-border bg-[#091725]" onClick={() => setSelectedCredentialId(null)}>Back to agents</Button></div>
+      {error ? <PanelError title="Permission update was not completed" detail={error} onRetry={() => void refreshAccess()} /> : null}
+      <Card className="border-amber-300/25 bg-amber-300/[0.04] py-0 shadow-none"><CardContent className="flex gap-3 p-4"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-amber-200" /><div><p className="text-sm font-semibold text-amber-100">Authority remains bounded</p><p className="mt-1 text-xs leading-5 text-amber-100/75">Permissions never expose private keys, arbitrary shell execution, consensus bypass, or operator approval. A mutation still follows the node plan and approval policy.</p></div></CardContent></Card>
+      {!permissionCatalog ? <PanelSkeleton rows={5} /> : ['Read', 'Actions'].map((group) => <Card key={group} className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">{group === 'Read' ? 'Observation rights' : 'Operational rights'}</p><CardTitle className="mt-1 text-lg font-semibold">{group === 'Read' ? 'Read-only tools' : 'Plan-bound actions'}</CardTitle></CardHeader><CardContent className="divide-y divide-border/70 p-0">{permissions.filter((permission) => permission.category === group).map((permission) => <label key={permission.scope} className="flex cursor-pointer gap-3 px-5 py-4 transition hover:bg-white/[0.02]"><input type="checkbox" checked={draftScopes.includes(permission.scope)} onChange={() => toggleScope(permission.scope)} disabled={selectedCredential.state !== 'active'} className="mt-1 size-4 accent-cyan-300" /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{permission.label}</p><span className={cn('rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase', permission.risk === 'critical' ? 'border-rose-300/30 text-rose-200' : permission.risk === 'high' ? 'border-amber-300/30 text-amber-200' : 'border-slate-500/30 text-slate-400')}>{permission.risk}</span></div><p className="mt-1 text-sm leading-5 text-muted-foreground">{permission.description}</p><p className="mt-2 font-mono text-[11px] text-slate-500">{permission.scope} · {permission.tool_names.join(', ')}</p></div></label>)}</CardContent></Card>)}
+      <div className="flex flex-col gap-3 rounded-xl border border-border/80 bg-[#07111d] p-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm leading-5 text-muted-foreground">{permissionCatalog?.note}</p><div className="flex shrink-0 gap-2"><Button variant="outline" className="border-border bg-[#091725]" onClick={() => setSelectedCredentialId(null)}>Cancel</Button><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={selectedCredential.state !== 'active' || draftScopes.length === 0 || busy === `permissions:${selectedCredential.credential_id}`} onClick={() => void savePermissions(selectedCredential)}>{busy === `permissions:${selectedCredential.credential_id}` ? 'Saving...' : 'Save permissions'}</Button></div></div>
+    </div>
+  }
+
   return (
     <div className="space-y-4">
       <ScreenHeading eyebrow="Local access boundary" title="Settings" detail="Pair this browser from the node terminal, then manage agent credentials without exposing existing secret values." />
@@ -732,7 +785,7 @@ function SettingsAccessWorkspace() {
         {status.enabled && status.session.active ? <>
           <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><CardTitle className="text-lg font-semibold">Agent enrollment requests</CardTitle><p className="mt-1 text-sm text-muted-foreground">Agents generate an ephemeral encryption key and wait here. Approving sends the credential only in an encrypted envelope.</p></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => void refreshAccess()}><RefreshCw />Refresh</Button></CardHeader><CardContent className="p-0">{enrollments.filter((request) => request.state === 'pending').length === 0 ? <EmptyState title="No pending agent requests" detail="An agent can request access without receiving an operator token or using the host shell." actionLabel="Refresh requests" onAction={() => void refreshAccess()} /> : <div className="divide-y divide-border/70">{enrollments.filter((request) => request.state === 'pending').map((request) => <div key={request.request_id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{request.label}</p><StatusBadge value={request.state} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-400">{request.key_fingerprint} · expires {new Date(request.expires_at).toLocaleTimeString()}</p></div><div className="flex gap-2"><Button size="sm" className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === request.request_id} onClick={() => void decideEnrollment(request, 'approve')}>Approve</Button><Button variant="outline" size="sm" className="border-rose-300/25 bg-[#091725] text-rose-50 hover:border-rose-300/60" disabled={busy === request.request_id} onClick={() => void decideEnrollment(request, 'reject')}>Reject</Button></div></div>)}</div>}</CardContent></Card>
           <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-start justify-between gap-4 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">MCP agent credentials</p><CardTitle className="mt-1 text-lg font-semibold">Issue a new agent token</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">The token is shown once. An agent authenticates to this node with it; existing values cannot be displayed again.</p></div><Button variant="outline" size="sm" className="shrink-0 border-border bg-[#091725]" disabled={busy === 'logout'} onClick={() => void logout()}><LogOut />Sign out</Button></CardHeader><CardContent className="space-y-4 p-5"><p className="rounded-md border border-border/70 bg-[#07111d] px-3 py-2 font-mono text-[11px] text-slate-400">Operator authority: {status.operator_authority.configured ? status.operator_authority.fingerprint : 'not configured'} · never shared with agents</p><div className="flex flex-col gap-3 sm:flex-row sm:items-end"><label className="grid flex-1 gap-2"><span className="eyebrow">Agent label</span><input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={96} placeholder="For example: coding-agent-node127" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none transition focus:border-cyan-300" /></label><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!label.trim() || busy === 'create'} onClick={() => void issueCredential()}><KeyRound />{busy === 'create' ? 'Issuing...' : 'Issue token'}</Button></div>{revealedToken ? <div className="rounded-lg border border-cyan-300/30 bg-cyan-300/[0.06] p-4"><div className="flex items-start justify-between gap-4"><div><p className="eyebrow text-cyan-100">Copy now</p><p className="mt-1 text-sm font-semibold text-cyan-50">New token is visible once</p></div><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725]" onClick={() => void navigator.clipboard.writeText(revealedToken)}><Copy />Copy</Button></div><code className="mt-3 block break-all rounded-md bg-black/25 p-3 font-mono text-xs leading-5 text-cyan-50">{revealedToken}</code><p className="mt-2 text-xs leading-5 text-cyan-100/75">Close this notice after transferring the value through an approved secret channel. Rotation immediately revokes the prior token.</p><Button variant="outline" size="sm" className="mt-3 border-border bg-[#091725]" onClick={() => setRevealedToken(null)}>I stored it</Button></div> : null}</CardContent></Card>
-          <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Active inventory</p><CardTitle className="mt-1 text-lg font-semibold">Agent credentials</CardTitle></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => void refreshAccess()}><RefreshCw />Refresh</Button></CardHeader><CardContent className="p-0">{status.credentials.length === 0 ? <EmptyState title="No agent credentials" detail="Issue a dedicated token for each agent or remote Hypervisor connection." actionLabel="Issue token" onAction={() => void issueCredential()} /> : <div className="divide-y divide-border/70">{status.credentials.map((credential) => <div key={credential.credential_id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{credential.label}</p><StatusBadge value={credential.state} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{credential.fingerprint} · last used {credential.last_used_at ? new Date(credential.last_used_at).toLocaleString() : 'never'}</p></div>{credential.state === 'active' ? <div className="flex gap-2"><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === credential.credential_id} onClick={() => void rotate(credential)}><RotateCcw />Rotate</Button><Button variant="outline" size="sm" className="border-rose-300/25 bg-transparent text-rose-100 hover:bg-rose-300/10" disabled={busy === credential.credential_id} onClick={() => void revoke(credential)}><Trash2 />Revoke</Button></div> : null}</div>)}</div>}</CardContent></Card>
+          <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Active inventory</p><CardTitle className="mt-1 text-lg font-semibold">Agent credentials</CardTitle></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => void refreshAccess()}><RefreshCw />Refresh</Button></CardHeader><CardContent className="p-0">{status.credentials.length === 0 ? <EmptyState title="No agent credentials" detail="Issue a dedicated token for each agent or remote Hypervisor connection." actionLabel="Issue token" onAction={() => void issueCredential()} /> : <div className="divide-y divide-border/70">{status.credentials.map((credential) => <div key={credential.credential_id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{credential.label}</p><StatusBadge value={credential.state} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{credential.fingerprint} · {credential.scopes.length} permissions · last used {credential.last_used_at ? new Date(credential.last_used_at).toLocaleString() : 'never'}</p></div>{credential.state === 'active' ? <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-cyan-300/30 bg-[#091725] text-cyan-100 hover:bg-cyan-300/10" disabled={busy === credential.credential_id} onClick={() => openPermissions(credential)}><ShieldCheck />Permissions</Button><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === credential.credential_id} onClick={() => void rotate(credential)}><RotateCcw />Rotate</Button><Button variant="outline" size="sm" className="border-rose-300/25 bg-transparent text-rose-100 hover:bg-rose-300/10" disabled={busy === credential.credential_id} onClick={() => void revoke(credential)}><Trash2 />Revoke</Button></div> : null}</div>)}</div>}</CardContent></Card>
         </> : null}
       </> : null}
     </div>

@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Callable
 
+from aidn_hypervisor.mcp.permissions import DEFAULT_AGENT_READ_SCOPES
 from aidn_hypervisor.secrets import FileSecretManager, SecretManagerError
 
 MCP_ACCESS_STATE_HANDLE = "secret://mcp/access-state"
@@ -107,6 +108,7 @@ class McpCredentialStore:
 
     def list_credentials(self) -> list[McpCredential]:
         state = self._load_state()
+        self._migrate_legacy_control_session_scope(state)
         return [self._credential(record) for record in state["credentials"]]
 
     def resolve(self, token: str | None) -> McpCredential | None:
@@ -114,6 +116,7 @@ class McpCredentialStore:
             return None
         token_digest = self._digest(token.strip())
         state = self._load_state()
+        self._migrate_legacy_control_session_scope(state)
         for record in state["credentials"]:
             if record["state"] != "active":
                 continue
@@ -148,6 +151,15 @@ class McpCredentialStore:
         state["credentials"].append(replacement)
         self._save_state(state)
         return self._credential(replacement, token=token)
+
+    def update_scopes(self, credential_id: str, *, scopes: tuple[str, ...]) -> McpCredential:
+        """Replace an active credential's permissions without revealing its token."""
+        normalized_scopes = self._normalize_scopes(scopes)
+        state = self._load_state()
+        record = self._find_active_record(state, credential_id)
+        record["scopes"] = list(normalized_scopes)
+        self._save_state(state)
+        return self._credential(record)
 
     def revoke_credential(self, credential_id: str) -> bool:
         state = self._load_state()
@@ -236,6 +248,22 @@ class McpCredentialStore:
             value=json.dumps(state, sort_keys=True, separators=(",", ":")).encode("utf-8"),
         )
 
+    def _migrate_legacy_control_session_scope(self, state: dict) -> None:
+        """Replace the former metadata-only enrollment scope with safe reads.
+
+        Releases before credential-scoped transport enforcement issued
+        ``CONTROL_SESSION``. It did not map to an MCP tool and therefore
+        cannot be preserved as an operator-selected permission.  Upgrade only
+        that exact legacy value, never a broader historical scope set.
+        """
+        changed = False
+        for record in state["credentials"]:
+            if record.get("scopes") == ["CONTROL_SESSION"]:
+                record["scopes"] = list(DEFAULT_AGENT_READ_SCOPES)
+                changed = True
+        if changed:
+            self._save_state(state)
+
     @staticmethod
     def _find_active_record(state: dict, credential_id: str) -> dict:
         for record in state["credentials"]:
@@ -253,7 +281,7 @@ class McpCredentialStore:
     def _normalize_scopes(scopes: tuple[str, ...]) -> tuple[str, ...]:
         if not scopes or any(not isinstance(scope, str) or not scope.strip() for scope in scopes):
             raise ValueError("MCP credential scopes must be non-empty strings")
-        return tuple(sorted(set(scope.strip() for scope in scopes)))
+        return tuple(sorted({scope.strip() for scope in scopes}))
 
     @staticmethod
     def _digest(token: str) -> str:

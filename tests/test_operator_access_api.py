@@ -61,6 +61,45 @@ def test_credential_mutation_requires_pairing_and_reveals_only_new_value(tmp_pat
     assert client.post("/operators/dashboard/access/logout").status_code == 204
 
 
+def test_paired_operator_can_list_and_update_only_known_agent_permissions(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    invalidated: list[str] = []
+    app = FastAPI()
+    app.include_router(build_operator_access_router(
+        access_service=access,
+        credential_store=credentials,
+        allow_insecure_lan=True,
+        invalidate_credential_sessions=invalidated.append,
+    ))
+    client = TestClient(app)
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+
+    catalog = client.get("/operators/dashboard/access/permission-catalog")
+    assert catalog.status_code == 200
+    assert any(item["scope"] == "BUNDLE:ACTIVATE" for item in catalog.json()["items"])
+
+    created = client.post(
+        "/operators/dashboard/access/credentials",
+        json={"label": "agent", "scopes": ["NODE:READ"]},
+    )
+    assert created.status_code == 201
+    credential_id = created.json()["credential_id"]
+    updated = client.put(
+        f"/operators/dashboard/access/credentials/{credential_id}/scopes",
+        json={"scopes": ["NODE:READ", "BUNDLE:ACTIVATE"]},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["scopes"] == ["BUNDLE:ACTIVATE", "NODE:READ"]
+    assert invalidated == [credential_id]
+    assert client.put(
+        f"/operators/dashboard/access/credentials/{credential_id}/scopes",
+        json={"scopes": ["*"]},
+    ).status_code == 422
+
+
 def test_agent_enrollment_is_approved_only_by_a_paired_dashboard(tmp_path) -> None:
     manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
     credentials = McpCredentialStore(secret_manager=manager)

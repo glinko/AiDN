@@ -57,6 +57,32 @@ the credential locally after approval.
 The agent must not make the operator copy a token into chat. Approval is the
 only required operator action after Settings is unlocked.
 
+## Permission Changes
+
+Enrollment grants the safe read-only profile. It does not authorize provider
+attachment, Bundle activation, or Bundle retirement. When an agent needs an
+additional implemented MCP operation, it SHALL stop at the permission boundary
+and send this prompt:
+
+```text
+AiDN needs an additional MCP permission to continue.
+
+Node Dashboard: <dashboard-url>
+Open: Settings -> Agent credentials -> Permissions
+Agent: <credential label or fingerprint>
+Requested permission: <scope>
+Reason: <specific operation>
+
+Saving the change disconnects my current MCP session. I will reconnect and
+verify that the requested tool is advertised. This permission does not bypass
+the separate operator approval required by the operation plan.
+```
+
+The agent SHALL never ask for wildcard scopes, operator authority, a Wallet
+key, shell access, or a pairing code. If the requested tool is not present in
+`tools/list` after reconnecting, it is deferred or unavailable; a permission
+does not make an unimplemented tool exist.
+
 ## Unlocking Settings
 
 If the operator says that Settings is locked, the agent gives this additional

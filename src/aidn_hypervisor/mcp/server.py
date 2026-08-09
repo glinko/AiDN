@@ -447,6 +447,7 @@ class McpControlPlane:
             },
         }
         self.session = self._restore_session(session, persisted_state)
+        self._persist_session = True
         self._plans = self._restore_plans(persisted_state)
         self._idempotency = self._restore_idempotency(persisted_state)
         self._emergency_stop = self._restore_emergency_stop(persisted_state)
@@ -581,7 +582,8 @@ class McpControlPlane:
             return
         state = self.mcp_state_store.load()
         sessions = state.setdefault("sessions", {})
-        sessions[self.session.control_session_id] = self.session.to_record()
+        if self._persist_session:
+            sessions[self.session.control_session_id] = self.session.to_record()
         plans = state.setdefault("plans", {})
         plans.update(_json_safe(self._plans))
         state["audit_events"] = self.audit.events() if hasattr(self, "audit") else []
