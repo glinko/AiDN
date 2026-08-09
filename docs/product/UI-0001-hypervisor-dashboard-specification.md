@@ -179,11 +179,23 @@ The following SHALL hold:
 - **No secret leakage.** UI views never expose reusable credentials, secret handles, private Provider topology, or cross-Session data.
 - **Architecture fidelity.** The UI reflects actual protocol ownership and does not create convenience abstractions that obscure Runtime, Endpoint, or Session boundaries.
 
-## 11. Future Extensions
+## 11. Reference Implementation
+
+The protocol and HTTP API SHALL remain framework-independent. The recommended
+reference implementation is React/Vite with Tailwind CSS and shadcn/ui
+primitives, TanStack Query, TanStack Table, Zustand, Zod, Lucide, and Recharts.
+Those choices are not a network requirement; they are the maintained reference
+for an operator UI that follows this specification.
+
+The initial React route may coexist with the legacy static shell during staged
+migration. A replacement workspace SHALL not become the default until it has
+functional parity with the operator actions it replaces.
+
+## 12. Future Extensions
 
 Potential additions include Storage, COMET Objects, Peer Explorer, AI Scheduler, GPU Allocator, Automation, and Developer Tools. They SHALL extend the primary navigation model without duplicating Bundle, Endpoint, or Runtime ownership.
 
-## 12. Implementation Order
+## 13. Implementation Order
 
 This specification is post-MVP product work. Implementation SHALL proceed as:
 

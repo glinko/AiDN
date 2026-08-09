@@ -370,7 +370,7 @@ fi
 
 echo "Installing AiDN operator '$operator_id' from ref '$ref'" >&2
 "${sudo_cmd[@]}" apt-get update
-"${sudo_cmd[@]}" apt-get install -y --no-install-recommends ca-certificates curl git python3 python3-venv
+"${sudo_cmd[@]}" apt-get install -y --no-install-recommends ca-certificates curl git python3 python3-venv xz-utils
 
 export PATH="$HOME/.local/bin:$PATH"
 if ! command -v uv >/dev/null 2>&1; then
@@ -394,6 +394,12 @@ fi
 git -C "$install_dir" checkout --detach FETCH_HEAD
 commit="$(git -C "$install_dir" rev-parse HEAD)"
 "$uv_bin" --directory "$install_dir" sync --all-extras --frozen
+
+node_root="$(bash "$install_dir/tools/install-node-runtime-ubuntu.sh" \
+  --output-dir "$data_dir/tooling/node")"
+bash "$install_dir/tools/build-operator-dashboard.sh" \
+  --project-root "$install_dir" --node-root "$node_root" \
+  --tooling-dir "$data_dir/tooling" >/dev/null
 
 mkdir -p "$data_dir"
 chmod 700 "$data_dir"

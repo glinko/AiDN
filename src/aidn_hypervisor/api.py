@@ -7,12 +7,16 @@ from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from aidn_hypervisor.accounting.models import UsageAcknowledgement, UsageReport
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
-from aidn_hypervisor.dashboard import build_market_payload, load_dashboard_html
+from aidn_hypervisor.dashboard import (
+    build_market_payload,
+    find_react_dashboard_asset,
+    load_dashboard_html,
+)
 from aidn_hypervisor.domain.models import (
     AllocationRequest,
     BundleConfig,
@@ -2891,6 +2895,37 @@ def build_api_router(
     @router.get("/operators/dashboard", response_class=HTMLResponse)
     async def operator_dashboard() -> str:
         return load_dashboard_html()
+
+    @router.get("/operators/dashboard/react", include_in_schema=False)
+    @router.get("/operators/dashboard/react/", include_in_schema=False)
+    async def operator_react_dashboard() -> FileResponse:
+        index = find_react_dashboard_asset()
+        if index is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    "React dashboard assets are not installed. "
+                    "Use the release image or build web/operator-dashboard first."
+                ),
+            )
+        return FileResponse(
+            index,
+            media_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.get("/operators/dashboard/react/{asset_path:path}", include_in_schema=False)
+    async def operator_react_dashboard_asset(asset_path: str) -> FileResponse:
+        asset = find_react_dashboard_asset(asset_path)
+        if asset is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="React dashboard asset was not found.",
+            )
+        return FileResponse(
+            asset,
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
 
     @router.post("/operators/wallet/quote")
     async def wallet_quote(request: WalletQuoteRequest) -> dict:

@@ -76,7 +76,7 @@ if [[ "${ID:-}" != 'ubuntu' ]]; then
 fi
 
 sudo apt-get update
-sudo apt-get install -y --no-install-recommends ca-certificates curl git python3 python3-venv
+sudo apt-get install -y --no-install-recommends ca-certificates curl git python3 python3-venv xz-utils
 
 if ! command -v uv >/dev/null 2>&1; then
   curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/install.sh | sh
@@ -99,6 +99,12 @@ fi
 
 commit="$(git -C "$install_dir" rev-parse HEAD)"
 "$uv_bin" --directory "$install_dir" sync --all-extras --frozen
+
+node_root="$(bash "$install_dir/tools/install-node-runtime-ubuntu.sh" \
+  --output-dir "$data_dir/tooling/node")"
+bash "$install_dir/tools/build-operator-dashboard.sh" \
+  --project-root "$install_dir" --node-root "$node_root" \
+  --tooling-dir "$data_dir/tooling" >/dev/null
 
 consensus_service_name=''
 consensus_home=''

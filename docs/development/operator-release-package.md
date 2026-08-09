@@ -7,6 +7,11 @@ store, provisions a pinned CometBFT process, and manages both processes with
 user-level systemd services. It also measures scheduler capacity from the host
 and records the result before the Hypervisor first starts.
 
+The bootstrap also installs a pinned Node runtime below the operator data
+directory, builds the React dashboard, and stages its static assets before the
+Hypervisor starts. Node and pnpm are build-only tools; the running Hypervisor
+does not require a JavaScript process.
+
 The installer is intentionally safe by default:
 
 - the API binds to `127.0.0.1:8766`;
@@ -112,6 +117,11 @@ key, service name and public bundle path. It contains no private key or master
 key. `resource-capacity.json` contains no credentials or process payloads. It
 records CPU affinity/cgroup limits, RAM capacity, and GPU VRAM when
 `nvidia-smi` is available. Unknown GPU capacity remains explicitly unreported.
+
+The React preview is available at `/operators/dashboard/react`; the legacy
+dashboard remains at `/operators/dashboard` during migration. The bootstrap
+creates the preview assets automatically, so no operator needs to run a manual
+frontend build command.
 
 Verify the service with:
 

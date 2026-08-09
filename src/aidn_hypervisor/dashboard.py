@@ -3,6 +3,25 @@ from pathlib import Path
 from aidn_hypervisor.registry_models import RegistryDiscoveryQuery
 
 
+def react_dashboard_directory() -> Path:
+    """Return the optional production build for the React dashboard slice."""
+    return Path(__file__).with_name("static") / "react-dashboard"
+
+
+def find_react_dashboard_asset(asset_path: str | None = None) -> Path | None:
+    """Resolve a built React asset without permitting path traversal."""
+    root = react_dashboard_directory().resolve()
+    relative_path = Path(asset_path or "index.html")
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        return None
+    candidate = (root / relative_path).resolve()
+    if not candidate.is_relative_to(root):
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
 def load_dashboard_html() -> str:
     path = Path(__file__).with_name("static") / "operator_dashboard.html"
     return path.read_text(encoding="utf-8")
