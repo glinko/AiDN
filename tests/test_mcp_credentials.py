@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime, timedelta
 
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
+from aidn_hypervisor.operator_access import DashboardAccessService
 from aidn_hypervisor.secrets import FileSecretManager
 
 
 def _manager(tmp_path) -> FileSecretManager:
     return FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.value = datetime(2026, 8, 9, 17, 0, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        return self.value
+
+    def advance(self, *, seconds: int) -> None:
+        self.value += timedelta(seconds=seconds)
 
 
 def test_store_resolves_active_token_but_lists_only_redacted_metadata(tmp_path) -> None:
@@ -61,3 +74,18 @@ def test_invalid_pairing_attempt_does_not_consume_valid_code(tmp_path) -> None:
 
     assert store.consume_pairing_code("wrong-code") is False
     assert store.consume_pairing_code(pairing.code) is True
+
+
+def test_access_session_requires_one_pairing_exchange_and_expires(tmp_path) -> None:
+    clock = _Clock()
+    store = McpCredentialStore(secret_manager=_manager(tmp_path), now=clock)
+    access = DashboardAccessService(store=store, now=clock)
+    pairing = access.create_pairing(ttl_seconds=600)
+
+    session = access.exchange_pairing_code(pairing.code)
+
+    assert session is not None
+    assert access.authorize(session.session_id) is True
+    assert access.exchange_pairing_code(pairing.code) is None
+    clock.advance(seconds=901)
+    assert access.authorize(session.session_id) is False
