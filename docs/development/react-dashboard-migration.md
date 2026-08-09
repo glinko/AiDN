@@ -86,6 +86,22 @@ escaping through a symlink.
 The package-data declaration includes the built entry point and assets so a
 wheel created from the release image retains the dashboard.
 
+## Existing Docker Deployments
+
+For an existing host-network Hypervisor container, use the reviewed rollout
+script rather than reconstructing its Docker invocation by hand:
+
+```bash
+sudo bash tools/rollout-operator-dashboard-ubuntu.sh \
+  --repo /home/user/aidn-dashboard-build-52aa94b \
+  --commit <reviewed-commit>
+```
+
+The script verifies the expected `aidn-g5-abci` topology, preserves its
+`/state` bind mount and AiDN runtime environment, keeps the previous container
+as a stopped rollback target, and restores it automatically if health,
+consensus, or React asset checks fail.
+
 ## API Contract
 
 The React slice consumes only existing read endpoints:
