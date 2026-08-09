@@ -36,9 +36,16 @@ service, deploy a model, spend Q, or modify consensus.
 
 ## Node 127 Assignment
 
-`192.168.88.127` is `node4` in the private controlled AiDN LAN testnet. It is
-a CometBFT validator host and an AiDN Hypervisor operator node used for
+`192.168.88.127` is `node4` in the private controlled AiDN LAN testnet. Its
+current profile is an AiDN Hypervisor operator node with
+`AIDN_CONSENSUS_MODE=non_validator`; it submits to the configured CometBFT RPC
+endpoint instead of binding its own validator RPC or P2P ports. It is used for
 integration, recovery and MCP acceptance work.
+
+Therefore, closed local ports `26656`, `26657` and `8545` on this host are not
+evidence that consensus is down. Verify the configured consensus endpoint with
+`aidn.network.status` and treat the result returned by that control-plane read
+model as the node's consensus evidence.
 
 It is **not** a public Internet node, production network, or proof of
 organizational independence. The MVP accepts it as a separate controlled-testnet
