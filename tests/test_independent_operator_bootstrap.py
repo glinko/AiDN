@@ -109,6 +109,19 @@ def test_dashboard_rollout_accepts_the_canonical_image_command() -> None:
     assert "aidn_hypervisor.operator_cli" in rollout
 
 
+def test_agent_enrollment_playbook_keeps_secrets_out_of_operator_prompts() -> None:
+    playbook = Path("docs/development/agent-enrollment-operator-playbook.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Settings -> Agent enrollment requests" in playbook
+    assert "Key fingerprint" in playbook
+    assert "Do not send me" in playbook
+    assert "any token, pairing code" in playbook
+    assert "MCP_ENROLLMENT_DISABLED" in playbook
+    assert "aidn-operator pair" in playbook
+
+
 def test_cometbft_installer_is_pinned_idempotent_and_preserves_genesis() -> None:
     script = Path("tools/install-cometbft-ubuntu.sh").read_text(encoding="utf-8")
 

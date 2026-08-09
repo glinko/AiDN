@@ -12,6 +12,8 @@ Use this file together with:
   transport details;
 - [MCP-0001 Implementation Profile](../product/MCP-0001-node-control-server-implementation-profile.md)
   for authority limits;
+- [Agent Enrollment Operator Playbook](./agent-enrollment-operator-playbook.md)
+  for the exact messages an agent gives an operator during access setup;
 - [Controlled LAN Testnet](./controlled-lan-testnet.md) for the testnet
   topology and evidence boundary.
 
@@ -93,9 +95,10 @@ An agent must never request, infer, store or use the operator credential.
 
 ### Dashboard-Native Enrollment
 
-For a new agent, the preferred path does not require the operator to run a
-host-terminal pairing command or copy a token. The agent creates an ephemeral
-X25519 encryption key locally and submits its public key to:
+For a new agent, the preferred path does not require copying a token or giving
+the agent host-shell access. The operator may need to unlock the Settings
+screen once with a local pairing code. The agent creates an ephemeral X25519
+encryption key locally and submits its public key to:
 
 ```text
 POST /operators/dashboard/access/agent-enrollment/requests
@@ -113,6 +116,12 @@ ephemeral X25519 public key. The browser sees only request metadata; it never
 receives the token. The agent decrypts the returned envelope locally, stores
 the token in its normal secret mechanism, and then initializes `/mcp`.
 
+After submitting a request, the agent SHALL tell the operator only the node
+URL, request label, key fingerprint and expiration time. It SHALL NOT show or
+ask for the retrieval secret, pairing code, MCP credential or operator token.
+The exact interaction wording and recovery steps are normative for this MVP in
+[Agent Enrollment Operator Playbook](./agent-enrollment-operator-playbook.md).
+
 Enrollment requests expire after ten minutes. They are designed for controlled
 LAN MVP operation; public-network use additionally requires the production
 HTTPS/mTLS transport profile and admission/rate-limit policy.
@@ -128,7 +137,11 @@ Node operator secret store
     -> model calls named MCP tools without receiving the token text
 ```
 
-The operator creates a dedicated credential from the node's React dashboard:
+### Legacy Manual Credential Transfer
+
+Use this path only when the receiving client cannot implement encrypted agent
+enrollment. The operator creates a dedicated credential from the node's React
+dashboard:
 
 1. On the node terminal, run `aidn-operator pair`.
 2. Open `Settings` in the React dashboard and paste the one-time pairing code.
