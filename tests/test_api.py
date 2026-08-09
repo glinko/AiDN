@@ -3199,6 +3199,18 @@ def test_operator_dashboard_shell_route_returns_terminal_layout_markup() -> None
     assert 'class="validation-donut"' in response.text
 
 
+def test_operator_dashboard_shell_recovers_from_individual_initial_payload_failures() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard")
+
+    assert response.status_code == 200
+    assert "Promise.allSettled" in response.text
+    assert "dashboardRequestTimeoutMs" in response.text
+    assert "Previously loaded data remains visible where available." in response.text
+    assert "data-dashboard-refresh" in response.text
+
+
 def test_operator_services_route_returns_canonical_service_inventory() -> None:
     client = TestClient(build_app(service=_service()))
 

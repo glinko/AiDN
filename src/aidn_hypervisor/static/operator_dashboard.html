@@ -3064,6 +3064,7 @@
       requests: "/operators/dashboard/requests",
     };
     const resourceProbePath = "/operators/resources/probe";
+    const dashboardRequestTimeoutMs = 15000;
 
     const walletEndpoints = {
       dashboard: "/operators/dashboard/wallet",
@@ -3134,6 +3135,8 @@
       screen: "home",
       interfaceMode: "basic",
       payloads: {},
+      dashboardLoading: false,
+      dashboardLoadErrors: {},
       selectedMarketCandidateId: null,
       selectedFleetBundleId: null,
       selectedProviderId: null,
@@ -6347,6 +6350,22 @@
       `;
     }
 
+    function renderDashboardLoadStatus() {
+      if (state.dashboardLoading) {
+        return `<div class="notice">Loading live Hypervisor state...</div>`;
+      }
+      const failedScreens = Object.keys(state.dashboardLoadErrors);
+      if (!failedScreens.length) {
+        return "";
+      }
+      return `
+        <div class="notice bad">
+          Some dashboard data is unavailable: ${escapeHtml(failedScreens.join(", "))}. Previously loaded data remains visible where available.
+          <button class="secondary-button" type="button" data-dashboard-refresh>Retry loading</button>
+        </div>
+      `;
+    }
+
     function renderHomeWorkspace() {
       {
         const home = state.payloads.home || {};
@@ -6373,6 +6392,7 @@
         const shortStatus = (bundle) => bundle.enabled ? (bundle.runtime_status || "running") : "stopped";
 
         return `
+          ${renderDashboardLoadStatus()}
           <section class="home-dashboard" aria-label="Hypervisor overview">
             <div class="overview-title-row">
               <div>
@@ -10760,8 +10780,34 @@
     }
 
     async function loadScreen(name) {
-      const response = await fetch(endpoints[name], { cache: "no-store" });
-      state.payloads[name] = await response.json();
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), dashboardRequestTimeoutMs);
+      try {
+        const response = await fetch(endpoints[name], {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        let payload = null;
+        try {
+          payload = await response.json();
+        } catch {
+          throw new Error(`${name} returned an invalid response`);
+        }
+        if (!response.ok) {
+          throw new Error(extractErrorMessage(payload) || `${name} returned ${response.status}`);
+        }
+        state.payloads[name] = payload;
+        delete state.dashboardLoadErrors[name];
+        return payload;
+      } catch (error) {
+        state.dashboardLoadErrors[name] =
+          error?.name === "AbortError"
+            ? `Timed out after ${Math.round(dashboardRequestTimeoutMs / 1000)} seconds`
+            : String(error);
+        return null;
+      } finally {
+        window.clearTimeout(timeout);
+      }
     }
 
     async function loadSelectedRequestTaskDetail(taskId) {
@@ -10835,7 +10881,9 @@
     }
 
     async function refreshBootstrapPayloads() {
-      await Promise.all([
+      state.dashboardLoading = true;
+      render();
+      await Promise.allSettled([
         loadScreen("home"),
         loadScreen("readiness"),
         loadScreen("fleet"),
@@ -10846,6 +10894,7 @@
         loadScreen("market"),
         loadScreen("remote"),
       ]);
+      state.dashboardLoading = false;
       render();
     }
 
@@ -10880,7 +10929,10 @@
     }
 
     async function bootstrap() {
-      await Promise.all(Object.keys(endpoints).map((name) => loadScreen(name)));
+      state.dashboardLoading = true;
+      render();
+      await Promise.allSettled(Object.keys(endpoints).map((name) => loadScreen(name)));
+      state.dashboardLoading = false;
       render();
     }
 
@@ -13685,6 +13737,12 @@
           } else if (button.dataset.walletAction === "resolve") {
             void resolveSelectedWalletDispute();
           }
+        });
+      });
+
+      document.querySelectorAll("[data-dashboard-refresh]").forEach((button) => {
+        button.addEventListener("click", () => {
+          void refreshBootstrapPayloads();
         });
       });
 
