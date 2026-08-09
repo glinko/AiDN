@@ -47,10 +47,13 @@ whenever TLS is in use.
 
 ### Pairing
 
-`aidn-operator pair` is a local-host command. It creates a random one-time
-pairing code with a ten-minute TTL and writes only its digest and expiry to the
-encrypted record. The command prints the node URL, expiry and raw code to its
-own terminal; it does not write the code to normal logs or state JSON.
+`aidn-operator pair` is a local-host command. Bootstrap installs a mode-0700
+operator wrapper that supplies local Secret Manager configuration without
+requiring the operator to paste its master key into a shell. The command creates
+a random one-time pairing code with a ten-minute TTL and writes only its digest
+and expiry to the encrypted record. The command prints the node URL, expiry and
+raw code to its own terminal; it does not write the code to normal logs or state
+JSON.
 
 The Settings UI exchanges the code once for a fifteen-minute dashboard access
 session. Successful consumption atomically removes the pairing record. A
@@ -127,6 +130,11 @@ unless the dashboard access policy allows the request:
   sessions, and returns the replacement only once;
 * `POST /operators/dashboard/access/credentials/{credential_id}/revoke`
   revokes a credential and invalidates its transport sessions.
+
+These local-operations routes are explicitly exempt from validator transaction
+submission because they cannot change canonical Ledger, Wallet, Endpoint, or
+consensus state. The validator write boundary permits only this fixed route set,
+not a prefix wildcard.
 
 Protected endpoints return `401 DASHBOARD_ACCESS_REQUIRED` with no secret or
 credential-specific detail. Invalid pairing exchanges return

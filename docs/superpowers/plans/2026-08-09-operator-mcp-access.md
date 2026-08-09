@@ -30,12 +30,13 @@
 - Create: `src/aidn_hypervisor/operator_access.py`
 - Create: `src/aidn_hypervisor/operator_cli.py`
 - Modify: `pyproject.toml`
+- Modify: `tools/aidn-operator-bootstrap-ubuntu.sh`
 - Modify: `tests/test_mcp_credentials.py`
 
 - [ ] **Step 1: Write failing access-session test.** It exchanges one pairing code, asserts one valid session, asserts second exchange fails, advances a clock beyond 15 minutes, then asserts authorization fails.
 - [ ] **Step 2: Run the focused test.** Expected: RED because `DashboardAccessService` is absent.
 - [ ] **Step 3: Implement bounded opaque in-memory sessions.** Sessions expire after 15 minutes and never persist across restart; code remains in encrypted store.
-- [ ] **Step 4: Register `aidn-operator = "aidn_hypervisor.operator_cli:main"`.** The `pair` subcommand loads the configured secret manager, prints dashboard URL, UTC expiry, and raw 10-minute code only to local stdout, and exits nonzero if configuration is absent.
+- [ ] **Step 4: Register `aidn-operator = "aidn_hypervisor.operator_cli:main"` and extend bootstrap.** Bootstrap writes a mode-0700 `aidn-operator` wrapper below the operator data directory and links it into `~/.local/bin`; the wrapper supplies only the local secret-manager path and master-key file to the CLI. The `pair` subcommand prints dashboard URL, UTC expiry, and raw 10-minute code only to local stdout, and exits nonzero if configuration is absent.
 - [ ] **Step 5: Run `uv run pytest tests/test_mcp_credentials.py -q`.** Expected: GREEN.
 - [ ] **Step 6: Commit.** Stage the two new source files, `pyproject.toml`, and test; commit message: `feat: add operator dashboard pairing`.
 
@@ -62,7 +63,7 @@
 - [ ] **Step 1: Write failing API test.** Assert unpaired credential creation returns 401; issue pairing code; exchange it on `/operators/dashboard/access/pair`; then assert creation returns 201 with a token while subsequent status contains no token.
 - [ ] **Step 2: Run `uv run pytest tests/test_operator_access_api.py -q`.** Expected: RED because routes are absent.
 - [ ] **Step 3: Implement dedicated API endpoints.** Include status, pair, logout, create, rotate, and revoke. Pairing failure is generic. Mutations require session cookie. Set HTTP-only, SameSite-Strict cookie scoped to access routes; require TLS unless `AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN=true`.
-- [ ] **Step 4: Wire `FileSecretManager`, `McpCredentialStore`, `DashboardAccessService`, and gateway resolver in `build_app`.** Import environment agent token once as `legacy-imported`, then authorize from encrypted store. Without a secret manager, preserve legacy MCP and expose only redacted disabled status.
+- [ ] **Step 4: Wire `FileSecretManager`, `McpCredentialStore`, `DashboardAccessService`, and gateway resolver in `build_app`.** Import environment agent token once as `legacy-imported`, then authorize from encrypted store. Without a secret manager, preserve legacy MCP and expose only redacted disabled status. Extend `_is_validator_consensus_write_path` with the exact dashboard access mutation paths only; this local secret boundary cannot use a wildcard exemption.
 - [ ] **Step 5: Run `uv run pytest tests/test_operator_access_api.py tests/test_mcp_remote.py tests/test_mcp_credentials.py -q`.** Expected: GREEN.
 - [ ] **Step 6: Commit.** Stage API/router wiring and tests; commit message: `feat: add protected dashboard credential API`.
 
