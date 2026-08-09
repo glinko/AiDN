@@ -165,17 +165,32 @@ class AIDNABCIApplication:
         expected_hash = self._snapshot_app_hash(snapshot)
         actual_hash = self._compute_state_hash()
         if expected_hash != actual_hash:
-            raise ABCIStateStoreError("durable ABCI state does not match the restored Hypervisor Ledger")
+            # Older validators included transaction_hash in the operation
+            # projection.  That field is transport evidence, not consensus
+            # state, so migrate only when the mismatch is exactly that known
+            # serialization change. Any other divergence remains fatal.
+            legacy_hash = self._compute_state_hash(include_transaction_hash_metadata=True)
+            if expected_hash != legacy_hash:
+                raise ABCIStateStoreError("durable ABCI state does not match the restored Hypervisor Ledger")
+            self._restore_snapshot_metadata(snapshot, app_hash_override=actual_hash)
+            self._restored_from_store = True
+            self._persist_abci_state()
+            return True
         self._restore_snapshot_metadata(snapshot)
         self._restored_from_store = True
         return True
 
-    def _restore_snapshot_metadata(self, snapshot: dict[str, Any]) -> None:
+    def _restore_snapshot_metadata(
+        self,
+        snapshot: dict[str, Any],
+        *,
+        app_hash_override: bytes | None = None,
+    ) -> None:
         """Restore consensus metadata without overwriting local Hypervisor state."""
         try:
             last_block_height = int(snapshot["last_block_height"])
             last_block_hash = bytes.fromhex(str(snapshot["last_block_hash"]))
-            app_hash = self._snapshot_app_hash(snapshot)
+            app_hash = app_hash_override or self._snapshot_app_hash(snapshot)
         except (KeyError, TypeError, ValueError) as error:
             raise ABCIStateStoreError("durable ABCI metadata is invalid") from error
         if last_block_height < 0 or len(last_block_hash) != 32 or len(app_hash) != 32:
@@ -1250,12 +1265,15 @@ class AIDNABCIApplication:
             return None
         return strict_operation_coverage_error(operation_type)
 
-    def _compute_state_hash(self) -> bytes:
+    def _compute_state_hash(self, *, include_transaction_hash_metadata: bool = False) -> bytes:
         """Compute deterministic hash of current application state."""
         consensus_state = self.ledger.snapshot_consensus_state()
         settlement_state = self._canonical_settlement_state_for_hash(self.ledger.snapshot_settlement_state())
         state = {
-            "operations": self._canonical_operations_for_hash(self.ledger.snapshot_operations()),
+            "operations": self._canonical_operations_for_hash(
+                self.ledger.snapshot_operations(),
+                include_transaction_hash_metadata=include_transaction_hash_metadata,
+            ),
             "wallet_sequences": self.ledger.snapshot_wallet_sequences(),
             "settlement_state": settlement_state,
         }
@@ -1269,20 +1287,25 @@ class AIDNABCIApplication:
         return hashlib.sha256(canonical.encode()).digest()
 
     @staticmethod
-    def _canonical_operations_for_hash(operations: list[dict]) -> list[dict]:
-        """Keep AppHash compatible with records written before tx hashes.
+    def _canonical_operations_for_hash(
+        operations: list[dict],
+        *,
+        include_transaction_hash_metadata: bool = False,
+    ) -> list[dict]:
+        """Project operation records into consensus state.
 
-        ``transaction_hash`` is durable metadata, not a new state transition.
-        Old ABCI snapshots omit it entirely; omitting a null value from the
-        new representation preserves their AppHash while still committing the
-        hash for newly admitted consensus transactions.
+        ``transaction_hash`` binds a record to transport evidence, but does
+        not change the Ledger transition. It must therefore never affect a
+        CometBFT AppHash. The opt-in legacy mode exists only to recognize and
+        migrate snapshots produced by the short-lived metadata-inclusive
+        projection.
         """
         canonical_operations: list[dict] = []
         for operation in operations:
             canonical = dict(operation)
             if canonical.get("operation_type") in LOCAL_ONLY_OPERATION_TYPES:
                 continue
-            if canonical.get("transaction_hash") is None:
+            if not include_transaction_hash_metadata or canonical.get("transaction_hash") is None:
                 canonical.pop("transaction_hash", None)
             canonical_operations.append(canonical)
         return canonical_operations

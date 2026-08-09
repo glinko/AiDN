@@ -80,6 +80,49 @@ def test_legacy_snapshot_without_transaction_hash_remains_restorable(tmp_path) -
     assert restored.info().last_block_app_hash == bytes.fromhex(legacy_snapshot["app_hash"])
 
 
+def test_transaction_hash_metadata_does_not_change_app_hash() -> None:
+    application = _app()
+    transaction = _operation_bytes()
+
+    assert application.finalize_block(block_height=1, block_hash=b"h" * 32, txs=[transaction]).code == "ok"
+    canonical_hash = application._compute_state_hash()
+
+    application.ledger.snapshot_operations()[-1]["transaction_hash"] = "F" * 64
+
+    assert application._compute_state_hash() == canonical_hash
+
+
+def test_validator_bootstrap_migrates_metadata_inclusive_app_hash(tmp_path) -> None:
+    store = ABCIStateStore(tmp_path / "abci")
+    source = _app()
+    transaction = _operation_bytes()
+    assert source.finalize_block(block_height=1, block_hash=b"m" * 32, txs=[transaction]).code == "ok"
+
+    legacy_snapshot = source.prepare_snapshot()
+    legacy_snapshot["app_hash"] = source._compute_state_hash(
+        include_transaction_hash_metadata=True
+    ).hex()
+    for commitment in legacy_snapshot["commitments"]:
+        if commitment["height"] == 1:
+            commitment["app_hash"] = legacy_snapshot["app_hash"]
+    store.persist(legacy_snapshot)
+
+    restored_ledger = LedgerOperationService()
+    restored_ledger.restore(
+        operations=legacy_snapshot["ledger_operations"],
+        wallet_sequences=legacy_snapshot["wallet_sequences"],
+    )
+    restored = AIDNABCIApplication(
+        ledger_service=restored_ledger,
+        state_store=store,
+        restore_state_from_store=False,
+    )
+
+    assert restored.restore_durable_state_if_matching_ledger()
+    assert restored.info().last_block_app_hash == source._compute_state_hash()
+    assert store.load_current()["app_hash"] == source._compute_state_hash().hex()
+
+
 def test_finalize_block_defers_durable_state_until_commit(tmp_path) -> None:
     store = ABCIStateStore(tmp_path / "abci")
     application = _app(store)
