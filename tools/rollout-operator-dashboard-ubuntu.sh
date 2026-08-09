@@ -12,6 +12,8 @@ Options:
   --commit REF         Reviewed Git commit or ref to deploy (required)
   --container NAME     Existing dashboard container (default: aidn-g5-abci)
   --image REPOSITORY   Image repository (default: aidn-hypervisor-lan-testnet-strict)
+  --allow-dashboard-access-insecure-lan
+                     Explicitly permit HTTP dashboard pairing on a controlled LAN
   --help               Show this help
 
 The script requires root because it recreates a Docker container. It preserves
@@ -24,6 +26,7 @@ repo=''
 requested_commit=''
 container='aidn-g5-abci'
 image_repository='aidn-hypervisor-lan-testnet-strict'
+allow_dashboard_access_insecure_lan=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,6 +45,10 @@ while [[ $# -gt 0 ]]; do
     --image)
       image_repository="${2:-}"
       shift 2
+      ;;
+    --allow-dashboard-access-insecure-lan)
+      allow_dashboard_access_insecure_lan=true
+      shift
       ;;
     --help|-h)
       usage
@@ -139,6 +146,12 @@ docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container"
       esac
     done > "$env_file"
 chmod 600 "$env_file"
+if [[ "$allow_dashboard_access_insecure_lan" == true ]]; then
+  # The switch is intentionally per-rollout rather than a dashboard default.
+  # It is only for a controlled test LAN; production pairing requires HTTPS.
+  sed -i '/^AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN=/d' "$env_file"
+  printf '%s\n' 'AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN=true' >> "$env_file"
+fi
 
 consensus_endpoint=$(sed -n 's/^AIDN_COMETBFT_ENDPOINT=//p' "$env_file" | head -n 1)
 if [[ -z "$consensus_endpoint" ]]; then
