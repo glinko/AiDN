@@ -154,10 +154,13 @@ def build_app(
         )
     if resolved_finality_source is not None:
         resolved_service.bind_consensus_finality_source(resolved_finality_source)
+    reconciled_publications = resolved_endpoint_publication_service.reconcile_canonical_publications(
+        resolved_service.ledger_operation_service.list_operations()
+    )
     reconciled_sessions = resolved_session_service.reconcile_canonical_settlement_projections(
         resolved_service.ledger_operation_service
     )
-    if reconciled_sessions:
+    if reconciled_publications or reconciled_sessions:
         # SessionStore owns the local projection; persist only after the
         # canonical Ledger transition has passed all reconciliation checks.
         resolved_service._persist_state()

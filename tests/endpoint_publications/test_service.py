@@ -138,6 +138,32 @@ def test_publish_configuration_creates_signed_current_record() -> None:
     assert record.wallet_signature
 
 
+def test_reconcile_canonical_publication_restores_missing_read_model() -> None:
+    endpoint_service = EndpointService(EndpointStore())
+    created = _create_endpoint(endpoint_service)
+    service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    record = _published_record_for_endpoint(
+        endpoint=created.endpoint,
+        publication_id="pub-canonical",
+    )
+
+    reconciled = service.reconcile_canonical_publications(
+        [
+            {
+                "operation_type": "ENDPOINT_PUBLISH",
+                "payload": {"publication": record.model_dump(mode="json")},
+                "result": {"status": "applied"},
+            }
+        ]
+    )
+
+    assert reconciled == ["pub-canonical"]
+    assert service.current_publication(created.endpoint.endpoint_id) == record
+
+
 def test_publish_configuration_uses_verifiable_owner_wallet_signature() -> None:
     endpoint_service = EndpointService(EndpointStore())
     created = _create_endpoint(endpoint_service)

@@ -187,6 +187,33 @@ class EndpointPublicationService:
         self.store.replace_records(updated_records)
         return record
 
+    def reconcile_canonical_publications(self, operations: list[dict]) -> list[str]:
+        """Restore publication read models from applied Ledger operations.
+
+        The publication store is a local projection. A snapshot write must not
+        make a finalized ``ENDPOINT_PUBLISH`` disappear, so rebuild missing
+        records from the canonical operation log without emitting a new
+        operation.
+        """
+        reconciled: list[str] = []
+        for operation in operations:
+            if operation.get("operation_type") != "ENDPOINT_PUBLISH":
+                continue
+            result = operation.get("result")
+            if not isinstance(result, dict) or result.get("status") != "applied":
+                continue
+            payload = operation.get("payload")
+            publication_payload = payload.get("publication") if isinstance(payload, dict) else None
+            if not isinstance(publication_payload, dict):
+                continue
+            record = PublishedEndpointConfiguration.model_validate(publication_payload)
+            current = self.current_publication(record.endpoint_id)
+            if current is not None and current.publication_id == record.publication_id:
+                continue
+            self.commit_prepared_configuration(record, record_operations=False)
+            reconciled.append(record.publication_id)
+        return reconciled
+
     def publication_readiness(
         self,
         *,
