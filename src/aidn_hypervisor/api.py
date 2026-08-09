@@ -606,6 +606,38 @@ def build_api_router(
             service._persist_state()
         return canonical_sequence
 
+    def _reconcile_remote_endpoint_publication(endpoint_id: str) -> bool:
+        """Restore a canonical publication missing from this node's read model."""
+        if not _endpoint_publication_uses_consensus() or endpoint_publication_service is None:
+            return False
+        consensus = service.consensus_service
+        query_publication = getattr(consensus, "query_endpoint_publication", None)
+        if not callable(query_publication):
+            return False
+        payload = query_publication(endpoint_id)
+        if payload is None:
+            return False
+        try:
+            record = PublishedEndpointConfiguration.model_validate(payload)
+            endpoint = endpoint_service.get_endpoint(endpoint_id).endpoint
+            if record.endpoint_id != endpoint_id or record.owner_wallet != endpoint.owner_wallet:
+                return False
+            verify_publication_signature(
+                public_key=record.owner_public_key,
+                signature=record.wallet_signature,
+                payload=record.signed_payload(),
+            )
+            current = endpoint_publication_service.current_publication(endpoint_id)
+            if current is not None and current.publication_id == record.publication_id:
+                return False
+            endpoint_publication_service.commit_prepared_configuration(
+                record,
+                record_operations=False,
+            )
+            return True
+        except (KeyError, ValueError, TypeError):
+            return False
+
     def _build_endpoint_publication_envelope(
         record: PublishedEndpointConfiguration,
         *,
@@ -2182,6 +2214,7 @@ def build_api_router(
                 "Endpoint publication service is not configured",
             )
         finalized = _reconcile_endpoint_publications()
+        _reconcile_remote_endpoint_publication(endpoint_id)
         wallet = service.owner_wallet_state()
         if not wallet["configured"]:
             return _error(

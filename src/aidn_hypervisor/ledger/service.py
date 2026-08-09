@@ -1785,6 +1785,23 @@ class LedgerOperationService:
             raise ValueError("first endpoint publication cannot have a previous hash")
         return {"publication": publication}
 
+    def canonical_endpoint_publication(self, endpoint_id: str) -> dict | None:
+        """Return the latest applied publication for one Endpoint."""
+        for operation in reversed(self._operations):
+            if operation.get("operation_type") != ENDPOINT_PUBLISH_OPERATION:
+                continue
+            result = operation.get("result")
+            payload = operation.get("payload")
+            publication = payload.get("publication") if isinstance(payload, dict) else None
+            if (
+                isinstance(result, dict)
+                and result.get("status") == "applied"
+                and isinstance(publication, dict)
+                and publication.get("endpoint_id") == endpoint_id
+            ):
+                return deepcopy(publication)
+        return None
+
     def apply_consensus_endpoint_publish(
         self,
         envelope: "LedgerOperationEnvelope",

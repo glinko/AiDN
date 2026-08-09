@@ -683,6 +683,15 @@ class AIDNABCIApplication:
             seq = self.ledger.wallet_next_sequence(wallet_id)
             kwargs["key"] = f"wallet:{wallet_id}:sequence".encode()
             kwargs["value"] = str(seq).encode()
+        elif path.startswith("endpoint/publication/"):
+            endpoint_id = path.removeprefix("endpoint/publication/")
+            publication = self.ledger.canonical_endpoint_publication(endpoint_id)
+            kwargs["key"] = f"endpoint:{endpoint_id}:publication".encode()
+            kwargs["value"] = (
+                json.dumps(publication, sort_keys=True, separators=(",", ":")).encode()
+                if publication is not None
+                else b""
+            )
         elif path == "mempool/size":
             kwargs["key"] = b"mempool_size"
             kwargs["value"] = str(self.mempool.size()).encode()

@@ -222,40 +222,54 @@ class ConsensusService:
         if not self.is_enabled or not isinstance(wallet_id, str) or not wallet_id.strip():
             return None
 
+        try:
+            raw_value = self._query_abci_value(f"wallet/sequence/{wallet_id}")
+            if raw_value is None:
+                return None
+            sequence = int(raw_value.decode("ascii"))
+            return sequence if sequence >= 1 else None
+        except (ValueError, TypeError, UnicodeDecodeError, binascii.Error, OSError):
+            return None
+
+    def query_endpoint_publication(self, endpoint_id: str) -> dict | None:
+        """Read one canonical Endpoint publication from the active ABCI RPC."""
+        if not self.is_enabled or not isinstance(endpoint_id, str) or not endpoint_id.strip():
+            return None
+        try:
+            raw_value = self._query_abci_value(f"endpoint/publication/{endpoint_id}")
+            if raw_value is None:
+                return None
+            publication = json.loads(raw_value.decode("utf-8"))
+            return publication if isinstance(publication, dict) else None
+        except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error, OSError):
+            return None
+
+    def _query_abci_value(self, path: str) -> bytes | None:
         parsed = urlsplit(self.config.cometbft_endpoint)
         rpc_endpoint = self.config.cometbft_endpoint
         if parsed.scheme not in {"http", "https"}:
             if not parsed.netloc:
                 return None
             rpc_endpoint = urlunsplit(("http", parsed.netloc, "", "", ""))
-
-        try:
-            transport = HttpCometBftRpcTransport(rpc_endpoint)
-            response = transport.get(
-                "/abci_query",
-                params={
-                    "path": json.dumps(
-                        f"wallet/sequence/{wallet_id}",
-                        separators=(",", ":"),
-                    ),
-                    "prove": "false",
-                },
-                timeout_seconds=2,
-            )
-            result = response.get("result")
-            if not isinstance(result, dict):
-                return None
-            query_response = result.get("response")
-            if not isinstance(query_response, dict) or int(query_response.get("code", -1)) != 0:
-                return None
-            encoded_value = query_response.get("value")
-            if not isinstance(encoded_value, str) or not encoded_value:
-                return None
-            raw_value = base64.b64decode(encoded_value, validate=True)
-            sequence = int(raw_value.decode("ascii"))
-            return sequence if sequence >= 1 else None
-        except (ValueError, TypeError, UnicodeDecodeError, binascii.Error, OSError):
+        transport = HttpCometBftRpcTransport(rpc_endpoint)
+        response = transport.get(
+            "/abci_query",
+            params={
+                "path": json.dumps(path, separators=(",", ":")),
+                "prove": "false",
+            },
+            timeout_seconds=2,
+        )
+        result = response.get("result")
+        if not isinstance(result, dict):
             return None
+        query_response = result.get("response")
+        if not isinstance(query_response, dict) or int(query_response.get("code", -1)) != 0:
+            return None
+        encoded_value = query_response.get("value")
+        if not isinstance(encoded_value, str) or not encoded_value:
+            return None
+        return base64.b64decode(encoded_value, validate=True)
 
     # ---- Submission ----
 
