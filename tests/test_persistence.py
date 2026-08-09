@@ -11,6 +11,7 @@ from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
 )
+from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.endpoints.state import (
     EndpointConfigurationSnapshotRecord,
@@ -300,6 +301,25 @@ def test_endpoint_publication_store_restores_records_from_state_store(
     store = EndpointPublicationStore(file_store)
 
     assert store.list_records() == snapshot.endpoint_publications
+
+
+def test_hypervisor_snapshot_preserves_bound_endpoint_publications() -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+    )
+    publication_store = EndpointPublicationStore()
+    publication = _published_record("pub-bound")
+    publication_store.append(publication)
+    publication_service = EndpointPublicationService(
+        store=publication_store,
+        endpoint_service=None,
+    )
+    service.bind_external_services(endpoint_publication_service=publication_service)
+
+    snapshot = service.snapshot_state()
+
+    assert snapshot.endpoint_publications == [publication]
 
 
 def test_endpoint_publication_store_accumulates_appended_records(

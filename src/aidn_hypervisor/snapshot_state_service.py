@@ -49,6 +49,9 @@ class SnapshotStateService:
     def snapshot_state(self) -> HypervisorStateSnapshot:
         endpoint_service = getattr(self._host, "endpoint_service", None)
         endpoint_store = getattr(endpoint_service, "store", None)
+        endpoint_publication_service = getattr(
+            self._host, "endpoint_publication_service", None
+        )
         session_service = getattr(self._host, "session_service", None)
         session_store = getattr(session_service, "store", None)
         failure_handler = getattr(session_service, "failure_handler", None)
@@ -199,6 +202,24 @@ class SnapshotStateService:
                 if endpoint_store is not None
                 else (
                     [item.model_copy(deep=True) for item in persisted_snapshot.endpoints]
+                    if persisted_snapshot is not None
+                    else []
+                )
+            ),
+            endpoint_publications=(
+                [
+                    item.model_copy(deep=True)
+                    for item in endpoint_publication_service.list_publications()
+                ]
+                if (
+                    endpoint_publication_service is not None
+                    and hasattr(endpoint_publication_service, "list_publications")
+                )
+                else (
+                    [
+                        item.model_copy(deep=True)
+                        for item in persisted_snapshot.endpoint_publications
+                    ]
                     if persisted_snapshot is not None
                     else []
                 )
