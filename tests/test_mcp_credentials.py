@@ -103,6 +103,21 @@ def test_invalid_pairing_attempt_does_not_consume_valid_code(tmp_path) -> None:
     assert store.consume_pairing_code(pairing.code) is True
 
 
+def test_long_running_store_observes_pairing_code_created_by_another_process(tmp_path) -> None:
+    key = os.urandom(32)
+    secret_path = tmp_path / "secrets.json"
+    running_store = McpCredentialStore(
+        secret_manager=FileSecretManager(path=secret_path, master_key=key)
+    )
+    cli_store = McpCredentialStore(
+        secret_manager=FileSecretManager(path=secret_path, master_key=key)
+    )
+
+    pairing = cli_store.create_pairing_code(ttl_seconds=600)
+
+    assert running_store.consume_pairing_code(pairing.code) is True
+
+
 def test_access_session_requires_one_pairing_exchange_and_expires(tmp_path) -> None:
     clock = _Clock()
     store = McpCredentialStore(secret_manager=_manager(tmp_path), now=clock)

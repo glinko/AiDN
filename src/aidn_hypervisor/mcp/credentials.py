@@ -195,6 +195,10 @@ class McpCredentialStore:
         return valid
 
     def _load_state(self) -> dict:
+        # Pairing codes are intentionally minted by a separate host-local CLI
+        # process. Refresh the encrypted backend before every operation so the
+        # long-running Hypervisor observes that external, authenticated write.
+        self._secret_manager.reload()
         if not self._secret_manager.has(MCP_ACCESS_STATE_HANDLE):
             return {
                 "version": _STATE_VERSION,
