@@ -89,6 +89,109 @@ The operator holds a different credential and exclusively controls:
 
 An agent must never request, infer, store or use the operator credential.
 
+## Operator Provisioning of the Agent Token
+
+The model does not need to see the token. The MCP client transport needs it to
+add the `Authorization` header. The safe pattern is therefore:
+
+```text
+Node operator secret store
+    -> one-time secure transfer to the agent-host secret store
+    -> agent launcher injects process environment variable
+    -> MCP client adds Bearer header
+    -> model calls named MCP tools without receiving the token text
+```
+
+The operator provisions the value of the node's dedicated
+`AIDN_MCP_REMOTE_TOKEN` as `AIDN_NODE127_MCP_AGENT_TOKEN` on the agent host.
+This is a copy of an already-scoped Agent credential, not a new Wallet,
+operator token or consensus key. The two following values must never be equal:
+
+```text
+Agent host: AIDN_NODE127_MCP_AGENT_TOKEN
+Node operator boundary: AIDN_MCP_OPERATOR_TOKEN
+```
+
+Use a secure out-of-band channel for the one-time transfer, such as a password
+manager share, an encrypted vault entry or a direct session on the agent host.
+Do not send it in chat, e-mail, source control, a ticket, a shell history or a
+dashboard form. Do not obtain it by having the agent SSH to the node.
+
+### Linux Agent Host
+
+For a manually launched local agent, store the value outside the repository in
+a file readable only by its operating-system account:
+
+```bash
+install -d -m 700 "$HOME/.config/aidn-agent"
+umask 077
+printf '%s' '<token-entered-by-operator>' > "$HOME/.config/aidn-agent/node127-mcp-token"
+```
+
+Use a launcher that reads the file only into the child process environment:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+export AIDN_NODE127_MCP_AGENT_TOKEN="$(<"$HOME/.config/aidn-agent/node127-mcp-token")"
+exec /path/to/local-agent "$@"
+```
+
+For a long-running service or container, prefer its native secret mechanism:
+systemd credentials, Docker secrets, Kubernetes Secrets or an organization
+vault. The entrypoint reads the secret file and exports the variable only for
+the MCP client process. Never place the value directly in a systemd unit,
+Docker command line, image layer or `.env` file in the repository.
+
+### Windows Agent Host
+
+Use the user's credential vault or another DPAPI-backed secret provider. A
+launcher retrieves the value only for the process that starts the local agent:
+
+```powershell
+# Example after the operator has stored this secret in a configured vault.
+$env:AIDN_NODE127_MCP_AGENT_TOKEN = Get-Secret aidn-node127-mcp-token -AsPlainText
+& 'C:\Path\To\local-agent.exe'
+Remove-Item Env:AIDN_NODE127_MCP_AGENT_TOKEN -ErrorAction SilentlyContinue
+```
+
+`Get-Secret` is supplied by a configured PowerShell SecretManagement vault; a
+Windows Credential Manager or enterprise vault launcher may serve the same
+role. Do not use `setx`, a checked-in `.env` file, a desktop shortcut argument
+or a plain-text project configuration because those make the credential
+persistent or broadly readable.
+
+### Client Configuration
+
+Configure the MCP client to obtain the token from its environment or secret
+provider, not from the agent prompt. A generic representation is:
+
+```yaml
+name: aidn-node127
+url: http://192.168.88.127:8000/mcp
+authorization: Bearer ${AIDN_NODE127_MCP_AGENT_TOKEN}
+protocol_version: "2025-03-26"
+```
+
+MCP client configuration formats differ. If a client does not support
+environment interpolation in headers, use its own secret-reference mechanism
+or a launcher/reverse proxy that adds the header. Do not replace the secure
+reference with a literal token.
+
+### Rotation and Revocation
+
+Rotate the Agent token when the agent host, its configuration or an operator
+session might have been exposed. The node operator installs a new remote Agent
+token, restarts or reloads the MCP gateway through the approved deployment
+procedure, updates the agent-host secret entry, and then restarts the agent.
+The old token must stop authenticating. The agent reconnects with a new MCP
+transport session and repeats its required first-read sequence.
+
+The current gateway is plain HTTP on a private LAN. This is acceptable only
+inside that controlled network. Before crossing an untrusted LAN, Wi-Fi, VPN
+or the public Internet, move the gateway to the documented mTLS HTTPS profile;
+local secret storage alone does not encrypt a bearer token in transit.
+
 ## Connect Procedure
 
 Configure the MCP client with the private endpoint and an environment-backed
