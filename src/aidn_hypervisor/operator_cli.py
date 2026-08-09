@@ -43,3 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Expires: {pairing.expires_at}")
     print(f"Code: {pairing.code}")
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

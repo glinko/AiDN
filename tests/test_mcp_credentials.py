@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import base64
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
@@ -142,3 +144,31 @@ def test_operator_pair_command_prints_one_time_code_only_to_stdout(tmp_path, cap
     assert result == 0
     assert store.consume_pairing_code(code) is True
     assert code.encode("utf-8") not in secret_path.read_bytes()
+
+
+def test_operator_pair_module_entrypoint_runs_main(tmp_path) -> None:
+    key = os.urandom(32)
+    secret_path = tmp_path / "secrets.json"
+    key_path = tmp_path / "master-key.b64"
+    key_path.write_text(base64.b64encode(key).decode("ascii"), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "aidn_hypervisor.operator_cli",
+            "pair",
+            "--secret-manager-path",
+            str(secret_path),
+            "--master-key-file",
+            str(key_path),
+            "--dashboard-url",
+            "http://127.0.0.1:8766/operators/dashboard/react#settings",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "Code: " in result.stdout
