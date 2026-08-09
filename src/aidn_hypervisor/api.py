@@ -588,14 +588,34 @@ def build_api_router(
         consensus = getattr(service, "consensus_service", None)
         return consensus is not None and bool(getattr(consensus, "is_enabled", False))
 
+    def _synchronize_publication_wallet_sequence(wallet_id: str) -> int:
+        """Use the canonical wallet nonce before creating a publish envelope."""
+        local_sequence = service.ledger_operation_service.wallet_next_sequence(wallet_id)
+        consensus = getattr(service, "consensus_service", None)
+        query_sequence = getattr(consensus, "query_wallet_next_sequence", None)
+        if not callable(query_sequence):
+            return local_sequence
+        canonical_sequence = query_sequence(wallet_id)
+        if canonical_sequence is None:
+            raise ValueError("canonical wallet sequence is unavailable")
+        changed = service.ledger_operation_service.reconcile_wallet_sequence(
+            wallet_id,
+            canonical_sequence,
+        )
+        if changed:
+            service._persist_state()
+        return canonical_sequence
+
     def _build_endpoint_publication_envelope(
         record: PublishedEndpointConfiguration,
         *,
+        sender_sequence: int | None = None,
         retry_nonce: str | None = None,
     ) -> LedgerOperationEnvelope:
-        sender_sequence = service.ledger_operation_service.wallet_next_sequence(
-            record.owner_wallet
-        )
+        if sender_sequence is None:
+            sender_sequence = service.ledger_operation_service.wallet_next_sequence(
+                record.owner_wallet
+            )
         evidence_references = [
             record.publication_id,
             record.endpoint_id,
@@ -2214,38 +2234,60 @@ def build_api_router(
             )
 
         consensus = service.consensus_service
-        pending = service.find_pending_consensus_envelope(
-            operation_type="ENDPOINT_PUBLISH",
-            predicate=lambda envelope: (
-                envelope.payload.get("publication", {}).get("endpoint_id") == endpoint_id
-                and envelope.payload.get("publication", {}).get("configuration_hash")
-                == record.configuration_hash
-            ),
-        )
-        if pending is None:
-            pending = _build_endpoint_publication_envelope(record)
-            service.stage_pending_consensus_envelope(pending)
-        else:
-            record = PublishedEndpointConfiguration.model_validate(
-                pending.payload["publication"]
-            )
-            expected_sequence = service.ledger_operation_service.wallet_next_sequence(
+        try:
+            expected_sequence = _synchronize_publication_wallet_sequence(
                 record.owner_wallet
             )
-            previous_submission = consensus.get_submission(pending.operation_id)
-            retry_failed = (
-                previous_submission is not None
-                and previous_submission.status.value == "failed"
+            candidates = [
+                envelope
+                for envelope in service.list_pending_consensus_envelopes()
+                if envelope.operation_type == "ENDPOINT_PUBLISH"
+                and envelope.payload.get("publication", {}).get("endpoint_id") == endpoint_id
+                and envelope.payload.get("publication", {}).get("configuration_hash")
+                == record.configuration_hash
+            ]
+            pending = next(
+                (
+                    envelope
+                    for envelope in reversed(candidates)
+                    if envelope.sender_sequence == expected_sequence
+                ),
+                None,
             )
-            if pending.sender_sequence != expected_sequence or retry_failed:
-                # Keep the rejected envelope for diagnostics, but do not
-                # retry it forever after a sequence repair or operator action.
+            if pending is None and candidates:
+                pending = candidates[-1]
+                record = PublishedEndpointConfiguration.model_validate(
+                    pending.payload["publication"]
+                )
+            if pending is None:
                 pending = _build_endpoint_publication_envelope(
                     record,
+                    sender_sequence=expected_sequence,
+                )
+                service.stage_pending_consensus_envelope(pending)
+            elif pending.sender_sequence != expected_sequence:
+                # Keep stale envelopes for diagnostics, but never submit a
+                # sequence that the canonical chain has already consumed.
+                pending = _build_endpoint_publication_envelope(
+                    record,
+                    sender_sequence=expected_sequence,
                     retry_nonce=uuid4().hex,
                 )
                 service.stage_pending_consensus_envelope(pending)
-        try:
+            else:
+                record = PublishedEndpointConfiguration.model_validate(
+                    pending.payload["publication"]
+                )
+            previous_submission = consensus.get_submission(pending.operation_id)
+            if previous_submission is not None and previous_submission.status.value == "failed":
+                # Reuse the exact canonical sequence with a fresh operation ID
+                # after a rejected submission; the old envelope remains audit evidence.
+                pending = _build_endpoint_publication_envelope(
+                    record,
+                    sender_sequence=expected_sequence,
+                    retry_nonce=uuid4().hex,
+                )
+                service.stage_pending_consensus_envelope(pending)
             submission = consensus.submit_operation(pending, retry_existing=True)
         except (ValueError, OSError) as error:
             return _error(

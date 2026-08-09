@@ -6,6 +6,7 @@ import zipfile
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -19,6 +20,7 @@ from aidn_hypervisor.accounting.models import (
     usage_report_hash,
 )
 from aidn_hypervisor.bundle_registry import FileBundleRegistry
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.dashboard import build_market_payload
 from aidn_hypervisor.domain.models import (
     AllocationRequest,
@@ -8120,6 +8122,94 @@ def test_publish_configuration_endpoint_returns_signed_record() -> None:
     assert body["data"]["publication"]["wallet_signature"]
     assert body["data"]["validation_summary"]["validation_status"] == "validated"
     assert body["data"]["validation_summary"]["configuration_hash"] == created.endpoint.configuration_hash
+
+
+def test_publish_configuration_reuses_pending_envelope_at_canonical_wallet_sequence() -> None:
+    service = _service(whisper_endpoint="http://127.0.0.1:9000")
+    service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet=service.owner_wallet_state()["wallet_id"],
+            bundle_id="whisper-a",
+            bundle_hash="whisper-a",
+            display_name="Shared STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+    prepared = publication_service.prepare_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet=created.endpoint.owner_wallet,
+        owner_public_key=service.owner_wallet_state()["public_key"],
+        node_id=service.node_id,
+        wallet_private_key=service.owner_wallet_private_key(),
+    )
+    pending = LedgerOperationEnvelope(
+        operation_type="ENDPOINT_PUBLISH",
+        origin_type="wallet",
+        initiator_id=created.endpoint.endpoint_id,
+        sender_wallet=prepared.owner_wallet,
+        sender_sequence=2,
+        fee_payer=prepared.owner_wallet,
+        created_at=prepared.published_at,
+        payload={"publication": prepared.model_dump(mode="json")},
+    )
+    service.stage_pending_consensus_envelope(pending)
+
+    class _NoFinality:
+        def finality_evidence(self, operation_id):
+            del operation_id
+            return None
+
+    class _Consensus:
+        config = SimpleNamespace(chain_id="aidn-localnet-1")
+        is_enabled = True
+        is_validator = False
+
+        def __init__(self):
+            self.submitted = None
+
+        def query_wallet_next_sequence(self, wallet_id):
+            assert wallet_id == prepared.owner_wallet
+            return 2
+
+        def get_submission(self, operation_id):
+            del operation_id
+            return None
+
+        def restore_submission(self, envelope):
+            del envelope
+
+        def submit_operation(self, envelope, *, retry_existing):
+            assert retry_existing is True
+            self.submitted = envelope
+            return SimpleNamespace(status=SimpleNamespace(value="pending"))
+
+    consensus = _Consensus()
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=publication_service,
+            consensus_service=consensus,
+            consensus_finality_source=_NoFinality(),
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/endpoints/{created.endpoint.endpoint_id}/publish-configuration"
+    )
+
+    assert response.status_code == 202
+    assert consensus.submitted is not None
+    assert consensus.submitted.operation_id == pending.operation_id
+    assert consensus.submitted.sender_sequence == 2
+    assert service.ledger_operation_service.wallet_next_sequence(prepared.owner_wallet) == 2
 
 
 def test_publish_configuration_returns_readiness_blockers() -> None:

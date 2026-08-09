@@ -7730,6 +7730,28 @@ class LedgerOperationService:
     def wallet_next_sequence(self, wallet_id: str) -> int:
         return int(self._wallet_next_sequences.get(wallet_id, 1))
 
+    def reconcile_wallet_sequence(self, wallet_id: str, canonical_next_sequence: int) -> bool:
+        """Advance a local wallet projection to an observed canonical nonce.
+
+        A remote chain may be ahead after restart, but it must never cause a
+        local projection to move backwards. Rewinding would permit replaying a
+        previously finalized wallet operation.
+        """
+        if not isinstance(wallet_id, str) or not wallet_id.strip():
+            raise ValueError("wallet ID is required for sequence reconciliation")
+        if isinstance(canonical_next_sequence, bool) or canonical_next_sequence < 1:
+            raise ValueError("canonical wallet sequence must be positive")
+        current = self.wallet_next_sequence(wallet_id)
+        if canonical_next_sequence < current:
+            raise ValueError(
+                f"canonical wallet sequence is behind local projection for {wallet_id}: "
+                f"local {current}, canonical {canonical_next_sequence}"
+            )
+        if canonical_next_sequence == current:
+            return False
+        self._wallet_next_sequences[wallet_id] = int(canonical_next_sequence)
+        return True
+
     def get_next_sequence(self, wallet_id: str) -> int:
         """Get the next expected sequence number for a wallet."""
         return self.wallet_next_sequence(wallet_id)

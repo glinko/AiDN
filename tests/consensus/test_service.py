@@ -1,5 +1,8 @@
 """M7-S3: ConsensusService — core behaviour tests."""
 
+import base64
+import json
+
 import pytest
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
@@ -278,6 +281,62 @@ def test_status_reads_cometbft_rpc_state(monkeypatch):
         "peer_count": 3,
         "listening": True,
     }
+
+
+def test_query_wallet_next_sequence_reads_canonical_abci_state(monkeypatch):
+    class FakeRpcTransport:
+        def __init__(self, endpoint):
+            assert endpoint == "http://127.0.0.1:26657"
+
+        def get(self, path, *, params, timeout_seconds):
+            assert path == "/abci_query"
+            assert json.loads(params["path"]) == "wallet/sequence/wallet-owner"
+            assert params["prove"] == "false"
+            assert timeout_seconds == 2
+            return {
+                "result": {
+                    "response": {
+                        "code": 0,
+                        "value": base64.b64encode(b"7").decode("ascii"),
+                    }
+                }
+            }
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.consensus.service.HttpCometBftRpcTransport",
+        FakeRpcTransport,
+    )
+    service = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.NON_VALIDATOR,
+            cometbft_endpoint="tcp://127.0.0.1:26657",
+        )
+    )
+
+    assert service.query_wallet_next_sequence("wallet-owner") == 7
+
+
+def test_query_wallet_next_sequence_fails_closed_on_invalid_abci_value(monkeypatch):
+    class FakeRpcTransport:
+        def __init__(self, endpoint):
+            del endpoint
+
+        def get(self, path, *, params, timeout_seconds):
+            del path, params, timeout_seconds
+            return {"result": {"response": {"code": 0, "value": "not-base64"}}}
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.consensus.service.HttpCometBftRpcTransport",
+        FakeRpcTransport,
+    )
+    service = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.NON_VALIDATOR,
+            cometbft_endpoint="http://127.0.0.1:26657",
+        )
+    )
+
+    assert service.query_wallet_next_sequence("wallet-owner") is None
 
 
 # ---- participation rate ----

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import time
 from collections.abc import Callable
@@ -208,6 +210,52 @@ class ConsensusService:
                 "error_type": type(error).__name__,
             }
         return payload
+
+    def query_wallet_next_sequence(self, wallet_id: str) -> int | None:
+        """Read the canonical next wallet sequence from the active ABCI RPC.
+
+        Non-validator nodes keep a local projection for request construction,
+        but that projection can lag after a restart or a remote consensus
+        finalization. Wallet mutations must use the network sequence instead
+        of silently fabricating a local nonce.
+        """
+        if not self.is_enabled or not isinstance(wallet_id, str) or not wallet_id.strip():
+            return None
+
+        parsed = urlsplit(self.config.cometbft_endpoint)
+        rpc_endpoint = self.config.cometbft_endpoint
+        if parsed.scheme not in {"http", "https"}:
+            if not parsed.netloc:
+                return None
+            rpc_endpoint = urlunsplit(("http", parsed.netloc, "", "", ""))
+
+        try:
+            transport = HttpCometBftRpcTransport(rpc_endpoint)
+            response = transport.get(
+                "/abci_query",
+                params={
+                    "path": json.dumps(
+                        f"wallet/sequence/{wallet_id}",
+                        separators=(",", ":"),
+                    ),
+                    "prove": "false",
+                },
+                timeout_seconds=2,
+            )
+            result = response.get("result")
+            if not isinstance(result, dict):
+                return None
+            query_response = result.get("response")
+            if not isinstance(query_response, dict) or int(query_response.get("code", -1)) != 0:
+                return None
+            encoded_value = query_response.get("value")
+            if not isinstance(encoded_value, str) or not encoded_value:
+                return None
+            raw_value = base64.b64decode(encoded_value, validate=True)
+            sequence = int(raw_value.decode("ascii"))
+            return sequence if sequence >= 1 else None
+        except (ValueError, TypeError, UnicodeDecodeError, binascii.Error, OSError):
+            return None
 
     # ---- Submission ----
 

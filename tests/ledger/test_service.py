@@ -97,6 +97,18 @@ def test_record_ledger_wallet_operation_rejects_stale_expected_sequence() -> Non
         )
 
 
+def test_reconcile_wallet_sequence_advances_without_rewinding() -> None:
+    service = _hypervisor()
+    ledger = service.ledger_operation_service
+
+    assert ledger.reconcile_wallet_sequence("wallet-owner", 3) is True
+    assert ledger.wallet_next_sequence("wallet-owner") == 3
+    assert ledger.reconcile_wallet_sequence("wallet-owner", 3) is False
+
+    with pytest.raises(ValueError, match="behind local projection"):
+        ledger.reconcile_wallet_sequence("wallet-owner", 2)
+
+
 def test_faucet_claim_records_canonical_ledger_operation() -> None:
     service = _hypervisor()
     service.configure_owner_wallet(mode="create", label="Primary Wallet")
