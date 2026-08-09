@@ -357,7 +357,7 @@ def _is_validator_consensus_write_path(path: str) -> bool:
         len(parts) == 7
         and parts[:3] == ["api", "v1", "endpoints"]
         and parts[4] == "mvp-sessions"
-        and parts[6] == "force-finalize"
+        and parts[6] in {"settlement-preview", "finalize", "force-finalize"}
     )
 
 

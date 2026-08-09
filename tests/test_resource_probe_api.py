@@ -101,3 +101,22 @@ def test_validator_write_boundary_allows_local_endpoint_draft_creation() -> None
 def test_validator_write_boundary_allows_local_runtime_task_submission() -> None:
     assert _is_validator_consensus_write_path("/tasks") is True
     assert _is_validator_consensus_write_path("/tasks/task-1") is False
+
+
+def test_validator_write_boundary_allows_consensus_bound_mvp_settlement_paths() -> None:
+    for action in ("settlement-preview", "finalize", "force-finalize"):
+        assert (
+            _is_validator_consensus_write_path(
+                f"/api/v1/endpoints/ep-1/mvp-sessions/sess-1/{action}"
+            )
+            is True
+        )
+
+
+def test_validator_write_boundary_rejects_unknown_mvp_session_actions() -> None:
+    assert (
+        _is_validator_consensus_write_path(
+            "/api/v1/endpoints/ep-1/mvp-sessions/sess-1/arbitrary-action"
+        )
+        is False
+    )
