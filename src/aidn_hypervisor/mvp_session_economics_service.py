@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 
 from aidn_hypervisor.session_failure.models import FailureClass
 from aidn_hypervisor.settlement.models import (
+    AtomicSettlementTransition,
     RequestSettlementInput,
     SessionFundingAccount,
     SessionSettlementAcceptance,
@@ -713,6 +714,12 @@ class MvpSessionEconomicsService:
         proposal_expiration: str | None = None,
         accepted_at: str | None = None,
     ):
+        recovered = self._reconcile_canonical_cooperative_settlement(
+            session_service=session_service,
+            session_id=session_id,
+        )
+        if recovered is not None:
+            return recovered
         session = session_service.store.get_session(session_id)
         evaluation = self.build_mvp_fixed_price_settlement_evaluation(
             session_service=session_service,
@@ -793,6 +800,160 @@ class MvpSessionEconomicsService:
             "funding": funding,
             "session_result": session_result,
             **({"status": "FINALIZED", "consensus": consensus_result} if consensus_result is not None else {}),
+        }
+
+    def _reconcile_canonical_cooperative_settlement(
+        self,
+        *,
+        session_service,
+        session_id: str,
+    ) -> dict | None:
+        """Finish a cooperative Settlement committed while the request was pending.
+
+        Consensus may apply the atomic funding transition after the HTTP
+        request has already returned ``CONSENSUS_PENDING``.  ABCI owns the
+        canonical funding transition, while ``SessionService`` owns the local
+        Session and Deposit projection.  Reconcile only an applied,
+        Session-bound finalization with verified finality; never infer a
+        settlement from ``RELEASED`` funding alone.
+        """
+        try:
+            session = session_service.store.get_session(session_id)
+            funding = self._host.get_session_funding_account(session_id)
+        except KeyError:
+            return None
+        if session.status in {"closed", "force_settled"}:
+            return None
+        if funding.funding_state not in {"RELEASED", "REFUNDED"}:
+            return None
+
+        ledger = self._host._ledger_operation_service
+        finalize_operation = None
+        for operation in reversed(ledger.list_operations()):
+            if operation.get("operation_type") != "SESSION_SETTLEMENT_FINALIZE":
+                continue
+            payload = operation.get("payload")
+            result = operation.get("result")
+            if not isinstance(payload, dict) or not isinstance(result, dict):
+                continue
+            if (
+                payload.get("session_id") == session_id
+                and result.get("status") == "applied"
+            ):
+                finalize_operation = operation
+                break
+        if finalize_operation is None:
+            return None
+
+        payload = finalize_operation["payload"]
+        transition_payload = payload.get("transition")
+        if not isinstance(transition_payload, dict):
+            raise ValueError("canonical cooperative Settlement transition is incomplete")
+        try:
+            transition = AtomicSettlementTransition.model_validate(transition_payload)
+        except ValueError as error:
+            raise ValueError(
+                "canonical cooperative Settlement transition is invalid"
+            ) from error
+
+        if transition.session_id != session_id:
+            raise ValueError("canonical cooperative Settlement session binding is invalid")
+        if payload.get("session_id") != session_id:
+            raise ValueError("canonical cooperative Settlement payload session is invalid")
+        if not isinstance(payload.get("settlement_input_root"), str):
+            raise ValueError("canonical cooperative Settlement input root is missing")
+
+        try:
+            proposal = ledger.get_settlement_proposal(transition.settlement_id)
+            acceptance = ledger.get_settlement_acceptance(transition.settlement_id)
+        except KeyError as error:
+            raise ValueError(
+                "canonical cooperative Settlement proposal or acceptance is missing"
+            ) from error
+        if (
+            proposal.session_id != session_id
+            or proposal.settlement_id != transition.settlement_id
+            or proposal.settlement_input_root != payload.get("settlement_input_root")
+            or acceptance.session_id != session_id
+            or acceptance.settlement_id != proposal.settlement_id
+            or acceptance.settlement_input_root != proposal.settlement_input_root
+            or payload.get("acceptance_hash") != acceptance.acceptance_hash
+        ):
+            raise ValueError("canonical cooperative Settlement binding is invalid")
+        if (
+            acceptance.accepted_endpoint_payment_q_atoms
+            != proposal.final_endpoint_payment_q_atoms
+            or acceptance.accepted_consumer_refund_q_atoms
+            != proposal.consumer_payment_refund_q_atoms
+            + proposal.consumer_fee_refund_q_atoms
+            or acceptance.accepted_network_fees_q_atoms
+            != proposal.actual_network_fees_q_atoms
+        ):
+            raise ValueError("canonical cooperative Settlement acceptance is invalid")
+        if proposal.dispute_reserve_q_atoms != 0:
+            raise ValueError(
+                "canonical cooperative Settlement cannot retain a dispute reserve"
+            )
+        if ledger.get_settlement_transition_hash(proposal.settlement_id) != transition.transition_hash:
+            raise ValueError("canonical cooperative Settlement transition hash is invalid")
+        if (
+            funding.released_to_endpoint_q_atoms
+            != proposal.final_endpoint_payment_q_atoms
+            or funding.consumer_payment_refund_q_atoms
+            != proposal.consumer_payment_refund_q_atoms
+            or funding.consumer_fee_refund_q_atoms != proposal.consumer_fee_refund_q_atoms
+            or funding.consumed_network_fees_q_atoms
+            != proposal.actual_network_fees_q_atoms
+            or funding.active_dispute_reserve_q_atoms != 0
+        ):
+            raise ValueError("canonical cooperative Settlement funding is inconsistent")
+
+        consensus = getattr(self._host, "consensus_service", None)
+        consensus_enabled = bool(
+            consensus is not None and getattr(consensus, "is_enabled", False)
+        )
+        finality = self._host.ledger_operation_finality(
+            finalize_operation["operation_id"]
+        )
+        consensus_finalized = (
+            not consensus_enabled or finality.get("consensus_finalized") is True
+        )
+        consensus_payload = {
+            "status": "finalized" if consensus_finalized else "awaiting_verified_finality",
+            "blocked_on": None if consensus_finalized else "finalize",
+            "canonical_operation_ids": {
+                "finalize": finalize_operation["operation_id"],
+            },
+            "finality": finality,
+        }
+        if not consensus_finalized:
+            return {
+                "status": "CONSENSUS_PENDING",
+                "proposal": proposal,
+                "acceptance": acceptance,
+                "funding": funding,
+                "consensus": consensus_payload,
+                "session_result": None,
+            }
+
+        session_result = session_service.mark_canonical_settlement_finalized(
+            session_id,
+            settlement_evidence_root=proposal.settlement_input_root,
+            endpoint_payment_q_atoms=proposal.final_endpoint_payment_q_atoms,
+            consumer_refund_q_atoms=(
+                proposal.consumer_payment_refund_q_atoms
+                + proposal.consumer_fee_refund_q_atoms
+            ),
+            network_fee_q_atoms=proposal.actual_network_fees_q_atoms,
+        )
+        self._host._persist_state()
+        return {
+            "status": "FINALIZED",
+            "proposal": proposal,
+            "acceptance": acceptance,
+            "funding": funding,
+            "consensus": consensus_payload,
+            "session_result": session_result,
         }
 
     def force_finalize_mvp_fixed_price_session(

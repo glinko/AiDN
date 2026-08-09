@@ -652,6 +652,9 @@ class LedgerOperationService:
     def get_settlement_proposal(self, settlement_id: str) -> SessionSettlementProposal:
         return self._settlement_proposals[settlement_id]
 
+    def get_settlement_acceptance(self, settlement_id: str) -> SessionSettlementAcceptance:
+        return self._settlement_acceptances[settlement_id]
+
     def get_settlement_ready_commitment(self, session_id: str) -> SettlementReadyCommitment:
         return self._settlement_ready_commits[session_id]
 

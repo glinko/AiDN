@@ -325,6 +325,97 @@ def test_consensus_cooperative_finalize_persists_pending_envelopes_and_waits_for
     assert consensus.get_submission(finalize_id).status.value == "finalized"
 
 
+def test_cooperative_retry_reconciles_funding_committed_before_http_finality():
+    hypervisor, client, endpoint, session, consensus, source = _context()
+    request_id = _seed_cooperative_runtime_evidence(
+        hypervisor,
+        endpoint=endpoint,
+        session=session,
+    )
+    finalize_path = (
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/mvp-sessions/"
+        f"{session['session_id']}/finalize"
+    )
+
+    first = client.post(
+        finalize_path,
+        json={
+            "request_id": request_id,
+            "consumer_signature": "consumer-cooperative-signature",
+            "accepted_at": "2030-01-01T00:01:00Z",
+        },
+    )
+    ready_id = first.json()["data"]["consensus"]["canonical_operation_ids"]["ready"]
+    source.finalize(ready_id, height=50)
+    second = client.post(
+        finalize_path,
+        json={
+            "request_id": request_id,
+            "consumer_signature": "consumer-cooperative-signature",
+            "accepted_at": "2030-01-01T00:02:00Z",
+        },
+    )
+    proposal_id = second.json()["data"]["consensus"]["canonical_operation_ids"]["proposal"]
+    source.finalize(proposal_id, height=51)
+    third = client.post(
+        finalize_path,
+        json={
+            "request_id": request_id,
+            "consumer_signature": "consumer-cooperative-signature",
+            "accepted_at": "2030-01-01T00:03:00Z",
+        },
+    )
+    acceptance_id = third.json()["data"]["consensus"]["canonical_operation_ids"]["acceptance"]
+    source.finalize(acceptance_id, height=52)
+    fourth = client.post(
+        finalize_path,
+        json={
+            "request_id": request_id,
+            "consumer_signature": "consumer-cooperative-signature",
+            "accepted_at": "2030-01-01T00:04:00Z",
+        },
+    )
+    finalize_id = fourth.json()["data"]["consensus"]["canonical_operation_ids"]["finalize"]
+    finalize_envelope = consensus.get_operation_envelope(finalize_id)
+    assert finalize_envelope is not None
+
+    # Model ABCI applying the atomic funding transition before the HTTP
+    # request observes consensus finality.
+    hypervisor.ledger_operation_service.apply_consensus_settlement_finalize(
+        finalize_envelope,
+        finalized_operation_ids={ready_id, proposal_id, acceptance_id},
+    )
+    pending = client.post(
+        finalize_path,
+        json={
+            "request_id": request_id,
+            "consumer_signature": "consumer-cooperative-signature",
+            "accepted_at": "2030-01-01T00:05:00Z",
+        },
+    )
+    assert pending.status_code == 200
+    assert pending.json()["data"]["status"] == "CONSENSUS_PENDING"
+    assert hypervisor.session_service.store.get_session(session["session_id"]).status == "active"
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+    source.finalize(finalize_id, height=53)
+    finalized = client.post(
+        finalize_path,
+        json={
+            "request_id": request_id,
+            "consumer_signature": "consumer-cooperative-signature",
+            "accepted_at": "2030-01-01T00:06:00Z",
+        },
+    )
+    assert finalized.status_code == 200
+    assert finalized.json()["data"]["status"] == "FINALIZED"
+    assert finalized.json()["data"]["session"]["status"] == "closed"
+    assert finalized.json()["data"]["deposit"]["status"] == "released"
+    assert hypervisor.wallet_q_atom_balance("wallet-endpoint") == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 100
+
+
 def test_consensus_force_finalize_applies_local_economics_only_after_finality():
     hypervisor, client, endpoint, session, consensus, source = _context()
 
