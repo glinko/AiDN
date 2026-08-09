@@ -114,7 +114,7 @@ docker inspect "$container" >/dev/null
   exit 1
 }
 
-expected_command='["python3","-m","uvicorn","aidn_hypervisor.main:build_app","--factory","--host","0.0.0.0","--port","8000"]'
+expected_command='["python","-m","uvicorn","aidn_hypervisor.main:build_app","--factory","--host","0.0.0.0","--port","8000"]'
 actual_command=$(docker inspect --format '{{json .Config.Cmd}}' "$container")
 [[ "$actual_command" == "$expected_command" ]] || {
   echo 'refusing to replace a container with a custom command' >&2

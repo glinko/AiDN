@@ -86,6 +86,20 @@ def test_dashboard_build_tools_pin_and_verify_the_frontend_toolchain() -> None:
     assert "old directory remains intact" in dashboard_builder
 
 
+def test_dashboard_rollout_accepts_the_canonical_image_command() -> None:
+    rollout = Path("tools/rollout-operator-dashboard-ubuntu.sh").read_text(
+        encoding="utf-8"
+    )
+    dockerfile = Path("tools/lan-testnet.Dockerfile").read_text(encoding="utf-8")
+    canonical_command = (
+        '["python","-m","uvicorn","aidn_hypervisor.main:build_app",'
+        '"--factory","--host","0.0.0.0","--port","8000"]'
+    )
+
+    assert 'CMD ["python", "-m", "uvicorn", "aidn_hypervisor.main:build_app"' in dockerfile
+    assert f"expected_command='{canonical_command}'" in rollout
+
+
 def test_cometbft_installer_is_pinned_idempotent_and_preserves_genesis() -> None:
     script = Path("tools/install-cometbft-ubuntu.sh").read_text(encoding="utf-8")
 
