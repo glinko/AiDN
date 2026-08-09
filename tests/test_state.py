@@ -16,6 +16,7 @@ from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.settlement.models import SettlementReadyCommitment
 from aidn_hypervisor.state import (
     HypervisorStateSnapshot,
     RuntimeSnapshot,
@@ -493,3 +494,36 @@ def test_service_snapshot_and_restore_preserves_pending_consensus_envelopes() ->
 
     restored_service.discard_pending_consensus_envelopes(envelope.operation_id)
     assert restored_service.get_pending_consensus_envelope(envelope.operation_id) is None
+
+
+def test_service_snapshot_and_restore_preserves_settlement_readiness_commitment() -> None:
+    service = _service(bundles=[], plugins=_registry())
+    ready = SettlementReadyCommitment(
+        session_id="session-ready-persistence",
+        settlement_sequence=1,
+        session_contract_hash="sha256:contract",
+        effective_terms_hash="sha256:terms",
+        funding_state_reference="sha256:funding",
+        endpoint_payment_beneficiary="wallet:endpoint",
+        consumer_refund_beneficiary="wallet:consumer",
+        request_settlement_root="sha256:requests",
+        usage_chain_root="sha256:usage",
+        checkpoint_root="sha256:checkpoints",
+        settlement_input_root="sha256:input",
+        session_close_reference="sha256:close",
+        ready_at="2030-01-01T00:00:00Z",
+    )
+    service.ledger_operation_service.restore(
+        operations=[],
+        wallet_sequences={},
+        settlement_ready_commits=[ready.model_dump(mode="json")],
+    )
+
+    snapshot = service.snapshot_state()
+    restored_service = _service(bundles=[], plugins=_registry())
+    restored_service.restore_state(snapshot)
+
+    assert snapshot.settlement_ready_commits == [ready]
+    assert restored_service.ledger_operation_service.get_settlement_ready_commitment(
+        ready.session_id
+    ) == ready

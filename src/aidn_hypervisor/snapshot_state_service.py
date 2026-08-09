@@ -320,6 +320,9 @@ class SnapshotStateService:
             stake_records=[dict(item) for item in snapshot.stake_records],
             participant_suspensions=[dict(item) for item in snapshot.participant_suspensions],
             session_funding_accounts=[item.model_dump(mode="json") for item in snapshot.session_funding_accounts],
+            settlement_ready_commits=[
+                item.model_dump(mode="json") for item in snapshot.settlement_ready_commits
+            ],
             settlement_proposals=[item.model_dump(mode="json") for item in snapshot.settlement_proposals],
             settlement_acceptances=[item.model_dump(mode="json") for item in snapshot.settlement_acceptances],
             session_checkpoints=[item.model_dump(mode="json") for item in snapshot.session_checkpoints],

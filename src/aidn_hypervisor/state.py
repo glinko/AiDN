@@ -75,6 +75,7 @@ from aidn_hypervisor.settlement.models import (
     SessionUsageCheckpoint,
     SettlementCorrection,
     SettlementDispute,
+    SettlementReadyCommitment,
 )
 from aidn_hypervisor.validation.models import (
     ValidationAssignment,
@@ -466,6 +467,7 @@ class HypervisorStateSnapshot(BaseModel):
     stake_records: list[dict] = Field(default_factory=list)
     participant_suspensions: list[dict] = Field(default_factory=list)
     session_funding_accounts: list[SessionFundingAccount] = Field(default_factory=list)
+    settlement_ready_commits: list[SettlementReadyCommitment] = Field(default_factory=list)
     settlement_proposals: list[SessionSettlementProposal] = Field(default_factory=list)
     settlement_acceptances: list[SessionSettlementAcceptance] = Field(default_factory=list)
     session_checkpoints: list[SessionUsageCheckpoint] = Field(default_factory=list)
