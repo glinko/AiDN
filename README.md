@@ -43,5 +43,6 @@ four-validator CometBFT drill is Docker-backed and intentionally opt-in.
 - [Terms](01_TERMS.md)
 - [Architecture](02_ARCHITECTURE.md)
 - [Roadmap](ROADMAP.md)
+- [Local agent MCP runbook for node 127](docs/development/local-agent-node127-mcp-runbook.md)
 - [Four-validator CometBFT acceptance drill](docs/development/cometbft-multivalidator-acceptance-drill.md)
 - [Executable implementation and operator specification pack](docs/development/executable-spec-pack/README.md)
