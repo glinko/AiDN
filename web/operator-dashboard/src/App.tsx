@@ -1,7 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Activity,
-  ArrowUpRight,
   Box,
   Boxes,
   BriefcaseBusiness,
@@ -10,7 +9,6 @@ import {
   CircleDot,
   Cpu,
   Database,
-  ExternalLink,
   Gauge,
   Layers3,
   Menu,
@@ -59,11 +57,11 @@ import {
   shortId,
 } from '@/lib/format'
 import { useDashboardData } from '@/hooks/use-dashboard'
-import { useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
+import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
 import type { Bundle, Endpoint, ReadinessStep } from '@/lib/types'
 
 type NavigationItem = {
-  id: DashboardScreen | 'legacy'
+  id: DashboardScreen
   label: string
   icon: LucideIcon
   advanced?: boolean
@@ -71,20 +69,20 @@ type NavigationItem = {
 
 const navigationItems: NavigationItem[] = [
   { id: 'overview', label: 'Overview', icon: PanelsTopLeft },
-  { id: 'legacy', label: 'Agents', icon: Activity },
+  { id: 'agents', label: 'Agents', icon: Activity },
   { id: 'bundles', label: 'Bundles', icon: Boxes },
-  { id: 'legacy', label: 'Market', icon: BriefcaseBusiness },
-  { id: 'legacy', label: 'Catalog', icon: Box },
+  { id: 'market', label: 'Market', icon: BriefcaseBusiness },
+  { id: 'catalog', label: 'Catalog', icon: Box },
   { id: 'endpoints', label: 'Endpoints', icon: RadioTower, advanced: true },
-  { id: 'legacy', label: 'Wallet', icon: WalletCards },
-  { id: 'legacy', label: 'Settings', icon: Settings },
+  { id: 'wallet', label: 'Wallet', icon: WalletCards },
+  { id: 'settings', label: 'Settings', icon: Settings },
 ]
 
 const advancedItems: NavigationItem[] = [
-  { id: 'legacy', label: 'Provider Plugins', icon: ServerCog, advanced: true },
-  { id: 'legacy', label: 'Models', icon: Database, advanced: true },
-  { id: 'legacy', label: 'Validation', icon: ShieldCheck, advanced: true },
-  { id: 'legacy', label: 'Network', icon: Network, advanced: true },
+  { id: 'providers', label: 'Provider Plugins', icon: ServerCog, advanced: true },
+  { id: 'models', label: 'Models', icon: Database, advanced: true },
+  { id: 'validation', label: 'Validation', icon: ShieldCheck, advanced: true },
+  { id: 'network', label: 'Network', icon: Network, advanced: true },
 ]
 
 const statusClassNames: Record<string, string> = {
@@ -103,6 +101,24 @@ const statusClassNames: Record<string, string> = {
   error: 'border-rose-300/25 bg-rose-300/10 text-rose-200',
 }
 
+type OperationsScreen = Exclude<DashboardScreen, 'overview' | 'bundles' | 'endpoints'>
+
+const operationsScreens: readonly OperationsScreen[] = [
+  'agents',
+  'market',
+  'catalog',
+  'wallet',
+  'settings',
+  'providers',
+  'models',
+  'validation',
+  'network',
+]
+
+function isOperationsScreen(screen: DashboardScreen): screen is OperationsScreen {
+  return operationsScreens.includes(screen as OperationsScreen)
+}
+
 function App() {
   const { activeScreen, advanced, setActiveScreen, setAdvanced } = useOperatorDashboardStore()
   const data = useDashboardData()
@@ -115,6 +131,19 @@ function App() {
     (query) => query.isError,
   )
 
+  useEffect(() => {
+    function syncScreenFromHash() {
+      const candidate = window.location.hash.slice(1) as DashboardScreen
+      if (dashboardScreens.includes(candidate)) {
+        setActiveScreen(candidate)
+      }
+    }
+
+    syncScreenFromHash()
+    window.addEventListener('hashchange', syncScreenFromHash)
+    return () => window.removeEventListener('hashchange', syncScreenFromHash)
+  }, [setActiveScreen])
+
   function refreshAll() {
     void Promise.all([
       data.home.refetch(),
@@ -125,12 +154,11 @@ function App() {
     ])
   }
 
-  function navigate(screen: DashboardScreen | 'legacy') {
-    if (screen === 'legacy') {
-      window.location.assign('/operators/dashboard')
-      return
-    }
+  function navigate(screen: DashboardScreen) {
     setActiveScreen(screen)
+    if (window.location.hash !== `#${screen}`) {
+      window.history.pushState(null, '', `#${screen}`)
+    }
     setMobileOpen(false)
   }
 
@@ -144,6 +172,7 @@ function App() {
         onRefresh={refreshAll}
         onToggleAdvanced={() => setAdvanced(!advanced)}
         onOpenNavigation={() => setMobileOpen(true)}
+        onNavigate={navigate}
       />
 
       <div className="mx-auto flex w-full max-w-[1760px] gap-0 px-3 pb-20 pt-3 lg:px-5">
@@ -166,6 +195,9 @@ function App() {
           ) : null}
           {activeScreen === 'endpoints' ? (
             <EndpointsScreen endpoints={data.endpoints.data?.items ?? []} isLoading={data.endpoints.isLoading} error={data.endpoints.error} onNavigate={navigate} />
+          ) : null}
+          {isOperationsScreen(activeScreen) ? (
+            <OperationsWorkspace screen={activeScreen} data={data} onNavigate={navigate} onRefresh={refreshAll} />
           ) : null}
         </main>
       </div>
@@ -196,6 +228,7 @@ type TopBarProps = {
   onRefresh: () => void
   onToggleAdvanced: () => void
   onOpenNavigation: () => void
+  onNavigate: (screen: DashboardScreen) => void
 }
 
 function TopBar({
@@ -206,6 +239,7 @@ function TopBar({
   onRefresh,
   onToggleAdvanced,
   onOpenNavigation,
+  onNavigate,
 }: TopBarProps) {
   return (
     <header className="sticky top-0 z-30 border-b border-border/80 bg-[#040a12]/95 backdrop-blur-xl">
@@ -219,12 +253,12 @@ function TopBar({
         >
           <Menu />
         </Button>
-        <a href="/operators/dashboard/react" className="flex shrink-0 items-center gap-2.5 font-semibold tracking-[-0.04em] text-white">
+        <button type="button" aria-label="Open Hypervisor overview" className="flex shrink-0 items-center gap-2.5 font-semibold tracking-[-0.04em] text-white" onClick={() => onNavigate('overview')}>
           <span className="grid size-8 place-items-center rounded-[10px] bg-gradient-to-br from-cyan-300 via-cyan-400 to-blue-500 shadow-[0_0_24px_rgba(43,215,197,0.18)]">
             <Sparkles className="size-4 text-[#04101c]" strokeWidth={2.8} />
           </span>
           <span className="hidden text-lg sm:inline">AiDN</span>
-        </a>
+        </button>
         <span className="hidden rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.12em] text-emerald-300 xl:inline">
           ONLINE
         </span>
@@ -237,10 +271,10 @@ function TopBar({
             <span className="block max-w-44 truncate">{nodeName}</span>
             <span className="hidden text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground sm:block">Local Hypervisor</span>
           </button>
-          <span className="hidden shrink-0 items-center gap-2 border border-dashed border-border/70 px-3 text-xs text-muted-foreground md:flex">
+          <button type="button" className="hidden shrink-0 items-center gap-2 border border-dashed border-border/70 px-3 text-xs text-muted-foreground transition-colors hover:border-cyan-300/40 hover:text-cyan-100 md:flex" onClick={() => onNavigate('network')}>
             <Network className="size-3.5" />
             Remote discovery
-          </span>
+          </button>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <Tooltip>
@@ -266,7 +300,7 @@ type NavigationProps = {
   activeScreen: DashboardScreen
   advanced: boolean
   readinessPercent: number
-  onNavigate: (screen: DashboardScreen | 'legacy') => void
+  onNavigate: (screen: DashboardScreen) => void
   onToggleAdvanced: () => void
 }
 
@@ -283,7 +317,6 @@ function Navigation({ activeScreen, advanced, readinessPercent, onNavigate, onTo
         {items.map((item, index) => {
           const Icon = item.icon
           const isCurrent = item.id === activeScreen
-          const label = item.id === 'legacy' ? `${item.label} (legacy workspace)` : item.label
           return (
             <Tooltip key={`${item.label}-${index}`}>
               <TooltipTrigger
@@ -303,9 +336,8 @@ function Navigation({ activeScreen, advanced, readinessPercent, onNavigate, onTo
               >
                 <Icon className={cn('size-4 shrink-0', isCurrent ? 'text-cyan-300' : 'text-slate-400 group-hover:text-slate-200')} />
                 <span>{item.label}</span>
-                {item.id === 'legacy' ? <ArrowUpRight className="ml-auto size-3 opacity-40" /> : null}
               </TooltipTrigger>
-              <TooltipContent side="right">{label}</TooltipContent>
+              <TooltipContent side="right">Open {item.label}</TooltipContent>
             </Tooltip>
           )
         })}
@@ -462,14 +494,24 @@ function ReadinessWizard({ readiness, isLoading, error, onNavigate, onRefresh }:
 
 function ReadinessAction({ action, onNavigate, onRefresh }: { action: { kind: string; label: string; detail: string; screen?: string } | undefined; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
   if (!action) return null
-  const targetScreen = action.screen
-  if (action.kind === 'screen' && (targetScreen === 'bundles' || targetScreen === 'endpoints')) {
-    return <Button size="sm" className="mt-3 bg-cyan-300 text-[#06121d] hover:bg-cyan-200 sm:mt-0" onClick={() => onNavigate(targetScreen)}>{action.label}<ChevronRight /></Button>
-  }
   if (action.kind === 'refresh') {
     return <Button size="sm" variant="outline" className="mt-3 border-cyan-300/25 bg-transparent text-cyan-100 hover:bg-cyan-300/10 sm:mt-0" onClick={onRefresh}><RefreshCw />{action.label}</Button>
   }
-  return <Button size="sm" variant="outline" className="mt-3 border-cyan-300/25 bg-transparent text-cyan-100 hover:bg-cyan-300/10 sm:mt-0" onClick={() => onNavigate('legacy')}><ExternalLink />{action.label}</Button>
+  return <Button size="sm" className="mt-3 bg-cyan-300 text-[#06121d] hover:bg-cyan-200 sm:mt-0" onClick={() => onNavigate(readinessActionScreen(action))}>{action.label}<ChevronRight /></Button>
+}
+
+function readinessActionScreen(action: { screen?: string; label: string; detail: string }): DashboardScreen {
+  const value = `${action.screen ?? ''} ${action.label} ${action.detail}`.toLowerCase()
+  if (value.includes('wallet')) return 'wallet'
+  if (value.includes('resource') || value.includes('capacity')) return 'settings'
+  if (value.includes('consensus') || value.includes('network') || value.includes('cometbft')) return 'network'
+  if (value.includes('provider') || value.includes('install')) return 'providers'
+  if (value.includes('model')) return 'models'
+  if (value.includes('validation')) return 'validation'
+  if (value.includes('endpoint')) return 'endpoints'
+  if (value.includes('bundle')) return 'bundles'
+  if (value.includes('market')) return 'market'
+  return 'overview'
 }
 
 function ReadinessStepRow({ step, onNavigate, onRefresh }: { step: ReadinessStep; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
@@ -507,7 +549,7 @@ function BundleTableSection({ bundles, isLoading, error, onNavigate, compact = f
       <CardContent className="p-0">
         {isLoading && bundles.length === 0 ? <TableSkeleton columns={6} rows={compact ? 3 : 6} /> : null}
         {error && bundles.length === 0 ? <PanelError title="Bundle inventory is unavailable" error={error} /> : null}
-        {!isLoading && !error && bundles.length === 0 ? <EmptyState title="No Bundle deployments are registered" detail="Start in Catalog to install a Provider, then create an immutable Bundle revision." actionLabel="Open legacy Catalog" /> : null}
+        {!isLoading && !error && bundles.length === 0 ? <EmptyState title="No Bundle deployments are registered" detail="Start in Catalog to inspect Provider capacity, then create an immutable Bundle revision." actionLabel="Open Catalog" onAction={() => onNavigate('catalog')} /> : null}
         {bundles.length > 0 ? <BundleTable bundles={bundles} onNavigate={onNavigate} /> : null}
       </CardContent>
     </Card>
@@ -574,6 +616,152 @@ function EndpointTable({ endpoints }: { endpoints: Endpoint[] }) {
   ]
   const table = useReactTable({ data: endpoints, columns, getCoreRowModel: getCoreRowModel() })
   return <DataTable table={table} />
+}
+
+function OperationsWorkspace({ screen, data, onNavigate, onRefresh }: { screen: OperationsScreen; data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
+  const home = data.home.data
+  const fleet = data.fleet.data
+  const readiness = data.readiness.data
+  const bundles = data.bundles.data?.items ?? []
+  const endpoints = data.endpoints.data?.items ?? []
+  const validation = summarizeValidation(endpoints)
+  const publishedEndpoints = endpoints.filter((endpoint) => endpoint.publication_status === 'published').length
+  const modelCount = new Set(bundles.map((bundle) => bundle.model_id).filter((modelId) => modelId && modelId !== 'unknown')).size
+  const nodeIdentity = home?.bootstrap.node_identity ?? fleet?.node
+  const wallet = home?.bootstrap.owner_wallet
+  const queue = fleet?.queue
+
+  const workspace = {
+    agents: {
+      eyebrow: 'Execution supervision',
+      title: 'Agents',
+      detail: 'Observe current execution pressure before adding work. Agent-specific controls will appear here as they are exposed by the control plane.',
+      facts: [
+        { label: 'Active work', value: formatCount(queue?.active ?? 0), detail: 'requests executing now' },
+        { label: 'Queued work', value: formatCount(queue?.queued ?? 0), detail: 'requests awaiting admission' },
+      ],
+      related: 'endpoints' as const,
+      relatedLabel: 'Review Endpoints',
+    },
+    market: {
+      eyebrow: 'Service discovery',
+      title: 'Market',
+      detail: 'Inspect the local offer inventory before publishing or consuming services. Remote discovery remains governed by the Network workspace.',
+      facts: [
+        { label: 'Published offers', value: formatCount(publishedEndpoints), detail: 'local Endpoints visible to the network' },
+        { label: 'Configured offers', value: formatCount(endpoints.length), detail: 'all local Endpoint records' },
+      ],
+      related: 'endpoints' as const,
+      relatedLabel: 'Review Endpoints',
+    },
+    catalog: {
+      eyebrow: 'Operator inventory',
+      title: 'Catalog',
+      detail: 'Catalog capability is represented by the registered Provider inventory. Installation and approval controls stay inside this React workspace as they are migrated from the control API.',
+      facts: [
+        { label: 'Providers', value: formatCount(home?.bootstrap.provider_count ?? 0), detail: 'registered Provider records' },
+        { label: 'Bundles', value: formatCount(bundles.length), detail: 'immutable deployments using catalog capacity' },
+      ],
+      related: 'providers' as const,
+      relatedLabel: 'Inspect Providers',
+    },
+    wallet: {
+      eyebrow: 'Operator ownership',
+      title: 'Wallet',
+      detail: 'The owner Wallet binds this Hypervisor to network-facing management actions. Private key material is never returned to the browser.',
+      facts: [
+        { label: 'Binding', value: wallet?.configured ? 'Configured' : 'Not configured', detail: wallet?.label || 'No owner wallet record' },
+        { label: 'Wallet ID', value: wallet?.wallet_id ? shortId(wallet.wallet_id) : 'Unavailable', detail: 'current operator beneficiary identity' },
+      ],
+      related: 'network' as const,
+      relatedLabel: 'Review Network',
+    },
+    settings: {
+      eyebrow: 'Host configuration',
+      title: 'Settings',
+      detail: 'Host identity and capacity reporting are read from the active Hypervisor record. The Resource Probe supplies the values shown in the persistent footer.',
+      facts: [
+        { label: 'Node', value: getText(nodeIdentity, 'node_id') || 'Local Hypervisor', detail: getText(nodeIdentity, 'base_url') || 'local control address' },
+        { label: 'Resource probe', value: fleet?.resources.probe ? 'Reporting' : 'Unavailable', detail: getText(fleet?.resources.probe, 'source') || 'no probe evidence was supplied' },
+      ],
+      related: 'network' as const,
+      relatedLabel: 'Review Network',
+    },
+    providers: {
+      eyebrow: 'Runtime supply',
+      title: 'Provider Plugins',
+      detail: 'Provider records are the backing systems for Bundles. A Provider is not a consumer-facing Endpoint and is never published by itself.',
+      facts: [
+        { label: 'Providers', value: formatCount(home?.bootstrap.provider_count ?? 0), detail: 'registered Provider records' },
+        { label: 'Bound Bundles', value: formatCount(bundles.length), detail: 'deployments consuming Provider capacity' },
+      ],
+      related: 'bundles' as const,
+      relatedLabel: 'Review Bundles',
+    },
+    models: {
+      eyebrow: 'Model inventory',
+      title: 'Models',
+      detail: 'Model inventory is derived from immutable Bundle definitions, so an operator can trace every deployed model back to its runtime and Endpoint relationship.',
+      facts: [
+        { label: 'Models in Bundles', value: formatCount(modelCount), detail: 'unique model identifiers in the local deployment set' },
+        { label: 'Bundles', value: formatCount(bundles.length), detail: 'immutable model deployment records' },
+      ],
+      related: 'bundles' as const,
+      relatedLabel: 'Review Bundles',
+    },
+    validation: {
+      eyebrow: 'Endpoint assurance',
+      title: 'Validation',
+      detail: 'Validation status is recorded against Endpoints. It supplements runtime health and does not change a Bundle in place.',
+      facts: [
+        { label: 'Published', value: formatCount(validation.published), detail: 'Endpoint records with published status' },
+        { label: 'Awaiting review', value: formatCount(validation.pending + validation.unvalidated), detail: 'pending or unvalidated Endpoint records' },
+      ],
+      related: 'endpoints' as const,
+      relatedLabel: 'Review Endpoints',
+    },
+    network: {
+      eyebrow: 'Network control plane',
+      title: 'Network',
+      detail: 'Network readiness is evaluated from the configured consensus and replication evidence. Remote Hypervisors are discovered here, not through a decorative tab.',
+      facts: [
+        { label: 'Readiness', value: readiness?.network_ready ? 'Ready' : 'Review required', detail: readiness?.overall_state || 'network status has not arrived' },
+        { label: 'Node address', value: getText(nodeIdentity, 'base_url') || 'Unavailable', detail: 'advertised local control address' },
+      ],
+      related: 'endpoints' as const,
+      relatedLabel: 'Review Endpoints',
+    },
+  }[screen]
+
+  return (
+    <div className="space-y-4">
+      <ScreenHeading eyebrow={workspace.eyebrow} title={workspace.title} detail={workspace.detail} />
+      <Card className="border-border/80 bg-card py-0 shadow-none">
+        <CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/75 px-5 py-4">
+          <div>
+            <CardTitle className="text-lg font-semibold tracking-[-0.03em]">Current local state</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">Live Hypervisor read-model data, refreshed automatically every 20 seconds.</p>
+          </div>
+          <Button variant="outline" size="sm" className="shrink-0 border-border bg-[#091725]" onClick={onRefresh}>
+            <RefreshCw className={cn('size-3.5', data.home.isFetching && 'animate-spin')} />
+            Refresh
+          </Button>
+        </CardHeader>
+        <CardContent className="p-0">
+          <dl className="divide-y divide-border/70">
+            {workspace.facts.map((fact) => <div key={fact.label} className="grid gap-1 px-5 py-4 sm:grid-cols-[minmax(12rem,0.75fr)_minmax(0,1.25fr)] sm:items-baseline sm:gap-5">
+              <dt className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{fact.label}</dt>
+              <dd><span className="font-medium text-slate-100">{fact.value}</span><p className="mt-1 text-xs text-muted-foreground">{fact.detail}</p></dd>
+            </div>)}
+          </dl>
+          <div className="flex flex-wrap gap-2 border-t border-border/70 px-5 py-4">
+            <Button size="sm" className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" onClick={() => onNavigate(workspace.related)}>{workspace.relatedLabel}<ChevronRight /></Button>
+            <Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => onNavigate('overview')}>Return to Overview</Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
 }
 
 function DataTable<TData>({ table }: { table: ReturnType<typeof useReactTable<TData>> }) {
@@ -687,8 +875,8 @@ function PanelError({ title, detail, error, onRetry }: { title: string; detail?:
   return <Card className="border-amber-300/20 bg-amber-300/[0.035] py-0 shadow-none"><CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold text-amber-100">{title}</p><p className="mt-1 max-w-xl text-xs leading-5 text-amber-100/75">{detail ?? error?.message ?? 'The Hypervisor did not provide this read model. Other dashboard sections remain available.'}</p></div>{onRetry ? <Button variant="outline" size="sm" className="shrink-0 border-amber-300/25 bg-transparent text-amber-100 hover:bg-amber-300/10" onClick={onRetry}><RefreshCw />Retry</Button> : null}</CardContent></Card>
 }
 
-function EmptyState({ title, detail, actionLabel, onAction }: { title: string; detail: string; actionLabel: string; onAction?: () => void }) {
-  return <div className="px-5 py-12 text-center"><Boxes className="mx-auto size-6 text-slate-600" /><p className="mt-3 font-medium text-slate-200">{title}</p><p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">{detail}</p><Button variant="outline" size="sm" className="mt-4 border-border bg-[#091725]" onClick={onAction ?? (() => window.location.assign('/operators/dashboard'))}>{actionLabel}<ExternalLink /></Button></div>
+function EmptyState({ title, detail, actionLabel, onAction }: { title: string; detail: string; actionLabel: string; onAction: () => void }) {
+  return <div className="px-5 py-12 text-center"><Boxes className="mx-auto size-6 text-slate-600" /><p className="mt-3 font-medium text-slate-200">{title}</p><p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">{detail}</p><Button variant="outline" size="sm" className="mt-4 border-border bg-[#091725]" onClick={onAction}>{actionLabel}<ChevronRight /></Button></div>
 }
 
 function summarizeValidation(endpoints: Endpoint[]) {

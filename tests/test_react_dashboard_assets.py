@@ -1,8 +1,26 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 import aidn_hypervisor.api as api_module
 import aidn_hypervisor.dashboard as dashboard_module
 from aidn_hypervisor.main import build_app
+
+
+def test_react_dashboard_navigation_stays_inside_react_workspace() -> None:
+    app_source = (
+        Path(__file__).resolve().parents[1]
+        / "web"
+        / "operator-dashboard"
+        / "src"
+        / "App.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "id: 'legacy'" not in app_source
+    assert "window.location.assign('/operators/dashboard')" not in app_source
+    assert "window.history.pushState" in app_source
+    for screen in ("agents", "market", "catalog", "wallet", "settings", "providers", "models", "validation", "network"):
+        assert f"id: '{screen}'" in app_source
 
 
 def test_react_dashboard_asset_resolver_requires_a_regular_file(

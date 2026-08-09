@@ -1,6 +1,33 @@
 import { create } from 'zustand'
 
-export type DashboardScreen = 'overview' | 'bundles' | 'endpoints'
+export type DashboardScreen =
+  | 'overview'
+  | 'agents'
+  | 'bundles'
+  | 'market'
+  | 'catalog'
+  | 'endpoints'
+  | 'wallet'
+  | 'settings'
+  | 'providers'
+  | 'models'
+  | 'validation'
+  | 'network'
+
+export const dashboardScreens: readonly DashboardScreen[] = [
+  'overview',
+  'agents',
+  'bundles',
+  'market',
+  'catalog',
+  'endpoints',
+  'wallet',
+  'settings',
+  'providers',
+  'models',
+  'validation',
+  'network',
+]
 
 type OperatorDashboardState = {
   activeScreen: DashboardScreen
