@@ -23,7 +23,7 @@ from argparse import ArgumentParser
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
@@ -41,6 +41,14 @@ from aidn_hypervisor.secrets import (
 
 DEFAULT_MAX_BODY_BYTES = 1_048_576
 MCP_SESSION_HEADER = "Mcp-Session-Id"
+
+
+class McpAgentCredentialResolver(Protocol):
+    """Resolve a bearer value without exposing it to the transport session."""
+
+    def resolve(self, token: str | None) -> Any | None: ...
+
+    def record_use(self, credential_id: str) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -274,6 +282,7 @@ class McpRemoteGateway:
         control: McpControlPlane,
         *,
         agent_token: str | None,
+        credential_resolver: McpAgentCredentialResolver | None = None,
         operator_token: str | None = None,
         require_tls: bool = False,
         max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
@@ -292,7 +301,7 @@ class McpRemoteGateway:
             _digest_token(operator_token),
         ):
             raise ValueError("MCP agent and operator tokens must be different")
-        if agent_token is None and operator_token is not None:
+        if agent_token is None and credential_resolver is None and operator_token is not None:
             raise ValueError("MCP operator token requires the remote agent token")
         if max_body_bytes < 1024:
             raise ValueError("MCP remote body limit is too small")
@@ -300,15 +309,16 @@ class McpRemoteGateway:
             raise ValueError("MCP remote session limit must be positive")
         self.control = control
         self._agent_token_hash = _digest_token(agent_token) if agent_token is not None else None
+        self._credential_resolver = credential_resolver
         self._operator_token_hash = _digest_token(operator_token) if operator_token is not None else None
         self.max_body_bytes = max_body_bytes
         self.max_transport_sessions = max_transport_sessions
         self.require_tls = require_tls
-        self._sessions: dict[str, McpJsonRpcServer] = {}
+        self._sessions: dict[str, tuple[str, McpJsonRpcServer]] = {}
 
     @property
     def enabled(self) -> bool:
-        return self._agent_token_hash is not None
+        return self._agent_token_hash is not None or self._credential_resolver is not None
 
     @property
     def operator_enabled(self) -> bool:
@@ -322,6 +332,22 @@ class McpRemoteGateway:
         if not separator or scheme.lower() != "bearer" or not token.strip():
             return False
         return hmac.compare_digest(_digest_token(token.strip()), expected)
+
+    def _agent_credential_id(self, request: Request) -> str | None:
+        if self._credential_resolver is None:
+            return "legacy-agent" if self._authorized(request, self._agent_token_hash) else None
+        authorization = request.headers.get("authorization", "")
+        scheme, separator, token = authorization.partition(" ")
+        if not separator or scheme.lower() != "bearer" or not token.strip():
+            return None
+        credential = self._credential_resolver.resolve(token.strip())
+        if credential is None:
+            return None
+        credential_id = getattr(credential, "credential_id", None)
+        if not isinstance(credential_id, str) or not credential_id:
+            return None
+        self._credential_resolver.record_use(credential_id)
+        return credential_id
 
     @staticmethod
     def _origin_is_rejected(request: Request) -> bool:
@@ -402,12 +428,12 @@ class McpRemoteGateway:
             return Response(status_code=status_code, headers=headers)
         return JSONResponse(status_code=status_code, headers=headers, content=payload)
 
-    def _new_transport_session(self) -> tuple[str, McpJsonRpcServer] | None:
+    def _new_transport_session(self, credential_id: str) -> tuple[str, McpJsonRpcServer] | None:
         if len(self._sessions) >= self.max_transport_sessions:
             return None
         session_id = "mcp-" + secrets.token_urlsafe(24)
         server = McpJsonRpcServer(self.control)
-        self._sessions[session_id] = server
+        self._sessions[session_id] = (credential_id, server)
         return session_id, server
 
     async def handle_agent(self, request: Request) -> Response:
@@ -415,7 +441,8 @@ class McpRemoteGateway:
             return JSONResponse(status_code=404, content=_json_error("MCP_REMOTE_DISABLED", "Remote MCP is disabled"))
         if self.require_tls and request.url.scheme != "https":
             return self._tls_required_response()
-        if not self._authorized(request, self._agent_token_hash):
+        credential_id = self._agent_credential_id(request)
+        if credential_id is None:
             return self._unauthorized()
         if self._origin_is_rejected(request):
             return self._forbidden_origin()
@@ -447,7 +474,7 @@ class McpRemoteGateway:
                         "initialize must not include an existing MCP session header",
                     ),
                 )
-            created = self._new_transport_session()
+            created = self._new_transport_session(credential_id)
             if created is None:
                 return JSONResponse(
                     status_code=429,
@@ -465,12 +492,13 @@ class McpRemoteGateway:
                 status_code=400,
                 content=_json_error("MCP_REMOTE_SESSION_REQUIRED", "Mcp-Session-Id is required after initialize"),
             )
-        server = self._sessions.get(session_id)
-        if server is None:
+        transport_session = self._sessions.get(session_id)
+        if transport_session is None:
             return JSONResponse(
                 status_code=404,
                 content=_json_error("MCP_REMOTE_SESSION_NOT_FOUND", "MCP transport session was not found"),
             )
+        _bound_credential_id, server = transport_session
         response = server.handle_message(payload)
         if response is None:
             return self._response(None, session_id=session_id, status_code=202)
@@ -537,6 +565,12 @@ class McpRemoteGateway:
 
     def close_all_sessions(self) -> None:
         self._sessions.clear()
+
+    def invalidate_credential_sessions(self, credential_id: str) -> None:
+        """Close all transport sessions issued under one revoked credential."""
+        for session_id, (bound_credential_id, _server) in tuple(self._sessions.items()):
+            if bound_credential_id == credential_id:
+                del self._sessions[session_id]
 
 
 def build_mcp_remote_router(gateway: McpRemoteGateway, *, prefix: str = "/mcp") -> APIRouter:

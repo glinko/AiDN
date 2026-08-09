@@ -26,6 +26,7 @@ from aidn_hypervisor.mcp import (
     build_mcp_remote_router,
     build_mcp_server,
 )
+from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager
@@ -107,6 +108,23 @@ def _client(
     return TestClient(app), gateway
 
 
+def _client_with_credentials(tmp_path, credentials: McpCredentialStore) -> tuple[TestClient, McpRemoteGateway]:
+    store = McpPersistentStateStore(tmp_path / "mcp-control-state.json")
+    server = build_mcp_server(
+        _service(),
+        session=_session("CAPABILITIES:READ"),
+        mcp_state_store=store,
+    )
+    gateway = McpRemoteGateway(
+        server.control,
+        agent_token=None,
+        credential_resolver=credentials,
+    )
+    app = FastAPI()
+    app.include_router(build_mcp_remote_router(gateway))
+    return TestClient(app), gateway
+
+
 def _headers(token: str = AGENT_TOKEN, session_id: str | None = None) -> dict[str, str]:
     headers = {"Authorization": f"Bearer {token}"}
     if session_id is not None:
@@ -114,10 +132,10 @@ def _headers(token: str = AGENT_TOKEN, session_id: str | None = None) -> dict[st
     return headers
 
 
-def _initialize(client: TestClient) -> str:
+def _initialize(client: TestClient, token: str = AGENT_TOKEN) -> str:
     response = client.post(
         "/mcp",
-        headers=_headers(),
+        headers=_headers(token),
         json={
             "jsonrpc": "2.0",
             "id": 1,
@@ -134,11 +152,31 @@ def _initialize(client: TestClient) -> str:
     session_id = response.headers["Mcp-Session-Id"]
     initialized = client.post(
         "/mcp",
-        headers=_headers(session_id=session_id),
+        headers=_headers(token, session_id=session_id),
         json={"jsonrpc": "2.0", "method": "notifications/initialized"},
     )
     assert initialized.status_code == 202
     return session_id
+
+
+def test_revocation_rejects_credential_and_closes_transport_sessions(tmp_path) -> None:
+    credentials = McpCredentialStore(
+        secret_manager=FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    )
+    issued = credentials.create_credential(label="agent", scopes=("CAPABILITIES:READ",))
+    client, gateway = _client_with_credentials(tmp_path, credentials)
+    session_id = _initialize(client, issued.token or "")
+
+    gateway.invalidate_credential_sessions(issued.credential_id)
+
+    closed = client.post(
+        "/mcp",
+        headers=_headers(issued.token or "", session_id=session_id),
+        json={"jsonrpc": "2.0", "id": 3, "method": "ping"},
+    )
+    assert closed.status_code == 404
+    assert credentials.revoke_credential(issued.credential_id) is True
+    assert client.post("/mcp", headers=_headers(issued.token or ""), json={}).status_code == 401
 
 
 def _tool_call(client: TestClient, session_id: str, name: str, arguments: dict) -> dict:
