@@ -9,9 +9,9 @@ turning the dashboard into an unauthenticated control channel.
 ## Scope
 
 This slice adds a local pairing flow, short-lived dashboard access sessions,
-multi-credential agent authentication, and the Settings UI for their lifecycle.
-It does not make the dashboard a replacement for mTLS, implement remote-node
-enrollment, or expose an operator credential to a browser.
+multi-credential agent authentication, dashboard-approved agent enrollment,
+and the Settings UI for their lifecycle. It does not make the dashboard a
+replacement for mTLS or expose an operator credential to a browser.
 
 ## Security Model
 
@@ -61,6 +61,20 @@ failed exchange returns a generic error and does not disclose whether the code
 was wrong, expired, or already consumed. Restarting the Hypervisor invalidates
 all dashboard sessions, while an unexpired unused pairing code remains
 available because it is encrypted at rest.
+
+### Dashboard-approved Agent Enrollment
+
+An agent may create a short-lived request containing a label and an ephemeral
+X25519 public key. The request response contains an opaque request ID and a
+random retrieval secret. Only a caller presenting that retrieval secret can
+poll its status. This permits an unauthenticated bootstrap request without
+giving an unapproved agent a reusable network credential.
+
+After a dashboard session approves the request, the node creates a dedicated
+agent credential and seals it using X25519 key agreement, HKDF-SHA256 and
+AES-256-GCM. The envelope is bound to the request ID as authenticated data.
+The Dashboard receives request metadata only; it never receives the token.
+Rejected and expired requests never produce credentials.
 
 ## Components
 

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from aidn_hypervisor.mcp.credentials import McpCredential, McpCredentialStore
+from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.operator_access import DashboardAccessService
 
 _COOKIE_NAME = "aidn_dashboard_access"
@@ -25,6 +26,11 @@ class CredentialCreateRequest(BaseModel):
     scopes: list[str] = Field(min_length=1, max_length=64)
 
 
+class EnrollmentCreateRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=96)
+    encryption_public_key: str = Field(min_length=40, max_length=128)
+
+
 def _credential_payload(credential: McpCredential, *, reveal: bool = False) -> dict:
     payload = asdict(credential)
     if not reveal:
@@ -37,6 +43,7 @@ def build_operator_access_router(
     access_service: DashboardAccessService | None,
     credential_store: McpCredentialStore | None,
     allow_insecure_lan: bool,
+    enrollment_service: McpEnrollmentService | None = None,
     operator_fingerprint: str | None = None,
     invalidate_credential_sessions: Callable[[str], None] | None = None,
 ) -> APIRouter:
@@ -54,6 +61,9 @@ def build_operator_access_router(
         if not allow_insecure_lan and request.url.scheme != "https":
             return JSONResponse(status_code=426, content={"error": {"code": "DASHBOARD_ACCESS_TLS_REQUIRED"}})
         return None
+
+    def enrollment_payload(item) -> dict:
+        return asdict(item)
 
     @router.get("/status")
     async def status(request: Request) -> dict:
@@ -133,5 +143,65 @@ def build_operator_access_router(
             access_service.revoke_session(request.cookies.get(_COOKIE_NAME))
         response.delete_cookie(_COOKIE_NAME, path=_COOKIE_PATH)
         return Response(status_code=204, headers=dict(response.headers))
+
+    @router.post("/agent-enrollment/requests", status_code=201)
+    async def create_enrollment(payload: EnrollmentCreateRequest) -> Response:
+        if enrollment_service is None:
+            return JSONResponse(status_code=404, content={"error": {"code": "MCP_ENROLLMENT_DISABLED"}})
+        try:
+            created = enrollment_service.create_request(
+                label=payload.label,
+                encryption_public_key=payload.encryption_public_key,
+            )
+        except ValueError:
+            return JSONResponse(status_code=422, content={"error": {"code": "MCP_ENROLLMENT_INVALID"}})
+        return JSONResponse(status_code=201, content=enrollment_payload(created))
+
+    @router.get("/agent-enrollment/requests/{request_id}")
+    async def retrieve_enrollment(request_id: str, request: Request) -> Response:
+        if enrollment_service is None:
+            return JSONResponse(status_code=404, content={"error": {"code": "MCP_ENROLLMENT_NOT_FOUND"}})
+        result = enrollment_service.retrieve(
+            request_id=request_id,
+            retrieval_secret=request.headers.get("X-AiDN-Enrollment-Secret", ""),
+        )
+        if result is None:
+            return JSONResponse(status_code=404, content={"error": {"code": "MCP_ENROLLMENT_NOT_FOUND"}})
+        return JSONResponse(status_code=200, content=result)
+
+    @router.get("/enrollment-requests")
+    async def list_enrollments(request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if enrollment_service is None:
+            return JSONResponse(status_code=404, content={"error": {"code": "MCP_ENROLLMENT_DISABLED"}})
+        return JSONResponse(status_code=200, content={"items": [enrollment_payload(item) for item in enrollment_service.list_requests()]})
+
+    @router.post("/enrollment-requests/{request_id}/approve")
+    async def approve_enrollment(request_id: str, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if enrollment_service is None:
+            return JSONResponse(status_code=404, content={"error": {"code": "MCP_ENROLLMENT_DISABLED"}})
+        try:
+            approved = enrollment_service.approve(request_id)
+        except ValueError:
+            return JSONResponse(status_code=409, content={"error": {"code": "MCP_ENROLLMENT_NOT_PENDING"}})
+        return JSONResponse(status_code=200, content=enrollment_payload(approved))
+
+    @router.post("/enrollment-requests/{request_id}/reject")
+    async def reject_enrollment(request_id: str, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if enrollment_service is None:
+            return JSONResponse(status_code=404, content={"error": {"code": "MCP_ENROLLMENT_DISABLED"}})
+        try:
+            rejected = enrollment_service.reject(request_id)
+        except ValueError:
+            return JSONResponse(status_code=409, content={"error": {"code": "MCP_ENROLLMENT_NOT_PENDING"}})
+        return JSONResponse(status_code=200, content=enrollment_payload(rejected))
 
     return router

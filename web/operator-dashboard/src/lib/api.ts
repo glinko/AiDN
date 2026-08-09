@@ -34,6 +34,15 @@ export type DashboardAccessStatus = {
   credentials: AccessCredential[]
 }
 
+export type EnrollmentRequest = {
+  request_id: string
+  label: string
+  key_fingerprint: string
+  state: 'pending' | 'approved' | 'rejected' | 'expired' | string
+  created_at: string
+  expires_at: string
+}
+
 async function readDashboard<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
@@ -107,4 +116,7 @@ export const dashboardApi = {
   rotateAgentCredential: (credentialId: string) => writeDashboard<AccessCredential>(`/operators/dashboard/access/credentials/${credentialId}/rotate`, { method: 'POST' }),
   revokeAgentCredential: (credentialId: string) => writeDashboard(`/operators/dashboard/access/credentials/${credentialId}`, { method: 'DELETE' }),
   logoutDashboardAccess: () => writeDashboard('/operators/dashboard/access/logout', { method: 'POST' }),
+  enrollmentRequests: () => writeDashboard<{ items: EnrollmentRequest[] }>('/operators/dashboard/access/enrollment-requests', { method: 'GET' }),
+  approveEnrollment: (requestId: string) => writeDashboard<EnrollmentRequest>(`/operators/dashboard/access/enrollment-requests/${requestId}/approve`, { method: 'POST' }),
+  rejectEnrollment: (requestId: string) => writeDashboard<EnrollmentRequest>(`/operators/dashboard/access/enrollment-requests/${requestId}/reject`, { method: 'POST' }),
 }

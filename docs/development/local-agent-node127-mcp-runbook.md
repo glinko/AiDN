@@ -91,6 +91,32 @@ An agent must never request, infer, store or use the operator credential.
 
 ## Operator Provisioning of the Agent Token
 
+### Dashboard-Native Enrollment
+
+For a new agent, the preferred path does not require the operator to run a
+host-terminal pairing command or copy a token. The agent creates an ephemeral
+X25519 encryption key locally and submits its public key to:
+
+```text
+POST /operators/dashboard/access/agent-enrollment/requests
+```
+
+The response contains a request ID and one-time retrieval secret. The agent
+keeps both in its own secret store and polls the request endpoint with the
+`X-AiDN-Enrollment-Secret` header. It cannot receive a credential while the
+request remains pending.
+
+The operator opens **Settings -> Agent enrollment requests**, verifies the
+agent label and key fingerprint, then selects **Approve** or **Reject**. An
+approval creates a dedicated MCP credential and encrypts it to the agent's
+ephemeral X25519 public key. The browser sees only request metadata; it never
+receives the token. The agent decrypts the returned envelope locally, stores
+the token in its normal secret mechanism, and then initializes `/mcp`.
+
+Enrollment requests expire after ten minutes. They are designed for controlled
+LAN MVP operation; public-network use additionally requires the production
+HTTPS/mTLS transport profile and admission/rate-limit policy.
+
 The model does not need to see the token. The MCP client transport needs it to
 add the `Authorization` header. The safe pattern is therefore:
 

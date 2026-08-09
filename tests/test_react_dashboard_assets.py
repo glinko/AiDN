@@ -23,6 +23,9 @@ def test_react_dashboard_navigation_stays_inside_react_workspace() -> None:
         assert f"id: '{screen}'" in app_source
     assert "aidn-operator pair" in app_source
     assert "Issue a new agent token" in app_source
+    assert "Agent enrollment requests" in app_source
+    assert "approveEnrollment" in app_source
+    assert "rejectEnrollment" in app_source
     assert "Rotate" in app_source
     assert "Revoke" in app_source
 

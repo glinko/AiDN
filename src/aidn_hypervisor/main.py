@@ -36,6 +36,7 @@ from aidn_hypervisor.mcp import (
     build_mcp_server,
 )
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
+from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.operator_access import DashboardAccessService
 from aidn_hypervisor.operator_access_api import build_operator_access_router
 from aidn_hypervisor.persistence import FileStateStore
@@ -260,9 +261,18 @@ def build_app(
         if mcp_credential_store is not None
         else None
     )
+    mcp_enrollment_service = (
+        McpEnrollmentService(
+            secret_manager=mcp_secret_manager,
+            credential_store=mcp_credential_store,
+        )
+        if mcp_secret_manager is not None and mcp_credential_store is not None
+        else None
+    )
     app.state.mcp_remote_gateway = mcp_remote_gateway
     app.state.mcp_credential_store = mcp_credential_store
     app.state.dashboard_access_service = dashboard_access_service
+    app.state.mcp_enrollment_service = mcp_enrollment_service
     if mcp_remote_gateway.enabled:
         app.include_router(build_mcp_remote_router(mcp_remote_gateway))
     app.include_router(
@@ -270,6 +280,7 @@ def build_app(
             access_service=dashboard_access_service,
             credential_store=mcp_credential_store,
             allow_insecure_lan=dashboard_access_insecure_lan,
+            enrollment_service=mcp_enrollment_service,
             operator_fingerprint=mcp_remote_gateway.operator_fingerprint,
             invalidate_credential_sessions=mcp_remote_gateway.invalidate_credential_sessions,
         )
@@ -365,6 +376,29 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
     ):
         # Pairing only creates a short-lived local browser session. The code is
         # minted from the host terminal and never reaches consensus state.
+        return True
+    if (
+        len(parts) == 5
+        and parts[:4] == ["operators", "dashboard", "access", "agent-enrollment"]
+        and parts[4] == "requests"
+        and (method is None or method == "POST")
+    ):
+        # An agent may only submit its public-key enrollment request here;
+        # no credential leaves the node until a dashboard operator approves it.
+        return True
+    if (
+        len(parts) == 6
+        and parts[:4] == ["operators", "dashboard", "access", "agent-enrollment"]
+        and parts[4] == "requests"
+        and (method is None or method == "GET")
+    ):
+        return True
+    if (
+        len(parts) == 6
+        and parts[:4] == ["operators", "dashboard", "access", "enrollment-requests"]
+        and parts[5] in {"approve", "reject"}
+        and (method is None or method == "POST")
+    ):
         return True
     if (
         parts == ["operators", "dashboard", "access", "logout"]
