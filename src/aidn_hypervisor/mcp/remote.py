@@ -29,6 +29,7 @@ from typing import Any, Protocol
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
+from aidn_hypervisor.mcp.permissions import approval_policy_for_agent
 from aidn_hypervisor.mcp.server import (
     McpControlPlane,
     McpDomainError,
@@ -58,6 +59,7 @@ class McpAuthenticatedCredential:
 
     credential_id: str
     scopes: tuple[str, ...]
+    auto_approved_scopes: tuple[str, ...] = ()
 
 
 class _ScopedMcpControlPlane:
@@ -81,6 +83,14 @@ class _ScopedMcpControlPlane:
             control_session_id=self._control_session_id,
             agent_identity=f"mcp-credential:{self._credential.credential_id}",
             scopes=frozenset(self._credential.scopes),
+            approval_policy=(
+                dict(base_session.approval_policy)
+                if self._credential.credential_id == "legacy-agent"
+                else approval_policy_for_agent(
+                    base_session.approval_policy,
+                    auto_approved_scopes=self._credential.auto_approved_scopes,
+                )
+            ),
             # Approval is held canonically by the operator control session.
             approved_plan_hashes=base_session.approved_plan_hashes,
         )
@@ -435,15 +445,22 @@ class McpRemoteGateway:
             return None
         credential_id = getattr(credential, "credential_id", None)
         scopes = getattr(credential, "scopes", None)
+        auto_approved_scopes = getattr(credential, "auto_approved_scopes", ())
         if (
             not isinstance(credential_id, str)
             or not credential_id
             or not isinstance(scopes, tuple)
             or not all(isinstance(scope, str) and scope for scope in scopes)
+            or not isinstance(auto_approved_scopes, tuple)
+            or not all(isinstance(scope, str) and scope for scope in auto_approved_scopes)
         ):
             return None
         self._credential_resolver.record_use(credential_id)
-        return McpAuthenticatedCredential(credential_id=credential_id, scopes=scopes)
+        return McpAuthenticatedCredential(
+            credential_id=credential_id,
+            scopes=scopes,
+            auto_approved_scopes=auto_approved_scopes,
+        )
 
     @staticmethod
     def _origin_is_rejected(request: Request) -> bool:

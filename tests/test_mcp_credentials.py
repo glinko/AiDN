@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 import base64
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -50,12 +50,17 @@ def test_store_resolves_active_token_but_lists_only_redacted_metadata(tmp_path) 
 
 def test_rotation_and_revoke_make_predecessor_unusable(tmp_path) -> None:
     store = McpCredentialStore(secret_manager=_manager(tmp_path))
-    initial = store.create_credential(label="agent", scopes=("NODE:READ",))
+    initial = store.create_credential(
+        label="agent",
+        scopes=("NODE:READ", "BUNDLE:ACTIVATE"),
+        auto_approved_scopes=("BUNDLE:ACTIVATE",),
+    )
 
     replacement = store.rotate_credential(initial.credential_id)
 
     assert store.resolve(initial.token) is None
     assert store.resolve(replacement.token) is not None
+    assert replacement.auto_approved_scopes == ("BUNDLE:ACTIVATE",)
     assert store.revoke_credential(replacement.credential_id) is True
     assert store.resolve(replacement.token) is None
 

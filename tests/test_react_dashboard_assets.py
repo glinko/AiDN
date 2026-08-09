@@ -26,6 +26,8 @@ def test_react_dashboard_navigation_stays_inside_react_workspace() -> None:
     assert "Agent enrollment requests" in app_source
     assert "Permissions" in app_source
     assert "Save permissions" in app_source
+    assert "Operator approved by default" in app_source
+    assert "Full agent-plane control" in app_source
     assert "approveEnrollment" in app_source
     assert "rejectEnrollment" in app_source
     assert "Rotate" in app_source
@@ -58,10 +60,15 @@ def test_react_dashboard_routes_serve_index_and_hashed_assets(monkeypatch, tmp_p
     index.write_text("<main>AiDN</main>", encoding="utf-8")
     script = assets / "index-test.js"
     script.write_text("console.log('aidn')", encoding="utf-8")
+    def resolve_asset(asset_path=None):
+        if asset_path is None:
+            return index
+        return script if asset_path == "assets/index-test.js" else None
+
     monkeypatch.setattr(
         api_module,
         "find_react_dashboard_asset",
-        lambda asset_path=None: index if asset_path is None else script if asset_path == "assets/index-test.js" else None,
+        resolve_asset,
     )
     client = TestClient(build_app())
 

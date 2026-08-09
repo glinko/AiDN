@@ -78,6 +78,30 @@ verify that the requested tool is advertised. This permission does not bypass
 the separate operator approval required by the operation plan.
 ```
 
+If the work is intentionally unattended, the agent may additionally request
+**Operator approved by default** for that exact plan-bound action. The prompt
+must name both settings and the concrete risk:
+
+```text
+AiDN needs unattended execution for one specific action.
+
+Node Dashboard: <dashboard-url>
+Open: Settings -> Agent credentials -> Permissions
+Agent: <credential label or fingerprint>
+Permission: <scope>
+Also enable: Operator approved by default
+Reason and bounded task: <specific operation>
+
+This allows that action to apply a valid node plan without a separate approval.
+It does not grant an operator token, Wallet key, shell access or consensus
+authority. I will reconnect after the setting is saved.
+```
+
+The **Full rights** switch is an experimental shortcut that enables every
+implemented agent-plane permission and automatic approval for every
+plan-bound action. An agent MUST NOT request it by default. It remains unable
+to impersonate the operator or access operator secrets.
+
 The agent SHALL never ask for wildcard scopes, operator authority, a Wallet
 key, shell access, or a pairing code. If the requested tool is not present in
 `tools/list` after reconnecting, it is deferred or unavailable; a permission

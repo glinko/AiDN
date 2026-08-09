@@ -633,6 +633,7 @@ function SettingsAccessWorkspace() {
   const [permissionCatalog, setPermissionCatalog] = useState<AgentPermissionCatalog | null>(null)
   const [selectedCredentialId, setSelectedCredentialId] = useState<string | null>(null)
   const [draftScopes, setDraftScopes] = useState<string[]>([])
+  const [draftAutoApprovedScopes, setDraftAutoApprovedScopes] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
 
@@ -712,13 +713,34 @@ function SettingsAccessWorkspace() {
   function openPermissions(credential: AccessCredential) {
     setSelectedCredentialId(credential.credential_id)
     setDraftScopes(credential.scopes)
+    setDraftAutoApprovedScopes(credential.auto_approved_scopes)
     setError(null)
   }
 
   function toggleScope(scope: string) {
-    setDraftScopes((current) => current.includes(scope)
+    setDraftScopes((current) => {
+      const next = current.includes(scope) ? current.filter((item) => item !== scope) : [...current, scope]
+      if (!next.includes(scope)) setDraftAutoApprovedScopes((approved) => approved.filter((item) => item !== scope))
+      return next
+    })
+  }
+
+  function toggleAutoApproval(scope: string) {
+    setDraftAutoApprovedScopes((current) => current.includes(scope)
       ? current.filter((item) => item !== scope)
       : [...current, scope])
+    setDraftScopes((current) => current.includes(scope) ? current : [...current, scope])
+  }
+
+  function setExperimentalFullControl(enabled: boolean) {
+    if (!permissionCatalog) return
+    if (enabled) {
+      if (!window.confirm('Grant all implemented MCP agent-plane permissions and automatic approval for every plan-bound action? This does not share wallet keys, the operator token, shell access, or consensus bypass.')) return
+      setDraftScopes(permissionCatalog.full_control_scopes)
+      setDraftAutoApprovedScopes(permissionCatalog.full_control_auto_approved_scopes)
+      return
+    }
+    setDraftAutoApprovedScopes([])
   }
 
   async function savePermissions(credential: AccessCredential) {
@@ -729,7 +751,7 @@ function SettingsAccessWorkspace() {
     setBusy(`permissions:${credential.credential_id}`)
     try {
       setError(null)
-      await dashboardApi.updateAgentCredentialScopes(credential.credential_id, draftScopes)
+      await dashboardApi.updateAgentCredentialScopes(credential.credential_id, draftScopes, draftAutoApprovedScopes)
       setSelectedCredentialId(null)
       await refreshAccess()
     } catch (cause) {
@@ -764,11 +786,16 @@ function SettingsAccessWorkspace() {
   const selectedCredential = status?.credentials.find((credential) => credential.credential_id === selectedCredentialId) ?? null
   if (selectedCredential) {
     const permissions = permissionCatalog?.items ?? []
+    const isFullControl = permissionCatalog !== null
+      && permissionCatalog.full_control_scopes.every((scope) => draftScopes.includes(scope))
+      && permissionCatalog.full_control_auto_approved_scopes.every((scope) => draftAutoApprovedScopes.includes(scope))
     return <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><ScreenHeading eyebrow="Agent authority" title={`Permissions: ${selectedCredential.label}`} detail="Select the MCP tools this credential may discover and execute. Saving closes its current MCP sessions, so the agent must reconnect." /><Button variant="outline" className="border-border bg-[#091725]" onClick={() => setSelectedCredentialId(null)}>Back to agents</Button></div>
       {error ? <PanelError title="Permission update was not completed" detail={error} onRetry={() => void refreshAccess()} /> : null}
-      <Card className="border-amber-300/25 bg-amber-300/[0.04] py-0 shadow-none"><CardContent className="flex gap-3 p-4"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-amber-200" /><div><p className="text-sm font-semibold text-amber-100">Authority remains bounded</p><p className="mt-1 text-xs leading-5 text-amber-100/75">Permissions never expose private keys, arbitrary shell execution, consensus bypass, or operator approval. A mutation still follows the node plan and approval policy.</p></div></CardContent></Card>
+      <Card className="border-amber-300/25 bg-amber-300/[0.04] py-0 shadow-none"><CardContent className="flex gap-3 p-4"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-amber-200" /><div><p className="text-sm font-semibold text-amber-100">Authority remains bounded</p><p className="mt-1 text-xs leading-5 text-amber-100/75">Permissions never expose private keys, arbitrary shell execution, consensus bypass, or operator credentials. For an action, both permission and “operator approved by default” must be enabled before the agent can apply its plan without a separate confirmation.</p></div></CardContent></Card>
       {!permissionCatalog ? <PanelSkeleton rows={5} /> : ['Read', 'Actions'].map((group) => <Card key={group} className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">{group === 'Read' ? 'Observation rights' : 'Operational rights'}</p><CardTitle className="mt-1 text-lg font-semibold">{group === 'Read' ? 'Read-only tools' : 'Plan-bound actions'}</CardTitle></CardHeader><CardContent className="divide-y divide-border/70 p-0">{permissions.filter((permission) => permission.category === group).map((permission) => <label key={permission.scope} className="flex cursor-pointer gap-3 px-5 py-4 transition hover:bg-white/[0.02]"><input type="checkbox" checked={draftScopes.includes(permission.scope)} onChange={() => toggleScope(permission.scope)} disabled={selectedCredential.state !== 'active'} className="mt-1 size-4 accent-cyan-300" /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{permission.label}</p><span className={cn('rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase', permission.risk === 'critical' ? 'border-rose-300/30 text-rose-200' : permission.risk === 'high' ? 'border-amber-300/30 text-amber-200' : 'border-slate-500/30 text-slate-400')}>{permission.risk}</span></div><p className="mt-1 text-sm leading-5 text-muted-foreground">{permission.description}</p><p className="mt-2 font-mono text-[11px] text-slate-500">{permission.scope} · {permission.tool_names.join(', ')}</p></div></label>)}</CardContent></Card>)}
+      {permissionCatalog ? <Card className="border-amber-300/25 bg-amber-300/[0.04] py-0 shadow-none"><CardHeader className="border-b border-amber-300/20 px-5 py-4"><p className="eyebrow text-amber-100">Default approval</p><CardTitle className="mt-1 text-lg font-semibold text-amber-50">Operator approved by default</CardTitle><p className="mt-1 text-sm leading-5 text-amber-100/75">Enable this only for actions the agent may apply without a separate operator confirmation. Enabling it also enables the corresponding action permission.</p></CardHeader><CardContent className="divide-y divide-amber-300/15 p-0">{permissions.filter((permission) => permission.approval_key).map((permission) => <label key={permission.scope} className="flex cursor-pointer items-start gap-3 px-5 py-4 transition hover:bg-white/[0.02]"><input type="checkbox" checked={draftAutoApprovedScopes.includes(permission.scope)} onChange={() => toggleAutoApproval(permission.scope)} disabled={selectedCredential.state !== 'active'} className="mt-0.5 size-4 accent-amber-300" /><span className="min-w-0"><span className="flex flex-wrap items-center gap-2 font-medium text-amber-50">{permission.label}<span className="rounded border border-amber-300/30 px-1.5 py-0.5 font-mono text-[10px] uppercase text-amber-200">{permission.risk}</span></span><span className="mt-1 block text-sm leading-5 text-amber-100/70">Both this checkbox and the action permission above must be enabled for automatic apply.</span></span></label>)}</CardContent></Card> : null}
+      {permissionCatalog ? <Card className="border-rose-300/30 bg-rose-300/[0.04] py-0 shadow-none"><CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-start sm:justify-between"><div><p className="eyebrow text-rose-100">Experimental</p><p className="mt-1 font-semibold text-rose-50">Full agent-plane control</p><p className="mt-1 max-w-2xl text-sm leading-5 text-rose-100/75">Grants every implemented agent permission and automatically approves provider attachment, Bundle activation, and retirement. It is not operator impersonation: wallet keys, the operator token, shell access, and consensus authority remain unavailable.</p></div><label className="flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border border-rose-300/30 bg-[#091725] px-3 py-2 text-sm font-medium text-rose-100"><input type="checkbox" checked={isFullControl} onChange={(event) => setExperimentalFullControl(event.target.checked)} disabled={selectedCredential.state !== 'active'} className="size-4 accent-rose-300" />Full rights</label></CardContent></Card> : null}
       <div className="flex flex-col gap-3 rounded-xl border border-border/80 bg-[#07111d] p-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm leading-5 text-muted-foreground">{permissionCatalog?.note}</p><div className="flex shrink-0 gap-2"><Button variant="outline" className="border-border bg-[#091725]" onClick={() => setSelectedCredentialId(null)}>Cancel</Button><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={selectedCredential.state !== 'active' || draftScopes.length === 0 || busy === `permissions:${selectedCredential.credential_id}`} onClick={() => void savePermissions(selectedCredential)}>{busy === `permissions:${selectedCredential.credential_id}` ? 'Saving...' : 'Save permissions'}</Button></div></div>
     </div>
   }

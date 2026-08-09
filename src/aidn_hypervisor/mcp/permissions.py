@@ -15,6 +15,7 @@ class McpAgentPermission:
     category: str
     risk: str
     tool_names: tuple[str, ...]
+    approval_key: str | None = None
 
     def public(self) -> dict[str, object]:
         return asdict(self)
@@ -130,6 +131,7 @@ AGENT_PERMISSION_CATALOG: tuple[McpAgentPermission, ...] = (
         "Actions",
         "high",
         ("aidn.provider.attach",),
+        "provider_attach",
     ),
     McpAgentPermission(
         "BUNDLE:ACTIVATE",
@@ -138,6 +140,7 @@ AGENT_PERMISSION_CATALOG: tuple[McpAgentPermission, ...] = (
         "Actions",
         "high",
         ("aidn.bundle.activate",),
+        "bundle_activate",
     ),
     McpAgentPermission(
         "BUNDLE:RETIRE",
@@ -146,6 +149,7 @@ AGENT_PERMISSION_CATALOG: tuple[McpAgentPermission, ...] = (
         "Actions",
         "critical",
         ("aidn.bundle.retire",),
+        "bundle_retire",
     ),
 )
 
@@ -153,6 +157,15 @@ DEFAULT_AGENT_READ_SCOPES: tuple[str, ...] = tuple(
     permission.scope for permission in AGENT_PERMISSION_CATALOG if permission.category == "Read"
 )
 _KNOWN_AGENT_SCOPES = frozenset(permission.scope for permission in AGENT_PERMISSION_CATALOG)
+AGENT_MUTATION_SCOPES: tuple[str, ...] = tuple(
+    permission.scope for permission in AGENT_PERMISSION_CATALOG if permission.approval_key is not None
+)
+FULL_AGENT_CONTROL_SCOPES: tuple[str, ...] = tuple(permission.scope for permission in AGENT_PERMISSION_CATALOG)
+_APPROVAL_KEY_BY_SCOPE = {
+    permission.scope: permission.approval_key
+    for permission in AGENT_PERMISSION_CATALOG
+    if permission.approval_key is not None
+}
 
 
 def normalize_agent_scopes(scopes: tuple[str, ...] | list[str]) -> tuple[str, ...]:
@@ -164,6 +177,32 @@ def normalize_agent_scopes(scopes: tuple[str, ...] | list[str]) -> tuple[str, ..
     if unknown:
         raise ValueError("MCP agent permissions contain an unknown or non-grantable scope")
     return normalized
+
+
+def normalize_auto_approved_scopes(scopes: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    """Validate auto-approval selections made for plan-bound agent actions."""
+    if any(not isinstance(scope, str) or not scope.strip() for scope in scopes):
+        raise ValueError("MCP agent auto-approval scopes must be non-empty strings")
+    normalized = tuple(sorted({scope.strip() for scope in scopes}))
+    if any(scope not in _APPROVAL_KEY_BY_SCOPE for scope in normalized):
+        raise ValueError("MCP agent auto-approval is only available for plan-bound actions")
+    return normalized
+
+
+def approval_policy_for_agent(
+    base_policy: dict[str, str], *, auto_approved_scopes: tuple[str, ...]
+) -> dict[str, str]:
+    """Derive a credential-specific approval policy from canonical operator policy.
+
+    Agent credentials default to explicit confirmation even when the operator's
+    own control session has a local automatic action.  An operator must opt in
+    per credential and per mutation before a remote agent can apply it.
+    """
+    policy = dict(base_policy)
+    auto_approved = set(auto_approved_scopes)
+    for scope, approval_key in _APPROVAL_KEY_BY_SCOPE.items():
+        policy[approval_key] = "AUTO" if scope in auto_approved else "OPERATOR_CONFIRMATION"
+    return policy
 
 
 def permission_catalog_payload() -> list[dict[str, object]]:

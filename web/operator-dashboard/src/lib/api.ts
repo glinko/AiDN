@@ -19,6 +19,7 @@ export type AccessCredential = {
   credential_id: string
   label: string
   scopes: string[]
+  auto_approved_scopes: string[]
   fingerprint: string
   state: 'active' | 'revoked' | string
   created_at: string
@@ -50,11 +51,14 @@ export type AgentPermission = {
   category: 'Read' | 'Actions' | string
   risk: 'low' | 'high' | 'critical' | string
   tool_names: string[]
+  approval_key: string | null
 }
 
 export type AgentPermissionCatalog = {
   items: AgentPermission[]
   default_scopes: string[]
+  full_control_scopes: string[]
+  full_control_auto_approved_scopes: string[]
   note: string
 }
 
@@ -127,9 +131,9 @@ export const dashboardApi = {
   endpoints: (signal?: AbortSignal): Promise<EndpointPayload> => readDashboard('/operators/dashboard/endpoints', dashboardSchemas.endpoints, signal),
   accessStatus: (): Promise<DashboardAccessStatus> => writeDashboard('/operators/dashboard/access/status', { method: 'GET' }) as Promise<DashboardAccessStatus>,
   pairDashboard: (code: string) => writeDashboard('/operators/dashboard/access/pair', { method: 'POST', body: JSON.stringify({ code }) }),
-  createAgentCredential: (label: string, scopes?: string[]) => writeDashboard<AccessCredential>('/operators/dashboard/access/credentials', { method: 'POST', body: JSON.stringify({ label, ...(scopes ? { scopes } : {}) }) }),
+  createAgentCredential: (label: string, scopes?: string[], autoApprovedScopes?: string[]) => writeDashboard<AccessCredential>('/operators/dashboard/access/credentials', { method: 'POST', body: JSON.stringify({ label, ...(scopes ? { scopes } : {}), ...(autoApprovedScopes ? { auto_approved_scopes: autoApprovedScopes } : {}) }) }),
   agentPermissionCatalog: () => writeDashboard<AgentPermissionCatalog>('/operators/dashboard/access/permission-catalog', { method: 'GET' }),
-  updateAgentCredentialScopes: (credentialId: string, scopes: string[]) => writeDashboard<AccessCredential>(`/operators/dashboard/access/credentials/${credentialId}/scopes`, { method: 'PUT', body: JSON.stringify({ scopes }) }),
+  updateAgentCredentialScopes: (credentialId: string, scopes: string[], autoApprovedScopes: string[]) => writeDashboard<AccessCredential>(`/operators/dashboard/access/credentials/${credentialId}/scopes`, { method: 'PUT', body: JSON.stringify({ scopes, auto_approved_scopes: autoApprovedScopes }) }),
   rotateAgentCredential: (credentialId: string) => writeDashboard<AccessCredential>(`/operators/dashboard/access/credentials/${credentialId}/rotate`, { method: 'POST' }),
   revokeAgentCredential: (credentialId: string) => writeDashboard(`/operators/dashboard/access/credentials/${credentialId}`, { method: 'DELETE' }),
   logoutDashboardAccess: () => writeDashboard('/operators/dashboard/access/logout', { method: 'POST' }),

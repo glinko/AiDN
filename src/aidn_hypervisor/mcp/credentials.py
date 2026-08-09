@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from aidn_hypervisor.mcp.permissions import DEFAULT_AGENT_READ_SCOPES
+from aidn_hypervisor.mcp.permissions import DEFAULT_AGENT_READ_SCOPES, normalize_auto_approved_scopes
 from aidn_hypervisor.secrets import FileSecretManager, SecretManagerError
 
 MCP_ACCESS_STATE_HANDLE = "secret://mcp/access-state"
@@ -23,6 +23,7 @@ class McpCredential:
     credential_id: str
     label: str
     scopes: tuple[str, ...]
+    auto_approved_scopes: tuple[str, ...]
     fingerprint: str
     state: str
     created_at: str
@@ -50,15 +51,21 @@ class McpCredentialStore:
         self._secret_manager = secret_manager
         self._now = now or (lambda: datetime.now(UTC))
 
-    def create_credential(self, *, label: str, scopes: tuple[str, ...]) -> McpCredential:
+    def create_credential(
+        self, *, label: str, scopes: tuple[str, ...], auto_approved_scopes: tuple[str, ...] = ()
+    ) -> McpCredential:
         normalized_label = self._normalize_label(label)
         normalized_scopes = self._normalize_scopes(scopes)
+        normalized_auto_approved_scopes = normalize_auto_approved_scopes(auto_approved_scopes)
+        if not set(normalized_auto_approved_scopes).issubset(normalized_scopes):
+            raise ValueError("MCP auto approval requires the corresponding credential scope")
         token = secrets.token_urlsafe(32)
         created_at = self._timestamp()
         record = {
             "credential_id": "mcpcred-" + secrets.token_urlsafe(12),
             "label": normalized_label,
             "scopes": list(normalized_scopes),
+            "auto_approved_scopes": list(normalized_auto_approved_scopes),
             "token_digest": self._digest(token),
             "fingerprint": self._fingerprint(token),
             "state": "active",
@@ -95,6 +102,7 @@ class McpCredentialStore:
             "credential_id": "mcpcred-" + secrets.token_urlsafe(12),
             "label": normalized_label,
             "scopes": list(normalized_scopes),
+            "auto_approved_scopes": [],
             "token_digest": self._digest(token.strip()),
             "fingerprint": self._fingerprint(token.strip()),
             "state": "active",
@@ -141,6 +149,7 @@ class McpCredentialStore:
             "credential_id": "mcpcred-" + secrets.token_urlsafe(12),
             "label": predecessor["label"],
             "scopes": predecessor["scopes"],
+            "auto_approved_scopes": predecessor.get("auto_approved_scopes", []),
             "token_digest": self._digest(token),
             "fingerprint": self._fingerprint(token),
             "state": "active",
@@ -152,12 +161,22 @@ class McpCredentialStore:
         self._save_state(state)
         return self._credential(replacement, token=token)
 
-    def update_scopes(self, credential_id: str, *, scopes: tuple[str, ...]) -> McpCredential:
+    def update_scopes(
+        self,
+        credential_id: str,
+        *,
+        scopes: tuple[str, ...],
+        auto_approved_scopes: tuple[str, ...] = (),
+    ) -> McpCredential:
         """Replace an active credential's permissions without revealing its token."""
         normalized_scopes = self._normalize_scopes(scopes)
+        normalized_auto_approved_scopes = normalize_auto_approved_scopes(auto_approved_scopes)
+        if not set(normalized_auto_approved_scopes).issubset(normalized_scopes):
+            raise ValueError("MCP auto approval requires the corresponding credential scope")
         state = self._load_state()
         record = self._find_active_record(state, credential_id)
         record["scopes"] = list(normalized_scopes)
+        record["auto_approved_scopes"] = list(normalized_auto_approved_scopes)
         self._save_state(state)
         return self._credential(record)
 
@@ -234,6 +253,9 @@ class McpCredentialStore:
             state["pairing"] = None
         if "legacy_imported" not in state:
             state["legacy_imported"] = False
+        for record in credentials:
+            if "auto_approved_scopes" not in record:
+                record["auto_approved_scopes"] = []
         if state["pairing"] is not None and not isinstance(state["pairing"], dict):
             raise SecretManagerError("MCP credential pairing state is invalid")
         if not isinstance(state["legacy_imported"], bool):
@@ -278,8 +300,8 @@ class McpCredentialStore:
         return label.strip()
 
     @staticmethod
-    def _normalize_scopes(scopes: tuple[str, ...]) -> tuple[str, ...]:
-        if not scopes or any(not isinstance(scope, str) or not scope.strip() for scope in scopes):
+    def _normalize_scopes(scopes: tuple[str, ...], *, allow_empty: bool = False) -> tuple[str, ...]:
+        if (not allow_empty and not scopes) or any(not isinstance(scope, str) or not scope.strip() for scope in scopes):
             raise ValueError("MCP credential scopes must be non-empty strings")
         return tuple(sorted({scope.strip() for scope in scopes}))
 
@@ -320,6 +342,7 @@ class McpCredentialStore:
             credential_id=record["credential_id"],
             label=record["label"],
             scopes=tuple(record["scopes"]),
+            auto_approved_scopes=tuple(record.get("auto_approved_scopes", [])),
             fingerprint=record["fingerprint"],
             state=record["state"],
             created_at=record["created_at"],

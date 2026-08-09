@@ -226,12 +226,35 @@ def test_credential_scopes_filter_tools_and_take_effect_after_session_reconnect(
     )
     refreshed_names = {tool["name"] for tool in refreshed.json()["result"]["tools"]}
     assert "aidn.bundle.activate" in refreshed_names
+    policy = _tool_call(
+        client, refreshed_session, "aidn.capabilities.get", {}, token=issued.token or ""
+    )["structuredContent"]["control_session"]["approval_policy"]
+    assert policy["bundle_activate"] == "OPERATOR_CONFIRMATION"
+
+    credentials.update_scopes(
+        issued.credential_id,
+        scopes=("NODE:READ", "BUNDLE:ACTIVATE"),
+        auto_approved_scopes=("BUNDLE:ACTIVATE",),
+    )
+    gateway.invalidate_credential_sessions(issued.credential_id)
+    automatic_session = _initialize(client, issued.token or "")
+    policy = _tool_call(
+        client, automatic_session, "aidn.capabilities.get", {}, token=issued.token or ""
+    )["structuredContent"]["control_session"]["approval_policy"]
+    assert policy["bundle_activate"] == "AUTO"
 
 
-def _tool_call(client: TestClient, session_id: str, name: str, arguments: dict) -> dict:
+def _tool_call(
+    client: TestClient,
+    session_id: str,
+    name: str,
+    arguments: dict,
+    *,
+    token: str = AGENT_TOKEN,
+) -> dict:
     response = client.post(
         "/mcp",
-        headers=_headers(session_id=session_id),
+        headers=_headers(token, session_id=session_id),
         json={
             "jsonrpc": "2.0",
             "id": 2,

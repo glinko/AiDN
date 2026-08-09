@@ -79,6 +79,19 @@ write boundary is Provider attachment. The current deployment grants
 `PROVIDER:WRITE`; Bundle management must be considered read-only unless
 `tools/list` explicitly advertises a corresponding write capability.
 
+For each plan-bound action, the Dashboard has two independent switches:
+
+1. The permission exposes the tool to this credential.
+2. **Operator approved by default** permits that already-authorized action to
+   apply a valid plan without a second operator confirmation.
+
+An agent may use unattended apply only when both settings are present and the
+tool reports an `AUTO` approval mode through `aidn.capabilities.get`. The
+experimental **Full rights** setting grants all currently implemented
+agent-plane scopes plus those automatic approvals. It does not grant actual
+operator identity, Wallet/private-key access, shell, Docker, SSH or consensus
+control, and the agent must never describe it as operator authority.
+
 The operator holds a different credential and exclusively controls:
 
 - plan approval through `POST /mcp/operator/approve`;

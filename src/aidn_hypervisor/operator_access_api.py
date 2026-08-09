@@ -12,8 +12,11 @@ from pydantic import BaseModel, Field
 from aidn_hypervisor.mcp.credentials import McpCredential, McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.mcp.permissions import (
+    AGENT_MUTATION_SCOPES,
     DEFAULT_AGENT_READ_SCOPES,
+    FULL_AGENT_CONTROL_SCOPES,
     normalize_agent_scopes,
+    normalize_auto_approved_scopes,
     permission_catalog_payload,
 )
 from aidn_hypervisor.operator_access import DashboardAccessService
@@ -29,10 +32,12 @@ class PairingRequest(BaseModel):
 class CredentialCreateRequest(BaseModel):
     label: str = Field(min_length=1, max_length=96)
     scopes: list[str] = Field(default_factory=lambda: list(DEFAULT_AGENT_READ_SCOPES), min_length=1, max_length=64)
+    auto_approved_scopes: list[str] = Field(default_factory=list, max_length=64)
 
 
 class CredentialScopeUpdateRequest(BaseModel):
     scopes: list[str] = Field(min_length=1, max_length=64)
+    auto_approved_scopes: list[str] = Field(default_factory=list, max_length=64)
 
 
 class EnrollmentCreateRequest(BaseModel):
@@ -119,9 +124,16 @@ def build_operator_access_router(
         assert credential_store is not None
         try:
             scopes = normalize_agent_scopes(payload.scopes)
+            auto_approved_scopes = normalize_auto_approved_scopes(payload.auto_approved_scopes)
+            if not set(auto_approved_scopes).issubset(scopes):
+                raise ValueError("auto approval requires the corresponding agent permission")
         except ValueError:
             return JSONResponse(status_code=422, content={"error": {"code": "MCP_CREDENTIAL_SCOPE_INVALID"}})
-        issued = credential_store.create_credential(label=payload.label, scopes=scopes)
+        issued = credential_store.create_credential(
+            label=payload.label,
+            scopes=scopes,
+            auto_approved_scopes=auto_approved_scopes,
+        )
         return JSONResponse(status_code=201, content=_credential_payload(issued, reveal=True))
 
     @router.get("/permission-catalog")
@@ -134,9 +146,11 @@ def build_operator_access_router(
             content={
                 "items": permission_catalog_payload(),
                 "default_scopes": list(DEFAULT_AGENT_READ_SCOPES),
+                "full_control_scopes": list(FULL_AGENT_CONTROL_SCOPES),
+                "full_control_auto_approved_scopes": list(AGENT_MUTATION_SCOPES),
                 "note": (
                     "Permissions control MCP tool visibility and execution. They do not bypass "
-                    "operator plan approval or enable deferred tools."
+                    "operator plan approval or enable deferred tools. Automatic approval is opt-in per action."
                 ),
             },
         )
@@ -152,9 +166,14 @@ def build_operator_access_router(
             return denied
         assert credential_store is not None
         try:
+            scopes = normalize_agent_scopes(payload.scopes)
+            auto_approved_scopes = normalize_auto_approved_scopes(payload.auto_approved_scopes)
+            if not set(auto_approved_scopes).issubset(scopes):
+                raise ValueError("auto approval requires the corresponding agent permission")
             updated = credential_store.update_scopes(
                 credential_id,
-                scopes=normalize_agent_scopes(payload.scopes),
+                scopes=scopes,
+                auto_approved_scopes=auto_approved_scopes,
             )
         except ValueError:
             return JSONResponse(status_code=422, content={"error": {"code": "MCP_CREDENTIAL_SCOPE_INVALID"}})

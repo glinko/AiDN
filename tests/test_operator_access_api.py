@@ -3,9 +3,9 @@ from __future__ import annotations
 import base64
 import os
 
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
@@ -80,6 +80,7 @@ def test_paired_operator_can_list_and_update_only_known_agent_permissions(tmp_pa
     catalog = client.get("/operators/dashboard/access/permission-catalog")
     assert catalog.status_code == 200
     assert any(item["scope"] == "BUNDLE:ACTIVATE" for item in catalog.json()["items"])
+    assert "BUNDLE:ACTIVATE" in catalog.json()["full_control_auto_approved_scopes"]
 
     created = client.post(
         "/operators/dashboard/access/credentials",
@@ -89,14 +90,26 @@ def test_paired_operator_can_list_and_update_only_known_agent_permissions(tmp_pa
     credential_id = created.json()["credential_id"]
     updated = client.put(
         f"/operators/dashboard/access/credentials/{credential_id}/scopes",
-        json={"scopes": ["NODE:READ", "BUNDLE:ACTIVATE"]},
+        json={
+            "scopes": ["NODE:READ", "BUNDLE:ACTIVATE"],
+            "auto_approved_scopes": ["BUNDLE:ACTIVATE"],
+        },
     )
     assert updated.status_code == 200
     assert updated.json()["scopes"] == ["BUNDLE:ACTIVATE", "NODE:READ"]
+    assert updated.json()["auto_approved_scopes"] == ["BUNDLE:ACTIVATE"]
     assert invalidated == [credential_id]
     assert client.put(
         f"/operators/dashboard/access/credentials/{credential_id}/scopes",
         json={"scopes": ["*"]},
+    ).status_code == 422
+    assert client.put(
+        f"/operators/dashboard/access/credentials/{credential_id}/scopes",
+        json={"scopes": ["NODE:READ"], "auto_approved_scopes": ["BUNDLE:ACTIVATE"]},
+    ).status_code == 422
+    assert client.put(
+        f"/operators/dashboard/access/credentials/{credential_id}/scopes",
+        json={"scopes": ["NODE:READ"], "auto_approved_scopes": ["NODE:READ"]},
     ).status_code == 422
 
 
@@ -113,14 +126,21 @@ def test_agent_enrollment_is_approved_only_by_a_paired_dashboard(tmp_path) -> No
         allow_insecure_lan=True,
     ))
     client = TestClient(app)
-    public_key = base64.urlsafe_b64encode(X25519PrivateKey.generate().public_key().public_bytes_raw()).rstrip(b"=").decode("ascii")
+    public_key = (
+        base64.urlsafe_b64encode(
+            X25519PrivateKey.generate().public_key().public_bytes_raw()
+        )
+        .rstrip(b"=")
+        .decode("ascii")
+    )
 
     created = client.post("/operators/dashboard/access/agent-enrollment/requests", json={
         "label": "remote-agent",
         "encryption_public_key": public_key,
     })
     assert created.status_code == 201
-    assert client.post(f"/operators/dashboard/access/enrollment-requests/{created.json()['request_id']}/approve").status_code == 401
+    approval_url = f"/operators/dashboard/access/enrollment-requests/{created.json()['request_id']}/approve"
+    assert client.post(approval_url).status_code == 401
 
     pairing = access.create_pairing(ttl_seconds=600)
     assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
