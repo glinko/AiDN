@@ -324,10 +324,11 @@ def _is_validator_consensus_write_path(path: str) -> bool:
     if (
         len(parts) == 4
         and parts[:2] == ["operators", "provider-instances"]
-        and parts[3] == "discover-models"
+        and parts[3] in {"discover-models", "health"}
     ):
-        # Discovery records only the provider's local model inventory. It does
-        # not publish a model or create a Consumer-facing economic obligation.
+        # Provider discovery and health checks record bounded local runtime
+        # observations. They do not publish a model, move Q or create a
+        # Consumer-facing economic obligation.
         return True
     if (
         len(parts) == 4

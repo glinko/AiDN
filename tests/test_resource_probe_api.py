@@ -85,6 +85,12 @@ def test_validator_write_boundary_allows_bounded_local_provider_installation() -
     )
     assert (
         _is_validator_consensus_write_path(
+            "/operators/provider-instances/pi-1/health"
+        )
+        is True
+    )
+    assert (
+        _is_validator_consensus_write_path(
             "/operators/model-deployments/md-1/runtime-bindings"
         )
         is True
