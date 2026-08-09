@@ -19,6 +19,7 @@ from aidn_hypervisor.consensus.service import (
     ConsensusService,
     ConsensusServiceConfig,
 )
+from aidn_hypervisor.consensus.state_store import ABCIStateStore
 from aidn_hypervisor.contribution_api import build_contribution_router
 from aidn_hypervisor.contributions.service import ContributionAccountingService
 from aidn_hypervisor.contributions.store import ContributionEvidenceStore
@@ -138,11 +139,6 @@ def build_app(
     if resolved_consensus_service is not None:
         resolved_service.consensus_service = resolved_consensus_service
         if resolved_consensus_service.is_validator:
-            removed_operation_ids = resolved_service.ledger_operation_service.remove_noncanonical_operations(
-                {"ENDPOINT_UPDATE"}
-            )
-            if removed_operation_ids:
-                resolved_service._persist_state()
             # Local drafts and pending Session metadata must not mutate the
             # consensus Ledger/AppHash before their canonical transactions
             # reach finality. Their durable projections remain available to
@@ -652,10 +648,31 @@ def _build_default_consensus_service(
     # operations before validator writes were made consensus-bound. This must
     # happen before ABCI bootstrap so local and canonical wallet sequences
     # start from the same state.
-    removed_operation_ids = hypervisor_service.ledger_operation_service.remove_noncanonical_operations(
-        {"ENDPOINT_UPDATE"}
-    )
-    if removed_operation_ids:
+    durable_snapshot = ABCIStateStore(config.abci_state_path).load_current()
+    durable_operation_ids = {
+        str(operation.get("operation_id"))
+        for operation in (durable_snapshot or {}).get("ledger_operations", [])
+        if isinstance(operation, dict) and operation.get("operation_id")
+    }
+    legacy_operation_ids = {
+        str(operation.get("operation_id"))
+        for operation in hypervisor_service.ledger_operation_service.snapshot_operations()
+        if operation.get("operation_type") == "ENDPOINT_UPDATE"
+        and operation.get("operation_id")
+    }
+    missing_legacy_operation_ids = legacy_operation_ids - durable_operation_ids
+    if missing_legacy_operation_ids:
+        if missing_legacy_operation_ids != legacy_operation_ids:
+            raise ValueError(
+                "validator legacy Endpoint migration found a partially committed operation set"
+            )
+        removed_operation_ids = hypervisor_service.ledger_operation_service.remove_noncanonical_operations(
+            {"ENDPOINT_UPDATE"}
+        )
+        if set(removed_operation_ids) != legacy_operation_ids:
+            raise ValueError(
+                "validator legacy Endpoint migration did not remove the expected operations"
+            )
         hypervisor_service._persist_state()
 
     genesis_accounts = _consensus_genesis_accounts()
