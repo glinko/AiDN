@@ -3605,6 +3605,10 @@ def test_operator_dashboard_shell_route_exposes_provider_install_controls() -> N
     assert "canInstallProvider && state.providerDiagnosticsPendingId" in response.text
     assert "Provider Installation Apply Jobs" in response.text
     assert "/operators/provider-instances/" in response.text
+    assert "/health" in response.text
+    assert "Check Health" in response.text
+    assert "provider health check" in response.text
+    assert "data-provider-health" in response.text
     assert "/discover-models" in response.text
     assert "Discover Models" in response.text
     assert "data-provider-discover-models" in response.text
@@ -4498,6 +4502,13 @@ def test_provider_inventory_operator_routes_attach_discover_and_bind() -> None:
     assert attach_response.status_code == 200
     attached = attach_response.json()
     assert attached["plugin_id"] == "fake-managed"
+
+    health_response = client.post(
+        f"/operators/provider-instances/{attached['provider_instance_id']}/health"
+    )
+    assert health_response.status_code == 200
+    assert health_response.json()["healthy"] is True
+    assert health_response.json()["provider_instance"]["health_status"] == "healthy"
 
     discover_response = client.post(f"/operators/provider-instances/{attached['provider_instance_id']}/discover-models")
     assert discover_response.status_code == 200

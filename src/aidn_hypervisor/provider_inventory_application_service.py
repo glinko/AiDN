@@ -195,6 +195,13 @@ class ProviderInventoryApplicationService:
         self._host._persist_state()
         return [deployment.model_dump(mode="json") for deployment in deployments]
 
+    def probe_provider_instance(self, provider_instance_id: str) -> dict:
+        result = self._host.provider_inventory.probe_provider_instance(
+            provider_instance_id
+        )
+        self._host._persist_state()
+        return result
+
     def create_runtime_binding(
         self,
         *,

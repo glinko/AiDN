@@ -24,6 +24,7 @@ from aidn_hypervisor.plugins.host import (
     PluginHostLocalIpcIngress,
     SecretManagerPluginHostActivationCredentialStore,
 )
+from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.providers.executor import (
     ProviderInstallationExecutor,
     RecordedProviderInstallationExecutor,
@@ -2096,6 +2097,54 @@ class ProviderInventoryService:
         )
         self.store.save_provider_instance(instance)
         return instance
+
+    def probe_provider_instance(self, provider_instance_id: str) -> dict:
+        """Probe an attached or managed provider without starting host processes.
+
+        Installation apply is deliberately declarative in the MVP. A separate,
+        explicit probe turns that inventory record into an observed health state
+        and gives the operator a useful failure boundary before model discovery.
+        """
+        instance = self.store.get_provider_instance(provider_instance_id)
+        if instance.operational_state == "removed":
+            raise ValueError("removed provider instances cannot be probed")
+        plugin = self._get_plugin(instance.plugin_id)
+        metadata = {
+            str(key): str(value)
+            for key, value in instance.configuration.items()
+            if isinstance(value, (str, int, float, bool))
+        }
+        runtime = RuntimeHandle(
+            runtime_id=f"provider-health-{provider_instance_id}",
+            command=[],
+            status="running",
+            metadata=metadata,
+        )
+        checked_at = _now_iso()
+        health_error: str | None = None
+        try:
+            healthy = bool(plugin.health_check(runtime))
+        except Exception as exc:  # pragma: no cover - plugin boundary
+            healthy = False
+            health_error = str(exc)
+        if not healthy and health_error is None:
+            health_error = "provider health check returned an unhealthy result"
+
+        updated = instance.model_copy(
+            update={
+                "operational_state": "ready" if healthy else "error",
+                "health_status": "healthy" if healthy else "unhealthy",
+                "last_health_check_at": checked_at,
+                "last_health_error": None if healthy else health_error,
+            }
+        )
+        self.store.save_provider_instance(updated)
+        return {
+            "provider_instance": updated.model_dump(mode="json"),
+            "healthy": healthy,
+            "checked_at": checked_at,
+            "error": health_error,
+        }
 
     def _validate_applied_provider_instance(
         self,

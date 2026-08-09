@@ -3112,6 +3112,8 @@
       `/operators/model-deployments/${encodeURIComponent(modelDeploymentId)}/artifact-set`;
     const providerModelDiscoveryPath = (providerInstanceId) =>
       `/operators/provider-instances/${encodeURIComponent(providerInstanceId)}/discover-models`;
+    const providerHealthPath = (providerInstanceId) =>
+      `/operators/provider-instances/${encodeURIComponent(providerInstanceId)}/health`;
     const modelRuntimeBindingPath = (modelDeploymentId) =>
       `/operators/model-deployments/${encodeURIComponent(modelDeploymentId)}/runtime-bindings`;
     const bundleConfigPath = "/operators/bundles/config";
@@ -3155,6 +3157,7 @@
       installMessage: null,
       providerActionPending: null,
       providerDiscoveryPendingId: null,
+      providerHealthPendingId: null,
       providerDiagnosticsPendingId: null,
       providerDiagnosticsByPluginId: {},
       providerMessage: null,
@@ -6911,8 +6914,15 @@
                           <div class="row-meta">${instance.plugin_id}</div>
                           <div><span class="chip">${formatCount(instance.model_count)}</span></div>
                           <div><span class="chip ${instance.runtime_binding_ready_count ? "good" : ""}">${formatCount(instance.runtime_binding_ready_count)}</span></div>
-                          <div><span class="chip ${instance.operational_state === "ready" ? "good" : ""}">${instance.operational_state || "unknown"}</span></div>
-                          <button class="row-action" type="button" data-provider-discover-models="${escapeHtml(instance.provider_instance_id)}">${state.providerDiscoveryPendingId === instance.provider_instance_id ? "Discovering..." : "Discover Models"}</button>
+                          <div class="stack">
+                            <span class="chip ${instance.operational_state === "ready" ? "good" : instance.operational_state === "error" ? "bad" : ""}">${escapeHtml(instance.operational_state || "unknown")}</span>
+                            <span class="chip ${instance.health_status === "healthy" ? "good" : instance.health_status === "unhealthy" ? "bad" : ""}">${escapeHtml(instance.health_status || "health unknown")}</span>
+                            ${instance.last_health_error ? `<span class="row-copy">${escapeHtml(instance.last_health_error)}</span>` : ""}
+                          </div>
+                          <div class="stack">
+                            <button class="row-action" type="button" data-provider-health="${escapeHtml(instance.provider_instance_id)}">${state.providerHealthPendingId === instance.provider_instance_id ? "Checking..." : "Check Health"}</button>
+                            <button class="row-action" type="button" data-provider-discover-models="${escapeHtml(instance.provider_instance_id)}" ${instance.health_status === "unhealthy" ? "disabled" : ""}>${state.providerDiscoveryPendingId === instance.provider_instance_id ? "Discovering..." : "Discover Models"}</button>
+                          </div>
                         </div>
                       `)
                       .join("")
@@ -9705,6 +9715,9 @@
               <button class="secondary-button" type="button" data-provider-action="apply-installation" ${canApplyInstallation ? "" : "disabled"}>${state.providerActionPending === "apply-installation" ? "Applying..." : (latestJob?.approval_id === latestApproval?.approval_id && latestJob?.status === "SUCCEEDED" && latestJob?.rollback_status !== "COMPLETED" ? "Already Applied" : "Apply Latest Approval")}</button>
               <button class="secondary-button" type="button" data-provider-action="rollback-installation" ${canRollbackLatestInstallation ? "" : "disabled"}>${state.providerActionPending === `rollback-installation:${latestJob?.job_id || ""}` ? "Rolling Back..." : "Rollback Latest Job"}</button>
             </div>
+            <div class="notice" style="margin-top: 10px;">
+              Apply records the approved provider inventory; it does not start a host process in this MVP. After a successful apply the dashboard runs an explicit provider health check. If it fails, start the declared service and use <strong>Check Health</strong> in the Provider Instances table before discovering models.
+            </div>
             ${renderProviderActionMessage()}
             <div class="request-history" style="margin-top: 10px;">
               <div class="request-history-item">
@@ -12362,10 +12375,23 @@
       bindInteractiveElements();
       try {
         const job = await postJson(providerInstallationApplyPath(approval.approval_id), {});
-        state.providerMessage = {
-          kind: job.status === "SUCCEEDED" ? "good" : "bad",
-          text: `Apply job ${job.job_id} finished with ${job.status}. Provider inventory id: ${job.provider_instance_id || "none"}.`,
-        };
+        if (job.status === "SUCCEEDED" && job.provider_instance_id) {
+          const health = await probeProviderInstance(job.provider_instance_id);
+          state.providerMessage = health?.healthy
+            ? {
+                kind: "good",
+                text: `Apply job ${job.job_id} finished and provider ${job.provider_instance_id} passed health check. Discover models next.`,
+              }
+            : {
+                kind: "warn",
+                text: `Apply job ${job.job_id} finished and provider inventory ${job.provider_instance_id} was recorded, but health is not ready. Start the declared provider service and retry Check Health.`,
+              };
+        } else {
+          state.providerMessage = {
+            kind: job.status === "SUCCEEDED" ? "warn" : "bad",
+            text: `Apply job ${job.job_id} finished with ${job.status}. Provider inventory id: ${job.provider_instance_id || "none"}.`,
+          };
+        }
         await refreshBootstrapPayloads();
       } catch (error) {
         state.providerMessage = { kind: "bad", text: String(error) };
@@ -12423,6 +12449,37 @@
         state.providerMessage = { kind: "bad", text: String(error) };
       } finally {
         state.providerDiscoveryPendingId = null;
+        render();
+        bindInteractiveElements();
+      }
+    }
+
+    async function probeProviderInstance(providerInstanceId) {
+      if (!providerInstanceId) {
+        return null;
+      }
+      state.providerHealthPendingId = providerInstanceId;
+      state.providerMessage = null;
+      renderWorkspace();
+      bindInteractiveElements();
+      try {
+        const result = await postJson(providerHealthPath(providerInstanceId), {});
+        state.providerMessage = result.healthy
+          ? {
+              kind: "good",
+              text: `Provider ${providerInstanceId} is healthy. Model discovery can continue.`,
+            }
+          : {
+              kind: "bad",
+              text: `Provider ${providerInstanceId} health check failed: ${result.error || "endpoint is not ready"}.`,
+            };
+        await refreshBootstrapPayloads();
+        return result;
+      } catch (error) {
+        state.providerMessage = { kind: "bad", text: String(error) };
+        return null;
+      } finally {
+        state.providerHealthPendingId = null;
         render();
         bindInteractiveElements();
       }
@@ -13098,6 +13155,13 @@
         button.addEventListener("click", (event) => {
           event.stopPropagation();
           void discoverModelsForProviderInstance(button.dataset.providerDiscoverModels);
+        });
+      });
+
+      document.querySelectorAll("[data-provider-health]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void probeProviderInstance(button.dataset.providerHealth);
         });
       });
 

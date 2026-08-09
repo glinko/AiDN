@@ -1711,6 +1711,11 @@ class HypervisorService:
             provider_instance_id
         )
 
+    def probe_provider_instance(self, provider_instance_id: str) -> dict:
+        return self._provider_inventory_application_facade().probe_provider_instance(
+            provider_instance_id
+        )
+
     def create_runtime_binding(
         self,
         *,

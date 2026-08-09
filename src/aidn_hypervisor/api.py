@@ -1674,6 +1674,18 @@ def build_api_router(
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @router.post("/operators/provider-instances/{provider_instance_id}/health")
+    async def probe_provider_instance(provider_instance_id: str) -> dict:
+        try:
+            return service.probe_provider_instance(provider_instance_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown provider instance: {provider_instance_id}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @router.post("/operators/model-deployments/{model_deployment_id}/runtime-bindings")
     async def create_runtime_binding(
         model_deployment_id: str,

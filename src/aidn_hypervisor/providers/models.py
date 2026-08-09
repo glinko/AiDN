@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 ProviderConnectionMode = Literal["attached", "managed"]
 ProviderOperationalState = Literal["created", "ready", "degraded", "error", "removed"]
+ProviderHealthStatus = Literal["unknown", "healthy", "unhealthy"]
 ModelOperationalState = Literal["discovered", "installing", "ready", "error", "removed"]
 RuntimeBindingStatus = Literal["draft", "ready", "degraded", "disabled"]
 RuntimeImplementationClass = Literal[
@@ -879,6 +880,9 @@ class ProviderInstance(BaseModel):
     connection_mode: ProviderConnectionMode
     configuration: dict = Field(default_factory=dict)
     operational_state: ProviderOperationalState
+    health_status: ProviderHealthStatus = "unknown"
+    last_health_check_at: str | None = None
+    last_health_error: str | None = None
 
 
 class ModelDeployment(BaseModel):

@@ -1129,6 +1129,9 @@ def test_recorded_provider_installation_executor_records_declarative_plan_withou
         "connection_mode": "managed",
         "configuration": configuration,
         "operational_state": "created",
+        "health_status": "unknown",
+        "last_health_check_at": None,
+        "last_health_error": None,
     }
     assert result.provider_instance["configuration"] is not configuration
 
@@ -2178,6 +2181,29 @@ def test_provider_inventory_apply_rejects_revoked_approval() -> None:
 
     with pytest.raises(ValueError, match="installation approval is not active"):
         service.apply_installation_approval(approval.approval_id)
+
+
+def test_provider_inventory_probe_persists_observed_health() -> None:
+    service = ProviderInventoryService(
+        plugins=_registry(),
+        store=InMemoryProviderInventoryStore(),
+    )
+    instance = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+
+    assert instance.health_status == "unknown"
+    result = service.probe_provider_instance(instance.provider_instance_id)
+
+    assert result["healthy"] is True
+    assert result["error"] is None
+    observed = service.store.get_provider_instance(instance.provider_instance_id)
+    assert observed.operational_state == "ready"
+    assert observed.health_status == "healthy"
+    assert observed.last_health_check_at == result["checked_at"]
+    assert observed.last_health_error is None
 
 
 def test_provider_inventory_run_installation_diagnostics_reports_ready_when_inputs_match() -> None:
