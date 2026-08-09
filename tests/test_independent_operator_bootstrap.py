@@ -104,6 +104,9 @@ def test_dashboard_rollout_accepts_the_canonical_image_command() -> None:
     assert "--enable-dashboard-access" in rollout
     assert "mcp-dashboard-access-master-key.b64" in rollout
     assert "AIDN_SECRET_MANAGER_PATH=/state/mcp-dashboard-access-secrets.json" in rollout
+    assert "operator_cli_wrapper" in rollout
+    assert "operator_pairing_command" in rollout
+    assert "aidn_hypervisor.operator_cli" in rollout
 
 
 def test_cometbft_installer_is_pinned_idempotent_and_preserves_genesis() -> None:

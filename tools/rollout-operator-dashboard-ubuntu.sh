@@ -213,9 +213,32 @@ asset_path=$(grep -oE '/operators/dashboard/react/assets/[^" ]+\.js' /tmp/aidn-d
 [[ -n "$asset_path" ]] || { echo 'React index did not include a JavaScript asset' >&2; exit 1; }
 curl --fail --silent --max-time 3 "http://127.0.0.1:8000${asset_path}" >/dev/null
 
+if [[ "$enable_dashboard_access" == true ]]; then
+  operator_home=$(getent passwd "$operator_user" | cut -d: -f6)
+  operator_cli_dir="$operator_home/.local/bin"
+  operator_cli_wrapper="$operator_cli_dir/aidn-operator"
+  install -d -o "$operator_user" -g "$operator_user" -m 0700 "$operator_cli_dir"
+  cat > "$operator_cli_wrapper" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This wrapper keeps the encrypted dashboard key inside the node state mount.
+# It only mints a one-time browser pairing code; it never exports MCP tokens.
+exec sudo docker exec "$container" python -m aidn_hypervisor.operator_cli "\$@" \\
+  --secret-manager-path /state/mcp-dashboard-access-secrets.json \\
+  --master-key-file /state/mcp-dashboard-access-master-key.b64 \\
+  --dashboard-url "\${AIDN_DASHBOARD_URL:-http://127.0.0.1:8000}"
+EOF
+  chown "$operator_user:$operator_user" "$operator_cli_wrapper"
+  chmod 0700 "$operator_cli_wrapper"
+fi
+
 printf 'rollout_status=ok\n'
 printf 'source_commit=%s\n' "$commit_short"
 printf 'image=%s\n' "$image"
 printf 'rollback_container=%s\n' "$rollback_name"
 printf 'react_asset=%s\n' "$asset_path"
 printf 'consensus_rpc=reachable\n'
+if [[ "$enable_dashboard_access" == true ]]; then
+  printf 'operator_pairing_command=%s\n' "~/.local/bin/aidn-operator pair"
+fi
