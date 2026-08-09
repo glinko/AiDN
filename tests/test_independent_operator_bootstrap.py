@@ -66,6 +66,9 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "sudo password was used only by sudo" in script
     assert "install-node-runtime-ubuntu.sh" in script
     assert "build-operator-dashboard.sh" in script
+    assert "aidn-operator-wrapper.sh" in script
+    assert "master-key-file" in script
+    assert "ln -sfn" in script
 
 
 def test_dashboard_build_tools_pin_and_verify_the_frontend_toolchain() -> None:

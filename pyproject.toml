@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 aidn-mcp-server = "aidn_hypervisor.mcp.server:main"
 aidn-mcp-server-http = "aidn_hypervisor.mcp.remote:main_http"
+aidn-operator = "aidn_hypervisor.operator_cli:main"
 
 [tool.setuptools.package-data]
 aidn_hypervisor = ["static/*.html", "static/react-dashboard/*", "static/react-dashboard/assets/*"]

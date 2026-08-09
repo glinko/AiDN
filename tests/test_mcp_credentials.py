@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import base64
 from datetime import UTC, datetime, timedelta
 
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.operator_access import DashboardAccessService
+from aidn_hypervisor.operator_cli import main as operator_cli_main
 from aidn_hypervisor.secrets import FileSecretManager
 
 
@@ -89,3 +91,31 @@ def test_access_session_requires_one_pairing_exchange_and_expires(tmp_path) -> N
     assert access.exchange_pairing_code(pairing.code) is None
     clock.advance(seconds=901)
     assert access.authorize(session.session_id) is False
+
+
+def test_operator_pair_command_prints_one_time_code_only_to_stdout(tmp_path, capsys) -> None:
+    key = os.urandom(32)
+    secret_path = tmp_path / "secrets.json"
+    key_path = tmp_path / "master-key.b64"
+    key_path.write_text(base64.b64encode(key).decode("ascii"), encoding="utf-8")
+
+    result = operator_cli_main(
+        [
+            "pair",
+            "--secret-manager-path",
+            str(secret_path),
+            "--master-key-file",
+            str(key_path),
+            "--dashboard-url",
+            "http://127.0.0.1:8766/operators/dashboard/react#settings",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    code = output.split("Code: ", maxsplit=1)[1].strip()
+    store = McpCredentialStore(
+        secret_manager=FileSecretManager(path=secret_path, master_key=key)
+    )
+    assert result == 0
+    assert store.consume_pairing_code(code) is True
+    assert code.encode("utf-8") not in secret_path.read_bytes()

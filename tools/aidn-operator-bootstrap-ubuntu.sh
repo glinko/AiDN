@@ -508,6 +508,8 @@ export AIDN_HYPERVISOR_STATE_PATH="\$data/hypervisor-state.json"
 export AIDN_HYPERVISOR_BUNDLES_PATH="\$data/bundles.json"
 export AIDN_RESOURCE_PROBE_MODE=auto
 export AIDN_RESOURCE_CAPACITY_PATH="\$data/resource-capacity.json"
+export AIDN_SECRET_MANAGER_PATH="\$data/registry-replication/secrets.json"
+export AIDN_SECRET_MANAGER_MASTER_KEY="\$(tr -d '\r\n' < "\$data/registry-replication/master-key.b64")"
 export PYTHONUNBUFFERED=1
 EOF
 if [[ "$consensus_mode" != 'disabled' ]]; then
@@ -529,14 +531,26 @@ fi
 if [[ "$enable_registry" == 'true' ]]; then
   cat >> "$wrapper" <<'EOF'
 export AIDN_REGISTRY_REPLICATION_CONFIG="$registry_config"
-export AIDN_SECRET_MANAGER_PATH="$data/registry-replication/secrets.json"
-export AIDN_SECRET_MANAGER_MASTER_KEY="$(tr -d '\r\n' < "$data/registry-replication/master-key.b64")"
 EOF
 fi
 cat >> "$wrapper" <<EOF
 exec "\$python_bin" -m uvicorn aidn_hypervisor.main:build_app --factory --host $api_host_q --port $api_port_q
 EOF
 chmod 700 "$wrapper"
+
+operator_cli_wrapper="$data_dir/aidn-operator-wrapper.sh"
+dashboard_url="http://$advertise_host:$api_port/operators/dashboard/react#settings"
+cat > "$operator_cli_wrapper" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$python_bin" -m aidn_hypervisor.operator_cli \\
+  --secret-manager-path "$registry_root/secrets.json" \\
+  --master-key-file "$registry_root/master-key.b64" \\
+  --dashboard-url $(shell_quote "$dashboard_url") "\$@"
+EOF
+chmod 700 "$operator_cli_wrapper"
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$operator_cli_wrapper" "$HOME/.local/bin/aidn-operator"
 
 service_name="aidn-hypervisor-$operator_id.service"
 unit_path="$HOME/.config/systemd/user/$service_name"
