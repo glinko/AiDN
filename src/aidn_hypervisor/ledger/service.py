@@ -7955,6 +7955,54 @@ class LedgerOperationService:
     def snapshot_operations(self) -> list[dict]:
         return list(self._operations)
 
+    def remove_noncanonical_operations(self, operation_types: set[str]) -> list[str]:
+        """Remove allow-listed local projections before validator bootstrap.
+
+        Older validator nodes could record draft Endpoint updates as wallet
+        operations even though those writes never entered consensus. Keeping
+        them would advance local wallet sequences beyond the ABCI state. This
+        migration is deliberately explicit and returns removed IDs for audit.
+        """
+        if not operation_types:
+            return []
+        removed = [
+            operation
+            for operation in self._operations
+            if operation.get("operation_type") in operation_types
+        ]
+        if not removed:
+            return []
+
+        self._operations = [
+            operation
+            for operation in self._operations
+            if operation.get("operation_type") not in operation_types
+        ]
+        self._finalized_operation_registry = FinalizedOperationRegistry.from_records(
+            self._operations
+        )
+        self._operation_ids = self._finalized_operation_registry.operation_ids()
+        self._next_sequence_id = max(
+            (int(operation["sequence_id"]) for operation in self._operations),
+            default=0,
+        ) + 1
+
+        for operation in removed:
+            wallet_id = operation.get("sender_wallet")
+            if not isinstance(wallet_id, str):
+                continue
+            remaining_sequences = [
+                int(candidate["sender_sequence"]) + 1
+                for candidate in self._operations
+                if candidate.get("sender_wallet") == wallet_id
+                and candidate.get("sender_sequence") is not None
+            ]
+            self._wallet_next_sequences[wallet_id] = max(
+                remaining_sequences,
+                default=1,
+            )
+        return [str(operation["operation_id"]) for operation in removed]
+
     def snapshot_wallet_sequences(self) -> dict[str, int]:
         return dict(self._wallet_next_sequences)
 

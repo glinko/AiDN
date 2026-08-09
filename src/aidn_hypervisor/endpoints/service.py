@@ -27,12 +27,16 @@ class EndpointService:
         *,
         operation_recorder=None,
         record_creation_operation: bool = True,
+        record_update_operation: bool = True,
     ) -> None:
         self.store = store
         self.operation_recorder = operation_recorder
         # Validator-mode Endpoint creation is a local draft operation. The
         # canonical ENDPOINT_PUBLISH transaction is submitted separately.
         self.record_creation_operation = record_creation_operation
+        # Draft configuration changes are also local projections in validator
+        # mode. A future typed consensus transition will own published edits.
+        self.record_update_operation = record_update_operation
 
     def list_endpoints(self) -> list[EndpointManifest]:
         return self.store.list_manifests()
@@ -339,7 +343,7 @@ class EndpointService:
         return EndpointResult(endpoint=updated)
 
     def _record_endpoint_publish(self, manifest: EndpointManifest) -> None:
-        if self.operation_recorder is None:
+        if self.operation_recorder is None or not self.record_creation_operation:
             return
         self.operation_recorder(
             operation_type="ENDPOINT_PUBLISH",
@@ -367,7 +371,7 @@ class EndpointService:
         current: EndpointManifest,
         snapshot: EndpointConfigurationSnapshot | None,
     ) -> None:
-        if self.operation_recorder is None:
+        if self.operation_recorder is None or not self.record_update_operation:
             return
         self.operation_recorder(
             operation_type="ENDPOINT_UPDATE",

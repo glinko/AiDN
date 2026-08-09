@@ -143,3 +143,21 @@ def test_execution_engine_supports_endpoint_publication_transition() -> None:
     assert result.operations_executed == 1
     assert result.execution_events[0].emitted_events == ["EndpointPublished"]
 
+
+def test_validator_migration_removes_legacy_local_endpoint_updates() -> None:
+    ledger = LedgerOperationService()
+    ledger.record_operation(
+        operation_type="ENDPOINT_UPDATE",
+        origin_type="wallet",
+        fee_class="standard",
+        initiator_id="wallet-legacy",
+        sender_wallet="wallet-legacy",
+        fee_payer="wallet-legacy",
+        payload={"endpoint_id": "endpoint-whisper"},
+    )
+
+    removed = ledger.remove_noncanonical_operations({"ENDPOINT_UPDATE"})
+
+    assert len(removed) == 1
+    assert ledger.snapshot_operations() == []
+    assert ledger.wallet_next_sequence("wallet-legacy") == 1

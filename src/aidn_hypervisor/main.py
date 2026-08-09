@@ -138,11 +138,17 @@ def build_app(
     if resolved_consensus_service is not None:
         resolved_service.consensus_service = resolved_consensus_service
         if resolved_consensus_service.is_validator:
+            removed_operation_ids = resolved_service.ledger_operation_service.remove_noncanonical_operations(
+                {"ENDPOINT_UPDATE"}
+            )
+            if removed_operation_ids:
+                resolved_service._persist_state()
             # Local drafts and pending Session metadata must not mutate the
             # consensus Ledger/AppHash before their canonical transactions
             # reach finality. Their durable projections remain available to
             # the operator and are reconciled after consensus confirmation.
             resolved_endpoint_service.record_creation_operation = False
+            resolved_endpoint_service.record_update_operation = False
             resolved_session_service.record_open_operation = False
     resolved_finality_source = consensus_finality_source or getattr(resolved_service, "consensus_finality_source", None)
     if resolved_finality_source is None:
@@ -641,6 +647,16 @@ def _build_default_consensus_service(
         raise ValueError("validator mode requires AIDN_HYPERVISOR_STATE_PATH")
     if not config.abci_state_path:
         raise ValueError("validator mode requires AIDN_COMETBFT_ABCI_STATE_PATH")
+
+    # Remove legacy draft updates that were incorrectly recorded as wallet
+    # operations before validator writes were made consensus-bound. This must
+    # happen before ABCI bootstrap so local and canonical wallet sequences
+    # start from the same state.
+    removed_operation_ids = hypervisor_service.ledger_operation_service.remove_noncanonical_operations(
+        {"ENDPOINT_UPDATE"}
+    )
+    if removed_operation_ids:
+        hypervisor_service._persist_state()
 
     genesis_accounts = _consensus_genesis_accounts()
     # Hypervisor state is restored before ABCI bootstrap.  Never reapply the

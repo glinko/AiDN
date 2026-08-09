@@ -50,6 +50,35 @@ def test_validator_endpoint_draft_does_not_record_publish_operation() -> None:
     assert recorded == []
 
 
+def test_validator_endpoint_draft_update_does_not_record_wallet_operation() -> None:
+    recorded: list[dict] = []
+    service = EndpointService(
+        EndpointStore(),
+        operation_recorder=lambda **kwargs: recorded.append(kwargs),
+        record_creation_operation=False,
+        record_update_operation=False,
+    )
+    created = service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Draft Endpoint",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+
+    service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=created.endpoint.endpoint_id,
+            pricing={"fixed_price": 1.0},
+        )
+    )
+
+    assert recorded == []
+
+
 def test_endpoint_application_delete_schedules_validation_custody_retirement() -> None:
     endpoint_service = EndpointService(EndpointStore())
     created = endpoint_service.create_endpoint(

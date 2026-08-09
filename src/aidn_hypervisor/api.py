@@ -590,10 +590,19 @@ def build_api_router(
 
     def _build_endpoint_publication_envelope(
         record: PublishedEndpointConfiguration,
+        *,
+        retry_nonce: str | None = None,
     ) -> LedgerOperationEnvelope:
         sender_sequence = service.ledger_operation_service.wallet_next_sequence(
             record.owner_wallet
         )
+        evidence_references = [
+            record.publication_id,
+            record.endpoint_id,
+            record.configuration_hash,
+        ]
+        if retry_nonce is not None:
+            evidence_references.append(f"retry:{retry_nonce}")
         unsigned = LedgerOperationEnvelope(
             operation_type="ENDPOINT_PUBLISH",
             operation_version="1.0.0",
@@ -606,11 +615,7 @@ def build_api_router(
             fee_class="standard",
             created_at=record.published_at,
             payload={"publication": record.model_dump(mode="json")},
-            evidence_references=[
-                record.publication_id,
-                record.endpoint_id,
-                record.configuration_hash,
-            ],
+            evidence_references=evidence_references,
             signatures=[],
         )
         signature = sign_consensus_bytes(
@@ -2218,6 +2223,22 @@ def build_api_router(
             record = PublishedEndpointConfiguration.model_validate(
                 pending.payload["publication"]
             )
+            expected_sequence = service.ledger_operation_service.wallet_next_sequence(
+                record.owner_wallet
+            )
+            previous_submission = consensus.get_submission(pending.operation_id)
+            retry_failed = (
+                previous_submission is not None
+                and previous_submission.status.value == "failed"
+            )
+            if pending.sender_sequence != expected_sequence or retry_failed:
+                # Keep the rejected envelope for diagnostics, but do not
+                # retry it forever after a sequence repair or operator action.
+                pending = _build_endpoint_publication_envelope(
+                    record,
+                    retry_nonce=uuid4().hex,
+                )
+                service.stage_pending_consensus_envelope(pending)
         try:
             submission = consensus.submit_operation(pending, retry_existing=True)
         except (ValueError, OSError) as error:
