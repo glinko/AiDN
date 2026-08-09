@@ -127,15 +127,44 @@ def test_access_session_requires_one_pairing_exchange_and_expires(tmp_path) -> N
     clock = _Clock()
     store = McpCredentialStore(secret_manager=_manager(tmp_path), now=clock)
     access = DashboardAccessService(store=store, now=clock)
+    browser_key = "browser-key-for-test-0000000000000000000000000000000000000000"
     pairing = access.create_pairing(ttl_seconds=600)
 
-    session = access.exchange_pairing_code(pairing.code)
+    session = access.exchange_pairing_code(
+        pairing.code,
+        browser_key=browser_key,
+        duration="ten_minutes",
+    )
 
     assert session is not None
-    assert access.authorize(session.session_id) is True
-    assert access.exchange_pairing_code(pairing.code) is None
-    clock.advance(seconds=901)
-    assert access.authorize(session.session_id) is False
+    assert access.authorize(
+        session.session_id,
+        browser_key=browser_key,
+    ) is True
+    assert access.authorize(
+        session.session_id,
+        browser_key="other-browser-key-0000000000000000000000000000000000000000",
+    ) is False
+    assert access.exchange_pairing_code(pairing.code, browser_key=browser_key) is None
+    clock.advance(seconds=601)
+    assert access.authorize(session.session_id, browser_key=browser_key) is False
+
+
+def test_access_session_can_be_persistent_and_survives_service_restart(tmp_path) -> None:
+    clock = _Clock()
+    store = McpCredentialStore(secret_manager=_manager(tmp_path), now=clock)
+    browser_key = "persistent-browser-key-000000000000000000000000000000000000000"
+    pairing = DashboardAccessService(store=store, now=clock).create_pairing(ttl_seconds=600)
+    session = DashboardAccessService(store=store, now=clock).exchange_pairing_code(
+        pairing.code,
+        browser_key=browser_key,
+        duration="forever",
+    )
+
+    assert session is not None
+    restored = DashboardAccessService(store=store, now=clock)
+    assert restored.authorize(session.session_id, browser_key=browser_key) is True
+    assert restored.session_expiry(session.session_id, browser_key=browser_key) is None
 
 
 def test_operator_pair_command_prints_one_time_code_only_to_stdout(tmp_path, capsys) -> None:

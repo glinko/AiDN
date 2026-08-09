@@ -23,10 +23,18 @@ from aidn_hypervisor.operator_access import DashboardAccessService
 
 _COOKIE_NAME = "aidn_dashboard_access"
 _COOKIE_PATH = "/operators/dashboard/access"
+_BROWSER_KEY_HEADER = "X-AiDN-Browser-Key"
+_COOKIE_MAX_AGE = {
+    "ten_minutes": 10 * 60,
+    "one_day": 24 * 60 * 60,
+    "thirty_days": 30 * 24 * 60 * 60,
+    "forever": 10 * 365 * 24 * 60 * 60,
+}
 
 
 class PairingRequest(BaseModel):
     code: str = Field(min_length=1, max_length=256)
+    duration: str = Field(default="one_day", pattern="^(ten_minutes|one_day|thirty_days|forever)$")
 
 
 class CredentialCreateRequest(BaseModel):
@@ -67,10 +75,15 @@ def build_operator_access_router(
     def session_expiry(request: Request) -> str | None:
         if access_service is None:
             return None
-        return access_service.session_expiry(request.cookies.get(_COOKIE_NAME))
+        return access_service.session_expiry(
+            request.cookies.get(_COOKIE_NAME),
+            browser_key=request.headers.get(_BROWSER_KEY_HEADER),
+        )
 
     def require_session(request: Request) -> JSONResponse | None:
-        if access_service is None or not access_service.authorize(request.cookies.get(_COOKIE_NAME)):
+        if access_service is None or not access_service.authorize(
+            request.cookies.get(_COOKIE_NAME), browser_key=request.headers.get(_BROWSER_KEY_HEADER)
+        ):
             return JSONResponse(status_code=401, content={"error": {"code": "DASHBOARD_ACCESS_REQUIRED"}})
         if not allow_insecure_lan and request.url.scheme != "https":
             return JSONResponse(status_code=426, content={"error": {"code": "DASHBOARD_ACCESS_TLS_REQUIRED"}})
@@ -103,7 +116,11 @@ def build_operator_access_router(
             return JSONResponse(status_code=404, content={"error": {"code": "DASHBOARD_ACCESS_DISABLED"}})
         if not allow_insecure_lan and request.url.scheme != "https":
             return JSONResponse(status_code=426, content={"error": {"code": "DASHBOARD_ACCESS_TLS_REQUIRED"}})
-        session = access_service.exchange_pairing_code(payload.code)
+        session = access_service.exchange_pairing_code(
+            payload.code,
+            browser_key=request.headers.get(_BROWSER_KEY_HEADER),
+            duration=payload.duration,
+        )
         if session is None:
             return JSONResponse(status_code=403, content={"error": {"code": "DASHBOARD_PAIRING_INVALID"}})
         response.set_cookie(
@@ -113,6 +130,7 @@ def build_operator_access_router(
             samesite="strict",
             secure=not allow_insecure_lan,
             path=_COOKIE_PATH,
+            max_age=_COOKIE_MAX_AGE[payload.duration],
         )
         return Response(status_code=204, headers=dict(response.headers))
 
@@ -210,7 +228,10 @@ def build_operator_access_router(
     @router.post("/logout", status_code=204)
     async def logout(request: Request, response: Response) -> Response:
         if access_service is not None:
-            access_service.revoke_session(request.cookies.get(_COOKIE_NAME))
+            access_service.revoke_session(
+                request.cookies.get(_COOKIE_NAME),
+                browser_key=request.headers.get(_BROWSER_KEY_HEADER),
+            )
         response.delete_cookie(_COOKIE_NAME, path=_COOKIE_PATH)
         return Response(status_code=204, headers=dict(response.headers))
 

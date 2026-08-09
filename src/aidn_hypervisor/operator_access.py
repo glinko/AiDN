@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import secrets
-import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Callable
 
 from aidn_hypervisor.mcp.credentials import McpCredentialStore, McpPairingCode
 
 DEFAULT_DASHBOARD_SESSION_TTL_SECONDS = 900
+_DURATION_SECONDS = {
+    "ten_minutes": 10 * 60,
+    "one_day": 24 * 60 * 60,
+    "thirty_days": 30 * 24 * 60 * 60,
+    "forever": None,
+}
 
 
 @dataclass(frozen=True)
@@ -19,74 +24,66 @@ class DashboardAccessSession:
 
     session_id: str
     expires_at: str
+    duration: str
 
 
 class DashboardAccessService:
-    """Exchange one local pairing code for a bounded dashboard session."""
+    """Exchange one local pairing code for a persistent browser-bound session."""
 
     def __init__(
         self,
         *,
         store: McpCredentialStore,
         now: Callable[[], datetime] | None = None,
-        session_ttl_seconds: int = DEFAULT_DASHBOARD_SESSION_TTL_SECONDS,
         max_sessions: int = 32,
     ) -> None:
-        if session_ttl_seconds <= 0:
-            raise ValueError("dashboard access session TTL must be positive")
         if max_sessions < 1:
             raise ValueError("dashboard access session limit must be positive")
         self._store = store
         self._now = now or (lambda: datetime.now(UTC))
-        self._session_ttl_seconds = session_ttl_seconds
         self._max_sessions = max_sessions
-        self._sessions: dict[str, datetime] = {}
-        self._lock = threading.RLock()
 
     def create_pairing(self, *, ttl_seconds: int) -> McpPairingCode:
         return self._store.create_pairing_code(ttl_seconds=ttl_seconds)
 
-    def exchange_pairing_code(self, code: str | None) -> DashboardAccessSession | None:
+    def exchange_pairing_code(
+        self, code: str | None, *, browser_key: str | None, duration: str = "one_day"
+    ) -> DashboardAccessSession | None:
+        if duration not in _DURATION_SECONDS or not isinstance(browser_key, str) or not (32 <= len(browser_key) <= 128):
+            return None
         if not self._store.consume_pairing_code(code):
             return None
-        with self._lock:
-            self._prune_expired()
-            if len(self._sessions) >= self._max_sessions:
-                return None
-            session_id = "das-" + secrets.token_urlsafe(24)
-            expires_at = self._current_time() + timedelta(seconds=self._session_ttl_seconds)
-            self._sessions[session_id] = expires_at
-            return DashboardAccessSession(
-                session_id=session_id,
-                expires_at=self._format_timestamp(expires_at),
-            )
-
-    def authorize(self, session_id: str | None) -> bool:
-        if not isinstance(session_id, str) or not session_id:
-            return False
-        with self._lock:
-            self._prune_expired()
-            return session_id in self._sessions
-
-    def revoke_session(self, session_id: str | None) -> bool:
-        if not isinstance(session_id, str) or not session_id:
-            return False
-        with self._lock:
-            return self._sessions.pop(session_id, None) is not None
-
-    def session_expiry(self, session_id: str | None) -> str | None:
-        if not isinstance(session_id, str) or not session_id:
+        session_id = "das-" + secrets.token_urlsafe(24)
+        seconds = _DURATION_SECONDS[duration]
+        expires_at = None if seconds is None else self._current_time() + timedelta(seconds=seconds)
+        expiry_text = None if expires_at is None else self._format_timestamp(expires_at)
+        if not self._store.create_dashboard_browser_session(
+            session_id=session_id,
+            browser_key=browser_key,
+            expires_at=expiry_text,
+            max_sessions=self._max_sessions,
+        ):
             return None
-        with self._lock:
-            self._prune_expired()
-            expires_at = self._sessions.get(session_id)
-            return self._format_timestamp(expires_at) if expires_at is not None else None
+        return DashboardAccessSession(
+            session_id=session_id,
+            expires_at=expiry_text or "never",
+            duration=duration,
+        )
 
-    def _prune_expired(self) -> None:
-        current = self._current_time()
-        for session_id, expires_at in tuple(self._sessions.items()):
-            if expires_at <= current:
-                del self._sessions[session_id]
+    def authorize(self, session_id: str | None, *, browser_key: str | None) -> bool:
+        return self._store.authorize_dashboard_browser_session(
+            session_id=session_id,
+            browser_key=browser_key,
+        )
+
+    def revoke_session(self, session_id: str | None, *, browser_key: str | None) -> bool:
+        return self._store.revoke_dashboard_browser_session(session_id=session_id, browser_key=browser_key)
+
+    def session_expiry(self, session_id: str | None, *, browser_key: str | None) -> str | None:
+        return self._store.dashboard_browser_session_expiry(
+            session_id=session_id,
+            browser_key=browser_key,
+        )
 
     def _current_time(self) -> datetime:
         value = self._now()

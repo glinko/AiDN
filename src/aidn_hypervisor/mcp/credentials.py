@@ -225,6 +225,81 @@ class McpCredentialStore:
             self._save_state(state)
         return valid
 
+    def create_dashboard_browser_session(
+        self,
+        *,
+        session_id: str,
+        browser_key: str,
+        expires_at: str | None,
+        max_sessions: int,
+    ) -> bool:
+        """Persist a browser-bound dashboard session without storing either secret."""
+        if not session_id or not self._valid_browser_key(browser_key) or max_sessions < 1:
+            return False
+        state = self._load_state()
+        self._prune_dashboard_sessions(state)
+        if len(state["dashboard_sessions"]) >= max_sessions:
+            self._save_state(state)
+            return False
+        state["dashboard_sessions"].append(
+            {
+                "session_digest": self._digest(session_id),
+                "browser_key_digest": self._digest(browser_key),
+                "expires_at": expires_at,
+            }
+        )
+        self._save_state(state)
+        return True
+
+    def authorize_dashboard_browser_session(self, *, session_id: str | None, browser_key: str | None) -> bool:
+        if not isinstance(session_id, str) or not self._valid_browser_key(browser_key):
+            return False
+        state = self._load_state()
+        self._prune_dashboard_sessions(state)
+        session_digest = self._digest(session_id)
+        browser_key_digest = self._digest(browser_key)
+        valid = any(
+            hmac.compare_digest(record.get("session_digest", ""), session_digest)
+            and hmac.compare_digest(record.get("browser_key_digest", ""), browser_key_digest)
+            for record in state["dashboard_sessions"]
+        )
+        self._save_state(state)
+        return valid
+
+    def dashboard_browser_session_expiry(self, *, session_id: str | None, browser_key: str | None) -> str | None:
+        if not isinstance(session_id, str) or not self._valid_browser_key(browser_key):
+            return None
+        state = self._load_state()
+        self._prune_dashboard_sessions(state)
+        session_digest = self._digest(session_id)
+        browser_key_digest = self._digest(browser_key)
+        for record in state["dashboard_sessions"]:
+            if hmac.compare_digest(record.get("session_digest", ""), session_digest) and hmac.compare_digest(
+                record.get("browser_key_digest", ""), browser_key_digest
+            ):
+                self._save_state(state)
+                return record.get("expires_at")
+        self._save_state(state)
+        return None
+
+    def revoke_dashboard_browser_session(self, *, session_id: str | None, browser_key: str | None) -> bool:
+        if not isinstance(session_id, str) or not self._valid_browser_key(browser_key):
+            return False
+        state = self._load_state()
+        session_digest = self._digest(session_id)
+        browser_key_digest = self._digest(browser_key)
+        before = len(state["dashboard_sessions"])
+        state["dashboard_sessions"] = [
+            record
+            for record in state["dashboard_sessions"]
+            if not (
+                hmac.compare_digest(record.get("session_digest", ""), session_digest)
+                and hmac.compare_digest(record.get("browser_key_digest", ""), browser_key_digest)
+            )
+        ]
+        self._save_state(state)
+        return len(state["dashboard_sessions"]) != before
+
     def _load_state(self) -> dict:
         # Pairing codes are intentionally minted by a separate host-local CLI
         # process. Refresh the encrypted backend before every operation so the
@@ -236,6 +311,7 @@ class McpCredentialStore:
                 "credentials": [],
                 "pairing": None,
                 "legacy_imported": False,
+                "dashboard_sessions": [],
             }
         try:
             raw = self._secret_manager.get(MCP_ACCESS_STATE_HANDLE)
@@ -253,6 +329,8 @@ class McpCredentialStore:
             state["pairing"] = None
         if "legacy_imported" not in state:
             state["legacy_imported"] = False
+        if "dashboard_sessions" not in state:
+            state["dashboard_sessions"] = []
         for record in credentials:
             if "auto_approved_scopes" not in record:
                 record["auto_approved_scopes"] = []
@@ -260,7 +338,19 @@ class McpCredentialStore:
             raise SecretManagerError("MCP credential pairing state is invalid")
         if not isinstance(state["legacy_imported"], bool):
             raise SecretManagerError("MCP credential legacy import state is invalid")
+        if not isinstance(state["dashboard_sessions"], list) or any(
+            not isinstance(item, dict) for item in state["dashboard_sessions"]
+        ):
+            raise SecretManagerError("MCP dashboard browser session state is invalid")
         return state
+
+    def _prune_dashboard_sessions(self, state: dict) -> None:
+        now = self._current_time()
+        state["dashboard_sessions"] = [
+            record
+            for record in state["dashboard_sessions"]
+            if (expires_at := self._parse_timestamp(record.get("expires_at"))) is None or expires_at > now
+        ]
 
     def _save_state(self, state: dict) -> None:
         import json
@@ -335,6 +425,10 @@ class McpCredentialStore:
         except ValueError:
             return None
         return parsed.astimezone(UTC) if parsed.tzinfo is not None else None
+
+    @staticmethod
+    def _valid_browser_key(value: object) -> bool:
+        return isinstance(value, str) and 32 <= len(value) <= 128
 
     @staticmethod
     def _credential(record: dict, *, token: str | None = None) -> McpCredential:

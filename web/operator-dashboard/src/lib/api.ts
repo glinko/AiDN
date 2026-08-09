@@ -4,6 +4,17 @@ import { dashboardSchemas, type BundlePayload, type DashboardHome, type Endpoint
 
 const apiRoot = (import.meta.env.VITE_AIDN_API_ROOT ?? '').replace(/\/$/, '')
 const requestTimeoutMs = 15_000
+const browserKeyStorageKey = 'aidn.dashboard.browser-key.v1'
+
+function browserKey(): string {
+  const existing = window.localStorage.getItem(browserKeyStorageKey)
+  if (existing && existing.length >= 32) return existing
+  const bytes = new Uint8Array(32)
+  window.crypto.getRandomValues(bytes)
+  const value = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  window.localStorage.setItem(browserKeyStorageKey, value)
+  return value
+}
 
 export class DashboardApiError extends Error {
   readonly status: number | undefined
@@ -104,7 +115,7 @@ async function readDashboard<T>(path: string, schema: z.ZodType<T>, signal?: Abo
 async function writeDashboard<T>(path: string, init: RequestInit): Promise<T | undefined> {
   const response = await fetch(`${apiRoot}${path}`, {
     credentials: 'same-origin',
-    headers: { Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
+    headers: { Accept: 'application/json', 'X-AiDN-Browser-Key': browserKey(), ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
     ...init,
   })
   const text = await response.text()
@@ -130,7 +141,7 @@ export const dashboardApi = {
   bundles: (signal?: AbortSignal): Promise<BundlePayload> => readDashboard('/operators/dashboard/bundles', dashboardSchemas.bundles, signal),
   endpoints: (signal?: AbortSignal): Promise<EndpointPayload> => readDashboard('/operators/dashboard/endpoints', dashboardSchemas.endpoints, signal),
   accessStatus: (): Promise<DashboardAccessStatus> => writeDashboard('/operators/dashboard/access/status', { method: 'GET' }) as Promise<DashboardAccessStatus>,
-  pairDashboard: (code: string) => writeDashboard('/operators/dashboard/access/pair', { method: 'POST', body: JSON.stringify({ code }) }),
+  pairDashboard: (code: string, duration: string) => writeDashboard('/operators/dashboard/access/pair', { method: 'POST', body: JSON.stringify({ code, duration }) }),
   createAgentCredential: (label: string, scopes?: string[], autoApprovedScopes?: string[]) => writeDashboard<AccessCredential>('/operators/dashboard/access/credentials', { method: 'POST', body: JSON.stringify({ label, ...(scopes ? { scopes } : {}), ...(autoApprovedScopes ? { auto_approved_scopes: autoApprovedScopes } : {}) }) }),
   agentPermissionCatalog: () => writeDashboard<AgentPermissionCatalog>('/operators/dashboard/access/permission-catalog', { method: 'GET' }),
   updateAgentCredentialScopes: (credentialId: string, scopes: string[], autoApprovedScopes: string[]) => writeDashboard<AccessCredential>(`/operators/dashboard/access/credentials/${credentialId}/scopes`, { method: 'PUT', body: JSON.stringify({ scopes, auto_approved_scopes: autoApprovedScopes }) }),

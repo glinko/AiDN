@@ -13,6 +13,8 @@ from aidn_hypervisor.operator_access import DashboardAccessService
 from aidn_hypervisor.operator_access_api import build_operator_access_router
 from aidn_hypervisor.secrets import FileSecretManager
 
+_BROWSER_HEADERS = {"X-AiDN-Browser-Key": "browser-key-for-api-tests-000000000000000000000000000000000000000"}
+
 
 def test_credential_mutation_requires_pairing_and_reveals_only_new_value(tmp_path) -> None:
     manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
@@ -32,6 +34,7 @@ def test_credential_mutation_requires_pairing_and_reveals_only_new_value(tmp_pat
         )
     )
     client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
 
     assert client.post(
         "/operators/dashboard/access/credentials",
@@ -74,6 +77,7 @@ def test_paired_operator_can_list_and_update_only_known_agent_permissions(tmp_pa
         invalidate_credential_sessions=invalidated.append,
     ))
     client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
     pairing = access.create_pairing(ttl_seconds=600)
     assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
 
@@ -126,6 +130,7 @@ def test_agent_enrollment_is_approved_only_by_a_paired_dashboard(tmp_path) -> No
         allow_insecure_lan=True,
     ))
     client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
     public_key = (
         base64.urlsafe_b64encode(
             X25519PrivateKey.generate().public_key().public_bytes_raw()
@@ -168,6 +173,7 @@ def test_build_app_wires_secret_backed_access_management(monkeypatch, tmp_path) 
     monkeypatch.setenv("AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN", "true")
     app = build_app()
     client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
 
     pairing = app.state.dashboard_access_service.create_pairing(ttl_seconds=60)
     assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
