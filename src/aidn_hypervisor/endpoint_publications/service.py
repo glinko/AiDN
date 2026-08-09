@@ -36,6 +36,30 @@ class EndpointPublicationService:
         node_id: str,
         wallet_private_key: str,
     ) -> PublishedEndpointConfiguration:
+        record = self.prepare_configuration(
+            endpoint_id=endpoint_id,
+            owner_wallet=owner_wallet,
+            owner_public_key=owner_public_key,
+            node_id=node_id,
+            wallet_private_key=wallet_private_key,
+        )
+        return self.commit_prepared_configuration(record)
+
+    def prepare_configuration(
+        self,
+        *,
+        endpoint_id: str,
+        owner_wallet: str,
+        owner_public_key: str | None = None,
+        node_id: str,
+        wallet_private_key: str,
+    ) -> PublishedEndpointConfiguration:
+        """Build a signed publication without mutating the local read model.
+
+        Validator-mode callers submit this exact record through consensus and
+        commit it locally only after finality. Non-validator callers can use
+        ``publish_configuration`` for the legacy immediate local path.
+        """
         manifest = self.endpoint_service.get_endpoint(endpoint_id).endpoint
         readiness = self.publication_readiness(
             endpoint_id=endpoint_id,
@@ -61,8 +85,12 @@ class EndpointPublicationService:
         )
         configuration_hash = configuration_hash_for_publication(payload)
         sequence = 1 if previous is None else previous.sequence + 1
-        if previous is not None:
-            previous.status = "superseded"
+        if (
+            previous is not None
+            and previous.configuration_hash == configuration_hash
+            and owner_public_key is not None
+        ):
+            return previous
         record = PublishedEndpointConfiguration(
             publication_id=f"pub-{uuid4().hex[:12]}",
             endpoint_id=endpoint_id,
@@ -98,13 +126,53 @@ class EndpointPublicationService:
             # Legacy local callers remain readable, but their records are not
             # cryptographically publishable outside this Hypervisor.
             record.wallet_signature = f"legacy-unverified:{configuration_hash[:16]}"
-        self._record_advertisement_publish(
-            record,
-            previous_publication_id=(
-                previous.publication_id if previous is not None else None
+        return record
+
+    def commit_prepared_configuration(
+        self,
+        record: PublishedEndpointConfiguration,
+        *,
+        record_operations: bool | None = None,
+    ) -> PublishedEndpointConfiguration:
+        """Commit one prepared publication to the local projection.
+
+        ``record_operations=False`` is used after a canonical
+        ``ENDPOINT_PUBLISH`` finality proof. The consensus operation is then
+        the only economic/publication authority; the local store is merely its
+        read model.
+        """
+        records = self.store.list_records()
+        existing_by_id = next(
+            (
+                existing
+                for existing in records
+                if existing.publication_id == record.publication_id
             ),
+            None,
         )
-        self._record_offer_publish(record)
+        if existing_by_id is not None:
+            if existing_by_id.model_dump(mode="json") != record.model_dump(mode="json"):
+                raise ValueError("publication id is already bound to another record")
+            return existing_by_id
+        previous = self._current_publication_from_records(records, record.endpoint_id)
+        if previous is None:
+            if record.sequence != 1 or record.previous_configuration_hash is not None:
+                raise ValueError("publication sequence does not start at one")
+        else:
+            if record.sequence != previous.sequence + 1:
+                raise ValueError("publication sequence is not next after current record")
+            if record.previous_configuration_hash != previous.configuration_hash:
+                raise ValueError("publication previous configuration hash conflicts")
+        if record_operations is None:
+            record_operations = self.operation_recorder is not None
+        if record_operations:
+            self._record_advertisement_publish(
+                record,
+                previous_publication_id=(
+                    previous.publication_id if previous is not None else None
+                ),
+            )
+            self._record_offer_publish(record)
         if previous is None:
             self.store.append(record)
             return record

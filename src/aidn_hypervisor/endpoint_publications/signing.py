@@ -38,6 +38,14 @@ def sign_publication_payload(*, private_key: str, payload: dict) -> str:
     return "ed25519:" + signature.hex()
 
 
+def sign_consensus_bytes(*, private_key: str, payload: bytes) -> str:
+    """Sign a canonical Ledger envelope without changing its domain."""
+    signature = Ed25519PrivateKey.from_private_bytes(
+        _private_key_bytes(private_key)
+    ).sign(payload)
+    return "ed25519:" + signature.hex()
+
+
 def verify_publication_signature(
     *, public_key: str, signature: str, payload: dict
 ) -> None:

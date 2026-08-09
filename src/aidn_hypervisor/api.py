@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from aidn_hypervisor.accounting.models import UsageAcknowledgement, UsageReport
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.dashboard import build_market_payload, load_dashboard_html
 from aidn_hypervisor.domain.models import (
     AllocationRequest,
@@ -28,7 +29,7 @@ from aidn_hypervisor.endpoint_publications.models import (
 from aidn_hypervisor.endpoint_publications.service import (
     EndpointPublicationReadinessError,
 )
-from aidn_hypervisor.endpoint_publications.signing import verify_publication_signature
+from aidn_hypervisor.endpoint_publications.signing import sign_consensus_bytes, verify_publication_signature
 from aidn_hypervisor.operator_readiness import build_operator_readiness_payload
 from aidn_hypervisor.operator_views import (
     build_operator_bundles_payload,
@@ -582,6 +583,98 @@ def build_api_router(
         if session_service is not None
         else None
     )
+
+    def _endpoint_publication_uses_consensus() -> bool:
+        consensus = getattr(service, "consensus_service", None)
+        return consensus is not None and bool(getattr(consensus, "is_enabled", False))
+
+    def _build_endpoint_publication_envelope(
+        record: PublishedEndpointConfiguration,
+    ) -> LedgerOperationEnvelope:
+        sender_sequence = service.ledger_operation_service.wallet_next_sequence(
+            record.owner_wallet
+        )
+        unsigned = LedgerOperationEnvelope(
+            operation_type="ENDPOINT_PUBLISH",
+            operation_version="1.0.0",
+            protocol_version="0.1",
+            origin_type="wallet",
+            initiator_id=record.endpoint_id,
+            sender_wallet=record.owner_wallet,
+            sender_sequence=sender_sequence,
+            fee_payer=record.owner_wallet,
+            fee_class="standard",
+            created_at=record.published_at,
+            payload={"publication": record.model_dump(mode="json")},
+            evidence_references=[
+                record.publication_id,
+                record.endpoint_id,
+                record.configuration_hash,
+            ],
+            signatures=[],
+        )
+        signature = sign_consensus_bytes(
+            private_key=service.owner_wallet_private_key(),
+            payload=unsigned.signing_bytes(),
+        )
+        return unsigned.model_copy(update={"signatures": [signature]})
+
+    def _reconcile_endpoint_publications() -> list[dict]:
+        """Materialize finalized publication envelopes into the local read model."""
+        if not _endpoint_publication_uses_consensus() or endpoint_publication_service is None:
+            return []
+        finalized: list[dict] = []
+        for envelope in service.list_pending_consensus_envelopes():
+            if envelope.operation_type != "ENDPOINT_PUBLISH":
+                continue
+            finality = service.ledger_operation_finality(envelope.operation_id)
+            if not finality.get("consensus_finalized"):
+                continue
+            publication_payload = envelope.payload.get("publication")
+            if not isinstance(publication_payload, dict):
+                continue
+            record = PublishedEndpointConfiguration.model_validate(publication_payload)
+            endpoint_publication_service.commit_prepared_configuration(
+                record,
+                record_operations=False,
+            )
+            service.discard_pending_consensus_envelopes(envelope.operation_id)
+            service.discard_pending_consensus_operations(envelope.operation_id)
+            finalized.append(
+                {
+                    "operation_id": envelope.operation_id,
+                    "endpoint_id": record.endpoint_id,
+                    "publication_id": record.publication_id,
+                    "finality": finality,
+                }
+            )
+        return finalized
+
+    def _endpoint_publication_response(
+        *,
+        record: PublishedEndpointConfiguration,
+        endpoint_id: str,
+        consensus: dict | None = None,
+    ) -> dict:
+        endpoint = endpoint_service.get_endpoint(endpoint_id).endpoint
+        onboarding = service.sync_operator_onboarding_state(
+            endpoint_items=_operator_dashboard_endpoints_payload(
+                service=service,
+                endpoint_service=endpoint_service,
+                endpoint_publication_service=endpoint_publication_service,
+                validation_service=validation_service,
+            )["items"]
+        )
+        payload = build_publication_validation_payload(
+            record=record,
+            endpoint_id=endpoint_id,
+            endpoint_configuration_hash=endpoint.configuration_hash,
+            validation_service=validation_service,
+            onboarding=onboarding,
+        )
+        if consensus is not None:
+            payload["consensus"] = consensus
+        return payload
 
     def _effective_registry_service() -> RegistryService:
         if registry_service is not None:
@@ -1211,6 +1304,7 @@ def build_api_router(
 
     @router.get("/operators/dashboard/readiness")
     async def operator_dashboard_readiness() -> dict:
+        _reconcile_endpoint_publications()
         endpoint_payload = _operator_dashboard_endpoints_payload(
             service=service,
             endpoint_service=endpoint_service,
@@ -2056,6 +2150,7 @@ def build_api_router(
                 "endpoint_publication_unavailable",
                 "Endpoint publication service is not configured",
             )
+        finalized = _reconcile_endpoint_publications()
         wallet = service.owner_wallet_state()
         if not wallet["configured"]:
             return _error(
@@ -2064,7 +2159,7 @@ def build_api_router(
                 "Owner wallet must be configured before publishing endpoint configuration",
             )
         try:
-            record = endpoint_publication_service.publish_configuration(
+            record = endpoint_publication_service.prepare_configuration(
                 endpoint_id=endpoint_id,
                 owner_wallet=wallet["wallet_id"],
                 owner_public_key=wallet["public_key"],
@@ -2086,23 +2181,91 @@ def build_api_router(
             )
         except ValueError as error:
             return _error(409, "publication_conflict", str(error))
-        endpoint = endpoint_service.get_endpoint(endpoint_id).endpoint
-        onboarding = service.sync_operator_onboarding_state(
-            endpoint_items=_operator_dashboard_endpoints_payload(
-                service=service,
-                endpoint_service=endpoint_service,
-                endpoint_publication_service=endpoint_publication_service,
-                validation_service=validation_service,
-            )["items"]
-        )
-        return _ok(
-            build_publication_validation_payload(
-                record=record,
-                endpoint_id=endpoint_id,
-                endpoint_configuration_hash=endpoint.configuration_hash,
-                validation_service=validation_service,
-                onboarding=onboarding,
+        current = endpoint_publication_service.current_publication(endpoint_id)
+        if current is not None and current.publication_id == record.publication_id:
+            return _ok(
+                _endpoint_publication_response(
+                    record=record,
+                    endpoint_id=endpoint_id,
+                    consensus={
+                        "status": "FINALIZED",
+                        "reconciled": bool(finalized),
+                    },
+                )
             )
+        if not _endpoint_publication_uses_consensus():
+            committed = endpoint_publication_service.commit_prepared_configuration(record)
+            return _ok(
+                _endpoint_publication_response(
+                    record=committed,
+                    endpoint_id=endpoint_id,
+                )
+            )
+
+        consensus = service.consensus_service
+        pending = service.find_pending_consensus_envelope(
+            operation_type="ENDPOINT_PUBLISH",
+            predicate=lambda envelope: (
+                envelope.payload.get("publication", {}).get("endpoint_id") == endpoint_id
+                and envelope.payload.get("publication", {}).get("configuration_hash")
+                == record.configuration_hash
+            ),
+        )
+        if pending is None:
+            pending = _build_endpoint_publication_envelope(record)
+            service.stage_pending_consensus_envelope(pending)
+        else:
+            record = PublishedEndpointConfiguration.model_validate(
+                pending.payload["publication"]
+            )
+        try:
+            submission = consensus.submit_operation(pending, retry_existing=True)
+        except (ValueError, OSError) as error:
+            return _error(
+                409,
+                "endpoint_publication_consensus_rejected",
+                str(error),
+                details={"operation_id": pending.operation_id},
+            )
+        finality = service.ledger_operation_finality(pending.operation_id)
+        if finality.get("consensus_finalized"):
+            committed = endpoint_publication_service.commit_prepared_configuration(
+                record,
+                record_operations=False,
+            )
+            service.discard_pending_consensus_envelopes(pending.operation_id)
+            service.discard_pending_consensus_operations(pending.operation_id)
+            return _ok(
+                _endpoint_publication_response(
+                    record=committed,
+                    endpoint_id=endpoint_id,
+                    consensus={
+                        "status": "FINALIZED",
+                        "operation_id": pending.operation_id,
+                        "submission": submission.status.value,
+                        "finality": finality,
+                    },
+                )
+            )
+        if submission.status.value == "failed":
+            return _error(
+                409,
+                "endpoint_publication_consensus_rejected",
+                submission.error or "Consensus rejected Endpoint publication",
+                details={
+                    "operation_id": pending.operation_id,
+                    "submission": submission.status.value,
+                },
+            )
+        return _ok(
+            {
+                "status": "CONSENSUS_PENDING",
+                "operation_id": pending.operation_id,
+                "submission": submission.status.value,
+                "publication": record.model_dump(mode="json"),
+                "finality": finality,
+            },
+            status_code=202,
         )
 
     @router.post("/api/v1/endpoints/{endpoint_id}/request-validation")

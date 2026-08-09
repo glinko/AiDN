@@ -129,7 +129,6 @@ a deterministic rejection, but they are explicitly excluded from the active
 implementation profile:
 
 - `DEPOSIT_LOCK`
-- `ENDPOINT_PUBLISH`
 - `EPOCH_TASK`
 - `REGISTRY_UPSERT`
 - `SESSION_SETTLE`
@@ -146,6 +145,12 @@ reject them; they are not counted as missing active transitions. A similarly
 named operation is not treated as an alias:
 for example, `SESSION_SETTLE` does not bypass the specialized
 `SESSION_SETTLEMENT_FINALIZE` transition.
+
+`ENDPOINT_PUBLISH` is active in the current profile. The HTTP publication
+route constructs a wallet-signed envelope, submits it through consensus and
+materializes the local publication read model only after verified finality.
+It is not a local allow-list exception and does not reuse the historical
+advertisement/offer operation names.
 
 `DEVELOPMENT_REWARD_CALCULATE` commits a self-contained, activation-bound
 calculation as immutable evidence and has no Wallet, reserve, mint or other Q

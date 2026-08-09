@@ -22,11 +22,13 @@ class EndpointApplicationService:
         *,
         endpoint_service,
         hypervisor_service=None,
+        endpoint_publication_service=None,
         remote_endpoint_service=None,
         validation_service=None,
     ) -> None:
         self._endpoint_service = endpoint_service
         self._hypervisor_service = hypervisor_service
+        self._endpoint_publication_service = endpoint_publication_service
         self._remote_endpoint_service = remote_endpoint_service
         self._validation_service = validation_service
 
@@ -78,6 +80,17 @@ class EndpointApplicationService:
         if command.endpoint_id != endpoint_id:
             command = command.model_copy(update={"endpoint_id": endpoint_id})
         current = self._endpoint_service.get_endpoint(endpoint_id).endpoint
+        consensus = getattr(self._hypervisor_service, "consensus_service", None)
+        if (
+            consensus is not None
+            and getattr(consensus, "is_validator", False)
+            and self._endpoint_publication_service is not None
+            and self._endpoint_publication_service.current_publication(endpoint_id)
+            is not None
+        ):
+            raise ValueError(
+                "published endpoint updates require a canonical consensus transition"
+            )
         updated = self._endpoint_service.update_endpoint(command)
         self._supersede_validation_if_needed(
             endpoint_id=endpoint_id,

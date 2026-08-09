@@ -100,8 +100,14 @@ def test_validator_write_boundary_allows_bounded_local_provider_installation() -
 
 def test_validator_write_boundary_allows_local_endpoint_draft_creation() -> None:
     assert _is_validator_consensus_write_path("/api/v1/endpoints") is True
-    assert _is_validator_consensus_write_path("/api/v1/endpoints/ep-1") is False
-    assert _is_validator_consensus_write_path("/api/v1/endpoints/ep-1/publish-configuration") is False
+    assert _is_validator_consensus_write_path("/api/v1/endpoints/ep-1", "PATCH") is True
+    assert _is_validator_consensus_write_path("/api/v1/endpoints/ep-1", "DELETE") is False
+    assert _is_validator_consensus_write_path(
+        "/api/v1/endpoints/ep-1/publish-configuration", "POST"
+    ) is True
+    assert _is_validator_consensus_write_path(
+        "/api/v1/endpoints/ep-1/publish-configuration", "GET"
+    ) is False
 
 
 def test_validator_write_boundary_allows_local_runtime_task_submission() -> None:

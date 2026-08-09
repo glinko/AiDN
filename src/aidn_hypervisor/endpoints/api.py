@@ -263,6 +263,7 @@ def build_endpoint_router(
     endpoint_application_service = EndpointApplicationService(
         endpoint_service=service,
         hypervisor_service=hypervisor_service,
+        endpoint_publication_service=endpoint_publication_service,
         remote_endpoint_service=remote_endpoint_service,
         validation_service=validation_service,
     )
@@ -337,6 +338,8 @@ def build_endpoint_router(
             result = endpoint_application_service.update_endpoint(endpoint_id, command)
         except KeyError:
             return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        except ValueError as error:
+            return _error(409, "endpoint_update_requires_consensus", str(error))
         return _ok(result["payload"])
 
     @router.post("/{endpoint_id}/proxy-target")

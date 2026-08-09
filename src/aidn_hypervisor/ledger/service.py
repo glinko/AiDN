@@ -48,6 +48,7 @@ SESSION_SETTLEMENT_PARTIAL_FINALIZE_OPERATION = "SESSION_SETTLEMENT_PARTIAL_FINA
 SESSION_SETTLEMENT_CORRECT_OPERATION = "SESSION_SETTLEMENT_CORRECT"
 CONSENSUS_PENALTY_APPLY_OPERATION = "PENALTY_APPLY"
 OPERATOR_WALLET_BIND_OPERATION = "OPERATOR_WALLET_BIND"
+ENDPOINT_PUBLISH_OPERATION = "ENDPOINT_PUBLISH"
 VALIDATION_REPORT_COMMIT_OPERATION = "VALIDATION_REPORT_COMMIT"
 VALIDATION_REPORT_STORAGE_RECEIPT_OPERATION = "VALIDATION_REPORT_STORAGE_RECEIPT"
 VALIDATION_REPORT_STORAGE_FAILURE_OPERATION = "VALIDATION_REPORT_STORAGE_FAILURE"
@@ -1690,6 +1691,109 @@ class LedgerOperationService:
         return self.record_admitted_envelope(
             envelope,
             emitted_events=["OperatorWalletBound"],
+        )
+
+    def validate_consensus_endpoint_publish(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Validate one wallet-authorized Endpoint publication transition."""
+        from aidn_hypervisor.endpoint_publications.models import (
+            PublishedEndpointConfiguration,
+        )
+        from aidn_hypervisor.endpoint_publications.signing import (
+            verify_publication_signature,
+        )
+
+        if envelope.operation_type != ENDPOINT_PUBLISH_OPERATION:
+            raise ValueError("endpoint publication requires ENDPOINT_PUBLISH")
+        if envelope.origin_type != "wallet":
+            raise ValueError("endpoint publication requires wallet origin")
+        if envelope.fee_class != "standard":
+            raise ValueError("endpoint publication requires standard fee class")
+        if envelope.sender_wallet is None or envelope.fee_payer != envelope.sender_wallet:
+            raise ValueError("endpoint publication requires one wallet fee payer")
+        publication_payload = envelope.payload.get("publication")
+        if not isinstance(publication_payload, dict):
+            raise ValueError("endpoint publication payload is missing publication")
+        try:
+            publication = PublishedEndpointConfiguration.model_validate(
+                publication_payload
+            )
+        except ValueError as error:
+            raise ValueError(f"endpoint publication payload is invalid: {error}") from error
+        if publication.status != "published":
+            raise ValueError("endpoint publication status must be published")
+        if envelope.initiator_id != publication.endpoint_id:
+            raise ValueError("endpoint publication initiator does not match Endpoint")
+        if publication.owner_wallet != envelope.sender_wallet:
+            raise ValueError("endpoint publication owner does not match sender wallet")
+        if not publication.owner_public_key:
+            raise ValueError("endpoint publication requires an owner public key")
+        expected_wallet_id = "wallet-" + hashlib.sha256(
+            publication.owner_public_key.encode("utf-8")
+        ).hexdigest()[:12]
+        if publication.owner_wallet != expected_wallet_id:
+            raise ValueError("endpoint publication owner wallet does not match public key")
+        try:
+            verify_publication_signature(
+                public_key=publication.owner_public_key,
+                signature=publication.wallet_signature,
+                payload=publication.signed_payload(),
+            )
+        except ValueError as error:
+            raise ValueError(str(error)) from error
+        if len(envelope.signatures) != 1:
+            raise ValueError("endpoint publication requires exactly one wallet signature")
+        signature = envelope.signatures[0]
+        if not signature.startswith("ed25519:"):
+            raise ValueError("endpoint publication envelope signature is invalid")
+        try:
+            signature_bytes = bytes.fromhex(signature.removeprefix("ed25519:"))
+            public_key_bytes = bytes.fromhex(
+                publication.owner_public_key.removeprefix("ed25519:")
+            )
+            Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(
+                signature_bytes,
+                envelope.signing_bytes(),
+            )
+        except (ValueError, InvalidSignature) as error:
+            raise ValueError("endpoint publication envelope signature verification failed") from error
+
+        for operation in self._operations:
+            if operation.get("operation_type") != ENDPOINT_PUBLISH_OPERATION:
+                continue
+            existing_payload = operation.get("payload") or {}
+            existing_publication = existing_payload.get("publication")
+            if not isinstance(existing_publication, dict):
+                continue
+            if existing_publication.get("publication_id") == publication.publication_id:
+                if existing_publication == publication_payload:
+                    raise ValueError("endpoint publication is already committed")
+                raise ValueError("endpoint publication id is already bound to another record")
+            if existing_publication.get("endpoint_id") != publication.endpoint_id:
+                continue
+            if existing_publication.get("configuration_hash") == publication.configuration_hash:
+                raise ValueError("endpoint publication configuration is already committed")
+            if publication.sequence != int(existing_publication.get("sequence", 0)) + 1:
+                raise ValueError("endpoint publication sequence is invalid")
+            if publication.previous_configuration_hash != existing_publication.get(
+                "configuration_hash"
+            ):
+                raise ValueError("endpoint publication previous hash is invalid")
+        if publication.sequence == 1 and publication.previous_configuration_hash is not None:
+            raise ValueError("first endpoint publication cannot have a previous hash")
+        return {"publication": publication}
+
+    def apply_consensus_endpoint_publish(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Persist one canonical Endpoint publication commitment."""
+        self.validate_consensus_endpoint_publish(envelope)
+        return self.record_admitted_envelope(
+            envelope,
+            emitted_events=["EndpointPublished"],
         )
 
     def validator_set_update_commitment(

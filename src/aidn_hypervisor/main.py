@@ -225,7 +225,10 @@ def build_app(
             consensus is not None
             and consensus.is_validator
             and request.method in {"POST", "PUT", "PATCH", "DELETE"}
-            and not _is_validator_consensus_write_path(request.url.path)
+            and not _is_validator_consensus_write_path(
+                request.url.path,
+                request.method,
+            )
         ):
             return JSONResponse(
                 status_code=409,
@@ -284,7 +287,7 @@ def build_app(
     return app
 
 
-def _is_validator_consensus_write_path(path: str) -> bool:
+def _is_validator_consensus_write_path(path: str, method: str | None = None) -> bool:
     """Allow canonical transactions and explicitly bounded local operations."""
     parts = path.strip("/").split("/")
     if parts and parts[0] == "mcp":
@@ -346,9 +349,25 @@ def _is_validator_consensus_write_path(path: str) -> bool:
         return True
     if parts == ["api", "v1", "endpoints"]:
         # Creating an Endpoint draft only records local operator inventory. It
-        # does not publish an advertisement, move Q, or create a Session. The
-        # publication route remains outside this allow-list until its typed
-        # consensus transaction is finalized.
+        # does not publish an advertisement, move Q, or create a Session.
+        return True
+    if (
+        len(parts) == 4
+        and parts[:3] == ["api", "v1", "endpoints"]
+        and (method is None or method == "PATCH")
+    ):
+        # Draft policy edits are local-only until the Endpoint has a current
+        # publication. EndpointApplicationService rejects edits after that
+        # boundary so published state cannot bypass consensus.
+        return True
+    if (
+        len(parts) == 5
+        and parts[:3] == ["api", "v1", "endpoints"]
+        and parts[4] == "publish-configuration"
+        and (method is None or method == "POST")
+    ):
+        # The route below constructs and submits ENDPOINT_PUBLISH; it is not a
+        # local publication write despite being exposed through HTTP.
         return True
     if parts == ["tasks"]:
         # Runtime task submission is a local execution operation. Its Session

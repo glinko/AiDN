@@ -227,6 +227,8 @@ class ExecutionEngine:
                             self.ledger.apply_consensus_wallet_transfer(result.envelope)
                         elif result.envelope.operation_type == "OPERATOR_WALLET_BIND":
                             self.ledger.apply_consensus_operator_wallet_bind(result.envelope)
+                        elif result.envelope.operation_type == "ENDPOINT_PUBLISH":
+                            self.ledger.apply_consensus_endpoint_publish(result.envelope)
                         elif result.envelope.operation_type == "SESSION_OPEN" and self._strict_operation_coverage:
                             self.ledger.apply_consensus_session_open(
                                 result.envelope,
@@ -658,6 +660,22 @@ class ExecutionEngine:
                     )
                 )
                 emitted.append("OperatorWalletBound")
+            elif envelope.operation_type == "ENDPOINT_PUBLISH":
+                self.ledger.validate_consensus_endpoint_publish(envelope)
+                publication = envelope.payload["publication"]
+                state_changes.append(
+                    StateChange(
+                        entity_type="endpoint_publication",
+                        entity_id=str(publication["publication_id"]),
+                        change_type="publish",
+                        after={
+                            "endpoint_id": publication["endpoint_id"],
+                            "configuration_hash": publication["configuration_hash"],
+                            "sequence": publication["sequence"],
+                        },
+                    )
+                )
+                emitted.append("EndpointPublished")
             elif envelope.operation_type == "SESSION_OPEN" and self._strict_operation_coverage:
                 self.ledger.validate_consensus_session_open(
                     envelope,

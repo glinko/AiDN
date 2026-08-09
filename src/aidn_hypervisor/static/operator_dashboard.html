@@ -11395,7 +11395,12 @@
           endpointPublishConfigurationPath(draft.endpoint_id),
           {}
         );
-        if (proxyGuidedFlow?.phase === "publish") {
+        if (result?.data?.status === "CONSENSUS_PENDING") {
+          state.bootstrapMessage = {
+            kind: "warn",
+            text: `Publication is waiting for consensus finality (${result.data.operation_id}). Refresh the wizard or press Publish Configuration again to reconcile it.`,
+          };
+        } else if (proxyGuidedFlow?.phase === "publish") {
           state.proxyGuidedFlow = {
             endpointId: draft.endpoint_id,
             remoteEndpointId: proxyGuidedFlow.remoteEndpointId,
@@ -11408,10 +11413,13 @@
         } else {
           state.bootstrapMessage = {
             kind: "good",
-            text: `Configuration ${result.data.publication.configuration_hash} published for ${draft.endpoint_id}.`,
+            text: `Configuration ${result?.data?.publication?.configuration_hash || result?.data?.proof?.current_publication?.configuration_hash || ""} published for ${draft.endpoint_id}.`,
           };
         }
-        state.screen = proxyGuidedFlow?.phase === "publish" ? "endpoints" : "home";
+        state.screen =
+          result?.data?.status === "CONSENSUS_PENDING" || proxyGuidedFlow?.phase === "publish"
+            ? "endpoints"
+            : "home";
         await refreshBootstrapPayloads();
       } catch (error) {
         state.bootstrapMessage = { kind: "bad", text: String(error) };
