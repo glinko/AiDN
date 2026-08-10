@@ -8,6 +8,14 @@ export function getText(value: unknown, key: string): string {
   return typeof candidate === 'string' ? candidate : ''
 }
 
+export function getTextList(value: unknown, key: string): string[] {
+  const record = getRecord(value)
+  const candidate = record?.[key]
+  return Array.isArray(candidate)
+    ? candidate.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : []
+}
+
 export function shortId(value: string | undefined | null, limit = 13): string {
   if (!value) return '—'
   if (value.length <= limit) return value

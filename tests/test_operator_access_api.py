@@ -58,6 +58,38 @@ class _OperationService:
         self.calls.append(("discover", provider_instance_id))
         return [{"model_deployment_id": "md-test"}]
 
+    def request_model_install(self, **payload) -> dict:
+        self.calls.append(("install", payload))
+        return {"install_id": "install-test", "status": "queued", **payload}
+
+    def process_model_installs(self) -> list[dict]:
+        self.calls.append(("process-installs",))
+        return [{"install_id": "install-test", "status": "completed"}]
+
+    def register_bundle_from_install(self, **payload) -> dict:
+        self.calls.append(("register-bundle", payload))
+        return {"bundle_id": payload["bundle_id"], "revision": 1}
+
+    def create_model_artifact_set(self, **payload) -> dict:
+        self.calls.append(("artifact-set", payload))
+        return {"artifact_set_id": "set-test", **payload}
+
+    def bind_model_artifact_set(self, **payload) -> dict:
+        self.calls.append(("bind-artifact-set", payload))
+        return {"model_deployment_id": payload["model_deployment_id"], **payload}
+
+    def materialize_model_artifact_set(self, **payload) -> dict:
+        self.calls.append(("materialize-artifact-set", payload))
+        return {"status": "READY", **payload}
+
+    def create_runtime_binding(self, **payload) -> dict:
+        self.calls.append(("runtime-binding", payload))
+        return {"runtime_binding_id": "rtb-test", **payload}
+
+    def create_bundle_revision(self, **payload) -> dict:
+        self.calls.append(("bundle-revision", payload))
+        return {"bundle_id": payload["bundle_id"], "revision": 2}
+
     def configure_owner_wallet(self, *, mode: str, label: str | None = None, private_key: str | None = None) -> dict:
         self.calls.append(("wallet", mode, label, private_key))
         return {
@@ -279,6 +311,70 @@ def test_paired_dashboard_operations_require_pairing_and_call_bounded_service(tm
     assert client.post("/operators/dashboard/access/operations/bundles/bundle-a/unknown").status_code == 422
 
 
+def test_paired_dashboard_model_and_bundle_lifecycle_operations_are_bounded(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    service = _OperationService()
+    app = FastAPI()
+    app.include_router(build_operator_access_router(
+        access_service=access,
+        credential_store=credentials,
+        allow_insecure_lan=True,
+        hypervisor_service=service,
+    ))
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+
+    assert client.post(
+        "/operators/dashboard/access/operations/models/install",
+        json={"provider_type": "whisper", "model_id": "small", "source_url": "file:///tmp/model.bin"},
+    ).status_code == 401
+
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+
+    assert client.post(
+        "/operators/dashboard/access/operations/models/install",
+        json={"provider_type": "whisper", "model_id": "small", "source_url": "file:///tmp/model.bin"},
+    ).status_code == 202
+    assert client.post("/operators/dashboard/access/operations/models/install/process").status_code == 200
+    assert client.post(
+        "/operators/dashboard/access/operations/models/install-test/register-bundle",
+        json={"bundle_id": "bundle-small", "workload_type": "speech_to_text", "endpoint": "http://127.0.0.1:9000"},
+    ).status_code == 201
+    assert client.post(
+        "/operators/dashboard/access/operations/model-artifact-sets",
+        json={"display_name": "Whisper files", "files": [{"relative_path": "model.bin", "artifact_id": "a1"}]},
+    ).status_code == 201
+    assert client.post(
+        "/operators/dashboard/access/operations/model-deployments/md-test/artifact-set",
+        json={"artifact_set_id": "set-test"},
+    ).status_code == 200
+    assert client.post(
+        "/operators/dashboard/access/operations/provider-instances/pi-test/artifact-sets/materialize",
+        json={"artifact_set_id": "set-test", "destination": "/var/lib/aidn/models/small"},
+    ).status_code == 200
+    assert client.post(
+        "/operators/dashboard/access/operations/model-deployments/md-test/runtime-bindings",
+        json={"capability_id": "speech.stt", "capability_version": "1.0.0", "capability_definition_hash": "sha256:stt"},
+    ).status_code == 201
+    assert client.post(
+        "/operators/dashboard/access/operations/bundles/bundle-small/revisions",
+        json={"bundle_id": "bundle-small-v2", "overrides": {"priority_class": 90}},
+    ).status_code == 201
+    assert [call[0] for call in service.calls[-8:]] == [
+        "install",
+        "process-installs",
+        "register-bundle",
+        "artifact-set",
+        "bind-artifact-set",
+        "materialize-artifact-set",
+        "runtime-binding",
+        "bundle-revision",
+    ]
+
+
 def test_validator_boundary_permits_only_paired_dashboard_operations() -> None:
     from aidn_hypervisor.main import _is_validator_consensus_write_path
 
@@ -287,5 +383,14 @@ def test_validator_boundary_permits_only_paired_dashboard_operations() -> None:
     )
     assert _is_validator_consensus_write_path(
         "/operators/dashboard/access/operations/wallet/create", "POST"
+    )
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/operations/models/install", "POST"
+    )
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/operations/model-deployments/md-1/runtime-bindings", "POST"
+    )
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/operations/endpoints/ep-1/publish", "POST"
     )
     assert not _is_validator_consensus_write_path("/operators/dashboard/access/operations/unknown", "POST")

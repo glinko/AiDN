@@ -209,14 +209,58 @@ Dashboard boundary:
 
 The remaining legacy workflows SHALL be migrated in this order:
 
-1. model installation, artifact materialization, and Runtime Binding creation;
-2. immutable Bundle revision creation with resource and validation preflight;
-3. Endpoint draft, configuration, publication, and validation request flows;
-4. consumer Market, Session, settlement, and wallet accounting workflows.
+1. consumer Market, Session, settlement, and wallet accounting workflows.
 
 Until a workflow reaches the React Dashboard, its legacy surface remains the
 canonical operator surface. A React view MAY show its current state but SHALL
 describe it as read-only rather than implying an unavailable mutation exists.
+
+### 11.2 Model-to-Endpoint Operator Flow
+
+The maintained React Dashboard SHALL provide one continuous, paired-operator
+flow from an installed provider model to a validated Endpoint. The flow is
+explicitly ordered so that every later object references an already persisted
+identity rather than an uncommitted form value:
+
+```text
+Provider install request
+  -> installation processing/materialization
+  -> Model Deployment
+  -> Model Artifact Set and node materialization
+  -> Runtime Binding
+  -> immutable Bundle revision
+  -> Endpoint draft
+  -> readiness/preflight
+  -> consensus publication
+  -> validation request
+```
+
+The Models workspace SHALL let an operator queue and process a provider/model
+installation, register the resulting deployment as a Bundle candidate, create
+or bind an Artifact Set, materialize it on the node, and create a Runtime
+Binding. Each action SHALL display the returned ID, current state, error, and
+the next allowed action. Destination defaults MAY be selected by the node, but
+the UI SHALL show the resolved destination after materialization.
+
+Bundle editing SHALL create a new revision with a new Bundle ID, monotonic
+revision number, source revision reference, and deterministic content hash.
+The source Bundle remains unchanged. Revision creation SHALL reject attempts to
+override identity, revision, ancestry, or content-hash fields.
+
+Endpoint configuration SHALL begin as a draft. Draft fields include the
+Runtime Binding, capability, visibility, owner/payment beneficiary, accounting
+mode, fixed price, minimum deposit, and validation profile. Publish is a
+separate action: it runs readiness checks, requires the paired operator
+boundary, and uses the canonical consensus publication path. A failed or
+pending publication SHALL remain visible with its operation ID and retry path;
+the UI SHALL never show a draft as published merely because the HTTP request
+was accepted.
+
+Validation is requested only against an existing Endpoint identity. The
+Dashboard SHALL expose `DRAFT`, `PUBLISHED`, `VALIDATION_PENDING`, `VALIDATED`,
+`REJECTED`, and `REVOKED` states, plus the exact reason and evidence reference
+when a transition is blocked. Endpoint changes after publication SHALL create
+a new draft/configuration revision rather than mutate the published offer.
 
 ## 12. Future Extensions
 

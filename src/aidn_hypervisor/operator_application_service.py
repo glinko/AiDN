@@ -560,7 +560,7 @@ class OperatorApplicationService:
                 return self._recover_owner_wallet_from_binding(
                     material, canonical_binding
                 )
-        if self._host._owner_wallet is not None:
+        if self._host._owner_wallet is not None and self._requires_consensus_wallet_bind():
             raise ValueError("Owner wallet is already configured")
         if self._requires_consensus_wallet_bind():
             if self._host._pending_owner_wallet_bootstraps:

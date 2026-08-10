@@ -59,6 +59,7 @@ import {
   formatPercent,
   getRecord,
   getText,
+  getTextList,
   resourceUsage,
   shortId,
 } from '@/lib/format'
@@ -133,7 +134,7 @@ function App() {
   const nodeIdentity = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
   const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
   const readinessPercent = data.readiness.data?.progress.percent ?? 0
-  const hasRefreshError = [data.home, data.readiness, data.fleet, data.bundles, data.endpoints].some(
+  const hasRefreshError = [data.home, data.readiness, data.fleet, data.bundles, data.endpoints, data.providers, data.installs].some(
     (query) => query.isError,
   )
 
@@ -158,6 +159,7 @@ function App() {
       data.bundles.refetch(),
       data.endpoints.refetch(),
       data.providers.refetch(),
+      data.installs.refetch(),
     ])
   }
 
@@ -201,14 +203,17 @@ function App() {
             <BundlesScreen bundles={data.bundles.data?.items ?? []} isLoading={data.bundles.isLoading} error={data.bundles.error} onNavigate={navigate} onRefresh={refreshAll} />
           ) : null}
           {activeScreen === 'endpoints' ? (
-            <EndpointsScreen endpoints={data.endpoints.data?.items ?? []} isLoading={data.endpoints.isLoading} error={data.endpoints.error} onNavigate={navigate} />
+            <EndpointsScreen endpoints={data.endpoints.data?.items ?? []} isLoading={data.endpoints.isLoading} error={data.endpoints.error} onNavigate={navigate} onRefresh={refreshAll} ownerWallet={data.home.data?.bootstrap.owner_wallet?.wallet_id ?? ''} bundles={data.bundles.data?.items ?? []} bindings={data.providers.data?.runtime_bindings ?? []} />
+          ) : null}
+          {activeScreen === 'models' ? (
+            <ModelsWorkspace installs={data.installs.data?.items ?? []} workspace={data.providers.data} isLoading={data.installs.isLoading || data.providers.isLoading} error={data.installs.error ?? data.providers.error} onRefresh={refreshAll} />
           ) : null}
           {activeScreen === 'settings' ? <SettingsWorkspace fleet={data.fleet.data} onRefresh={refreshAll} /> : null}
           {activeScreen === 'wallet' ? <WalletWorkspace ownerWallet={data.home.data?.bootstrap.owner_wallet} onRefresh={refreshAll} /> : null}
           {activeScreen === 'providers' || activeScreen === 'catalog' ? (
             <ProviderWorkspaceScreen screen={activeScreen} workspace={data.providers.data} isLoading={data.providers.isLoading} error={data.providers.error} onRefresh={refreshAll} />
           ) : null}
-          {isOperationsScreen(activeScreen) && activeScreen !== 'providers' && activeScreen !== 'catalog' && activeScreen !== 'wallet' ? (
+          {isOperationsScreen(activeScreen) && activeScreen !== 'providers' && activeScreen !== 'catalog' && activeScreen !== 'wallet' && activeScreen !== 'models' ? (
             <OperationsWorkspace screen={activeScreen} data={data} onNavigate={navigate} onRefresh={refreshAll} />
           ) : null}
         </main>
@@ -620,15 +625,89 @@ function BundlesScreen({ bundles, isLoading, error, onNavigate, onRefresh }: { b
       <ScreenHeading eyebrow="Bundle-first operations" title="Bundles" detail="Bundles are immutable deployments. These controls operate the current revision only; configuration changes require a new revision rather than overwriting active history." />
       {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
       {busy ? <p className="font-mono text-xs text-cyan-200">Applying {busy.replace(':', ' ')}...</p> : null}
+      <BundleRevisionControl bundles={bundles} onRefresh={onRefresh} />
       <BundleTableSection bundles={bundles} isLoading={isLoading} error={error} onNavigate={onNavigate} onAction={runBundleAction} />
     </div>
   )
 }
 
-function EndpointsScreen({ endpoints, isLoading, error, onNavigate }: { endpoints: Endpoint[]; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate'] }) {
+function BundleRevisionControl({ bundles, onRefresh }: { bundles: Bundle[]; onRefresh: () => void }) {
+  const [sourceBundleId, setSourceBundleId] = useState('')
+  const [bundleId, setBundleId] = useState('')
+  const [overrides, setOverrides] = useState('{}')
+  const [enabled, setEnabled] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!sourceBundleId && bundles.length > 0) {
+      setSourceBundleId(bundles[0].bundle_id)
+      setBundleId(`${bundles[0].bundle_id}-r${Number(getRecord(bundles[0])?.revision ?? 1) + 1}`)
+    }
+  }, [bundles, sourceBundleId])
+
+  function chooseSource(nextId: string) {
+    setSourceBundleId(nextId)
+    const source = bundles.find((bundle) => bundle.bundle_id === nextId)
+    if (source) setBundleId(`${source.bundle_id}-r${Number(getRecord(source)?.revision ?? 1) + 1}`)
+  }
+
+  async function createRevision() {
+    let parsed: DashboardRecord
+    try {
+      const candidate: unknown = JSON.parse(overrides)
+      const record = getRecord(candidate)
+      if (!record) throw new Error('Revision overrides must be a JSON object.')
+      parsed = record
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Revision overrides are not valid JSON.')
+      return
+    }
+    if (!sourceBundleId || !bundleId.trim()) {
+      setMessage('Choose a source Bundle and provide a new revision ID.')
+      return
+    }
+    setBusy(true)
+    setMessage(null)
+    try {
+      const result = await dashboardApi.createBundleRevision(sourceBundleId, { bundle_id: bundleId.trim(), overrides: parsed, enabled })
+      setMessage(`Created ${getText(result, 'bundle_id') || bundleId.trim()} with hash ${getText(result, 'bundle_hash') || 'pending'}. The source revision was not overwritten.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Bundle revision creation failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow text-cyan-100">Immutable revision factory</p><CardTitle className="mt-1 text-lg font-semibold">Create a new Bundle revision</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">A revision receives a new ID and content hash. The source remains auditable and unchanged; enable the new revision only when preflight is complete.</p></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-[1fr_1fr_1.5fr_auto]"><label className="grid gap-2"><span className="eyebrow">Source revision</span><select value={sourceBundleId} onChange={(event) => chooseSource(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="">Select Bundle</option>{bundles.map((bundle) => <option key={bundle.bundle_id} value={bundle.bundle_id}>{bundle.bundle_id} · r{String(getRecord(bundle)?.revision ?? 1)}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">New revision ID</span><input value={bundleId} onChange={(event) => setBundleId(event.target.value)} placeholder="bundle-whisper-r2" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Immutable overrides JSON</span><input value={overrides} onChange={(event) => setOverrides(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><div className="flex items-end gap-2"><label className="flex h-10 items-center gap-2 rounded-lg border border-border/70 px-3 text-xs text-slate-300"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />Enable</label><Button className="h-10 bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy || bundles.length === 0} onClick={() => void createRevision()}><Boxes />{busy ? 'Creating...' : 'Create revision'}</Button></div>{message ? <div className="lg:col-span-4"><OperationNotice message={message} onDismiss={() => setMessage(null)} /></div> : null}</CardContent></Card>
+}
+
+function EndpointsScreen({ endpoints, isLoading, error, onNavigate, onRefresh, ownerWallet, bundles, bindings }: { endpoints: Endpoint[]; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void; ownerWallet: string; bundles: Bundle[]; bindings: DashboardRecord[] }) {
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function runEndpointAction(endpoint: Endpoint, action: 'publish' | 'validate') {
+    setBusy(`${endpoint.endpoint_id}:${action}`)
+    setMessage(null)
+    try {
+      if (action === 'publish') await dashboardApi.publishEndpoint(endpoint.endpoint_id)
+      if (action === 'validate') await dashboardApi.requestEndpointValidation(endpoint.endpoint_id)
+      setMessage(`${endpoint.endpoint_id}: ${action} request completed.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Endpoint operation failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <ScreenHeading eyebrow="Network-facing service offers" title="Endpoints" detail="Endpoint publication remains commercially distinct from the Bundle that runs it. This table shows the bound configuration, execution state and public readiness." />
+      <EndpointDraftControl ownerWallet={ownerWallet} bundles={bundles} bindings={bindings} onRefresh={onRefresh} />
+      {busy ? <p className="font-mono text-xs text-cyan-200">Applying {busy.replace(':', ' ')}...</p> : null}
+      {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
       <Card className="border-border/80 bg-card py-0 shadow-none">
         <CardHeader className="border-b border-border/75 px-5 py-4">
           <div><p className="eyebrow">Endpoint inventory</p><CardTitle className="mt-1 text-lg font-semibold tracking-[-0.03em]">Published and local offers</CardTitle></div>
@@ -638,23 +717,253 @@ function EndpointsScreen({ endpoints, isLoading, error, onNavigate }: { endpoint
           {isLoading && endpoints.length === 0 ? <TableSkeleton columns={5} rows={6} /> : null}
           {error && endpoints.length === 0 ? <PanelError title="Endpoint inventory is unavailable" error={error} /> : null}
           {!isLoading && !error && endpoints.length === 0 ? <EmptyState title="No Endpoint offers are configured" detail="Create a Bundle first, then review its publication readiness before exposing it to the Market." actionLabel="Open Bundles" onAction={() => onNavigate('bundles')} /> : null}
-          {endpoints.length > 0 ? <EndpointTable endpoints={endpoints} /> : null}
+          {endpoints.length > 0 ? <EndpointTable endpoints={endpoints} onAction={runEndpointAction} /> : null}
         </CardContent>
       </Card>
     </div>
   )
 }
 
-function EndpointTable({ endpoints }: { endpoints: Endpoint[] }) {
+function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { ownerWallet: string; bundles: Bundle[]; bindings: DashboardRecord[]; onRefresh: () => void }) {
+  const [displayName, setDisplayName] = useState('New Endpoint')
+  const [bindingId, setBindingId] = useState('')
+  const [bundleId, setBundleId] = useState('')
+  const [bundleHash, setBundleHash] = useState('')
+  const [modelClass, setModelClass] = useState('llm.chat')
+  const [visibility, setVisibility] = useState<'private' | 'shared' | 'public'>('private')
+  const [sharedWalletIds, setSharedWalletIds] = useState('')
+  const [acceptsExternal, setAcceptsExternal] = useState(false)
+  const [validationEnabled, setValidationEnabled] = useState(false)
+  const [fixedPrice, setFixedPrice] = useState('0')
+  const [minimumDeposit, setMinimumDeposit] = useState('0')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!bindingId && bindings.length > 0) {
+      const first = bindings[0]
+      setBindingId(getText(first, 'runtime_binding_id'))
+      setModelClass(getText(first, 'capability_id') || 'llm.chat')
+    }
+  }, [bindingId, bindings])
+
+  useEffect(() => {
+    if (!bundleId && bundles.length > 0) {
+      const first = bundles[0]
+      setBundleId(first.bundle_id)
+      setBundleHash(getText(first, 'bundle_hash'))
+    }
+  }, [bundleId, bundles])
+
+  useEffect(() => {
+    if (!sharedWalletIds && ownerWallet) setSharedWalletIds(ownerWallet)
+  }, [ownerWallet, sharedWalletIds])
+
+  async function createDraft() {
+    if (!ownerWallet) {
+      setMessage('Configure the owner Wallet before creating an Endpoint draft.')
+      return
+    }
+    if (!displayName.trim() || (!bindingId && (!bundleId.trim() || !bundleHash.trim()))) {
+      setMessage('Provide a display name and either a Runtime Binding or Bundle ID plus Bundle hash.')
+      return
+    }
+    setBusy(true)
+    setMessage(null)
+    const validation = validationEnabled
+      ? { enabled: true, model_class_supported: true, verification_status: 'pending', certification_status: 'pending_initial', validation_status: 'pending_initial' }
+      : { enabled: false, model_class_supported: false, verification_status: 'unsupported', certification_status: 'uncertified', validation_status: 'unvalidated' }
+    try {
+      await dashboardApi.createEndpoint({
+        owner_wallet: ownerWallet,
+        runtime_binding_id: bindingId || null,
+        bundle_id: bundleId,
+        bundle_hash: bundleHash,
+        display_name: displayName.trim(),
+        model_class: modelClass.trim() || 'llm.chat',
+        capabilities: [modelClass.trim() || 'llm.chat'],
+        runtime: { streaming: true },
+        publication: { visibility, shared_with_wallet_ids: visibility === 'shared' ? sharedWalletIds.split(',').map((wallet) => wallet.trim()).filter(Boolean) : [], discoverable: visibility !== 'private', validation: validationEnabled ? 'enabled' : 'disabled', accepts_external_requests: acceptsExternal },
+        pricing: { billing_unit: 'request', fixed_price: Number(fixedPrice) || 0 },
+        session: { minimum_deposit: Number(minimumDeposit) || 0, max_concurrent_sessions: 1 },
+        validation,
+      })
+      setMessage('Endpoint draft created. Review readiness, then publish the exact configuration.')
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Endpoint draft creation failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow text-cyan-100">Endpoint lifecycle</p><CardTitle className="mt-1 text-lg font-semibold">Create a draft from a ready runtime</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Draft creation is local. Publication signs the immutable configuration and, on a validator, submits `ENDPOINT_PUBLISH` through consensus. Validation is a separate request.</p></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-4"><label className="grid gap-2"><span className="eyebrow">Display name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Runtime Binding</span><select value={bindingId} onChange={(event) => setBindingId(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300"><option value="">Manual Bundle fields</option>{bindings.map((binding) => <option key={getText(binding, 'runtime_binding_id')} value={getText(binding, 'runtime_binding_id')}>{shortId(getText(binding, 'runtime_binding_id'), 28)} · {getText(binding, 'capability_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Capability</span><input value={modelClass} onChange={(event) => setModelClass(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Visibility</span><select value={visibility} onChange={(event) => setVisibility(event.target.value as typeof visibility)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="private">Private</option><option value="shared">Shared</option><option value="public">Public</option></select></label><label className="grid gap-2"><span className="eyebrow">Bundle ID</span><input value={bundleId} onChange={(event) => setBundleId(event.target.value)} disabled={Boolean(bindingId)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300 disabled:opacity-50" /></label><label className="grid gap-2"><span className="eyebrow">Bundle hash</span><input value={bundleHash} onChange={(event) => setBundleHash(event.target.value)} disabled={Boolean(bindingId)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300 disabled:opacity-50" /></label><label className="grid gap-2"><span className="eyebrow">Fixed price Q</span><input inputMode="decimal" value={fixedPrice} onChange={(event) => setFixedPrice(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Minimum deposit Q</span><input inputMode="decimal" value={minimumDeposit} onChange={(event) => setMinimumDeposit(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><div className="flex flex-wrap items-center gap-3 lg:col-span-3"><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={acceptsExternal} onChange={(event) => setAcceptsExternal(event.target.checked)} />Accept external requests</label><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={validationEnabled} onChange={(event) => setValidationEnabled(event.target.checked)} />Require validation</label></div><div className="flex items-end justify-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy} onClick={() => void createDraft()}><RadioTower />{busy ? 'Creating...' : 'Create draft'}</Button></div>{message ? <div className="lg:col-span-4"><OperationNotice message={message} onDismiss={() => setMessage(null)} /></div> : null}</CardContent></Card>
+}
+
+function EndpointTable({ endpoints, onAction }: { endpoints: Endpoint[]; onAction: (endpoint: Endpoint, action: 'publish' | 'validate') => void }) {
   const columns: ColumnDef<Endpoint>[] = [
     { accessorKey: 'display_name', header: 'Endpoint', cell: ({ row }) => <div><p className="font-medium text-slate-100">{row.original.display_name || shortId(row.original.endpoint_id, 22)}</p><p className="mt-0.5 font-mono text-[10px] text-slate-500">{shortId(row.original.endpoint_id)}</p></div> },
     { accessorKey: 'model_class', header: 'Capability', cell: ({ row }) => <span className="text-xs text-slate-200">{row.original.model_class || row.original.capabilities[0] || '—'}</span> },
     { accessorKey: 'visibility', header: 'Visibility', cell: ({ row }) => <StatusBadge value={row.original.visibility || 'private'} /> },
     { accessorKey: 'publication_status', header: 'Publication', cell: ({ row }) => <StatusBadge value={row.original.publication_status} /> },
     { accessorKey: 'runtime_status', header: 'Runtime', cell: ({ row }) => <StatusBadge value={row.original.runtime_status} /> },
+    { id: 'controls', header: 'Controls', cell: ({ row }) => <div className="flex flex-wrap gap-1.5"><Button variant="outline" size="xs" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={() => onAction(row.original, 'publish')}>Publish</Button><Button variant="outline" size="xs" className="border-amber-300/25 bg-[#091725] text-amber-100" onClick={() => onAction(row.original, 'validate')}>Validate</Button></div> },
   ]
   const table = useReactTable({ data: endpoints, columns, getCoreRowModel: getCoreRowModel() })
   return <DataTable table={table} />
+}
+
+function ModelsWorkspace({ installs, workspace, isLoading, error, onRefresh }: { installs: DashboardRecord[]; workspace: ProviderWorkspace | undefined; isLoading: boolean; error: Error | null; onRefresh: () => void }) {
+  const [providerType, setProviderType] = useState('')
+  const [modelId, setModelId] = useState('')
+  const [sourceUrl, setSourceUrl] = useState('')
+  const [workloadType, setWorkloadType] = useState('llm_text')
+  const [endpoint, setEndpoint] = useState('http://127.0.0.1:8080')
+  const [bundleId, setBundleId] = useState('')
+  const [artifactSetName, setArtifactSetName] = useState('')
+  const [artifactFiles, setArtifactFiles] = useState('[{"relative_path":"model.bin","artifact_id":"artifact-1","role":"WEIGHTS"}]')
+  const [capabilityVersion, setCapabilityVersion] = useState('1.0.0')
+  const [capabilityDefinitionHash, setCapabilityDefinitionHash] = useState('sha256:capability-definition')
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const plugins = workspace?.plugin_directory ?? []
+  const deployments = workspace?.model_deployments ?? []
+  const artifactSets = workspace?.model_artifact_sets ?? []
+  const instances = workspace?.provider_instances ?? []
+
+  useEffect(() => {
+    if (!providerType && plugins.length > 0) setProviderType(getText(plugins[0], 'plugin_id'))
+  }, [plugins, providerType])
+
+  useEffect(() => {
+    if (!bundleId && modelId.trim()) {
+      setBundleId(`bundle-${modelId.trim().replace(/[^a-zA-Z0-9-]+/g, '-')}`)
+    }
+  }, [bundleId, modelId])
+
+  async function installModel() {
+    if (!providerType || !modelId.trim() || !sourceUrl.trim()) {
+      setMessage('Select a Provider type and provide model ID plus source URL.')
+      return
+    }
+    setBusy('install')
+    setMessage(null)
+    try {
+      await dashboardApi.requestModelInstall({ provider_type: providerType, model_id: modelId.trim(), source_url: sourceUrl.trim() })
+      setMessage('Model installation queued. Run the materializer, then refresh this workspace.')
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Model installation request failed.')
+    } finally { setBusy(null) }
+  }
+
+  async function processInstalls() {
+    setBusy('process')
+    setMessage(null)
+    try {
+      const result = await dashboardApi.processModelInstalls()
+      setMessage(`Model materialization processed: ${result?.items?.length ?? 0} job(s).`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Model materialization failed.')
+    } finally { setBusy(null) }
+  }
+
+  async function registerBundle(install: DashboardRecord) {
+    const id = getText(install, 'install_id')
+    const nextBundleId = bundleId.trim() || `bundle-${getText(install, 'model_id').replace(/[^a-zA-Z0-9-]+/g, '-')}`
+    if (!nextBundleId) {
+      setMessage('Provide a Bundle ID before registering the completed install.')
+      return
+    }
+    setBusy(`register:${id}`)
+    setMessage(null)
+    try {
+      await dashboardApi.registerBundleFromInstall(id, { bundle_id: nextBundleId, workload_type: workloadType, endpoint })
+      setMessage(`Bundle ${nextBundleId} registered from the completed model install.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Bundle registration failed.')
+    } finally { setBusy(null) }
+  }
+
+  async function createArtifactSet() {
+    let files: DashboardRecord[]
+    try {
+      const parsed: unknown = JSON.parse(artifactFiles)
+      if (!Array.isArray(parsed)) throw new Error('Artifact files must be a JSON array.')
+      files = parsed.filter((item): item is DashboardRecord => Boolean(getRecord(item)))
+      if (files.length === 0) throw new Error('Artifact files array is empty.')
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Artifact set JSON is invalid.')
+      return
+    }
+    if (!artifactSetName.trim()) { setMessage('Provide an artifact set name.'); return }
+    setBusy('artifact-set')
+    setMessage(null)
+    try {
+      await dashboardApi.createModelArtifactSet({ display_name: artifactSetName.trim(), files })
+      setMessage('Immutable model artifact set created.')
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Artifact set creation failed.')
+    } finally { setBusy(null) }
+  }
+
+  async function bindArtifactSet(deployment: DashboardRecord, artifactSetId: string) {
+    if (!artifactSetId) return
+    const id = getText(deployment, 'model_deployment_id')
+    setBusy(`bind:${id}`)
+    try {
+      await dashboardApi.bindModelArtifactSet(id, artifactSetId)
+      setMessage(`Artifact set bound to ${id}. Materialize it on the Provider before creating a Runtime Binding.`)
+      onRefresh()
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Artifact binding failed.') } finally { setBusy(null) }
+  }
+
+    async function materialize(deployment: DashboardRecord, artifactSetId: string) {
+      const providerId = getText(deployment, 'provider_instance_id')
+      const deploymentId = getText(deployment, 'model_deployment_id')
+      const modelReference = getText(deployment, 'provider_model_reference').trim()
+      if (!modelReference) {
+        setMessage('The deployment has no provider model reference; discover the model again before materializing.')
+        return
+      }
+      const destination = `/var/lib/aidn/models/${modelReference}`
+    setBusy(`materialize:${deploymentId}`)
+    try {
+      await dashboardApi.materializeModelArtifactSet(providerId, artifactSetId, destination)
+      setMessage(`Artifact set materialized on ${providerId}.`)
+      onRefresh()
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Artifact materialization failed.') } finally { setBusy(null) }
+  }
+
+  async function createBinding(deployment: DashboardRecord) {
+    const deploymentId = getText(deployment, 'model_deployment_id')
+    const capabilityId = getTextList(deployment, 'capability_bindings')[0] || (workloadType === 'speech_to_text' ? 'speech_to_text' : 'llm.chat')
+    if (!capabilityVersion.trim() || !capabilityDefinitionHash.trim()) {
+      setMessage('Provide a capability version and definition hash before creating a Runtime Binding.')
+      return
+    }
+    setBusy(`binding:${deploymentId}`)
+    try {
+      await dashboardApi.createRuntimeBinding(deploymentId, { capability_id: capabilityId, capability_version: capabilityVersion.trim(), capability_definition_hash: capabilityDefinitionHash.trim() })
+      setMessage(`Runtime Binding created for ${deploymentId}.`)
+      onRefresh()
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Runtime Binding creation failed.') } finally { setBusy(null) }
+  }
+
+  return <div className="space-y-4"><ScreenHeading eyebrow="Model materialization pipeline" title="Models" detail="Move in order: queue and materialize the model, discover a deployment, bind immutable artifacts when required, then create a Runtime Binding. Each transition reports its backend result." />
+    {isLoading && !workspace ? <PanelSkeleton rows={6} /> : null}
+    {error && !workspace ? <PanelError title="Model workspace is unavailable" error={error} onRetry={onRefresh} /> : null}
+    {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Operator inputs</p><CardTitle className="mt-1 text-lg font-semibold">Name the next immutable objects</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">These values stay in the dashboard flow; no terminal prompt is required for Bundle registration, provider materialization, or Runtime Binding.</p></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-4"><label className="grid gap-2"><span className="eyebrow">Bundle ID</span><input value={bundleId} onChange={(event) => setBundleId(event.target.value)} placeholder="bundle-whisper-small" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Capability version</span><input value={capabilityVersion} onChange={(event) => setCapabilityVersion(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2 lg:col-span-2"><span className="eyebrow">Capability definition hash</span><input value={capabilityDefinitionHash} onChange={(event) => setCapabilityDefinitionHash(event.target.value)} placeholder="sha256:..." className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label></CardContent></Card>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Step 1</p><CardTitle className="mt-1 text-lg font-semibold">Install and materialize model</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">The source URL is used by the node-side model store. The browser never supplies a target path or executes a shell command.</p></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-4"><label className="grid gap-2"><span className="eyebrow">Provider type</span><select value={providerType} onChange={(event) => setProviderType(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="">Select Provider</option>{plugins.map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Model ID</span><input value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="whisper-small" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2 lg:col-span-2"><span className="eyebrow">Source URL</span><input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://.../model.bin" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Bundle workload</span><input value={workloadType} onChange={(event) => setWorkloadType(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2 lg:col-span-2"><span className="eyebrow">Bundle endpoint</span><input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><div className="flex items-end gap-2"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'install'} onClick={() => void installModel()}><Database />{busy === 'install' ? 'Queueing...' : 'Queue install'}</Button><Button variant="outline" className="border-border bg-[#091725]" disabled={busy === 'process'} onClick={() => void processInstalls()}><RefreshCw />{busy === 'process' ? 'Running...' : 'Materialize'}</Button></div></CardContent></Card>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Install queue</p><CardTitle className="mt-1 text-lg font-semibold">Model install jobs</CardTitle></CardHeader><CardContent className="divide-y divide-border/70 p-0">{installs.length === 0 ? <p className="px-5 py-6 text-sm text-muted-foreground">No model installs queued.</p> : installs.map((install) => { const id = getText(install, 'install_id'); const status = getText(install, 'install_status') || getText(install, 'status') || 'unknown'; const canRegister = Boolean(getRecord(install)?.can_register_bundle) || status === 'completed'; return <div key={id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{getText(install, 'model_id')}</p><StatusBadge value={status} /></div><p className="mt-1 break-all font-mono text-[11px] text-slate-500">{getText(install, 'provider_type')} · {id} · {getText(install, 'target_path') || 'target reserved by node'}</p>{getText(install, 'last_error') ? <p className="mt-1 text-xs text-rose-200">{getText(install, 'last_error')}</p> : null}</div>{canRegister ? <Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `register:${id}`} onClick={() => void registerBundle(install)}><Boxes />Register Bundle</Button> : null}</div> })}</CardContent></Card>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Optional artifact custody</p><CardTitle className="mt-1 text-lg font-semibold">Create immutable model artifact set</CardTitle></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-[1fr_2fr_auto]"><label className="grid gap-2"><span className="eyebrow">Display name</span><input value={artifactSetName} onChange={(event) => setArtifactSetName(event.target.value)} placeholder="Whisper small files" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Files JSON</span><input value={artifactFiles} onChange={(event) => setArtifactFiles(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><div className="flex items-end"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'artifact-set'} onClick={() => void createArtifactSet()}><Layers3 />Create set</Button></div></CardContent></Card>
+    <div className="grid gap-4 lg:grid-cols-2"><InventoryCard title="Artifact sets" detail="Content-addressed file manifests. Bind a set to a Model Deployment before Runtime Binding." items={artifactSets} primaryKey="artifact_set_id" /><InventoryCard title="Provider instances" detail={`${instances.length} provider instance(s) available for materialization.`} items={instances} primaryKey="provider_instance_id" /></div>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Step 2 and 3</p><CardTitle className="mt-1 text-lg font-semibold">Deployments and Runtime Bindings</CardTitle></CardHeader><CardContent className="divide-y divide-border/70 p-0">{deployments.length === 0 ? <p className="px-5 py-6 text-sm text-muted-foreground">Discover models from the Providers screen first.</p> : deployments.map((deployment) => { const id = getText(deployment, 'model_deployment_id'); const artifactId = getText(deployment, 'artifact_set_id'); const providerId = getText(deployment, 'provider_instance_id'); return <div key={id} className="space-y-3 px-5 py-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium text-slate-100">{getText(deployment, 'operator_display_name') || getText(deployment, 'provider_model_reference')}</p><p className="mt-1 font-mono text-[11px] text-slate-500">{id} · provider {shortId(providerId)} · artifacts {artifactId || 'not bound'}</p></div><StatusBadge value={getText(deployment, 'artifact_materialization_status') || getText(deployment, 'operational_state') || 'unknown'} /></div><div className="flex flex-wrap gap-2"><select defaultValue={artifactId} onChange={(event) => void bindArtifactSet(deployment, event.target.value)} className="h-9 min-w-52 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300"><option value="">Bind artifact set...</option>{artifactSets.map((item) => <option key={getText(item, 'artifact_set_id')} value={getText(item, 'artifact_set_id')}>{getText(item, 'display_name') || getText(item, 'artifact_set_id')}</option>)}</select>{artifactId ? <Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === `materialize:${id}`} onClick={() => void materialize(deployment, artifactId)}><Database />Materialize</Button> : null}<Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `binding:${id}` || (getText(deployment, 'artifact_materialization_required') === 'true' && getText(deployment, 'artifact_materialization_ready') !== 'true')} onClick={() => void createBinding(deployment)}><Zap />Create Runtime Binding</Button></div></div> })}</CardContent></Card>
+  </div>
 }
 
 function SettingsAccessWorkspace() {

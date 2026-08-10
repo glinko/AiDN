@@ -284,6 +284,10 @@ def build_app(
             operator_fingerprint=mcp_remote_gateway.operator_fingerprint,
             invalidate_credential_sessions=mcp_remote_gateway.invalidate_credential_sessions,
             hypervisor_service=resolved_service,
+            endpoint_service=resolved_endpoint_service,
+            endpoint_publication_service=resolved_endpoint_publication_service,
+            remote_endpoint_service=resolved_remote_endpoint_service,
+            validation_service=resolved_validation_service,
         )
     )
 
@@ -421,6 +425,13 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
         and parts[6] in {"enable", "disable", "retry", "reset-cooldown"}
     ):
         return True
+    if (
+        len(parts) == 7
+        and parts[:5] == ["operators", "dashboard", "access", "operations", "bundles"]
+        and parts[6] == "revisions"
+        and (method is None or method == "POST")
+    ):
+        return True
     if parts == ["operators", "dashboard", "access", "operations", "providers", "attach"]:
         return True
     if (
@@ -431,6 +442,50 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
         # Dashboard operations are browser-paired local controls. Their
         # handlers only expose bounded resource, provider and Bundle lifecycle
         # actions and cannot publish an Endpoint or transfer Q.
+        return True
+    if parts == ["operators", "dashboard", "access", "operations", "models", "install"]:
+        return True
+    if parts == ["operators", "dashboard", "access", "operations", "models", "install", "process"]:
+        return True
+    if (
+        len(parts) == 7
+        and parts[:5] == ["operators", "dashboard", "access", "operations", "models"]
+        and parts[6] == "register-bundle"
+    ):
+        return True
+    if (
+        parts == ["operators", "dashboard", "access", "operations", "model-artifact-sets"]
+        or (
+            len(parts) == 7
+            and parts[:5] == ["operators", "dashboard", "access", "operations", "model-deployments"]
+            and parts[6] == "artifact-set"
+        )
+        or (
+            len(parts) == 8
+            and parts[:5] == ["operators", "dashboard", "access", "operations", "provider-instances"]
+            and parts[6:8] == ["artifact-sets", "materialize"]
+        )
+        or (
+            len(parts) == 7
+            and parts[:5] == ["operators", "dashboard", "access", "operations", "model-deployments"]
+            and parts[6] == "runtime-bindings"
+        )
+    ):
+        return True
+    if parts == ["operators", "dashboard", "access", "operations", "endpoints"]:
+        return True
+    if (
+        len(parts) == 7
+        and parts[:5] == ["operators", "dashboard", "access", "operations", "endpoints"]
+        and parts[6] in {"publish", "validation", "revoke"}
+        and (method is None or method == "POST")
+    ):
+        return True
+    if (
+        len(parts) == 6
+        and parts[:5] == ["operators", "dashboard", "access", "operations", "endpoints"]
+        and (method is None or method == "PATCH")
+    ):
         return True
     if (
         parts == ["operators", "dashboard", "access", "credentials"]

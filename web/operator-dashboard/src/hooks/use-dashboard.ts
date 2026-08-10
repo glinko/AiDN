@@ -42,6 +42,12 @@ export function useDashboardData() {
     staleTime: staleTimeMs,
     refetchInterval: refetchIntervalMs,
   })
+  const installs = useQuery({
+    queryKey: ['operator-dashboard', 'installs'],
+    queryFn: ({ signal }) => dashboardApi.installs(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
 
-  return { home, readiness, fleet, bundles, endpoints, providers }
+  return { home, readiness, fleet, bundles, endpoints, providers, installs }
 }

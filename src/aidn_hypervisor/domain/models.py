@@ -22,6 +22,9 @@ class ResourceProfile(BaseModel):
 
 class BundleConfig(BaseModel):
     bundle_id: str
+    revision: int = Field(default=1, ge=1)
+    revision_of: str | None = None
+    bundle_hash: str | None = None
     plugin_id: str
     provider_type: str
     workload_type: str

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 
 from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
@@ -41,6 +43,64 @@ class BundleRuntimePolicyService:
         )
         self._host._persist_state()
         return len(self._host.bundles)
+
+    def create_bundle_revision(
+        self,
+        *,
+        source_bundle_id: str,
+        bundle_id: str,
+        overrides: dict | None = None,
+        enabled: bool = False,
+    ) -> dict:
+        """Create a new immutable Bundle revision without rewriting its source."""
+        source = self.get_bundle(source_bundle_id)
+        if any(bundle.bundle_id == bundle_id for bundle in self._host.bundles):
+            raise ValueError(f"Bundle already exists: {bundle_id}")
+        changes = dict(overrides or {})
+        forbidden = {"bundle_id", "revision", "revision_of", "bundle_hash"}
+        unknown = sorted(set(changes) - set(BundleConfig.model_fields))
+        if unknown:
+            raise ValueError(f"Unknown Bundle revision fields: {', '.join(unknown)}")
+        immutable = sorted(set(changes) & forbidden)
+        if immutable:
+            raise ValueError(f"Immutable Bundle revision fields: {', '.join(immutable)}")
+        payload = source.model_dump(mode="json")
+        payload.update(changes)
+        payload.update(
+            {
+                "bundle_id": bundle_id,
+                "revision": source.revision + 1,
+                "revision_of": source.bundle_id,
+                "enabled": enabled,
+                "bundle_hash": None,
+            }
+        )
+        revision = BundleConfig.model_validate(payload)
+        revision = revision.model_copy(update={"bundle_hash": self._bundle_hash(revision)})
+        self.validate_bundles([revision])
+        self._host.bundles.append(revision.model_copy(deep=True))
+        self.persist_bundle_config_if_available()
+        self._host.record_event(
+            event_type="bundle.revision_created",
+            message="immutable Bundle revision created by operator",
+            bundle_id=revision.bundle_id,
+            details={
+                "source_bundle_id": source.bundle_id,
+                "revision": revision.revision,
+                "bundle_hash": revision.bundle_hash,
+                "enabled": revision.enabled,
+            },
+        )
+        self._host._persist_state()
+        return revision.model_dump(mode="json")
+
+    @staticmethod
+    def _bundle_hash(bundle: BundleConfig) -> str:
+        payload = bundle.model_dump(mode="json")
+        payload.pop("bundle_hash", None)
+        payload.pop("enabled", None)
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
     def reload_bundle_config(self) -> int:
         registry = self.require_bundle_registry()

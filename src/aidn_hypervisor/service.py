@@ -1842,6 +1842,21 @@ class HypervisorService:
     def replace_bundle_config(self, bundles: list[BundleConfig]) -> int:
         return self._runtime_boundary._bundle_runtime_policy_facade().replace_bundle_config(bundles)
 
+    def create_bundle_revision(
+        self,
+        *,
+        source_bundle_id: str,
+        bundle_id: str,
+        overrides: dict | None = None,
+        enabled: bool = False,
+    ) -> dict:
+        return self._runtime_boundary._bundle_runtime_policy_facade().create_bundle_revision(
+            source_bundle_id=source_bundle_id,
+            bundle_id=bundle_id,
+            overrides=overrides,
+            enabled=enabled,
+        )
+
     def reload_bundle_config(self) -> int:
         return self._runtime_boundary._bundle_runtime_policy_facade().reload_bundle_config()
 

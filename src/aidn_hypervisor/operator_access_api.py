@@ -5,11 +5,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+from aidn_hypervisor.endpoint_publications.signing import sign_consensus_bytes
+from aidn_hypervisor.endpoints.endpoint_application_service import EndpointApplicationService
+from aidn_hypervisor.endpoints.models import UpdateEndpointCommand
 from aidn_hypervisor.mcp.credentials import McpCredential, McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.mcp.permissions import (
@@ -71,6 +76,45 @@ class WalletBootstrapImportRequest(WalletBootstrapCreateRequest):
     private_key: str = Field(min_length=1, max_length=512)
 
 
+class ModelInstallOperationRequest(BaseModel):
+    provider_type: str = Field(min_length=1, max_length=128)
+    model_id: str = Field(min_length=1, max_length=512)
+    source_url: str = Field(min_length=1, max_length=2048)
+    requested_by: str = Field(default="operator-dashboard", min_length=1, max_length=128)
+
+
+class RegisterBundleOperationRequest(BaseModel):
+    bundle_id: str = Field(min_length=1, max_length=128)
+    workload_type: str = Field(min_length=1, max_length=128)
+    endpoint: str = Field(min_length=1, max_length=2048)
+
+
+class ModelArtifactSetOperationRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=256)
+    files: list[dict[str, Any]] = Field(min_length=1, max_length=512)
+
+
+class BindModelArtifactSetOperationRequest(BaseModel):
+    artifact_set_id: str = Field(min_length=1, max_length=128)
+
+
+class MaterializeModelArtifactSetOperationRequest(BaseModel):
+    artifact_set_id: str = Field(min_length=1, max_length=128)
+    destination: str = Field(min_length=1, max_length=2048)
+
+
+class RuntimeBindingOperationRequest(BaseModel):
+    capability_id: str = Field(min_length=1, max_length=128)
+    capability_version: str = Field(min_length=1, max_length=64)
+    capability_definition_hash: str = Field(min_length=1, max_length=256)
+
+
+class BundleRevisionOperationRequest(BaseModel):
+    bundle_id: str = Field(min_length=1, max_length=128)
+    overrides: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = False
+
+
 def _credential_payload(credential: McpCredential, *, reveal: bool = False) -> dict:
     payload = asdict(credential)
     if not reveal:
@@ -87,6 +131,10 @@ def build_operator_access_router(
     operator_fingerprint: str | None = None,
     invalidate_credential_sessions: Callable[[str], None] | None = None,
     hypervisor_service: Any | None = None,
+    endpoint_service: Any | None = None,
+    endpoint_publication_service: Any | None = None,
+    remote_endpoint_service: Any | None = None,
+    validation_service: Any | None = None,
 ) -> APIRouter:
     """Build a browser-only credential management boundary."""
     router = APIRouter(prefix="/operators/dashboard/access")
@@ -116,6 +164,139 @@ def build_operator_access_router(
             status_code=409,
             content={"error": {"code": "DASHBOARD_OPERATION_REJECTED", "message": str(error)}},
         )
+
+    endpoint_application_service = (
+        EndpointApplicationService(
+            endpoint_service=endpoint_service,
+            hypervisor_service=hypervisor_service,
+            endpoint_publication_service=endpoint_publication_service,
+            remote_endpoint_service=remote_endpoint_service,
+            validation_service=validation_service,
+        )
+        if endpoint_service is not None
+        else None
+    )
+
+    def _publish_endpoint(endpoint_id: str) -> dict:
+        if (
+            hypervisor_service is None
+            or endpoint_service is None
+            or endpoint_publication_service is None
+        ):
+            raise ValueError("Endpoint publication service is not configured")
+        wallet = hypervisor_service.owner_wallet_state()
+        if not wallet.get("configured"):
+            raise ValueError("Owner wallet must be configured before publishing endpoint configuration")
+        record = endpoint_publication_service.prepare_configuration(
+            endpoint_id=endpoint_id,
+            owner_wallet=wallet["wallet_id"],
+            owner_public_key=wallet.get("public_key"),
+            node_id=hypervisor_service.node_id,
+            wallet_private_key=hypervisor_service.owner_wallet_private_key(),
+        )
+        current = endpoint_publication_service.current_publication(endpoint_id)
+        if current is not None and current.publication_id == record.publication_id:
+            return {
+                "status": "FINALIZED",
+                "endpoint_id": endpoint_id,
+                "publication": record.model_dump(mode="json"),
+            }
+        consensus = getattr(hypervisor_service, "consensus_service", None)
+        if consensus is None or not getattr(consensus, "is_enabled", False):
+            committed = endpoint_publication_service.commit_prepared_configuration(record)
+            return {
+                "status": "FINALIZED",
+                "endpoint_id": endpoint_id,
+                "publication": committed.model_dump(mode="json"),
+            }
+
+        local_sequence = hypervisor_service.ledger_operation_service.wallet_next_sequence(
+            record.owner_wallet
+        )
+        query_sequence = getattr(consensus, "query_wallet_next_sequence", None)
+        if callable(query_sequence):
+            canonical_sequence = query_sequence(record.owner_wallet)
+            if canonical_sequence is None:
+                raise ValueError("canonical wallet sequence is unavailable")
+            if hypervisor_service.ledger_operation_service.reconcile_wallet_sequence(
+                record.owner_wallet, canonical_sequence
+            ):
+                hypervisor_service._persist_state()
+            local_sequence = canonical_sequence
+
+        def build_envelope(sequence: int, retry_nonce: str | None = None):
+            evidence = [record.publication_id, record.endpoint_id, record.configuration_hash]
+            if retry_nonce is not None:
+                evidence.append(f"retry:{retry_nonce}")
+            unsigned = LedgerOperationEnvelope(
+                operation_type="ENDPOINT_PUBLISH",
+                operation_version="1.0.0",
+                protocol_version="0.1",
+                origin_type="wallet",
+                initiator_id=record.endpoint_id,
+                sender_wallet=record.owner_wallet,
+                sender_sequence=sequence,
+                fee_payer=record.owner_wallet,
+                fee_class="standard",
+                created_at=record.published_at,
+                payload={"publication": record.model_dump(mode="json")},
+                evidence_references=evidence,
+                signatures=[],
+            )
+            signature = sign_consensus_bytes(
+                private_key=hypervisor_service.owner_wallet_private_key(),
+                payload=unsigned.signing_bytes(),
+            )
+            return unsigned.model_copy(update={"signatures": [signature]})
+
+        candidates = [
+            envelope
+            for envelope in hypervisor_service.list_pending_consensus_envelopes()
+            if envelope.operation_type == "ENDPOINT_PUBLISH"
+            and envelope.payload.get("publication", {}).get("endpoint_id") == endpoint_id
+            and envelope.payload.get("publication", {}).get("configuration_hash")
+            == record.configuration_hash
+        ]
+        pending = next(
+            (envelope for envelope in reversed(candidates) if envelope.sender_sequence == local_sequence),
+            None,
+        )
+        if pending is None:
+            pending = build_envelope(local_sequence)
+            hypervisor_service.stage_pending_consensus_envelope(pending)
+        previous_submission = consensus.get_submission(pending.operation_id)
+        if previous_submission is not None and previous_submission.status.value == "failed":
+            pending = build_envelope(local_sequence, uuid4().hex)
+            hypervisor_service.stage_pending_consensus_envelope(pending)
+        submission = consensus.submit_operation(pending, retry_existing=True)
+        finality = hypervisor_service.ledger_operation_finality(pending.operation_id)
+        if finality.get("consensus_finalized"):
+            committed = endpoint_publication_service.commit_prepared_configuration(
+                record,
+                record_operations=False,
+            )
+            hypervisor_service.discard_pending_consensus_envelopes(pending.operation_id)
+            hypervisor_service.discard_pending_consensus_operations(pending.operation_id)
+            return {
+                "status": "FINALIZED",
+                "endpoint_id": endpoint_id,
+                "publication": committed.model_dump(mode="json"),
+                "consensus": {
+                    "operation_id": pending.operation_id,
+                    "submission": submission.status.value,
+                    "finality": finality,
+                },
+            }
+        if submission.status.value == "failed":
+            raise ValueError(submission.error or "Consensus rejected Endpoint publication")
+        return {
+            "status": "CONSENSUS_PENDING",
+            "endpoint_id": endpoint_id,
+            "operation_id": pending.operation_id,
+            "submission": submission.status.value,
+            "publication": record.model_dump(mode="json"),
+            "finality": finality,
+        }
 
     @router.get("/status")
     async def status(request: Request) -> dict:
@@ -315,6 +496,15 @@ def build_operator_access_router(
         if hypervisor_service is None:
             return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
         try:
+            if action == "revisions":
+                payload = BundleRevisionOperationRequest.model_validate(await request.json())
+                result = hypervisor_service.create_bundle_revision(
+                    source_bundle_id=bundle_id,
+                    bundle_id=payload.bundle_id,
+                    overrides=payload.overrides,
+                    enabled=payload.enabled,
+                )
+                return JSONResponse(status_code=201, content=result)
             if action == "enable":
                 result = hypervisor_service.set_bundle_enabled(bundle_id, True)
             elif action == "disable":
@@ -367,6 +557,199 @@ def build_operator_access_router(
         except (KeyError, ValueError) as error:
             return operation_error(error)
         return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/models/install")
+    async def request_model_install(payload: ModelInstallOperationRequest, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.request_model_install(**payload.model_dump(mode="json"))
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=202, content=result)
+
+    @router.post("/operations/models/install/process")
+    async def process_model_installs(request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.process_model_installs()
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=200, content={"items": result})
+
+    @router.post("/operations/models/{install_id}/register-bundle")
+    async def register_bundle_from_install(
+        install_id: str,
+        payload: RegisterBundleOperationRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.register_bundle_from_install(
+                install_id=install_id,
+                **payload.model_dump(mode="json"),
+            )
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=201, content=result)
+
+    @router.post("/operations/model-artifact-sets")
+    async def create_model_artifact_set(
+        payload: ModelArtifactSetOperationRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.create_model_artifact_set(**payload.model_dump(mode="json"))
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=201, content=result)
+
+    @router.post("/operations/model-deployments/{model_deployment_id}/artifact-set")
+    async def bind_model_artifact_set(
+        model_deployment_id: str,
+        payload: BindModelArtifactSetOperationRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.bind_model_artifact_set(
+                model_deployment_id=model_deployment_id,
+                artifact_set_id=payload.artifact_set_id,
+            )
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/provider-instances/{provider_instance_id}/artifact-sets/materialize")
+    async def materialize_model_artifact_set(
+        provider_instance_id: str,
+        payload: MaterializeModelArtifactSetOperationRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.materialize_model_artifact_set(
+                provider_instance_id=provider_instance_id,
+                artifact_set_id=payload.artifact_set_id,
+                destination=payload.destination,
+            )
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/model-deployments/{model_deployment_id}/runtime-bindings")
+    async def create_runtime_binding(
+        model_deployment_id: str,
+        payload: RuntimeBindingOperationRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.create_runtime_binding(
+                model_deployment_id=model_deployment_id,
+                **payload.model_dump(mode="json"),
+            )
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=201, content=result)
+
+    @router.post("/operations/endpoints")
+    async def create_endpoint(payload: dict[str, Any], request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if endpoint_application_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_ENDPOINTS_UNAVAILABLE"}})
+        try:
+            result = endpoint_application_service.create_endpoint(payload)
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=201, content=result["payload"])
+
+    @router.patch("/operations/endpoints/{endpoint_id}")
+    async def update_endpoint(
+        endpoint_id: str,
+        payload: dict[str, Any],
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if endpoint_application_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_ENDPOINTS_UNAVAILABLE"}})
+        try:
+            result = endpoint_application_service.update_endpoint(
+                endpoint_id,
+                UpdateEndpointCommand.model_validate(payload),
+            )
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=200, content=result["payload"])
+
+    @router.post("/operations/endpoints/{endpoint_id}/publish")
+    async def publish_endpoint(endpoint_id: str, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        try:
+            result = _publish_endpoint(endpoint_id)
+        except (KeyError, ValueError, OSError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=202 if result.get("status") == "CONSENSUS_PENDING" else 200, content=result)
+
+    @router.post("/operations/endpoints/{endpoint_id}/validation")
+    async def request_endpoint_validation(endpoint_id: str, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if endpoint_service is None or validation_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_VALIDATION_UNAVAILABLE"}})
+        try:
+            endpoint = endpoint_service.get_endpoint(endpoint_id).endpoint
+            outcome = validation_service.request_validation(
+                endpoint_id=endpoint.endpoint_id,
+                owner_wallet=endpoint.owner_wallet,
+                configuration_hash=endpoint.configuration_hash,
+                minimum_session_deposit_q=endpoint.session.minimum_deposit,
+            )
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(
+            status_code=201,
+            content={
+                "request": outcome.request.model_dump(mode="json"),
+                "bond": outcome.bond.model_dump(mode="json"),
+                "snapshot": outcome.snapshot.model_dump(mode="json"),
+            },
+        )
 
     @router.post("/agent-enrollment/requests", status_code=201)
     async def create_enrollment(payload: EnrollmentCreateRequest) -> Response:

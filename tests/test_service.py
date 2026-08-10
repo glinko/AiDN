@@ -382,6 +382,53 @@ def test_service_create_runtime_binding_reuses_compatibility_bundle_for_same_log
     assert len(persisted_matching_bundles) == 1
 
 
+def test_service_create_bundle_revision_preserves_source_and_persists_hash(tmp_path) -> None:
+    from aidn_hypervisor.bundle_registry import FileBundleRegistry
+
+    bundle_registry = FileBundleRegistry(tmp_path / "bundles.json")
+    source = _bundle("whisper-a", "speech_to_text", priority_class=50)
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        bundles=[source],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+        bundle_registry=bundle_registry,
+    )
+
+    created = service.create_bundle_revision(
+        source_bundle_id="whisper-a",
+        bundle_id="whisper-b",
+        overrides={"priority_class": 90},
+        enabled=False,
+    )
+
+    assert created["bundle_id"] == "whisper-b"
+    assert created["revision"] == 2
+    assert created["revision_of"] == "whisper-a"
+    assert created["bundle_hash"].startswith("sha256:")
+    assert created["enabled"] is False
+    assert next(bundle for bundle in service.bundles if bundle.bundle_id == "whisper-a").priority_class == 50
+    assert next(bundle for bundle in service.bundles if bundle.bundle_id == "whisper-b").priority_class == 90
+    assert bundle_registry.load(service.plugins)[1].bundle_hash == created["bundle_hash"]
+
+    with pytest.raises(ValueError, match="Unknown Bundle revision fields"):
+        service.create_bundle_revision(
+            source_bundle_id="whisper-a",
+            bundle_id="whisper-c",
+            overrides={"not_a_bundle_field": True},
+        )
+    assert all(bundle.bundle_id != "whisper-c" for bundle in service.bundles)
+
+    with pytest.raises(ValueError, match="Immutable Bundle revision fields"):
+        service.create_bundle_revision(
+            source_bundle_id="whisper-a",
+            bundle_id="whisper-d",
+            overrides={"revision": 99},
+        )
+    assert all(bundle.bundle_id != "whisper-d" for bundle in service.bundles)
+
+
 def test_provider_inventory_survives_state_restore() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
