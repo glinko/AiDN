@@ -1,4 +1,4 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import { dashboardSchemas, type BundlePayload, type DashboardHome, type EndpointPayload, type Fleet, type Readiness } from '@/lib/types'
 
@@ -73,6 +73,24 @@ export type AgentPermissionCatalog = {
   note: string
 }
 
+export type DashboardRecord = Record<string, unknown>
+
+export type ProviderWorkspace = {
+  plugin_directory: DashboardRecord[]
+  provider_instances: DashboardRecord[]
+  model_deployments: DashboardRecord[]
+  runtime_bindings: DashboardRecord[]
+  summary: DashboardRecord
+}
+
+const providerWorkspaceSchema = z.object({
+  plugin_directory: z.array(z.record(z.string(), z.unknown())).default([]),
+  provider_instances: z.array(z.record(z.string(), z.unknown())).default([]),
+  model_deployments: z.array(z.record(z.string(), z.unknown())).default([]),
+  runtime_bindings: z.array(z.record(z.string(), z.unknown())).default([]),
+  summary: z.record(z.string(), z.unknown()).default({}),
+})
+
 async function readDashboard<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
@@ -127,7 +145,7 @@ async function writeDashboard<T>(path: string, init: RequestInit): Promise<T | u
   }
   if (!response.ok) {
     const error = typeof payload === 'object' && payload !== null && 'error' in payload
-      ? String((payload as { error?: { code?: string } }).error?.code ?? 'request rejected')
+      ? String((payload as { error?: { code?: string; message?: string } }).error?.message ?? (payload as { error?: { code?: string } }).error?.code ?? 'request rejected')
       : response.statusText
     throw new DashboardApiError(`${path} failed: ${error || 'request rejected'}`, response.status)
   }
@@ -140,6 +158,7 @@ export const dashboardApi = {
   fleet: (signal?: AbortSignal): Promise<Fleet> => readDashboard('/operators/dashboard/fleet', dashboardSchemas.fleet, signal),
   bundles: (signal?: AbortSignal): Promise<BundlePayload> => readDashboard('/operators/dashboard/bundles', dashboardSchemas.bundles, signal),
   endpoints: (signal?: AbortSignal): Promise<EndpointPayload> => readDashboard('/operators/dashboard/endpoints', dashboardSchemas.endpoints, signal),
+  providers: (signal?: AbortSignal): Promise<ProviderWorkspace> => readDashboard('/operators/dashboard/providers', providerWorkspaceSchema, signal),
   accessStatus: (): Promise<DashboardAccessStatus> => writeDashboard('/operators/dashboard/access/status', { method: 'GET' }) as Promise<DashboardAccessStatus>,
   pairDashboard: (code: string, duration: string) => writeDashboard('/operators/dashboard/access/pair', { method: 'POST', body: JSON.stringify({ code, duration }) }),
   createAgentCredential: (label: string, scopes?: string[], autoApprovedScopes?: string[]) => writeDashboard<AccessCredential>('/operators/dashboard/access/credentials', { method: 'POST', body: JSON.stringify({ label, ...(scopes ? { scopes } : {}), ...(autoApprovedScopes ? { auto_approved_scopes: autoApprovedScopes } : {}) }) }),
@@ -151,4 +170,10 @@ export const dashboardApi = {
   enrollmentRequests: () => writeDashboard<{ items: EnrollmentRequest[] }>('/operators/dashboard/access/enrollment-requests', { method: 'GET' }),
   approveEnrollment: (requestId: string) => writeDashboard<EnrollmentRequest>(`/operators/dashboard/access/enrollment-requests/${requestId}/approve`, { method: 'POST' }),
   rejectEnrollment: (requestId: string) => writeDashboard<EnrollmentRequest>(`/operators/dashboard/access/enrollment-requests/${requestId}/reject`, { method: 'POST' }),
+  probeResources: () => writeDashboard('/operators/dashboard/access/operations/resources/probe', { method: 'POST' }),
+  createOwnerWallet: (label: string) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/wallet/create', { method: 'POST', body: JSON.stringify({ label: label || null }) }),
+  importOwnerWallet: (label: string, privateKey: string) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/wallet/import', { method: 'POST', body: JSON.stringify({ label: label || null, private_key: privateKey }) }),
+  bundleOperation: (bundleId: string, action: 'enable' | 'disable' | 'retry' | 'reset-cooldown') => writeDashboard(`/operators/dashboard/access/operations/bundles/${encodeURIComponent(bundleId)}/${action}`, { method: 'POST' }),
+  attachProvider: (payload: { plugin_id: string; display_name: string; configuration: DashboardRecord }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/providers/attach', { method: 'POST', body: JSON.stringify(payload) }),
+  providerOperation: (providerInstanceId: string, action: 'probe' | 'discover-models') => writeDashboard(`/operators/dashboard/access/operations/providers/${encodeURIComponent(providerInstanceId)}/${action}`, { method: 'POST' }),
 }

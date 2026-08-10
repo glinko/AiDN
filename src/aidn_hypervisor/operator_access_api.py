@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import asdict
+from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
@@ -20,6 +21,7 @@ from aidn_hypervisor.mcp.permissions import (
     permission_catalog_payload,
 )
 from aidn_hypervisor.operator_access import DashboardAccessService
+from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environment
 
 _COOKIE_NAME = "aidn_dashboard_access"
 _COOKIE_PATH = "/operators/dashboard/access"
@@ -53,6 +55,22 @@ class EnrollmentCreateRequest(BaseModel):
     encryption_public_key: str = Field(min_length=40, max_length=128)
 
 
+class ProviderAttachRequest(BaseModel):
+    """Attach an already-running Provider through the paired Dashboard."""
+
+    plugin_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=128)
+    configuration: dict[str, Any] = Field(default_factory=dict)
+
+
+class WalletBootstrapCreateRequest(BaseModel):
+    label: str | None = Field(default=None, max_length=128)
+
+
+class WalletBootstrapImportRequest(WalletBootstrapCreateRequest):
+    private_key: str = Field(min_length=1, max_length=512)
+
+
 def _credential_payload(credential: McpCredential, *, reveal: bool = False) -> dict:
     payload = asdict(credential)
     if not reveal:
@@ -68,6 +86,7 @@ def build_operator_access_router(
     enrollment_service: McpEnrollmentService | None = None,
     operator_fingerprint: str | None = None,
     invalidate_credential_sessions: Callable[[str], None] | None = None,
+    hypervisor_service: Any | None = None,
 ) -> APIRouter:
     """Build a browser-only credential management boundary."""
     router = APIRouter(prefix="/operators/dashboard/access")
@@ -91,6 +110,12 @@ def build_operator_access_router(
 
     def enrollment_payload(item) -> dict:
         return asdict(item)
+
+    def operation_error(error: Exception) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {"code": "DASHBOARD_OPERATION_REJECTED", "message": str(error)}},
+        )
 
     @router.get("/status")
     async def status(request: Request) -> dict:
@@ -234,6 +259,114 @@ def build_operator_access_router(
             )
         response.delete_cookie(_COOKIE_NAME, path=_COOKIE_PATH)
         return Response(status_code=204, headers=dict(response.headers))
+
+    @router.post("/operations/resources/probe")
+    async def refresh_resources(request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None or hypervisor_service.resources is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_RESOURCE_PROBE_UNAVAILABLE"}})
+        try:
+            report = refresh_resource_probe_from_environment()
+            hypervisor_service.resources.replace_capacity(report.capacity, probe=report.metadata())
+        except (OSError, TypeError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(
+            status_code=200,
+            content={"status": "ok", "resources": hypervisor_service.resources.summary()},
+        )
+
+    @router.post("/operations/wallet/create")
+    async def create_wallet(payload: WalletBootstrapCreateRequest, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.configure_owner_wallet(mode="create", label=payload.label)
+        except ValueError as error:
+            return operation_error(error)
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/wallet/import")
+    async def import_wallet(payload: WalletBootstrapImportRequest, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.configure_owner_wallet(
+                mode="import",
+                label=payload.label,
+                private_key=payload.private_key,
+            )
+        except ValueError as error:
+            return operation_error(error)
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/bundles/{bundle_id}/{action}")
+    async def bundle_operation(bundle_id: str, action: str, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            if action == "enable":
+                result = hypervisor_service.set_bundle_enabled(bundle_id, True)
+            elif action == "disable":
+                result = hypervisor_service.set_bundle_enabled(bundle_id, False)
+            elif action == "retry":
+                result = {
+                    "bundle_id": bundle_id,
+                    "status": "retried",
+                    "summary": hypervisor_service.retry_bundle(bundle_id),
+                }
+            elif action == "reset-cooldown":
+                result = hypervisor_service.reset_bundle_cooldown(bundle_id)
+            else:
+                return JSONResponse(status_code=422, content={"error": {"code": "DASHBOARD_OPERATION_UNKNOWN"}})
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/providers/attach")
+    async def attach_provider(payload: ProviderAttachRequest, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.attach_provider_instance(
+                plugin_id=payload.plugin_id,
+                display_name=payload.display_name,
+                configuration=payload.configuration,
+            )
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=201, content=result)
+
+    @router.post("/operations/providers/{provider_instance_id}/{action}")
+    async def provider_operation(provider_instance_id: str, action: str, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            if action == "probe":
+                result = hypervisor_service.probe_provider_instance(provider_instance_id)
+            elif action == "discover-models":
+                result = {"items": hypervisor_service.discover_provider_models(provider_instance_id)}
+            else:
+                return JSONResponse(status_code=422, content={"error": {"code": "DASHBOARD_OPERATION_UNKNOWN"}})
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=200, content=result)
 
     @router.post("/agent-enrollment/requests", status_code=201)
     async def create_enrollment(payload: EnrollmentCreateRequest) -> Response:

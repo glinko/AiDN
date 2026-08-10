@@ -16,6 +16,56 @@ from aidn_hypervisor.secrets import FileSecretManager
 _BROWSER_HEADERS = {"X-AiDN-Browser-Key": "browser-key-for-api-tests-000000000000000000000000000000000000000"}
 
 
+class _OperationResources:
+    def __init__(self) -> None:
+        self.capacity = None
+        self.probe = None
+
+    def replace_capacity(self, capacity, *, probe) -> None:
+        self.capacity = capacity
+        self.probe = probe
+
+    def summary(self) -> dict:
+        return {"probe": self.probe}
+
+
+class _OperationService:
+    def __init__(self) -> None:
+        self.resources = _OperationResources()
+        self.calls: list[tuple] = []
+
+    def set_bundle_enabled(self, bundle_id: str, enabled: bool) -> dict:
+        self.calls.append(("bundle", bundle_id, enabled))
+        return {"bundle_id": bundle_id, "enabled": enabled}
+
+    def retry_bundle(self, bundle_id: str) -> dict:
+        self.calls.append(("retry", bundle_id))
+        return {"bundle_id": bundle_id, "runtime_status": "running"}
+
+    def reset_bundle_cooldown(self, bundle_id: str) -> dict:
+        self.calls.append(("reset", bundle_id))
+        return {"bundle_id": bundle_id, "cooldown": "reset"}
+
+    def attach_provider_instance(self, **payload) -> dict:
+        self.calls.append(("attach", payload))
+        return {"provider_instance_id": "pi-test", **payload}
+
+    def probe_provider_instance(self, provider_instance_id: str) -> dict:
+        self.calls.append(("probe", provider_instance_id))
+        return {"provider_instance_id": provider_instance_id, "healthy": True}
+
+    def discover_provider_models(self, provider_instance_id: str) -> list[dict]:
+        self.calls.append(("discover", provider_instance_id))
+        return [{"model_deployment_id": "md-test"}]
+
+    def configure_owner_wallet(self, *, mode: str, label: str | None = None, private_key: str | None = None) -> dict:
+        self.calls.append(("wallet", mode, label, private_key))
+        return {
+            "wallet": {"configured": True, "wallet_id": "wallet-test", "label": label},
+            "private_key": "ed25519:new-key" if mode == "create" else None,
+        }
+
+
 def test_credential_mutation_requires_pairing_and_reveals_only_new_value(tmp_path) -> None:
     manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
     credentials = McpCredentialStore(secret_manager=manager)
@@ -181,3 +231,61 @@ def test_build_app_wires_secret_backed_access_management(monkeypatch, tmp_path) 
     assert status.status_code == 200
     assert status.json()["enabled"] is True
     assert status.json()["credentials"][0]["label"] == "Legacy MCP agent token"
+
+
+def test_paired_dashboard_operations_require_pairing_and_call_bounded_service(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    service = _OperationService()
+    app = FastAPI()
+    app.include_router(build_operator_access_router(
+        access_service=access,
+        credential_store=credentials,
+        allow_insecure_lan=True,
+        hypervisor_service=service,
+    ))
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+
+    assert client.post("/operators/dashboard/access/operations/bundles/bundle-a/enable").status_code == 401
+
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+
+    assert client.post("/operators/dashboard/access/operations/bundles/bundle-a/enable").json()["enabled"] is True
+    assert client.post("/operators/dashboard/access/operations/bundles/bundle-a/retry").json()["status"] == "retried"
+    attached = client.post(
+        "/operators/dashboard/access/operations/providers/attach",
+        json={"plugin_id": "ollama", "display_name": "Local Ollama", "configuration": {"base_url": "http://127.0.0.1:11434"}},
+    )
+    assert attached.status_code == 201
+    assert attached.json()["provider_instance_id"] == "pi-test"
+    wallet = client.post(
+        "/operators/dashboard/access/operations/wallet/create",
+        json={"label": "Primary"},
+    )
+    assert wallet.status_code == 200
+    assert wallet.json()["private_key"] == "ed25519:new-key"
+    imported = client.post(
+        "/operators/dashboard/access/operations/wallet/import",
+        json={"label": "Imported", "private_key": "ed25519:existing"},
+    )
+    assert imported.status_code == 200
+    assert imported.json()["private_key"] is None
+    assert client.post("/operators/dashboard/access/operations/providers/pi-test/probe").json()["healthy"] is True
+    discovered = client.post("/operators/dashboard/access/operations/providers/pi-test/discover-models")
+    assert discovered.json()["items"][0]["model_deployment_id"] == "md-test"
+    assert client.post("/operators/dashboard/access/operations/bundles/bundle-a/unknown").status_code == 422
+
+
+def test_validator_boundary_permits_only_paired_dashboard_operations() -> None:
+    from aidn_hypervisor.main import _is_validator_consensus_write_path
+
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/operations/bundles/bundle-a/enable", "POST"
+    )
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/operations/wallet/create", "POST"
+    )
+    assert not _is_validator_consensus_write_path("/operators/dashboard/access/operations/unknown", "POST")

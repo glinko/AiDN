@@ -1,6 +1,6 @@
+import hmac
 import json
 import os
-import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -283,6 +283,7 @@ def build_app(
             enrollment_service=mcp_enrollment_service,
             operator_fingerprint=mcp_remote_gateway.operator_fingerprint,
             invalidate_credential_sessions=mcp_remote_gateway.invalidate_credential_sessions,
+            hypervisor_service=resolved_service,
         )
     )
 
@@ -404,6 +405,32 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
         parts == ["operators", "dashboard", "access", "logout"]
         and (method is None or method == "POST")
     ):
+        return True
+    if parts == ["operators", "dashboard", "access", "operations", "resources", "probe"]:
+        return True
+    if tuple(parts) in {
+        ("operators", "dashboard", "access", "operations", "wallet", "create"),
+        ("operators", "dashboard", "access", "operations", "wallet", "import"),
+    }:
+        # Wallet bootstrap enters the same canonical bind path as the terminal
+        # flow. It is browser-paired and may not bypass consensus finality.
+        return True
+    if (
+        len(parts) == 7
+        and parts[:5] == ["operators", "dashboard", "access", "operations", "bundles"]
+        and parts[6] in {"enable", "disable", "retry", "reset-cooldown"}
+    ):
+        return True
+    if parts == ["operators", "dashboard", "access", "operations", "providers", "attach"]:
+        return True
+    if (
+        len(parts) == 7
+        and parts[:5] == ["operators", "dashboard", "access", "operations", "providers"]
+        and parts[6] in {"probe", "discover-models"}
+    ):
+        # Dashboard operations are browser-paired local controls. Their
+        # handlers only expose bounded resource, provider and Bundle lifecycle
+        # actions and cannot publish an Endpoint or transfer Q.
         return True
     if (
         parts == ["operators", "dashboard", "access", "credentials"]

@@ -57,14 +57,15 @@ import {
   formatCount,
   formatMemory,
   formatPercent,
+  getRecord,
   getText,
   resourceUsage,
   shortId,
 } from '@/lib/format'
 import { useDashboardData } from '@/hooks/use-dashboard'
-import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type EnrollmentRequest } from '@/lib/api'
+import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type ProviderWorkspace } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
-import type { Bundle, Endpoint, ReadinessStep } from '@/lib/types'
+import type { Bundle, DashboardHome, Endpoint, ReadinessStep } from '@/lib/types'
 
 type NavigationItem = {
   id: DashboardScreen
@@ -156,6 +157,7 @@ function App() {
       data.fleet.refetch(),
       data.bundles.refetch(),
       data.endpoints.refetch(),
+      data.providers.refetch(),
     ])
   }
 
@@ -196,13 +198,17 @@ function App() {
             <OverviewScreen data={data} onNavigate={navigate} onRefresh={refreshAll} />
           ) : null}
           {activeScreen === 'bundles' ? (
-            <BundlesScreen bundles={data.bundles.data?.items ?? []} isLoading={data.bundles.isLoading} error={data.bundles.error} onNavigate={navigate} />
+            <BundlesScreen bundles={data.bundles.data?.items ?? []} isLoading={data.bundles.isLoading} error={data.bundles.error} onNavigate={navigate} onRefresh={refreshAll} />
           ) : null}
           {activeScreen === 'endpoints' ? (
             <EndpointsScreen endpoints={data.endpoints.data?.items ?? []} isLoading={data.endpoints.isLoading} error={data.endpoints.error} onNavigate={navigate} />
           ) : null}
-          {activeScreen === 'settings' ? <SettingsAccessWorkspace /> : null}
-          {isOperationsScreen(activeScreen) ? (
+          {activeScreen === 'settings' ? <SettingsWorkspace fleet={data.fleet.data} onRefresh={refreshAll} /> : null}
+          {activeScreen === 'wallet' ? <WalletWorkspace ownerWallet={data.home.data?.bootstrap.owner_wallet} onRefresh={refreshAll} /> : null}
+          {activeScreen === 'providers' || activeScreen === 'catalog' ? (
+            <ProviderWorkspaceScreen screen={activeScreen} workspace={data.providers.data} isLoading={data.providers.isLoading} error={data.providers.error} onRefresh={refreshAll} />
+          ) : null}
+          {isOperationsScreen(activeScreen) && activeScreen !== 'providers' && activeScreen !== 'catalog' && activeScreen !== 'wallet' ? (
             <OperationsWorkspace screen={activeScreen} data={data} onNavigate={navigate} onRefresh={refreshAll} />
           ) : null}
         </main>
@@ -540,7 +546,7 @@ function ReadinessStepRow({ step, onNavigate, onRefresh }: { step: ReadinessStep
   )
 }
 
-function BundleTableSection({ bundles, isLoading, error, onNavigate, compact = false }: { bundles: Bundle[]; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; compact?: boolean }) {
+function BundleTableSection({ bundles, isLoading, error, onNavigate, compact = false, onAction }: { bundles: Bundle[]; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; compact?: boolean; onAction?: (bundle: Bundle, action: BundleAction) => void }) {
   return (
     <Card className="border-border/80 bg-card py-0 shadow-none">
       <CardHeader className="border-b border-border/75 px-5 py-4">
@@ -556,13 +562,15 @@ function BundleTableSection({ bundles, isLoading, error, onNavigate, compact = f
         {isLoading && bundles.length === 0 ? <TableSkeleton columns={6} rows={compact ? 3 : 6} /> : null}
         {error && bundles.length === 0 ? <PanelError title="Bundle inventory is unavailable" error={error} /> : null}
         {!isLoading && !error && bundles.length === 0 ? <EmptyState title="No Bundle deployments are registered" detail="Start in Catalog to inspect Provider capacity, then create an immutable Bundle revision." actionLabel="Open Catalog" onAction={() => onNavigate('catalog')} /> : null}
-        {bundles.length > 0 ? <BundleTable bundles={bundles} onNavigate={onNavigate} /> : null}
+        {bundles.length > 0 ? <BundleTable bundles={bundles} onNavigate={onNavigate} onAction={onAction} /> : null}
       </CardContent>
     </Card>
   )
 }
 
-function BundleTable({ bundles, onNavigate }: { bundles: Bundle[]; onNavigate: NavigationProps['onNavigate'] }) {
+type BundleAction = 'enable' | 'disable' | 'retry' | 'reset-cooldown'
+
+function BundleTable({ bundles, onNavigate, onAction }: { bundles: Bundle[]; onNavigate: NavigationProps['onNavigate']; onAction?: (bundle: Bundle, action: BundleAction) => void }) {
   const columns: ColumnDef<Bundle>[] = [
     {
       accessorKey: 'bundle_id',
@@ -578,16 +586,41 @@ function BundleTable({ bundles, onNavigate }: { bundles: Bundle[]; onNavigate: N
       header: '',
       cell: ({ row }) => row.original.endpoint_relationship?.state === 'published_endpoint' ? <Button variant="ghost" size="sm" className="text-cyan-200 hover:bg-cyan-300/10" onClick={() => onNavigate('endpoints')}>Endpoint<ChevronRight /></Button> : <span className="text-xs text-muted-foreground">No Endpoint</span>,
     },
+    ...(onAction ? [{
+      id: 'controls',
+      header: 'Controls',
+      cell: ({ row }: { row: { original: Bundle } }) => <div className="flex flex-wrap gap-1.5"><Button variant="outline" size="xs" className="border-border bg-[#091725]" onClick={() => onAction(row.original, row.original.enabled ? 'disable' : 'enable')}>{row.original.enabled ? 'Pause' : 'Enable'}</Button><Button variant="outline" size="xs" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={() => onAction(row.original, 'retry')}>Retry</Button><Button variant="ghost" size="xs" className="text-slate-300" onClick={() => onAction(row.original, 'reset-cooldown')}>Reset</Button></div>,
+    }] satisfies ColumnDef<Bundle>[] : []),
   ]
   const table = useReactTable({ data: bundles, columns, getCoreRowModel: getCoreRowModel() })
   return <DataTable table={table} />
 }
 
-function BundlesScreen({ bundles, isLoading, error, onNavigate }: { bundles: Bundle[]; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate'] }) {
+function BundlesScreen({ bundles, isLoading, error, onNavigate, onRefresh }: { bundles: Bundle[]; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function runBundleAction(bundle: Bundle, action: BundleAction) {
+    if (action === 'disable' && !window.confirm(`Pause Bundle ${bundle.bundle_id}? Existing Sessions are not rewritten.`)) return
+    setBusy(`${bundle.bundle_id}:${action}`)
+    setMessage(null)
+    try {
+      await dashboardApi.bundleOperation(bundle.bundle_id, action)
+      setMessage(`${bundle.bundle_id}: ${action.replace('-', ' ')} completed.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Bundle operation failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <ScreenHeading eyebrow="Bundle-first operations" title="Bundles" detail="Bundles are immutable operator deployments. Provider, model, runtime and Endpoint state are inspected from one canonical object." />
-      <BundleTableSection bundles={bundles} isLoading={isLoading} error={error} onNavigate={onNavigate} />
+      <ScreenHeading eyebrow="Bundle-first operations" title="Bundles" detail="Bundles are immutable deployments. These controls operate the current revision only; configuration changes require a new revision rather than overwriting active history." />
+      {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+      {busy ? <p className="font-mono text-xs text-cyan-200">Applying {busy.replace(':', ' ')}...</p> : null}
+      <BundleTableSection bundles={bundles} isLoading={isLoading} error={error} onNavigate={onNavigate} onAction={runBundleAction} />
     </div>
   )
 }
@@ -818,6 +851,173 @@ function SettingsAccessWorkspace() {
       </> : null}
     </div>
   )
+}
+
+function WalletWorkspace({ ownerWallet, onRefresh }: { ownerWallet: DashboardHome['bootstrap']['owner_wallet']; onRefresh: () => void }) {
+  const [label, setLabel] = useState('Primary Wallet')
+  const [privateKey, setPrivateKey] = useState('')
+  const [mode, setMode] = useState<'create' | 'import'>('create')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const [revealedKey, setRevealedKey] = useState<string | null>(null)
+  const configured = Boolean(ownerWallet?.configured)
+
+  async function configureWallet() {
+    if (mode === 'import' && !privateKey.trim()) {
+      setMessage('Paste the existing private key before importing the Wallet.')
+      return
+    }
+    setBusy(true)
+    setMessage(null)
+    try {
+      const result = mode === 'create'
+        ? await dashboardApi.createOwnerWallet(label.trim())
+        : await dashboardApi.importOwnerWallet(label.trim(), privateKey.trim())
+      const key = getText(result, 'private_key')
+      if (key) setRevealedKey(key)
+      const status = getText(result, 'status')
+      setMessage(status === 'CONSENSUS_PENDING'
+        ? 'Wallet bind was submitted to consensus and is pending finality. Refresh this screen after the node observes the transaction.'
+        : mode === 'create' ? 'Owner Wallet was created and bound to this Hypervisor.' : 'Owner Wallet was imported and bound to this Hypervisor.')
+      setPrivateKey('')
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Wallet configuration failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <div className="space-y-4"><ScreenHeading eyebrow="Operator ownership" title="Wallet" detail="The owner Wallet signs network-facing Hypervisor actions. It is separate from the node identity and is never disclosed to agents." />
+    {configured ? <Card className="border-emerald-300/25 bg-emerald-300/[0.04] py-0 shadow-none"><CardContent className="flex gap-3 p-5"><WalletCards className="mt-0.5 size-5 shrink-0 text-emerald-300" /><div><p className="font-semibold text-emerald-50">Owner Wallet configured</p><p className="mt-1 text-sm text-emerald-100/75">{ownerWallet?.label || 'Owner Wallet'} · <span className="font-mono">{shortId(ownerWallet?.wallet_id)}</span></p><p className="mt-2 text-xs leading-5 text-emerald-100/65">Changing ownership is intentionally not an in-place Dashboard action. It requires the future signed ownership-transfer protocol.</p></div></CardContent></Card> : <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Wallet bootstrap</p><CardTitle className="mt-1 text-lg font-semibold">Bind node ownership</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Create a new key once or import a key you already control. The request follows the canonical wallet-binding path; a validator node may report a pending consensus operation before the binding becomes active.</p></CardHeader><CardContent className="space-y-4 p-5"><div className="flex flex-wrap gap-2"><Button variant={mode === 'create' ? 'default' : 'outline'} className={cn(mode === 'create' ? 'bg-cyan-300 text-[#06121d] hover:bg-cyan-200' : 'border-border bg-[#091725]')} onClick={() => setMode('create')}>Create Wallet</Button><Button variant={mode === 'import' ? 'default' : 'outline'} className={cn(mode === 'import' ? 'bg-cyan-300 text-[#06121d] hover:bg-cyan-200' : 'border-border bg-[#091725]')} onClick={() => setMode('import')}>Import Wallet</Button></div><label className="grid gap-2"><span className="eyebrow">Wallet label</span><input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={128} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label>{mode === 'import' ? <label className="grid gap-2"><span className="eyebrow">Existing private key</span><input type="password" value={privateKey} onChange={(event) => setPrivateKey(event.target.value)} autoComplete="off" placeholder="ed25519:..." className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /><span className="text-xs leading-5 text-muted-foreground">The key is submitted only to the node's encrypted Wallet bootstrap service and is never added to the Dashboard read-model.</span></label> : null}<div className="flex justify-end"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy} onClick={() => void configureWallet()}><KeyRound />{busy ? 'Binding...' : mode === 'create' ? 'Create and bind' : 'Import and bind'}</Button></div></CardContent></Card>}
+    {revealedKey ? <Card className="border-amber-300/30 bg-amber-300/[0.05] py-0 shadow-none"><CardHeader className="border-b border-amber-300/20 px-5 py-4"><p className="eyebrow text-amber-100">Store immediately</p><CardTitle className="mt-1 text-lg font-semibold text-amber-50">New private key is visible once</CardTitle></CardHeader><CardContent className="p-5"><code className="block break-all rounded-lg bg-black/25 p-3 font-mono text-xs leading-5 text-amber-50">{revealedKey}</code><div className="mt-3 flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-amber-300/30 bg-[#091725] text-amber-100" onClick={() => void navigator.clipboard.writeText(revealedKey)}><Copy />Copy key</Button><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => setRevealedKey(null)}>I stored it</Button></div></CardContent></Card> : null}
+    {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+  </div>
+}
+
+function SettingsWorkspace({ fleet, onRefresh }: { fleet: DashboardData['fleet']['data']; onRefresh: () => void }) {
+  return (
+    <div className="space-y-4">
+      <ResourceProbeControl fleet={fleet} onRefresh={onRefresh} />
+      <SettingsAccessWorkspace />
+    </div>
+  )
+}
+
+function ResourceProbeControl({ fleet, onRefresh }: { fleet: DashboardData['fleet']['data']; onRefresh: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const probe = fleet?.resources.probe
+
+  async function refreshProbe() {
+    setBusy(true)
+    setMessage(null)
+    try {
+      await dashboardApi.probeResources()
+      setMessage('Host capacity was measured and the Dashboard read-models were refreshed.')
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Resource probe failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-start justify-between gap-4 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Host capacity</p><CardTitle className="mt-1 text-lg font-semibold">Resource probe</CardTitle><p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Measure CPU, memory, storage and supported GPU capacity directly on this Hypervisor. The browser never supplies resource values.</p></div><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy} onClick={() => void refreshProbe()}><Gauge />{busy ? 'Measuring...' : 'Run probe'}</Button></CardHeader><CardContent className="p-5"><div className="rounded-lg border border-border/70 bg-[#07111d] p-3"><p className="eyebrow">Last evidence</p><p className="mt-1 text-sm text-slate-200">{getText(probe, 'source') || 'No current probe record'}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{Array.isArray(probe?.limitations) && probe.limitations.length > 0 ? String(probe.limitations[0]) : 'A paired operator session is required to run this local measurement.'}</p></div>{message ? <div className="mt-3"><OperationNotice message={message} onDismiss={() => setMessage(null)} /></div> : null}</CardContent></Card>
+}
+
+function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefresh }: { screen: 'providers' | 'catalog'; workspace: ProviderWorkspace | undefined; isLoading: boolean; error: Error | null; onRefresh: () => void }) {
+  const [pluginId, setPluginId] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [configuration, setConfiguration] = useState('{\n  "base_url": "http://127.0.0.1:11434"\n}')
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const plugins = workspace?.plugin_directory ?? []
+  const instances = workspace?.provider_instances ?? []
+  const deployments = workspace?.model_deployments ?? []
+  const bindings = workspace?.runtime_bindings ?? []
+
+  useEffect(() => {
+    if (!pluginId && plugins.length > 0) {
+      const nextPlugin = getText(plugins[0], 'plugin_id')
+      setPluginId(nextPlugin)
+      setDisplayName(getText(plugins[0], 'display_name') || nextPlugin)
+    }
+  }, [pluginId, plugins])
+
+  function choosePlugin(nextPluginId: string) {
+    setPluginId(nextPluginId)
+    const plugin = plugins.find((item) => getText(item, 'plugin_id') === nextPluginId)
+    if (plugin && !displayName.trim()) setDisplayName(getText(plugin, 'display_name') || nextPluginId)
+  }
+
+  async function attach() {
+    let parsedConfiguration: DashboardRecord
+    try {
+      const candidate: unknown = JSON.parse(configuration)
+      const record = getRecord(candidate)
+      if (!record) throw new Error('Configuration must be a JSON object.')
+      parsedConfiguration = record
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Provider configuration is not valid JSON.')
+      return
+    }
+    if (!pluginId || !displayName.trim()) {
+      setMessage('Select a Provider plugin and set a display name.')
+      return
+    }
+    setBusy('attach')
+    setMessage(null)
+    try {
+      const result = await dashboardApi.attachProvider({ plugin_id: pluginId, display_name: displayName.trim(), configuration: parsedConfiguration })
+      setMessage(`Provider ${getText(result, 'provider_instance_id') || displayName.trim()} was attached. Probe it before using it for a Bundle.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Provider attachment failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function runProviderOperation(providerInstanceId: string, action: 'probe' | 'discover-models') {
+    setBusy(`${providerInstanceId}:${action}`)
+    setMessage(null)
+    try {
+      const result = await dashboardApi.providerOperation(providerInstanceId, action)
+      const discovered = getRecord(result)?.items
+      setMessage(action === 'discover-models' ? `Model discovery completed: ${Array.isArray(discovered) ? discovered.length : 0} model deployment(s) found.` : `Provider ${providerInstanceId} health check completed.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Provider operation failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const title = screen === 'catalog' ? 'Catalog' : 'Provider Plugins'
+  const detail = screen === 'catalog'
+    ? 'Select a real Provider Plugin, attach an existing local service, then discover its model supply. The next Bundle revision remains a separate immutable operation.'
+    : 'Provider Plugins are the backing execution systems for Bundles. They are never published directly to Consumers.'
+
+  return <div className="space-y-4"><ScreenHeading eyebrow={screen === 'catalog' ? 'Operator catalog' : 'Runtime supply'} title={title} detail={detail} />
+    {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+    {isLoading && !workspace ? <PanelSkeleton rows={5} /> : null}
+    {error && !workspace ? <PanelError title="Provider workspace is unavailable" error={error} onRetry={onRefresh} /> : null}
+    {workspace ? <>
+      <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Attach existing Provider</p><CardTitle className="mt-1 text-lg font-semibold">Create Provider instance</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Use the Plugin's documented configuration. For local Ollama, the usual value is a `base_url`; no Provider credentials are persisted in this form.</p></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-[0.8fr_0.9fr_1.5fr_auto]"><label className="grid gap-2"><span className="eyebrow">Plugin</span><select value={pluginId} onChange={(event) => choosePlugin(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{plugins.map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Provider name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Node Ollama" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Configuration JSON</span><input value={configuration} onChange={(event) => setConfiguration(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><div className="flex items-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'attach' || plugins.length === 0} onClick={() => void attach()}><ServerCog />{busy === 'attach' ? 'Attaching...' : 'Attach'}</Button></div></CardContent></Card>
+      <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Attached inventory</p><CardTitle className="mt-1 text-lg font-semibold">Provider instances</CardTitle></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={onRefresh}><RefreshCw />Refresh</Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{instances.length === 0 ? <EmptyState title="No Provider instances attached" detail="Attach a known local Provider above. The Dashboard will not guess an upstream endpoint or create credentials." actionLabel="Refresh catalog" onAction={onRefresh} /> : instances.map((instance) => { const id = getText(instance, 'provider_instance_id'); return <div key={id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(instance, 'display_name') || id}</p><StatusBadge value={getText(instance, 'health_status') || 'unknown'} /></div><p className="mt-1 break-all font-mono text-[11px] text-slate-500">{id} · {String(getRecord(instance)?.model_count ?? 0)} models · {String(getRecord(instance)?.runtime_binding_ready_count ?? 0)} ready bindings</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === `${id}:probe`} onClick={() => void runProviderOperation(id, 'probe')}><Gauge />Probe</Button><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `${id}:discover-models`} onClick={() => void runProviderOperation(id, 'discover-models')}><Database />Discover models</Button></div></div> })}</CardContent></Card>
+      <div className="grid gap-4 lg:grid-cols-2"><InventoryCard title="Model deployments" detail="Discovered model supply. Runtime binding is required before Endpoint admission." items={deployments} primaryKey="model_deployment_id" /><InventoryCard title="Runtime bindings" detail="Compatibility records backing eligible Bundle and Endpoint runtime selection." items={bindings} primaryKey="runtime_binding_id" /></div>
+    </> : null}
+  </div>
+}
+
+function InventoryCard({ title, detail, items, primaryKey }: { title: string; detail: string; items: DashboardRecord[]; primaryKey: string }) {
+  return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><CardTitle className="text-base font-semibold">{title}</CardTitle><p className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</p></CardHeader><CardContent className="p-0">{items.length === 0 ? <p className="px-5 py-6 text-sm text-muted-foreground">No records yet.</p> : <div className="divide-y divide-border/70">{items.slice(0, 8).map((item) => <div key={getText(item, primaryKey)} className="px-5 py-3"><div className="flex items-center justify-between gap-3"><p className="truncate font-mono text-xs text-slate-200">{shortId(getText(item, primaryKey), 24)}</p><StatusBadge value={getText(item, 'status') || 'recorded'} /></div></div>)}</div>}</CardContent></Card>
+}
+
+function OperationNotice({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  const failed = /failed|rejected|required|invalid|unavailable|error/i.test(message)
+  return <div className={cn('flex items-start justify-between gap-3 rounded-lg border p-3 text-sm', failed ? 'border-rose-300/25 bg-rose-300/[0.05] text-rose-100' : 'border-emerald-300/25 bg-emerald-300/[0.05] text-emerald-100')}><p className="leading-5">{message}</p><Button variant="ghost" size="icon-xs" className="shrink-0" aria-label="Dismiss operation result" onClick={onDismiss}>×</Button></div>
 }
 
 function OperationsWorkspace({ screen, data, onNavigate, onRefresh }: { screen: OperationsScreen; data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
