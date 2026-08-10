@@ -7,7 +7,7 @@ from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from aidn_hypervisor.accounting.models import UsageAcknowledgement, UsageReport
@@ -2891,6 +2891,11 @@ def build_api_router(
     @router.get("/operators/node/identity")
     async def operator_node_identity() -> dict:
         return service.node_identity()
+
+    @router.get("/", include_in_schema=False)
+    async def operator_root() -> RedirectResponse:
+        """Make the node URL open the canonical operator dashboard."""
+        return RedirectResponse(url="/operators/dashboard/react", status_code=307)
 
     @router.get("/operators/dashboard", response_class=HTMLResponse)
     async def operator_dashboard() -> str:

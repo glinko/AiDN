@@ -72,10 +72,13 @@ def test_react_dashboard_routes_serve_index_and_hashed_assets(monkeypatch, tmp_p
     )
     client = TestClient(build_app())
 
+    root_response = client.get("/", follow_redirects=False)
     index_response = client.get("/operators/dashboard/react")
     asset_response = client.get("/operators/dashboard/react/assets/index-test.js")
     missing_response = client.get("/operators/dashboard/react/assets/missing.js")
 
+    assert root_response.status_code == 307
+    assert root_response.headers["location"] == "/operators/dashboard/react"
     assert index_response.status_code == 200
     assert index_response.headers["cache-control"] == "no-store"
     assert index_response.text == "<main>AiDN</main>"
