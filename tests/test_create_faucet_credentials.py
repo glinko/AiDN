@@ -48,7 +48,7 @@ def test_credential_generator_creates_secret_separated_manifest(tmp_path, monkey
     assert "creator_token" not in summary
 
 
-def test_credential_generator_requires_consensus_funding_operation(tmp_path) -> None:
+def test_credential_generator_requires_consensus_funding_id(tmp_path) -> None:
     import runpy
     import sys
 
@@ -69,5 +69,5 @@ def test_credential_generator_requires_consensus_funding_operation(tmp_path) -> 
         "--funding-mode",
         "CONSENSUS",
     ]
-    with pytest.raises(SystemExit, match="funding-operation-id"):
+    with pytest.raises(SystemExit, match="funding-id"):
         runpy.run_path("tools/create-faucet-credentials.py", run_name="__main__")

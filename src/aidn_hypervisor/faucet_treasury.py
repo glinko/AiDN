@@ -19,6 +19,7 @@ FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS = 10_000_000_000_000
 FAUCET_TREASURY_FUNDING_DOMAIN = "aidn.faucet-treasury-funding.v1"
 _PUBLIC_KEY_RE = re.compile(r"^ed25519:[0-9a-fA-F]{64}$")
 _HASH_RE = re.compile(r"^sha256:[0-9a-fA-F]{64}$")
+_OPERATION_ID_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 _FUNDING_AUTHORIZATION_FIELDS = (
     "funding_id",
@@ -79,6 +80,10 @@ class FaucetTreasuryManifest(BaseModel):
     creator_recovery_wallet: str = Field(min_length=1)
     genesis_allocation_q_atoms: int = Field(gt=0)
     funding_mode: Literal["GENESIS", "CONSENSUS"] = "GENESIS"
+    funding_id: str | None = None
+    # The consensus envelope ID is unknown when the pre-funding manifest is
+    # created. It is post-finalization metadata and is excluded from the
+    # manifest hash so the canonical declaration remains stable.
     funding_operation_id: str | None = None
     policy_registry_hash: str = Field(min_length=1)
     object_version: int = Field(default=1, ge=1)
@@ -89,6 +94,11 @@ class FaucetTreasuryManifest(BaseModel):
     def _hash_payload(self) -> dict:
         payload = self.model_dump(mode="json")
         payload.pop("manifest_hash", None)
+        payload.pop("funding_operation_id", None)
+        if self.funding_mode == "GENESIS":
+            # Preserve the v1 Genesis hash for manifests created before the
+            # consensus funding metadata was introduced.
+            payload.pop("funding_id", None)
         return payload
 
     def expected_manifest_hash(self) -> str:
@@ -106,10 +116,16 @@ class FaucetTreasuryManifest(BaseModel):
             raise ValueError("initial Faucet Treasury allocation must be exactly 10,000,000 Q")
         if not _HASH_RE.fullmatch(self.policy_registry_hash):
             raise ValueError("policy_registry_hash must be sha256:<64 hex characters>")
-        if self.funding_mode == "GENESIS" and self.funding_operation_id is not None:
-            raise ValueError("Genesis Treasury funding cannot contain a funding operation")
-        if self.funding_mode == "CONSENSUS" and not self.funding_operation_id:
-            raise ValueError("consensus Treasury funding requires funding_operation_id")
+        if self.funding_mode == "GENESIS" and (
+            self.funding_id is not None or self.funding_operation_id is not None
+        ):
+            raise ValueError("Genesis Treasury funding cannot contain funding metadata")
+        if self.funding_mode == "CONSENSUS" and not self.funding_id:
+            raise ValueError("consensus Treasury funding requires funding_id")
+        if self.funding_operation_id is not None and not _OPERATION_ID_RE.fullmatch(
+            self.funding_operation_id
+        ):
+            raise ValueError("funding_operation_id must be a 64-character operation ID")
         expected_hash = self.expected_manifest_hash()
         if self.manifest_hash and self.manifest_hash != expected_hash:
             raise ValueError("faucet Treasury manifest_hash does not match the manifest")
@@ -141,6 +157,7 @@ class FaucetTreasuryActivationProof(BaseModel):
     wallet_id: str = Field(min_length=1)
     manifest_hash: str = Field(min_length=1)
     funding_mode: Literal["GENESIS", "CONSENSUS"]
+    funding_id: str | None = None
     funding_operation_id: str | None = None
     funded_amount_q_atoms: int = Field(ge=0)
     observed_balance_q_atoms: int | None = Field(default=None, ge=0)
@@ -164,8 +181,11 @@ class FaucetTreasuryActivationProof(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not _HASH_RE.fullmatch(self.manifest_hash):
             raise ValueError("Treasury activation proof manifest_hash is invalid")
-        if self.funding_mode == "CONSENSUS" and not self.funding_operation_id:
-            raise ValueError("consensus Treasury activation proof requires funding_operation_id")
+        if self.state == "ACTIVE" and self.funding_mode == "CONSENSUS":
+            if not self.funding_id:
+                raise ValueError("consensus Treasury activation proof requires funding_id")
+            if not self.funding_operation_id:
+                raise ValueError("consensus Treasury activation proof requires funding_operation_id")
         if self.state == "ACTIVE":
             if self.funded_amount_q_atoms != FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS:
                 raise ValueError("active Treasury activation proof has an invalid funded amount")
@@ -183,6 +203,8 @@ class FaucetTreasuryActivationProof(BaseModel):
             if self.funding_mode == "CONSENSUS":
                 if self.evidence_type != "CONSENSUS_FUNDING":
                     raise ValueError("consensus Treasury activation requires funding evidence")
+                if evidence.get("funding_id") != self.funding_id:
+                    raise ValueError("Treasury activation evidence does not bind funding ID")
                 if evidence.get("operation_id") != self.funding_operation_id:
                     raise ValueError("Treasury activation evidence does not bind funding operation")
                 if evidence.get("operation_type") != "TREASURY_FUND":
@@ -212,6 +234,7 @@ class FaucetTreasuryActivationProof(BaseModel):
             wallet_id=manifest.wallet_id,
             manifest_hash=manifest.manifest_hash,
             funding_mode=manifest.funding_mode,
+            funding_id=manifest.funding_id,
             funding_operation_id=manifest.funding_operation_id,
             funded_amount_q_atoms=0,
             observed_balance_q_atoms=observed_balance_q_atoms,

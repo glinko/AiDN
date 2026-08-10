@@ -93,7 +93,9 @@ The proof SHALL bind all of the following to the supplied manifest:
 * Treasury public key through the manifest Wallet derivation;
 * `manifest_hash`;
 * `funding_mode`;
-* `funding_operation_id` when funding mode is `CONSENSUS`;
+* `funding_id` for consensus funding;
+* `funding_operation_id` when funding mode is `CONSENSUS` and finalization has
+  occurred;
 * exact initial allocation of `10,000,000 Q`.
 
 The proof hash SHALL cover the complete canonical proof payload. A caller
@@ -104,7 +106,10 @@ proof hash.
 
 For `funding_mode: CONSENSUS`, the proof SHALL contain:
 
-* the exact `funding_operation_id` from the manifest;
+* the exact finalized `funding_operation_id` from the funding receipt or
+  post-finalization manifest;
+* the stable `funding_id` bound by the canonical manifest and operation
+  payload;
 * operation type `TREASURY_FUND`;
 * verified finality evidence for that operation;
 * matching `chain_id`;
@@ -116,6 +121,11 @@ For `funding_mode: CONSENSUS`, the proof SHALL contain:
 The finality source SHALL verify transaction inclusion, transaction hash,
 operation identity, commit validity and the active chain trust anchor. A
 `WALLET_TRANSFER`, local admission result or RPC label is not a funding proof.
+
+The pre-funding manifest cannot contain the hash-derived envelope operation ID:
+the operation payload contains the manifest hash, while the manifest binds the
+stable funding request ID. Implementations SHALL not use the stable
+`funding_id` as a substitute for the finalized operation ID.
 
 The operation itself remains subject to the Ledger rules in ECO-0008 and the
 consensus transition in RFC-0036. This ECO adds the consumer-side verification

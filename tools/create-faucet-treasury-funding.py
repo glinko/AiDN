@@ -29,6 +29,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--creator-private-key", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--final-manifest",
+        type=Path,
+        help="write a post-finalization manifest with the computed operation ID",
+    )
     parser.add_argument("--authorization-reference", required=True)
     parser.add_argument("--created-at", default=datetime.now(UTC).isoformat())
     return parser
@@ -62,8 +67,10 @@ def main() -> int:
     )
     if manifest.funding_mode != "CONSENSUS":
         raise ValueError("TREASURY_FUND requires a CONSENSUS-funded Treasury manifest")
-    if not manifest.funding_operation_id:
-        raise ValueError("consensus Treasury manifest is missing funding_operation_id")
+    if not manifest.funding_id:
+        raise ValueError("consensus Treasury manifest is missing funding_id")
+    if manifest.funding_operation_id:
+        raise ValueError("Treasury manifest already contains a finalized funding_operation_id")
 
     creator_key = _load_private_key(args.creator_private_key)
     creator_public_key = "ed25519:" + creator_key.public_key().public_bytes(
@@ -74,7 +81,7 @@ def main() -> int:
         raise ValueError("creator private key does not control manifest creator_recovery_wallet")
 
     payload = {
-        "funding_id": manifest.funding_operation_id,
+        "funding_id": manifest.funding_id,
         "treasury_id": manifest.treasury_id,
         "network_id": manifest.network_id,
         "chain_id": manifest.chain_id,
@@ -106,7 +113,21 @@ def main() -> int:
         }
     )
     _write_json(args.output, signed.model_dump(mode="json"))
-    print(json.dumps({"operation_id": signed.operation_id, "output": str(args.output)}, sort_keys=True))
+    final_manifest = None
+    if args.final_manifest is not None:
+        final_manifest = manifest.model_copy(update={"funding_operation_id": signed.operation_id})
+        _write_json(args.final_manifest, final_manifest.model_dump(mode="json"))
+    print(
+        json.dumps(
+            {
+                "operation_id": signed.operation_id,
+                "output": str(args.output),
+                "final_manifest": str(args.final_manifest) if final_manifest is not None else None,
+                "manifest_hash": manifest.manifest_hash,
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 

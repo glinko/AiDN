@@ -326,10 +326,13 @@ class CometBftFaucetTransferSubmitter:
             )
 
         if manifest.funding_mode == "CONSENSUS":
-            try:
-                evidence = self._finality_source.finality_evidence(
-                    manifest.funding_operation_id or ""
+            if not manifest.funding_operation_id:
+                return FaucetTreasuryActivationProof.unavailable(
+                    manifest,
+                    reason="FAUCET_TREASURY_FUNDING_NOT_FINALIZED",
                 )
+            try:
+                evidence = self._finality_source.finality_evidence(manifest.funding_operation_id)
             except Exception as error:  # pragma: no cover - transport-specific boundary
                 return FaucetTreasuryActivationProof.unavailable(
                     manifest,
@@ -365,6 +368,7 @@ class CometBftFaucetTransferSubmitter:
                 wallet_id=manifest.wallet_id,
                 manifest_hash=manifest.manifest_hash,
                 funding_mode=manifest.funding_mode,
+                funding_id=manifest.funding_id,
                 funding_operation_id=manifest.funding_operation_id,
                 funded_amount_q_atoms=manifest.genesis_allocation_q_atoms,
                 observed_balance_q_atoms=balance,
@@ -372,6 +376,7 @@ class CometBftFaucetTransferSubmitter:
                 canonical_evidence={
                     "operation_id": evidence.operation_id,
                     "operation_type": evidence.operation_type,
+                    "funding_id": manifest.funding_id,
                     "chain_id": evidence.chain_id,
                     "manifest_hash": manifest.manifest_hash,
                     "block_height": evidence.block_height,
@@ -417,6 +422,7 @@ class CometBftFaucetTransferSubmitter:
             wallet_id=manifest.wallet_id,
             manifest_hash=manifest.manifest_hash,
             funding_mode=manifest.funding_mode,
+            funding_id=manifest.funding_id,
             funding_operation_id=None,
             funded_amount_q_atoms=manifest.genesis_allocation_q_atoms,
             observed_balance_q_atoms=balance,

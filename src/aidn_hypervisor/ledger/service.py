@@ -293,8 +293,13 @@ class LedgerOperationService:
             raise ValueError("Treasury funding amount must be exactly 10,000,000 Q")
         if payload["funding_mode"] != "CONSENSUS":
             raise ValueError("Treasury funding mode must be CONSENSUS")
-        if payload["funding_id"] != manifest.funding_operation_id:
+        if payload["funding_id"] != manifest.funding_id:
             raise ValueError("Treasury funding ID does not match the configured manifest")
+        if (
+            manifest.funding_operation_id is not None
+            and envelope.operation_id != manifest.funding_operation_id
+        ):
+            raise ValueError("Treasury funding operation ID does not match the configured manifest")
         if payload["treasury_id"] != manifest.treasury_id:
             raise ValueError("Treasury funding treasury_id does not match the configured manifest")
         if payload["network_id"] != manifest.network_id:

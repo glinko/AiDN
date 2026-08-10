@@ -42,7 +42,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--creator-recovery-wallet", required=True)
     parser.add_argument("--policy-registry-hash", required=True)
     parser.add_argument("--funding-mode", choices=("GENESIS", "CONSENSUS"), default="GENESIS")
-    parser.add_argument("--funding-operation-id")
+    parser.add_argument(
+        "--funding-id",
+        help="creator-selected stable ID for a consensus Treasury funding request",
+    )
+    parser.add_argument(
+        "--funding-operation-id",
+        help="finalized envelope operation ID, used only when completing a manifest",
+    )
     parser.add_argument(
         "--force",
         action="store_true",
@@ -54,10 +61,12 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     output_dir = args.output_dir.expanduser().resolve()
-    if args.funding_mode == "CONSENSUS" and not args.funding_operation_id:
-        raise ValueError("--funding-operation-id is required for CONSENSUS funding")
-    if args.funding_mode == "GENESIS" and args.funding_operation_id:
-        raise ValueError("--funding-operation-id is only valid for CONSENSUS funding")
+    if args.funding_mode == "CONSENSUS" and not args.funding_id:
+        raise ValueError("--funding-id is required for CONSENSUS funding")
+    if args.funding_mode == "GENESIS" and (args.funding_id or args.funding_operation_id):
+        raise ValueError("funding metadata is only valid for CONSENSUS funding")
+    if args.funding_operation_id and not args.funding_id:
+        raise ValueError("--funding-operation-id requires --funding-id")
     if output_dir.exists() and any(output_dir.iterdir()) and not args.force:
         raise ValueError(f"refusing to overwrite non-empty credential directory: {output_dir}")
     output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -83,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         creator_recovery_wallet=args.creator_recovery_wallet,
         genesis_allocation_q_atoms=10_000_000_000_000,
         funding_mode=args.funding_mode,
+        funding_id=args.funding_id,
         funding_operation_id=args.funding_operation_id,
         policy_registry_hash=args.policy_registry_hash,
     )
@@ -119,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
                 "network_id": manifest.network_id,
                 "chain_id": manifest.chain_id,
                 "funding_mode": manifest.funding_mode,
+                "funding_id": manifest.funding_id,
                 "funding_operation_id": manifest.funding_operation_id,
                 "manifest_hash": manifest.manifest_hash,
                 "files": {

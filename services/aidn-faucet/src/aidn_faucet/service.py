@@ -277,6 +277,7 @@ class FaucetService:
             or proof.wallet_id != self.manifest.wallet_id
             or proof.manifest_hash != self.manifest.manifest_hash
             or proof.funding_mode != self.manifest.funding_mode
+            or proof.funding_id != self.manifest.funding_id
             or proof.funding_operation_id != self.manifest.funding_operation_id
         ):
             proof = FaucetTreasuryActivationProof.unavailable(

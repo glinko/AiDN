@@ -56,8 +56,9 @@ input:
 - active `network_id` and `chain_id`;
 - `creator_recovery_wallet`, controlled by the creator;
 - the approved `policy_registry_hash`;
-- for an already-running network, a creator-approved
-  `funding_operation_id` and the canonical submission procedure;
+- for an already-running network, a creator-approved stable `funding_id`, the
+  finalized envelope `funding_operation_id` after submission, and the canonical
+  submission procedure;
 - `/etc/aidn/cometbft-finality.json`, containing at least two approved RPC
   endpoints and an out-of-band trusted checkpoint;
 - the node's approved LAN bind address, for example `192.168.88.127`.
@@ -91,12 +92,14 @@ sudo -u root uv run python tools/create-faucet-credentials.py \
   --creator-recovery-wallet wallet-REPLACE_CREATOR \
   --policy-registry-hash sha256:REPLACE_POLICY_REGISTRY_HASH \
   --funding-mode CONSENSUS \
-  --funding-operation-id REPLACE_TREASURY_FUND_OPERATION_ID
+  --funding-id faucet-funding:aidn-faucet-main-v1:1
 ```
 
 Replace every `REPLACE_` value before running. For a brand-new network where
 the manifest is included before Genesis, use `--funding-mode GENESIS` and omit
-`--funding-operation-id`.
+`--funding-id`. The command creates a pre-funding manifest; the actual
+`funding_operation_id` is produced only after the signed consensus envelope
+is built.
 
 The command reports only the Treasury ID, Wallet ID and manifest hash. Inspect
 the generated `summary.json`; do not print `treasury.key`, `agent-token`,
@@ -115,6 +118,23 @@ generation alone does not create balance.
   only after the creator supplies the matching creator private key and
   authorization reference. Do not submit it through a Faucet shortcut or
   directly mutate a node's SQLite/state JSON.
+
+The funding tool prints the computed envelope `operation_id`. Run it with
+`--final-manifest /var/lib/aidn-faucet/credentials/faucet-treasury.json` to
+write that ID into the manifest after the envelope is created. The manifest
+hash remains unchanged. Submit the exact generated envelope through the
+canonical consensus path, wait for finality, then start or restart the Faucet.
+
+Example envelope preparation:
+
+```bash
+sudo -u root uv run python tools/create-faucet-treasury-funding.py \
+  --manifest /var/lib/aidn-faucet/credentials/faucet-treasury.json \
+  --creator-private-key /secure/creator-recovery.key \
+  --output /var/lib/aidn-faucet/treasury-fund-envelope.json \
+  --final-manifest /var/lib/aidn-faucet/credentials/faucet-treasury.json \
+  --authorization-reference governance:aidn-faucet-main-v1
+```
 
 For an already-running testnet, the normal path is `CONSENSUS`. The agent must
 stop if the creator Wallet or canonical submission path is unavailable.

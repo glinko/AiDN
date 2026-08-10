@@ -81,6 +81,13 @@ finality file before starting the HTTP server. Status responses include the
 activation state, diagnostic reason and public proof hash; they never include
 private keys or bearer tokens.
 
+For consensus-funded Treasuries, create the manifest with a stable
+`funding_id`. The actual hash-derived `funding_operation_id` exists only after
+`create-faucet-treasury-funding.py` builds the signed envelope. Use that tool's
+`--final-manifest` option after envelope creation; it writes the operation ID
+without changing the manifest hash. Do not use `funding_id` as a substitute for
+the finalized operation ID.
+
 To make the GUI and MCP endpoint reachable from a trusted private LAN, use
 `--lan` (or bind to one specific LAN address with `--host`). Both bearer
 tokens are mandatory for every non-loopback bind:

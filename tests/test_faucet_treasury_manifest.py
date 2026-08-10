@@ -62,7 +62,8 @@ def test_activation_proof_binds_consensus_funding_and_rejects_tampering() -> Non
     values.update(
         {
             "funding_mode": "CONSENSUS",
-            "funding_operation_id": "treasury-fund-operation-1",
+            "funding_id": "treasury-fund-request-1",
+            "funding_operation_id": "a" * 64,
         }
     )
     manifest = FaucetTreasuryManifest(**values)
@@ -74,6 +75,7 @@ def test_activation_proof_binds_consensus_funding_and_rejects_tampering() -> Non
         wallet_id=manifest.wallet_id,
         manifest_hash=manifest.manifest_hash,
         funding_mode="CONSENSUS",
+        funding_id=manifest.funding_id,
         funding_operation_id=manifest.funding_operation_id,
         funded_amount_q_atoms=FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS,
         observed_balance_q_atoms=FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS,
@@ -81,6 +83,7 @@ def test_activation_proof_binds_consensus_funding_and_rejects_tampering() -> Non
         canonical_evidence={
             "operation_id": manifest.funding_operation_id,
             "operation_type": "TREASURY_FUND",
+            "funding_id": manifest.funding_id,
             "chain_id": manifest.chain_id,
             "manifest_hash": manifest.manifest_hash,
         },
@@ -143,3 +146,21 @@ def test_manifest_cli_create_and_verify(tmp_path: Path) -> None:
         text=True,
     )
     assert '"status": "ok"' in verify.stdout
+
+
+def test_finalized_operation_id_does_not_change_manifest_hash() -> None:
+    pre_funding = FaucetTreasuryManifest(
+        **{
+            **_manifest_kwargs(),
+            "funding_mode": "CONSENSUS",
+            "funding_id": "treasury-fund-request-1",
+        }
+    )
+    finalized = FaucetTreasuryManifest(
+        **{
+            **pre_funding.model_dump(mode="json"),
+            "funding_operation_id": "b" * 64,
+        }
+    )
+
+    assert finalized.manifest_hash == pre_funding.manifest_hash

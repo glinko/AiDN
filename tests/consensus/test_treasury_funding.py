@@ -43,7 +43,7 @@ def _manifest(
         creator_recovery_wallet=wallet_id_for_public_key(creator_public_key),
         genesis_allocation_q_atoms=FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS,
         funding_mode="CONSENSUS",
-        funding_operation_id=funding_id,
+        funding_id=funding_id,
         policy_registry_hash="sha256:" + ("cd" * 32),
     )
 
@@ -58,7 +58,7 @@ def _funding_envelope(
 ) -> LedgerOperationEnvelope:
     creator_public_key = creator_public_key or _public_key(creator_key)
     payload = {
-        "funding_id": manifest.funding_operation_id,
+        "funding_id": manifest.funding_id,
         "treasury_id": manifest.treasury_id,
         "network_id": manifest.network_id,
         "chain_id": manifest.chain_id,
@@ -167,7 +167,7 @@ def test_treasury_funding_requires_exact_amount_and_consensus_manifest() -> None
         )
 
     genesis_values = manifest.model_dump(mode="json")
-    genesis_values.update({"funding_mode": "GENESIS", "funding_operation_id": None})
+    genesis_values.update({"funding_mode": "GENESIS", "funding_id": None, "funding_operation_id": None})
     genesis_values.pop("manifest_hash", None)
     genesis_manifest = FaucetTreasuryManifest(**genesis_values)
     genesis_ledger = LedgerOperationService()

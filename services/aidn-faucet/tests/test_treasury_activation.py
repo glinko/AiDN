@@ -46,7 +46,8 @@ def _manifest(*, funding_mode: str = "CONSENSUS") -> FaucetTreasuryManifest:
         creator_recovery_wallet="wallet-creator-recovery",
         genesis_allocation_q_atoms=FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS,
         funding_mode=funding_mode,
-        funding_operation_id="treasury-fund-operation-1" if funding_mode == "CONSENSUS" else None,
+        funding_id="treasury-fund-request-1" if funding_mode == "CONSENSUS" else None,
+        funding_operation_id="a" * 64 if funding_mode == "CONSENSUS" else None,
         policy_registry_hash="sha256:" + ("cd" * 32),
     )
 

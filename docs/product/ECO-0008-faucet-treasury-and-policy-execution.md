@@ -69,6 +69,7 @@ faucet_treasury:
   wallet_public_key:
   creator_recovery_wallet:
   genesis_allocation_q_atoms:
+  funding_id:
   funding_operation_id:
   policy_registry_hash:
   state:
@@ -136,6 +137,14 @@ treasury_funding:
   authorization_reference:
   authorization_signature:
 ```
+
+`funding_id` is a creator-selected stable identifier and is included in the
+pre-funding manifest. `funding_operation_id` is the actual hash-derived
+`LedgerOperationEnvelope.operation_id`; it is unknown until the envelope is
+created and may be written into a post-finalization copy of the manifest. The
+post-finalization field is excluded from `manifest_hash`, so adding it does
+not change the canonical Treasury declaration. These two identifiers SHALL
+not be conflated.
 
 The creator signature covers the canonical funding payload under the
 `aidn.faucet-treasury-funding.v1` domain. The same creator key also signs the
