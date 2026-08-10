@@ -47,6 +47,7 @@ class FaucetStore:
                     quota_key TEXT NOT NULL,
                     policy_id TEXT NOT NULL,
                     policy_version TEXT NOT NULL,
+                    policy_state_key TEXT NOT NULL DEFAULT '',
                     amount_q_atoms INTEGER NOT NULL,
                     decision_json TEXT NOT NULL,
                     state_after_success_json TEXT NOT NULL,
@@ -69,6 +70,14 @@ class FaucetStore:
                 );
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(claims)").fetchall()
+            }
+            if "policy_state_key" not in columns:
+                connection.execute(
+                    "ALTER TABLE claims ADD COLUMN policy_state_key TEXT NOT NULL DEFAULT ''"
+                )
 
     @staticmethod
     def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -147,10 +156,10 @@ class FaucetStore:
                 """
                 INSERT INTO claims (
                     request_id, claim_id, wallet_id, quota_key, policy_id,
-                    policy_version, amount_q_atoms, decision_json,
+                    policy_version, policy_state_key, amount_q_atoms, decision_json,
                     state_after_success_json, envelope_json, operation_id,
                     status, detail, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NULL, ?)
                 """,
                 (
                     claim["request_id"],
@@ -159,6 +168,7 @@ class FaucetStore:
                     claim["quota_key"],
                     claim["policy_id"],
                     claim["policy_version"],
+                    claim.get("policy_state_key", claim["policy_id"]),
                     claim["amount_q_atoms"],
                     json.dumps(claim["decision"], sort_keys=True, separators=(",", ":")),
                     json.dumps(claim["state_after_success"], sort_keys=True, separators=(",", ":")),

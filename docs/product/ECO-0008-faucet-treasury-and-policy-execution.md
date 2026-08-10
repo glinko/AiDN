@@ -181,6 +181,7 @@ Policy implementations are external, versioned and replaceable.
 
 ```yaml
 faucet_policy:
+  policy_registry_hash:
   policy_id:
   policy_version:
   treasury_id:
@@ -197,6 +198,15 @@ faucet_policy:
 
 A policy change applies only from its declared future boundary. It SHALL not
 rewrite or recalculate finalized decisions from an earlier policy version.
+
+The `policy_registry_hash` in the immutable Treasury manifest SHALL identify a
+signed Registry Root. The root binds the network, chain, Treasury ID and the
+creator recovery public key. A concrete policy SHALL be a separately signed
+Policy Release bound to that root, with an explicit sequence, parameter schema
+and effective window. The Faucet SHALL verify the root hash, both signatures,
+the manifest binding and the release window before executing claims. A signed
+release is not a new Treasury manifest and cannot change Treasury funding or
+Wallet ownership.
 
 The first policy may grant `50 Q` once per UTC calendar day to any Wallet that
 proves control of the Wallet key. The recipient is the Wallet, not the agent

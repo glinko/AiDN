@@ -27,6 +27,14 @@ The Treasury private key is never part of the public manifest, repository,
 HTTP response or Hypervisor state. Keep it in a dedicated secret store or a
 local file readable only by the Faucet service account.
 
+For a real deployment, the manifest's `policy_registry_hash` must resolve to a
+creator-signed immutable registry root and the running policy must come from a
+creator-signed release. The CLI accepts `--policy-registry-root` and
+`--policy-release` for this path; direct `--policy` flags remain only as a
+backwards-compatible lab mode and emit a warning. The complete Creator,
+validator and Faucet-host sequence is in
+[`docs/development/faucet-creator-bootstrap.md`](../../docs/development/faucet-creator-bootstrap.md).
+
 ## Package layout
 
 - `src/aidn_faucet/policy.py` contains replaceable policy implementations.
@@ -71,6 +79,8 @@ aidn-faucet serve \
   --private-key /var/lib/aidn-faucet/treasury.key \
   --state /var/lib/aidn-faucet/faucet.sqlite \
   --finality-config /etc/aidn/cometbft-finality.json \
+  --policy-registry-root /etc/aidn/faucet-policy-registry-root.json \
+  --policy-release /etc/aidn/faucet-policy-release.json \
   --agent-token "$AIDN_FAUCET_AGENT_TOKEN" \
   --creator-token "$AIDN_FAUCET_CREATOR_TOKEN" \
   --host 127.0.0.1

@@ -55,7 +55,8 @@ input:
 - `treasury_id`, unique for this Treasury lineage;
 - active `network_id` and `chain_id`;
 - `creator_recovery_wallet`, controlled by the creator;
-- the approved `policy_registry_hash`;
+- the signed policy Registry Root and active Policy Release files (the agent
+  takes `policy_registry_hash` only from the verified root, never from prose);
 - for an already-running network, a creator-approved stable `funding_id`, the
   finalized envelope `funding_operation_id` after submission, and the canonical
   submission procedure;
@@ -119,11 +120,12 @@ generation alone does not create balance.
   authorization reference. Do not submit it through a Faucet shortcut or
   directly mutate a node's SQLite/state JSON.
 
-The funding tool prints the computed envelope `operation_id`. Run it with
-`--final-manifest /var/lib/aidn-faucet/credentials/faucet-treasury.json` to
-write that ID into the manifest after the envelope is created. The manifest
-hash remains unchanged. Submit the exact generated envelope through the
-canonical consensus path, wait for finality, then start or restart the Faucet.
+The funding tool prints the computed envelope `operation_id`. Do not write the
+final manifest merely because an envelope was created. Submit the exact
+generated envelope through the canonical consensus path and use
+`tools/submit-faucet-treasury-funding.py` to wait for verified quorum finality;
+only that tool writes the post-finality manifest. The manifest hash remains
+unchanged. Start or restart the Faucet only after this succeeds.
 
 Example envelope preparation:
 
@@ -132,7 +134,6 @@ sudo -u root uv run python tools/create-faucet-treasury-funding.py \
   --manifest /var/lib/aidn-faucet/credentials/faucet-treasury.json \
   --creator-private-key /secure/creator-recovery.key \
   --output /var/lib/aidn-faucet/treasury-fund-envelope.json \
-  --final-manifest /var/lib/aidn-faucet/credentials/faucet-treasury.json \
   --authorization-reference governance:aidn-faucet-main-v1
 ```
 
@@ -202,7 +203,9 @@ sudo -u aidn-faucet /opt/aidn/AiDN/services/aidn-faucet/.venv/bin/aidn-faucet se
   --manifest /var/lib/aidn-faucet/credentials/faucet-treasury.json \
   --private-key /var/lib/aidn-faucet/credentials/treasury.key \
   --state /var/lib/aidn-faucet/faucet.sqlite \
-  --finality-config /etc/aidn/cometbft-finality.json
+  --finality-config /etc/aidn/cometbft-finality.json \
+  --policy-registry-root /etc/aidn/faucet-policy-registry-root.json \
+  --policy-release /etc/aidn/faucet-policy-release.json
 ```
 
 The CLI reads the agent token, creator token and host from the protected

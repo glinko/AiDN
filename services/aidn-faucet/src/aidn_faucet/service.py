@@ -28,6 +28,7 @@ from aidn_faucet.models import (
     wallet_id_for_public_key,
 )
 from aidn_faucet.policy import FaucetPolicy, FaucetPolicyError
+from aidn_faucet.policy_registry import FaucetPolicyRegistryRoot, FaucetPolicyRelease
 from aidn_faucet.store import FaucetStore
 from aidn_hypervisor.consensus.cometbft import cometbft_transaction_hash
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
@@ -115,6 +116,8 @@ class FaucetService:
         treasury_balance_provider: Callable[[str], int | None] | None = None,
         require_treasury_activation: bool = True,
         now: Callable[[], datetime] | None = None,
+        policy_registry_root: FaucetPolicyRegistryRoot | None = None,
+        policy_release: FaucetPolicyRelease | None = None,
     ) -> None:
         parsed_manifest = (
             manifest
@@ -138,6 +141,27 @@ class FaucetService:
             None,
         )
         self._now_fn = now or (lambda: datetime.now(UTC))
+        if (policy_registry_root is None) != (policy_release is None):
+            raise ValueError("FAUCET_POLICY_PROVENANCE_INCOMPLETE")
+        self.policy_registry_root = policy_registry_root
+        self.policy_release = policy_release
+        if policy_registry_root is not None and policy_release is not None:
+            from aidn_faucet.policy_registry import validate_registry_for_manifest
+
+            verified_policy = validate_registry_for_manifest(
+                policy_registry_root,
+                policy_release,
+                manifest=self.manifest,
+                now=self._now(),
+            )
+            if (
+                verified_policy.policy_id != policy.policy_id
+                or verified_policy.policy_version != policy.policy_version
+            ):
+                raise ValueError("FAUCET_POLICY_RELEASE_IMPLEMENTATION_MISMATCH")
+            self._policy_state_key = f"{policy.policy_id}@{policy.policy_version}:{policy_release.policy_hash}"
+        else:
+            self._policy_state_key = policy.policy_id
         self._treasury_activation_cache: tuple[datetime, FaucetTreasuryActivationProof] | None = None
         self.store.ensure_service_state(
             state_key="controls",
@@ -147,8 +171,9 @@ class FaucetService:
                 "low_balance_watermark_q_atoms": 0,
             },
         )
+        self._record_policy_release()
         self.store.ensure_policy_state(
-            policy_id=self.policy.policy_id,
+            policy_id=self._policy_state_key,
             state=self.policy.initial_state(now=self._now()),
         )
 
@@ -157,6 +182,37 @@ class FaucetService:
         if value.tzinfo is None:
             value = value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
+
+    def _record_policy_release(self) -> None:
+        """Reject local rollback of a valid signed policy release.
+
+        The Registry Root intentionally remains immutable.  This durable local
+        watermark prevents a stale release file from becoming active again on
+        a surviving Faucet state volume. A new host still needs the creator's
+        reviewed deployment artifacts, just as it needs the Treasury key.
+        """
+
+        if self.policy_release is None or self.policy_registry_root is None:
+            return
+        state_key = f"policy-release:{self.manifest.treasury_id}"
+        current = self.store.get_service_state(state_key)
+        proposed = {
+            "registry_hash": self.policy_registry_root.root_hash,
+            "sequence": self.policy_release.sequence,
+            "policy_hash": self.policy_release.policy_hash,
+        }
+        if current is not None:
+            if current.get("registry_hash") != proposed["registry_hash"]:
+                raise ValueError("FAUCET_POLICY_REGISTRY_ROLLBACK_DETECTED")
+            current_sequence = int(current.get("sequence", 0))
+            if current_sequence > proposed["sequence"]:
+                raise ValueError("FAUCET_POLICY_RELEASE_ROLLBACK_DETECTED")
+            if (
+                current_sequence == proposed["sequence"]
+                and current.get("policy_hash") != proposed["policy_hash"]
+            ):
+                raise ValueError("FAUCET_POLICY_RELEASE_SEQUENCE_CONFLICT")
+        self.store.set_service_state(state_key=state_key, state=proposed)
 
     def authorize_agent(self, token: str | None) -> None:
         if self.agent_token is None:
@@ -227,6 +283,21 @@ class FaucetService:
             treasury_wallet_id=self.manifest.wallet_id,
             policy_id=self.policy.policy_id,
             policy_version=self.policy.policy_version,
+            policy_registry_id=(
+                self.policy_registry_root.registry_id
+                if self.policy_registry_root is not None
+                else None
+            ),
+            policy_registry_hash=(
+                self.policy_registry_root.root_hash if self.policy_registry_root is not None else None
+            ),
+            policy_release_hash=(self.policy_release.policy_hash if self.policy_release is not None else None),
+            policy_release_sequence=(
+                self.policy_release.sequence if self.policy_release is not None else None
+            ),
+            policy_effective_from=(
+                self.policy_release.effective_from if self.policy_release is not None else None
+            ),
             agent_auth_required=self.agent_token is not None,
             paused=bool(controls["paused"]),
             pause_reason=controls.get("pause_reason"),
@@ -314,7 +385,7 @@ class FaucetService:
         self._verify_wallet_proof(request)
         if self.store.find_pending_treasury_claim() is not None:
             raise ValueError("FAUCET_TREASURY_TRANSFER_PENDING")
-        state = self.store.get_policy_state(self.policy.policy_id)
+        state = self.store.get_policy_state(self._policy_state_key)
         if state is None:
             raise ValueError("FAUCET_POLICY_STATE_MISSING")
         quota_key = self.policy.quota_key(wallet_id=request.wallet_id, state=state, now=now)
@@ -370,6 +441,7 @@ class FaucetService:
                 "quota_key": decision.quota_key,
                 "policy_id": decision.policy_id,
                 "policy_version": decision.policy_version,
+                "policy_state_key": self._policy_state_key,
                 "amount_q_atoms": decision.amount_q_atoms,
                 "decision": decision.model_dump(mode="json"),
                 "state_after_success": decision.state_after_success,
@@ -418,7 +490,7 @@ class FaucetService:
             state_after_success = json_loads(record["state_after_success_json"])
             updated = self.store.finalize_claim(
                 request_id=record["request_id"],
-                policy_id=record["policy_id"],
+                policy_id=record.get("policy_state_key") or record["policy_id"],
                 state_after_success=state_after_success,
                 finalized_at=self._now().isoformat(),
                 detail=result.detail,

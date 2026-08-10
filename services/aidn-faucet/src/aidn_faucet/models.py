@@ -112,6 +112,11 @@ class FaucetStatus(BaseModel, frozen=True):
     treasury_wallet_id: str
     policy_id: str
     policy_version: str
+    policy_registry_id: str | None = None
+    policy_registry_hash: str | None = None
+    policy_release_hash: str | None = None
+    policy_release_sequence: int | None = None
+    policy_effective_from: str | None = None
     agent_auth_required: bool
     paused: bool = False
     pause_reason: str | None = None

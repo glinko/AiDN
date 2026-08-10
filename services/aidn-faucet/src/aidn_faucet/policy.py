@@ -56,10 +56,14 @@ class FixedDailyPolicy(FaucetPolicy):
     policy_id = "fixed-daily"
     policy_version = FAUCET_POLICY_VERSION + ".fixed-daily.1"
 
-    def __init__(self, *, amount_q: int = 50) -> None:
+    def __init__(self, *, amount_q: int = 50, policy_version: str | None = None) -> None:
         if amount_q <= 0:
             raise ValueError("fixed daily amount must be positive")
         self.amount_q_atoms = amount_q * Q_ATOMS_PER_Q
+        if policy_version is not None:
+            if not policy_version.strip():
+                raise ValueError("fixed daily policy version must not be empty")
+            self.policy_version = policy_version
 
     def initial_state(self, *, now: datetime) -> dict[str, Any]:
         return {}
@@ -102,11 +106,21 @@ class AccumulatingPoolPolicy(FaucetPolicy):
     policy_id = "accumulating-pool"
     policy_version = FAUCET_POLICY_VERSION + ".accumulating-pool.1"
 
-    def __init__(self, *, rate_q: int = 5, interval_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        *,
+        rate_q: int = 5,
+        interval_seconds: int = 60,
+        policy_version: str | None = None,
+    ) -> None:
         if rate_q <= 0 or interval_seconds <= 0:
             raise ValueError("accumulating pool parameters must be positive")
         self.rate_q_atoms = rate_q * Q_ATOMS_PER_Q
         self.interval_seconds = interval_seconds
+        if policy_version is not None:
+            if not policy_version.strip():
+                raise ValueError("accumulating pool policy version must not be empty")
+            self.policy_version = policy_version
 
     def initial_state(self, *, now: datetime) -> dict[str, Any]:
         timestamp = now.astimezone(UTC).isoformat()

@@ -14,6 +14,11 @@ import uvicorn
 
 from aidn_faucet.api import build_app
 from aidn_faucet.policy import AccumulatingPoolPolicy, FixedDailyPolicy
+from aidn_faucet.policy_registry import (
+    FaucetPolicyRegistryRoot,
+    FaucetPolicyRelease,
+    validate_registry_for_manifest,
+)
 from aidn_faucet.service import FaucetService
 from aidn_faucet.store import FaucetStore
 from aidn_hypervisor.faucet_treasury import FaucetTreasuryManifest
@@ -71,11 +76,35 @@ def _serve(args: argparse.Namespace) -> int:
     from aidn_faucet.service import TreasurySigner
 
     signer = TreasurySigner.from_file(args.private_key, expected_public_key=manifest.wallet_public_key)
-    policy = (
-        FixedDailyPolicy(amount_q=args.daily_q)
-        if args.policy == "fixed-daily"
-        else AccumulatingPoolPolicy(rate_q=args.rate_q, interval_seconds=args.interval_seconds)
-    )
+    if (args.policy_registry_root is None) != (args.policy_release is None):
+        raise ValueError("--policy-registry-root and --policy-release must be provided together")
+    policy_registry_root = None
+    policy_release = None
+    if args.policy_registry_root is not None:
+        policy_registry_root = FaucetPolicyRegistryRoot.model_validate_json(
+            args.policy_registry_root.read_text(encoding="utf-8")
+        )
+        policy_release = FaucetPolicyRelease.model_validate_json(
+            args.policy_release.read_text(encoding="utf-8")
+        )
+        from datetime import UTC, datetime
+
+        policy = validate_registry_for_manifest(
+            policy_registry_root,
+            policy_release,
+            manifest=manifest,
+            now=datetime.now(UTC),
+        )
+    else:
+        print(
+            "WARNING: running a legacy direct Faucet policy without signed registry provenance",
+            file=sys.stderr,
+        )
+        policy = (
+            FixedDailyPolicy(amount_q=args.daily_q)
+            if args.policy == "fixed-daily"
+            else AccumulatingPoolPolicy(rate_q=args.rate_q, interval_seconds=args.interval_seconds)
+        )
     submitter = _load_factory(args.submitter_factory)(args)
     service = FaucetService(
         manifest=manifest,
@@ -85,6 +114,8 @@ def _serve(args: argparse.Namespace) -> int:
         submitter=submitter,
         agent_token=args.agent_token,
         creator_token=args.creator_token,
+        policy_registry_root=policy_registry_root,
+        policy_release=policy_release,
     )
     print(f"Faucet GUI:  http://{bind_host}:{args.port}/", file=sys.stderr)
     print(f"Faucet MCP:  http://{bind_host}:{args.port}/mcp", file=sys.stderr)
@@ -113,6 +144,16 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--daily-q", type=int, default=50)
     serve.add_argument("--rate-q", type=int, default=5)
     serve.add_argument("--interval-seconds", type=int, default=60)
+    serve.add_argument(
+        "--policy-registry-root",
+        type=Path,
+        help="creator-signed immutable policy registry root required by the Treasury manifest",
+    )
+    serve.add_argument(
+        "--policy-release",
+        type=Path,
+        help="creator-signed active policy release bound to the registry root",
+    )
     serve.add_argument(
         "--agent-token",
         default=os.environ.get("AIDN_FAUCET_AGENT_TOKEN"),
