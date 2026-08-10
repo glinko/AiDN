@@ -1,0 +1,23 @@
+[Unit]
+Description=AiDN External Faucet Treasury
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aidn-faucet
+Group=aidn-faucet
+WorkingDirectory=/opt/aidn/AiDN
+EnvironmentFile=/etc/aidn/faucet.env
+ExecStart=/opt/aidn/AiDN/services/aidn-faucet/.venv/bin/aidn-faucet serve --manifest /var/lib/aidn-faucet/credentials/faucet-treasury.json --private-key /var/lib/aidn-faucet/credentials/treasury.key --state /var/lib/aidn-faucet/faucet.sqlite --finality-config /etc/aidn/cometbft-finality.json
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/aidn-faucet
+
+[Install]
+WantedBy=multi-user.target

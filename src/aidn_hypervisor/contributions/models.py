@@ -215,6 +215,32 @@ class ContributorWalletBinding(BaseModel):
     binding_hash: str = Field(min_length=1)
 
 
+class ContributorWalletClaim(BaseModel):
+    """Signed wallet declaration committed in a merged repository revision."""
+
+    schema_version: Literal["aidn.contributor-wallet.v1"] = "aidn.contributor-wallet.v1"
+    contributor_id: str = Field(min_length=1)
+    source_platform_account: str = Field(min_length=1)
+    wallet_address: str = Field(min_length=1)
+    wallet_public_key: str = Field(min_length=1)
+    wallet_signature: str = Field(min_length=1)
+    binding_id: str | None = None
+    binding_hash: str | None = None
+    claim_hash: str = Field(min_length=1)
+
+    def unsigned_payload(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude={"wallet_signature", "claim_hash"})
+
+    def signed_payload(self) -> dict[str, Any]:
+        return {
+            "domain": "aidn.contributor-wallet-claim.v1",
+            **self.unsigned_payload(),
+        }
+
+    def expected_claim_hash(self) -> str:
+        return canonical_hash(self.model_dump(mode="json", exclude={"claim_hash"}))
+
+
 class ContributionGroup(BaseModel):
     contribution_group_id: str = Field(min_length=1)
     repository_id: str = Field(min_length=1)
@@ -288,6 +314,7 @@ class ContributionAttestation(BaseModel):
     file_changes: list[ContributionFileChange] = Field(default_factory=list)
     repository_profile_hash: str = Field(min_length=1)
     role_allocations: list[ContributionRoleAllocation] = Field(default_factory=list)
+    wallet_claim: ContributorWalletClaim | None = None
     eligibility_state: ContributionEligibilityState = "PENDING"
     wallet_state: Literal["VERIFIED", "UNCLAIMED"] = "UNCLAIMED"
     challenge_until_epoch: int = Field(ge=0)

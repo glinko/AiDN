@@ -3011,7 +3011,7 @@ def build_api_router(
         try:
             return service.claim_faucet_share()
         except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
+            raise HTTPException(status_code=410, detail=str(error)) from error
 
     @router.get("/operators/wallet/endpoints/publications")
     async def wallet_endpoint_publications(endpoint_id: str | None = None) -> dict:

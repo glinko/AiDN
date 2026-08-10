@@ -27,6 +27,10 @@ from aidn_hypervisor.consensus.state_store import (
     ABCIStateStore,
     ABCIStateStoreError,
 )
+from aidn_hypervisor.faucet_treasury import (
+    FaucetTreasuryManifest,
+    validate_faucet_treasury_manifest,
+)
 
 # Runtime evidence is persisted in the Hypervisor Ledger for local recovery,
 # but it is not a consensus transition. It must not change the CometBFT AppHash
@@ -110,6 +114,7 @@ class AIDNABCIApplication:
         admission_validator: AdmissionValidator | None = None,
         genesis_time: str | None = None,
         genesis_accounts: dict[str, int] | None = None,
+        genesis_treasury_manifest: dict | FaucetTreasuryManifest | None = None,
         state_store: ABCIStateStore | None = None,
         restore_state_from_store: bool = True,
         state_checkpoint_callback: Callable[[], None] | None = None,
@@ -129,13 +134,52 @@ class AIDNABCIApplication:
         self._restored_from_store = False
         self._pending_commit_snapshot: dict[str, Any] | None = None
         self._pending_commit_admission_state: dict[str, Any] | None = None
-
+        treasury_manifest = (
+            genesis_treasury_manifest
+            if isinstance(genesis_treasury_manifest, FaucetTreasuryManifest)
+            else FaucetTreasuryManifest.model_validate(genesis_treasury_manifest)
+            if genesis_treasury_manifest is not None
+            else None
+        )
+        self._genesis_treasury_manifest = (
+            treasury_manifest.model_dump(mode="json") if treasury_manifest is not None else None
+        )
+        if treasury_manifest is not None:
+            self.ledger.bind_faucet_treasury_manifest(treasury_manifest)
         persisted_snapshot = (
             state_store.load_current() if state_store is not None and restore_state_from_store else None
         )
+        # Genesis inputs are only applied while creating a new ABCI state. A
+        # restart must bind the configured manifest to the durable snapshot,
+        # never project its balance a second time.
+        if treasury_manifest is not None and persisted_snapshot is None:
+            genesis_accounts = dict(genesis_accounts or {})
+            treasury_accounts = (
+                treasury_manifest.genesis_accounts()
+                if treasury_manifest.funding_mode == "GENESIS"
+                else {}
+            )
+            for wallet_id, amount in treasury_accounts.items():
+                existing = genesis_accounts.get(wallet_id)
+                if existing is not None and existing != amount:
+                    raise ValueError("Genesis Treasury allocation conflicts with genesis account")
+                genesis_accounts[wallet_id] = amount
+
         if persisted_snapshot is not None:
             if genesis_accounts:
                 raise ValueError("genesis accounts cannot be applied over durable ABCI state")
+            snapshot_manifest = persisted_snapshot.get("genesis_treasury_manifest")
+            if snapshot_manifest is not None:
+                persisted_manifest = FaucetTreasuryManifest.model_validate(snapshot_manifest)
+                if (
+                    treasury_manifest is not None
+                    and persisted_manifest.manifest_hash != treasury_manifest.manifest_hash
+                ):
+                    raise ValueError("durable ABCI Treasury manifest does not match configured Genesis")
+                self._genesis_treasury_manifest = persisted_manifest.model_dump(mode="json")
+                self.ledger.bind_faucet_treasury_manifest(persisted_manifest)
+            elif treasury_manifest is not None:
+                raise ValueError("durable ABCI state is missing the configured Treasury manifest")
             result = self.apply_snapshot(persisted_snapshot)
             if result.code != "ok":
                 raise ABCIStateStoreError(result.log or "could not restore durable ABCI state")
@@ -683,6 +727,17 @@ class AIDNABCIApplication:
             seq = self.ledger.wallet_next_sequence(wallet_id)
             kwargs["key"] = f"wallet:{wallet_id}:sequence".encode()
             kwargs["value"] = str(seq).encode()
+        elif path == "faucet/treasury-manifest":
+            kwargs["key"] = b"faucet:treasury:manifest"
+            kwargs["value"] = (
+                json.dumps(
+                    self._genesis_treasury_manifest,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                if self._genesis_treasury_manifest is not None
+                else b""
+            )
         elif path.startswith("endpoint/publication/"):
             endpoint_id = path.removeprefix("endpoint/publication/")
             publication = self.ledger.canonical_endpoint_publication(endpoint_id)
@@ -705,7 +760,7 @@ class AIDNABCIApplication:
 
     def prepare_snapshot(self) -> dict:
         """Export application state for snapshot."""
-        return {
+        snapshot = {
             "app_version": self.APP_VERSION,
             "protocol_version": self.PROTOCOL_VERSION,
             "genesis_time": self._genesis_time,
@@ -719,6 +774,9 @@ class AIDNABCIApplication:
             "settlement_state": self.ledger.snapshot_settlement_state(),
             "consensus_state": self.ledger.snapshot_consensus_state(),
         }
+        if self._genesis_treasury_manifest is not None:
+            snapshot["genesis_treasury_manifest"] = dict(self._genesis_treasury_manifest)
+        return snapshot
 
     def apply_snapshot(self, snapshot: dict) -> ABCIResult:
         """Atomically restore application state from a verified snapshot."""
@@ -747,6 +805,19 @@ class AIDNABCIApplication:
         """Apply a parsed snapshot; caller owns rollback when validation fails."""
         if int(snapshot["app_version"]) != self.APP_VERSION:
             raise ValueError("snapshot application version is unsupported")
+        snapshot_manifest = snapshot.get("genesis_treasury_manifest")
+        if snapshot_manifest is not None:
+            manifest = validate_faucet_treasury_manifest(
+                FaucetTreasuryManifest.model_validate(snapshot_manifest)
+            )
+            if (
+                self._genesis_treasury_manifest is not None
+                and self._genesis_treasury_manifest["manifest_hash"] != manifest.manifest_hash
+            ):
+                raise ValueError("snapshot Treasury manifest does not match configured Genesis")
+            self._genesis_treasury_manifest = manifest.model_dump(mode="json")
+        elif self._genesis_treasury_manifest is not None:
+            raise ValueError("snapshot is missing the configured Treasury manifest")
         settlement_state = snapshot.get("settlement_state", {})
         self.ledger.restore(
             operations=snapshot.get("ledger_operations", []),
@@ -958,6 +1029,8 @@ class AIDNABCIApplication:
                 self.ledger.apply_consensus_session_failure_evidence(envelope)
             elif envelope.operation_type == "CONSENSUS_VALIDATOR_SET_UPDATE":
                 self.ledger.apply_consensus_validator_set_update(envelope)
+            elif envelope.operation_type == "TREASURY_FUND":
+                self.ledger.apply_consensus_treasury_fund(envelope)
             elif envelope.operation_type == "REWARD_MINT":
                 self.ledger.apply_consensus_reward_mint(
                     envelope,
@@ -1195,6 +1268,8 @@ class AIDNABCIApplication:
                 self.ledger.validate_consensus_session_failure_evidence(envelope)
             elif envelope.operation_type == "CONSENSUS_VALIDATOR_SET_UPDATE":
                 self.ledger.validate_consensus_validator_set_update(envelope)
+            elif envelope.operation_type == "TREASURY_FUND":
+                self.ledger.validate_consensus_treasury_fund(envelope)
             elif envelope.operation_type == "REWARD_MINT":
                 self.ledger.validate_consensus_reward_mint(
                     envelope,
@@ -1384,6 +1459,8 @@ class AIDNABCIApplication:
             or consensus_state["activated_validator_set_epochs"]
         ):
             state["consensus_state"] = consensus_state
+        if self._genesis_treasury_manifest is not None:
+            state["genesis_treasury_manifest"] = self._genesis_treasury_manifest
         canonical = json.dumps(state, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).digest()
 

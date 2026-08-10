@@ -27,6 +27,10 @@ class ConsensusFinalityEvidence:
     finalized_at: str
     verifier_id: str
     proof_version: str = "consensus-finality-evidence.v1"
+    # The transaction payload is already bound by operation_id. Keeping the
+    # decoded operation type here lets consumers reject a valid proof for the
+    # wrong protocol operation without trusting a caller-supplied label.
+    operation_type: str = ""
 
     def __post_init__(self) -> None:
         required_text = {
@@ -155,4 +159,5 @@ class QuorumConsensusFinalitySource:
             evidence.commit_hash,
             evidence.finalized_at,
             evidence.proof_version,
+            evidence.operation_type,
         )

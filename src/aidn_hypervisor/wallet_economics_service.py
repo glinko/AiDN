@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from aidn_hypervisor.economics.models import (
     EpochRewardBudget,
-    FaucetClaim,
     RecyclableRemoval,
 )
 from aidn_hypervisor.wallet import quote_usage_q
@@ -40,62 +37,20 @@ class WalletEconomicsService:
 
     def get_faucet_claim_preview(self) -> dict:
         owner_wallet = self._host.owner_wallet_state()
-        latest_budget = self._latest_epoch_reward_budget()
-        epoch_id = (
-            str(latest_budget["epoch_id"])
-            if latest_budget is not None and latest_budget.get("epoch_id") is not None
-            else None
-        )
-        share_q = float(latest_budget["faucet_share_q"]) if latest_budget is not None else 0.0
-        active_local_endpoint_count = self._active_local_endpoint_count()
-        claim = self._latest_faucet_claim(epoch_id)
-        claimed_q = round(float(claim["amount_q"]), 6) if claim is not None else 0.0
-        remaining_q = round(max(0.0, share_q - claimed_q), 6)
-
-        eligible = False
-        reason = "wallet_not_configured"
-        message = "Owner wallet is not configured"
-        if not owner_wallet["configured"]:
-            pass
-        elif latest_budget is None:
-            reason = "no_epoch_budget"
-            message = "No epoch reward budget has been derived yet"
-        elif active_local_endpoint_count <= 0:
-            reason = "no_active_endpoints"
-            message = "At least one active local endpoint is required for faucet eligibility"
-        elif share_q <= 0.0:
-            reason = "zero_share"
-            message = f"Faucet share is zero for epoch {epoch_id}"
-        elif claim is not None:
-            reason = "already_claimed"
-            message = f"Faucet share already claimed for epoch {epoch_id}"
-        else:
-            eligible = True
-            reason = "eligible"
-            message = f"Faucet share is available for epoch {epoch_id}"
-
         return {
-            "eligible": eligible,
-            "reason": reason,
-            "message": message,
-            "epoch_id": epoch_id,
+            "eligible": False,
+            "reason": "external_faucet_service_required",
+            "message": "Faucet claims are handled by the external services/aidn-faucet service",
+            "epoch_id": None,
             "wallet_id": owner_wallet["wallet_id"],
-            "share_q": share_q,
-            "claimed": claim is not None,
-            "claimed_q": claimed_q,
-            "remaining_q": remaining_q,
-            "active_local_endpoint_count": active_local_endpoint_count,
-            "active_hypervisor_count": (
-                int(latest_budget["active_hypervisor_count"])
-                if latest_budget is not None
-                else 0
-            ),
-            "faucet_budget_q": (
-                float(latest_budget["faucet_budget_q"])
-                if latest_budget is not None
-                else 0.0
-            ),
-            "claim": claim,
+            "share_q": 0.0,
+            "claimed": False,
+            "claimed_q": 0.0,
+            "remaining_q": 0.0,
+            "active_local_endpoint_count": 0,
+            "active_hypervisor_count": 0,
+            "faucet_budget_q": 0.0,
+            "claim": None,
         }
 
     def get_wallet_economics_summary(self, *, recent_limit: int = 10) -> dict:
@@ -135,18 +90,13 @@ class WalletEconomicsService:
         }
         faucet_preview = self.get_faucet_claim_preview()
         faucet = {
-            "carryover_q": float(latest_budget["faucet_carryover_q"])
-            if latest_budget is not None
-            else 0.0,
-            "budget_q": float(latest_budget["faucet_budget_q"])
-            if latest_budget is not None
-            else 0.0,
-            "active_hypervisor_count": int(latest_budget["active_hypervisor_count"])
-            if latest_budget is not None
-            else 0,
-            "share_q": float(latest_budget["faucet_share_q"])
-            if latest_budget is not None
-            else 0.0,
+            # Faucet economics are owned by the external Treasury service.
+            # Keep this legacy-shaped read model at zero so old dashboard
+            # clients cannot mistake an epoch allocation for claimable funds.
+            "carryover_q": 0.0,
+            "budget_q": 0.0,
+            "active_hypervisor_count": 0,
+            "share_q": 0.0,
             "claimed": bool(faucet_preview["claimed"]),
             "claimed_q": float(faucet_preview["claimed_q"]),
             "remaining_q": float(faucet_preview["remaining_q"]),
@@ -162,18 +112,14 @@ class WalletEconomicsService:
             "validation_budget_q": float(latest_budget["validation_budget_q"])
             if latest_budget is not None
             else 0.0,
-            "faucet_budget_q": float(latest_budget["faucet_budget_q"])
-            if latest_budget is not None
-            else 0.0,
+            "faucet_budget_q": 0.0,
         }
         latest_budget_breakdown = {
             "epoch_id": str(latest_budget["epoch_id"]) if latest_budget is not None else None,
             "total_authorized_q": float(latest_budget["total_authorized_q"])
             if latest_budget is not None
             else 0.0,
-            "faucet_share_q": float(latest_budget["faucet_share_q"])
-            if latest_budget is not None
-            else 0.0,
+            "faucet_share_q": 0.0,
         }
         return {
             "base_emission_q": self._host.base_emission_q,
@@ -194,93 +140,9 @@ class WalletEconomicsService:
         }
 
     def claim_faucet_share(self) -> dict:
-        preview = self.get_faucet_claim_preview()
-        if not preview["eligible"]:
-            raise ValueError(str(preview["message"]))
-
-        claim = FaucetClaim(
-            sequence_id=self._host._next_faucet_claim_sequence,
-            claim_id=str(uuid4()),
-            epoch_id=str(preview["epoch_id"]),
-            wallet_id=str(preview["wallet_id"]),
-            node_id=self._host.node_id,
-            operator_id=self._host.operator_id,
-            amount_q=float(preview["share_q"]),
-            active_local_endpoint_count=int(preview["active_local_endpoint_count"]),
-            claimed_at=datetime.now(UTC).isoformat(),
-        ).model_dump(mode="json")
-        self._host._faucet_claims.append(claim)
-        self._host._next_faucet_claim_sequence += 1
-        self.append_wallet_ledger_event(
-            stream="economics",
-            source_event={
-                "event_id": claim["claim_id"],
-                "sequence_id": claim["sequence_id"],
-                "occurred_at": claim["claimed_at"],
-                **claim,
-            },
-            event_type="faucet_claimed",
-            owner_id=str(claim["wallet_id"]),
-            status=str(claim["epoch_id"]),
-            amount_q=float(claim["amount_q"]),
+        raise ValueError(
+            "Core Faucet claims are disabled; use the external services/aidn-faucet service"
         )
-        self.append_wallet_economics_event(
-            event_type="faucet_claimed",
-            occurred_at=str(claim["claimed_at"]),
-            owner_id=str(claim["wallet_id"]),
-            status=str(claim["epoch_id"]),
-            amount_q=float(claim["amount_q"]),
-            payload=claim,
-        )
-        eligibility_snapshot_hash = hashlib.sha256(
-            json.dumps(
-                {
-                    "epoch_id": preview["epoch_id"],
-                    "wallet_id": preview["wallet_id"],
-                    "share_q": preview["share_q"],
-                    "active_local_endpoint_count": preview["active_local_endpoint_count"],
-                    "active_hypervisor_count": preview["active_hypervisor_count"],
-                },
-                sort_keys=True,
-            ).encode("utf-8")
-        ).hexdigest()
-        self._host.record_ledger_operation(
-            operation_type="FAUCET_CLAIM",
-            origin_type="wallet",
-            fee_class="faucet_exempt",
-            initiator_id=str(claim["wallet_id"]),
-            sender_wallet=str(claim["wallet_id"]),
-            fee_payer=str(claim["wallet_id"]),
-            payload={
-                "hypervisor_id": self._host.node_id,
-                "claim_epoch": str(preview["epoch_id"]),
-                "destination_wallet": str(claim["wallet_id"]),
-                "eligibility_snapshot_hash": f"sha256:{eligibility_snapshot_hash}",
-                "claim_id": str(claim["claim_id"]),
-                "amount_q": float(claim["amount_q"]),
-            },
-            created_at=str(claim["claimed_at"]),
-            emitted_events=["FaucetClaimed"],
-        )
-        self._host.record_ledger_operation(
-            operation_type="REWARD_MINT",
-            origin_type="protocol",
-            fee_class="protocol_sponsored",
-            initiator_id=str(claim["claim_id"]),
-            payload={
-                "reward_id": str(claim["claim_id"]),
-                "reward_type": "faucet",
-                "reward_epoch": str(preview["epoch_id"]),
-                "recipient_wallet": str(claim["wallet_id"]),
-                "amount": float(claim["amount_q"]),
-                "pool_id": "faucet",
-                "pool_budget_reference": str(preview["epoch_id"]),
-            },
-            created_at=str(claim["claimed_at"]),
-            emitted_events=["RewardMinted"],
-        )
-        self._host._persist_state()
-        return self.get_faucet_claim_preview()
 
     def export_wallet_usage_events(
         self,

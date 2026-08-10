@@ -11,6 +11,13 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from aidn_hypervisor.consensus.replay import FinalizedOperationRegistry
+from aidn_hypervisor.faucet_treasury import (
+    FAUCET_TREASURY_FUNDING_DOMAIN,
+    FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS,
+    FaucetTreasuryManifest,
+    faucet_treasury_funding_authorization_bytes,
+    wallet_id_for_public_key,
+)
 from aidn_hypervisor.ledger.models import (
     LedgerFeeClass,
     LedgerOperationRecord,
@@ -47,6 +54,7 @@ SESSION_SETTLEMENT_DISPUTE_OPERATION = "SESSION_SETTLEMENT_DISPUTE"
 SESSION_SETTLEMENT_PARTIAL_FINALIZE_OPERATION = "SESSION_SETTLEMENT_PARTIAL_FINALIZE"
 SESSION_SETTLEMENT_CORRECT_OPERATION = "SESSION_SETTLEMENT_CORRECT"
 CONSENSUS_PENALTY_APPLY_OPERATION = "PENALTY_APPLY"
+TREASURY_FUND_OPERATION = "TREASURY_FUND"
 OPERATOR_WALLET_BIND_OPERATION = "OPERATOR_WALLET_BIND"
 ENDPOINT_PUBLISH_OPERATION = "ENDPOINT_PUBLISH"
 VALIDATION_REPORT_COMMIT_OPERATION = "VALIDATION_REPORT_COMMIT"
@@ -195,6 +203,7 @@ class LedgerOperationService:
         self._development_reward_adjustment_snapshots: dict[str, dict] = {}
         self._development_reward_cancellations: dict[str, dict] = {}
         self._development_reward_corrections: dict[str, dict] = {}
+        self._faucet_treasury_manifest: dict | None = None
         self._active_validator_set: dict[str, dict] = {}
         self._active_validator_set_epoch: int | None = None
         self._activated_validator_set_epochs: set[int] = set()
@@ -220,6 +229,173 @@ class LedgerOperationService:
         remaining = balance - int(amount_q_atoms)
         self._wallet_q_atom_balances[wallet_id] = remaining
         return remaining
+
+    def bind_faucet_treasury_manifest(
+        self,
+        manifest: FaucetTreasuryManifest | dict,
+    ) -> None:
+        """Bind the configured public Treasury declaration to this Ledger."""
+
+        normalized = FaucetTreasuryManifest.model_validate(manifest).model_dump(mode="json")
+        existing = self._faucet_treasury_manifest
+        if existing is not None and existing.get("manifest_hash") != normalized["manifest_hash"]:
+            raise ValueError("Ledger Faucet Treasury manifest cannot be replaced")
+        self._faucet_treasury_manifest = normalized
+
+    def validate_consensus_treasury_fund(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Validate the one-time consensus funding transition for an existing network."""
+
+        if envelope.operation_type != TREASURY_FUND_OPERATION:
+            raise ValueError("Treasury funding requires TREASURY_FUND operation")
+        if envelope.origin_type != "protocol" or envelope.sender_wallet is not None:
+            raise ValueError("Treasury funding requires protocol origin")
+        if envelope.fee_payer is not None or envelope.fee_class != "protocol_sponsored":
+            raise ValueError("Treasury funding requires protocol-sponsored fee class")
+        if envelope.initiator_id != "faucet-treasury-funding":
+            raise ValueError("Treasury funding initiator is invalid")
+        if envelope.target_epoch is not None:
+            raise ValueError("Treasury funding cannot target an epoch")
+
+        manifest_data = self._faucet_treasury_manifest
+        if manifest_data is None:
+            raise ValueError("Treasury funding requires a configured Treasury manifest")
+        manifest = FaucetTreasuryManifest.model_validate(manifest_data)
+        if manifest.funding_mode != "CONSENSUS":
+            raise ValueError("Genesis-funded Treasury cannot be funded by consensus")
+
+        payload = dict(envelope.payload)
+        required_text = (
+            "funding_id",
+            "treasury_id",
+            "network_id",
+            "chain_id",
+            "treasury_wallet_id",
+            "treasury_public_key",
+            "creator_recovery_wallet",
+            "creator_recovery_public_key",
+            "treasury_manifest_hash",
+            "funding_mode",
+            "authorization_reference",
+            "authorization_signature",
+        )
+        for field_name in required_text:
+            value = payload.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"Treasury funding field is invalid: {field_name}")
+
+        amount = payload.get("amount")
+        if isinstance(amount, bool) or not isinstance(amount, int):
+            raise ValueError("Treasury funding amount is invalid")
+        if amount != FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS:
+            raise ValueError("Treasury funding amount must be exactly 10,000,000 Q")
+        if payload["funding_mode"] != "CONSENSUS":
+            raise ValueError("Treasury funding mode must be CONSENSUS")
+        if payload["funding_id"] != manifest.funding_operation_id:
+            raise ValueError("Treasury funding ID does not match the configured manifest")
+        if payload["treasury_id"] != manifest.treasury_id:
+            raise ValueError("Treasury funding treasury_id does not match the configured manifest")
+        if payload["network_id"] != manifest.network_id:
+            raise ValueError("Treasury funding network_id does not match the configured manifest")
+        if payload["chain_id"] != manifest.chain_id:
+            raise ValueError("Treasury funding chain_id does not match the configured manifest")
+        if payload["treasury_wallet_id"] != manifest.wallet_id:
+            raise ValueError("Treasury funding wallet does not match the configured manifest")
+        if payload["treasury_public_key"] != manifest.wallet_public_key:
+            raise ValueError("Treasury funding public key does not match the configured manifest")
+        if payload["creator_recovery_wallet"] != manifest.creator_recovery_wallet:
+            raise ValueError("Treasury funding recovery Wallet does not match the configured manifest")
+        if payload["treasury_manifest_hash"] != manifest.manifest_hash:
+            raise ValueError("Treasury funding manifest hash does not match the configured manifest")
+
+        creator_public_key = payload["creator_recovery_public_key"]
+        if not creator_public_key.startswith("ed25519:"):
+            raise ValueError("Treasury funding creator public key is invalid")
+        try:
+            creator_public_key_bytes = bytes.fromhex(creator_public_key.removeprefix("ed25519:"))
+        except ValueError as error:
+            raise ValueError("Treasury funding creator public key is invalid") from error
+        if len(creator_public_key_bytes) != 32:
+            raise ValueError("Treasury funding creator public key must contain 32 bytes")
+        try:
+            if wallet_id_for_public_key(creator_public_key) != payload["creator_recovery_wallet"]:
+                raise ValueError("Treasury funding creator public key does not match recovery Wallet")
+        except ValueError as error:
+            raise ValueError("Treasury funding creator public key is invalid") from error
+
+        treasury_public_key = payload["treasury_public_key"]
+        try:
+            treasury_public_key_bytes = bytes.fromhex(treasury_public_key.removeprefix("ed25519:"))
+        except ValueError as error:
+            raise ValueError("Treasury funding Treasury public key is invalid") from error
+        if len(treasury_public_key_bytes) != 32:
+            raise ValueError("Treasury funding Treasury public key must contain 32 bytes")
+        if wallet_id_for_public_key(treasury_public_key) != payload["treasury_wallet_id"]:
+            raise ValueError("Treasury funding Treasury public key does not match Wallet")
+
+        authorization_signature = payload["authorization_signature"]
+        if not authorization_signature.startswith("ed25519:"):
+            raise ValueError("Treasury funding authorization signature is invalid")
+        try:
+            authorization_signature_bytes = bytes.fromhex(
+                authorization_signature.removeprefix("ed25519:")
+            )
+            Ed25519PublicKey.from_public_bytes(creator_public_key_bytes).verify(
+                authorization_signature_bytes,
+                faucet_treasury_funding_authorization_bytes(payload),
+            )
+        except (ValueError, InvalidSignature) as error:
+            raise ValueError("Treasury funding authorization signature verification failed") from error
+
+        if len(envelope.signatures) != 1 or not envelope.signatures[0].startswith("ed25519:"):
+            raise ValueError("Treasury funding requires exactly one envelope signature")
+        try:
+            envelope_signature = bytes.fromhex(envelope.signatures[0].removeprefix("ed25519:"))
+            Ed25519PublicKey.from_public_bytes(creator_public_key_bytes).verify(
+                envelope_signature,
+                envelope.signing_bytes(),
+            )
+        except (ValueError, InvalidSignature) as error:
+            raise ValueError("Treasury funding envelope signature verification failed") from error
+
+        for operation in self._operations:
+            if operation.get("operation_type") != TREASURY_FUND_OPERATION:
+                continue
+            existing_payload = operation.get("payload") or {}
+            if existing_payload.get("funding_id") == payload["funding_id"]:
+                if existing_payload == payload:
+                    raise ValueError("Treasury funding is already committed")
+                raise ValueError("conflicting Treasury funding retry")
+            if existing_payload.get("treasury_id") == payload["treasury_id"]:
+                raise ValueError("Treasury has already been funded")
+            if existing_payload.get("treasury_wallet_id") == payload["treasury_wallet_id"]:
+                raise ValueError("Treasury Wallet has already been funded")
+
+        return {
+            "payload": payload,
+            "amount_q_atoms": amount,
+            "treasury_wallet_id": payload["treasury_wallet_id"],
+            "authorization_domain": FAUCET_TREASURY_FUNDING_DOMAIN,
+        }
+
+    def apply_consensus_treasury_fund(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Apply the one-time consensus funding transition exactly once."""
+
+        validated = self.validate_consensus_treasury_fund(envelope)
+        record = self.record_admitted_envelope(
+            envelope,
+            emitted_events=["FaucetTreasuryFunded"],
+        )
+        self.credit_wallet_q_atoms(
+            wallet_id=str(validated["treasury_wallet_id"]),
+            amount_q_atoms=int(validated["amount_q_atoms"]),
+        )
+        return record
 
     def validate_consensus_wallet_transfer(
         self,

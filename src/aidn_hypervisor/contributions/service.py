@@ -8,6 +8,7 @@ challenge decisions.  It has no Q balance and no Ledger write capability.
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 import secrets
 import subprocess
@@ -38,6 +39,7 @@ from aidn_hypervisor.contributions.models import (
     ContributorIdentity,
     ContributorWalletBinding,
     ContributorWalletBindingChallenge,
+    ContributorWalletClaim,
     EligibleRepository,
     RepositoryContributionProfile,
     RevertClassification,
@@ -82,6 +84,12 @@ def contributor_wallet_binding_payload(
             "binding_version": binding_version,
         }
     ).encode("utf-8")
+
+
+def contributor_wallet_claim_payload(claim: ContributorWalletClaim) -> bytes:
+    """Return the exact bytes signed by the wallet claim file owner."""
+
+    return canonical_json(claim.signed_payload()).encode("utf-8")
 
 
 def _parse_datetime(value: str) -> datetime:
@@ -151,6 +159,24 @@ class GitRepositoryMergeVerifier:
         if result.returncode != 0:
             raise ValueError("CONTRIBUTION_GIT_VERIFICATION_FAILED")
         return result.stdout.strip()
+
+    def read_file_at_commit(
+        self,
+        repository_path: Path | str,
+        *,
+        commit_hash: str,
+        path: str,
+    ) -> str | None:
+        """Read one fixed evidence file from the exact merged commit."""
+
+        repository = Path(repository_path)
+        if not path or path.startswith(("/", "\\")) or ".." in Path(path).parts:
+            raise ValueError("CONTRIBUTION_WALLET_CLAIM_PATH_INVALID")
+        self._validate_commit(commit_hash)
+        result = self._run(repository, "show", f"{commit_hash}:{path}")
+        if result.returncode != 0:
+            return None
+        return result.stdout
 
     def verify(
         self,
@@ -494,6 +520,66 @@ class ContributionAccountingService:
         )
         return binding
 
+    def _wallet_claim_from_commit(
+        self,
+        *,
+        repository_path: Path | str,
+        merge_commit_hash: str,
+        primary_contributor_id: str,
+        reward_metadata: dict[str, Any],
+    ) -> ContributorWalletClaim | None:
+        """Load and verify the contributor wallet declaration from Git."""
+
+        claim_path = reward_metadata.get(
+            "wallet_claim_path",
+            ".aidn/contributor-wallet.json",
+        )
+        if not isinstance(claim_path, str) or not claim_path.strip():
+            raise ValueError("CONTRIBUTION_WALLET_CLAIM_PATH_INVALID")
+        raw = self.git_verifier.read_file_at_commit(
+            repository_path,
+            commit_hash=merge_commit_hash,
+            path=claim_path,
+        )
+        if raw is None:
+            return None
+        try:
+            claim = ContributorWalletClaim.model_validate(json.loads(raw))
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise ValueError("CONTRIBUTION_WALLET_CLAIM_INVALID") from error
+        if claim.contributor_id != primary_contributor_id:
+            raise ValueError("CONTRIBUTION_WALLET_CLAIM_CONTRIBUTOR_MISMATCH")
+        contributor = self.store.contributors.get(primary_contributor_id)
+        if contributor is None:
+            raise ContributionNotFoundError("CONTRIBUTOR_NOT_REGISTERED")
+        if not contributor.has_platform_account(claim.source_platform_account):
+            raise ValueError("CONTRIBUTION_WALLET_CLAIM_PLATFORM_ACCOUNT_MISMATCH")
+        if claim.claim_hash != claim.expected_claim_hash():
+            raise ValueError("CONTRIBUTION_WALLET_CLAIM_HASH_INVALID")
+        _verify_wallet_signature(
+            public_key=claim.wallet_public_key,
+            signature=claim.wallet_signature,
+            payload=contributor_wallet_claim_payload(claim),
+        )
+        binding = next(
+            (
+                item
+                for item in self.store.wallet_bindings.values()
+                if item.contributor_id == claim.contributor_id
+                and item.source_platform_account == claim.source_platform_account
+                and item.wallet_address == claim.wallet_address
+                and item.wallet_public_key == claim.wallet_public_key
+            ),
+            None,
+        )
+        if binding is None:
+            raise ValueError("CONTRIBUTION_WALLET_BINDING_REQUIRED")
+        if claim.binding_id is not None and claim.binding_id != binding.binding_id:
+            raise ValueError("CONTRIBUTION_WALLET_CLAIM_BINDING_MISMATCH")
+        if claim.binding_hash is not None and claim.binding_hash != binding.binding_hash:
+            raise ValueError("CONTRIBUTION_WALLET_CLAIM_BINDING_MISMATCH")
+        return claim
+
     def attest_merge(
         self,
         *,
@@ -539,6 +625,13 @@ class ContributionAccountingService:
             allowed_branches=repository.protected_branches(),
             source_commit_hash=source_commit_hash,
         )
+        reward_metadata = dict(reward_metadata or {})
+        wallet_claim = self._wallet_claim_from_commit(
+            repository_path=repository_path,
+            merge_commit_hash=git_evidence["merge_commit_hash"],
+            primary_contributor_id=primary_contributor_id,
+            reward_metadata=reward_metadata,
+        )
         normalized_changes = [
             item if isinstance(item, ContributionFileChange) else ContributionFileChange.model_validate(item)
             for item in file_changes
@@ -546,7 +639,6 @@ class ContributionAccountingService:
         factors = factor_values or ContributionFactorValues()
         scoring = score_contribution_changes(normalized_changes, profile, factors)
         coauthors = list(coauthors or [])
-        reward_metadata = dict(reward_metadata or {})
         merge_payload = {
             "repository_id": repository_id,
             "pull_request_id": pull_request_id,
@@ -623,6 +715,7 @@ class ContributionAccountingService:
                 "merge_event": merge_event.model_dump(mode="json"),
                 "git_evidence": git_evidence,
                 "file_changes": [item.model_dump(mode="json") for item in normalized_changes],
+                "wallet_claim": wallet_claim.model_dump(mode="json") if wallet_claim else None,
             }
         )
         if contribution_id in self.store.attestations:
@@ -637,7 +730,7 @@ class ContributionAccountingService:
                 "factors": factors.model_dump(mode="json"),
             }
         )
-        wallet_state = "VERIFIED" if primary.current_wallet_address else "UNCLAIMED"
+        wallet_state = "VERIFIED" if wallet_claim or primary.current_wallet_address else "UNCLAIMED"
         attestation_payload = {
             "contribution_id": contribution_id,
             "repository_id": repository_id,
@@ -653,6 +746,7 @@ class ContributionAccountingService:
             "file_changes": [item.model_dump(mode="json") for item in normalized_changes],
             "repository_profile_hash": profile.profile_hash,
             "role_allocations": [item.model_dump(mode="json") for item in allocations],
+            "wallet_claim": wallet_claim.model_dump(mode="json") if wallet_claim else None,
             "eligibility_state": "ELIGIBLE",
             "wallet_state": wallet_state,
             "challenge_until_epoch": contribution_epoch + 1,

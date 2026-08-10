@@ -23,6 +23,14 @@ from aidn_hypervisor.contributions.service import (
     ContributionConflictError,
     ContributionNotFoundError,
 )
+from aidn_hypervisor.reward.development_activation import DevelopmentRewardActivationApproval
+from aidn_hypervisor.reward.development_contribution_service import (
+    DevelopmentContributionRewardService,
+)
+from aidn_hypervisor.reward.development_distribution import (
+    DevelopmentPoolInput,
+    DevelopmentRewardPolicy,
+)
 
 
 class WalletChallengeRequest(BaseModel):
@@ -98,6 +106,20 @@ class MaturityRequest(BaseModel):
     revert_classification: str | None = None
 
 
+class RewardPreviewRequest(BaseModel):
+    pool_input: DevelopmentPoolInput
+    contribution_ids: list[str] | None = None
+    policy: DevelopmentRewardPolicy | None = None
+
+
+class RewardPlanRequest(RewardPreviewRequest):
+    activation_approval: DevelopmentRewardActivationApproval
+    current_epoch: int = Field(ge=0)
+    source_epoch_transition_operation_id: str = Field(min_length=1)
+    pool_budget_reference: str = Field(min_length=1)
+    created_at: str = Field(min_length=1)
+
+
 def _error_response(error: Exception) -> JSONResponse:
     if isinstance(error, ContributionNotFoundError):
         status_code = 404
@@ -116,8 +138,10 @@ def _error_response(error: Exception) -> JSONResponse:
 
 def build_contribution_router(
     service: ContributionAccountingService,
+    reward_service: DevelopmentContributionRewardService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/contributions", tags=["contributions"])
+    reward_planner = reward_service or DevelopmentContributionRewardService(service)
 
     @router.get("/status")
     async def status() -> dict[str, object]:
@@ -126,7 +150,39 @@ def build_contribution_router(
             "emits_q": False,
             "ledger_writes": False,
             "protocol": "RFC-0068",
+            "reward_preview": True,
+            "reward_execution": "ECO-0007_CONSENSUS_GATED",
         }
+
+    @router.post("/rewards/preview", response_model=None)
+    async def reward_preview(payload: RewardPreviewRequest) -> dict[str, Any] | JSONResponse:
+        try:
+            return reward_planner.preview(
+                pool_input=payload.pool_input,
+                contribution_ids=payload.contribution_ids,
+                policy=payload.policy,
+            ).model_dump(mode="json")
+        except (ContributionNotFoundError, ValueError) as error:
+            return _error_response(error)
+
+    @router.post("/rewards/plan", response_model=None)
+    async def reward_plan(payload: RewardPlanRequest) -> dict[str, Any] | JSONResponse:
+        try:
+            preview = reward_planner.preview(
+                pool_input=payload.pool_input,
+                contribution_ids=payload.contribution_ids,
+                policy=payload.policy,
+            )
+            return reward_planner.build_consensus_plan(
+                preview,
+                activation_approval=payload.activation_approval,
+                current_epoch=payload.current_epoch,
+                source_epoch_transition_operation_id=payload.source_epoch_transition_operation_id,
+                pool_budget_reference=payload.pool_budget_reference,
+                created_at=payload.created_at,
+            ).model_dump(mode="json")
+        except (ContributionNotFoundError, ValueError) as error:
+            return _error_response(error)
 
     @router.get("/repositories")
     async def repositories() -> list[dict[str, Any]]:

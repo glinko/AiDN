@@ -123,6 +123,7 @@ class ExecutionEngine:
         "CONSENSUS_VALIDATOR_SET_UPDATE": 200,
         "EPOCH_TASK": 150,
         "EPOCH_TRANSITION": 200,
+        "TREASURY_FUND": 250,
         "REWARD_MINT": 250,
         "SERVICE_VERIFICATION_COMMIT": 200,
         "REPUTATION_PROFILE_UPDATE": 250,
@@ -351,6 +352,10 @@ class ExecutionEngine:
                             )
                         elif result.envelope.operation_type == "CONSENSUS_VALIDATOR_SET_UPDATE":
                             self.ledger.apply_consensus_validator_set_update(
+                                result.envelope,
+                            )
+                        elif result.envelope.operation_type == "TREASURY_FUND":
+                            self.ledger.apply_consensus_treasury_fund(
                                 result.envelope,
                             )
                         elif result.envelope.operation_type == "PENALTY_APPLY":
@@ -1167,6 +1172,17 @@ class ExecutionEngine:
                     )
                 )
                 emitted.append("ValidatorSetUpdateScheduled")
+            elif envelope.operation_type == "TREASURY_FUND":
+                self.ledger.validate_consensus_treasury_fund(envelope)
+                state_changes.append(
+                    StateChange(
+                        entity_type="wallet",
+                        entity_id=str(envelope.payload["treasury_wallet_id"]),
+                        change_type="credit",
+                        after={"amount_q_atoms": int(envelope.payload["amount"])},
+                    )
+                )
+                emitted.append("FaucetTreasuryFunded")
             elif envelope.operation_type == "PENALTY_APPLY":
                 self.ledger.validate_consensus_penalty_apply(
                     envelope,

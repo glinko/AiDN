@@ -29,6 +29,10 @@ from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.endpoints.api import build_endpoint_router
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
+from aidn_hypervisor.faucet_treasury import (
+    FaucetTreasuryManifest,
+    validate_faucet_treasury_manifest,
+)
 from aidn_hypervisor.mcp import (
     McpPersistentStateStore,
     McpRemoteGateway,
@@ -910,6 +914,7 @@ def _build_default_consensus_service(
         state_migrated = True
 
     genesis_accounts = _consensus_genesis_accounts()
+    genesis_treasury_manifest = _consensus_genesis_treasury_manifest(chain_id=config.chain_id)
     # Hypervisor state is restored before ABCI bootstrap.  Never reapply the
     # disposable test genesis over an already populated local Ledger during a
     # validator restart.
@@ -919,6 +924,7 @@ def _build_default_consensus_service(
     consensus.bootstrap_validator_abci(
         ledger_service=hypervisor_service.ledger_operation_service,
         genesis_accounts=genesis_accounts,
+        genesis_treasury_manifest=genesis_treasury_manifest,
         restore_state_from_store=False,
         state_checkpoint_callback=hypervisor_service._persist_state,
     )
@@ -970,6 +976,33 @@ def _consensus_genesis_accounts() -> dict[str, int] | None:
             raise ValueError("AIDN_CONSENSUS_GENESIS_ACCOUNTS_JSON contains invalid account")
         accounts[wallet_id] = amount
     return accounts
+
+
+def _consensus_genesis_treasury_manifest(*, chain_id: str) -> dict | None:
+    """Load the secret-free Faucet Treasury Genesis declaration.
+
+    The Faucet policy service and its signer remain external to this process;
+    only the initial ordinary Wallet balance is projected into the Ledger.
+    """
+
+    raw_path = os.getenv("AIDN_FAUCET_TREASURY_GENESIS_MANIFEST")
+    if not raw_path:
+        return None
+    path = Path(raw_path).expanduser()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise ValueError("AIDN_FAUCET_TREASURY_GENESIS_MANIFEST cannot be read") from error
+    except json.JSONDecodeError as error:
+        raise ValueError("AIDN_FAUCET_TREASURY_GENESIS_MANIFEST must contain valid JSON") from error
+    if not isinstance(raw, dict):
+        raise ValueError("AIDN_FAUCET_TREASURY_GENESIS_MANIFEST must contain an object")
+    manifest = FaucetTreasuryManifest.model_validate(raw)
+    return validate_faucet_treasury_manifest(
+        manifest,
+        expected_network_id=os.getenv("AIDN_NETWORK_ID") or None,
+        expected_chain_id=chain_id,
+    ).model_dump(mode="json")
 
 
 def _default_bundle_registry(plugins: PluginRegistry) -> FileBundleRegistry:

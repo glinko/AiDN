@@ -1,6 +1,5 @@
-from aidn_hypervisor.endpoints.models import CreateEndpointCommand
-from aidn_hypervisor.endpoints.service import EndpointService
-from aidn_hypervisor.endpoints.store import EndpointStore
+import pytest
+
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
@@ -200,25 +199,25 @@ def test_economics_summary_aggregates_removals_and_latest_budget() -> None:
         "recyclable_amount_q": 535.0,
     }
     assert summary["faucet"] == {
-        "carryover_q": 40.0,
-        "budget_q": 593.5,
-        "active_hypervisor_count": 25,
-        "share_q": 23.74,
+        "carryover_q": 0.0,
+        "budget_q": 0.0,
+        "active_hypervisor_count": 0,
+        "share_q": 0.0,
         "claimed": False,
         "claimed_q": 0.0,
-        "remaining_q": 23.74,
+        "remaining_q": 0.0,
         "claim": None,
     }
     assert summary["pools"] == {
         "consensus_budget_q": 1660.5,
         "registry_budget_q": 1660.5,
         "validation_budget_q": 1660.5,
-        "faucet_budget_q": 593.5,
+        "faucet_budget_q": 0.0,
     }
     assert summary["latest_budget_breakdown"] == {
         "epoch_id": "epoch-11",
         "total_authorized_q": 5535.0,
-        "faucet_share_q": 23.74,
+        "faucet_share_q": 0.0,
     }
 
 
@@ -269,88 +268,23 @@ def test_economics_export_stitches_removals_and_epoch_budgets() -> None:
     assert exported["cursor_status"] == "ok"
 
 
-def test_faucet_claim_updates_summary_and_economics_export() -> None:
+def test_core_faucet_claim_is_disabled() -> None:
     service = _service()
-    endpoint_service = EndpointService(EndpointStore())
-    service.endpoint_service = endpoint_service
     service.configure_owner_wallet(mode="create", label="Primary Wallet")
-    created = endpoint_service.create_endpoint(
-        CreateEndpointCommand(
-            owner_wallet=service.owner_wallet_state()["wallet_id"],
-            bundle_id="bundle-a",
-            bundle_hash="bundle-hash-a",
-            display_name="Active Endpoint",
-            model_class="llm_text",
-            capabilities=["llm_text.generate"],
-        )
-    )
-    endpoint_service.start_endpoint(created.endpoint.endpoint_id)
-    service.derive_epoch_reward_budget(
-        epoch_id="epoch-21",
-        source_epoch_id="epoch-20",
-        active_hypervisor_count=4,
-    )
 
     preview = service.get_faucet_claim_preview()
-    claimed = service.claim_faucet_share()
-    summary = service.get_wallet_economics_summary()
-    exported = service.export_wallet_economics_events(limit=10)
 
-    assert preview["eligible"] is True
-    assert preview["reason"] == "eligible"
-    assert preview["share_q"] == 125.0
-    assert preview["active_local_endpoint_count"] == 1
-    assert claimed["claimed"] is True
-    assert claimed["eligible"] is False
-    assert claimed["reason"] == "already_claimed"
-    assert claimed["claimed_q"] == 125.0
-    assert claimed["remaining_q"] == 0.0
-    assert claimed["claim"]["epoch_id"] == "epoch-21"
-    assert claimed["claim"]["amount_q"] == 125.0
-    assert summary["faucet"]["share_q"] == 125.0
-    assert summary["faucet"]["claimed"] is True
-    assert summary["faucet"]["claimed_q"] == 125.0
-    assert summary["faucet"]["remaining_q"] == 0.0
-    assert summary["faucet"]["claim"]["claim_id"] == claimed["claim"]["claim_id"]
-    assert [item["event_type"] for item in exported["items"]] == [
-        "epoch_reward_budget_derived",
-        "faucet_claimed",
-    ]
-    assert exported["items"][-1]["payload"]["claim_id"] == claimed["claim"]["claim_id"]
+    assert preview["eligible"] is False
+    assert preview["reason"] == "external_faucet_service_required"
+    with pytest.raises(ValueError, match="external services/aidn-faucet"):
+        service.claim_faucet_share()
 
 
-def test_faucet_claim_records_protocol_reward_mint() -> None:
+def test_core_faucet_claim_does_not_record_a_ledger_operation() -> None:
     service = _service()
-    endpoint_service = EndpointService(EndpointStore())
-    service.endpoint_service = endpoint_service
-    service.configure_owner_wallet(mode="create", label="Primary Wallet")
-    created = endpoint_service.create_endpoint(
-        CreateEndpointCommand(
-            owner_wallet=service.owner_wallet_state()["wallet_id"],
-            bundle_id="bundle-a",
-            bundle_hash="bundle-hash-a",
-            display_name="Active Endpoint",
-            model_class="llm_text",
-            capabilities=["llm_text.generate"],
-        )
-    )
-    endpoint_service.start_endpoint(created.endpoint.endpoint_id)
-    service.derive_epoch_reward_budget(
-        epoch_id="epoch-21",
-        source_epoch_id="epoch-20",
-        active_hypervisor_count=4,
-    )
-
-    claimed = service.claim_faucet_share()
-    operation = service.list_ledger_operations()[-1]
-
-    assert claimed["claim"]["amount_q"] == 125.0
-    assert operation["operation_type"] == "REWARD_MINT"
-    assert operation["origin_type"] == "protocol"
-    assert operation["payload"]["reward_type"] == "faucet"
-    assert operation["payload"]["reward_epoch"] == "epoch-21"
-    assert operation["payload"]["recipient_wallet"] == service.owner_wallet_state()["wallet_id"]
-    assert operation["payload"]["amount"] == 125.0
+    with pytest.raises(ValueError, match="external services/aidn-faucet"):
+        service.claim_faucet_share()
+    assert service.list_ledger_operations() == []
 
 
 def test_faucet_preview_reports_ineligible_without_active_endpoint() -> None:
@@ -365,9 +299,9 @@ def test_faucet_preview_reports_ineligible_without_active_endpoint() -> None:
     preview = service.get_faucet_claim_preview()
 
     assert preview["eligible"] is False
-    assert preview["reason"] == "no_active_endpoints"
+    assert preview["reason"] == "external_faucet_service_required"
     assert preview["claimed"] is False
-    assert preview["remaining_q"] == 125.0
+    assert preview["remaining_q"] == 0.0
 
 
 def test_derive_epoch_reward_budget_records_protocol_epoch_transition() -> None:

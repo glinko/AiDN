@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-05`
+Last updated: `2026-08-10`
 
 This is the main public roadmap for the repository.
 
@@ -17,7 +17,7 @@ Paid endpoint consumption and client-facing execution economics must also stay a
 
 Network-wide economic assumptions, `Q` utility, Session deposits, Network Fees, and operator reward boundaries must also stay aligned with [docs/product/ECO-0000-economic-principles.md](./docs/product/ECO-0000-economic-principles.md).
 
-Epoch reward allocation, recyclable fee/removal handling, Faucet carryover, and service-pool competition must also stay aligned with [docs/product/ECO-0005-q-emission-recycling-and-epoch-reward-allocation.md](./docs/product/ECO-0005-q-emission-recycling-and-epoch-reward-allocation.md).
+Epoch reward allocation, recyclable fee/removal handling, and service-pool competition must stay aligned with [docs/product/ECO-0005-q-emission-recycling-and-epoch-reward-allocation.md](./docs/product/ECO-0005-q-emission-recycling-and-epoch-reward-allocation.md). The external Faucet Treasury, its replaceable payout policy, its dedicated supply boundary, and canonical activation proof must stay aligned with [docs/product/ECO-0008-faucet-treasury-and-policy-execution.md](./docs/product/ECO-0008-faucet-treasury-and-policy-execution.md) and [ECO-0009](./docs/product/ECO-0009-treasury-activation-and-canonical-funding-proof.md).
 
 Service-pool weight formulas, diversity controls, concentration caps, and deterministic reward-mint derivation must also stay aligned with [docs/product/ECO-0004-protocol-service-reward-distribution.md](./docs/product/ECO-0004-protocol-service-reward-distribution.md).
 
@@ -25,7 +25,7 @@ Consensus Stake, active-set selection, equal voting power, validator rotation, u
 
 Wallet ownership, signing semantics, and the separation between Wallet identity and Hypervisor node identity must also stay aligned with [docs/product/RFC-0016-wallet-and-identity.md](./docs/product/RFC-0016-wallet-and-identity.md).
 
-Participant eligibility, reward-bound identity layers, Faucet anti-Sybil constraints, and future reward/voting concentration controls must also stay aligned with [docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md](./docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md).
+Participant eligibility, reward-bound identity layers, Faucet claimant anti-abuse constraints, and future reward/voting concentration controls must also stay aligned with [docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md](./docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md) and ECO-0008.
 
 Validation-status issuance, maintenance revalidation, and Validator incentives must also stay aligned with [docs/product/ECO-0003-validation-economics.md](./docs/product/ECO-0003-validation-economics.md).
 
@@ -205,11 +205,11 @@ Product alignment summary:
 - the next product-critical gap is no longer the bare first-run bootstrap loop or shell ownership ambiguity, but trust/reputation publication and endpoint lifecycle depth on top of the consolidated operator surface;
 - endpoint publication is now a first trust layer, and paid consumption now has a working first Session contract;
 - validation economics and maintenance-validation policy are now defined at the product level, and the first computed reputation publication layer now projects trust through registry, discovery, and operator market surfaces;
-- epoch reward allocation, recyclable protocol removals, and Faucet carryover are now defined at the product level, so upcoming consensus/registry reward work can land on one supply model instead of mixing direct fee passthrough with pool-based issuance;
+- epoch reward allocation and recyclable protocol removals are now defined at the product level, while Faucet payouts are explicitly owned by the separate Treasury service and do not enter epoch pool allocation;
 - service-pool reward formulas are now documented in `ECO-0004`, so future Consensus, Registry, and Validation reward implementation can share one deterministic weighting, diversity, and cap model instead of embedding separate payout heuristics in each subsystem;
 - consensus validator economics are now documented in `ECO-0006`, so future Validator Set selection, equal voting-power enforcement, Stake lifecycle, downtime handling, and slashing implementation can build on one deterministic eligibility model instead of scattering security rules across consensus adapters and app logic;
-- participant identity hierarchy, Hypervisor/Service eligibility states, and anti-Sybil design constraints are now documented in `RFC-0058`, so future Faucet, Registry, Validation, and Consensus reward work can share one eligibility model instead of each inventing local heuristics;
-- the canonical Ledger operation inventory is now documented in `RFC-0059`, so future consensus, settlement, reward, Faucet, validation, and suspension work can land on one state-transition catalog instead of duplicating operation semantics across RFCs;
+- participant identity hierarchy, Hypervisor/Service eligibility states, and anti-Sybil design constraints are now documented in `RFC-0058`; the external Faucet additionally uses signed Wallet proof, quota state, and Treasury policy from `ECO-0008`;
+- the canonical Ledger operation inventory is now documented in `RFC-0059`, so consensus, settlement, reward, external Faucet Treasury funding, validation, and suspension work can land on one state-transition catalog instead of duplicating operation semantics across RFCs;
 - the Capability Runtime service model is now documented in `RFC-0053`, so future runtime packaging, runtime authorization, runtime replacement, and multi-runtime capability work can share one architectural contract before wire-level protocol details;
 - the Hypervisor-to-Runtime boundary is now documented in `RFC-0054`, and its first durable protocol core now enforces approved Binding/route identity, handshake version negotiation, semantic replay protection, Request admission/idempotency, Usage chains and explicit recovery plans/results;
 - the first `MCP-0001` node-control slice is now implemented as a local stdio JSON-RPC server plus an opt-in bearer-token HTTP gateway over the existing Hypervisor service. It exposes scope-filtered read models and Bundle plan/apply mutations with persistent Control Sessions, atomic plans/idempotency, revision checks, hash-linked audit events, a separate operator approval channel, and an operator emergency stop. The production HTTP profile now adds mandatory mTLS, TLS 1.2+, HTTPS enforcement, private-key permission checks, a single-worker launcher, Secret Manager-backed TLS handles, hash-only rotation detection, valid-bundle gating, and graceful certificate reload; QUIC hardening, shell execution, wallet signing, public Endpoint actions, and consensus writes remain deferred. See [the MCP implementation profile](./docs/product/MCP-0001-node-control-server-implementation-profile.md) and [the quickstart](./docs/development/mcp-server-quickstart.md);
@@ -471,7 +471,7 @@ What is still missing in the current stage:
     the remaining declared operation transitions and external multi-validator
     rollout remain separate public-network work.
 - implementation of `RFC-0059` is also still pending beyond partial local scaffolding:
-  - a canonical local ledger-operation stream now exists for Faucet, session, validation, endpoint lifecycle, endpoint Advertisement and Offer publication, epoch transition, and faucet reward mint flows;
+  - a canonical local ledger-operation stream now covers session, validation, endpoint lifecycle, endpoint Advertisement and Offer publication, epoch transition, reward mint, ordinary Wallet transfer, and dedicated Faucet Treasury funding; the deprecated in-core Faucet Claim path is inactive;
   - the Ledger now derives a deterministic finalized-operation replay registry
     from that canonical stream, binding operation ID, type, sequence and full
     record digest; duplicate IDs, conflicting identities and duplicate
@@ -939,8 +939,8 @@ Order of work right now:
 
 This work is intentionally outside the functional MVP. It must not alter current Endpoint economics, escrow, or Validator rewards until its independent Governance and tokenomics decisions are approved.
 
-1. Implement [RFC-0068](./docs/product/RFC-0068-development-contribution-accounting-and-attribution-protocol.md) in a non-emitting evidence mode: eligible repositories, protected-branch merge verification, Contributor Identity, signed Wallet binding, contribution attestations, ECU/CU calculation, contributor groups, role allocation, challenge windows, and maturity records. The first executable slice is complete and documented in [rfc-0068-evidence-mode.md](./docs/development/rfc-0068-evidence-mode.md); it is intentionally isolated from Q and Ledger writes.
-2. Approve [ECO-0007](./docs/product/ECO-0007-development-reward-pool-and-distribution-policy.md) before any development-reward transfer. The non-emitting fixed-point simulator and the deterministic 11-scenario launch matrix are implemented and documented in [eco-0007-simulation.md](./docs/development/eco-0007-simulation.md); the policy remains a draft and activation still requires Governance approval and parameter selection.
+1. Implement [RFC-0068](./docs/product/RFC-0068-development-contribution-accounting-and-attribution-protocol.md) with an evidence-first boundary: eligible repositories, protected-branch merge verification, Contributor Identity, signed Wallet binding, immutable merged-commit Wallet claims, contribution attestations, ECU/CU calculation, contributor groups, role allocation, challenge windows, and maturity records. The executable slice is documented in [rfc-0068-evidence-mode.md](./docs/development/rfc-0068-evidence-mode.md); GitHub evidence still cannot mint Q.
+2. Approve [ECO-0007](./docs/product/ECO-0007-development-reward-pool-and-distribution-policy.md) before any development-reward transfer. The fixed-point simulator, deterministic launch matrix, and RFC-0068-to-ECO-0007 preview/consensus-plan bridge are implemented and documented in [development-contribution-reward-bridge.md](./docs/development/development-contribution-reward-bridge.md); activation still requires Governance approval and parameter selection.
 3. Implemented the non-emitting Governance activation gate in `reward/development_activation.py`. It binds an exact ECO-0007 policy hash to an effective epoch, authority set, quorum, and Ed25519 approvals; it rejects missing approvals, mismatched policy versions, premature epochs, revoked approvals, and invalid signatures before any Ledger integration.
 4. The non-emitting dry-run commitment builder is implemented for policy, pool, allocation, schedule, and payment-state roots; it remains explicitly simulation-only and cannot reserve or transfer Q.
 5. `DEVELOPMENT_REWARD_CALCULATE` now commits a self-contained, activation-bound calculation as non-emitting Ledger evidence in both ABCI and deterministic execution; it cannot reserve, mint or transfer Q.
@@ -983,10 +983,71 @@ This work is intentionally outside the functional MVP. It must not alter current
     valid transaction. This evidence is intentionally not a substitute for
     live multi-validator or independent operator evidence.
 
+21. Added the immutable merged-commit Wallet claim verifier and the
+    `DevelopmentContributionRewardService`, plus
+    `tools/create-contributor-wallet-claim.py`. Finalized RFC-0068
+    attestations now produce an ECO-0007 preview and an activation/pool-bound
+    ordered operation plan. The plan is inspectable but not submitted by the
+    HTTP evidence API; live payout requires Governance activation and
+    finalized epoch evidence.
+22. Added the external `services/aidn-faucet` implementation slice for
+    ECO-0008: hash-bound Treasury manifest loading, fixed-daily and
+    accumulating policies, signed Wallet challenges, SQLite idempotency,
+    signed ordinary `WALLET_TRANSFER` envelopes, and explicit admitted versus
+    finalized claim handling. The service now also ships a CometBFT submission
+    adapter with exact-envelope RPC failover, canonical sequence/balance
+    quorum reads, verified finality reconciliation, and separate creator
+    pause/resume/low-balance controls. The CLI now has a built-in production
+    factory that binds the manifest to an operator-approved multi-RPC finality
+    file, and exposes consensus rejection separately from transport
+    unavailability. Signer rotation remains a new Treasury lineage, not an
+    online mutable setting.
+23. Added the one-time `TREASURY_FUND` consensus transition for an already
+    finalized network. It requires a configured CONSENSUS Treasury manifest,
+    exact `10,000,000 Q`, creator/recovery authorization, envelope
+    authentication and replay-safe Treasury identity checks. A signed envelope
+    can be generated with `tools/create-faucet-treasury-funding.py`; it is not
+    submitted by the tool.
+24. Added a separate Faucet control plane: an authenticated `/mcp` endpoint
+    with agent/creator tool separation, auto-renewing bearer-bound MCP
+    sessions, status/policy resources, creator pause/resume/watermark controls,
+    sanitized claim inspection and exact-claim reconciliation. Added a minimal
+    responsive creator UI at `/`; its token remains browser-memory-only and it
+    never exposes Treasury key material or signed envelopes.
+25. Added ECO-0009 and the canonical Treasury activation boundary. The Faucet
+    now fails closed unless a hash-bound proof matches the manifest, chain and
+    Wallet, proves the exact finalized `TREASURY_FUND` (or canonical Genesis
+    manifest), and includes a quorum-consistent current balance. The ABCI
+    application exposes the canonical `faucet/treasury-manifest` query and the
+    Faucet UI reports activation state and its diagnostic reason.
+
 ### Current post-MVP implementation gate
 
 - [x] ECO-0007 carryover and bounty lifecycle transitions are consensus-applied and persisted.
 - [x] ECO-0007 unvested cancellation and correction transitions are consensus-applied, append-only, and persisted.
+- [x] Define ECO-0008 and bind the secret-free Faucet Treasury manifest into
+  Genesis or the one-time consensus funding boundary. The Faucet policy
+  remains outside Hypervisor/Ledger and spends only through signed canonical
+  `WALLET_TRANSFER` operations.
+- [x] Implement the external Faucet policy/signing/idempotency slice under
+  `services/aidn-faucet`, including the default CometBFT submitter/finality
+  wiring, exact-envelope failover, creator controls, and explicit rejection
+  diagnostics.
+- [x] Add the separate Faucet MCP and minimal creator UI surfaces with
+  token-separated agent/creator capabilities and no secret-material exposure.
+- [x] Add ECO-0009 Treasury activation proof, canonical Genesis manifest query,
+  exact consensus funding-operation binding and fail-closed claim enforcement.
+- [ ] Verify Treasury activation and one payout against a live canonical
+  multi-validator network; local manifests and local balances are not evidence.
+- [ ] Prove Faucet payout finality across at least two validators, including
+  restart/reconciliation and exact-envelope RPC failover evidence. The
+  submitter/finality adapter implementation is complete; this remains a live
+  deployment gate.
+- [x] Add the replay-safe one-time consensus funding path for `10,000,000 Q`
+  on networks whose Genesis is already finalized; it never edits Genesis or
+  credits a database directly.
+- [x] Merged-commit Wallet claims and RFC-0068 to ECO-0007 reward planning are implemented.
+- [ ] Activate a production ECO-0007 reward profile and execute a finalized contribution payout batch against a real epoch pool.
 - [x] Public multi-validator profiles are signed, hash-bound, quorum-checked, and projected into the existing CometBFT finality configuration.
 - [x] Generate and verify the current Implementation Profile and execute the
   checked-in FIX-0001 ABCI vector deterministically.
@@ -1017,6 +1078,7 @@ This work is intentionally outside the functional MVP. It must not alter current
 - Emission, recycling, and epoch reward allocation: [docs/product/ECO-0005-q-emission-recycling-and-epoch-reward-allocation.md](./docs/product/ECO-0005-q-emission-recycling-and-epoch-reward-allocation.md)
 - Consensus economics and validator eligibility: [docs/product/ECO-0006-consensus-economics-and-validator-eligibility.md](./docs/product/ECO-0006-consensus-economics-and-validator-eligibility.md)
 - Development reward pool and distribution: [docs/product/ECO-0007-development-reward-pool-and-distribution-policy.md](./docs/product/ECO-0007-development-reward-pool-and-distribution-policy.md)
+- Faucet Treasury and policy execution: [docs/product/ECO-0008-faucet-treasury-and-policy-execution.md](./docs/product/ECO-0008-faucet-treasury-and-policy-execution.md)
 - Wallet and identity: [docs/product/RFC-0016-wallet-and-identity.md](./docs/product/RFC-0016-wallet-and-identity.md)
 - Validation economics: [docs/product/ECO-0003-validation-economics.md](./docs/product/ECO-0003-validation-economics.md)
 - Validation escrow system: [docs/product/RFC-0035-validation-escrow-system.md](./docs/product/RFC-0035-validation-escrow-system.md)

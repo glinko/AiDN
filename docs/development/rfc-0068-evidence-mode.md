@@ -1,10 +1,12 @@
 # RFC-0068 Evidence Mode
 
-Status: implemented locally, non-emitting
+Status: implemented locally, evidence and consensus-gated reward planning
 
 This document records the first executable slice of RFC-0068. It is an
-evidence and attribution service only. It does not implement ECO-0007 and
-cannot mint, reserve, transfer, or settle Q.
+evidence and attribution service. It does not autonomously mint or transfer
+Q. Finalized evidence can now feed the ECO-0007 fixed-point calculator and
+produce a reviewable consensus operation plan; only an explicitly activated
+ECO-0007 plan can enter the Ledger.
 
 ## Implemented Boundary
 
@@ -14,6 +16,8 @@ The service currently provides:
 - protected-branch verification against a local Git checkout;
 - Contributor Identity records;
 - signed Ed25519 Wallet binding challenges with one-use replay protection;
+- signed `.aidn/contributor-wallet.json` claims read from the exact merged
+  commit and bound to the registered Wallet binding;
 - merge events bound to repository, pull request, commit, branch, and source evidence;
 - deterministic ECU, sublinear Size Score, and fixed-point CU calculation;
 - generated, vendor, lockfile, binary, and formatting exclusion;
@@ -23,6 +27,8 @@ The service currently provides:
 - stage-one and stage-two maturity records with explicit revert classifications;
 - atomic JSON persistence independent from the Hypervisor Ledger snapshot;
 - a local HTTP API under `/api/v1/contributions`.
+- an ECO-0007 preview and consensus-plan bridge under
+  `/api/v1/contributions/rewards`.
 
 All scoring uses integer milli-units. The default CU calculation is:
 
@@ -55,14 +61,16 @@ for unit tests and disposable development nodes. The application exposes:
 GET /api/v1/contributions/status
 ```
 
-The response must remain equivalent to:
+The response includes:
 
 ```json
 {
   "mode": "EVIDENCE_ONLY",
   "emits_q": false,
   "ledger_writes": false,
-  "protocol": "RFC-0068"
+  "protocol": "RFC-0068",
+  "reward_preview": true,
+  "reward_execution": "ECO-0007_CONSENSUS_GATED"
 }
 ```
 
@@ -73,9 +81,33 @@ The response must remain equivalent to:
 3. Register the contributor and source-forge account at `POST /api/v1/contributions/contributors`.
 4. Issue a Wallet challenge and sign the canonical binding payload with the Wallet key.
 5. Submit the signed binding and source-platform confirmation hash.
-6. Submit a merge attestation with the local checkout path and changed-file evidence.
+6. Commit `.aidn/contributor-wallet.json` in the contribution and submit a
+   merge attestation with the local checkout path and changed-file evidence.
 7. Wait until `challenge_until_epoch` has closed, resolve any open challenge, and finalize the attestation.
-8. Record maturity decisions at the RFC-defined epoch boundaries.
+8. Request an ECO-0007 preview for the finalized attestation batch.
+9. Obtain the required Governance activation and finalized epoch pool evidence
+   before building or submitting a consensus plan.
+10. Record maturity decisions at the RFC-defined epoch boundaries.
+
+## Wallet claim file
+
+The canonical file path is:
+
+```text
+.aidn/contributor-wallet.json
+```
+
+It contains the contributor identity, source-platform account, Wallet address,
+Wallet public key, Ed25519 signature, and optional binding references. The
+signature covers the canonical JSON object with the signature and `claim_hash`
+fields excluded, under domain `aidn.contributor-wallet-claim.v1`. The
+`claim_hash` then commits the complete signed claim. The attestation verifier
+reads this file from the exact merge commit and checks the registered binding.
+
+The file is immutable evidence. It is **not** overwritten after payment. A
+wallet rotation or correction is represented by a new signed claim and a new
+attestation/correction lineage; changing a working-tree file after merge does
+not alter the historical reward destination.
 
 The Git verifier requires the merge commit to resolve locally and to be an
 ancestor of the protected branch (or its local `origin/<branch>` tracking
@@ -83,20 +115,25 @@ ref). A boolean supplied by a caller is not accepted as merge proof.
 
 ## API Safety Boundary
 
-The API intentionally has no request fields for:
+The API intentionally has no request fields for direct transfer authority:
 
 - Q amounts;
-- reward pool balances;
-- payment operations;
-- Ledger operation IDs;
-- emission or vesting decisions.
+- direct Wallet credit;
+- unbounded emission;
+- bypassing the ECO-0007 activation gate.
+
+`POST /api/v1/contributions/rewards/preview` accepts an epoch pool input and
+selected finalized contribution IDs, then returns the fixed-point calculation
+and wallet provenance. `POST /api/v1/contributions/rewards/plan` additionally
+requires a valid activation approval and source epoch transition reference;
+it returns ordered envelopes but does not submit them to consensus.
 
 `wallet_address` is evidence of a binding, not a payment destination. A
 contribution without a verified Wallet remains attributable with
 `wallet_state: UNCLAIMED`.
 
-Validator-mode write protection continues to reject these HTTP mutations;
-canonical consensus writes are not introduced by this evidence slice.
+The reward plan is therefore safe to inspect or hand to a consensus-aware
+operator, but no HTTP request in this router can directly credit a Wallet.
 
 ## Verification
 
@@ -117,9 +154,9 @@ The following remain outside this implementation slice:
 - GitHub webhook or forge API ingestion;
 - decentralized attestation quorum;
 - AST or semantic code analysis;
-- ECO-0007 pool allocation and normalization;
-- contribution reward records and Ledger operations;
-- Q payments, maturity reserves, and unclaimed reward claims;
+- automatic GitHub webhook ingestion and unattended Governance activation;
+- batch scheduling against a live epoch transition;
+- UI controls for reward preview, activation, and payment finality;
 - automated Reputation changes;
 - decentralized challenges and appeals.
 

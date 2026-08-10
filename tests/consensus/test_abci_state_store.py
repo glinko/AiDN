@@ -12,6 +12,10 @@ from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.state_store import ABCIStateStore, ABCIStateStoreError
+from aidn_hypervisor.faucet_treasury import (
+    FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS,
+    FaucetTreasuryManifest,
+)
 from aidn_hypervisor.ledger.service import LedgerOperationService
 
 
@@ -33,6 +37,24 @@ def _operation_bytes() -> bytes:
     return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
 
 
+def _treasury_manifest(*, public_key_hex: str = "ab" * 32, funding_mode: str = "GENESIS") -> FaucetTreasuryManifest:
+    public_key = f"ed25519:{public_key_hex}"
+    wallet_id = "wallet-" + hashlib.sha256(public_key.encode("utf-8")).hexdigest()[:12]
+    values = {
+        "treasury_id": "faucet-treasury-test-v1",
+        "network_id": "aidn-localnet-1",
+        "chain_id": "aidn-testnet-1",
+        "wallet_id": wallet_id,
+        "wallet_public_key": public_key,
+        "creator_recovery_wallet": "wallet-creator-recovery",
+        "genesis_allocation_q_atoms": FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS,
+        "funding_mode": funding_mode,
+        "funding_operation_id": "treasury-fund-test-1" if funding_mode == "CONSENSUS" else None,
+        "policy_registry_hash": "sha256:" + ("cd" * 32),
+    }
+    return FaucetTreasuryManifest(**values)
+
+
 def test_finalized_state_survives_application_restart(tmp_path) -> None:
     store = ABCIStateStore(tmp_path / "abci", chunk_size=64)
     application = _app(store)
@@ -52,6 +74,63 @@ def test_finalized_state_survives_application_restart(tmp_path) -> None:
     assert restored.info().last_block_app_hash == expected_hash
     assert restored.commitment_at(1) is not None
     assert len(restored.ledger.snapshot_operations()) == 1
+
+
+def test_genesis_treasury_is_projected_once_and_bound_to_restart_snapshot(tmp_path) -> None:
+    store = ABCIStateStore(tmp_path / "abci")
+    manifest = _treasury_manifest()
+    ledger = LedgerOperationService()
+    application = AIDNABCIApplication(
+        ledger_service=ledger,
+        genesis_treasury_manifest=manifest,
+        state_store=store,
+    )
+
+    assert ledger.wallet_q_atom_balance(manifest.wallet_id) == FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS
+    assert application.finalize_block(block_height=1, block_hash=b"t" * 32, txs=[]).code == "ok"
+    snapshot = store.load_current()
+    assert snapshot is not None
+    assert snapshot["genesis_treasury_manifest"]["manifest_hash"] == manifest.manifest_hash
+
+    restored_ledger = LedgerOperationService()
+    restored = AIDNABCIApplication(
+        ledger_service=restored_ledger,
+        genesis_treasury_manifest=manifest,
+        state_store=store,
+    )
+
+    assert restored_ledger.wallet_q_atom_balance(manifest.wallet_id) == FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS
+    assert restored.info().last_block_height == 1
+
+    query = restored.query(path="faucet/treasury-manifest")
+    assert json.loads(query.value.decode("utf-8"))["manifest_hash"] == manifest.manifest_hash
+
+
+def test_genesis_treasury_manifest_mismatch_fails_closed_on_restart(tmp_path) -> None:
+    store = ABCIStateStore(tmp_path / "abci")
+    manifest = _treasury_manifest()
+    application = AIDNABCIApplication(
+        ledger_service=LedgerOperationService(),
+        genesis_treasury_manifest=manifest,
+        state_store=store,
+    )
+    assert application.finalize_block(block_height=1, block_hash=b"m" * 32, txs=[]).code == "ok"
+
+    with pytest.raises(ValueError, match="does not match configured Genesis"):
+        AIDNABCIApplication(
+            ledger_service=LedgerOperationService(),
+            genesis_treasury_manifest=_treasury_manifest(public_key_hex="ef" * 32),
+            state_store=store,
+        )
+
+
+def test_consensus_funded_treasury_does_not_project_genesis_balance() -> None:
+    manifest = _treasury_manifest(funding_mode="CONSENSUS")
+    ledger = LedgerOperationService()
+
+    AIDNABCIApplication(ledger_service=ledger, genesis_treasury_manifest=manifest)
+
+    assert ledger.wallet_q_atom_balance(manifest.wallet_id) == 0
 
 
 def test_legacy_snapshot_without_transaction_hash_remains_restorable(tmp_path) -> None:

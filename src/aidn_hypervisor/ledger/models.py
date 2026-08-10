@@ -8,7 +8,6 @@ LedgerFeeClass = Literal[
     "session",
     "protocol_sponsored",
     "onboarding_exempt",
-    "faucet_exempt",
 ]
 LedgerOperationStatus = Literal["applied", "rejected", "no_op"]
 

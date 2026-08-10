@@ -18,6 +18,8 @@ def test_contribution_api_is_explicitly_non_emitting():
         "emits_q": False,
         "ledger_writes": False,
         "protocol": "RFC-0068",
+        "reward_preview": True,
+        "reward_execution": "ECO-0007_CONSENSUS_GATED",
     }
 
 

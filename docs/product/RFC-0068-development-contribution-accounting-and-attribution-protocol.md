@@ -136,6 +136,38 @@ contributor_wallet_binding:
 
 A Wallet in a PR is compared with the active binding. An unverified or mismatching address SHALL not receive immediate payment. A valid contribution without a verified Wallet enters `UNCLAIMED` and remains claimable for the configured epoch window; then it returns to the pool or reserve under `ECO-0007`. Wallet rotation applies only from its effective boundary and SHALL NOT redirect past rewards.
 
+For a contribution that requests reward attribution, the preferred evidence is a
+signed file committed in the exact merged revision:
+
+```text
+.aidn/contributor-wallet.json
+```
+
+The file SHALL use the following schema:
+
+```yaml
+schema_version: aidn.contributor-wallet.v1
+contributor_id:
+source_platform_account:
+wallet_address:
+wallet_public_key:
+wallet_signature:
+binding_id:
+binding_hash:
+claim_hash:
+```
+
+The Wallet signature covers the canonical claim payload and the claim hash
+covers the complete claim object without `claim_hash`. The attestation process
+MUST read the file from `merge_commit_hash`, verify the Ed25519 signature, and
+match it to the active `ContributorWalletBinding`. A PR description or a file
+from the working tree is not sufficient evidence.
+
+The merged claim file is immutable evidence and SHALL NOT be overwritten after
+payment. Payment, unclaimed, maturity, and correction state belongs to separate
+`ECO-0007` reward records. A later Wallet rotation creates a new claim in a
+later contribution and does not rewrite prior attribution.
+
 ## 6. Attestation and Attribution
 
 Canonical attribution starts with a Contribution Attestation:
@@ -154,6 +186,7 @@ contribution_attestation:
   size_score:
   factor_values:
   contribution_units:
+  wallet_claim:
   eligibility_state:
   exclusion_reasons:
   source_evidence_root:

@@ -109,42 +109,17 @@ def test_reconcile_wallet_sequence_advances_without_rewinding() -> None:
         ledger.reconcile_wallet_sequence("wallet-owner", 2)
 
 
-def test_faucet_claim_records_canonical_ledger_operation() -> None:
+def test_core_faucet_claim_is_disabled() -> None:
     service = _hypervisor()
     service.configure_owner_wallet(mode="create", label="Primary Wallet")
 
-    class _EndpointService:
-        def list_endpoints(self):
-            class _Manifest:
-                status = "active"
+    with pytest.raises(ValueError, match="external services/aidn-faucet"):
+        service.claim_faucet_share()
 
-            return [_Manifest()]
-
-    service.endpoint_service = _EndpointService()
-    service.derive_epoch_reward_budget(
-        epoch_id="epoch-21",
-        source_epoch_id="epoch-20",
-        active_hypervisor_count=4,
+    assert all(
+        operation["operation_type"] not in {"FAUCET_CLAIM", "REWARD_MINT"}
+        for operation in service.list_ledger_operations()
     )
-
-    claimed = service.claim_faucet_share()
-    operations = service.list_ledger_operations()[-3:]
-
-    assert claimed["claimed"] is True
-    assert operations[0]["operation_type"] == "EPOCH_TRANSITION"
-    assert operations[0]["origin_type"] == "protocol"
-    assert operations[0]["payload"]["opening_epoch"] == "epoch-21"
-    assert operations[1]["operation_type"] == "FAUCET_CLAIM"
-    assert operations[1]["origin_type"] == "wallet"
-    assert operations[1]["fee_class"] == "faucet_exempt"
-    assert operations[1]["sender_wallet"] == service.owner_wallet_state()["wallet_id"]
-    assert operations[1]["sender_sequence"] == 1
-    assert operations[1]["payload"]["claim_epoch"] == "epoch-21"
-    assert operations[2]["operation_type"] == "REWARD_MINT"
-    assert operations[2]["origin_type"] == "protocol"
-    assert operations[2]["payload"]["reward_type"] == "faucet"
-    assert operations[2]["payload"]["reward_epoch"] == "epoch-21"
-    assert operations[2]["payload"]["recipient_wallet"] == service.owner_wallet_state()["wallet_id"]
 
 
 def test_session_open_and_settle_record_canonical_ledger_operations() -> None:

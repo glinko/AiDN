@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from datetime import UTC, datetime
 
@@ -12,6 +13,7 @@ from aidn_hypervisor.contributions.models import (
     ContributionFactorValues,
     ContributionFileChange,
     ContributorIdentity,
+    ContributorWalletClaim,
     EligibleRepository,
     PlatformAccount,
     RepositoryContributionProfile,
@@ -20,6 +22,7 @@ from aidn_hypervisor.contributions.service import (
     ContributionAccountingService,
     GitRepositoryMergeVerifier,
     contributor_wallet_binding_payload,
+    contributor_wallet_claim_payload,
     score_contribution_changes,
 )
 from aidn_hypervisor.contributions.store import ContributionEvidenceStore
@@ -258,3 +261,92 @@ def test_attestation_challenge_finalization_maturity_and_persistence(tmp_path):
     restored = ContributionAccountingService(ContributionEvidenceStore(tmp_path / "contribution-evidence.json"))
     assert restored.get_attestation(attestation.contribution_id).attestation_hash == finalized.attestation_hash
     assert restored.store.list_maturity(attestation.contribution_id)[0].maturity_hash == maturity.maturity_hash
+
+
+def test_merged_wallet_claim_is_signed_and_retained_as_evidence(tmp_path):
+    service = _service(tmp_path)
+    private_key = Ed25519PrivateKey.generate()
+    public_key = (
+        "ed25519:"
+        + private_key.public_key()
+        .public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+        .hex()
+    )
+    challenge = service.issue_wallet_binding_challenge(
+        contributor_id="contributor-alice",
+        source_platform_account="github:alice",
+        wallet_address="q1alice",
+    )
+    binding_payload = contributor_wallet_binding_payload(
+        contributor_id=challenge.contributor_id,
+        source_platform_account=challenge.source_platform_account,
+        wallet_address=challenge.wallet_address,
+        wallet_public_key=public_key,
+        challenge_id=challenge.challenge_id,
+        challenge_hash=challenge.challenge_hash,
+        binding_version=1,
+    )
+    binding = service.bind_wallet(
+        challenge_id=challenge.challenge_id,
+        wallet_public_key=public_key,
+        wallet_signature="ed25519:" + private_key.sign(binding_payload).hex(),
+        source_platform_confirmation_hash="sha256:github-confirmation",
+    )
+
+    repo, _feature_commit, source_commit = _git_repository(tmp_path)
+    claim_template = ContributorWalletClaim(
+        contributor_id="contributor-alice",
+        source_platform_account="github:alice",
+        wallet_address="q1alice",
+        wallet_public_key=public_key,
+        wallet_signature="ed25519:pending",
+        binding_id=binding.binding_id,
+        binding_hash=binding.binding_hash,
+        claim_hash="sha256:pending",
+    )
+    claim_signature = "ed25519:" + private_key.sign(contributor_wallet_claim_payload(claim_template)).hex()
+    signed_claim = claim_template.model_copy(update={"wallet_signature": claim_signature})
+    claim = signed_claim.model_copy(update={"claim_hash": signed_claim.expected_claim_hash()})
+    (repo / ".aidn").mkdir()
+    (repo / ".aidn" / "contributor-wallet.json").write_text(
+        json.dumps(claim.model_dump(mode="json"), sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", ".aidn/contributor-wallet.json")
+    _git(repo, "commit", "-m", "Declare contributor wallet")
+    merge_commit = _git(repo, "rev-parse", "HEAD")
+
+    attestation = service.attest_merge(
+        repository_id="repo-aidn",
+        pull_request_id="wallet-claim",
+        merge_commit_hash=merge_commit,
+        source_commit_hash=source_commit,
+        base_branch="main",
+        merged_at="2026-08-01T12:00:00+00:00",
+        merge_actor="maintainer",
+        pull_request_author="github:alice",
+        primary_contributor_id="contributor-alice",
+        contribution_epoch=0,
+        contribution_class="CODE",
+        file_changes=[ContributionFileChange(path=".aidn/contributor-wallet.json", added_lines=12)],
+        attestation_authorities=[
+            AttestationAuthority(
+                authority_id="maintainer-1",
+                authority_role="maintainer",
+                signature="ed25519:maintainer",
+            )
+        ],
+        source_platform_evidence_hash="sha256:github-wallet-claim",
+        repository_path=repo,
+    )
+
+    assert attestation.wallet_state == "VERIFIED"
+    assert attestation.wallet_claim is not None
+    assert attestation.wallet_claim.wallet_address == "q1alice"
+    original_attestation_hash = attestation.attestation_hash
+
+    (repo / ".aidn" / "contributor-wallet.json").write_text("{}\n", encoding="utf-8")
+    assert service.get_attestation(attestation.contribution_id).attestation_hash == original_attestation_hash

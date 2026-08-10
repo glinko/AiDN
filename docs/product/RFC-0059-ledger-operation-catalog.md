@@ -508,7 +508,7 @@ The MVP catalog contains the following categories:
 | `ENDPOINT_REINSTATE` | Protocol | Protocol Sponsored |
 | `ENDPOINT_RETIRE` | Wallet or Protocol | Standard or Protocol Sponsored |
 | `WALLET_TRANSFER` | Wallet | Standard |
-| `FAUCET_CLAIM` | Wallet + Hypervisor | Faucet Exempt |
+| `TREASURY_FUND` | Protocol | Protocol Sponsored |
 | `STAKE_LOCK` | Wallet | Standard |
 | `UNSTAKE_REQUEST` | Wallet | Standard |
 | `STAKE_RELEASE` | Protocol | Protocol Sponsored |
@@ -1050,9 +1050,15 @@ the recipient, recycle the fee, and persist the operation in the replay
 registry. Snapshot restoration preserves both balances and the recyclable
 accumulator. A duplicate operation cannot repeat the transfer.
 
-## 33. Faucet Claim
+## 33. Deprecated Faucet Claim (Inactive)
 
 `FAUCET_CLAIM`
+
+This historical operation is not part of the active implementation profile and
+MUST be rejected by strict consensus. Faucet distribution is external to the
+Hypervisor/Ledger and uses a dedicated Treasury Wallet plus ordinary
+`WALLET_TRANSFER`. The current post-Genesis Treasury allocation uses the
+separate `TREASURY_FUND` transition described by ECO-0008.
 
 Claims the current Epoch Faucet Share.
 
@@ -1082,11 +1088,8 @@ Preconditions
 
 State Changes
 
-- mints the fixed Faucet Share;
-- credits destination Wallet;
-- marks Hypervisor as claimed for the Epoch;
-- reduces current Faucet authorization;
-- updates Faucet carryover accounting.
+- No active state change is permitted. The section is retained only as a
+  historical schema reference for migration and rejection tests.
 
 Fee
 
@@ -1884,8 +1887,10 @@ Supported Reward Types
 - Consensus Reward;
 - Registry Reward;
 - Validation Reward;
-- Faucet payment where not directly represented by `FAUCET_CLAIM`;
 - future authorized protocol reward.
+
+External Faucet payments are ordinary signed `WALLET_TRANSFER` operations and
+are never represented by `REWARD_MINT`.
 
 Required Payload
 
@@ -2395,7 +2400,7 @@ The MVP SHALL implement at minimum:
 - `ENDPOINT_REINSTATE`;
 - `ENDPOINT_RETIRE`;
 - `WALLET_TRANSFER`;
-- `FAUCET_CLAIM`;
+- `TREASURY_FUND`;
 - `STAKE_LOCK`;
 - `UNSTAKE_REQUEST`;
 - `STAKE_RELEASE`;

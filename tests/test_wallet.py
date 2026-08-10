@@ -668,25 +668,25 @@ def test_operator_wallet_economics_summary_reports_removals_and_latest_budget() 
         "recyclable_amount_q": 517.5,
     }
     assert response.json()["faucet"] == {
-        "carryover_q": 20.0,
-        "budget_q": 571.75,
-        "active_hypervisor_count": 10,
-        "share_q": 57.175,
+        "carryover_q": 0.0,
+        "budget_q": 0.0,
+        "active_hypervisor_count": 0,
+        "share_q": 0.0,
         "claimed": False,
         "claimed_q": 0.0,
-        "remaining_q": 57.175,
+        "remaining_q": 0.0,
         "claim": None,
     }
     assert response.json()["pools"] == {
         "consensus_budget_q": 1655.25,
         "registry_budget_q": 1655.25,
         "validation_budget_q": 1655.25,
-        "faucet_budget_q": 571.75,
+        "faucet_budget_q": 0.0,
     }
     assert response.json()["latest_budget_breakdown"] == {
         "epoch_id": "epoch-21",
         "total_authorized_q": 5517.5,
-        "faucet_share_q": 57.175,
+        "faucet_share_q": 0.0,
     }
 
 
@@ -758,7 +758,7 @@ def test_operator_dashboard_wallet_aggregates_usage_allocations_and_economics() 
     assert "eligible" in payload["faucet_preview"]
 
 
-def test_operator_wallet_faucet_preview_and_claim_flow() -> None:
+def test_operator_wallet_faucet_requires_external_service() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())
     service.configure_owner_wallet(mode="create", label="Primary Wallet")
@@ -786,25 +786,21 @@ def test_operator_wallet_faucet_preview_and_claim_flow() -> None:
     export_response = client.get("/operators/wallet/economics/export", params={"limit": 10})
 
     assert preview_response.status_code == 200
-    assert preview_response.json()["eligible"] is True
-    assert preview_response.json()["share_q"] == 50.0
-    assert preview_response.json()["active_local_endpoint_count"] == 1
-    assert claim_response.status_code == 200
-    assert claim_response.json()["claimed"] is True
-    assert claim_response.json()["claim"]["amount_q"] == 50.0
-    assert claim_response.json()["claim"]["wallet_id"] == service.owner_wallet_state()["wallet_id"]
+    assert preview_response.json()["eligible"] is False
+    assert preview_response.json()["reason"] == "external_faucet_service_required"
+    assert claim_response.status_code == 410
+    assert "external services/aidn-faucet" in claim_response.json()["detail"]
     assert summary_response.status_code == 200
-    assert summary_response.json()["faucet"]["claimed"] is True
-    assert summary_response.json()["faucet"]["claimed_q"] == 50.0
+    assert summary_response.json()["faucet"]["claimed"] is False
+    assert summary_response.json()["faucet"]["claimed_q"] == 0.0
     assert summary_response.json()["faucet"]["remaining_q"] == 0.0
     assert export_response.status_code == 200
     assert [item["event_type"] for item in export_response.json()["items"]] == [
         "epoch_reward_budget_derived",
-        "faucet_claimed",
     ]
 
 
-def test_operator_wallet_faucet_claim_rejects_duplicate_epoch_claim() -> None:
+def test_operator_wallet_faucet_claim_is_not_a_core_write_path() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())
     service.configure_owner_wallet(mode="create", label="Primary Wallet")
@@ -827,16 +823,14 @@ def test_operator_wallet_faucet_claim_rejects_duplicate_epoch_claim() -> None:
     client = TestClient(build_app(service=service, endpoint_service=endpoint_service))
 
     first_claim = client.post("/operators/wallet/economics/faucet/claim")
-    second_claim = client.post("/operators/wallet/economics/faucet/claim")
     preview_response = client.get("/operators/wallet/economics/faucet")
 
-    assert first_claim.status_code == 200
-    assert second_claim.status_code == 409
-    assert second_claim.json()["detail"] == "Faucet share already claimed for epoch epoch-21"
+    assert first_claim.status_code == 410
+    assert "external services/aidn-faucet" in first_claim.json()["detail"]
     assert preview_response.status_code == 200
     assert preview_response.json()["eligible"] is False
-    assert preview_response.json()["reason"] == "already_claimed"
-    assert preview_response.json()["claimed"] is True
+    assert preview_response.json()["reason"] == "external_faucet_service_required"
+    assert preview_response.json()["claimed"] is False
 
 
 def test_wallet_ledger_export_merges_session_usage_and_allocation_streams() -> None:

@@ -29,6 +29,18 @@ class ABCICommittedFinalitySource:
         self._source = source
         self._abci_application = abci_application
 
+    @property
+    def quorum(self) -> int:
+        """Expose the wrapped source quorum for activation evidence."""
+
+        return int(getattr(self._source, "quorum", 1))
+
+    @property
+    def source_count(self) -> int:
+        """Expose the wrapped source count for activation evidence."""
+
+        return int(getattr(self._source, "source_count", 1))
+
     def finality_evidence(self, operation_id: str) -> ConsensusFinalityEvidence | None:
         try:
             evidence = self._source.finality_evidence(operation_id)

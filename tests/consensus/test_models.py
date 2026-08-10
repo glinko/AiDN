@@ -153,7 +153,6 @@ def test_all_fee_classes():
         "session",
         "protocol_sponsored",
         "onboarding_exempt",
-        "faucet_exempt",
     ]
     for fc in classes:
         env = _make_envelope(fee_class=fc)

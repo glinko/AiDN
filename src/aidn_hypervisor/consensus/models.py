@@ -44,6 +44,7 @@ KNOWN_OPERATION_TYPES = frozenset({
     "SETTLEMENT_PROPOSE",
     "SETTLEMENT_ACCEPT",
     "EPOCH_TRANSITION",
+    "TREASURY_FUND",
     "REWARD_MINT",
     "DEVELOPMENT_POOL_ALLOCATE",
     "DEVELOPMENT_POOL_CARRYOVER",
@@ -81,7 +82,6 @@ LedgerFeeClass = Literal[
     "session",
     "protocol_sponsored",
     "onboarding_exempt",
-    "faucet_exempt",
 ]
 
 

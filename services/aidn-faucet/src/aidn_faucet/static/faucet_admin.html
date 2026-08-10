@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AiDN Faucet Treasury</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #07111c;
+        --panel: #0d1d2b;
+        --panel-2: #102637;
+        --line: #234158;
+        --text: #e7f3f7;
+        --muted: #91a9b6;
+        --cyan: #56e2e5;
+        --green: #57d39a;
+        --amber: #f8c66d;
+        --red: #ff7f8f;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at 80% 0%, #12334b 0, transparent 42%), var(--bg);
+        color: var(--text);
+        font: 15px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+      main { width: min(1040px, 100%); margin: 0 auto; padding: 28px 18px 56px; }
+      header { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
+      h1 { margin: 0; font: 700 32px/1.1 Georgia, serif; letter-spacing: -0.03em; }
+      h2 { margin: 0 0 12px; font-size: 16px; letter-spacing: 0.08em; text-transform: uppercase; }
+      p { color: var(--muted); margin: 8px 0 0; }
+      .eyebrow { color: var(--cyan); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 7px; }
+      .panel { background: linear-gradient(145deg, rgba(16,38,55,.96), rgba(8,24,36,.96)); border: 1px solid var(--line); border-radius: 18px; padding: 20px; box-shadow: 0 16px 42px rgba(0,0,0,.2); }
+      .auth { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; margin-bottom: 18px; }
+      label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+      input { width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #071723; color: var(--text); padding: 12px; font: inherit; }
+      button { border: 1px solid #2c6675; border-radius: 10px; background: #153847; color: var(--text); padding: 11px 15px; font: inherit; cursor: pointer; }
+      button:hover { border-color: var(--cyan); background: #1a4b5c; }
+      button.danger { border-color: #74434d; background: #3b1e2a; }
+      button.primary { border-color: #2ba8ac; background: #167d85; }
+      button:disabled { cursor: wait; opacity: .6; }
+      .status-line { display: flex; align-items: center; gap: 8px; min-height: 25px; color: var(--muted); }
+      .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+      .dot.good { background: var(--green); box-shadow: 0 0 12px var(--green); }
+      .dot.bad { background: var(--red); }
+      .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 18px 0; }
+      .metric { background: rgba(4,16,25,.58); border: 1px solid var(--line); border-radius: 13px; padding: 15px; min-height: 106px; }
+      .metric small { color: var(--muted); text-transform: uppercase; letter-spacing: .1em; font-size: 10px; }
+      .metric strong { display: block; margin-top: 12px; font-size: 21px; color: var(--cyan); overflow-wrap: anywhere; }
+      .two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+      .controls { display: grid; gap: 12px; }
+      .control-row { display: flex; align-items: end; gap: 10px; }
+      .control-row label { flex: 1; }
+      .notice { border-left: 3px solid var(--amber); padding: 9px 12px; background: rgba(248,198,109,.08); color: #f9dfad; }
+      .notice.good { border-color: var(--green); background: rgba(87,211,154,.08); color: #b8f2d7; }
+      .notice.bad { border-color: var(--red); background: rgba(255,127,143,.08); color: #ffc2ca; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+      .footer { margin-top: 18px; color: var(--muted); font-size: 12px; }
+      @media (max-width: 760px) {
+        main { padding: 20px 12px 42px; }
+        header, .auth, .control-row { align-items: stretch; grid-template-columns: 1fr; flex-direction: column; }
+        .grid, .two { grid-template-columns: 1fr 1fr; }
+      }
+      @media (max-width: 460px) { .grid, .two { grid-template-columns: 1fr; } h1 { font-size: 27px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <div class="eyebrow">AiDN / External Treasury</div>
+          <h1>Faucet control room</h1>
+          <p>Policy execution is separate from Hypervisor epoch rewards.</p>
+        </div>
+        <div class="status-line"><span id="status-dot" class="dot"></span><span id="status-line">Locked</span></div>
+      </header>
+
+      <section class="panel auth">
+        <label>Creator token (kept in browser memory only)
+          <input id="token" type="password" autocomplete="off" placeholder="AIDN_FAUCET_CREATOR_TOKEN" />
+        </label>
+        <button class="primary" id="load">Unlock and refresh</button>
+      </section>
+
+      <div id="message" class="notice">Enter the creator token to inspect or control the Faucet.</div>
+
+      <section class="grid" aria-label="Treasury status">
+        <div class="metric"><small>Treasury</small><strong id="treasury">—</strong></div>
+        <div class="metric"><small>Balance</small><strong id="balance">—</strong></div>
+        <div class="metric"><small>Policy</small><strong id="policy">—</strong></div>
+        <div class="metric"><small>State</small><strong id="state">—</strong></div>
+        <div class="metric"><small>Treasury activation</small><strong id="activation">—</strong></div>
+      </section>
+
+      <section class="two">
+        <article class="panel controls">
+          <h2>Safety controls</h2>
+          <div class="control-row">
+            <button class="danger" id="pause">Pause claims</button>
+            <button id="resume">Resume claims</button>
+          </div>
+          <div class="control-row">
+            <label>Low-balance watermark (Q atoms)
+              <input id="watermark" type="number" min="0" step="1" placeholder="0" />
+            </label>
+            <button id="set-watermark">Save watermark</button>
+          </div>
+          <p>Pause and watermark changes are persisted in the Faucet SQLite state.</p>
+        </article>
+
+        <article class="panel controls">
+          <h2>Claim recovery</h2>
+          <div class="control-row">
+            <label>Request ID
+              <input id="request-id" autocomplete="off" placeholder="agent-request-id" />
+            </label>
+            <button id="inspect">Inspect</button>
+          </div>
+          <div class="control-row">
+            <button id="reconcile">Reconcile exact claim</button>
+          </div>
+          <pre id="claim">No claim selected.</pre>
+        </article>
+      </section>
+
+      <div class="footer">The dashboard never displays the Treasury private key or signed transfer envelope.</div>
+    </main>
+    <script>
+      const token = document.getElementById("token");
+      const message = document.getElementById("message");
+      const dot = document.getElementById("status-dot");
+      const line = document.getElementById("status-line");
+      let claim = null;
+
+      function show(text, kind) {
+        message.textContent = text;
+        message.className = "notice" + (kind ? " " + kind : "");
+      }
+
+      function authHeaders() {
+        const value = token.value.trim();
+        return value ? { Authorization: "Bearer " + value } : {};
+      }
+
+      async function request(path, options = {}) {
+        const response = await fetch(path, {
+          ...options,
+          headers: { "Content-Type": "application/json", ...authHeaders(), ...(options.headers || {}) },
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.detail || "Request failed");
+        return body;
+      }
+
+      function render(payload) {
+        const service = payload.service || payload;
+        document.getElementById("treasury").textContent = service.treasury_id || "—";
+        document.getElementById("balance").textContent = service.treasury_balance_q_atoms == null ? "unknown" : (Number(service.treasury_balance_q_atoms) / 1000000).toLocaleString() + " Q";
+        document.getElementById("policy").textContent = service.policy_id ? service.policy_id + " / " + service.policy_version : "—";
+        const paused = Boolean(payload.paused ?? service.paused);
+        const blocked = Boolean(service.low_balance_blocked);
+        const activation = service.treasury_activation_state || "UNVERIFIED";
+        const activationBlocked = activation !== "ACTIVE";
+        document.getElementById("state").textContent = paused ? "PAUSED" : (blocked ? "LOW BALANCE" : (activationBlocked ? "ACTIVATION BLOCKED" : "READY"));
+        document.getElementById("activation").textContent = activation;
+        dot.className = "dot " + (paused || blocked || activationBlocked ? "bad" : "good");
+        line.textContent = paused ? "Paused" : (blocked ? "Low balance" : (activationBlocked ? (service.treasury_activation_reason || "Treasury unverified") : "Ready"));
+        document.getElementById("watermark").value = service.low_balance_watermark_q_atoms ?? payload.low_balance_watermark_q_atoms ?? 0;
+      }
+
+      async function refresh() {
+        try { render(await request("/v1/admin/status")); show("Creator session active.", "good"); }
+        catch (error) { dot.className = "dot bad"; line.textContent = "Locked"; show(String(error), "bad"); }
+      }
+
+      async function mutate(path, body) {
+        try { render(await request(path, { method: "POST", body: JSON.stringify(body || {}) })); show("Control change applied.", "good"); }
+        catch (error) { show(String(error), "bad"); }
+      }
+
+      document.getElementById("load").onclick = refresh;
+      document.getElementById("pause").onclick = () => { const reason = window.prompt("Reason for pausing new claims:"); if (reason) mutate("/v1/admin/pause", { reason }); };
+      document.getElementById("resume").onclick = () => mutate("/v1/admin/resume");
+      document.getElementById("set-watermark").onclick = () => mutate("/v1/admin/low-balance-watermark", { watermark_q_atoms: Number(document.getElementById("watermark").value || 0) });
+      document.getElementById("inspect").onclick = async () => {
+        try { claim = await request("/v1/admin/claims/" + encodeURIComponent(document.getElementById("request-id").value.trim())); document.getElementById("claim").textContent = JSON.stringify(claim, null, 2); show("Claim loaded.", "good"); }
+        catch (error) { show(String(error), "bad"); }
+      };
+      document.getElementById("reconcile").onclick = async () => {
+        try { claim = await request("/v1/admin/claims/" + encodeURIComponent(document.getElementById("request-id").value.trim()) + "/reconcile", { method: "POST", body: "{}" }); document.getElementById("claim").textContent = JSON.stringify(claim, null, 2); show("Exact claim reconciled.", "good"); }
+        catch (error) { show(String(error), "bad"); }
+      };
+    </script>
+  </body>
+</html>

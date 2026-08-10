@@ -406,7 +406,7 @@ class CometBftRpcFinalitySource:
                 return None
             if not isinstance(transaction_result.get("proof"), dict):
                 return None
-            self._verify_operation_binding(
+            envelope = self._verify_operation_binding(
                 operation_id=operation_id,
                 expected_hash=transaction_hash,
                 encoded_transaction=transaction_result.get("tx"),
@@ -462,6 +462,7 @@ class CometBftRpcFinalitySource:
                 commit_hash=_canonical_hash(signed_header),
                 finalized_at=finalized_at,
                 verifier_id=self._verifier_id,
+                operation_type=envelope.operation_type,
             )
         except Exception:
             return None
@@ -566,7 +567,7 @@ class CometBftRpcFinalitySource:
         operation_id: str,
         expected_hash: str,
         encoded_transaction: object,
-    ) -> None:
+    ) -> LedgerOperationEnvelope:
         if not isinstance(encoded_transaction, str):
             raise ValueError("CometBFT transaction is missing")
         transaction_bytes = base64.b64decode(encoded_transaction, validate=True)
@@ -576,6 +577,7 @@ class CometBftRpcFinalitySource:
         envelope = LedgerOperationEnvelope.model_validate(payload)
         if envelope.operation_id != operation_id:
             raise ValueError("CometBFT transaction does not bind the requested operation")
+        return envelope
 
     def _block_id(self, commit: dict) -> str:
         block_id = commit.get("block_id")

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aidn-faucet"
+version = "0.1.0"
+description = "External AiDN Faucet Treasury policy service"
+requires-python = ">=3.11"
+dependencies = [
+    "aidn-hypervisor",
+    "cryptography>=43",
+    "fastapi>=0.115",
+    "pydantic>=2.8",
+    "uvicorn>=0.30",
+]
+
+[project.scripts]
+aidn-faucet = "aidn_faucet.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+aidn_faucet = ["static/*.html"]
+
+[tool.uv.sources]
+aidn-hypervisor = { path = "../.." }

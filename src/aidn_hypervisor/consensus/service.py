@@ -530,6 +530,7 @@ class ConsensusService:
         ledger_service,
         admission_validator: AdmissionValidator | None = None,
         genesis_accounts: dict[str, int] | None = None,
+        genesis_treasury_manifest: dict | None = None,
         restore_state_from_store: bool = False,
         state_checkpoint_callback: Callable[[], None] | None = None,
     ) -> AIDNABCIApplication:
@@ -552,6 +553,7 @@ class ConsensusService:
             ledger_service=ledger_service,
             admission_validator=admission_validator,
             genesis_accounts=genesis_accounts,
+            genesis_treasury_manifest=genesis_treasury_manifest,
             state_store=ABCIStateStore(
                 self.config.abci_state_path,
                 retained_snapshots=self.config.abci_retained_snapshots,

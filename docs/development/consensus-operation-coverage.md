@@ -1,6 +1,6 @@
 # Consensus Operation Coverage
 
-Last updated: `2026-08-03`
+Last updated: `2026-08-10`
 
 This document is the implementation matrix for the consensus operation
 boundary. The normative operation schemas and state transitions remain in
@@ -77,10 +77,19 @@ ABCI and `ExecutionEngine`:
 - `STAKE_RELEASE`
 - `UNSTAKE_REQUEST`
 - `WALLET_TRANSFER`
+- `TREASURY_FUND`
 
 `WALLET_TRANSFER` uses the MVP `STANDARD` fee of `10,000 q_atoms` and is
 covered by dedicated balance, fee-recycling, insufficient-balance and replay
 tests in both execution entrypoints.
+
+`TREASURY_FUND` is a one-time protocol-sponsored transition for a
+pre-declared CONSENSUS Faucet Treasury on an already-running network. It
+requires the configured hash-bound manifest, exact `10,000,000 Q`, creator
+authorization and an authenticated envelope. It credits the Treasury once;
+the Treasury ID, Wallet ID and funding ID cannot be reused. Genesis-funded
+Treasuries do not accept this transition. Faucet payout policy remains
+external and uses ordinary `WALLET_TRANSFER`.
 
 `SESSION_OPEN` is a non-economic lifecycle projection. It is accepted only
 after a finalized `SESSION_ESCROW_LOCK`, binds the Session Contract, Endpoint
