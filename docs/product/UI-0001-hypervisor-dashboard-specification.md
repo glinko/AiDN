@@ -191,6 +191,33 @@ The initial React route may coexist with the legacy static shell during staged
 migration. A replacement workspace SHALL not become the default until it has
 functional parity with the operator actions it replaces.
 
+### 11.1 Functional Migration Boundary
+
+The maintained React Dashboard SHALL not present an action button unless it
+invokes a real, authenticated control-plane operation and renders the resulting
+success, pending, blocked, or failed state. During the current migration, the
+following operator controls are implemented through the browser-paired
+Dashboard boundary:
+
+- owner Wallet creation and import, including one-time display of a newly
+  generated private key;
+- host Resource Probe refresh;
+- existing Provider attachment, health probing, and model discovery;
+- Bundle enable, disable, retry, and cooldown reset;
+- MCP agent enrollment, credential lifecycle, permission and default-approval
+  controls.
+
+The remaining legacy workflows SHALL be migrated in this order:
+
+1. model installation, artifact materialization, and Runtime Binding creation;
+2. immutable Bundle revision creation with resource and validation preflight;
+3. Endpoint draft, configuration, publication, and validation request flows;
+4. consumer Market, Session, settlement, and wallet accounting workflows.
+
+Until a workflow reaches the React Dashboard, its legacy surface remains the
+canonical operator surface. A React view MAY show its current state but SHALL
+describe it as read-only rather than implying an unavailable mutation exists.
+
 ## 12. Future Extensions
 
 Potential additions include Storage, COMET Objects, Peer Explorer, AI Scheduler, GPU Allocator, Automation, and Developer Tools. They SHALL extend the primary navigation model without duplicating Bundle, Endpoint, or Runtime ownership.
