@@ -602,6 +602,35 @@ def test_validator_reconciles_stale_local_wallet_binding_only_after_finality():
     assert recovered.json()["wallet_id"] == material["wallet"]["wallet_id"]
 
 
+def test_validator_does_not_trust_pre_reset_wallet_binding_confirmation():
+    hypervisor, client, _endpoint, _session, consensus, source = _context(
+        open_session=False
+    )
+    consensus.config.mode = ConsensusMode.VALIDATOR
+    facade = hypervisor._operator_application_facade()
+    material = facade._prepare_wallet_material(mode="create", label="pre-reset wallet", private_key=None)
+    envelope = facade._wallet_bind_envelope(material, mode="create")
+    hypervisor.ledger_operation_service.record_admitted_envelope(envelope)
+    hypervisor._owner_wallet = {
+        **material["wallet"],
+        # This is the state a local snapshot may retain across a network reset.
+        "canonical_binding_confirmed": True,
+    }
+
+    pending = client.get("/operators/wallet/bootstrap")
+
+    assert pending.status_code == 200
+    assert pending.json()["configured"] is False
+    assert pending.json()["pending_consensus"]["operation_id"] == envelope.operation_id
+
+    source.finalize(envelope.operation_id, 1)
+    recovered = client.get("/operators/wallet/bootstrap")
+
+    assert recovered.status_code == 200
+    assert recovered.json()["configured"] is True
+    assert recovered.json()["wallet_id"] == material["wallet"]["wallet_id"]
+
+
 def test_consensus_operation_records_are_valid_for_projection_after_recovery():
     ledger = LedgerOperationService()
     envelope = LedgerOperationEnvelope(
@@ -654,7 +683,7 @@ def test_failed_validator_wallet_bootstrap_retries_the_same_binding():
 
 
 def test_validator_wallet_recovers_only_the_canonically_bound_private_key():
-    hypervisor, client, _endpoint, _session, consensus, _source = _context(
+    hypervisor, client, _endpoint, _session, consensus, source = _context(
         open_session=False
     )
     consensus.config.mode = ConsensusMode.VALIDATOR
@@ -664,6 +693,7 @@ def test_validator_wallet_recovers_only_the_canonically_bound_private_key():
     )
     envelope = facade._wallet_bind_envelope(material, mode="create")
     hypervisor.ledger_operation_service.record_admitted_envelope(envelope)
+    source.finalize(envelope.operation_id, 1)
     operations_after_binding = hypervisor.ledger_operation_service.snapshot_operations()
 
     state = client.get("/operators/wallet/bootstrap").json()
@@ -760,7 +790,7 @@ def test_validator_session_open_resumes_after_canonical_funding_finality():
         "deposit_q_atoms": 1_000,
         "fixed_price_q_atoms": 900,
         "network_fee_reserve_q_atoms": 100,
-        "consensus_sender_sequence": 2,
+            "consensus_sender_sequence": 1,
         "consensus_lock_signatures": ["sig-lock"],
     }
     pending = client.post(open_path, json=open_payload)
@@ -839,7 +869,7 @@ def test_validator_session_recovery_checks_finality_before_rebroadcast():
         "deposit_q_atoms": 1_000,
         "fixed_price_q_atoms": 900,
         "network_fee_reserve_q_atoms": 100,
-        "consensus_sender_sequence": 2,
+            "consensus_sender_sequence": 1,
         "consensus_lock_signatures": ["sig-lock"],
     }
     pending = client.post(open_path, json=open_payload)

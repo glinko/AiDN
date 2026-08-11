@@ -300,18 +300,24 @@ class OperatorApplicationService:
 
     def _owner_wallet_binding_is_finalized(self) -> bool:
         binding = self._owner_wallet_binding_operation()
-        if (
-            binding is not None
-            and self._host._owner_wallet is not None
-            and self._host._owner_wallet.get("canonical_binding_confirmed") is True
-        ):
-            return True
+        if binding is None:
+            return False
+        _, envelope = binding
+        return self._wallet_binding_finality_is_verified(envelope)
+
+    def _wallet_binding_finality_is_verified(self, envelope: LedgerOperationEnvelope) -> bool:
+        """Verify an operator Wallet bind against the active consensus lineage.
+
+        A local ``canonical_binding_confirmed`` flag only describes the prior
+        local projection.  It cannot survive a reset to a new genesis lineage
+        by itself.  When an external finality source exists, the exact bind
+        envelope must therefore be found and finalized on that source.
+        """
         consensus = getattr(self._host, "consensus_service", None)
         finality_source = getattr(self._host, "consensus_finality_source", None)
         restore_submission = getattr(consensus, "restore_submission", None)
-        if binding is None or consensus is None or finality_source is None or restore_submission is None:
-            return False
-        _, envelope = binding
+        if consensus is None or finality_source is None or restore_submission is None:
+            return self._local_abci_has_committed_state()
         try:
             restore_submission(envelope)
             consensus.reconcile_finality(
@@ -401,10 +407,17 @@ class OperatorApplicationService:
             canonical_binding = self._canonical_owner_wallet_binding_payload()
             for intent in pending:
                 operation_id = intent["operation_id"]
+                operation = canonical_operations.get(operation_id)
+                envelope = None
+                if operation is not None:
+                    try:
+                        envelope = LedgerOperationEnvelope.model_validate(operation)
+                    except ValueError as error:
+                        raise ValueError("wallet bootstrap operation is invalid") from error
                 if canonical_binding is not None:
                     if self._wallet_matches_binding(
                         intent["owner_wallet"], canonical_binding
-                    ) and self._local_abci_has_committed_state():
+                    ) and envelope is not None and self._wallet_binding_finality_is_verified(envelope):
                         self._host._owner_wallet = {
                             **intent["owner_wallet"],
                             "canonical_binding_confirmed": True,
@@ -452,7 +465,6 @@ class OperatorApplicationService:
                         operation_id,
                         finality_source=finality_source,
                     )
-                operation = canonical_operations.get(operation_id)
                 if operation is None:
                     try:
                         self._submit_pending_owner_wallet_bootstrap(intent)
@@ -469,7 +481,8 @@ class OperatorApplicationService:
                 submission = consensus.get_submission(operation_id)
                 if submission is None or submission.status.value != "finalized":
                     try:
-                        envelope = LedgerOperationEnvelope.model_validate(operation)
+                        if envelope is None:
+                            raise ValueError("wallet bootstrap operation is invalid")
                         self._host.stage_pending_consensus_envelope(envelope)
                         consensus.restore_submission(envelope)
                         self._submit_pending_owner_wallet_bootstrap(intent)
