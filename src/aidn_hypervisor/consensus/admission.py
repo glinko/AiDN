@@ -128,6 +128,16 @@ class AdmissionValidator:
         """Mark an operation ID as finalized (for duplicate detection)."""
         self._finalized_ids.add(operation_id)
 
+    def discard_finalized(self, operation_id: str) -> None:
+        """Drop one non-canonical in-memory replay-cache entry.
+
+        Callers must first prove that the canonical Ledger replay registry does
+        not contain this ID. This is used only to repair process-local state
+        after a controlled chain reset; it never changes the Ledger.
+        """
+
+        self._finalized_ids.discard(operation_id)
+
     def advance_wallet_sequence(self, wallet_id: str) -> int:
         """Advance and return the next sequence for a wallet."""
         current = self._wallet_sequences.get(wallet_id, 1)

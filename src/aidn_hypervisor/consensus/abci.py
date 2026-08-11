@@ -122,7 +122,9 @@ class AIDNABCIApplication:
     ):
         self.ledger = ledger_service
         self.mempool = ABCIMempool()
-        self._admission = admission_validator or AdmissionValidator(current_time=datetime.now(UTC).isoformat())
+        self._admission = admission_validator or AdmissionValidator(
+            current_time=datetime.now(UTC).isoformat()
+        )
         self._genesis_time = genesis_time or datetime.now(UTC).isoformat()
         self._last_block_height = 0
         self._last_block_hash = b"\x00" * 32
@@ -343,6 +345,9 @@ class AIDNABCIApplication:
         # The Hypervisor Ledger is the authoritative local snapshot here. Local
         # evidence may be newer than the last committed ABCI snapshot, so do not
         # replace its wallet sequence state while restoring consensus metadata.
+        # Canonical replay protection is queried from the Ledger per CheckTx.
+        # Keep the process-local cache empty so a reset cannot retain IDs from
+        # a discarded chain generation.
         self._admission.restore_state(
             {
                 "finalized_ids": set(),
@@ -418,8 +423,29 @@ class AIDNABCIApplication:
                 log=f"parse error: {e}",
             )
 
+        if not recheck:
+            finalized_error = self._canonical_finalized_operation_error(envelope)
+            if finalized_error is not None:
+                return ABCIResult(
+                    code="rejected",
+                    log=finalized_error,
+                    tags=[
+                        ABCITag(key="operation_id", value=envelope.operation_id),
+                        ABCITag(key="reason", value=finalized_error),
+                    ],
+                )
+
         # Admission check
         admission = self._admission.validate(envelope)
+        if (
+            not admission.admitted
+            and admission.reason == "duplicate_operation_id"
+            # The canonical registry was checked immediately above. A duplicate
+            # only in AdmissionValidator is stale process memory, not a replay.
+            and envelope.operation_id not in self._finalized_operation_ids()
+        ):
+            self._admission.discard_finalized(envelope.operation_id)
+            admission = self._admission.validate(envelope)
         if not admission.admitted:
             return ABCIResult(
                 code="rejected",
@@ -473,7 +499,11 @@ class AIDNABCIApplication:
         for tx_data in txs:
             try:
                 envelope = self._parse_envelope(tx_data)
-                if envelope.operation_id in selected_ids or not self._admission.validate(envelope).admitted:
+                if (
+                    envelope.operation_id in selected_ids
+                    or self._canonical_finalized_operation_error(envelope) is not None
+                    or not self._admission.validate(envelope).admitted
+                ):
                     continue
                 if (
                     self._special_operation_error(
@@ -504,6 +534,12 @@ class AIDNABCIApplication:
             if envelope.operation_id in operation_ids:
                 return ABCIResult(code="duplicate", log="duplicate operation in proposal")
             operation_ids.add(envelope.operation_id)
+            finalized_error = self._canonical_finalized_operation_error(
+                envelope,
+                finalized_operation_ids=finalized_operation_ids,
+            )
+            if finalized_error is not None:
+                return ABCIResult(code="rejected", log=finalized_error)
             admission = self._admission.validate(envelope)
             if not admission.admitted:
                 return ABCIResult(code="rejected", log=admission.reason or "admission failed")
@@ -727,6 +763,17 @@ class AIDNABCIApplication:
             seq = self.ledger.wallet_next_sequence(wallet_id)
             kwargs["key"] = f"wallet:{wallet_id}:sequence".encode()
             kwargs["value"] = str(seq).encode()
+        elif path.startswith("operation/finalized/"):
+            operation_id = path.removeprefix("operation/finalized/")
+            reference = self.ledger.finalized_operation_reference(operation_id)
+            kwargs["key"] = f"operation:{operation_id}:finalized".encode()
+            # Expose replay provenance only; payloads and signatures remain
+            # restricted settlement and execution evidence.
+            kwargs["value"] = (
+                json.dumps(reference, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                if reference is not None
+                else b""
+            )
         elif path == "faucet/treasury-manifest":
             kwargs["key"] = b"faucet:treasury:manifest"
             kwargs["value"] = (
@@ -884,10 +931,9 @@ class AIDNABCIApplication:
         }
         if self._compute_state_hash() != self._app_hash:
             raise ValueError("snapshot application hash does not match state")
-        # Wallet sequence state is part of the executable consensus projection
-        # even though it is not separately committed. Rebuild it so the next
-        # block uses the same sequence rules. Replay authority remains the
-        # restored Ledger registry, which preserves typed duplicate errors.
+        # Wallet sequences are part of the executable consensus projection.
+        # Finalized operation IDs are checked directly against the restored
+        # canonical Ledger so a process-local cache cannot survive a reset.
         self._admission.restore_state(
             {
                 "finalized_ids": set(),
@@ -1241,6 +1287,39 @@ class AIDNABCIApplication:
             for operation in self.ledger.snapshot_operations()
             if operation.get("operation_id")
         }
+
+    def _canonical_finalized_operation_error(
+        self,
+        envelope: LedgerOperationEnvelope,
+        *,
+        finalized_operation_ids: set[str] | None = None,
+    ) -> str | None:
+        """Return the deterministic replay result from the canonical Ledger.
+
+        AdmissionValidator's finalized-ID set is intentionally process-local:
+        it accelerates a running node but is not an authority after restart or
+        a controlled chain reset. The Ledger replay registry is the committed
+        source of truth. Typed operations retain their domain-specific replay
+        error; a completed Wallet transfer has no richer replay state and uses
+        the stable generic code.
+        """
+
+        operation_ids = (
+            finalized_operation_ids
+            if finalized_operation_ids is not None
+            else self._finalized_operation_ids()
+        )
+        if envelope.operation_id not in operation_ids:
+            return None
+        if envelope.operation_type == "WALLET_TRANSFER":
+            return "duplicate_operation_id"
+        return (
+            self._special_operation_error(
+                envelope,
+                finalized_operation_ids=operation_ids,
+            )
+            or "duplicate_operation_id"
+        )
 
     def _special_operation_error(
         self,

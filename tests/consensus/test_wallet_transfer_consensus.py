@@ -171,3 +171,50 @@ def test_abci_snapshot_restore_preserves_wallet_transfer_economics() -> None:
     assert restored_ledger.wallet_q_atom_balance("wallet:recipient") == 25
     assert restored_ledger.recyclable_q_atom_balance() == STANDARD_NETWORK_FEE_Q_ATOMS
     assert restored.prepare_snapshot()["app_hash"] == snapshot["app_hash"]
+
+    # A snapshot restore must rebuild admission replay protection from the
+    # canonical operation log. Otherwise the same transfer can pass CheckTx
+    # after restart and fail only later during block execution.
+    replay = restored.check_transaction(_tx())
+    assert replay.code == "rejected"
+    assert replay.log == "duplicate_operation_id"
+
+
+def test_abci_query_exposes_only_finalized_operation_replay_provenance() -> None:
+    ledger = _ledger()
+    app = AIDNABCIApplication(
+        ledger_service=ledger,
+        admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
+        strict_operation_coverage=True,
+    )
+    tx = _tx()
+    envelope = LedgerOperationEnvelope.model_validate(json.loads(tx))
+    app.finalize_block(block_height=1, block_hash=b"G" * 32, txs=[tx])
+
+    response = app.query(path=f"operation/finalized/{envelope.operation_id}")
+    reference = json.loads(response.value)
+
+    assert reference["operation_id"] == envelope.operation_id
+    assert reference["operation_type"] == "WALLET_TRANSFER"
+    assert reference["sequence_id"] == 1
+    assert "payload" not in reference
+    assert "signatures" not in reference
+
+
+def test_abci_repairs_a_noncanonical_admission_replay_cache_entry() -> None:
+    ledger = _ledger()
+    admission = AdmissionValidator(current_time="2030-01-01T00:00:00Z")
+    tx = _tx()
+    envelope = LedgerOperationEnvelope.model_validate(json.loads(tx))
+    admission.record_finalized(envelope.operation_id)
+    app = AIDNABCIApplication(
+        ledger_service=ledger,
+        admission_validator=admission,
+        strict_operation_coverage=True,
+    )
+
+    # This simulates a validator process which survived a controlled chain
+    # reset. The cache is not authority when the canonical Ledger lacks the ID.
+    result = app.check_transaction(tx)
+
+    assert result.code == "ok"
