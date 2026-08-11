@@ -131,7 +131,7 @@ class FaucetStore:
                 connection.execute(
                     """
                     SELECT * FROM claims
-                    WHERE wallet_id = ? AND quota_key = ? AND status IN ('PENDING', 'REJECTED', 'FINALIZED')
+                    WHERE wallet_id = ? AND quota_key = ? AND status IN ('PENDING', 'FINALIZED')
                     ORDER BY created_at DESC LIMIT 1
                     """,
                     (wallet_id, quota_key),
@@ -144,7 +144,7 @@ class FaucetStore:
                 connection.execute(
                     """
                     SELECT * FROM claims
-                    WHERE status IN ('PENDING', 'REJECTED')
+                    WHERE status = 'PENDING'
                     ORDER BY created_at ASC LIMIT 1
                     """
                 ).fetchone()

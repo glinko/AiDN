@@ -64,7 +64,14 @@ class FaucetTransactionHashRegistry:
 
 
 class FailoverCometBftSubmissionTransport:
-    """Try configured RPC submitters while preserving the exact tx bytes."""
+    """Fan out an exact transaction to configured RPCs.
+
+    A successful ``CheckTx`` only proves admission into one validator's
+    mempool. It is not a durability guarantee: a restart or a broken gossip
+    link can otherwise leave an admitted Faucet transfer absent from every
+    proposed block. Sending identical, signed bytes to every configured
+    submission RPC makes admission resilient to that single-node failure.
+    """
 
     def __init__(self, transports: Sequence[CometBftSubmissionTransport]) -> None:
         if not transports:
@@ -73,12 +80,34 @@ class FailoverCometBftSubmissionTransport:
 
     def broadcast_tx_sync(self, tx_data: bytes, *, timeout_seconds: int) -> dict:
         errors: list[str] = []
+        responses: list[dict] = []
         for transport in self._transports:
             try:
-                return transport.broadcast_tx_sync(tx_data, timeout_seconds=timeout_seconds)
+                response = transport.broadcast_tx_sync(tx_data, timeout_seconds=timeout_seconds)
             except Exception as error:  # pragma: no cover - transport-specific failures
                 errors.append(f"{type(error).__name__}: {error}")
+                continue
+            responses.append(response)
+        for response in responses:
+            if self._is_admitted_response(response):
+                return response
+        if responses:
+            # Preserve the CheckTx error for the caller rather than masking a
+            # deterministic consensus rejection as a transport outage.
+            return responses[0]
         raise RuntimeError("all CometBFT submission endpoints failed: " + " | ".join(errors))
+
+    @staticmethod
+    def _is_admitted_response(response: object) -> bool:
+        if not isinstance(response, dict) or response.get("error") not in {None, ""}:
+            return False
+        result = response.get("result", response)
+        if not isinstance(result, dict):
+            return False
+        try:
+            return int(result.get("code", -1)) == 0
+        except (TypeError, ValueError):
+            return False
 
 
 class HttpCometBftWalletSequenceProvider:
@@ -661,12 +690,18 @@ class CometBftFaucetTransferSubmitter:
                 detail=f"consensus finality unavailable: {error}",
             )
         if evidence is None:
-            return TransferSubmission(
-                operation_id=envelope.operation_id,
-                status="ADMITTED",
-                transaction_hash=transaction_hash,
-                detail="No verified finality evidence is available yet",
-            )
+            # Do not manufacture finality from a local mempool. Re-broadcast
+            # only the exact signed bytes so a transaction lost by one RPC can
+            # re-enter the validator set without creating a second transfer.
+            rebroadcast = self.submit_transfer(envelope)
+            if rebroadcast.status == "ADMITTED":
+                return rebroadcast.model_copy(
+                    update={
+                        "detail": "No verified finality evidence is available yet; "
+                        "the exact envelope was re-broadcast to configured RPCs",
+                    }
+                )
+            return rebroadcast
         if evidence.operation_id != envelope.operation_id or evidence.chain_id != self.chain_id:
             return TransferSubmission(
                 operation_id=envelope.operation_id,

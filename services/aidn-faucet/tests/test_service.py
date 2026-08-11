@@ -72,6 +72,19 @@ class LedgerSubmitter:
         return TransferSubmission(operation_id=envelope.operation_id, status="FINALIZED")
 
 
+class AlwaysRejectedSubmitter(LedgerSubmitter):
+    def submit_transfer(self, envelope):
+        self.submitted.append(envelope)
+        return TransferSubmission(
+            operation_id=envelope.operation_id,
+            status="REJECTED",
+            detail="expired envelope",
+        )
+
+    def reconcile_transfer(self, envelope):
+        return self.submit_transfer(envelope)
+
+
 def _service(
     tmp_path,
     *,
@@ -200,6 +213,43 @@ def test_rejected_submission_is_publicly_distinct_and_retries_exact_claim(tmp_pa
     assert retried.operation_id == rejected.operation_id
     assert len(service.submitter.submitted) == 2
     assert service.submitter.submitted[0].model_dump() == service.submitter.submitted[1].model_dump()
+
+
+def test_rejected_claim_does_not_block_new_claim_or_quota(tmp_path) -> None:
+    now = [datetime(2030, 1, 2, tzinfo=UTC)]
+    service, ledger, _ = _service(
+        tmp_path,
+        policy=FixedDailyPolicy(amount_q=50),
+        now=now,
+    )
+    service.submitter = AlwaysRejectedSubmitter(ledger)
+    wallet_key = Ed25519PrivateKey.generate()
+
+    rejected = _claim(service, wallet_key, "expired-request")
+    replacement = _claim(service, wallet_key, "replacement-request")
+
+    assert rejected.status == "SUBMISSION_REJECTED"
+    assert replacement.status == "SUBMISSION_REJECTED"
+    assert replacement.operation_id != rejected.operation_id
+
+
+def test_pending_recovery_reconciles_only_the_serialized_treasury_transfer(tmp_path) -> None:
+    now = [datetime(2030, 1, 2, tzinfo=UTC)]
+    service, _, _ = _service(
+        tmp_path,
+        policy=FixedDailyPolicy(amount_q=50),
+        now=now,
+        admitted_first=True,
+    )
+    wallet_key = Ed25519PrivateKey.generate()
+
+    pending = _claim(service, wallet_key, "background-recovery")
+    recovered = service.reconcile_pending_claim()
+
+    assert pending.status == "PENDING_FINALITY"
+    assert recovered is not None
+    assert recovered.status == "APPROVED"
+    assert service.reconcile_pending_claim() is None
 
 
 def test_accumulating_pool_resets_only_after_finalized_claim(tmp_path) -> None:

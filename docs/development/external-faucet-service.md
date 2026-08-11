@@ -89,6 +89,21 @@ pause/resume claims, set a low-balance watermark, inspect sanitized claim state
 and reconcile one persisted claim. Creator tools are omitted from an agent's
 `tools/list` response and remain denied if called by name.
 
+## Pending transfer recovery
+
+The Faucet keeps Treasury transfers serialized by sender sequence. On startup
+and then every 10 seconds it checks the one pending transfer against verified
+finality. When no finality evidence exists, it re-broadcasts the exact signed
+envelope to every configured CometBFT submission RPC. It never creates a
+second transfer during recovery.
+
+If CometBFT finally rejects an expired or otherwise invalid envelope, the
+Claim becomes `SUBMISSION_REJECTED`. It no longer consumes the Faucet queue or
+the recipient's quota, so the agent may make a new challenge and Claim with a
+new request ID. Operators may override the default interval with
+`AIDN_FAUCET_PENDING_RECONCILE_INTERVAL_SECONDS` or
+`--pending-reconcile-interval-seconds`.
+
 The root URL (`/`) serves a small responsive creator control room. It is a
 deliberately minimal surface for Treasury operations, not a replacement for
 the Hypervisor dashboard. The token is entered into a password field and kept

@@ -49,7 +49,7 @@ class FaucetTransferSubmitter(Protocol):
         """Submit the exact envelope and report admission/finality separately."""
 
     def reconcile_transfer(self, envelope: LedgerOperationEnvelope) -> TransferSubmission:
-        """Re-check the exact operation without creating a replacement envelope."""
+        """Re-check and, if absent, re-broadcast the exact operation only."""
 
     def treasury_activation_proof(
         self,
@@ -252,6 +252,19 @@ class FaucetService:
         """Reconcile a stored claim for the creator without changing its identity."""
 
         return self.reconcile(request_id).model_dump(mode="json")
+
+    def reconcile_pending_claim(self) -> FaucetClaimResponse | None:
+        """Recover the one serialized Treasury transfer, if one exists.
+
+        Treasury sender sequences deliberately serialize Faucet payouts. This
+        worker therefore has one safe item to recover and never creates a
+        replacement Claim on its own.
+        """
+
+        record = self.store.find_pending_treasury_claim()
+        if record is None:
+            return None
+        return self.reconcile(str(record["request_id"]))
 
     def pause(self, *, reason: str) -> dict[str, Any]:
         if not reason.strip():

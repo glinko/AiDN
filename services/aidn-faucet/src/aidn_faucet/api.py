@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 
@@ -14,9 +19,44 @@ from aidn_faucet.models import (
 )
 from aidn_faucet.service import FaucetService
 
+logger = logging.getLogger(__name__)
 
-def build_app(service: FaucetService, *, mcp_server: FaucetMcpServer | None = None) -> FastAPI:
-    app = FastAPI(title="AiDN Faucet Treasury", version="0.1.0")
+
+def build_app(
+    service: FaucetService,
+    *,
+    mcp_server: FaucetMcpServer | None = None,
+    pending_reconcile_interval_seconds: int = 10,
+) -> FastAPI:
+    if pending_reconcile_interval_seconds < 1:
+        raise ValueError("pending reconcile interval must be positive")
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        stop = asyncio.Event()
+
+        async def recover_pending_claims() -> None:
+            while not stop.is_set():
+                try:
+                    await asyncio.to_thread(service.reconcile_pending_claim)
+                except Exception:  # pragma: no cover - deployment boundary
+                    logger.exception("Faucet pending-transfer recovery failed")
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(
+                        stop.wait(),
+                        timeout=pending_reconcile_interval_seconds,
+                    )
+
+        task = asyncio.create_task(recover_pending_claims())
+        try:
+            yield
+        finally:
+            stop.set()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    app = FastAPI(title="AiDN Faucet Treasury", version="0.1.0", lifespan=lifespan)
     mcp = mcp_server or FaucetMcpServer(service)
 
     def authorize(authorization: str | None) -> None:

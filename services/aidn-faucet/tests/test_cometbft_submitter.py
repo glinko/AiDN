@@ -81,7 +81,7 @@ def test_admission_is_not_finality_and_reconcile_reuses_exact_bytes() -> None:
 
     assert admitted.status == "ADMITTED"
     assert pending.status == "ADMITTED"
-    assert transport.calls == [serialize_faucet_envelope(envelope)]
+    assert transport.calls == [serialize_faucet_envelope(envelope)] * 2
     assert finality.operations == [envelope.operation_id]
 
 
@@ -147,6 +147,21 @@ def test_failover_sends_identical_bytes_to_second_rpc() -> None:
 
     assert result.status == "ADMITTED"
     assert first.calls == [second.calls[0]]
+
+
+def test_submission_fans_out_after_first_success() -> None:
+    envelope = _envelope()
+    tx_hash = cometbft_transaction_hash(serialize_faucet_envelope(envelope))
+    first = SubmissionTransport({"result": {"code": 0, "hash": tx_hash}})
+    second = SubmissionTransport({"result": {"code": 0, "hash": tx_hash}})
+    submitter = _submitter(
+        transport=FailoverCometBftSubmissionTransport((first, second)),
+        finality=FinalitySource(None),
+    )
+
+    assert submitter.submit_transfer(envelope).status == "ADMITTED"
+    assert first.calls == [serialize_faucet_envelope(envelope)]
+    assert second.calls == [serialize_faucet_envelope(envelope)]
 
 
 class RpcTransport:

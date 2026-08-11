@@ -119,7 +119,14 @@ def _serve(args: argparse.Namespace) -> int:
     )
     print(f"Faucet GUI:  http://{bind_host}:{args.port}/", file=sys.stderr)
     print(f"Faucet MCP:  http://{bind_host}:{args.port}/mcp", file=sys.stderr)
-    uvicorn.run(build_app(service), host=bind_host, port=args.port)
+    uvicorn.run(
+        build_app(
+            service,
+            pending_reconcile_interval_seconds=args.pending_reconcile_interval_seconds,
+        ),
+        host=bind_host,
+        port=args.port,
+    )
     return 0
 
 
@@ -171,6 +178,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="bind GUI and MCP to 0.0.0.0; requires both bearer tokens",
     )
     serve.add_argument("--port", type=int, default=8790)
+    serve.add_argument(
+        "--pending-reconcile-interval-seconds",
+        type=int,
+        default=int(os.environ.get("AIDN_FAUCET_PENDING_RECONCILE_INTERVAL_SECONDS", "10")),
+        help="seconds between exact-envelope recovery attempts for a pending Treasury transfer",
+    )
     return parser
 
 
