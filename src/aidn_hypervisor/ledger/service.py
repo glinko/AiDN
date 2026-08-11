@@ -8164,6 +8164,22 @@ class LedgerOperationService:
         self._wallet_next_sequences[wallet_id] = int(canonical_next_sequence)
         return True
 
+    def synchronize_wallet_sequence(self, wallet_id: str, canonical_next_sequence: int) -> bool:
+        """Replace a local nonce with an operator-approved canonical quorum read.
+
+        This permits a lower nonce only after a controlled chain reset.  It is
+        deliberately separate from ordinary reconciliation so local state can
+        never rewind based on pending operations or an arbitrary peer.
+        """
+        if not isinstance(wallet_id, str) or not wallet_id.strip():
+            raise ValueError("wallet ID is required for sequence synchronization")
+        if isinstance(canonical_next_sequence, bool) or canonical_next_sequence < 1:
+            raise ValueError("canonical wallet sequence must be positive")
+        if self.wallet_next_sequence(wallet_id) == canonical_next_sequence:
+            return False
+        self._wallet_next_sequences[wallet_id] = int(canonical_next_sequence)
+        return True
+
     def get_next_sequence(self, wallet_id: str) -> int:
         """Get the next expected sequence number for a wallet."""
         return self.wallet_next_sequence(wallet_id)

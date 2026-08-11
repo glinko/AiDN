@@ -293,6 +293,81 @@ class HttpCometBftWalletBalanceProvider:
             return None
 
 
+class HttpCometBftWalletSequenceProvider:
+    """Read a Wallet nonce from an approved CometBFT RPC quorum."""
+
+    def __init__(
+        self,
+        transports: Sequence[CometBftRpcTransport],
+        *,
+        quorum: int = 1,
+        timeout_seconds: int = 10,
+    ) -> None:
+        if not transports:
+            raise ValueError("at least one CometBFT RPC transport is required")
+        if not 1 <= quorum <= len(transports):
+            raise ValueError("sequence quorum must be within the RPC count")
+        if timeout_seconds < 1:
+            raise ValueError("sequence timeout must be positive")
+        self._transports = tuple(transports)
+        self._quorum = quorum
+        self._timeout_seconds = timeout_seconds
+
+    def __call__(self, wallet_id: str) -> int:
+        if not wallet_id or "/" in wallet_id or "\\" in wallet_id:
+            raise ValueError("Wallet ID is invalid for an ABCI query path")
+        path = f"wallet/sequence/{wallet_id}"
+        with ThreadPoolExecutor(max_workers=len(self._transports)) as executor:
+            sequences = [
+                sequence
+                for sequence in executor.map(
+                    lambda transport: self._read_sequence(transport, path),
+                    self._transports,
+                )
+                if sequence is not None
+            ]
+        counts = Counter(sequences)
+        if not counts:
+            raise RuntimeError("canonical Wallet sequence is unavailable")
+        sequence, count = counts.most_common(1)[0]
+        if count < self._quorum:
+            raise RuntimeError("configured RPCs disagree on the canonical Wallet sequence")
+        return sequence
+
+    def _read_sequence(
+        self,
+        transport: CometBftRpcTransport,
+        path: str,
+    ) -> int | None:
+        try:
+            response = transport.get(
+                "/abci_query",
+                params={
+                    "path": json.dumps(path, separators=(",", ":")),
+                    "prove": "false",
+                },
+                timeout_seconds=self._timeout_seconds,
+            )
+            result = response.get("result")
+            query_response = result.get("response") if isinstance(result, dict) else None
+            if not isinstance(query_response, dict) or int(query_response.get("code", -1)) != 0:
+                return None
+            encoded = query_response.get("value")
+            if not isinstance(encoded, str) or not encoded:
+                return None
+            sequence = int(base64.b64decode(encoded, validate=True).decode("ascii"))
+            return sequence if sequence >= 1 else None
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            UnicodeDecodeError,
+            binascii.Error,
+            OSError,
+        ):
+            return None
+
+
 class HttpCometBftWalletIdentityProvider:
     """Read a finalized Wallet identity from an approved CometBFT RPC quorum.
 

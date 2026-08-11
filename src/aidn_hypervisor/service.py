@@ -159,6 +159,7 @@ class HypervisorService:
         consensus_finality_source=None,
         canonical_wallet_balance_provider=None,
         canonical_wallet_identity_provider=None,
+        canonical_wallet_sequence_provider=None,
     ) -> None:
         self.queue = queue
         self.scheduler = scheduler
@@ -181,6 +182,7 @@ class HypervisorService:
         self.consensus_finality_source = consensus_finality_source
         self.canonical_wallet_balance_provider = canonical_wallet_balance_provider
         self.canonical_wallet_identity_provider = canonical_wallet_identity_provider
+        self.canonical_wallet_sequence_provider = canonical_wallet_sequence_provider
         if consensus_finality_source is not None:
             self.bind_consensus_finality_source(consensus_finality_source)
         self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(

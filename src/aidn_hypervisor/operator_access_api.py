@@ -338,16 +338,27 @@ def build_operator_access_router(
             raise ValueError("canonical Wallet identity is unavailable; registration was not submitted")
 
         local_sequence = hypervisor_service.ledger_operation_service.wallet_next_sequence(wallet_id)
-        query_sequence = getattr(consensus, "query_wallet_next_sequence", None)
-        if callable(query_sequence):
-            canonical_sequence = query_sequence(wallet_id)
-            if canonical_sequence is None:
-                raise ValueError("canonical wallet sequence is unavailable")
-            if hypervisor_service.ledger_operation_service.reconcile_wallet_sequence(
+        sequence_provider = getattr(
+            hypervisor_service, "canonical_wallet_sequence_provider", None
+        )
+        if sequence_provider is not None:
+            canonical_sequence = sequence_provider(wallet_id)
+            if hypervisor_service.ledger_operation_service.synchronize_wallet_sequence(
                 wallet_id, canonical_sequence
             ):
                 hypervisor_service._persist_state()
             local_sequence = canonical_sequence
+        else:
+            query_sequence = getattr(consensus, "query_wallet_next_sequence", None)
+            if callable(query_sequence):
+                canonical_sequence = query_sequence(wallet_id)
+                if canonical_sequence is None:
+                    raise ValueError("canonical wallet sequence is unavailable")
+                if hypervisor_service.ledger_operation_service.reconcile_wallet_sequence(
+                    wallet_id, canonical_sequence
+                ):
+                    hypervisor_service._persist_state()
+                local_sequence = canonical_sequence
 
         def build_envelope(sequence: int, retry_nonce: str | None = None) -> LedgerOperationEnvelope:
             registered_at = datetime.now(UTC).isoformat()

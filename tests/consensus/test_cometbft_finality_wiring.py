@@ -13,6 +13,7 @@ from aidn_hypervisor.consensus.cometbft import (
     CometBftRpcFinalitySource,
     HttpCometBftWalletBalanceProvider,
     HttpCometBftWalletIdentityProvider,
+    HttpCometBftWalletSequenceProvider,
 )
 from aidn_hypervisor.consensus.cometbft_crypto import Zip215CometBftEd25519Backend
 from aidn_hypervisor.consensus.cometbft_finality import (
@@ -162,6 +163,33 @@ def test_wallet_identity_provider_treats_quorum_empty_as_not_registered():
     )
 
     assert provider("wallet-owner") is None
+
+
+def test_wallet_sequence_provider_uses_quorum_after_a_chain_reset():
+    class SequenceTransport:
+        def __init__(self, sequence: int) -> None:
+            self.sequence = sequence
+
+        def get(self, path: str, *, params: dict[str, str], timeout_seconds: int) -> dict:
+            assert path == "/abci_query"
+            assert params["path"] == '"wallet/sequence/wallet-owner"'
+            assert timeout_seconds == 2
+            return {
+                "result": {
+                    "response": {
+                        "code": 0,
+                        "value": base64.b64encode(str(self.sequence).encode("ascii")).decode("ascii"),
+                    }
+                }
+            }
+
+    provider = HttpCometBftWalletSequenceProvider(
+        [SequenceTransport(1), SequenceTransport(1), SequenceTransport(2)],
+        quorum=2,
+        timeout_seconds=2,
+    )
+
+    assert provider("wallet-owner") == 1
 
 
 def _trusted_checkpoint(chain_id: str = "aidn-testnet-1") -> TrustedCometBftCheckpoint:

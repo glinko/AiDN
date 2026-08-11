@@ -80,3 +80,13 @@ def test_wallet_identity_query_returns_empty_only_for_an_absent_identity() -> No
     response = app.query(path="wallet/identity/wallet-missing")
 
     assert response.value == b""
+
+
+def test_wallet_sequence_synchronization_allows_a_verified_chain_reset() -> None:
+    ledger = LedgerOperationService()
+    ledger.reconcile_wallet_sequence("wallet-owner", 5)
+
+    changed = ledger.synchronize_wallet_sequence("wallet-owner", 1)
+
+    assert changed is True
+    assert ledger.wallet_next_sequence("wallet-owner") == 1
