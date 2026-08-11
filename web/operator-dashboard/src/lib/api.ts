@@ -75,15 +75,17 @@ export type AgentPermissionCatalog = {
 
 export type DashboardRecord = Record<string, unknown>
 
+export type ProviderArtifactInventory = DashboardRecord[] | DashboardRecord
+
 export type ProviderWorkspace = {
   plugin_directory: DashboardRecord[]
   provider_instances: DashboardRecord[]
   model_deployments: DashboardRecord[]
   runtime_bindings: DashboardRecord[]
-  installation_artifacts: DashboardRecord[]
-  model_artifacts: DashboardRecord[]
-  model_artifact_sets: DashboardRecord[]
-  artifact_materializations: DashboardRecord[]
+  installation_artifacts: ProviderArtifactInventory
+  model_artifacts: ProviderArtifactInventory
+  model_artifact_sets: ProviderArtifactInventory
+  artifact_materializations: ProviderArtifactInventory
   summary: DashboardRecord
 }
 
@@ -92,17 +94,23 @@ export type ModelInstallWorkspace = {
   summary: DashboardRecord
 }
 
+const dashboardRecordSchema = z.record(z.string(), z.unknown())
+const providerArtifactInventorySchema = z.union([
+  z.array(dashboardRecordSchema),
+  dashboardRecordSchema,
+]).default([])
+
 const providerWorkspaceSchema = z.object({
   plugin_directory: z.array(z.record(z.string(), z.unknown())).default([]),
   provider_instances: z.array(z.record(z.string(), z.unknown())).default([]),
   model_deployments: z.array(z.record(z.string(), z.unknown())).default([]),
   runtime_bindings: z.array(z.record(z.string(), z.unknown())).default([]),
-  installation_artifacts: z.array(z.record(z.string(), z.unknown())).default([]),
-  model_artifacts: z.array(z.record(z.string(), z.unknown())).default([]),
-  model_artifact_sets: z.array(z.record(z.string(), z.unknown())).default([]),
-  artifact_materializations: z.array(z.record(z.string(), z.unknown())).default([]),
+  installation_artifacts: providerArtifactInventorySchema,
+  model_artifacts: providerArtifactInventorySchema,
+  model_artifact_sets: providerArtifactInventorySchema,
+  artifact_materializations: providerArtifactInventorySchema,
   summary: z.record(z.string(), z.unknown()).default({}),
-})
+}).passthrough()
 
 const modelInstallWorkspaceSchema = z.object({
   items: z.array(z.record(z.string(), z.unknown())).default([]),

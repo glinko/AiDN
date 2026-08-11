@@ -64,7 +64,7 @@ import {
   shortId,
 } from '@/lib/format'
 import { useDashboardData } from '@/hooks/use-dashboard'
-import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type ProviderWorkspace } from '@/lib/api'
+import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type ProviderArtifactInventory, type ProviderWorkspace } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
 import type { Bundle, Endpoint, ReadinessStep, WalletDashboard } from '@/lib/types'
 
@@ -92,6 +92,14 @@ const advancedItems: NavigationItem[] = [
   { id: 'validation', label: 'Validation', icon: ShieldCheck, advanced: true },
   { id: 'network', label: 'Network', icon: Network, advanced: true },
 ]
+
+function inventoryRecords(value: ProviderArtifactInventory | undefined): DashboardRecord[] {
+  if (Array.isArray(value)) return value
+  const items = getRecord(value)?.items
+  return Array.isArray(items)
+    ? items.filter((item): item is DashboardRecord => Boolean(getRecord(item)))
+    : []
+}
 
 const statusClassNames: Record<string, string> = {
   ready: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
@@ -829,7 +837,7 @@ function ModelsWorkspace({ installs, workspace, isLoading, error, onRefresh }: {
   const [message, setMessage] = useState<string | null>(null)
   const plugins = workspace?.plugin_directory ?? []
   const deployments = workspace?.model_deployments ?? []
-  const artifactSets = workspace?.model_artifact_sets ?? []
+  const artifactSets = inventoryRecords(workspace?.model_artifact_sets)
   const instances = workspace?.provider_instances ?? []
 
   useEffect(() => {
