@@ -123,7 +123,10 @@ uv run python tools/create-faucet-treasury-funding.py \
 
 9. Submit that exact signed envelope through the trusted CometBFT quorum. The
 command writes the post-finality manifest only after the transaction has
-operation-bound verified finality.
+operation-bound verified finality. It also atomically records the verified
+transaction hash in `legacy_transaction_hashes` in the supplied finality
+configuration. This restart-safe record is required for the Faucet to verify
+the funding operation after its in-memory submission registry is lost.
 
 ```bash
 uv run python tools/submit-faucet-treasury-funding.py \

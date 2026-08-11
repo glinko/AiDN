@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import json
+
+import pytest
 from aidn_faucet.policy_registry import public_key_for_private_key
-from aidn_faucet.treasury_funding import submit_and_wait_for_treasury_funding
+from aidn_faucet.treasury_funding import (
+    persist_finality_transaction_hash,
+    submit_and_wait_for_treasury_funding,
+)
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
@@ -105,3 +111,30 @@ def test_treasury_funding_submits_exact_signed_envelope_and_requires_finality() 
     assert transaction_hash
     assert transport.transaction
     assert evidence.operation_id == envelope.operation_id
+
+
+def test_persist_finality_transaction_hash_is_atomic_and_rejects_conflicts(tmp_path) -> None:
+    config_path = tmp_path / "cometbft-finality.json"
+    operation_id = "a" * 64
+    transaction_hash = "B" * 64
+    config_path.write_text(json.dumps({"legacy_transaction_hashes": {}}), encoding="utf-8")
+
+    assert persist_finality_transaction_hash(
+        config_path,
+        operation_id=operation_id,
+        transaction_hash=transaction_hash,
+    )
+    assert json.loads(config_path.read_text(encoding="utf-8"))["legacy_transaction_hashes"] == {
+        operation_id: transaction_hash
+    }
+    assert not persist_finality_transaction_hash(
+        config_path,
+        operation_id=operation_id,
+        transaction_hash=transaction_hash.lower(),
+    )
+    with pytest.raises(ValueError, match="HASH_CONFLICT"):
+        persist_finality_transaction_hash(
+            config_path,
+            operation_id=operation_id,
+            transaction_hash="C" * 64,
+        )

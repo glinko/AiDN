@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import os
+import re
+import stat
+import tempfile
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Protocol
 
 from aidn_faucet.cometbft_submitter import serialize_faucet_envelope
@@ -16,6 +22,71 @@ from aidn_hypervisor.faucet_treasury import FaucetTreasuryManifest
 class TreasuryFundingSubmissionTransport(Protocol):
     def broadcast_tx_sync(self, tx_data: bytes, *, timeout_seconds: int) -> dict:
         """Submit the exact creator-signed envelope bytes."""
+
+
+_HEX_64 = re.compile(r"^[0-9A-Fa-f]{64}$")
+
+
+def persist_finality_transaction_hash(
+    finality_config: Path,
+    *,
+    operation_id: str,
+    transaction_hash: str,
+) -> bool:
+    """Persist a finalized operation hash for restart-safe finality verification.
+
+    The in-process submission registry is intentionally ephemeral. A Faucet
+    must nevertheless re-verify its Treasury funding after a restart, so the
+    creator-side funding command records the already verified transaction hash
+    in the operator-owned finality configuration. Existing mappings are
+    immutable: a conflicting replacement is rejected.
+    """
+
+    normalized_hash = transaction_hash.removeprefix("0x").upper()
+    if not _HEX_64.fullmatch(operation_id) or not _HEX_64.fullmatch(normalized_hash):
+        raise ValueError("FAUCET_TREASURY_FINALITY_TRANSACTION_HASH_INVALID")
+
+    try:
+        payload = json.loads(finality_config.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("FAUCET_TREASURY_FINALITY_CONFIG_UNREADABLE") from error
+    if not isinstance(payload, dict):
+        raise ValueError("FAUCET_TREASURY_FINALITY_CONFIG_INVALID")
+    mappings = payload.get("legacy_transaction_hashes", {})
+    if not isinstance(mappings, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in mappings.items()
+    ):
+        raise ValueError("FAUCET_TREASURY_FINALITY_TRANSACTION_REGISTRY_INVALID")
+
+    existing = mappings.get(operation_id)
+    if existing is not None:
+        if existing.removeprefix("0x").upper() != normalized_hash:
+            raise ValueError("FAUCET_TREASURY_FINALITY_TRANSACTION_HASH_CONFLICT")
+        return False
+
+    source_stat = finality_config.stat()
+    payload["legacy_transaction_hashes"] = {**mappings, operation_id: normalized_hash}
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=finality_config.parent,
+        prefix=f".{finality_config.name}.",
+        suffix=".tmp",
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary_path, stat.S_IMODE(source_stat.st_mode))
+        if getattr(os, "geteuid", lambda: -1)() == 0:
+            os.chown(temporary_path, source_stat.st_uid, source_stat.st_gid)
+        os.replace(temporary_path, finality_config)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+    return True
 
 
 def validate_treasury_funding_envelope(

@@ -21,7 +21,10 @@ from aidn_faucet.cometbft_submitter import (  # noqa: E402
     FaucetTransactionHashRegistry,
     serialize_faucet_envelope,
 )
-from aidn_faucet.treasury_funding import submit_and_wait_for_treasury_funding  # noqa: E402
+from aidn_faucet.treasury_funding import (  # noqa: E402
+    persist_finality_transaction_hash,
+    submit_and_wait_for_treasury_funding,
+)
 
 from aidn_hypervisor.consensus.cometbft import HttpCometBftSubmissionTransport  # noqa: E402
 from aidn_hypervisor.consensus.cometbft_finality import (  # noqa: E402
@@ -61,13 +64,34 @@ def main() -> int:
     transport = FailoverCometBftSubmissionTransport(
         [HttpCometBftSubmissionTransport(endpoint) for endpoint in deployment.rpc_endpoints]
     )
-    transaction_hash, evidence = submit_and_wait_for_treasury_funding(
-        manifest=manifest,
-        envelope=envelope,
-        transport=transport,
-        finality_source=finality_source,
-        timeout_seconds=args.timeout_seconds,
-        poll_seconds=args.poll_seconds,
+    transaction_hash = registry.remember(envelope, serialize_faucet_envelope(envelope))
+    existing_final_manifest = (
+        FaucetTreasuryManifest.model_validate_json(args.final_manifest.read_text(encoding="utf-8"))
+        if args.final_manifest.exists()
+        else None
+    )
+    if existing_final_manifest is not None:
+        if (
+            existing_final_manifest.manifest_hash != manifest.manifest_hash
+            or existing_final_manifest.funding_operation_id != envelope.operation_id
+        ):
+            raise ValueError("final manifest conflicts with the requested Treasury funding")
+        evidence = finality_source.finality_evidence(envelope.operation_id)
+        if evidence is None or evidence.operation_type != "TREASURY_FUND":
+            raise ValueError("existing final manifest is not backed by verified Treasury funding")
+    else:
+        transaction_hash, evidence = submit_and_wait_for_treasury_funding(
+            manifest=manifest,
+            envelope=envelope,
+            transport=transport,
+            finality_source=finality_source,
+            timeout_seconds=args.timeout_seconds,
+            poll_seconds=args.poll_seconds,
+        )
+    transaction_hash_recorded = persist_finality_transaction_hash(
+        args.finality_config,
+        operation_id=envelope.operation_id,
+        transaction_hash=transaction_hash,
     )
     final_manifest = manifest.model_copy(update={"funding_operation_id": envelope.operation_id})
     args.final_manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +104,7 @@ def main() -> int:
             {
                 "operation_id": envelope.operation_id,
                 "transaction_hash": transaction_hash,
+                "transaction_hash_recorded": transaction_hash_recorded,
                 "final_manifest": str(args.final_manifest),
                 "finality": evidence.model_dump(),
             },
