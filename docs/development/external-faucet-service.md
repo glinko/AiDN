@@ -114,6 +114,31 @@ subsequent requests, and preserve the returned `Mcp-Session-Id`. The service
 renews the session expiry on valid requests; restarting the service invalidates
 old sessions and requires a fresh `initialize`.
 
+## Live acceptance drill
+
+Run the acceptance runner on the Faucet host or a protected operator host. It
+creates a one-use recipient Wallet in process memory, proves control using the
+normal challenge flow, submits one claim, reconciles the same claim and checks
+that the fixed-daily policy rejects a second claim for that Wallet. It never
+writes the recipient private key, bearer token, Wallet proof or Treasury
+envelope to the report.
+
+```bash
+cd /opt/aidn/AiDN
+set -a
+. /etc/aidn/faucet.env
+set +a
+export AIDN_FAUCET_URL=http://127.0.0.1:8790
+uv run python tools/run_faucet_live_acceptance.py \
+  --output /var/lib/aidn-faucet/evidence/live-claim.json
+```
+
+For the current `fixed-daily` policy the expected amount is `50_000_000`
+`q_atoms`. A future accumulating-pool policy must set its expected amount and
+use `--skip-quota-check` when repeated claims are intentionally valid. The
+report is evidence of a single live execution, not authority to expose the
+Faucet publicly or to reuse its ephemeral recipient Wallet.
+
 ## Production completion gates
 
 Before using the service against a public or shared network, add and verify:
