@@ -472,10 +472,15 @@ class FaucetService:
         if record["status"] == "FINALIZED":
             return self._response_from_record(record)
         envelope = LedgerOperationEnvelope.model_validate(json_loads(record["envelope_json"]))
+        # A CheckTx rejection can race with block finalization: a validator may
+        # already have committed these exact signed bytes while another still
+        # reports the operation as a duplicate. Reconciliation must verify
+        # finality before it attempts any re-broadcast, including for a prior
+        # REJECTED claim.
         return self._submit_or_recover(
             record,
             envelope,
-            reconcile_only=record["status"] != "REJECTED",
+            reconcile_only=True,
         )
 
     def _submit_or_recover(

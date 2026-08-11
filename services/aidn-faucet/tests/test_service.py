@@ -68,6 +68,7 @@ class LedgerSubmitter:
         return TransferSubmission(operation_id=envelope.operation_id, status="FINALIZED")
 
     def reconcile_transfer(self, envelope):
+        self.submitted.append(envelope)
         self.ledger.apply_consensus_wallet_transfer(envelope)
         return TransferSubmission(operation_id=envelope.operation_id, status="FINALIZED")
 
@@ -83,6 +84,23 @@ class AlwaysRejectedSubmitter(LedgerSubmitter):
 
     def reconcile_transfer(self, envelope):
         return self.submit_transfer(envelope)
+
+
+class FinalizedThenRejectedSubmitter(LedgerSubmitter):
+    """Simulate a stale validator CheckTx response after canonical commit."""
+
+    def submit_transfer(self, envelope):
+        self.submitted.append(envelope)
+        self.ledger.apply_consensus_wallet_transfer(envelope)
+        return TransferSubmission(
+            operation_id=envelope.operation_id,
+            status="REJECTED",
+            detail="duplicate_operation_id",
+        )
+
+    def reconcile_transfer(self, envelope):
+        self.submitted.append(envelope)
+        return TransferSubmission(operation_id=envelope.operation_id, status="FINALIZED")
 
 
 def _service(
@@ -231,6 +249,26 @@ def test_rejected_claim_does_not_block_new_claim_or_quota(tmp_path) -> None:
     assert rejected.status == "SUBMISSION_REJECTED"
     assert replacement.status == "SUBMISSION_REJECTED"
     assert replacement.operation_id != rejected.operation_id
+
+
+def test_rejected_claim_reconciles_finality_before_rebroadcasting(tmp_path) -> None:
+    now = [datetime(2030, 1, 2, tzinfo=UTC)]
+    service, ledger, _ = _service(
+        tmp_path,
+        policy=FixedDailyPolicy(amount_q=50),
+        now=now,
+    )
+    service.submitter = FinalizedThenRejectedSubmitter(ledger)
+    wallet_key = Ed25519PrivateKey.generate()
+
+    rejected = _claim(service, wallet_key, "finalized-before-reject")
+    assert rejected.status == "SUBMISSION_REJECTED"
+
+    reconciled = service.reconcile(rejected.request_id)
+
+    assert reconciled.status == "APPROVED"
+    assert reconciled.operation_id == rejected.operation_id
+    assert len(ledger.snapshot_operations()) == 1
 
 
 def test_pending_recovery_reconciles_only_the_serialized_treasury_transfer(tmp_path) -> None:
