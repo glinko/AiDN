@@ -763,6 +763,15 @@ class AIDNABCIApplication:
             seq = self.ledger.wallet_next_sequence(wallet_id)
             kwargs["key"] = f"wallet:{wallet_id}:sequence".encode()
             kwargs["value"] = str(seq).encode()
+        elif path.startswith("wallet/identity/"):
+            wallet_id = path.split("/")[-1]
+            identity = self.ledger.canonical_wallet_identity(wallet_id)
+            kwargs["key"] = f"wallet:{wallet_id}:identity".encode()
+            kwargs["value"] = (
+                json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                if identity is not None
+                else b""
+            )
         elif path.startswith("operation/finalized/"):
             operation_id = path.removeprefix("operation/finalized/")
             reference = self.ledger.finalized_operation_reference(operation_id)
@@ -1054,6 +1063,8 @@ class AIDNABCIApplication:
         try:
             if envelope.operation_type == "WALLET_TRANSFER" and self._strict_operation_coverage:
                 self.ledger.apply_consensus_wallet_transfer(envelope)
+            elif envelope.operation_type == "WALLET_IDENTITY_REGISTER":
+                self.ledger.apply_consensus_wallet_identity_register(envelope)
             elif envelope.operation_type == "OPERATOR_WALLET_BIND":
                 self.ledger.apply_consensus_operator_wallet_bind(envelope)
             elif envelope.operation_type == "ENDPOINT_PUBLISH":
@@ -1339,6 +1350,8 @@ class AIDNABCIApplication:
         try:
             if envelope.operation_type == "WALLET_TRANSFER" and self._strict_operation_coverage:
                 self.ledger.validate_consensus_wallet_transfer(envelope)
+            elif envelope.operation_type == "WALLET_IDENTITY_REGISTER":
+                self.ledger.validate_consensus_wallet_identity_register(envelope)
             elif envelope.operation_type == "OPERATOR_WALLET_BIND":
                 self.ledger.validate_consensus_operator_wallet_bind(envelope)
             elif envelope.operation_type == "ENDPOINT_PUBLISH":

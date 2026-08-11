@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -27,6 +28,7 @@ from aidn_hypervisor.mcp.permissions import (
 )
 from aidn_hypervisor.operator_access import DashboardAccessService
 from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environment
+from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
 
 _COOKIE_NAME = "aidn_dashboard_access"
 _COOKIE_PATH = "/operators/dashboard/access"
@@ -298,6 +300,134 @@ def build_operator_access_router(
             "finality": finality,
         }
 
+    def _register_owner_wallet_identity() -> dict:
+        if hypervisor_service is None:
+            raise ValueError("Wallet service is not configured")
+        wallet = hypervisor_service.owner_wallet_state()
+        if not wallet.get("configured"):
+            raise ValueError("Owner wallet must be configured before identity registration")
+        wallet_id = str(wallet["wallet_id"])
+        public_key = str(wallet["public_key"])
+        consensus = getattr(hypervisor_service, "consensus_service", None)
+        if consensus is None or not getattr(consensus, "is_enabled", False):
+            nonce = uuid4().hex
+            registration_signature = sign_consensus_bytes(
+                private_key=hypervisor_service.owner_wallet_private_key(),
+                payload=wallet_identity_registration_payload(
+                    wallet_id=wallet_id,
+                    public_key=public_key,
+                    registration_nonce=nonce,
+                ),
+            )
+            identity = hypervisor_service.register_wallet_identity(
+                wallet_id=wallet_id,
+                public_key=public_key,
+                registration_nonce=nonce,
+                signature=registration_signature,
+            )
+            return {"status": "FINALIZED", "wallet_id": wallet_id, "identity": identity}
+
+        identity_read = hypervisor_service.wallet_identity_read_model(wallet_id)
+        if identity_read.get("identity") is not None:
+            return {
+                "status": "FINALIZED",
+                "wallet_id": wallet_id,
+                "identity": identity_read["identity"],
+            }
+        if identity_read.get("error") is not None:
+            raise ValueError("canonical Wallet identity is unavailable; registration was not submitted")
+
+        local_sequence = hypervisor_service.ledger_operation_service.wallet_next_sequence(wallet_id)
+        query_sequence = getattr(consensus, "query_wallet_next_sequence", None)
+        if callable(query_sequence):
+            canonical_sequence = query_sequence(wallet_id)
+            if canonical_sequence is None:
+                raise ValueError("canonical wallet sequence is unavailable")
+            if hypervisor_service.ledger_operation_service.reconcile_wallet_sequence(
+                wallet_id, canonical_sequence
+            ):
+                hypervisor_service._persist_state()
+            local_sequence = canonical_sequence
+
+        def build_envelope(sequence: int, retry_nonce: str | None = None) -> LedgerOperationEnvelope:
+            registered_at = datetime.now(UTC).isoformat()
+            nonce = uuid4().hex
+            registration_signature = sign_consensus_bytes(
+                private_key=hypervisor_service.owner_wallet_private_key(),
+                payload=wallet_identity_registration_payload(
+                    wallet_id=wallet_id,
+                    public_key=public_key,
+                    registration_nonce=nonce,
+                ),
+            )
+            evidence = [wallet_id, f"identity-nonce:{nonce}"]
+            if retry_nonce is not None:
+                evidence.append(f"retry:{retry_nonce}")
+            unsigned = LedgerOperationEnvelope(
+                operation_type="WALLET_IDENTITY_REGISTER",
+                operation_version="1.0.0",
+                protocol_version="0.1",
+                origin_type="wallet",
+                initiator_id=wallet_id,
+                sender_wallet=wallet_id,
+                sender_sequence=sequence,
+                fee_payer=wallet_id,
+                fee_class="onboarding_exempt",
+                created_at=registered_at,
+                payload={
+                    "wallet_id": wallet_id,
+                    "public_key": public_key,
+                    "registration_nonce": nonce,
+                    "registration_signature": registration_signature,
+                    "registered_at": registered_at,
+                },
+                evidence_references=evidence,
+                signatures=[],
+            )
+            signature = sign_consensus_bytes(
+                private_key=hypervisor_service.owner_wallet_private_key(),
+                payload=unsigned.signing_bytes(),
+            )
+            return unsigned.model_copy(update={"signatures": [signature]})
+
+        candidates = [
+            envelope
+            for envelope in hypervisor_service.list_pending_consensus_envelopes()
+            if envelope.operation_type == "WALLET_IDENTITY_REGISTER"
+            and envelope.payload.get("wallet_id") == wallet_id
+        ]
+        pending = next(
+            (envelope for envelope in reversed(candidates) if envelope.sender_sequence == local_sequence),
+            None,
+        )
+        if pending is None:
+            pending = build_envelope(local_sequence)
+            hypervisor_service.stage_pending_consensus_envelope(pending)
+        previous_submission = consensus.get_submission(pending.operation_id)
+        if previous_submission is not None and previous_submission.status.value == "failed":
+            pending = build_envelope(local_sequence, uuid4().hex)
+            hypervisor_service.stage_pending_consensus_envelope(pending)
+        submission = consensus.submit_operation(pending, retry_existing=True)
+        finality = hypervisor_service.ledger_operation_finality(pending.operation_id)
+        if finality.get("consensus_finalized"):
+            hypervisor_service.discard_pending_consensus_envelopes(pending.operation_id)
+            hypervisor_service.discard_pending_consensus_operations(pending.operation_id)
+            return {
+                "status": "FINALIZED",
+                "wallet_id": wallet_id,
+                "operation_id": pending.operation_id,
+                "finality": finality,
+            }
+        if submission.status.value == "failed":
+            raise ValueError(submission.error or "Consensus rejected Wallet identity registration")
+        return {
+            "status": "CONSENSUS_PENDING",
+            "wallet_id": wallet_id,
+            "operation_id": pending.operation_id,
+            "submission": submission.status.value,
+            "finality": finality,
+        }
+
     @router.get("/status")
     async def status(request: Request) -> dict:
         active = session_expiry(request) is not None
@@ -487,6 +617,20 @@ def build_operator_access_router(
         except ValueError as error:
             return operation_error(error)
         return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/wallet/identity/register")
+    async def register_owner_wallet_identity(request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        try:
+            result = _register_owner_wallet_identity()
+        except (ValueError, OSError) as error:
+            return operation_error(error)
+        return JSONResponse(
+            status_code=202 if result.get("status") == "CONSENSUS_PENDING" else 200,
+            content=result,
+        )
 
     @router.post("/operations/bundles/{bundle_id}/{action}")
     async def bundle_operation(bundle_id: str, action: str, request: Request) -> Response:

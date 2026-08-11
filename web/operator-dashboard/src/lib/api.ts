@@ -193,6 +193,7 @@ export const dashboardApi = {
   probeResources: () => writeDashboard('/operators/dashboard/access/operations/resources/probe', { method: 'POST' }),
   createOwnerWallet: (label: string) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/wallet/create', { method: 'POST', body: JSON.stringify({ label: label || null }) }),
   importOwnerWallet: (label: string, privateKey: string) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/wallet/import', { method: 'POST', body: JSON.stringify({ label: label || null, private_key: privateKey }) }),
+  registerOwnerWalletIdentity: () => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/wallet/identity/register', { method: 'POST' }),
   bundleOperation: (bundleId: string, action: 'enable' | 'disable' | 'retry' | 'reset-cooldown') => writeDashboard(`/operators/dashboard/access/operations/bundles/${encodeURIComponent(bundleId)}/${action}`, { method: 'POST' }),
   attachProvider: (payload: { plugin_id: string; display_name: string; configuration: DashboardRecord }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/providers/attach', { method: 'POST', body: JSON.stringify(payload) }),
   providerOperation: (providerInstanceId: string, action: 'probe' | 'discover-models') => writeDashboard(`/operators/dashboard/access/operations/providers/${encodeURIComponent(providerInstanceId)}/${action}`, { method: 'POST' }),

@@ -59,6 +59,7 @@ CONSENSUS_PENALTY_APPLY_OPERATION = "PENALTY_APPLY"
 TREASURY_FUND_OPERATION = "TREASURY_FUND"
 TREASURY_MANIFEST_BIND_OPERATION = "TREASURY_MANIFEST_BIND"
 OPERATOR_WALLET_BIND_OPERATION = "OPERATOR_WALLET_BIND"
+WALLET_IDENTITY_REGISTER_OPERATION = "WALLET_IDENTITY_REGISTER"
 ENDPOINT_PUBLISH_OPERATION = "ENDPOINT_PUBLISH"
 VALIDATION_REPORT_COMMIT_OPERATION = "VALIDATION_REPORT_COMMIT"
 VALIDATION_REPORT_STORAGE_RECEIPT_OPERATION = "VALIDATION_REPORT_STORAGE_RECEIPT"
@@ -1985,6 +1986,106 @@ class LedgerOperationService:
         return self.record_admitted_envelope(
             envelope,
             emitted_events=["OperatorWalletBound"],
+        )
+
+    def canonical_wallet_identity(self, wallet_id: str) -> dict | None:
+        """Return one finalized Wallet identity from the canonical operation log."""
+        for operation in reversed(self._operations):
+            if operation.get("operation_type") != WALLET_IDENTITY_REGISTER_OPERATION:
+                continue
+            payload = operation.get("payload") or {}
+            if payload.get("wallet_id") != wallet_id:
+                continue
+            return {
+                "wallet_id": wallet_id,
+                "public_key": payload["public_key"],
+                "registration_nonce": payload["registration_nonce"],
+                "registered_at": payload["registered_at"],
+                "operation_id": operation["operation_id"],
+            }
+        return None
+
+    def validate_consensus_wallet_identity_register(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Validate a Wallet-owned, reset-safe identity registration."""
+        from aidn_hypervisor.wallet_identity import verify_wallet_identity_registration
+
+        if envelope.operation_type != WALLET_IDENTITY_REGISTER_OPERATION:
+            raise ValueError("wallet identity registration requires WALLET_IDENTITY_REGISTER")
+        if envelope.origin_type != "wallet" or envelope.sender_wallet is None:
+            raise ValueError("wallet identity registration requires wallet origin")
+        if envelope.fee_payer != envelope.sender_wallet:
+            raise ValueError("wallet identity registration fee payer must be the sender Wallet")
+        if envelope.fee_class != "onboarding_exempt":
+            raise ValueError("wallet identity registration requires onboarding-exempt fee class")
+
+        payload = dict(envelope.payload)
+        required_fields = (
+            "wallet_id",
+            "public_key",
+            "registration_nonce",
+            "registration_signature",
+            "registered_at",
+        )
+        for field_name in required_fields:
+            value = payload.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"wallet identity registration field is invalid: {field_name}")
+        if envelope.initiator_id != envelope.sender_wallet or payload["wallet_id"] != envelope.sender_wallet:
+            raise ValueError("wallet identity registration owner does not match sender Wallet")
+        if payload["registered_at"] != envelope.created_at:
+            raise ValueError("wallet identity registration timestamp does not match envelope")
+
+        public_key = payload["public_key"]
+        if not public_key.startswith("ed25519:"):
+            raise ValueError("wallet identity public key must use ed25519:<32-byte hex>")
+        try:
+            public_key_bytes = bytes.fromhex(public_key.removeprefix("ed25519:"))
+        except ValueError as error:
+            raise ValueError("wallet identity public key is invalid") from error
+        if len(public_key_bytes) != 32:
+            raise ValueError("wallet identity public key must contain 32 bytes")
+        expected_wallet_id = "wallet-" + hashlib.sha256(public_key.encode("utf-8")).hexdigest()[:12]
+        if payload["wallet_id"] != expected_wallet_id:
+            raise ValueError("wallet identity wallet id does not match public key")
+        try:
+            verify_wallet_identity_registration(
+                wallet_id=payload["wallet_id"],
+                public_key=public_key,
+                registration_nonce=payload["registration_nonce"],
+                signature=payload["registration_signature"],
+            )
+        except ValueError as error:
+            raise ValueError(str(error)) from error
+
+        if len(envelope.signatures) != 1 or not envelope.signatures[0].startswith("ed25519:"):
+            raise ValueError("wallet identity registration requires exactly one wallet signature")
+        try:
+            Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(
+                bytes.fromhex(envelope.signatures[0].removeprefix("ed25519:")),
+                envelope.signing_bytes(),
+            )
+        except (ValueError, InvalidSignature) as error:
+            raise ValueError("wallet identity registration envelope signature is invalid") from error
+
+        existing = self.canonical_wallet_identity(payload["wallet_id"])
+        if existing is not None:
+            if existing["public_key"] != public_key:
+                raise ValueError("Wallet identity key rotation is not supported")
+            raise ValueError("Wallet identity is already registered")
+        return {"payload": payload}
+
+    def apply_consensus_wallet_identity_register(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Persist a canonical Wallet identity after consensus admission."""
+        self.validate_consensus_wallet_identity_register(envelope)
+        return self.record_admitted_envelope(
+            envelope,
+            emitted_events=["WalletIdentityRegistered"],
         )
 
     def validate_consensus_endpoint_publish(

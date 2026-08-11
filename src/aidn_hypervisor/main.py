@@ -12,6 +12,7 @@ from aidn_hypervisor.bundle_registry import FileBundleRegistry
 from aidn_hypervisor.consensus.cometbft import (
     HttpCometBftRpcTransport,
     HttpCometBftWalletBalanceProvider,
+    HttpCometBftWalletIdentityProvider,
 )
 from aidn_hypervisor.consensus.cometbft_finality import (
     build_cometbft_multi_rpc_finality_source,
@@ -170,6 +171,10 @@ def build_app(
     if resolved_service.canonical_wallet_balance_provider is None:
         resolved_service.canonical_wallet_balance_provider = (
             _build_default_canonical_wallet_balance_provider()
+        )
+    if resolved_service.canonical_wallet_identity_provider is None:
+        resolved_service.canonical_wallet_identity_provider = (
+            _build_default_canonical_wallet_identity_provider()
         )
     reconciled_publications = resolved_endpoint_publication_service.reconcile_canonical_publications(
         resolved_service.ledger_operation_service.list_operations()
@@ -964,6 +969,25 @@ def _build_default_canonical_wallet_balance_provider():
         return None
     config = load_cometbft_finality_deployment_config(Path(config_path))
     return HttpCometBftWalletBalanceProvider(
+        [
+            HttpCometBftRpcTransport(
+                endpoint,
+                max_response_bytes=config.max_response_bytes,
+            )
+            for endpoint in config.rpc_endpoints
+        ],
+        quorum=config.minimum_agreement,
+        timeout_seconds=config.timeout_seconds,
+    )
+
+
+def _build_default_canonical_wallet_identity_provider():
+    """Build the Wallet identity read source from finality RPC configuration."""
+    config_path = os.getenv("AIDN_COMETBFT_FINALITY_CONFIG")
+    if not config_path:
+        return None
+    config = load_cometbft_finality_deployment_config(Path(config_path))
+    return HttpCometBftWalletIdentityProvider(
         [
             HttpCometBftRpcTransport(
                 endpoint,

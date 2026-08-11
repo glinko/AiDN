@@ -1219,6 +1219,24 @@ function WalletWorkspace({ wallet, isLoading, error, onRefresh }: { wallet: Wall
     }
   }
 
+  async function registerNetworkIdentity() {
+    setBusy(true)
+    setMessage(null)
+    try {
+      const result = await dashboardApi.registerOwnerWalletIdentity()
+      const status = getText(result, 'status')
+      const operationId = shortId(getText(result, 'operation_id'))
+      setMessage(status === 'CONSENSUS_PENDING'
+        ? `Network identity registration was submitted${operationId ? ` (${operationId})` : ''}. It will appear after the configured consensus quorum finalizes it; refresh this screen in a few seconds.`
+        : 'Network identity is registered for the current Wallet on this chain.')
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Network identity registration failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return <div className="space-y-4"><ScreenHeading eyebrow="Operator ownership" title="Wallet" detail="Inspect the owner Wallet's ledger projection, binding and registry identity. Private key material is never returned to the Dashboard." />
     {isLoading && !wallet ? <PanelSkeleton rows={4} /> : null}
     {error && !wallet ? <PanelError title="Wallet state is unavailable" error={error} onRetry={onRefresh} /> : null}
@@ -1231,7 +1249,7 @@ function WalletWorkspace({ wallet, isLoading, error, onRefresh }: { wallet: Wall
         <Card className={cn('border py-0 shadow-none', identityRegistered ? 'border-emerald-300/25 bg-emerald-300/[0.04]' : 'border-amber-300/25 bg-amber-300/[0.04]')}><CardContent className="p-5"><p className="text-sm text-muted-foreground">Network identity</p><p className={cn('mt-2 text-xl font-semibold', identityRegistered ? 'text-emerald-100' : 'text-amber-100')}>{identityRegistered ? 'Registered' : 'Not registered'}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{identityRegistered ? 'Identity evidence is visible in the current registry projection.' : 'No wallet identity record is visible in this chain projection.'}</p></CardContent></Card>
         <Card className="border-border/80 bg-card py-0 shadow-none"><CardContent className="p-5"><p className="text-sm text-muted-foreground">Recorded usage</p><p className="mt-2 font-mono text-2xl font-semibold tracking-tight text-slate-100">{wallet.usage_events.length}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{wallet.allocation_events.length} allocation events and {wallet.dispute_events.length} disputes retained locally.</p></CardContent></Card>
       </div>
-      {!identityRegistered ? <Card className="border-amber-300/25 bg-amber-300/[0.04] py-0 shadow-none"><CardContent className="flex gap-3 p-4"><CircleDot className="mt-0.5 size-4 shrink-0 text-amber-200" /><div><p className="text-sm font-semibold text-amber-100">Wallet is bound, but the network reset removed its registry identity</p><p className="mt-1 text-sm leading-6 text-amber-100/75">This does not change the private key or create a second Wallet. The current chain has not received a Wallet identity registration for this Wallet. Complete registration through the canonical node workflow before using identity-gated network operations.</p></div></CardContent></Card> : null}
+      {!identityRegistered ? <Card className="border-amber-300/25 bg-amber-300/[0.04] py-0 shadow-none"><CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between"><div className="flex gap-3"><CircleDot className="mt-0.5 size-4 shrink-0 text-amber-200" /><div><p className="text-sm font-semibold text-amber-100">Wallet is bound, but the network reset removed its registry identity</p><p className="mt-1 max-w-3xl text-sm leading-6 text-amber-100/75">Register this same Wallet in the current chain. This submits a signed, no-fee consensus operation. It does not expose the private key, replace ownership or create a second Wallet.</p>{walletState?.identity_error ? <p className="mt-2 text-xs leading-5 text-amber-200">Identity quorum is currently unavailable: {String(walletState.identity_error)}</p> : null}</div></div><Button className="shrink-0 bg-amber-200 text-[#191204] hover:bg-amber-100" disabled={busy || Boolean(walletState?.identity_error)} onClick={() => void registerNetworkIdentity()}><CircleDot />{busy ? 'Submitting...' : 'Register in network'}</Button></CardContent></Card> : null}
       <div className="grid gap-4 xl:grid-cols-2"><WalletActivityList title="Usage activity" items={wallet.usage_events} emptyDetail="No metered usage has been recorded for this Wallet." /><WalletActivityList title="Allocation activity" items={wallet.allocation_events} emptyDetail="No allocation or settlement events have been recorded for this Wallet." /></div>
       <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><CardTitle className="text-base font-semibold">Economic record</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">These are local accounting events. The external faucet is a separate Treasury service and is not represented as a claimable balance here.</p></CardHeader><CardContent className="grid gap-4 p-5 sm:grid-cols-3"><div><p className="text-sm text-muted-foreground">Recyclable removals</p><p className="mt-1 font-mono text-lg text-slate-100">{String(economics?.count ?? 0)}</p></div><div><p className="text-sm text-muted-foreground">Removed value</p><p className="mt-1 font-mono text-lg text-slate-100">{String(economics?.total_q ?? 0)} Q</p></div><div><p className="text-sm text-muted-foreground">Faucet integration</p><p className="mt-1 text-sm font-medium text-slate-100">External service</p></div></CardContent></Card>
     </> : null}

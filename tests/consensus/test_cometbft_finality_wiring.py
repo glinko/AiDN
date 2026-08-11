@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import json
 from urllib import error as urllib_error
 
 import pytest
@@ -11,6 +12,7 @@ from aidn_hypervisor.consensus.abci_finality import ABCICommittedFinalitySource
 from aidn_hypervisor.consensus.cometbft import (
     CometBftRpcFinalitySource,
     HttpCometBftWalletBalanceProvider,
+    HttpCometBftWalletIdentityProvider,
 )
 from aidn_hypervisor.consensus.cometbft_crypto import Zip215CometBftEd25519Backend
 from aidn_hypervisor.consensus.cometbft_finality import (
@@ -110,6 +112,56 @@ def test_wallet_balance_provider_ignores_an_unavailable_rpc_when_quorum_remains(
     )
 
     assert provider("wallet-owner") == 150_000_000
+
+
+def test_wallet_identity_provider_requires_a_matching_rpc_quorum():
+    identity = {
+        "wallet_id": "wallet-owner",
+        "public_key": "ed25519:abcd",
+        "registration_nonce": "nonce-1",
+        "registered_at": "2030-01-01T00:00:00+00:00",
+        "operation_id": "operation-1",
+    }
+
+    class IdentityTransport:
+        def __init__(self, value: dict | None) -> None:
+            self.value = value
+
+        def get(self, path: str, *, params: dict[str, str], timeout_seconds: int) -> dict:
+            assert path == "/abci_query"
+            assert params["path"] == '"wallet/identity/wallet-owner"'
+            assert params["prove"] == "false"
+            assert timeout_seconds == 2
+            value = b"" if self.value is None else json.dumps(self.value).encode("utf-8")
+            return {
+                "result": {
+                    "response": {
+                        "code": 0,
+                        "value": base64.b64encode(value).decode("ascii"),
+                    }
+                }
+            }
+
+    provider = HttpCometBftWalletIdentityProvider(
+        [IdentityTransport(identity), IdentityTransport(identity), IdentityTransport(None)],
+        quorum=2,
+        timeout_seconds=2,
+    )
+
+    assert provider("wallet-owner") == identity
+
+
+def test_wallet_identity_provider_treats_quorum_empty_as_not_registered():
+    class EmptyIdentityTransport:
+        def get(self, path: str, *, params: dict[str, str], timeout_seconds: int) -> dict:
+            del path, params, timeout_seconds
+            return {"result": {"response": {"code": 0, "value": ""}}}
+
+    provider = HttpCometBftWalletIdentityProvider(
+        [EmptyIdentityTransport(), EmptyIdentityTransport()], quorum=2
+    )
+
+    assert provider("wallet-owner") is None
 
 
 def _trusted_checkpoint(chain_id: str = "aidn-testnet-1") -> TrustedCometBftCheckpoint:

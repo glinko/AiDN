@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 # Custom handlers may register additional types dynamically.
 KNOWN_OPERATION_TYPES = frozenset({
     "WALLET_TRANSFER",
+    "WALLET_IDENTITY_REGISTER",
     "OPERATOR_WALLET_BIND",
     "SESSION_OPEN",
     "SESSION_ACCEPT",

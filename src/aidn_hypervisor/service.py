@@ -158,6 +158,7 @@ class HypervisorService:
         consensus_service=None,
         consensus_finality_source=None,
         canonical_wallet_balance_provider=None,
+        canonical_wallet_identity_provider=None,
     ) -> None:
         self.queue = queue
         self.scheduler = scheduler
@@ -179,6 +180,7 @@ class HypervisorService:
         self.consensus_service = consensus_service
         self.consensus_finality_source = consensus_finality_source
         self.canonical_wallet_balance_provider = canonical_wallet_balance_provider
+        self.canonical_wallet_identity_provider = canonical_wallet_identity_provider
         if consensus_finality_source is not None:
             self.bind_consensus_finality_source(consensus_finality_source)
         self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
@@ -570,6 +572,31 @@ class HypervisorService:
         except Exception as error:
             return {
                 "q_atoms": local_balance,
+                "source": "local_projection_unverified",
+                "error": f"{type(error).__name__}: {error}",
+            }
+
+    def wallet_identity_read_model(self, wallet_id: str) -> dict:
+        """Return a Wallet identity without representing a stale local copy as canonical."""
+        local_identity = self.resolve_wallet_identity(wallet_id)
+        provider = self.canonical_wallet_identity_provider
+        if provider is None:
+            return {
+                "identity": local_identity,
+                "source": "consensus_projection"
+                if bool(self.consensus_service and self.consensus_service.is_validator)
+                else "local_projection",
+                "error": None,
+            }
+        try:
+            return {
+                "identity": provider(wallet_id),
+                "source": "remote_consensus_quorum",
+                "error": None,
+            }
+        except Exception as error:
+            return {
+                "identity": local_identity,
                 "source": "local_projection_unverified",
                 "error": f"{type(error).__name__}: {error}",
             }

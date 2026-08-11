@@ -293,6 +293,106 @@ class HttpCometBftWalletBalanceProvider:
             return None
 
 
+class HttpCometBftWalletIdentityProvider:
+    """Read a finalized Wallet identity from an approved CometBFT RPC quorum.
+
+    A missing identity is a valid canonical answer only when it is returned by
+    the configured quorum.  Transport failure never becomes "not registered".
+    """
+
+    def __init__(
+        self,
+        transports: Sequence[CometBftRpcTransport],
+        *,
+        quorum: int = 1,
+        timeout_seconds: int = 10,
+    ) -> None:
+        if not transports:
+            raise ValueError("at least one CometBFT RPC transport is required")
+        if not 1 <= quorum <= len(transports):
+            raise ValueError("identity quorum must be within the RPC count")
+        if timeout_seconds < 1:
+            raise ValueError("identity timeout must be positive")
+        self._transports = tuple(transports)
+        self._quorum = quorum
+        self._timeout_seconds = timeout_seconds
+
+    def __call__(self, wallet_id: str) -> dict | None:
+        if not wallet_id or "/" in wallet_id or "\\" in wallet_id:
+            raise ValueError("Wallet ID is invalid for an ABCI query path")
+        path = f"wallet/identity/{wallet_id}"
+        with ThreadPoolExecutor(max_workers=len(self._transports)) as executor:
+            results = list(
+                executor.map(
+                    lambda transport: self._read_identity(transport, path),
+                    self._transports,
+                )
+            )
+        canonical_results = [
+            item for item in results if item is not _WALLET_IDENTITY_UNAVAILABLE
+        ]
+        if not canonical_results:
+            raise RuntimeError("canonical Wallet identity is unavailable")
+        encoded = [json.dumps(item, sort_keys=True, separators=(",", ":")) for item in canonical_results]
+        counts = Counter(encoded)
+        winner, count = counts.most_common(1)[0]
+        if count < self._quorum:
+            raise RuntimeError("configured RPCs disagree on the canonical Wallet identity")
+        decoded = json.loads(winner)
+        return decoded if isinstance(decoded, dict) else None
+
+    def _read_identity(
+        self,
+        transport: CometBftRpcTransport,
+        path: str,
+    ) -> dict | None | object:
+        unavailable = _WALLET_IDENTITY_UNAVAILABLE
+        try:
+            response = transport.get(
+                "/abci_query",
+                params={
+                    "path": json.dumps(path, separators=(",", ":")),
+                    "prove": "false",
+                },
+                timeout_seconds=self._timeout_seconds,
+            )
+            result = response.get("result")
+            query_response = result.get("response") if isinstance(result, dict) else None
+            if not isinstance(query_response, dict) or int(query_response.get("code", -1)) != 0:
+                return unavailable
+            encoded = query_response.get("value")
+            if not isinstance(encoded, str) or not encoded:
+                return None
+            identity = json.loads(base64.b64decode(encoded, validate=True).decode("utf-8"))
+            if not isinstance(identity, dict):
+                return unavailable
+            required = {
+                "wallet_id",
+                "public_key",
+                "registration_nonce",
+                "registered_at",
+                "operation_id",
+            }
+            if required - set(identity) or not all(
+                isinstance(identity[key], str) and identity[key] for key in required
+            ):
+                return unavailable
+            return identity
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            binascii.Error,
+            OSError,
+        ):
+            return unavailable
+
+
+_WALLET_IDENTITY_UNAVAILABLE = object()
+
+
 class CometBftRpcValidatorSetProvider:
     """Load complete, canonically ordered CometBFT validator sets over RPC.
 

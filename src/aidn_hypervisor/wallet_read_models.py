@@ -21,11 +21,12 @@ def build_operator_wallet_payload(
 ) -> dict:
     owner_wallet = service.owner_wallet_state()
     wallet_id = owner_wallet.get("wallet_id")
-    wallet_identity = (
-        service.resolve_wallet_identity(str(wallet_id))
+    identity_read_model = (
+        service.wallet_identity_read_model(str(wallet_id))
         if wallet_id is not None
-        else None
+        else {"identity": None, "source": "not_configured", "error": None}
     )
+    wallet_identity = identity_read_model["identity"]
     balance_read_model = (
         service.wallet_balance_read_model(str(wallet_id))
         if wallet_id is not None
@@ -48,6 +49,8 @@ def build_operator_wallet_payload(
                 "registered" if wallet_identity is not None else "not_registered"
             ),
             "identity": wallet_identity,
+            "identity_source": identity_read_model["source"],
+            "identity_error": identity_read_model["error"],
             "binding_state": (
                 "pending"
                 if owner_wallet.get("pending_consensus") is not None
