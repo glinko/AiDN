@@ -181,6 +181,12 @@ def test_abci_binds_manifest_before_consensus_funding_and_restores_it(tmp_path) 
     assert app.query(path="faucet/treasury-manifest").value
     assert app.check_transaction(funding).code == "ok"
     assert app.finalize_block(block_height=2, block_hash=b"c" * 32, txs=[funding]).code == "ok"
+    funding_query = app.query(path="faucet/treasury-funding")
+    assert json.loads(funding_query.value) == {
+        "operation_id": _funding_envelope(manifest, creator_key=creator_key).operation_id,
+        "operation_type": "TREASURY_FUND",
+        "payload": _funding_envelope(manifest, creator_key=creator_key).payload,
+    }
 
     restored = AIDNABCIApplication(
         ledger_service=LedgerOperationService(),

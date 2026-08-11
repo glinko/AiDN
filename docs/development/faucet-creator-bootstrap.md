@@ -150,6 +150,17 @@ aidn-faucet serve \
   --lan
 ```
 
+## Finality checkpoint rotation
+
+Rotating a trusted CometBFT checkpoint does not require another
+`TREASURY_FUND`. The funding transition remains in replicated ABCI state and
+the Faucet verifies that state through its configured RPC quorum whenever the
+historical transaction proof predates the new checkpoint. A rotation procedure
+MUST preserve `legacy_transaction_hashes`; it MUST NOT replace the Treasury
+manifest, final manifest, or Faucet SQLite state. A new checkpoint is an
+authentication anchor for subsequent consensus verification, not a new
+economic genesis.
+
 ## Policy change
 
 The manifest hash never changes when a policy changes. Create a new signed

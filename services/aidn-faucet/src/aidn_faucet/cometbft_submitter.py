@@ -260,6 +260,77 @@ class HttpCometBftTreasuryManifestProvider:
         return winning[0][0]
 
 
+class HttpCometBftTreasuryFundingProvider:
+    """Read the canonical Treasury funding transition through an RPC quorum.
+
+    The funding record is replicated ABCI state. Unlike a historical `/tx`
+    lookup it remains available after a trusted checkpoint is rotated past the
+    block that originally funded the Treasury.
+    """
+
+    def __init__(
+        self,
+        transports: Sequence[CometBftRpcTransport],
+        *,
+        quorum: int = 1,
+        timeout_seconds: int = 10,
+    ) -> None:
+        if not transports:
+            raise ValueError("at least one CometBFT RPC transport is required")
+        if not 1 <= quorum <= len(transports):
+            raise ValueError("Treasury funding quorum must be within the RPC count")
+        if timeout_seconds < 1:
+            raise ValueError("Treasury funding timeout must be positive")
+        self._transports = tuple(transports)
+        self._quorum = quorum
+        self._timeout_seconds = timeout_seconds
+
+    @property
+    def quorum(self) -> int:
+        return self._quorum
+
+    @property
+    def source_count(self) -> int:
+        return len(self._transports)
+
+    def __call__(self) -> dict[str, Any] | None:
+        records: dict[str, list[dict[str, Any]]] = {}
+        for transport in self._transports:
+            try:
+                response = transport.get(
+                    "/abci_query",
+                    params={
+                        "path": json.dumps("faucet/treasury-funding", separators=(",", ":")),
+                        "prove": "false",
+                    },
+                    timeout_seconds=self._timeout_seconds,
+                )
+                result = response.get("result")
+                query_response = result.get("response") if isinstance(result, dict) else None
+                if not isinstance(query_response, dict) or int(query_response.get("code", -1)) != 0:
+                    continue
+                encoded = query_response.get("value")
+                if not isinstance(encoded, str) or not encoded:
+                    continue
+                record = json.loads(base64.b64decode(encoded, validate=True).decode("utf-8"))
+                if (
+                    not isinstance(record, dict)
+                    or not isinstance(record.get("operation_id"), str)
+                    or record.get("operation_type") != "TREASURY_FUND"
+                    or not isinstance(record.get("payload"), dict)
+                ):
+                    continue
+                fingerprint = json.dumps(record, sort_keys=True, separators=(",", ":"))
+            except (ValueError, TypeError, KeyError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            records.setdefault(fingerprint, []).append(record)
+
+        winning = [group for group in records.values() if len(group) >= self._quorum]
+        if len(winning) != 1:
+            return None
+        return winning[0][0]
+
+
 class CometBftFaucetTransferSubmitter:
     """Submit Faucet transfers and reconcile them against verified finality."""
 
@@ -274,6 +345,7 @@ class CometBftFaucetTransferSubmitter:
         transaction_hash_registry: FaucetTransactionHashRegistry | None = None,
         balance_provider: Callable[[str], int | None] | None = None,
         manifest_provider: Callable[[], FaucetTreasuryManifest | None] | None = None,
+        funding_record_provider: Callable[[], dict[str, Any] | None] | None = None,
         timeout_seconds: int = 10,
     ) -> None:
         if not treasury_wallet_id.strip() or not chain_id.strip():
@@ -288,6 +360,7 @@ class CometBftFaucetTransferSubmitter:
         self._hash_registry = transaction_hash_registry or FaucetTransactionHashRegistry()
         self._balance_provider = balance_provider
         self._manifest_provider = manifest_provider
+        self._funding_record_provider = funding_record_provider
         self._timeout_seconds = timeout_seconds
 
     def next_sender_sequence(self, wallet_id: str) -> int:
@@ -339,10 +412,7 @@ class CometBftFaucetTransferSubmitter:
                     reason=f"FAUCET_TREASURY_FINALITY_UNAVAILABLE: {error}",
                 )
             if evidence is None:
-                return FaucetTreasuryActivationProof.unavailable(
-                    manifest,
-                    reason="FAUCET_TREASURY_FUNDING_NOT_FINALIZED",
-                )
+                return self._activation_from_canonical_treasury_state(manifest)
             if (
                 evidence.operation_id != manifest.funding_operation_id
                 or evidence.chain_id != manifest.chain_id
@@ -432,6 +502,99 @@ class CometBftFaucetTransferSubmitter:
                 "chain_id": canonical_manifest.chain_id,
                 "wallet_id": canonical_manifest.wallet_id,
                 "balance_q_atoms": balance,
+            },
+            quorum=quorum,
+            source_count=source_count,
+        )
+
+    def _activation_from_canonical_treasury_state(
+        self,
+        manifest: FaucetTreasuryManifest,
+    ) -> FaucetTreasuryActivationProof:
+        """Verify persisted funding through current quorum-agreed ABCI state.
+
+        This path is used only when the transaction proof predates the active
+        trusted checkpoint. It never trusts the local manifest: both the bound
+        manifest and the one-time funding record must agree across the current
+        RPC quorum, as must the observed Treasury balance.
+        """
+
+        if self._manifest_provider is None or self._funding_record_provider is None:
+            return FaucetTreasuryActivationProof.unavailable(
+                manifest,
+                reason="FAUCET_TREASURY_FUNDING_NOT_FINALIZED",
+            )
+        try:
+            canonical_manifest = self._manifest_provider()
+            funding_record = self._funding_record_provider()
+            balance = self.treasury_balance_q_atoms(manifest.wallet_id)
+        except Exception as error:  # pragma: no cover - transport-specific boundary
+            return FaucetTreasuryActivationProof.unavailable(
+                manifest,
+                reason=f"FAUCET_TREASURY_CANONICAL_STATE_UNAVAILABLE: {error}",
+            )
+        if canonical_manifest is None or canonical_manifest.manifest_hash != manifest.manifest_hash:
+            return FaucetTreasuryActivationProof.unavailable(
+                manifest,
+                reason="FAUCET_TREASURY_CANONICAL_MANIFEST_MISMATCH",
+            )
+        if funding_record is None or balance is None:
+            return FaucetTreasuryActivationProof.unavailable(
+                manifest,
+                reason="FAUCET_TREASURY_FUNDING_NOT_FINALIZED",
+            )
+        payload = funding_record.get("payload")
+        expected_payload = {
+            "funding_id": manifest.funding_id,
+            "treasury_id": manifest.treasury_id,
+            "network_id": manifest.network_id,
+            "chain_id": manifest.chain_id,
+            "treasury_wallet_id": manifest.wallet_id,
+            "treasury_public_key": manifest.wallet_public_key,
+            "creator_recovery_wallet": manifest.creator_recovery_wallet,
+            "treasury_manifest_hash": manifest.manifest_hash,
+            "funding_mode": "CONSENSUS",
+        }
+        if (
+            funding_record.get("operation_id") != manifest.funding_operation_id
+            or funding_record.get("operation_type") != "TREASURY_FUND"
+            or not isinstance(payload, dict)
+            or any(payload.get(field) != value for field, value in expected_payload.items())
+            or payload.get("amount") != manifest.genesis_allocation_q_atoms
+        ):
+            return FaucetTreasuryActivationProof.unavailable(
+                manifest,
+                reason="FAUCET_TREASURY_CANONICAL_FUNDING_MISMATCH",
+                observed_balance_q_atoms=balance,
+            )
+        quorum = min(
+            int(getattr(self._manifest_provider, "quorum", 1)),
+            int(getattr(self._funding_record_provider, "quorum", 1)),
+        )
+        source_count = min(
+            int(getattr(self._manifest_provider, "source_count", 1)),
+            int(getattr(self._funding_record_provider, "source_count", 1)),
+        )
+        return FaucetTreasuryActivationProof(
+            state="ACTIVE",
+            treasury_id=manifest.treasury_id,
+            network_id=manifest.network_id,
+            chain_id=manifest.chain_id,
+            wallet_id=manifest.wallet_id,
+            manifest_hash=manifest.manifest_hash,
+            funding_mode=manifest.funding_mode,
+            funding_id=manifest.funding_id,
+            funding_operation_id=manifest.funding_operation_id,
+            funded_amount_q_atoms=manifest.genesis_allocation_q_atoms,
+            observed_balance_q_atoms=balance,
+            evidence_type="CONSENSUS_FUNDING",
+            canonical_evidence={
+                "operation_id": manifest.funding_operation_id,
+                "operation_type": "TREASURY_FUND",
+                "funding_id": manifest.funding_id,
+                "chain_id": manifest.chain_id,
+                "manifest_hash": manifest.manifest_hash,
+                "verification": "CANONICAL_ABCI_STATE_QUORUM",
             },
             quorum=quorum,
             source_count=source_count,
@@ -605,6 +768,11 @@ def build_http_cometbft_faucet_submitter(
             )
         ),
         manifest_provider=HttpCometBftTreasuryManifestProvider(
+            rpc_transports,
+            quorum=sequence_quorum or len(rpc_transports),
+            timeout_seconds=timeout_seconds,
+        ),
+        funding_record_provider=HttpCometBftTreasuryFundingProvider(
             rpc_transports,
             quorum=sequence_quorum or len(rpc_transports),
             timeout_seconds=timeout_seconds,

@@ -250,6 +250,28 @@ class LedgerOperationService:
 
         return deepcopy(self._faucet_treasury_manifest)
 
+    def faucet_treasury_funding_record(self) -> dict | None:
+        """Return the one canonical consensus funding record for the Treasury.
+
+        This is replicated Ledger state, not an operator-local receipt. It
+        lets downstream services verify an already-funded Treasury from the
+        current ABCI state after their trusted CometBFT checkpoint rotates past
+        the original funding block.
+        """
+
+        for operation in self._operations:
+            if operation.get("operation_type") != TREASURY_FUND_OPERATION:
+                continue
+            payload = operation.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            return {
+                "operation_id": operation.get("operation_id"),
+                "operation_type": TREASURY_FUND_OPERATION,
+                "payload": deepcopy(payload),
+            }
+        return None
+
     def validate_consensus_treasury_manifest_bind(
         self,
         envelope: "LedgerOperationEnvelope",

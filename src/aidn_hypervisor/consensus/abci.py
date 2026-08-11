@@ -738,6 +738,18 @@ class AIDNABCIApplication:
                 if self._genesis_treasury_manifest is not None
                 else b""
             )
+        elif path == "faucet/treasury-funding":
+            funding_record = self.ledger.faucet_treasury_funding_record()
+            kwargs["key"] = b"faucet:treasury:funding"
+            kwargs["value"] = (
+                json.dumps(
+                    funding_record,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                if funding_record is not None
+                else b""
+            )
         elif path.startswith("endpoint/publication/"):
             endpoint_id = path.removeprefix("endpoint/publication/")
             publication = self.ledger.canonical_endpoint_publication(endpoint_id)

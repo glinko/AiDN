@@ -7,6 +7,9 @@ import argparse
 import json
 from pathlib import Path
 
+from aidn_hypervisor.consensus.deployment import (
+    load_cometbft_finality_deployment_config,
+)
 from aidn_hypervisor.consensus.public_network import (
     PublicMultiValidatorNetworkProfile,
     inspect_public_multivalidator_profile,
@@ -53,8 +56,17 @@ def main() -> int:
         )
         print(report.model_dump_json(indent=2))
         if report.valid and args.write_finality_config is not None:
+            finality_config = profile.finality_deployment_config()
+            if args.write_finality_config.exists():
+                existing = load_cometbft_finality_deployment_config(args.write_finality_config)
+                if existing.chain_id == finality_config.chain_id:
+                    # Transaction bindings are restart-critical evidence. A
+                    # checkpoint rotation must never discard them.
+                    finality_config = finality_config.model_copy(
+                        update={"legacy_transaction_hashes": existing.legacy_transaction_hashes}
+                    )
             args.write_finality_config.write_text(
-                profile.finality_deployment_config().model_dump_json(indent=2) + "\n",
+                finality_config.model_dump_json(indent=2) + "\n",
                 encoding="utf-8",
             )
         return 0 if report.valid else 2

@@ -5,6 +5,7 @@ import json
 
 from aidn_faucet.cometbft_submitter import (
     CometBftFaucetTransferSubmitter,
+    HttpCometBftTreasuryFundingProvider,
     HttpCometBftTreasuryManifestProvider,
 )
 
@@ -52,7 +53,13 @@ def _manifest(*, funding_mode: str = "CONSENSUS") -> FaucetTreasuryManifest:
     )
 
 
-def _submitter(manifest: FaucetTreasuryManifest, evidence: ConsensusFinalityEvidence):
+def _submitter(
+    manifest: FaucetTreasuryManifest,
+    evidence: ConsensusFinalityEvidence | None,
+    *,
+    manifest_provider=None,
+    funding_record_provider=None,
+):
     return CometBftFaucetTransferSubmitter(
         treasury_wallet_id=manifest.wallet_id,
         chain_id=manifest.chain_id,
@@ -60,6 +67,8 @@ def _submitter(manifest: FaucetTreasuryManifest, evidence: ConsensusFinalityEvid
         submission_transport=type("Submission", (), {"broadcast_tx_sync": lambda *args, **kwargs: {}})(),
         finality_source=_Finality(evidence),
         balance_provider=lambda wallet_id: FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS,
+        manifest_provider=manifest_provider,
+        funding_record_provider=funding_record_provider,
     )
 
 
@@ -100,3 +109,49 @@ def test_genesis_activation_requires_canonical_manifest_quorum() -> None:
     assert provider().manifest_hash == manifest.manifest_hash
     assert provider.quorum == 2
     assert provider.source_count == 2
+
+
+def test_consensus_activation_survives_checkpoint_rotation_from_canonical_state() -> None:
+    manifest = _manifest()
+    funding_record = {
+        "operation_id": manifest.funding_operation_id,
+        "operation_type": "TREASURY_FUND",
+        "payload": {
+            "funding_id": manifest.funding_id,
+            "treasury_id": manifest.treasury_id,
+            "network_id": manifest.network_id,
+            "chain_id": manifest.chain_id,
+            "treasury_wallet_id": manifest.wallet_id,
+            "treasury_public_key": manifest.wallet_public_key,
+            "creator_recovery_wallet": manifest.creator_recovery_wallet,
+            "treasury_manifest_hash": manifest.manifest_hash,
+            "funding_mode": "CONSENSUS",
+            "amount": FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS,
+        },
+    }
+
+    proof = _submitter(
+        manifest,
+        None,
+        manifest_provider=lambda: manifest,
+        funding_record_provider=lambda: funding_record,
+    ).treasury_activation_proof(manifest)
+
+    assert proof.state == "ACTIVE"
+    assert proof.canonical_evidence["verification"] == "CANONICAL_ABCI_STATE_QUORUM"
+
+
+def test_treasury_funding_provider_requires_matching_rpc_quorum() -> None:
+    record = {
+        "operation_id": "a" * 64,
+        "operation_type": "TREASURY_FUND",
+        "payload": {"funding_id": "funding-1"},
+    }
+    encoded = base64.b64encode(json.dumps(record).encode("utf-8")).decode("ascii")
+    response = {"result": {"response": {"code": 0, "value": encoded}}}
+    provider = HttpCometBftTreasuryFundingProvider(
+        (_Transport(response), _Transport(response)),
+        quorum=2,
+    )
+
+    assert provider() == record
