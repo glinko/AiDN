@@ -245,37 +245,16 @@ class HttpCometBftWalletBalanceProvider:
     def __call__(self, wallet_id: str) -> int:
         if not wallet_id or "/" in wallet_id or "\\" in wallet_id:
             raise ValueError("Wallet ID is invalid for an ABCI query path")
-        balances: list[int] = []
         path = f"wallet/balance/{wallet_id}"
-        for transport in self._transports:
-            try:
-                response = transport.get(
-                    "/abci_query",
-                    params={
-                        "path": json.dumps(path, separators=(",", ":")),
-                        "prove": "false",
-                    },
-                    timeout_seconds=self._timeout_seconds,
-                )
-                result = response.get("result")
-                query_response = result.get("response") if isinstance(result, dict) else None
-                if not isinstance(query_response, dict) or int(query_response.get("code", -1)) != 0:
-                    continue
-                encoded = query_response.get("value")
-                if not isinstance(encoded, str) or not encoded:
-                    continue
-                balance = int(base64.b64decode(encoded, validate=True).decode("ascii"))
-                if balance >= 0:
-                    balances.append(balance)
-            except (
-                ValueError,
-                TypeError,
-                KeyError,
-                UnicodeDecodeError,
-                binascii.Error,
-                urllib_error.URLError,
-            ):
-                continue
+        # An unreachable historical RPC must not add one timeout per endpoint
+        # to a dashboard request. Query all independently configured sources
+        # in parallel and let the configured quorum decide the result.
+        with ThreadPoolExecutor(max_workers=len(self._transports)) as executor:
+            balances = [
+                balance
+                for balance in executor.map(lambda transport: self._read_balance(transport, path), self._transports)
+                if balance is not None
+            ]
         counts = Counter(balances)
         if not counts:
             raise RuntimeError("canonical Wallet balance is unavailable")
@@ -283,6 +262,35 @@ class HttpCometBftWalletBalanceProvider:
         if count < self._quorum:
             raise RuntimeError("configured RPCs disagree on the canonical Wallet balance")
         return balance
+
+    def _read_balance(self, transport: CometBftRpcTransport, path: str) -> int | None:
+        try:
+            response = transport.get(
+                "/abci_query",
+                params={
+                    "path": json.dumps(path, separators=(",", ":")),
+                    "prove": "false",
+                },
+                timeout_seconds=self._timeout_seconds,
+            )
+            result = response.get("result")
+            query_response = result.get("response") if isinstance(result, dict) else None
+            if not isinstance(query_response, dict) or int(query_response.get("code", -1)) != 0:
+                return None
+            encoded = query_response.get("value")
+            if not isinstance(encoded, str) or not encoded:
+                return None
+            balance = int(base64.b64decode(encoded, validate=True).decode("ascii"))
+            return balance if balance >= 0 else None
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            UnicodeDecodeError,
+            binascii.Error,
+            OSError,
+        ):
+            return None
 
 
 class CometBftRpcValidatorSetProvider:
