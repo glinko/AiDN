@@ -1,5 +1,6 @@
 import base64
 import hashlib
+from urllib import error as urllib_error
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -83,6 +84,32 @@ def test_wallet_balance_provider_fails_closed_without_quorum():
 
     with pytest.raises(RuntimeError, match="disagree"):
         provider("wallet-owner")
+
+
+def test_wallet_balance_provider_ignores_an_unavailable_rpc_when_quorum_remains():
+    class UnavailableTransport:
+        def get(self, path: str, *, params: dict[str, str], timeout_seconds: int) -> dict:
+            del path, params, timeout_seconds
+            raise urllib_error.URLError("connection refused")
+
+    class BalanceTransport:
+        def get(self, path: str, *, params: dict[str, str], timeout_seconds: int) -> dict:
+            del path, params, timeout_seconds
+            return {
+                "result": {
+                    "response": {
+                        "code": 0,
+                        "value": base64.b64encode(b"150000000").decode("ascii"),
+                    }
+                }
+            }
+
+    provider = HttpCometBftWalletBalanceProvider(
+        [UnavailableTransport(), BalanceTransport(), BalanceTransport()],
+        quorum=2,
+    )
+
+    assert provider("wallet-owner") == 150_000_000
 
 
 def _trusted_checkpoint(chain_id: str = "aidn-testnet-1") -> TrustedCometBftCheckpoint:

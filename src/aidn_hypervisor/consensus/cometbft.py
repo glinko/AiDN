@@ -267,7 +267,14 @@ class HttpCometBftWalletBalanceProvider:
                 balance = int(base64.b64decode(encoded, validate=True).decode("ascii"))
                 if balance >= 0:
                     balances.append(balance)
-            except (ValueError, TypeError, KeyError, UnicodeDecodeError, binascii.Error):
+            except (
+                ValueError,
+                TypeError,
+                KeyError,
+                UnicodeDecodeError,
+                binascii.Error,
+                urllib_error.URLError,
+            ):
                 continue
         counts = Counter(balances)
         if not counts:
