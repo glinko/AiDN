@@ -12,7 +12,8 @@ import base64
 import binascii
 import hashlib
 import json
-from collections.abc import Callable, Mapping
+from collections import Counter
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 from urllib import error as urllib_error
@@ -213,6 +214,68 @@ class HttpCometBftSubmissionTransport:
         if not isinstance(decoded, dict):
             raise ValueError("CometBFT submission response is invalid")
         return decoded
+
+
+class HttpCometBftWalletBalanceProvider:
+    """Read a Wallet balance from a quorum of configured CometBFT RPCs.
+
+    This is a read model, not finality evidence for a particular operation.
+    A non-validator Hypervisor uses it to avoid presenting its stale local
+    Ledger snapshot as the network balance.  The caller must configure the
+    RPC endpoints from the same operator-approved finality deployment config.
+    """
+
+    def __init__(
+        self,
+        transports: Sequence[CometBftRpcTransport],
+        *,
+        quorum: int = 1,
+        timeout_seconds: int = 10,
+    ) -> None:
+        if not transports:
+            raise ValueError("at least one CometBFT RPC transport is required")
+        if not 1 <= quorum <= len(transports):
+            raise ValueError("balance quorum must be within the RPC count")
+        if timeout_seconds < 1:
+            raise ValueError("balance timeout must be positive")
+        self._transports = tuple(transports)
+        self._quorum = quorum
+        self._timeout_seconds = timeout_seconds
+
+    def __call__(self, wallet_id: str) -> int:
+        if not wallet_id or "/" in wallet_id or "\\" in wallet_id:
+            raise ValueError("Wallet ID is invalid for an ABCI query path")
+        balances: list[int] = []
+        path = f"wallet/balance/{wallet_id}"
+        for transport in self._transports:
+            try:
+                response = transport.get(
+                    "/abci_query",
+                    params={
+                        "path": json.dumps(path, separators=(",", ":")),
+                        "prove": "false",
+                    },
+                    timeout_seconds=self._timeout_seconds,
+                )
+                result = response.get("result")
+                query_response = result.get("response") if isinstance(result, dict) else None
+                if not isinstance(query_response, dict) or int(query_response.get("code", -1)) != 0:
+                    continue
+                encoded = query_response.get("value")
+                if not isinstance(encoded, str) or not encoded:
+                    continue
+                balance = int(base64.b64decode(encoded, validate=True).decode("ascii"))
+                if balance >= 0:
+                    balances.append(balance)
+            except (ValueError, TypeError, KeyError, UnicodeDecodeError, binascii.Error):
+                continue
+        counts = Counter(balances)
+        if not counts:
+            raise RuntimeError("canonical Wallet balance is unavailable")
+        balance, count = counts.most_common(1)[0]
+        if count < self._quorum:
+            raise RuntimeError("configured RPCs disagree on the canonical Wallet balance")
+        return balance
 
 
 class CometBftRpcValidatorSetProvider:

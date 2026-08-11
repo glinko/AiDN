@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
@@ -26,13 +26,12 @@ def build_operator_wallet_payload(
         if wallet_id is not None
         else None
     )
-    balance_q_atoms = (
-        service.wallet_q_atom_balance(str(wallet_id))
+    balance_read_model = (
+        service.wallet_balance_read_model(str(wallet_id))
         if wallet_id is not None
-        else 0
+        else {"q_atoms": 0, "source": "not_configured", "error": None}
     )
-    consensus = getattr(service, "consensus_service", None)
-    validator_mode = bool(consensus is not None and consensus.is_validator)
+    balance_q_atoms = cast(int, balance_read_model["q_atoms"])
     economics_history = service.export_wallet_economics_events(
         limit=economics_history_limit
     )
@@ -43,9 +42,8 @@ def build_operator_wallet_payload(
             "wallet_id": wallet_id,
             "canonical_balance_q_atoms": balance_q_atoms,
             "canonical_balance_q": balance_q_atoms / Q_ATOMS_PER_Q,
-            "balance_source": (
-                "consensus_projection" if validator_mode else "local_projection"
-            ),
+            "balance_source": balance_read_model["source"],
+            "balance_error": balance_read_model["error"],
             "identity_state": (
                 "registered" if wallet_identity is not None else "not_registered"
             ),

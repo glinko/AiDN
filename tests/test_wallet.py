@@ -783,6 +783,26 @@ def test_operator_dashboard_wallet_reports_wallet_balance_and_binding_state() ->
     assert wallet_state["identity_state"] == "not_registered"
 
 
+def test_operator_dashboard_wallet_uses_remote_consensus_balance_when_configured() -> None:
+    service = _service()
+    configured = service.configure_owner_wallet(mode="create", label="Primary Wallet")
+    wallet_id = configured["wallet"]["wallet_id"]
+    service.credit_wallet_q_atoms(wallet_id=wallet_id, amount_q_atoms=900)
+    service.canonical_wallet_balance_provider = lambda requested_wallet_id: (
+        50_000_000 if requested_wallet_id == wallet_id else 0
+    )
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/dashboard/wallet")
+
+    assert response.status_code == 200
+    wallet_state = response.json()["wallet_state"]
+    assert wallet_state["canonical_balance_q_atoms"] == 50_000_000
+    assert wallet_state["canonical_balance_q"] == 50
+    assert wallet_state["balance_source"] == "remote_consensus_quorum"
+    assert wallet_state["balance_error"] is None
+
+
 def test_operator_wallet_faucet_requires_external_service() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())

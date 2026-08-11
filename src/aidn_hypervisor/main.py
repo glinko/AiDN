@@ -9,6 +9,10 @@ from fastapi.responses import JSONResponse
 
 from aidn_hypervisor.api import build_api_router
 from aidn_hypervisor.bundle_registry import FileBundleRegistry
+from aidn_hypervisor.consensus.cometbft import (
+    HttpCometBftRpcTransport,
+    HttpCometBftWalletBalanceProvider,
+)
 from aidn_hypervisor.consensus.cometbft_finality import (
     build_cometbft_multi_rpc_finality_source,
 )
@@ -163,6 +167,10 @@ def build_app(
         )
     if resolved_finality_source is not None:
         resolved_service.bind_consensus_finality_source(resolved_finality_source)
+    if resolved_service.canonical_wallet_balance_provider is None:
+        resolved_service.canonical_wallet_balance_provider = (
+            _build_default_canonical_wallet_balance_provider()
+        )
     reconciled_publications = resolved_endpoint_publication_service.reconcile_canonical_publications(
         resolved_service.ledger_operation_service.list_operations()
     )
@@ -928,6 +936,7 @@ def _build_default_consensus_service(
         restore_state_from_store=False,
         state_checkpoint_callback=hypervisor_service._persist_state,
     )
+
     try:
         consensus.restore_validator_abci_state_if_matching_ledger()
     except ABCIStateStoreError as error:
@@ -946,6 +955,25 @@ def _build_default_consensus_service(
     if state_migrated:
         hypervisor_service._persist_state()
     return consensus
+
+
+def _build_default_canonical_wallet_balance_provider():
+    """Build the dashboard wallet read source from finality RPC configuration."""
+    config_path = os.getenv("AIDN_COMETBFT_FINALITY_CONFIG")
+    if not config_path:
+        return None
+    config = load_cometbft_finality_deployment_config(Path(config_path))
+    return HttpCometBftWalletBalanceProvider(
+        [
+            HttpCometBftRpcTransport(
+                endpoint,
+                max_response_bytes=config.max_response_bytes,
+            )
+            for endpoint in config.rpc_endpoints
+        ],
+        quorum=config.minimum_agreement,
+        timeout_seconds=config.timeout_seconds,
+    )
 
 
 def _consensus_genesis_accounts() -> dict[str, int] | None:

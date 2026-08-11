@@ -17,6 +17,7 @@ from aidn_hypervisor.consensus.cometbft import (
     CometBftSubmissionTransport,
     HttpCometBftRpcTransport,
     HttpCometBftSubmissionTransport,
+    HttpCometBftWalletBalanceProvider,
     cometbft_transaction_hash,
 )
 from aidn_hypervisor.consensus.cometbft_crypto import (
@@ -213,6 +214,7 @@ __all__ = [
     "CometBftRpcLightClientProofVerifier",
     "CometBftRpcTransport",
     "CometBftRpcValidatorSetProvider",
+    "HttpCometBftWalletBalanceProvider",
     "HttpCometBftRpcTransport",
     "HttpCometBftSubmissionTransport",
     "cometbft_transaction_hash",

@@ -157,6 +157,7 @@ class HypervisorService:
         registry_service: RegistryService | None = None,
         consensus_service=None,
         consensus_finality_source=None,
+        canonical_wallet_balance_provider=None,
     ) -> None:
         self.queue = queue
         self.scheduler = scheduler
@@ -177,6 +178,7 @@ class HypervisorService:
         self.registry_service = registry_service
         self.consensus_service = consensus_service
         self.consensus_finality_source = consensus_finality_source
+        self.canonical_wallet_balance_provider = canonical_wallet_balance_provider
         if consensus_finality_source is not None:
             self.bind_consensus_finality_source(consensus_finality_source)
         self.runtime_protocol_store = runtime_protocol_store or RuntimeProtocolStore(
@@ -541,6 +543,36 @@ class HypervisorService:
 
     def wallet_q_atom_balance(self, wallet_id: str) -> int:
         return self._settlement_application_facade().wallet_q_atom_balance(wallet_id)
+
+    def wallet_balance_read_model(self, wallet_id: str) -> dict:
+        """Return the best available wallet balance without relabelling local state.
+
+        Non-validator nodes keep a local Ledger projection for operational
+        recovery, but it cannot be presented as canonical when a remote
+        quorum source is configured.
+        """
+        local_balance = self.wallet_q_atom_balance(wallet_id)
+        provider = self.canonical_wallet_balance_provider
+        if provider is None:
+            return {
+                "q_atoms": local_balance,
+                "source": "consensus_projection"
+                if bool(self.consensus_service and self.consensus_service.is_validator)
+                else "local_projection",
+                "error": None,
+            }
+        try:
+            return {
+                "q_atoms": int(provider(wallet_id)),
+                "source": "remote_consensus_quorum",
+                "error": None,
+            }
+        except Exception as error:
+            return {
+                "q_atoms": local_balance,
+                "source": "local_projection_unverified",
+                "error": f"{type(error).__name__}: {error}",
+            }
 
     def get_session_funding_account(self, session_id: str) -> SessionFundingAccount:
         return self._settlement_application_facade().get_session_funding_account(
