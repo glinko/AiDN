@@ -78,12 +78,15 @@ ABCI and `ExecutionEngine`:
 - `UNSTAKE_REQUEST`
 - `WALLET_TRANSFER`
 - `TREASURY_FUND`
+- `TREASURY_MANIFEST_BIND`
 
 `WALLET_TRANSFER` uses the MVP `STANDARD` fee of `10,000 q_atoms` and is
 covered by dedicated balance, fee-recycling, insufficient-balance and replay
 tests in both execution entrypoints.
 
-`TREASURY_FUND` is a one-time protocol-sponsored transition for a
+`TREASURY_MANIFEST_BIND` is a one-time Creator-signed protocol transition that
+binds a CONSENSUS-funded Faucet Treasury manifest into the canonical ABCI
+state. `TREASURY_FUND` is a one-time protocol-sponsored transition for a
 pre-declared CONSENSUS Faucet Treasury on an already-running network. It
 requires the configured hash-bound manifest, exact `10,000,000 Q`, creator
 authorization and an authenticated envelope. It credits the Treasury once;

@@ -17,6 +17,7 @@ FAUCET_TREASURY_SCHEMA = "aidn.faucet-treasury.v1"
 FAUCET_TREASURY_ACTIVATION_PROOF_SCHEMA = "aidn.faucet-treasury-activation-proof.v1"
 FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS = 10_000_000_000_000
 FAUCET_TREASURY_FUNDING_DOMAIN = "aidn.faucet-treasury-funding.v1"
+FAUCET_TREASURY_MANIFEST_BINDING_DOMAIN = "aidn.faucet-treasury-manifest-bind.v1"
 _PUBLIC_KEY_RE = re.compile(r"^ed25519:[0-9a-fA-F]{64}$")
 _HASH_RE = re.compile(r"^sha256:[0-9a-fA-F]{64}$")
 _OPERATION_ID_RE = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -33,6 +34,12 @@ _FUNDING_AUTHORIZATION_FIELDS = (
     "amount",
     "treasury_manifest_hash",
     "funding_mode",
+    "authorization_reference",
+)
+
+_MANIFEST_BINDING_AUTHORIZATION_FIELDS = (
+    "treasury_manifest",
+    "creator_recovery_public_key",
     "authorization_reference",
 )
 
@@ -63,6 +70,26 @@ def faucet_treasury_funding_authorization_bytes(payload: dict) -> bytes:
     return _canonical_json(
         {
             "domain": FAUCET_TREASURY_FUNDING_DOMAIN,
+            "payload": authorization_payload,
+        }
+    )
+
+
+def faucet_treasury_manifest_binding_authorization_bytes(payload: dict) -> bytes:
+    """Return the canonical creator authorization preimage for a manifest bind.
+
+    The manifest itself is signed before the first funding transition.  This
+    makes a post-genesis Treasury declaration a replicated consensus fact,
+    rather than a per-node environment setting.
+    """
+
+    authorization_payload = {
+        field_name: payload.get(field_name)
+        for field_name in _MANIFEST_BINDING_AUTHORIZATION_FIELDS
+    }
+    return _canonical_json(
+        {
+            "domain": FAUCET_TREASURY_MANIFEST_BINDING_DOMAIN,
             "payload": authorization_payload,
         }
     )

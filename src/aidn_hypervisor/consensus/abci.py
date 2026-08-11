@@ -816,6 +816,7 @@ class AIDNABCIApplication:
             ):
                 raise ValueError("snapshot Treasury manifest does not match configured Genesis")
             self._genesis_treasury_manifest = manifest.model_dump(mode="json")
+            self.ledger.bind_faucet_treasury_manifest(manifest)
         elif self._genesis_treasury_manifest is not None:
             raise ValueError("snapshot is missing the configured Treasury manifest")
         settlement_state = snapshot.get("settlement_state", {})
@@ -1029,6 +1030,9 @@ class AIDNABCIApplication:
                 self.ledger.apply_consensus_session_failure_evidence(envelope)
             elif envelope.operation_type == "CONSENSUS_VALIDATOR_SET_UPDATE":
                 self.ledger.apply_consensus_validator_set_update(envelope)
+            elif envelope.operation_type == "TREASURY_MANIFEST_BIND":
+                self.ledger.apply_consensus_treasury_manifest_bind(envelope)
+                self._genesis_treasury_manifest = self.ledger.faucet_treasury_manifest()
             elif envelope.operation_type == "TREASURY_FUND":
                 self.ledger.apply_consensus_treasury_fund(envelope)
             elif envelope.operation_type == "REWARD_MINT":
@@ -1268,6 +1272,8 @@ class AIDNABCIApplication:
                 self.ledger.validate_consensus_session_failure_evidence(envelope)
             elif envelope.operation_type == "CONSENSUS_VALIDATOR_SET_UPDATE":
                 self.ledger.validate_consensus_validator_set_update(envelope)
+            elif envelope.operation_type == "TREASURY_MANIFEST_BIND":
+                self.ledger.validate_consensus_treasury_manifest_bind(envelope)
             elif envelope.operation_type == "TREASURY_FUND":
                 self.ledger.validate_consensus_treasury_fund(envelope)
             elif envelope.operation_type == "REWARD_MINT":

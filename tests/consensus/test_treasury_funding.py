@@ -17,6 +17,7 @@ from aidn_hypervisor.faucet_treasury import (
     FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS,
     FaucetTreasuryManifest,
     faucet_treasury_funding_authorization_bytes,
+    faucet_treasury_manifest_binding_authorization_bytes,
     wallet_id_for_public_key,
 )
 from aidn_hypervisor.ledger.service import LedgerOperationService
@@ -91,6 +92,36 @@ def _funding_envelope(
     )
 
 
+def _manifest_bind_envelope(
+    manifest: FaucetTreasuryManifest,
+    *,
+    creator_key: Ed25519PrivateKey,
+    created_at: str = "2030-01-01T00:00:00Z",
+) -> LedgerOperationEnvelope:
+    creator_public_key = _public_key(creator_key)
+    payload = {
+        "treasury_manifest": manifest.model_dump(mode="json"),
+        "creator_recovery_public_key": creator_public_key,
+        "authorization_reference": "governance:testnet-faucet-manifest-bind",
+    }
+    payload["authorization_signature"] = "ed25519:" + creator_key.sign(
+        faucet_treasury_manifest_binding_authorization_bytes(payload)
+    ).hex()
+    unsigned = LedgerOperationEnvelope(
+        operation_type="TREASURY_MANIFEST_BIND",
+        operation_version="1.0.0",
+        protocol_version="0.1",
+        origin_type="protocol",
+        initiator_id="faucet-treasury-manifest-bind",
+        fee_class="protocol_sponsored",
+        created_at=created_at,
+        payload=payload,
+    )
+    return unsigned.model_copy(
+        update={"signatures": ["ed25519:" + creator_key.sign(unsigned.signing_bytes()).hex()]}
+    )
+
+
 def _tx(envelope: LedgerOperationEnvelope) -> bytes:
     return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
 
@@ -126,6 +157,55 @@ def test_abci_consensus_funds_treasury_once_and_restores_snapshot(tmp_path) -> N
         FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS
     )
     assert len(restored.ledger.snapshot_operations()) == 1
+
+
+def test_abci_binds_manifest_before_consensus_funding_and_restores_it(tmp_path) -> None:
+    treasury_key = Ed25519PrivateKey.generate()
+    creator_key = Ed25519PrivateKey.generate()
+    manifest = _manifest(treasury_key=treasury_key, creator_key=creator_key)
+    store = ABCIStateStore(tmp_path / "abci")
+    ledger = LedgerOperationService()
+    app = AIDNABCIApplication(
+        ledger_service=ledger,
+        state_store=store,
+        strict_operation_coverage=True,
+        admission_validator=AdmissionValidator(current_time="2029-01-01T00:00:00Z"),
+    )
+    bind = _tx(_manifest_bind_envelope(manifest, creator_key=creator_key))
+    funding = _tx(_funding_envelope(manifest, creator_key=creator_key))
+
+    assert app.check_transaction(funding).code == "rejected"
+    assert app.check_transaction(bind).code == "ok"
+    assert app.finalize_block(block_height=1, block_hash=b"b" * 32, txs=[bind]).code == "ok"
+    assert ledger.faucet_treasury_manifest()["manifest_hash"] == manifest.manifest_hash
+    assert app.query(path="faucet/treasury-manifest").value
+    assert app.check_transaction(funding).code == "ok"
+    assert app.finalize_block(block_height=2, block_hash=b"c" * 32, txs=[funding]).code == "ok"
+
+    restored = AIDNABCIApplication(
+        ledger_service=LedgerOperationService(),
+        state_store=store,
+        strict_operation_coverage=True,
+    )
+    assert restored.ledger.faucet_treasury_manifest()["manifest_hash"] == manifest.manifest_hash
+    assert restored.ledger.wallet_q_atom_balance(manifest.wallet_id) == (
+        FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS
+    )
+
+
+def test_manifest_binding_requires_the_declared_creator_and_is_one_time() -> None:
+    treasury_key = Ed25519PrivateKey.generate()
+    creator_key = Ed25519PrivateKey.generate()
+    manifest = _manifest(treasury_key=treasury_key, creator_key=creator_key)
+    ledger = LedgerOperationService()
+    wrong = _manifest_bind_envelope(manifest, creator_key=Ed25519PrivateKey.generate())
+    with pytest.raises(ValueError, match="does not match recovery Wallet"):
+        ledger.validate_consensus_treasury_manifest_bind(wrong)
+
+    envelope = _manifest_bind_envelope(manifest, creator_key=creator_key)
+    ledger.apply_consensus_treasury_manifest_bind(envelope)
+    with pytest.raises(ValueError, match="already bound"):
+        ledger.validate_consensus_treasury_manifest_bind(envelope)
 
 
 def test_treasury_funding_rejects_replay_conflict_and_wrong_signature() -> None:

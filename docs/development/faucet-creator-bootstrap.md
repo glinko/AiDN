@@ -9,7 +9,7 @@ the Faucet host authority to mint Q or to change policy unilaterally.
 | --- | --- | --- |
 | Creator workstation | `creator-recovery.key` | Faucet Treasury key |
 | Faucet host | `treasury.key`, agent and creator bearer tokens | Creator recovery key |
-| Validators | pre-finality Treasury manifest and consensus state | either private key |
+| Validators | canonical Treasury manifest transition and consensus state | either private key |
 
 The private Creator recovery key must remain on the Creator workstation. Its
 public identity and signed artifacts are safe to copy to the Faucet host.
@@ -82,12 +82,36 @@ uv run python tools/create-faucet-credentials.py \
   --funding-id aidn-localnet-faucet-genesis-v1
 ```
 
-The validator/ABCI configuration must bind this pre-finality manifest before
-the next step. This is what prevents an arbitrary wallet from declaring itself
-the Treasury.
+Do not configure this manifest through validator environment variables. It is
+not active until the following one-time consensus transition finalizes; this
+prevents an arbitrary wallet or a single validator from declaring itself the
+Treasury.
 
-6. On the Creator workstation, create the signed funding envelope. This signs
-only the already fixed manifest and does not transfer any private key.
+6. After every validator has deployed the release supporting
+`TREASURY_MANIFEST_BIND`, create the Creator-signed manifest-bind envelope.
+The private key remains on the Creator workstation.
+
+```bash
+uv run python tools/create-faucet-treasury-manifest-bind.py \
+  --manifest /secure-copy/faucet-treasury.json \
+  --creator-private-key ~/.local/share/aidn/creator-recovery/creator-recovery.key \
+  --authorization-reference governance:aidn-localnet-faucet-v1 \
+  --output ~/.local/share/aidn/faucet-public/treasury-manifest-bind-envelope.json
+```
+
+7. Submit the bind envelope through the trusted CometBFT quorum and wait for
+operation-bound finality. Only after this succeeds can `TREASURY_FUND` pass
+CheckTx.
+
+```bash
+uv run python tools/submit-faucet-treasury-manifest-bind.py \
+  --manifest /secure-copy/faucet-treasury.json \
+  --envelope ~/.local/share/aidn/faucet-public/treasury-manifest-bind-envelope.json \
+  --finality-config /etc/aidn/cometbft-finality.json
+```
+
+8. On the Creator workstation, create the signed funding envelope. This signs
+only the canonically bound manifest and does not transfer any private key.
 
 ```bash
 uv run python tools/create-faucet-treasury-funding.py \
@@ -97,7 +121,7 @@ uv run python tools/create-faucet-treasury-funding.py \
   --output ~/.local/share/aidn/faucet-public/treasury-fund-envelope.json
 ```
 
-7. Submit that exact signed envelope through the trusted CometBFT quorum. The
+9. Submit that exact signed envelope through the trusted CometBFT quorum. The
 command writes the post-finality manifest only after the transaction has
 operation-bound verified finality.
 
@@ -137,6 +161,8 @@ release cannot inherit a predecessor's state accidentally.
   claims after Treasury activation.
 - A `TREASURY_FUND` is accepted only when its signed payload matches the
   consensus-bound pre-finality manifest.
+- `TREASURY_MANIFEST_BIND` is one-time, Creator-signed and committed in the
+  same ABCI state and AppHash as all other canonical transitions.
 - `funding_operation_id` is a finalized operation identity, never an input
   guessed by an operator.
 - A policy release is valid only when its hash, root binding, signature,

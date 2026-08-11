@@ -14,8 +14,10 @@ from aidn_hypervisor.consensus.replay import FinalizedOperationRegistry
 from aidn_hypervisor.faucet_treasury import (
     FAUCET_TREASURY_FUNDING_DOMAIN,
     FAUCET_TREASURY_INITIAL_ALLOCATION_Q_ATOMS,
+    FAUCET_TREASURY_MANIFEST_BINDING_DOMAIN,
     FaucetTreasuryManifest,
     faucet_treasury_funding_authorization_bytes,
+    faucet_treasury_manifest_binding_authorization_bytes,
     wallet_id_for_public_key,
 )
 from aidn_hypervisor.ledger.models import (
@@ -55,6 +57,7 @@ SESSION_SETTLEMENT_PARTIAL_FINALIZE_OPERATION = "SESSION_SETTLEMENT_PARTIAL_FINA
 SESSION_SETTLEMENT_CORRECT_OPERATION = "SESSION_SETTLEMENT_CORRECT"
 CONSENSUS_PENALTY_APPLY_OPERATION = "PENALTY_APPLY"
 TREASURY_FUND_OPERATION = "TREASURY_FUND"
+TREASURY_MANIFEST_BIND_OPERATION = "TREASURY_MANIFEST_BIND"
 OPERATOR_WALLET_BIND_OPERATION = "OPERATOR_WALLET_BIND"
 ENDPOINT_PUBLISH_OPERATION = "ENDPOINT_PUBLISH"
 VALIDATION_REPORT_COMMIT_OPERATION = "VALIDATION_REPORT_COMMIT"
@@ -241,6 +244,94 @@ class LedgerOperationService:
         if existing is not None and existing.get("manifest_hash") != normalized["manifest_hash"]:
             raise ValueError("Ledger Faucet Treasury manifest cannot be replaced")
         self._faucet_treasury_manifest = normalized
+
+    def faucet_treasury_manifest(self) -> dict | None:
+        """Return the canonical Faucet Treasury declaration, if activated."""
+
+        return deepcopy(self._faucet_treasury_manifest)
+
+    def validate_consensus_treasury_manifest_bind(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Validate the one-time post-genesis Faucet Treasury declaration."""
+
+        if envelope.operation_type != TREASURY_MANIFEST_BIND_OPERATION:
+            raise ValueError("Treasury manifest binding requires TREASURY_MANIFEST_BIND operation")
+        if envelope.origin_type != "protocol" or envelope.sender_wallet is not None:
+            raise ValueError("Treasury manifest binding requires protocol origin")
+        if envelope.fee_payer is not None or envelope.fee_class != "protocol_sponsored":
+            raise ValueError("Treasury manifest binding requires protocol-sponsored fee class")
+        if envelope.initiator_id != "faucet-treasury-manifest-bind":
+            raise ValueError("Treasury manifest binding initiator is invalid")
+        if envelope.target_epoch is not None:
+            raise ValueError("Treasury manifest binding cannot target an epoch")
+        if self._faucet_treasury_manifest is not None:
+            raise ValueError("Faucet Treasury manifest is already bound")
+
+        payload = dict(envelope.payload)
+        manifest_data = payload.get("treasury_manifest")
+        if not isinstance(manifest_data, dict):
+            raise ValueError("Treasury manifest binding manifest is invalid")
+        manifest = FaucetTreasuryManifest.model_validate(manifest_data)
+        if manifest.funding_mode != "CONSENSUS":
+            raise ValueError("Treasury manifest binding requires a CONSENSUS-funded manifest")
+        if manifest.funding_operation_id is not None:
+            raise ValueError("Treasury manifest binding cannot include a funding operation")
+
+        for field_name in ("creator_recovery_public_key", "authorization_reference", "authorization_signature"):
+            value = payload.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"Treasury manifest binding field is invalid: {field_name}")
+        creator_public_key = payload["creator_recovery_public_key"]
+        if not creator_public_key.startswith("ed25519:"):
+            raise ValueError("Treasury manifest binding creator public key is invalid")
+        try:
+            creator_public_key_bytes = bytes.fromhex(creator_public_key.removeprefix("ed25519:"))
+            if len(creator_public_key_bytes) != 32:
+                raise ValueError("invalid key length")
+        except ValueError as error:
+            raise ValueError("Treasury manifest binding creator public key is invalid") from error
+        if wallet_id_for_public_key(creator_public_key) != manifest.creator_recovery_wallet:
+            raise ValueError("Treasury manifest binding creator public key does not match recovery Wallet")
+
+        authorization_signature = payload["authorization_signature"]
+        if not authorization_signature.startswith("ed25519:"):
+            raise ValueError("Treasury manifest binding authorization signature is invalid")
+        try:
+            Ed25519PublicKey.from_public_bytes(creator_public_key_bytes).verify(
+                bytes.fromhex(authorization_signature.removeprefix("ed25519:")),
+                faucet_treasury_manifest_binding_authorization_bytes(payload),
+            )
+        except (ValueError, InvalidSignature) as error:
+            raise ValueError("Treasury manifest binding authorization signature verification failed") from error
+        if len(envelope.signatures) != 1 or not envelope.signatures[0].startswith("ed25519:"):
+            raise ValueError("Treasury manifest binding requires exactly one envelope signature")
+        try:
+            Ed25519PublicKey.from_public_bytes(creator_public_key_bytes).verify(
+                bytes.fromhex(envelope.signatures[0].removeprefix("ed25519:")),
+                envelope.signing_bytes(),
+            )
+        except (ValueError, InvalidSignature) as error:
+            raise ValueError("Treasury manifest binding envelope signature verification failed") from error
+        return {
+            "manifest": manifest.model_dump(mode="json"),
+            "authorization_domain": FAUCET_TREASURY_MANIFEST_BINDING_DOMAIN,
+        }
+
+    def apply_consensus_treasury_manifest_bind(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Bind the Faucet Treasury declaration as a one-time ledger transition."""
+
+        validated = self.validate_consensus_treasury_manifest_bind(envelope)
+        record = self.record_admitted_envelope(
+            envelope,
+            emitted_events=["FaucetTreasuryManifestBound"],
+        )
+        self.bind_faucet_treasury_manifest(validated["manifest"])
+        return record
 
     def validate_consensus_treasury_fund(
         self,

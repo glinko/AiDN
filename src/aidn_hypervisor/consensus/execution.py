@@ -123,6 +123,7 @@ class ExecutionEngine:
         "CONSENSUS_VALIDATOR_SET_UPDATE": 200,
         "EPOCH_TASK": 150,
         "EPOCH_TRANSITION": 200,
+        "TREASURY_MANIFEST_BIND": 250,
         "TREASURY_FUND": 250,
         "REWARD_MINT": 250,
         "SERVICE_VERIFICATION_COMMIT": 200,
@@ -352,6 +353,10 @@ class ExecutionEngine:
                             )
                         elif result.envelope.operation_type == "CONSENSUS_VALIDATOR_SET_UPDATE":
                             self.ledger.apply_consensus_validator_set_update(
+                                result.envelope,
+                            )
+                        elif result.envelope.operation_type == "TREASURY_MANIFEST_BIND":
+                            self.ledger.apply_consensus_treasury_manifest_bind(
                                 result.envelope,
                             )
                         elif result.envelope.operation_type == "TREASURY_FUND":
@@ -1172,6 +1177,17 @@ class ExecutionEngine:
                     )
                 )
                 emitted.append("ValidatorSetUpdateScheduled")
+            elif envelope.operation_type == "TREASURY_MANIFEST_BIND":
+                self.ledger.validate_consensus_treasury_manifest_bind(envelope)
+                state_changes.append(
+                    StateChange(
+                        entity_type="faucet_treasury",
+                        entity_id=str(envelope.payload["treasury_manifest"]["treasury_id"]),
+                        change_type="bind",
+                        after={"manifest_hash": envelope.payload["treasury_manifest"]["manifest_hash"]},
+                    )
+                )
+                emitted.append("FaucetTreasuryManifestBound")
             elif envelope.operation_type == "TREASURY_FUND":
                 self.ledger.validate_consensus_treasury_fund(envelope)
                 state_changes.append(
