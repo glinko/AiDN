@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { dashboardSchemas, type BundlePayload, type DashboardHome, type EndpointPayload, type Fleet, type Readiness } from '@/lib/types'
+import { dashboardSchemas, type BundlePayload, type DashboardHome, type EndpointPayload, type Fleet, type Readiness, type WalletDashboard } from '@/lib/types'
 
 const apiRoot = (import.meta.env.VITE_AIDN_API_ROOT ?? '').replace(/\/$/, '')
 const requestTimeoutMs = 15_000
@@ -176,6 +176,7 @@ export const dashboardApi = {
   fleet: (signal?: AbortSignal): Promise<Fleet> => readDashboard('/operators/dashboard/fleet', dashboardSchemas.fleet, signal),
   bundles: (signal?: AbortSignal): Promise<BundlePayload> => readDashboard('/operators/dashboard/bundles', dashboardSchemas.bundles, signal),
   endpoints: (signal?: AbortSignal): Promise<EndpointPayload> => readDashboard('/operators/dashboard/endpoints', dashboardSchemas.endpoints, signal),
+  wallet: (signal?: AbortSignal): Promise<WalletDashboard> => readDashboard('/operators/dashboard/wallet', dashboardSchemas.wallet, signal),
   providers: (signal?: AbortSignal): Promise<ProviderWorkspace> => readDashboard('/operators/dashboard/providers', providerWorkspaceSchema, signal),
   installs: (signal?: AbortSignal): Promise<ModelInstallWorkspace> => readDashboard('/operators/dashboard/installs', modelInstallWorkspaceSchema, signal),
   accessStatus: (): Promise<DashboardAccessStatus> => writeDashboard('/operators/dashboard/access/status', { method: 'GET' }) as Promise<DashboardAccessStatus>,

@@ -66,7 +66,7 @@ import {
 import { useDashboardData } from '@/hooks/use-dashboard'
 import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type ProviderWorkspace } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
-import type { Bundle, DashboardHome, Endpoint, ReadinessStep } from '@/lib/types'
+import type { Bundle, Endpoint, ReadinessStep, WalletDashboard } from '@/lib/types'
 
 type NavigationItem = {
   id: DashboardScreen
@@ -134,7 +134,7 @@ function App() {
   const nodeIdentity = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
   const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
   const readinessPercent = data.readiness.data?.progress.percent ?? 0
-  const hasRefreshError = [data.home, data.readiness, data.fleet, data.bundles, data.endpoints, data.providers, data.installs].some(
+  const hasRefreshError = [data.home, data.readiness, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.installs].some(
     (query) => query.isError,
   )
 
@@ -158,6 +158,7 @@ function App() {
       data.fleet.refetch(),
       data.bundles.refetch(),
       data.endpoints.refetch(),
+      data.wallet.refetch(),
       data.providers.refetch(),
       data.installs.refetch(),
     ])
@@ -209,7 +210,7 @@ function App() {
             <ModelsWorkspace installs={data.installs.data?.items ?? []} workspace={data.providers.data} isLoading={data.installs.isLoading || data.providers.isLoading} error={data.installs.error ?? data.providers.error} onRefresh={refreshAll} />
           ) : null}
           {activeScreen === 'settings' ? <SettingsWorkspace fleet={data.fleet.data} onRefresh={refreshAll} /> : null}
-          {activeScreen === 'wallet' ? <WalletWorkspace ownerWallet={data.home.data?.bootstrap.owner_wallet} onRefresh={refreshAll} /> : null}
+          {activeScreen === 'wallet' ? <WalletWorkspace wallet={data.wallet.data} isLoading={data.wallet.isLoading} error={data.wallet.error} onRefresh={refreshAll} /> : null}
           {activeScreen === 'providers' || activeScreen === 'catalog' ? (
             <ProviderWorkspaceScreen screen={activeScreen} workspace={data.providers.data} isLoading={data.providers.isLoading} error={data.providers.error} onRefresh={refreshAll} />
           ) : null}
@@ -1162,14 +1163,35 @@ function SettingsAccessWorkspace() {
   )
 }
 
-function WalletWorkspace({ ownerWallet, onRefresh }: { ownerWallet: DashboardHome['bootstrap']['owner_wallet']; onRefresh: () => void }) {
+function formatQAtoms(qAtoms: number) {
+  return `${new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 6,
+    minimumFractionDigits: qAtoms !== 0 && Math.abs(qAtoms) < 1_000_000 ? 6 : 0,
+  }).format(qAtoms / 1_000_000)} Q`
+}
+
+function WalletActivityList({ title, items, emptyDetail }: { title: string; items: DashboardRecord[]; emptyDetail: string }) {
+  return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader><CardContent className="p-0">{items.length === 0 ? <p className="px-5 py-6 text-sm leading-6 text-muted-foreground">{emptyDetail}</p> : <div className="divide-y divide-border/70">{items.slice(-6).reverse().map((item, index) => {
+    const quote = getRecord(item)?.quote
+    const charges = getRecord(getRecord(quote)?.charges)
+    const amount = getText(item, 'amount_q') || getText(charges, 'total_q')
+    return <div key={getText(item, 'event_id') || `${title}-${index}`} className="min-w-0 px-5 py-3"><div className="flex min-w-0 items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-medium text-slate-100">{getText(item, 'event_type') || 'Recorded activity'}</p><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{getText(item, 'occurred_at') || getText(item, 'created_at') || 'Time not reported'}</p></div>{amount ? <p className="shrink-0 font-mono text-xs text-cyan-100">{amount} Q</p> : null}</div></div>
+  })}</div>}</CardContent></Card>
+}
+
+function WalletWorkspace({ wallet, isLoading, error, onRefresh }: { wallet: WalletDashboard | undefined; isLoading: boolean; error: Error | null; onRefresh: () => void }) {
   const [label, setLabel] = useState('Primary Wallet')
   const [privateKey, setPrivateKey] = useState('')
   const [mode, setMode] = useState<'create' | 'import'>('create')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [revealedKey, setRevealedKey] = useState<string | null>(null)
+  const ownerWallet = wallet?.owner_wallet
+  const walletState = wallet?.wallet_state
   const configured = Boolean(ownerWallet?.configured)
+  const identityRegistered = walletState?.identity_state === 'registered'
+  const balance = walletState?.canonical_balance_q_atoms ?? 0
+  const economics = getRecord(getRecord(wallet?.economics_summary)?.removals)
 
   async function configureWallet() {
     if (mode === 'import' && !privateKey.trim()) {
@@ -1197,8 +1219,22 @@ function WalletWorkspace({ ownerWallet, onRefresh }: { ownerWallet: DashboardHom
     }
   }
 
-  return <div className="space-y-4"><ScreenHeading eyebrow="Operator ownership" title="Wallet" detail="The owner Wallet signs network-facing Hypervisor actions. It is separate from the node identity and is never disclosed to agents." />
+  return <div className="space-y-4"><ScreenHeading eyebrow="Operator ownership" title="Wallet" detail="Inspect the owner Wallet's ledger projection, binding and registry identity. Private key material is never returned to the Dashboard." />
+    {isLoading && !wallet ? <PanelSkeleton rows={4} /> : null}
+    {error && !wallet ? <PanelError title="Wallet state is unavailable" error={error} onRetry={onRefresh} /> : null}
+    {error && wallet ? <PanelError title="Wallet refresh did not complete" detail="The last confirmed Wallet projection remains visible below. Retry when the Hypervisor API is reachable." onRetry={onRefresh} /> : null}
     {configured ? <Card className="border-emerald-300/25 bg-emerald-300/[0.04] py-0 shadow-none"><CardContent className="flex gap-3 p-5"><WalletCards className="mt-0.5 size-5 shrink-0 text-emerald-300" /><div><p className="font-semibold text-emerald-50">Owner Wallet configured</p><p className="mt-1 text-sm text-emerald-100/75">{ownerWallet?.label || 'Owner Wallet'} · <span className="font-mono">{shortId(ownerWallet?.wallet_id)}</span></p><p className="mt-2 text-xs leading-5 text-emerald-100/65">Changing ownership is intentionally not an in-place Dashboard action. It requires the future signed ownership-transfer protocol.</p></div></CardContent></Card> : <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Wallet bootstrap</p><CardTitle className="mt-1 text-lg font-semibold">Bind node ownership</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Create a new key once or import a key you already control. The request follows the canonical wallet-binding path; a validator node may report a pending consensus operation before the binding becomes active.</p></CardHeader><CardContent className="space-y-4 p-5"><div className="flex flex-wrap gap-2"><Button variant={mode === 'create' ? 'default' : 'outline'} className={cn(mode === 'create' ? 'bg-cyan-300 text-[#06121d] hover:bg-cyan-200' : 'border-border bg-[#091725]')} onClick={() => setMode('create')}>Create Wallet</Button><Button variant={mode === 'import' ? 'default' : 'outline'} className={cn(mode === 'import' ? 'bg-cyan-300 text-[#06121d] hover:bg-cyan-200' : 'border-border bg-[#091725]')} onClick={() => setMode('import')}>Import Wallet</Button></div><label className="grid gap-2"><span className="eyebrow">Wallet label</span><input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={128} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label>{mode === 'import' ? <label className="grid gap-2"><span className="eyebrow">Existing private key</span><input type="password" value={privateKey} onChange={(event) => setPrivateKey(event.target.value)} autoComplete="off" placeholder="ed25519:..." className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /><span className="text-xs leading-5 text-muted-foreground">The key is submitted only to the node's encrypted Wallet bootstrap service and is never added to the Dashboard read-model.</span></label> : null}<div className="flex justify-end"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy} onClick={() => void configureWallet()}><KeyRound />{busy ? 'Binding...' : mode === 'create' ? 'Create and bind' : 'Import and bind'}</Button></div></CardContent></Card>}
+    {configured && wallet ? <>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Card className="border-border/80 bg-card py-0 shadow-none"><CardContent className="p-5"><p className="text-sm text-muted-foreground">Canonical balance</p><p className="mt-2 break-all font-mono text-2xl font-semibold tracking-tight text-cyan-100">{formatQAtoms(balance)}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{walletState?.balance_source === 'consensus_projection' ? 'Current consensus projection' : 'Local ledger projection'}</p></CardContent></Card>
+        <Card className="border-border/80 bg-card py-0 shadow-none"><CardContent className="p-5"><p className="text-sm text-muted-foreground">Binding</p><p className="mt-2 text-xl font-semibold capitalize text-slate-100">{walletState?.binding_state || 'unknown'}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{walletState?.binding_state === 'pending' ? 'Waiting for the canonical bind operation to finalize.' : 'Owner Wallet is available to node operations.'}</p></CardContent></Card>
+        <Card className={cn('border py-0 shadow-none', identityRegistered ? 'border-emerald-300/25 bg-emerald-300/[0.04]' : 'border-amber-300/25 bg-amber-300/[0.04]')}><CardContent className="p-5"><p className="text-sm text-muted-foreground">Network identity</p><p className={cn('mt-2 text-xl font-semibold', identityRegistered ? 'text-emerald-100' : 'text-amber-100')}>{identityRegistered ? 'Registered' : 'Not registered'}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{identityRegistered ? 'Identity evidence is visible in the current registry projection.' : 'No wallet identity record is visible in this chain projection.'}</p></CardContent></Card>
+        <Card className="border-border/80 bg-card py-0 shadow-none"><CardContent className="p-5"><p className="text-sm text-muted-foreground">Recorded usage</p><p className="mt-2 font-mono text-2xl font-semibold tracking-tight text-slate-100">{wallet.usage_events.length}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{wallet.allocation_events.length} allocation events and {wallet.dispute_events.length} disputes retained locally.</p></CardContent></Card>
+      </div>
+      {!identityRegistered ? <Card className="border-amber-300/25 bg-amber-300/[0.04] py-0 shadow-none"><CardContent className="flex gap-3 p-4"><CircleDot className="mt-0.5 size-4 shrink-0 text-amber-200" /><div><p className="text-sm font-semibold text-amber-100">Wallet is bound, but the network reset removed its registry identity</p><p className="mt-1 text-sm leading-6 text-amber-100/75">This does not change the private key or create a second Wallet. The current chain has not received a Wallet identity registration for this Wallet. Complete registration through the canonical node workflow before using identity-gated network operations.</p></div></CardContent></Card> : null}
+      <div className="grid gap-4 xl:grid-cols-2"><WalletActivityList title="Usage activity" items={wallet.usage_events} emptyDetail="No metered usage has been recorded for this Wallet." /><WalletActivityList title="Allocation activity" items={wallet.allocation_events} emptyDetail="No allocation or settlement events have been recorded for this Wallet." /></div>
+      <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><CardTitle className="text-base font-semibold">Economic record</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">These are local accounting events. The external faucet is a separate Treasury service and is not represented as a claimable balance here.</p></CardHeader><CardContent className="grid gap-4 p-5 sm:grid-cols-3"><div><p className="text-sm text-muted-foreground">Recyclable removals</p><p className="mt-1 font-mono text-lg text-slate-100">{String(economics?.count ?? 0)}</p></div><div><p className="text-sm text-muted-foreground">Removed value</p><p className="mt-1 font-mono text-lg text-slate-100">{String(economics?.total_q ?? 0)} Q</p></div><div><p className="text-sm text-muted-foreground">Faucet integration</p><p className="mt-1 text-sm font-medium text-slate-100">External service</p></div></CardContent></Card>
+    </> : null}
     {revealedKey ? <Card className="border-amber-300/30 bg-amber-300/[0.05] py-0 shadow-none"><CardHeader className="border-b border-amber-300/20 px-5 py-4"><p className="eyebrow text-amber-100">Store immediately</p><CardTitle className="mt-1 text-lg font-semibold text-amber-50">New private key is visible once</CardTitle></CardHeader><CardContent className="p-5"><code className="block break-all rounded-lg bg-black/25 p-3 font-mono text-xs leading-5 text-amber-50">{revealedKey}</code><div className="mt-3 flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-amber-300/30 bg-[#091725] text-amber-100" onClick={() => void navigator.clipboard.writeText(revealedKey)}><Copy />Copy key</Button><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => setRevealedKey(null)}>I stored it</Button></div></CardContent></Card> : null}
     {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
   </div>

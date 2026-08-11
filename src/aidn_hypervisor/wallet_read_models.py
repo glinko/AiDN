@@ -7,6 +7,9 @@ if TYPE_CHECKING:
     from aidn_hypervisor.service import HypervisorService
 
 
+Q_ATOMS_PER_Q = 1_000_000
+
+
 def build_operator_wallet_payload(
     service: HypervisorService,
     *,
@@ -16,11 +19,45 @@ def build_operator_wallet_payload(
     economics_recent_limit: int = 8,
     economics_history_limit: int = 12,
 ) -> dict:
+    owner_wallet = service.owner_wallet_state()
+    wallet_id = owner_wallet.get("wallet_id")
+    wallet_identity = (
+        service.resolve_wallet_identity(str(wallet_id))
+        if wallet_id is not None
+        else None
+    )
+    balance_q_atoms = (
+        service.wallet_q_atom_balance(str(wallet_id))
+        if wallet_id is not None
+        else 0
+    )
+    consensus = getattr(service, "consensus_service", None)
+    validator_mode = bool(consensus is not None and consensus.is_validator)
     economics_history = service.export_wallet_economics_events(
         limit=economics_history_limit
     )
     return {
-        "owner_wallet": service.owner_wallet_state(),
+        "owner_wallet": owner_wallet,
+        "wallet_state": {
+            "configured": bool(owner_wallet.get("configured")),
+            "wallet_id": wallet_id,
+            "canonical_balance_q_atoms": balance_q_atoms,
+            "canonical_balance_q": balance_q_atoms / Q_ATOMS_PER_Q,
+            "balance_source": (
+                "consensus_projection" if validator_mode else "local_projection"
+            ),
+            "identity_state": (
+                "registered" if wallet_identity is not None else "not_registered"
+            ),
+            "identity": wallet_identity,
+            "binding_state": (
+                "pending"
+                if owner_wallet.get("pending_consensus") is not None
+                else "bound"
+                if owner_wallet.get("configured")
+                else "not_configured"
+            ),
+        },
         "node_identity": service.node_identity(),
         "usage_events": service.list_wallet_usage_events(limit=usage_limit),
         "allocation_events": service.list_wallet_allocation_events(

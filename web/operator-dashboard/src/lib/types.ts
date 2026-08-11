@@ -140,6 +140,26 @@ const endpointPayloadSchema = z.object({
   items: z.array(endpointSchema).catch([]),
 }).passthrough()
 
+const walletDashboardSchema = z.object({
+  owner_wallet: walletSchema,
+  wallet_state: z.object({
+    configured: z.boolean().catch(false),
+    wallet_id: z.string().nullable().optional(),
+    canonical_balance_q_atoms: numberValue,
+    canonical_balance_q: numberValue,
+    balance_source: z.string().catch('unknown'),
+    identity_state: z.string().catch('unknown'),
+    identity: unknownRecord.nullable().optional(),
+    binding_state: z.string().catch('unknown'),
+  }).passthrough(),
+  usage_events: z.array(unknownRecord).catch([]),
+  allocation_events: z.array(unknownRecord).catch([]),
+  dispute_events: z.array(unknownRecord).catch([]),
+  economics_summary: unknownRecord.default({}),
+  economics_history: z.array(unknownRecord).catch([]),
+  faucet_preview: unknownRecord.default({}),
+}).passthrough()
+
 export type DashboardHome = z.infer<typeof homeSchema>
 export type Readiness = z.infer<typeof readinessSchema>
 export type ReadinessStep = z.infer<typeof readinessStepSchema>
@@ -148,6 +168,7 @@ export type BundlePayload = z.infer<typeof bundlePayloadSchema>
 export type EndpointPayload = z.infer<typeof endpointPayloadSchema>
 export type Bundle = z.infer<typeof bundleSchema>
 export type Endpoint = z.infer<typeof endpointSchema>
+export type WalletDashboard = z.infer<typeof walletDashboardSchema>
 
 export const dashboardSchemas = {
   home: homeSchema,
@@ -155,4 +176,5 @@ export const dashboardSchemas = {
   fleet: fleetSchema,
   bundles: bundlePayloadSchema,
   endpoints: endpointPayloadSchema,
+  wallet: walletDashboardSchema,
 }

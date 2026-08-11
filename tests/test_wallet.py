@@ -749,6 +749,9 @@ def test_operator_dashboard_wallet_aggregates_usage_allocations_and_economics() 
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["wallet_state"]["configured"] is False
+    assert payload["wallet_state"]["canonical_balance_q_atoms"] == 0
+    assert payload["wallet_state"]["identity_state"] == "not_registered"
     assert payload["usage_events"][0]["task_id"] == "task-1"
     assert isinstance(payload["allocation_events"], list)
     assert isinstance(payload["dispute_events"], list)
@@ -756,6 +759,28 @@ def test_operator_dashboard_wallet_aggregates_usage_allocations_and_economics() 
     assert isinstance(payload["economics_history"], list)
     assert "cursor_status" in payload["economics_history_cursor"]
     assert "eligible" in payload["faucet_preview"]
+
+
+def test_operator_dashboard_wallet_reports_wallet_balance_and_binding_state() -> None:
+    service = _service()
+    configured = service.configure_owner_wallet(
+        mode="create",
+        label="Primary Wallet",
+    )
+    wallet_id = configured["wallet"]["wallet_id"]
+    service.credit_wallet_q_atoms(wallet_id=wallet_id, amount_q_atoms=1_250_000)
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/dashboard/wallet")
+
+    assert response.status_code == 200
+    wallet_state = response.json()["wallet_state"]
+    assert wallet_state["configured"] is True
+    assert wallet_state["wallet_id"] == wallet_id
+    assert wallet_state["canonical_balance_q_atoms"] == 1_250_000
+    assert wallet_state["canonical_balance_q"] == 1.25
+    assert wallet_state["binding_state"] == "bound"
+    assert wallet_state["identity_state"] == "not_registered"
 
 
 def test_operator_wallet_faucet_requires_external_service() -> None:
