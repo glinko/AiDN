@@ -133,6 +133,8 @@ class DevelopmentRewardProductionBatch(BaseModel, frozen=True):
             raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_VERSION_INVALID")
         if self.plan.mode != "CONSENSUS_GATED":
             raise ValueError("DEVELOPMENT_PRODUCTION_PLAN_MODE_INVALID")
+        if not self.plan.verify_integrity():
+            raise ValueError("DEVELOPMENT_PRODUCTION_PLAN_HASH_INVALID")
         if self.plan.epoch != self.epoch:
             raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_EPOCH_INVALID")
         commitment = self.plan.commitment

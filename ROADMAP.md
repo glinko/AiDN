@@ -1061,6 +1061,11 @@ This work is intentionally outside the functional MVP. It must not alter current
     consensus plan without submitting transactions or minting Q. The operator
     workflow is documented in
     `docs/development/eco-0007-production-reward-batch.md`.
+27. Added the idempotent ECO-0007 production batch executor. It accepts only
+    the exact hash-bound batch envelopes, persists the current envelope before
+    submission, waits for verified consensus finality after every predecessor,
+    and resumes after restart without replacing operation identities. It does
+    not create keys, mint Q locally, or bypass Governance/operator policy.
 
 ### Current post-MVP implementation gate
 
@@ -1099,6 +1104,8 @@ This work is intentionally outside the functional MVP. It must not alter current
 - [x] Add the hash-bound ECO-0007 production profile and bounded production
   reward-batch builder; keep the resulting plan non-submitting until live
   finality evidence is available.
+- [x] Add the idempotent production batch executor with exact-envelope
+  persistence, ordered predecessor checks, and verified-finality gating.
 - [ ] Activate a production ECO-0007 reward profile and execute a finalized contribution payout batch against a real epoch pool.
 - [x] Public multi-validator profiles are signed, hash-bound, quorum-checked, and projected into the existing CometBFT finality configuration.
 - [x] Generate and verify the current Implementation Profile and execute the

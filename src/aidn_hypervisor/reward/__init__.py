@@ -101,6 +101,11 @@ from aidn_hypervisor.reward.development_distribution import (
     DevelopmentRoleReward,
     contribution_input_from_attestation,
 )
+from aidn_hypervisor.reward.development_execution import (
+    DevelopmentRewardBatchExecution,
+    DevelopmentRewardBatchExecutor,
+    DevelopmentRewardBatchStage,
+)
 from aidn_hypervisor.reward.development_expiry import (
     DEVELOPMENT_REWARD_EXPIRY_VERSION,
     DevelopmentRewardExpiryRecord,
@@ -283,6 +288,9 @@ __all__ = [
     "DevelopmentRoleInput",
     "DevelopmentRoleReward",
     "contribution_input_from_attestation",
+    "DevelopmentRewardBatchExecution",
+    "DevelopmentRewardBatchExecutor",
+    "DevelopmentRewardBatchStage",
     "DEVELOPMENT_POOL_ALLOCATION_VERSION",
     "DEVELOPMENT_POOL_ID",
     "DevelopmentPoolAllocation",

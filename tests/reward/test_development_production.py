@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from aidn_hypervisor.consensus.service import SubmissionRecord, SubmissionStatus
 from aidn_hypervisor.reward.development_activation import (
     DevelopmentRewardApprovalSignature,
     DevelopmentRewardAuthority,
@@ -13,6 +16,9 @@ from aidn_hypervisor.reward.development_activation import (
 from aidn_hypervisor.reward.development_commitments import build_development_reward_commitment
 from aidn_hypervisor.reward.development_contribution_service import DevelopmentRewardOperationPlan
 from aidn_hypervisor.reward.development_distribution import DevelopmentRewardPolicy, canonical_hash
+from aidn_hypervisor.reward.development_execution import (
+    DevelopmentRewardBatchExecutor,
+)
 from aidn_hypervisor.reward.development_operations import (
     DevelopmentRewardOperationRequest,
     build_development_reward_operation,
@@ -223,3 +229,141 @@ def test_production_batch_rejects_amount_cap():
             source_epoch_transition_operation_id="epoch-transition-20",
             pool_budget_reference="epoch:20:GENERAL_DEVELOPMENT",
         )
+
+
+def _production_batch():
+    calculation, approval, plan = _plan()
+    profile = build_development_reward_production_profile(
+        network_id="aidn-localnet-1",
+        chain_id="chain-test-1",
+        effective_epoch=0,
+        activation_approval=approval,
+        policy=calculation.policy,
+        max_batch_q_atoms=1_000_000_000,
+        max_contributions=1,
+        max_operations=8,
+    )
+    batch = build_development_reward_production_batch(
+        profile=profile,
+        activation_approval=approval,
+        plan=plan,
+        source_epoch_transition_operation_id="epoch-transition-20",
+        pool_budget_reference="epoch:20:GENERAL_DEVELOPMENT",
+    )
+    return profile, batch
+
+
+class _PendingStore:
+    def __init__(self):
+        self.staged = []
+        self.discarded = []
+
+    def stage_pending_consensus_envelope(self, envelope):
+        self.staged.append(envelope.operation_id)
+
+    def discard_pending_consensus_envelopes(self, operation_id):
+        self.discarded.append(operation_id)
+
+
+class _ProductionConsensus:
+    is_enabled = True
+
+    def __init__(self):
+        self.config = SimpleNamespace(chain_id="chain-test-1")
+        self.records = {}
+        self.submitted = []
+        self.finalized = set()
+
+    def restore_submission(self, envelope):
+        record = self.records.setdefault(
+            envelope.operation_id,
+            SubmissionRecord(
+                operation_id=envelope.operation_id,
+                status=SubmissionStatus.PENDING,
+                transaction_hash=f"tx-{envelope.operation_id}",
+            ),
+        )
+        return record
+
+    def get_submission(self, operation_id):
+        return self.records.get(operation_id)
+
+    def submit_operation(self, envelope, *, retry_existing):
+        assert retry_existing is True
+        self.submitted.append(envelope.operation_id)
+        record = self.records[envelope.operation_id]
+        record.status = SubmissionStatus.ADMITTED
+        record.admitted_at = 1.0
+        self.finalized.add(envelope.operation_id)
+        return record
+
+    def reconcile_finality(self, operation_id, *, finality_source):
+        if operation_id not in self.finalized:
+            return None
+        record = self.records[operation_id]
+        record.status = SubmissionStatus.FINALIZED
+        record.block_height = len(self.finalized)
+        record.finalized_at = 2.0
+        return record
+
+
+class _NoFinality:
+    def finality_evidence(self, operation_id):
+        return None
+
+
+class _AvailableFinality:
+    def finality_evidence(self, operation_id):
+        return object()
+
+
+def test_production_executor_stops_before_admission_without_finality():
+    profile, batch = _production_batch()
+    consensus = _ProductionConsensus()
+    store = _PendingStore()
+
+    result = DevelopmentRewardBatchExecutor(
+        consensus,
+        pending_envelope_store=store,
+    ).execute(batch, profile=profile)
+
+    assert result.status == "AWAITING_VERIFIED_FINALITY"
+    assert result.blocked_on == batch.plan.envelopes[0].operation_id
+    assert consensus.submitted == []
+    assert store.staged == [batch.plan.envelopes[0].operation_id]
+    assert result.verify_integrity()
+
+
+def test_production_executor_submits_in_order_and_is_resumable():
+    profile, batch = _production_batch()
+    consensus = _ProductionConsensus()
+    store = _PendingStore()
+    executor = DevelopmentRewardBatchExecutor(
+        consensus,
+        finality_source=_AvailableFinality(),
+        pending_envelope_store=store,
+    )
+
+    result = executor.execute(batch, profile=profile)
+
+    assert result.status == "FINALIZED"
+    assert consensus.submitted == [item.operation_id for item in batch.plan.envelopes]
+    assert result.finalized_operation_ids == consensus.submitted
+    assert store.discarded == consensus.submitted
+
+
+def test_disabled_consensus_executor_uses_local_finalized_records():
+    from aidn_hypervisor.consensus.service import ConsensusMode, ConsensusService, ConsensusServiceConfig
+
+    profile, batch = _production_batch()
+    consensus = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.DISABLED,
+            chain_id="chain-test-1",
+        )
+    )
+
+    result = DevelopmentRewardBatchExecutor(consensus).execute(batch, profile=profile)
+
+    assert result.status == "FINALIZED"
+    assert len(result.finalized_operation_ids) == len(batch.plan.envelopes)

@@ -63,6 +63,18 @@ class DevelopmentRewardOperationPlan(BaseModel, frozen=True):
     envelopes: list[LedgerOperationEnvelope] = Field(min_length=1)
     plan_hash: str = Field(min_length=1)
 
+    def unsigned_payload(self) -> dict:
+        return {
+            "plan_version": self.plan_version,
+            "mode": self.mode,
+            "epoch": self.epoch,
+            "commitment_hash": self.commitment.commitment_hash,
+            "operation_ids": [item.operation_id for item in self.envelopes],
+        }
+
+    def verify_integrity(self) -> bool:
+        return self.plan_hash == canonical_hash(self.unsigned_payload())
+
 
 class DevelopmentContributionRewardService:
     """Calculate and assemble rewards from finalized contribution evidence."""

@@ -31,6 +31,8 @@ The implementation provides:
   `DEVELOPMENT_REWARD_*` envelopes;
 - `tools/build-development-reward-profile.py`;
 - `tools/build-development-reward-batch.py`;
+- `DevelopmentRewardBatchExecutor`, which submits the exact signed envelopes
+  one at a time and stops until verified finality is available;
 - `POST /api/v1/contributions/rewards/production-batch` for a planner that
   already holds finalized evidence.
 
@@ -76,8 +78,10 @@ keys and never create a Governance approval.
    ```
 
 5. Inspect `production-batch.json` and verify the batch hash and envelope
-   order. A future submission runner must submit one envelope at a time and
-   wait for finality of each predecessor before sending the next one.
+   order. `DevelopmentRewardBatchExecutor` submits one envelope at a time and
+   waits for verified finality of each predecessor before sending the next one.
+   It stores the current exact envelope before submission so a restart can
+   resume without creating a replacement operation.
 6. Reconcile every finalized operation against the quorum and verify the
    resulting Wallet payment records. A transport acknowledgement or a single
    node's mempool response is not payment finality.
@@ -98,3 +102,6 @@ Until then, the HTTP route and CLI are planning/verification surfaces only.
 This prevents a Forge webhook, dashboard caller or local operator process from
 becoming an unauthorized Q issuer.
 
+The executor is an orchestration primitive, not a bypass around operator or
+Governance authorization. A production control-plane route still needs to bind
+it to the node's authenticated operator policy before enabling live execution.
