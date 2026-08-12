@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from aidn_faucet.cometbft_submitter import (
     CometBftFaucetTransferSubmitter,
     FailoverCometBftSubmissionTransport,
+    FaucetTransactionHashRegistry,
     HttpCometBftWalletSequenceProvider,
     serialize_faucet_envelope,
 )
@@ -83,6 +85,21 @@ def test_admission_is_not_finality_and_reconcile_reuses_exact_bytes() -> None:
     assert pending.status == "ADMITTED"
     assert transport.calls == [serialize_faucet_envelope(envelope)] * 2
     assert finality.operations == [envelope.operation_id]
+
+
+def test_envelope_serialization_is_stable_after_persistent_round_trip() -> None:
+    envelope = _envelope()
+    original_bytes = serialize_faucet_envelope(envelope)
+    persisted = json.dumps(envelope.model_dump(mode="json"), sort_keys=True)
+    restored = LedgerOperationEnvelope.model_validate(json.loads(persisted))
+
+    assert serialize_faucet_envelope(restored) == original_bytes
+
+    registry = FaucetTransactionHashRegistry()
+    assert registry.remember(envelope, original_bytes) == registry.remember(
+        restored,
+        serialize_faucet_envelope(restored),
+    )
 
 
 def test_verified_finality_is_the_only_finalized_result() -> None:

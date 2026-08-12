@@ -142,3 +142,7 @@ class LedgerOperationEnvelope(BaseModel):
         obj_dict = self.model_dump(mode="json")
         obj_dict["signatures"] = []
         return _canonical_json(obj_dict).encode("utf-8")
+
+    def consensus_bytes(self) -> bytes:
+        """Return the canonical signed envelope bytes sent to consensus."""
+        return _canonical_json(self.model_dump(mode="json")).encode("utf-8")

@@ -94,7 +94,7 @@ def test_submission_retains_exact_transaction_hash_for_finality_lookup():
 
     svc.submit_operation(env)
 
-    expected_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    expected_bytes = env.consensus_bytes()
     assert svc.transaction_hash_for_operation(env.operation_id) == cometbft_transaction_hash(
         expected_bytes
     )
@@ -108,7 +108,7 @@ def test_restore_submission_reconstructs_operation_identity_without_rebroadcast(
     first = svc.restore_submission(env)
     second = svc.restore_submission(env)
 
-    expected_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    expected_bytes = env.consensus_bytes()
     assert first is second
     assert first.status == SubmissionStatus.PENDING
     assert svc.get_operation_envelope(env.operation_id) == env
@@ -124,7 +124,7 @@ def test_transaction_hash_lookup_falls_back_to_persisted_consensus_ledger_record
     env = _make_envelope(origin_type="protocol")
     abci.ledger.record_admitted_envelope(env)
 
-    expected_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    expected_bytes = env.consensus_bytes()
     assert svc.transaction_hash_for_operation(env.operation_id) == cometbft_transaction_hash(
         expected_bytes
     )
@@ -148,7 +148,7 @@ def test_legacy_consensus_record_without_transaction_hash_requires_rpc_recovery(
 
 def test_http_submission_transport_marks_only_checktx_admission():
     env = _make_envelope()
-    transaction_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    transaction_bytes = env.consensus_bytes()
     transport = RecordingSubmissionTransport(
         {
             "result": {
@@ -176,7 +176,7 @@ def test_http_submission_transport_marks_only_checktx_admission():
 
 def test_non_validator_tcp_endpoint_configures_http_submission_transport(monkeypatch):
     env = _make_envelope()
-    transaction_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    transaction_bytes = env.consensus_bytes()
     transport = RecordingSubmissionTransport(
         {
             "result": {
@@ -252,7 +252,7 @@ def test_submission_is_idempotent_for_the_same_operation_and_transaction():
 
 def test_retry_existing_submission_rebroadcasts_and_accepts_cometbft_cache():
     env = _make_envelope()
-    transaction_bytes = json.dumps(env.model_dump(mode="json")).encode("utf-8")
+    transaction_bytes = env.consensus_bytes()
     transport = RecordingSubmissionTransport(
         {
             "result": {

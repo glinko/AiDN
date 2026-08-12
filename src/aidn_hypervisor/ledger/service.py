@@ -74,10 +74,10 @@ STANDARD_NETWORK_FEE_Q_ATOMS = 10_000
 
 def _consensus_transaction_hash(envelope: object) -> str:
     """Hash the exact JSON form used by the consensus submission transport."""
-    model_dump = getattr(envelope, "model_dump", None)
-    if not callable(model_dump):
+    consensus_bytes = getattr(envelope, "consensus_bytes", None)
+    if not callable(consensus_bytes):
         raise ValueError("consensus envelope serializer is unavailable")
-    transaction_bytes = json.dumps(model_dump(mode="json")).encode("utf-8")
+    transaction_bytes = consensus_bytes()
     return hashlib.sha256(transaction_bytes).hexdigest().upper()
 
 

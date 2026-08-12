@@ -72,7 +72,7 @@ def _transfer(*, sequence: int, amount: int, recipient: str, memo: str) -> bytes
         },
         signatures=["ed25519:sender"],
     )
-    return json.dumps(envelope.model_dump(mode="json"), sort_keys=True).encode("utf-8")
+    return envelope.consensus_bytes()
 
 
 def _finalize(application: AIDNABCIApplication, *, height: int, block_byte: bytes, tx: bytes) -> None:

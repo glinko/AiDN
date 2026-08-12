@@ -836,7 +836,7 @@ class ConsensusService:
         record.block_height = block_height
 
     def _serialize_envelope(self, envelope: LedgerOperationEnvelope) -> bytes:
-        return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
+        return envelope.consensus_bytes()
 
     def _submission_result(self, response: dict) -> dict:
         if not isinstance(response, dict):

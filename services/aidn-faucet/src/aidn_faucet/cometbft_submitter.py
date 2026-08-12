@@ -34,7 +34,7 @@ from aidn_hypervisor.faucet_treasury import (
 def serialize_faucet_envelope(envelope: LedgerOperationEnvelope) -> bytes:
     """Serialize exactly as the AiDN consensus submission service does."""
 
-    return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
+    return envelope.consensus_bytes()
 
 
 class FaucetTransactionHashRegistry:
