@@ -26,6 +26,12 @@ The Wallet page is organized into these sections:
      a consensus projection or an unverified local projection.
    - Keep wallet creation/import and network identity registration as separate
      actions with their own visible result states.
+   - Expose the identity-registration operation lifecycle separately from the
+     registry projection: `not_registered`, `pending`, `rejected`,
+     `registered` and `unavailable` are distinct operator states.
+   - Show the exact operation ID, submission status, finality status and safe
+     rejection reason. A retry is available only for a rejected operation;
+     pending operations are refreshed rather than duplicated.
 
 2. **Balance and network status**
    - Show canonical `q_atoms` and the formatted Q value.
@@ -137,6 +143,10 @@ this browser mutation through a local non-consensus path.
 - A rejected operation is not treated as configured or paid.
 - A pending operation is idempotent for the same semantic intent and sender
   sequence.
+- Identity registration uses the same rule: a pending
+  `WALLET_IDENTITY_REGISTER` envelope is never replaced by a browser retry.
+- Identity operation diagnostics never include the public-key payload or any
+  private signing material; only bounded lifecycle metadata is returned.
 - A different operation already occupying the sender sequence blocks a second
   transfer until the first operation is resolved.
 - The UI never exposes the private key in a read-model response.
@@ -154,6 +164,9 @@ this browser mutation through a local non-consensus path.
   operation still enters consensus.
 - Refresh shows pending transfers and finalized transfer activity from the
   server read model.
+- A wallet identity registration that is waiting for consensus is visibly
+  pending, and a rejected registration exposes its operation ID and error with
+  an explicit retry action.
 - Insufficient balance, self-transfer, invalid amount and stale sequence are
   visible as actionable errors.
 - Frontend build and backend transfer tests pass.

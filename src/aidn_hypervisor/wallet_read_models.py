@@ -47,6 +47,55 @@ def _pending_wallet_transfer_payload(service: HypervisorService, wallet_id: str 
     return items
 
 
+def _wallet_identity_operation_payload(
+    service: HypervisorService,
+    wallet_id: str | None,
+) -> list[dict]:
+    """Expose identity-registration lifecycle without exposing signing material."""
+    if not wallet_id:
+        return []
+    consensus = getattr(service, "consensus_service", None)
+    items: list[dict] = []
+    for envelope in service.list_pending_consensus_envelopes():
+        if envelope.operation_type != "WALLET_IDENTITY_REGISTER":
+            continue
+        payload = dict(envelope.payload)
+        if envelope.sender_wallet != wallet_id and payload.get("wallet_id") != wallet_id:
+            continue
+        submission = (
+            consensus.get_submission(envelope.operation_id)
+            if consensus is not None and callable(getattr(consensus, "get_submission", None))
+            else None
+        )
+        finality = service.ledger_operation_finality(envelope.operation_id)
+        submission_status = submission.status.value if submission is not None else None
+        finality_status = finality.get("status")
+        if submission_status == "failed" or finality_status == "failed":
+            state = "rejected"
+        elif finality.get("consensus_finalized") or finality_status in {
+            "consensus_finalized",
+            "locally_observed_finalized",
+        }:
+            state = "finalized"
+        else:
+            state = "pending"
+        items.append(
+            {
+                "operation_id": envelope.operation_id,
+                "operation_type": envelope.operation_type,
+                "wallet_id": wallet_id,
+                "sender_sequence": envelope.sender_sequence,
+                "created_at": envelope.created_at,
+                "submission_status": submission_status,
+                "status": finality_status,
+                "state": state,
+                "finality": finality,
+                "error": submission.error if submission is not None else None,
+            }
+        )
+    return items
+
+
 def build_operator_wallet_payload(
     service: HypervisorService,
     *,
@@ -74,6 +123,19 @@ def build_operator_wallet_payload(
         limit=economics_history_limit
     )
     pending_operations = _pending_wallet_transfer_payload(service, str(wallet_id) if wallet_id else None)
+    identity_operations = _wallet_identity_operation_payload(
+        service,
+        str(wallet_id) if wallet_id else None,
+    )
+    latest_identity_operation = identity_operations[-1] if identity_operations else None
+    if wallet_identity is not None:
+        identity_registration_state = "registered"
+    elif latest_identity_operation is not None:
+        identity_registration_state = latest_identity_operation["state"]
+    elif identity_read_model["error"] is not None:
+        identity_registration_state = "unavailable"
+    else:
+        identity_registration_state = "not_registered"
     active_pending_operations = [
         item
         for item in pending_operations
@@ -100,9 +162,12 @@ def build_operator_wallet_payload(
             "identity_state": (
                 "registered" if wallet_identity is not None else "not_registered"
             ),
+            "identity_registration_state": identity_registration_state,
             "identity": wallet_identity,
             "identity_source": identity_read_model["source"],
             "identity_error": identity_read_model["error"],
+            "identity_operation": latest_identity_operation,
+            "identity_operations": identity_operations,
             "binding_state": (
                 "pending"
                 if owner_wallet.get("pending_consensus") is not None

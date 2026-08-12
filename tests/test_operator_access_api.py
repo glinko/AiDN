@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.operator_access import DashboardAccessService
@@ -465,6 +466,57 @@ def test_wallet_transfer_pending_state_is_visible_without_local_debit(tmp_path) 
     assert read_model["wallet_state"]["pending_operation_count"] == 1
     assert read_model["pending_operations"][0]["recipient_wallet"] == "wallet-recipient"
     assert read_model["ledger_operations"] == []
+
+
+def test_wallet_identity_registration_lifecycle_is_visible_in_read_model() -> None:
+    class IdentityConsensus:
+        is_enabled = True
+        is_validator = False
+
+        def __init__(self) -> None:
+            self.submissions = {}
+
+        def get_submission(self, operation_id: str):
+            return self.submissions.get(operation_id)
+
+    service = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    service.configure_owner_wallet(mode="create", label="Primary")
+    wallet_id = service.owner_wallet_state()["wallet_id"]
+    consensus = IdentityConsensus()
+    service.consensus_service = consensus
+    envelope = LedgerOperationEnvelope(
+        operation_type="WALLET_IDENTITY_REGISTER",
+        origin_type="wallet",
+        initiator_id=wallet_id,
+        sender_wallet=wallet_id,
+        sender_sequence=1,
+        fee_payer=wallet_id,
+        fee_class="onboarding_exempt",
+        created_at="2026-01-01T00:00:00+00:00",
+        payload={"wallet_id": wallet_id},
+    )
+    service.stage_pending_consensus_envelope(envelope)
+    consensus.submissions[envelope.operation_id] = SimpleNamespace(
+        status=SimpleNamespace(value="pending"),
+        error=None,
+        block_height=None,
+    )
+
+    pending = build_operator_wallet_payload(service)
+    assert pending["wallet_state"]["identity_registration_state"] == "pending"
+    assert pending["wallet_state"]["identity_operation"]["operation_id"] == envelope.operation_id
+    assert pending["wallet_state"]["identity_operation"]["error"] is None
+
+    consensus.submissions[envelope.operation_id] = SimpleNamespace(
+        status=SimpleNamespace(value="failed"),
+        error="consensus rejected the identity registration",
+        block_height=None,
+    )
+    rejected = build_operator_wallet_payload(service)
+    assert rejected["wallet_state"]["identity_registration_state"] == "rejected"
+    assert rejected["wallet_state"]["identity_operation"]["error"] == (
+        "consensus rejected the identity registration"
+    )
 
 
 def test_paired_dashboard_model_and_bundle_lifecycle_operations_are_bounded(tmp_path) -> None:
