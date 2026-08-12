@@ -521,6 +521,16 @@ class LedgerOperationService:
         envelope: "LedgerOperationEnvelope",
     ) -> dict:
         """Validate the canonical MVP Wallet transfer transition."""
+        validated = self._validate_consensus_wallet_transfer_shape(envelope)
+        if self.wallet_q_atom_balance(envelope.sender_wallet) < validated["total_debit_q_atoms"]:
+            raise ValueError("insufficient q_atoms for wallet transfer and fee")
+        return validated
+
+    @staticmethod
+    def _validate_consensus_wallet_transfer_shape(
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Validate transfer fields without consulting a local balance."""
         if envelope.operation_type != "WALLET_TRANSFER":
             raise ValueError("consensus wallet transfer requires WALLET_TRANSFER operation")
         if envelope.origin_type != "wallet" or envelope.sender_wallet is None:
@@ -540,15 +550,48 @@ class LedgerOperationService:
         if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
             raise ValueError("wallet transfer amount is invalid")
 
-        total = amount + STANDARD_NETWORK_FEE_Q_ATOMS
-        if self.wallet_q_atom_balance(envelope.sender_wallet) < total:
-            raise ValueError("insufficient q_atoms for wallet transfer and fee")
         return {
             "payload": payload,
             "recipient_wallet": recipient,
             "amount_q_atoms": amount,
             "network_fee_q_atoms": STANDARD_NETWORK_FEE_Q_ATOMS,
+            "total_debit_q_atoms": amount + STANDARD_NETWORK_FEE_Q_ATOMS,
         }
+
+    def record_consensus_wallet_transfer_projection(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Record a verified remote transfer without applying Q twice.
+
+        Non-validator Hypervisors read canonical balances and nonce values from
+        the remote consensus quorum. Their local Ledger is a read projection,
+        so it may not contain the sender's genesis balance or earlier remote
+        operations. Once finality is verified, recording the exact envelope is
+        sufficient to make history and sequence state converge; debiting and
+        crediting local balances here would double-apply the remote transfer.
+        """
+        self._validate_consensus_wallet_transfer_shape(envelope)
+        existing = self.get_operation(envelope.operation_id)
+        if existing is not None:
+            return existing
+        if envelope.sender_wallet is None or envelope.sender_sequence is None:
+            raise ValueError("wallet transfer projection requires sender identity")
+        expected_sequence = self.wallet_next_sequence(envelope.sender_wallet)
+        if expected_sequence > envelope.sender_sequence:
+            raise ValueError(
+                f"wallet transfer projection sequence is behind local projection: "
+                f"local {expected_sequence}, remote {envelope.sender_sequence}"
+            )
+        if expected_sequence < envelope.sender_sequence:
+            self.synchronize_wallet_sequence(
+                envelope.sender_wallet,
+                envelope.sender_sequence,
+            )
+        return self.record_admitted_envelope(
+            envelope,
+            emitted_events=["WalletTransferred", "NetworkFeeRecycled"],
+        )
 
     def apply_consensus_wallet_transfer(
         self,

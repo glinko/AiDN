@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.wallet_reconciliation import reconcile_pending_wallet_transfers
 
 
@@ -21,6 +22,7 @@ class _Ledger:
     def __init__(self, finalized: bool = False) -> None:
         self.finalized = finalized
         self.applied: list[str] = []
+        self.projected: list[str] = []
 
     def get_operation(self, operation_id: str):
         return {"operation_id": operation_id} if self.finalized else None
@@ -29,9 +31,14 @@ class _Ledger:
         self.applied.append(envelope.operation_id)
         return {"operation_id": envelope.operation_id, "status": "applied"}
 
+    def record_consensus_wallet_transfer_projection(self, envelope):
+        self.projected.append(envelope.operation_id)
+        return {"operation_id": envelope.operation_id, "status": "projected"}
+
 
 class _Consensus:
     is_enabled = True
+    is_validator = False
 
     def __init__(self) -> None:
         self.submissions: dict[str, SimpleNamespace] = {}
@@ -113,6 +120,7 @@ def test_restart_recovery_rebroadcasts_exact_pending_transfer_once() -> None:
 def test_finalized_transfer_is_materialized_and_envelope_is_removed() -> None:
     service = _Service(finalized=True)
     envelope = service.pending[0]
+    service.consensus_service.is_validator = True
 
     reports = reconcile_pending_wallet_transfers(service)
 
@@ -125,6 +133,7 @@ def test_finalized_transfer_is_materialized_and_envelope_is_removed() -> None:
 def test_consensus_finality_materializes_transfer() -> None:
     service = _Service()
     envelope = service.pending[0]
+    service.consensus_service.is_validator = True
     original_finality = service.ledger_operation_finality
 
     def finalized_after_submission(operation_id: str):
@@ -137,5 +146,17 @@ def test_consensus_finality_materializes_transfer() -> None:
 
     assert reports[0]["status"] == "consensus_finalized"
     assert service.ledger_operation_service.applied == [envelope.operation_id]
+    assert service.ledger_operation_service.projected == []
     assert service.pending == []
     assert service.persisted == 1
+
+
+def test_remote_projection_does_not_require_local_genesis_balance() -> None:
+    ledger = LedgerOperationService()
+    envelope = _envelope()
+
+    record = ledger.record_consensus_wallet_transfer_projection(envelope)
+
+    assert record["operation_id"] == envelope.operation_id
+    assert ledger.wallet_q_atom_balance("wallet-sender") == 0
+    assert ledger.wallet_next_sequence("wallet-sender") == 5

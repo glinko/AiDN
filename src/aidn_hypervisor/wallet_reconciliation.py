@@ -58,7 +58,8 @@ def _reconcile_one(
     operation_id = envelope.operation_id
     try:
         # A local canonical operation is enough to remove a stale durable
-        # envelope.  This is the validator/local-ABCI recovery path.
+        # envelope. It was materialized only after verified finality, so this
+        # check also prevents a second broadcast on a later refresh.
         if service.ledger_operation_service.get_operation(operation_id) is not None:
             _discard(service, operation_id)
             return {"operation_id": operation_id, "status": "local_projection_finalized"}
@@ -106,7 +107,13 @@ def _reconcile_one(
 
 def _materialize_finalized(service, envelope, finality: dict) -> dict:
     operation_id = envelope.operation_id
-    record = service.ledger_operation_service.apply_consensus_wallet_transfer(envelope)
+    consensus = getattr(service, "consensus_service", None)
+    if getattr(consensus, "is_validator", False):
+        record = service.ledger_operation_service.apply_consensus_wallet_transfer(envelope)
+    else:
+        record = service.ledger_operation_service.record_consensus_wallet_transfer_projection(
+            envelope
+        )
     service._persist_state()
     _discard(service, operation_id)
     return {
