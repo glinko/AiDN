@@ -37,6 +37,12 @@ from aidn_hypervisor.consensus.cometbft_header import cometbft_header_hash
 from aidn_hypervisor.consensus.cometbft_merkle import (
     verify_cometbft_transaction_inclusion,
 )
+from aidn_hypervisor.consensus.checkpoint_rotation import (
+    CometBftCheckpointCandidate,
+    collect_checkpoint_candidate,
+    rotate_checkpoint,
+    rotate_checkpoint_file,
+)
 from aidn_hypervisor.consensus.coverage import (
     ACTIVE_OPERATION_TYPES,
     CONSENSUS_APPLIED_OPERATION_TYPES,
@@ -225,6 +231,10 @@ __all__ = [
     "zip215_verify",
     "verify_cometbft_transaction_inclusion",
     "cometbft_header_hash",
+    "CometBftCheckpointCandidate",
+    "collect_checkpoint_candidate",
+    "rotate_checkpoint",
+    "rotate_checkpoint_file",
     "CometBftFinalityConfig",
     "CometBftMultiRpcFinalityConfig",
     "build_cometbft_finality_source",

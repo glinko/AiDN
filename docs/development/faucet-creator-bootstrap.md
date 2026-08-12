@@ -161,6 +161,22 @@ manifest, final manifest, or Faucet SQLite state. A new checkpoint is an
 authentication anchor for subsequent consensus verification, not a new
 economic genesis.
 
+Use the checked-in tool to rotate the checkpoint. It queries every configured
+RPC endpoint, requires the configured quorum to agree on the exact block,
+AppHash, current validator set and next-validator-set hash, validates the
+deployment schema, and atomically preserves `legacy_transaction_hashes`:
+
+```bash
+uv run python tools/rotate-cometbft-finality-checkpoint.py \
+  --config /etc/aidn/cometbft-finality.json \
+  --height <quorum-verified-height>
+```
+
+Use `--output /path/to/new-config.json` for a staged file. The tool rejects a
+checkpoint at or below the current height, non-canonical commits, mismatched
+validator hashes, and insufficient RPC agreement. Do not edit the JSON by
+hand and do not delete historical transaction bindings during a rotation.
+
 ## Policy change
 
 The manifest hash never changes when a policy changes. Create a new signed

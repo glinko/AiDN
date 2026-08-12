@@ -1077,12 +1077,12 @@ This work is intentionally outside the functional MVP. It must not alter current
   idempotent `tx already exists in cache` responses remain admitted, ordinary
   CheckTx errors remain rejected, and the upgrade helper prevents stale
   `site-packages` copies from shadowing the reviewed checkout.
-- [ ] Verify Treasury activation and one payout against a live canonical
-  multi-validator network; local manifests and local balances are not evidence.
-- [ ] Prove Faucet payout finality across at least two validators, including
+- [x] Verify Treasury activation and one payout against a live canonical
+  multi-validator network; see [Faucet live payout/finality acceptance](./docs/development/faucet-live-payout-finality-acceptance-2026-08-12.md).
+- [x] Prove Faucet payout finality across at least two validators, including
   restart/reconciliation and exact-envelope RPC failover evidence. The
-  submitter/finality adapter implementation is complete; this remains a live
-  deployment gate.
+  controlled-localnet result is recorded in the acceptance report; it does not
+  claim public-network or independent-operator readiness.
 - [x] Add the replay-safe one-time consensus funding path for `10,000,000 Q`
   on networks whose Genesis is already finalized; it never edits Genesis or
   credits a database directly.
