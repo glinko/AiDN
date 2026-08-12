@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -25,6 +26,11 @@ from typing import Any
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from aidn_hypervisor.consensus.cometbft_finality import (
+    build_cometbft_multi_rpc_finality_source,
+)
+from aidn_hypervisor.consensus.deployment import load_cometbft_finality_deployment_config
+
 
 class AcceptanceError(RuntimeError):
     """Raised when the live Faucet boundary does not meet its contract."""
@@ -32,6 +38,7 @@ class AcceptanceError(RuntimeError):
 
 FINAL_CLAIM_STATES = frozenset({"APPROVED", "ALREADY_CLAIMED"})
 RETRYABLE_CLAIM_STATES = frozenset({"PENDING_FINALITY", "SUBMISSION_UNKNOWN"})
+TRANSACTION_HASH_RE = re.compile(r"^(?:0x)?[0-9a-fA-F]{64}$")
 
 
 def canonical_json(value: Any) -> bytes:
@@ -185,6 +192,64 @@ def _redacted_claim(response: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _verify_external_finality(
+    *,
+    finality_config: Path,
+    operation_id: str,
+    transaction_hash: str,
+    timeout_seconds: float,
+    finality_timeout_seconds: float,
+    poll_interval_seconds: float,
+) -> dict[str, Any]:
+    """Verify one finalized Faucet transfer through the configured RPC quorum.
+
+    The Faucet response is intentionally not treated as finality evidence. The
+    configured checkpoint and RPC quorum independently verify the exact
+    operation-to-transaction binding, inclusion proof and validator commit.
+    """
+
+    if not operation_id.strip() or not TRANSACTION_HASH_RE.fullmatch(transaction_hash):
+        raise AcceptanceError("Finalized Faucet claim lacks a valid operation or transaction hash")
+    try:
+        deployment = load_cometbft_finality_deployment_config(finality_config)
+    except ValueError as error:
+        raise AcceptanceError(f"Finality configuration is invalid: {error}") from error
+
+    finality_source = build_cometbft_multi_rpc_finality_source(
+        config=deployment.runtime_config(),
+        transaction_hash_for_operation=lambda candidate: (
+            transaction_hash if candidate == operation_id else None
+        ),
+    )
+    deadline = time.monotonic() + finality_timeout_seconds
+    while True:
+        evidence = finality_source.finality_evidence(operation_id)
+        if evidence is not None:
+            if evidence.operation_type != "WALLET_TRANSFER":
+                raise AcceptanceError(
+                    "Finality proof resolved to an unexpected operation type: "
+                    f"{evidence.operation_type!r}"
+                )
+            if evidence.chain_id != deployment.chain_id:
+                raise AcceptanceError("Finality proof chain does not match the approved configuration")
+            return {
+                "status": "PASS",
+                "config_hash": "sha256:" + hashlib.sha256(finality_config.read_bytes()).hexdigest(),
+                "chain_id": deployment.chain_id,
+                "operation_id": operation_id,
+                "transaction_hash": transaction_hash.removeprefix("0x").upper(),
+                "rpc_endpoints": list(deployment.rpc_endpoints),
+                "minimum_agreement": deployment.minimum_agreement,
+                "evidence": evidence.model_dump(),
+            }
+        if time.monotonic() >= deadline:
+            raise AcceptanceError(
+                "Faucet transfer did not obtain quorum finality evidence before the acceptance timeout: "
+                f"{operation_id}"
+            )
+        time.sleep(poll_interval_seconds)
+
+
 def run_acceptance(
     *,
     base_url: str,
@@ -194,6 +259,7 @@ def run_acceptance(
     poll_interval_seconds: float,
     expected_amount_q_atoms: int | None,
     assert_quota: bool,
+    finality_config: Path | None = None,
 ) -> dict[str, Any]:
     base_url = base_url.rstrip("/")
     health = _json_request(
@@ -259,6 +325,24 @@ def run_acceptance(
     if replay.get("operation_id") != first.get("operation_id") or replay.get("status") not in FINAL_CLAIM_STATES:
         raise AcceptanceError("Faucet reconciliation did not retain the exact finalized claim")
 
+    external_finality: dict[str, Any] = {
+        "status": "NOT_REQUESTED",
+        "reason": "pass --finality-config to verify exact payout finality through the configured RPC quorum",
+    }
+    if finality_config is not None:
+        operation_id = first.get("operation_id")
+        transaction_hash = first.get("transaction_hash")
+        if not isinstance(operation_id, str) or not isinstance(transaction_hash, str):
+            raise AcceptanceError("Finalized Faucet claim does not expose operation and transaction identity")
+        external_finality = _verify_external_finality(
+            finality_config=finality_config,
+            operation_id=operation_id,
+            transaction_hash=transaction_hash,
+            timeout_seconds=timeout_seconds,
+            finality_timeout_seconds=finality_timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+
     quota_result: dict[str, Any] | None = None
     if assert_quota:
         quota_result = _claim_request(
@@ -297,6 +381,7 @@ def run_acceptance(
         },
         "claim": _redacted_claim(first),
         "idempotent_reconcile": _redacted_claim(replay),
+        "external_finality": external_finality,
         "quota_check": _redacted_claim(quota_result) if quota_result is not None else None,
     }
 
@@ -315,6 +400,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the AiDN Faucet live acceptance check")
     parser.add_argument("--faucet-url", default=os.environ.get("AIDN_FAUCET_URL", ""))
     parser.add_argument("--agent-token", default=os.environ.get("AIDN_FAUCET_AGENT_TOKEN", ""))
+    parser.add_argument(
+        "--finality-config",
+        type=Path,
+        default=(
+            Path(os.environ["AIDN_FAUCET_FINALITY_CONFIG"])
+            if os.environ.get("AIDN_FAUCET_FINALITY_CONFIG")
+            else None
+        ),
+        help="Operator-approved multi-RPC CometBFT finality configuration for independent payout proof",
+    )
+    parser.add_argument(
+        "--require-external-finality",
+        action="store_true",
+        help="Fail unless --finality-config (or AIDN_FAUCET_FINALITY_CONFIG) is supplied",
+    )
     parser.add_argument("--timeout-seconds", type=float, default=15)
     parser.add_argument("--finality-timeout-seconds", type=float, default=120)
     parser.add_argument("--poll-interval-seconds", type=float, default=2)
@@ -330,6 +430,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--faucet-url or AIDN_FAUCET_URL is required")
     if not args.agent_token:
         parser.error("--agent-token or AIDN_FAUCET_AGENT_TOKEN is required")
+    if args.require_external_finality and args.finality_config is None:
+        parser.error("--require-external-finality requires --finality-config or AIDN_FAUCET_FINALITY_CONFIG")
     if args.timeout_seconds <= 0 or args.finality_timeout_seconds <= 0 or args.poll_interval_seconds <= 0:
         parser.error("timeout values must be positive")
     if args.expected_amount_q_atoms <= 0:
@@ -344,6 +446,7 @@ def main(argv: list[str] | None = None) -> int:
             poll_interval_seconds=args.poll_interval_seconds,
             expected_amount_q_atoms=args.expected_amount_q_atoms,
             assert_quota=not args.skip_quota_check,
+            finality_config=args.finality_config,
         )
     except AcceptanceError as error:
         print(json.dumps({"status": "FAIL", "error": str(error)}, sort_keys=True), file=sys.stderr)

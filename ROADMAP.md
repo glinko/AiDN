@@ -1069,6 +1069,10 @@ This work is intentionally outside the functional MVP. It must not alter current
   token-separated agent/creator capabilities and no secret-material exposure.
 - [x] Add ECO-0009 Treasury activation proof, canonical Genesis manifest query,
   exact consensus funding-operation binding and fail-closed claim enforcement.
+- [x] Extend the Faucet live-acceptance runner with an optional required
+  external-finality mode that verifies the exact `WALLET_TRANSFER` through the
+  configured CometBFT RPC quorum and trusted checkpoint; the live deployment
+  result remains an operational gate and is not inferred from local tests.
 - [ ] Verify Treasury activation and one payout against a live canonical
   multi-validator network; local manifests and local balances are not evidence.
 - [ ] Prove Faucet payout finality across at least two validators, including

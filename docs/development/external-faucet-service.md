@@ -154,6 +154,28 @@ use `--skip-quota-check` when repeated claims are intentionally valid. The
 report is evidence of a single live execution, not authority to expose the
 Faucet publicly or to reuse its ephemeral recipient Wallet.
 
+### Independent payout finality proof
+
+The basic command verifies the Faucet API, Wallet challenge, policy decision,
+idempotent reconciliation and quota behavior. It does not treat the Faucet's
+own `APPROVED` response as consensus evidence. For a network acceptance run,
+provide the same operator-approved multi-RPC finality file used by the Faucet:
+
+```bash
+uv run python tools/run_faucet_live_acceptance.py \
+  --finality-config /etc/aidn/cometbft-finality.json \
+  --require-external-finality \
+  --output /var/lib/aidn-faucet/evidence/live-claim-with-finality.json
+```
+
+This mode binds the exact finalized claim `operation_id` and transaction hash
+to the configured checkpoint, verifies the CometBFT transaction inclusion proof
+and validator commit through the configured RPC quorum, and requires the
+operation type to be `WALLET_TRANSFER`. The report contains only public
+finality metadata and hashes; it never includes the Treasury key, Wallet proof
+or signed envelope. A successful API response without this external proof is
+not sufficient to close the multi-validator payout gate.
+
 ## Production completion gates
 
 Before using the service against a public or shared network, add and verify:

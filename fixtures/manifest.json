@@ -5,8 +5,8 @@
   "files": [
     {
       "path": "valid/wallet-transfer-001.json",
-      "sha256": "0e29f8abd550b8c8667872ee74c544663c243eb0ed5b7255722f9dd6a6a85296"
+      "sha256": "2132ccd4e918c1189d7ba29a16139989e34752960e61db282541baa23387a966"
     }
   ],
-  "manifest_hash": "sha256:885acbf4506cedb7de00225e4f74e99438e3d7829db42827af533e9d649be53a"
+  "manifest_hash": "sha256:565ee6c55e0efde6d117e7261927c56b8fd00e7bf5c7b48048682e2c761c140e"
 }

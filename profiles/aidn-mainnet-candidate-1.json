@@ -79,6 +79,7 @@
       "STAKE_LOCK",
       "STAKE_RELEASE",
       "TREASURY_FUND",
+      "TREASURY_MANIFEST_BIND",
       "UNSTAKE_REQUEST",
       "VALIDATION_REPORT",
       "VALIDATION_REPORT_AVAILABILITY_COMMIT",
@@ -89,6 +90,7 @@
       "VALIDATION_REQUEST",
       "VALIDATOR_STAKE",
       "VALIDATOR_UNSTAKE",
+      "WALLET_IDENTITY_REGISTER",
       "WALLET_TRANSFER"
     ],
     "active_operation_types": [
@@ -137,12 +139,14 @@
       "STAKE_LOCK",
       "STAKE_RELEASE",
       "TREASURY_FUND",
+      "TREASURY_MANIFEST_BIND",
       "UNSTAKE_REQUEST",
       "VALIDATION_REPORT_AVAILABILITY_COMMIT",
       "VALIDATION_REPORT_COMMIT",
       "VALIDATION_REPORT_CUSTODY_RELEASE",
       "VALIDATION_REPORT_STORAGE_FAILURE",
       "VALIDATION_REPORT_STORAGE_RECEIPT",
+      "WALLET_IDENTITY_REGISTER",
       "WALLET_TRANSFER"
     ],
     "supported_operation_types": [
@@ -191,12 +195,14 @@
       "STAKE_LOCK",
       "STAKE_RELEASE",
       "TREASURY_FUND",
+      "TREASURY_MANIFEST_BIND",
       "UNSTAKE_REQUEST",
       "VALIDATION_REPORT_AVAILABILITY_COMMIT",
       "VALIDATION_REPORT_COMMIT",
       "VALIDATION_REPORT_CUSTODY_RELEASE",
       "VALIDATION_REPORT_STORAGE_FAILURE",
       "VALIDATION_REPORT_STORAGE_RECEIPT",
+      "WALLET_IDENTITY_REGISTER",
       "WALLET_TRANSFER"
     ],
     "active_but_unsupported_operation_types": [],
@@ -224,7 +230,7 @@
       "VALIDATOR_STAKE",
       "VALIDATOR_UNSTAKE"
     ],
-    "operation_catalog_hash": "sha256:2a095fafd82ef283e564e99acd52a011176143c695965b8fc4de629bb688a439"
+    "operation_catalog_hash": "sha256:229efefad5afa9c6b2c7bbdb33fe180cfa5d34a7a5c4d18195c9d75cb9923cbe"
   },
   "state_commitment": {
     "abci_app_hash_version": "aidn-abci-state-hash.v1",
@@ -233,5 +239,5 @@
     "empty_extension_compatibility": "empty post-MVP extensions are omitted from historical AppHash"
   },
   "stable_error_policy": "symbolic deterministic errors; human text is non-consensus",
-  "profile_commitment": "sha256:3d3ddcf8b601e4e58ce204617c98e47f8dc4b6cf62e46cc7d1ee5bd87d201cd1"
+  "profile_commitment": "sha256:76944e91a9d270a09919d66bec2793ef58df8a839c2764977f4976457ec2ddbd"
 }
