@@ -31,6 +31,10 @@ from aidn_hypervisor.reward.development_distribution import (
     DevelopmentPoolInput,
     DevelopmentRewardPolicy,
 )
+from aidn_hypervisor.reward.development_production import (
+    DevelopmentRewardProductionProfile,
+    build_development_reward_production_batch,
+)
 
 
 class WalletChallengeRequest(BaseModel):
@@ -120,6 +124,10 @@ class RewardPlanRequest(RewardPreviewRequest):
     created_at: str = Field(min_length=1)
 
 
+class ProductionRewardBatchRequest(RewardPlanRequest):
+    production_profile: DevelopmentRewardProductionProfile
+
+
 def _error_response(error: Exception) -> JSONResponse:
     if isinstance(error, ContributionNotFoundError):
         status_code = 404
@@ -181,6 +189,39 @@ def build_contribution_router(
                 pool_budget_reference=payload.pool_budget_reference,
                 created_at=payload.created_at,
             ).model_dump(mode="json")
+        except (ContributionNotFoundError, ValueError) as error:
+            return _error_response(error)
+
+    @router.post("/rewards/production-batch", response_model=None)
+    async def production_reward_batch(
+        payload: ProductionRewardBatchRequest,
+    ) -> dict[str, Any] | JSONResponse:
+        """Build a production-bound batch; consensus submission stays explicit."""
+
+        try:
+            if payload.policy is not None and payload.policy != payload.production_profile.policy:
+                raise ValueError("DEVELOPMENT_PRODUCTION_POLICY_MISMATCH")
+            preview = reward_planner.preview(
+                pool_input=payload.pool_input,
+                contribution_ids=payload.contribution_ids,
+                policy=payload.production_profile.policy,
+            )
+            plan = reward_planner.build_consensus_plan(
+                preview,
+                activation_approval=payload.activation_approval,
+                current_epoch=payload.current_epoch,
+                source_epoch_transition_operation_id=payload.source_epoch_transition_operation_id,
+                pool_budget_reference=payload.pool_budget_reference,
+                created_at=payload.created_at,
+            )
+            batch = build_development_reward_production_batch(
+                profile=payload.production_profile,
+                activation_approval=payload.activation_approval,
+                plan=plan,
+                source_epoch_transition_operation_id=payload.source_epoch_transition_operation_id,
+                pool_budget_reference=payload.pool_budget_reference,
+            )
+            return batch.model_dump(mode="json")
         except (ContributionNotFoundError, ValueError) as error:
             return _error_response(error)
 

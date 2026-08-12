@@ -42,11 +42,16 @@ The current HTTP APIs are:
 ```text
 POST /api/v1/contributions/rewards/preview
 POST /api/v1/contributions/rewards/plan
+POST /api/v1/contributions/rewards/production-batch
 ```
 
 The preview is non-emitting. The plan is hash-bound and requires activation
 and finalized epoch evidence. It does not turn GitHub, an agent or an HTTP
-caller into a mint authority.
+caller into a mint authority. The production-batch route additionally binds a
+bounded deployment profile and returns an ordered consensus plan; it still
+does not submit that plan. See
+[eco-0007-production-reward-batch.md](./eco-0007-production-reward-batch.md)
+for the operator workflow.
 
 ## Safety rules
 

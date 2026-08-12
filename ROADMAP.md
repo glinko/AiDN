@@ -1053,6 +1053,15 @@ This work is intentionally outside the functional MVP. It must not alter current
     application exposes the canonical `faucet/treasury-manifest` query and the
     Faucet UI reports activation state and its diagnostic reason.
 
+26. Added the production-bound ECO-0007 reward batch layer. A signed,
+    future-effective production profile now binds network/chain identity,
+    Development Pool, activation approval, operation scope and batch limits.
+    The production batch builder verifies the profile, finalized epoch/pool
+    references, contribution and Q caps, then emits an inspectable ordered
+    consensus plan without submitting transactions or minting Q. The operator
+    workflow is documented in
+    `docs/development/eco-0007-production-reward-batch.md`.
+
 ### Current post-MVP implementation gate
 
 - [x] ECO-0007 carryover and bounty lifecycle transitions are consensus-applied and persisted.
@@ -1087,6 +1096,9 @@ This work is intentionally outside the functional MVP. It must not alter current
   on networks whose Genesis is already finalized; it never edits Genesis or
   credits a database directly.
 - [x] Merged-commit Wallet claims and RFC-0068 to ECO-0007 reward planning are implemented.
+- [x] Add the hash-bound ECO-0007 production profile and bounded production
+  reward-batch builder; keep the resulting plan non-submitting until live
+  finality evidence is available.
 - [ ] Activate a production ECO-0007 reward profile and execute a finalized contribution payout batch against a real epoch pool.
 - [x] Public multi-validator profiles are signed, hash-bound, quorum-checked, and projected into the existing CometBFT finality configuration.
 - [x] Generate and verify the current Implementation Profile and execute the
