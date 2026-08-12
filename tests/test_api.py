@@ -2154,6 +2154,10 @@ def test_operator_dashboard_fleet_endpoint_returns_aggregated_payload(tmp_path) 
     assert response.status_code == 200
     assert response.json()["node"]["node_id"] == service.node_id
     assert response.json()["bundles"][0]["bundle_id"] == "whisper-a"
+    assert response.json()["bundles"][0]["revision"] == 1
+    assert response.json()["bundles"][0]["bundle_hash"] is None
+    assert response.json()["bundles"][0]["resource_profile"]["steady_vram_mb"] == 0
+    assert response.json()["bundles"][0]["runtime_health_status"] == "healthy"
     assert response.json()["owner_wallet"]["configured"] is False
     assert response.json()["node_identity"]["node_id"] == service.node_id
 

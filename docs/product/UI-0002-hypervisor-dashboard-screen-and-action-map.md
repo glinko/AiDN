@@ -303,9 +303,9 @@ Profile, Endpoint relationship, Session relationship.
 | Retry Bundle | Retry recoverable startup/runtime work and show resulting health. | `IMPLEMENTED` |
 | Reset cooldown | Clear an eligible failure cooldown. | `IMPLEMENTED` |
 | Create revision | Clone immutable source into a new ID/hash with explicit overrides. | `IMPLEMENTED` |
-| Inspect Bundle | Open full dependency, hash, generation, resource, Endpoint, and history view. | `UI_PENDING` |
-| Compare revisions | Show field-level changes and their resource/validation/Endpoint effects. | `UI_PENDING` |
-| Run activation preflight | Verify resources, Provider, model, Runtime Binding, route generation, and validation impact. | `UI_PENDING` |
+| Inspect Bundle | Open full dependency, hash, generation, resource, Endpoint, and history view. | `IMPLEMENTED` (React inspector; generation and active Session evidence remain API-pending) |
+| Compare revisions | Show field-level changes and their resource/validation/Endpoint effects. | `IMPLEMENTED` (read-only comparison) |
+| Run activation preflight | Verify resources, Provider, model, Runtime Binding, route generation, and validation impact. | `IMPLEMENTED` (read-only projection; canonical evidence endpoint remains planned) |
 | Drain Bundle | Stop new Sessions and wait for accepted work to finish. | `API_PENDING` |
 | Retire revision | Retain audit history while preventing future activation. | `API_PENDING` |
 

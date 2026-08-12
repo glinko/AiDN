@@ -70,7 +70,7 @@ import {
 import { useDashboardData } from '@/hooks/use-dashboard'
 import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type ProviderArtifactInventory, type ProviderWorkspace } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
-import type { Bundle, Endpoint, ReadinessStep, WalletDashboard } from '@/lib/types'
+import type { Bundle, Endpoint, Fleet, Readiness, ReadinessStep, WalletDashboard } from '@/lib/types'
 import { createSavedHypervisor, loadSavedHypervisors, saveSavedHypervisors, type SavedHypervisorConnection } from '@/lib/hypervisor-connections'
 
 type NavigationItem = {
@@ -292,7 +292,7 @@ function App() {
             <OverviewScreen data={data} onNavigate={navigate} onRefresh={refreshAll} />
           ) : null}
           {activeScreen === 'bundles' ? (
-            <BundlesScreen bundles={data.bundles.data?.items ?? []} isLoading={data.bundles.isLoading} error={data.bundles.error} onNavigate={navigate} onRefresh={refreshAll} />
+            <BundlesScreen bundles={data.bundles.data?.items ?? []} isLoading={data.bundles.isLoading} error={data.bundles.error} onNavigate={navigate} onRefresh={refreshAll} readiness={data.readiness.data} fleet={data.fleet.data} providers={data.providers.data} />
           ) : null}
           {activeScreen === 'endpoints' ? (
             <EndpointsScreen endpoints={data.endpoints.data?.items ?? []} isLoading={data.endpoints.isLoading} error={data.endpoints.error} onNavigate={navigate} onRefresh={refreshAll} ownerWallet={data.home.data?.bootstrap.owner_wallet?.wallet_id ?? ''} bundles={data.bundles.data?.items ?? []} bindings={data.providers.data?.runtime_bindings ?? []} />
@@ -825,7 +825,7 @@ function ReadinessStepRow({ step, onNavigate, onRefresh }: { step: ReadinessStep
   )
 }
 
-function BundleTableSection({ bundles, isLoading, error, onNavigate, compact = false, onAction }: { bundles: Bundle[]; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; compact?: boolean; onAction?: (bundle: Bundle, action: BundleAction) => void }) {
+function BundleTableSection({ bundles, isLoading, error, onNavigate, compact = false, onAction, onSelect }: { bundles: Bundle[]; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; compact?: boolean; onAction?: (bundle: Bundle, action: BundleAction) => void; onSelect?: (bundle: Bundle) => void }) {
   return (
     <Card className="border-border/80 bg-card py-0 shadow-none">
       <CardHeader className="border-b border-border/75 px-5 py-4">
@@ -841,7 +841,7 @@ function BundleTableSection({ bundles, isLoading, error, onNavigate, compact = f
         {isLoading && bundles.length === 0 ? <TableSkeleton columns={6} rows={compact ? 3 : 6} /> : null}
         {error && bundles.length === 0 ? <PanelError title="Bundle inventory is unavailable" error={error} /> : null}
         {!isLoading && !error && bundles.length === 0 ? <EmptyState title="No Bundle deployments are registered" detail="Start in Catalog to inspect Provider capacity, then create an immutable Bundle revision." actionLabel="Open Catalog" onAction={() => onNavigate('catalog')} /> : null}
-        {bundles.length > 0 ? <BundleTable bundles={bundles} onNavigate={onNavigate} onAction={onAction} /> : null}
+        {bundles.length > 0 ? <BundleTable bundles={bundles} onNavigate={onNavigate} onAction={onAction} onSelect={onSelect} compact={compact} /> : null}
       </CardContent>
     </Card>
   )
@@ -849,17 +849,18 @@ function BundleTableSection({ bundles, isLoading, error, onNavigate, compact = f
 
 type BundleAction = 'enable' | 'disable' | 'retry' | 'reset-cooldown'
 
-function BundleTable({ bundles, onNavigate, onAction }: { bundles: Bundle[]; onNavigate: NavigationProps['onNavigate']; onAction?: (bundle: Bundle, action: BundleAction) => void }) {
+function BundleTable({ bundles, onNavigate, onAction, onSelect, compact = false }: { bundles: Bundle[]; onNavigate: NavigationProps['onNavigate']; onAction?: (bundle: Bundle, action: BundleAction) => void; onSelect?: (bundle: Bundle) => void; compact?: boolean }) {
   const columns: ColumnDef<Bundle>[] = [
     {
       accessorKey: 'bundle_id',
       header: 'Bundle',
-      cell: ({ row }) => <button type="button" className="rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" aria-label={`Open Bundle ${row.original.bundle_id}`} onClick={() => onNavigate('bundles')}><p className="font-medium text-slate-100 transition-colors hover:text-cyan-200">{shortId(row.original.bundle_id, 20)}</p><p className="mt-0.5 font-mono text-[10px] text-slate-500">{shortId(row.original.bundle_id)}</p></button>,
+      cell: ({ row }) => <button type="button" className="rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" aria-label={`Inspect Bundle ${row.original.bundle_id}`} onClick={() => onSelect ? onSelect(row.original) : onNavigate('bundles')}><p className="font-medium text-slate-100 transition-colors hover:text-cyan-200">{shortId(row.original.bundle_id, 20)}</p><p className="mt-0.5 font-mono text-[10px] text-slate-500">r{String(getRecord(row.original)?.revision ?? 1)} Â· {shortId(getText(row.original, 'bundle_hash'), 18)}</p></button>,
     },
-    { accessorKey: 'provider_type', header: 'Provider', cell: ({ row }) => <span className="font-mono text-xs text-slate-300">{row.original.provider_type}</span> },
-    { accessorKey: 'model_id', header: 'Model', cell: ({ row }) => <span className="text-xs text-slate-200">{row.original.model_id}</span> },
+    { accessorKey: 'provider_type', header: 'Provider', cell: ({ row }) => <div><span className="font-mono text-xs text-slate-300">{row.original.provider_type}</span><p className="mt-1 text-[10px] text-slate-500">{shortId(row.original.plugin_id, 20)}</p></div> },
+    { accessorKey: 'model_id', header: 'Model', cell: ({ row }) => <div><span className="text-xs text-slate-200">{row.original.model_id}</span><p className="mt-1 text-[10px] text-slate-500">{row.original.workload_type || 'workload not reported'}</p></div> },
     { accessorKey: 'runtime_status', header: 'Runtime', cell: ({ row }) => <StatusBadge value={row.original.runtime_status} /> },
-    { accessorKey: 'publish_status', header: 'Publication', cell: ({ row }) => <StatusBadge value={row.original.publish_status} /> },
+    ...(!compact ? [{ id: 'resources', header: 'Resources', cell: ({ row }: { row: { original: Bundle } }) => { const required = bundleRequiredResources(row.original); return <div className="min-w-[120px] text-xs text-slate-300"><p>{required.cpu.toFixed(1)} CPU Â· {formatMemory(required.ram_mb)}</p><p className="mt-1 text-[10px] text-slate-500">VRAM {formatMemory(required.vram_mb)}</p></div> } }] satisfies ColumnDef<Bundle>[] : []),
+    { accessorKey: 'publish_status', header: 'Publication', cell: ({ row }) => <div><StatusBadge value={row.original.publish_status} /><p className="mt-1 text-[10px] text-slate-500">{bundleEndpointState(row.original).replaceAll('_', ' ')}</p></div> },
     {
       id: 'endpoint',
       header: '',
@@ -868,16 +869,227 @@ function BundleTable({ bundles, onNavigate, onAction }: { bundles: Bundle[]; onN
     ...(onAction ? [{
       id: 'controls',
       header: 'Controls',
-      cell: ({ row }: { row: { original: Bundle } }) => <div className="flex flex-wrap gap-1.5"><Button variant="outline" size="xs" className="border-border bg-[#091725]" onClick={() => onAction(row.original, row.original.enabled ? 'disable' : 'enable')}>{row.original.enabled ? 'Pause' : 'Enable'}</Button><Button variant="outline" size="xs" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={() => onAction(row.original, 'retry')}>Retry</Button><Button variant="ghost" size="xs" className="text-slate-300" onClick={() => onAction(row.original, 'reset-cooldown')}>Reset</Button></div>,
+      cell: ({ row }: { row: { original: Bundle } }) => { const record = getRecord(row.original); const failed = ['failed', 'error', 'cooldown'].includes(bundleLifecycleStatus(row.original)); const hasCooldown = Boolean(valueText(record, 'cooldown_until')); return <div className="flex flex-wrap gap-1.5"><Button variant="outline" size="xs" className="border-border bg-[#091725]" disabled={row.original.enabled && bundleLifecycleStatus(row.original) === 'running'} onClick={() => onAction(row.original, row.original.enabled ? 'disable' : 'enable')}>{row.original.enabled ? 'Pause' : 'Enable'}</Button><Button variant="outline" size="xs" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!failed} onClick={() => onAction(row.original, 'retry')}>Retry</Button><Button variant="ghost" size="xs" className="text-slate-300" disabled={!hasCooldown} onClick={() => onAction(row.original, 'reset-cooldown')}>Reset</Button></div> },
     }] satisfies ColumnDef<Bundle>[] : []),
   ]
   const table = useReactTable({ data: bundles, columns, getCoreRowModel: getCoreRowModel() })
   return <DataTable table={table} />
 }
 
-function BundlesScreen({ bundles, isLoading, error, onNavigate, onRefresh }: { bundles: Bundle[]; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
+type BundlePreflightState = 'ready' | 'blocked' | 'unknown' | 'info'
+
+type BundlePreflightCheck = {
+  key: string
+  label: string
+  state: BundlePreflightState
+  detail: string
+}
+
+function bundleEndpointState(bundle: Bundle): string {
+  const state = getText(getRecord(bundle)?.endpoint_relationship, 'state')
+  return state || (bundle.endpoint ? 'draft_endpoint' : 'no_endpoint')
+}
+
+function bundleLifecycleStatus(bundle: Bundle): string {
+  const record = getRecord(bundle)
+  const runtime = normalizeStatus(valueText(record, 'runtime_status') || 'stopped')
+  const inventory = normalizeStatus(valueText(record, 'inventory_status'))
+  if (!bundle.enabled) return 'paused'
+  if (['failed', 'error', 'unhealthy'].includes(runtime) || ['failed', 'error', 'unhealthy'].includes(inventory)) return 'failed'
+  if (valueText(record, 'cooldown_until')) return 'cooldown'
+  if (['running', 'ready', 'healthy', 'active'].includes(runtime)) return 'running'
+  return runtime || 'unknown'
+}
+
+function bundleRequiredResources(bundle: Bundle): { cpu: number; ram_mb: number; vram_mb: number } {
+  const record = getRecord(bundle)
+  const profile = getRecord(record?.resource_profile)
+  const runtime = normalizeStatus(valueText(record, 'runtime_status'))
+  const warm = ['running', 'ready', 'healthy', 'active'].includes(runtime)
+  const prefix = warm ? 'steady' : 'cold_start'
+  return {
+    cpu: numberValue(profile, `${prefix}_cpu`) + numberValue(profile, 'per_request_cpu'),
+    ram_mb: numberValue(profile, `${prefix}_ram_mb`) + numberValue(profile, 'per_request_ram_mb'),
+    vram_mb: numberValue(profile, `${prefix}_vram_mb`) + numberValue(profile, 'per_request_vram_mb'),
+  }
+}
+
+function readinessState(readiness: Readiness | undefined, key: string): BundlePreflightState {
+  const step = readiness?.steps.find((candidate) => candidate.key === key)
+  if (!step) return 'unknown'
+  if (step.status === 'ready') return 'ready'
+  if (step.status === 'blocked') return 'blocked'
+  return 'unknown'
+}
+
+function bundlePreflightChecks(bundle: Bundle, readiness?: Readiness, fleet?: Fleet, providers?: ProviderWorkspace): BundlePreflightCheck[] {
+  const record = getRecord(bundle)
+  const pluginId = valueText(record, 'plugin_id')
+  const providerType = valueText(record, 'provider_type')
+  const modelId = valueText(record, 'model_id')
+  const providerStep = readinessState(readiness, 'provider')
+  const modelStep = readinessState(readiness, 'model_deployment')
+  const bindingStep = readinessState(readiness, 'runtime_binding')
+  const provider = providers?.provider_instances.find((item) => valueText(item, 'plugin_id') === pluginId || valueText(item, 'provider_type') === providerType)
+  const providerHealthy = provider ? ['ready', 'healthy', 'operational', 'running'].includes(normalizeStatus(valueText(provider, 'health_status') || valueText(provider, 'operational_state'))) : false
+  const deployment = providers?.model_deployments.find((item) => valueText(item, 'model_id') === modelId && (!pluginId || valueText(item, 'plugin_id') === pluginId || valueText(item, 'provider_type') === providerType))
+  const deploymentReady = deployment ? ['ready', 'healthy', 'materialized', 'available'].includes(normalizeStatus(valueText(deployment, 'status') || valueText(deployment, 'deployment_status'))) : false
+  const deploymentId = valueText(deployment, 'model_deployment_id')
+  const binding = providers?.runtime_bindings.find((item) => valueText(item, 'bundle_id') === bundle.bundle_id || valueText(item, 'compatibility_bundle_id') === bundle.bundle_id || (deploymentId !== '' && valueText(item, 'model_deployment_id') === deploymentId))
+  const bindingReady = binding ? ['ready', 'healthy', 'active', 'bound'].includes(normalizeStatus(valueText(binding, 'status') || valueText(binding, 'binding_status'))) : false
+  const required = bundleRequiredResources(bundle)
+  const total = fleet?.resources.total
+  const free = fleet?.resources.free
+  const capacityKnown = Boolean(total && (total.cpu > 0 || total.ram_mb > 0 || total.vram_mb > 0))
+  const fits = Boolean(free && free.cpu >= required.cpu && free.ram_mb >= required.ram_mb && free.vram_mb >= required.vram_mb)
+  const lifecycle = bundleLifecycleStatus(bundle)
+  const endpointState = bundleEndpointState(bundle)
+
+  return [
+    {
+      key: 'bundle',
+      label: 'Bundle revision',
+      state: !bundle.enabled ? 'blocked' : lifecycle === 'failed' || lifecycle === 'cooldown' ? 'blocked' : 'ready',
+      detail: !bundle.enabled ? 'The revision is paused. Enable it before admitting new work.' : lifecycle === 'failed' || lifecycle === 'cooldown' ? `Lifecycle is ${lifecycle}; retry or reset the cooldown before activation.` : `Revision r${String(valueText(record, 'revision') || '1')} is enabled and its source history is immutable.`,
+    },
+    {
+      key: 'provider',
+      label: 'Provider instance',
+      state: providers && providers.provider_instances.length > 0 ? (provider ? (providerHealthy ? 'ready' : 'blocked') : 'blocked') : providerStep,
+      detail: providers && providers.provider_instances.length > 0 ? (provider ? (providerHealthy ? `${valueText(provider, 'display_name') || pluginId || providerType} reports a usable health state.` : 'The matching Provider instance is present but not healthy.') : `No attached Provider matches ${pluginId || providerType}.`) : 'Provider inventory is not available; readiness evidence is used instead.',
+    },
+    {
+      key: 'model',
+      label: 'Model deployment',
+      state: providers && providers.model_deployments.length > 0 ? (deployment ? (deploymentReady ? 'ready' : 'blocked') : 'blocked') : modelStep,
+      detail: providers && providers.model_deployments.length > 0 ? (deployment ? (deploymentReady ? `${modelId} is available to the attached Provider.` : 'The model deployment exists but is not ready or materialized.') : `No deployment for ${modelId} was reported.`) : 'Model deployment inventory is not available; readiness evidence is used instead.',
+    },
+    {
+      key: 'binding',
+      label: 'Runtime Binding',
+      state: providers && providers.runtime_bindings.length > 0 ? (binding ? (bindingReady ? 'ready' : 'blocked') : 'blocked') : bindingStep,
+      detail: providers && providers.runtime_bindings.length > 0 ? (binding ? (bindingReady ? `Binding ${shortId(valueText(binding, 'runtime_binding_id'), 24)} is active.` : 'The binding exists but is not active.') : 'No Runtime Binding targets this Bundle or its model deployment.') : 'Runtime Binding inventory is not available; readiness evidence is used instead.',
+    },
+    {
+      key: 'capacity',
+      label: 'Host capacity',
+      state: !capacityKnown ? (readinessState(readiness, 'resources') === 'blocked' ? 'blocked' : 'unknown') : fits ? 'ready' : 'blocked',
+      detail: !capacityKnown ? `Capacity probe is not reporting enough data for ${required.cpu.toFixed(1)} CPU, ${formatMemory(required.ram_mb)} RAM and ${formatMemory(required.vram_mb)} VRAM.` : fits ? `Free capacity covers ${required.cpu.toFixed(1)} CPU, ${formatMemory(required.ram_mb)} RAM and ${formatMemory(required.vram_mb)} VRAM.` : `Free capacity does not cover ${required.cpu.toFixed(1)} CPU, ${formatMemory(required.ram_mb)} RAM and ${formatMemory(required.vram_mb)} VRAM.`,
+    },
+    {
+      key: 'endpoint',
+      label: 'Endpoint relationship',
+      state: endpointState === 'published_endpoint' ? 'ready' : 'info',
+      detail: endpointState === 'published_endpoint' ? 'A published Endpoint points at this revision.' : endpointState === 'draft_endpoint' ? 'A draft Endpoint exists; publication remains a separate trust decision.' : 'No Endpoint is linked. This does not block local Bundle execution.',
+    },
+    {
+      key: 'validation',
+      label: 'Validation impact',
+      state: 'info',
+      detail: endpointState === 'published_endpoint' ? 'Endpoint validation and publication policy are managed in the Endpoints workspace.' : 'Validation is not inferred from Bundle readiness and will be evaluated when an Endpoint is drafted.',
+    },
+  ]
+}
+
+function BundlePreflightPanel({ bundle, readiness, fleet, providers, onNavigate, onRefresh }: { bundle: Bundle; readiness?: Readiness; fleet?: Fleet; providers?: ProviderWorkspace; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
+  const checks = bundlePreflightChecks(bundle, readiness, fleet, providers)
+  const blocked = checks.filter((check) => check.state === 'blocked')
+  const ready = checks.filter((check) => check.state === 'ready')
+  const unknown = checks.filter((check) => check.state === 'unknown')
+  const overall = blocked.length > 0 ? 'blocked' : unknown.length > 0 ? 'unknown' : 'ready'
+  return <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow text-cyan-100">Activation evidence</p><CardTitle className="mt-1 text-lg font-semibold">Preflight: {shortId(bundle.bundle_id, 30)}</CardTitle><p className="mt-1 text-xs leading-5 text-muted-foreground">Read-only projection from current Hypervisor inventories. Refresh evidence before changing lifecycle state.</p></div><StatusBadge value={overall} /></div></CardHeader><CardContent className="space-y-3 p-5"><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>{ready.length} ready</span><span>Â·</span><span>{blocked.length} blocked</span><span>Â·</span><span>{unknown.length} unknown</span><Button variant="outline" size="sm" className="ml-auto border-border bg-[#091725]" onClick={onRefresh}><RefreshCw />Refresh evidence</Button></div><div className="grid gap-2 lg:grid-cols-2">{checks.map((check) => <div key={check.key} className="flex gap-3 rounded-lg border border-border/70 bg-black/10 p-3"><BundleCheckIcon state={check.state} /><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="text-sm font-medium text-slate-100">{check.label}</p><StatusBadge value={check.state} /></div><p className="mt-1 text-xs leading-5 text-muted-foreground">{check.detail}</p></div></div>)}</div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => onNavigate('providers')}><ServerCog />Provider workspace</Button><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => onNavigate('models')}><Database />Model deployments</Button><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => onNavigate('endpoints')}><RadioTower />Endpoint impact</Button></div></CardContent></Card>
+}
+
+function BundleCheckIcon({ state }: { state: BundlePreflightState }) {
+  if (state === 'ready') return <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-300" />
+  if (state === 'blocked') return <XCircle className="mt-0.5 size-4 shrink-0 text-rose-300" />
+  if (state === 'info') return <CircleDot className="mt-0.5 size-4 shrink-0 text-cyan-200" />
+  return <CircleDot className="mt-0.5 size-4 shrink-0 text-amber-200" />
+}
+
+function BundleCopyValue({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false)
+  async function copy() {
+    if (!value || value === 'Not reported') return
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1400)
+    } catch {
+      setCopied(false)
+    }
+  }
+  return <div className="min-w-0"><p className="eyebrow">{label}</p><button type="button" className="mt-1 flex max-w-full items-center gap-1 rounded text-left font-mono text-xs text-slate-200 hover:text-cyan-200" onClick={() => void copy()} title="Copy value"><span className="truncate">{value || 'Not reported'}</span>{value && value !== 'Not reported' ? <Copy className="size-3 shrink-0" /> : null}</button>{copied ? <p className="mt-1 text-[10px] text-emerald-300">Copied</p> : null}</div>
+}
+
+function BundleInspector({ bundle, open, onOpenChange, onAction, onNavigate, onPreflight, onClone, preflight, readiness, fleet, providers }: { bundle?: Bundle; open: boolean; onOpenChange: (open: boolean) => void; onAction: (bundle: Bundle, action: BundleAction) => void; onNavigate: NavigationProps['onNavigate']; onPreflight: () => void; onClone: () => void; preflight: boolean; readiness?: Readiness; fleet?: Fleet; providers?: ProviderWorkspace }) {
+  if (!bundle) return null
+  const record = getRecord(bundle)
+  const profile = getRecord(record?.resource_profile)
+  const metadata = getRecord(record?.runtime_metadata)
+  const relation = getRecord(record?.endpoint_relationship)
+  const lifecycle = bundleLifecycleStatus(bundle)
+  const endpointState = bundleEndpointState(bundle)
+  const required = bundleRequiredResources(bundle)
+  const checks = bundlePreflightChecks(bundle, readiness, fleet, providers)
+  return <Sheet open={open} onOpenChange={onOpenChange}><SheetContent side="right" className="w-full overflow-y-auto border-slate-700 bg-[#07111d] p-0 sm:max-w-xl"><SheetHeader className="border-b border-border/70 px-5 py-5"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={lifecycle} /><span className="eyebrow">Bundle inspector</span></div><SheetTitle className="pr-8 text-xl text-white">{bundle.bundle_id}</SheetTitle><SheetDescription className="font-mono text-[11px] text-slate-500">Immutable revision r{String(valueText(record, 'revision') || '1')} Â· {shortId(valueText(record, 'bundle_hash'), 28)}</SheetDescription></SheetHeader><div className="space-y-4 p-5">
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Identity & ancestry</CardTitle></CardHeader><CardContent className="grid grid-cols-2 gap-x-4 gap-y-4 p-4"><BundleCopyValue label="Bundle ID" value={bundle.bundle_id} /><BundleCopyValue label="Content hash" value={valueText(record, 'bundle_hash', 'Not reported')} /><BundleCopyValue label="Revision" value={valueText(record, 'revision', '1')} /><BundleCopyValue label="Revision of" value={valueText(record, 'revision_of', 'Root revision')} /><BundleCopyValue label="Launch mode" value={valueText(record, 'launch_mode', 'Not reported')} /><BundleCopyValue label="Device affinity" value={valueText(record, 'device_affinity', 'Not reported')} /></CardContent></Card>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Execution chain</CardTitle></CardHeader><CardContent className="space-y-3 p-4"><div className="grid grid-cols-[1fr_auto] items-center gap-2"><div><p className="eyebrow">Provider</p><p className="mt-1 text-sm text-slate-200">{valueText(record, 'provider_type')} <span className="font-mono text-xs text-slate-500">{shortId(valueText(record, 'plugin_id'), 24)}</span></p></div><Button variant="ghost" size="sm" className="text-cyan-200" onClick={() => onNavigate('providers')}>Open<ChevronRight /></Button></div><div className="border-l border-cyan-300/30 pl-3"><p className="eyebrow">Model deployment</p><p className="mt-1 text-sm text-slate-200">{valueText(record, 'model_id')}</p></div><div className="border-l border-cyan-300/30 pl-3"><p className="eyebrow">Runtime</p><p className="mt-1 text-sm text-slate-200">{valueText(record, 'runtime_id', 'No runtime handle')}</p><p className="mt-1 text-xs text-muted-foreground">{valueText(record, 'runtime_health_status', 'Health not reported')} Â· {valueText(record, 'runtime_last_error', 'No runtime error')}</p></div><div className="grid grid-cols-[1fr_auto] items-center gap-2 border-l border-cyan-300/30 pl-3"><div><p className="eyebrow">Endpoint relationship</p><p className="mt-1 text-sm text-slate-200">{endpointState.replaceAll('_', ' ')}</p><p className="mt-1 font-mono text-[11px] text-slate-500">{valueText(relation, 'endpoint_id', 'No Endpoint ID')}</p></div><Button variant="ghost" size="sm" className="text-cyan-200" onClick={() => onNavigate('endpoints')}>Open<ChevronRight /></Button></div></CardContent></Card>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><div className="flex items-center justify-between gap-3"><CardTitle className="text-sm">Resource profile</CardTitle><StatusBadge value={valueText(record, 'warm_policy', 'auto')} /></div></CardHeader><CardContent className="grid grid-cols-2 gap-x-4 gap-y-4 p-4"><SessionValue label="Activation CPU" value={`${required.cpu.toFixed(1)} cores`} /><SessionValue label="Activation RAM" value={formatMemory(required.ram_mb)} /><SessionValue label="Activation VRAM" value={formatMemory(required.vram_mb)} /><SessionValue label="Steady CPU" value={`${numberValue(profile, 'steady_cpu').toFixed(1)} cores`} /><SessionValue label="Steady RAM" value={formatMemory(numberValue(profile, 'steady_ram_mb'))} /><SessionValue label="Steady VRAM" value={formatMemory(numberValue(profile, 'steady_vram_mb'))} /><SessionValue label="Priority" value={valueText(record, 'priority_class', '50')} /><SessionValue label="Parallel limit" value={valueText(record, 'max_parallel_requests', '1')} /></CardContent></Card>
+    {preflight ? <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Current preflight</CardTitle></CardHeader><CardContent className="space-y-2 p-4">{checks.map((check) => <div key={check.key} className="flex items-center gap-2"><BundleCheckIcon state={check.state} /><span className="text-xs text-slate-200">{check.label}</span><StatusBadge value={check.state} /></div>)}</CardContent></Card> : null}
+    {metadata && Object.keys(metadata).length > 0 ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Runtime metadata</CardTitle></CardHeader><CardContent className="space-y-2 p-4">{Object.entries(metadata).slice(0, 8).map(([key, value]) => <div key={key} className="flex items-start justify-between gap-3 text-xs"><span className="font-mono text-slate-500">{key}</span><span className="max-w-[65%] break-all text-right text-slate-300">{typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : 'structured value'}</span></div>)}</CardContent></Card> : null}
+  </div><div className="sticky bottom-0 mt-auto flex flex-wrap gap-2 border-t border-border/70 bg-[#07111d] p-4"><Button variant="outline" className="border-border bg-[#091725]" onClick={onPreflight}><Gauge />{preflight ? 'Refresh preflight' : 'Run preflight'}</Button><Button variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={onClone}><Boxes />Create revision</Button><Button variant="outline" className="border-border bg-[#091725]" onClick={() => onAction(bundle, bundle.enabled ? 'disable' : 'enable')}>{bundle.enabled ? 'Pause' : 'Enable'}</Button><Button variant="ghost" className="ml-auto" onClick={() => onOpenChange(false)}>Close</Button></div></SheetContent></Sheet>
+}
+
+function BundleComparison({ source, target }: { source?: Bundle; target?: Bundle }) {
+  if (!source || !target) return null
+  const sourceRecord = getRecord(source)
+  const targetRecord = getRecord(target)
+  const fields: Array<[string, string, string]> = [
+    ['Revision', valueText(sourceRecord, 'revision', '1'), valueText(targetRecord, 'revision', '1')],
+    ['Bundle hash', valueText(sourceRecord, 'bundle_hash', 'Not reported'), valueText(targetRecord, 'bundle_hash', 'Not reported')],
+    ['Provider', valueText(sourceRecord, 'provider_type'), valueText(targetRecord, 'provider_type')],
+    ['Model', valueText(sourceRecord, 'model_id'), valueText(targetRecord, 'model_id')],
+    ['Launch mode', valueText(sourceRecord, 'launch_mode', 'Not reported'), valueText(targetRecord, 'launch_mode', 'Not reported')],
+    ['Endpoint', valueText(sourceRecord, 'endpoint', 'None'), valueText(targetRecord, 'endpoint', 'None')],
+    ['Device affinity', valueText(sourceRecord, 'device_affinity', 'Not reported'), valueText(targetRecord, 'device_affinity', 'Not reported')],
+    ['Warm policy', valueText(sourceRecord, 'warm_policy', 'Not reported'), valueText(targetRecord, 'warm_policy', 'Not reported')],
+    ['Priority', valueText(sourceRecord, 'priority_class', '50'), valueText(targetRecord, 'priority_class', '50')],
+    ['Parallel limit', valueText(sourceRecord, 'max_parallel_requests', '1'), valueText(targetRecord, 'max_parallel_requests', '1')],
+    ['Resource profile', JSON.stringify(sourceRecord?.resource_profile ?? {}), JSON.stringify(targetRecord?.resource_profile ?? {})],
+  ]
+  return <Card className="border-violet-300/20 bg-violet-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="eyebrow text-violet-100">Immutable history</p><CardTitle className="mt-1 text-lg font-semibold">Revision comparison</CardTitle><p className="mt-1 text-xs text-muted-foreground">Field-level view only. Neither source is edited by comparison.</p></div><StatusBadge value={source.bundle_id === target.bundle_id ? 'same revision' : 'comparison ready'} /></div></CardHeader><CardContent className="overflow-x-auto p-0"><table className="w-full min-w-[640px] text-left text-xs"><thead className="border-b border-border/70 text-[10px] uppercase tracking-[0.16em] text-slate-500"><tr><th className="px-5 py-3">Field</th><th className="px-5 py-3">Source · {shortId(source.bundle_id, 18)}</th><th className="px-5 py-3">Target · {shortId(target.bundle_id, 18)}</th><th className="px-5 py-3">Change</th></tr></thead><tbody className="divide-y divide-border/70">{fields.map(([label, left, right]) => <tr key={label}><td className="px-5 py-3 font-medium text-slate-300">{label}</td><td className="max-w-[220px] break-all px-5 py-3 font-mono text-slate-400">{left}</td><td className="max-w-[220px] break-all px-5 py-3 font-mono text-slate-200">{right}</td><td className="px-5 py-3"><StatusBadge value={left === right ? 'unchanged' : 'changed'} /></td></tr>)}</tbody></table></CardContent></Card>
+}
+
+function BundlesScreen({ bundles, isLoading, error, onNavigate, onRefresh, readiness, fleet, providers }: { bundles: Bundle[]; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void; readiness?: Readiness; fleet?: Fleet; providers?: ProviderWorkspace }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [providerFilter, setProviderFilter] = useState('all')
+  const [endpointFilter, setEndpointFilter] = useState('all')
+  const [selectedBundleId, setSelectedBundleId] = useState<string | null>(null)
+  const [preflightBundleId, setPreflightBundleId] = useState<string | null>(null)
+  const [compareSourceId, setCompareSourceId] = useState('')
+  const [compareTargetId, setCompareTargetId] = useState('')
+  const [revisionSeed, setRevisionSeed] = useState<string | undefined>()
+
+  const filteredBundles = bundles.filter((bundle) => {
+    const haystack = [bundle.bundle_id, bundle.provider_type, bundle.model_id, bundle.plugin_id, bundle.workload_type].join(' ').toLowerCase()
+    return (search.trim() === '' || haystack.includes(search.trim().toLowerCase())) && (statusFilter === 'all' || bundleLifecycleStatus(bundle) === statusFilter) && (providerFilter === 'all' || bundle.provider_type === providerFilter) && (endpointFilter === 'all' || bundleEndpointState(bundle) === endpointFilter)
+  })
+  const selectedBundle = bundles.find((bundle) => bundle.bundle_id === selectedBundleId)
+  const preflightBundle = bundles.find((bundle) => bundle.bundle_id === preflightBundleId)
+  const compareSource = bundles.find((bundle) => bundle.bundle_id === compareSourceId)
+  const compareTarget = bundles.find((bundle) => bundle.bundle_id === compareTargetId)
+  const statuses = Array.from(new Set(bundles.map(bundleLifecycleStatus))).sort()
+  const providersInUse = Array.from(new Set(bundles.map((bundle) => bundle.provider_type))).sort()
+  const summary = {
+    total: bundles.length,
+    enabled: bundles.filter((bundle) => bundle.enabled).length,
+    attention: bundles.filter((bundle) => ['failed', 'cooldown'].includes(bundleLifecycleStatus(bundle))).length,
+    linked: bundles.filter((bundle) => bundleEndpointState(bundle) === 'published_endpoint').length,
+  }
 
   async function runBundleAction(bundle: Bundle, action: BundleAction) {
     if (action === 'disable' && !window.confirm(`Pause Bundle ${bundle.bundle_id}? Existing Sessions are not rewritten.`)) return
@@ -899,13 +1111,24 @@ function BundlesScreen({ bundles, isLoading, error, onNavigate, onRefresh }: { b
       <ScreenHeading eyebrow="Bundle-first operations" title="Bundles" detail="Bundles are immutable deployments. These controls operate the current revision only; configuration changes require a new revision rather than overwriting active history." />
       {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
       {busy ? <p className="font-mono text-xs text-cyan-200">Applying {busy.replace(':', ' ')}...</p> : null}
-      <BundleRevisionControl bundles={bundles} onRefresh={onRefresh} />
-      <BundleTableSection bundles={bundles} isLoading={isLoading} error={error} onNavigate={onNavigate} onAction={runBundleAction} />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><BundleSummary label="Total revisions" value={summary.total} detail="Immutable records" icon={Boxes} /><BundleSummary label="Enabled" value={summary.enabled} detail="Admit compatible work" icon={Zap} /><BundleSummary label="Needs attention" value={summary.attention} detail="Failed or cooldown" icon={ShieldCheck} tone={summary.attention > 0 ? 'warning' : 'default'} /><BundleSummary label="Published links" value={summary.linked} detail="Endpoint relationships" icon={RadioTower} /></div>
+      <Card className="border-border/80 bg-card py-0 shadow-none"><CardContent className="grid gap-3 p-4 lg:grid-cols-[minmax(14rem,1.6fr)_repeat(3,minmax(9rem,0.7fr))_auto]"><label className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Bundle, model, Provider..." className="h-10 w-full rounded-lg border border-input bg-[#07111d] pl-9 pr-3 text-sm text-white outline-none focus:border-cyan-300" /></label><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="all">All lifecycle states</option>{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</select><select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="all">All Providers</option>{providersInUse.map((provider) => <option key={provider} value={provider}>{provider}</option>)}</select><select value={endpointFilter} onChange={(event) => setEndpointFilter(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="all">All Endpoint links</option><option value="published_endpoint">Published</option><option value="draft_endpoint">Draft</option><option value="no_endpoint">Unlinked</option><option value="published_drifted">Drifted</option></select><Button variant="outline" className="h-10 border-border bg-[#091725]" onClick={() => { setSearch(''); setStatusFilter('all'); setProviderFilter('all'); setEndpointFilter('all') }}>Clear</Button></CardContent></Card>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>Showing {filteredBundles.length} of {bundles.length} revisions</span><span>Â·</span><span>Select a row to inspect dependencies and actions</span></div>
+      <BundleTableSection bundles={filteredBundles} isLoading={isLoading} error={error} onNavigate={onNavigate} onAction={runBundleAction} onSelect={(bundle) => setSelectedBundleId(bundle.bundle_id)} />
+      <Card className="border-violet-300/15 bg-violet-300/[0.025] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-end justify-between gap-3"><div><p className="eyebrow text-violet-100">Revision history</p><CardTitle className="mt-1 text-lg font-semibold">Compare two immutable records</CardTitle><p className="mt-1 text-xs leading-5 text-muted-foreground">Compare configuration and resource fields before creating or enabling a new revision.</p></div><StatusBadge value={compareSource && compareTarget ? 'ready' : 'select two'} /></div></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-[1fr_1fr_auto]"><select value={compareSourceId} onChange={(event) => setCompareSourceId(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-violet-300"><option value="">Source revision</option>{bundles.map((bundle) => <option key={`source:${bundle.bundle_id}`} value={bundle.bundle_id}>{bundle.bundle_id} Â· r{String(valueText(getRecord(bundle), 'revision') || '1')}</option>)}</select><select value={compareTargetId} onChange={(event) => setCompareTargetId(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-violet-300"><option value="">Target revision</option>{bundles.map((bundle) => <option key={`target:${bundle.bundle_id}`} value={bundle.bundle_id}>{bundle.bundle_id} Â· r{String(valueText(getRecord(bundle), 'revision') || '1')}</option>)}</select><Button variant="outline" className="h-10 border-violet-300/25 bg-[#091725] text-violet-100" disabled={!compareSource || !compareTarget} onClick={() => { if (compareSource && compareTarget) window.requestAnimationFrame(() => document.getElementById('bundle-comparison')?.scrollIntoView({ behavior: 'smooth', block: 'start' })) }}><Eye />Compare</Button></CardContent></Card>
+      {compareSource && compareTarget ? <div id="bundle-comparison"><BundleComparison source={compareSource} target={compareTarget} /></div> : null}
+      {preflightBundle ? <BundlePreflightPanel bundle={preflightBundle} readiness={readiness} fleet={fleet} providers={providers} onNavigate={onNavigate} onRefresh={onRefresh} /> : null}
+      <div id="bundle-revision-factory"><BundleRevisionControl key={revisionSeed ?? 'default'} bundles={bundles} onRefresh={onRefresh} initialSourceBundleId={revisionSeed} /></div>
+      <BundleInspector bundle={selectedBundle} open={Boolean(selectedBundle)} onOpenChange={(open) => { if (!open) setSelectedBundleId(null) }} onAction={(bundle, action) => void runBundleAction(bundle, action)} onNavigate={onNavigate} preflight={Boolean(preflightBundle && selectedBundleId === preflightBundleId)} onPreflight={() => { if (selectedBundle) { setPreflightBundleId(selectedBundle.bundle_id); onRefresh() } }} onClone={() => { if (selectedBundle) { setRevisionSeed(selectedBundle.bundle_id); setSelectedBundleId(null); window.setTimeout(() => document.getElementById('bundle-revision-factory')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0) } }} readiness={readiness} fleet={fleet} providers={providers} />
     </div>
   )
 }
 
-function BundleRevisionControl({ bundles, onRefresh }: { bundles: Bundle[]; onRefresh: () => void }) {
+function BundleSummary({ label, value, detail, icon: Icon, tone = 'default' }: { label: string; value: number; detail: string; icon: LucideIcon; tone?: 'default' | 'warning' }) {
+  return <Card className={cn('border-border/80 bg-card py-0 shadow-none', tone === 'warning' && 'border-amber-300/25')}><CardContent className="flex items-center gap-3 p-4"><span className={cn('grid size-9 place-items-center rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] text-cyan-200', tone === 'warning' && 'border-amber-300/25 bg-amber-300/[0.06] text-amber-200')}><Icon className="size-4" /></span><div><p className="eyebrow">{label}</p><p className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">{formatCount(value)}</p><p className="text-xs text-muted-foreground">{detail}</p></div></CardContent></Card>
+}
+
+function BundleRevisionControl({ bundles, onRefresh, initialSourceBundleId }: { bundles: Bundle[]; onRefresh: () => void; initialSourceBundleId?: string }) {
   const [sourceBundleId, setSourceBundleId] = useState('')
   const [bundleId, setBundleId] = useState('')
   const [overrides, setOverrides] = useState('{}')
@@ -914,11 +1137,17 @@ function BundleRevisionControl({ bundles, onRefresh }: { bundles: Bundle[]; onRe
   const [message, setMessage] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!sourceBundleId && bundles.length > 0) {
-      setSourceBundleId(bundles[0].bundle_id)
-      setBundleId(`${bundles[0].bundle_id}-r${Number(getRecord(bundles[0])?.revision ?? 1) + 1}`)
+    if (initialSourceBundleId && bundles.some((bundle) => bundle.bundle_id === initialSourceBundleId)) {
+      setSourceBundleId(initialSourceBundleId)
+      const source = bundles.find((bundle) => bundle.bundle_id === initialSourceBundleId)
+      if (source) setBundleId(`${source.bundle_id}-r${Number(getRecord(source)?.revision ?? 1) + 1}`)
+      return
     }
-  }, [bundles, sourceBundleId])
+    if (bundles.length > 0) {
+      setSourceBundleId((current) => current || bundles[0].bundle_id)
+      setBundleId((current) => current || `${bundles[0].bundle_id}-r${Number(getRecord(bundles[0])?.revision ?? 1) + 1}`)
+    }
+  }, [bundles, initialSourceBundleId])
 
   function chooseSource(nextId: string) {
     setSourceBundleId(nextId)

@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-10`
+Last updated: `2026-08-12`
 
 This is the main public roadmap for the repository.
 
@@ -12,6 +12,38 @@ It should stay current and answer four questions:
 4. What has to be true before we move to the next stage?
 
 The roadmap must also stay aligned with the product-level operator journey defined in [docs/product/UX-0001-hypervisor-operator-journey.md](./docs/product/UX-0001-hypervisor-operator-journey.md).
+
+## 2026-08-12 Bundle Workspace Slice
+
+Completed in this slice:
+
+- [x] Upgrade the React `Bundles` workspace from a list to an operator control
+  surface with lifecycle metrics, search, lifecycle/provider/Endpoint filters,
+  explicit result feedback, and real enable/pause/retry/cooldown actions.
+- [x] Add a right-side Bundle inspector showing immutable identity and ancestry,
+  content hash, Provider -> Model -> Runtime -> Endpoint relationships, runtime
+  health/error evidence, resource profile, and navigation to the owning
+  workspaces.
+- [x] Add read-only activation preflight that derives `ready`, `blocked`,
+  `unknown`, and informational checks from canonical readiness, Provider/model/
+  Runtime Binding inventories, host capacity, Bundle lifecycle, and Endpoint
+  relationship state. The UI does not invent missing capacity or validation.
+- [x] Add field-level comparison for two immutable Bundle records and keep the
+  revision factory as the only configuration mutation path.
+- [x] Extend Bundle dashboard read models with revision ancestry, content hash,
+  launch/resource policy, runtime identity and runtime health/error fields.
+
+Next planned Bundle work:
+
+- [ ] Add a canonical backend preflight endpoint with evidence IDs and a
+  server-side resource-fit decision; the current UI preflight remains an
+  explicitly read-only projection of existing read models.
+- [ ] Expose runtime generation, active Session counts, drain/retire operations,
+  and their recovery/finality rules from the canonical service API before adding
+  corresponding buttons to the dashboard.
+- [ ] Complete the endpoint-first migration so Bundle remains the immutable
+  execution revision while Endpoint draft/publish/validation owns consumer-facing
+  trust and publication state.
 
 Paid endpoint consumption and client-facing execution economics must also stay aligned with [docs/product/UX-0002-endpoint-session-and-payment-flow.md](./docs/product/UX-0002-endpoint-session-and-payment-flow.md).
 

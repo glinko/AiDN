@@ -116,6 +116,12 @@ Each read model has its own TanStack Query. A timeout, malformed response or
 server error is shown inside its corresponding panel and cannot leave the whole
 dashboard indefinitely loading.
 
+The Bundle workspace now uses the existing read models as a real operator
+surface: lifecycle/provider/Endpoint filters, immutable revision inspection,
+field-level comparison, and a read-only activation preflight are implemented.
+The preflight deliberately reports missing evidence as `unknown` or `blocked`;
+it is not a replacement for the planned canonical server-side evidence endpoint.
+
 ## Migration Order
 
 1. Overview, Readiness, Bundles and Endpoints.
