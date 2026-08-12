@@ -119,6 +119,11 @@ const statusClassNames: Record<string, string> = {
 
 type OperationsScreen = Exclude<DashboardScreen, 'overview' | 'bundles' | 'endpoints' | 'settings'>
 
+type RefreshFeedback = {
+  state: 'idle' | 'running' | 'success' | 'error'
+  message: string
+}
+
 const operationsScreens: readonly OperationsScreen[] = [
   'agents',
   'market',
@@ -138,11 +143,12 @@ function App() {
   const { activeScreen, advanced, setActiveScreen, setAdvanced } = useOperatorDashboardStore()
   const data = useDashboardData()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [refreshFeedback, setRefreshFeedback] = useState<RefreshFeedback>({ state: 'idle', message: 'Live data refreshes every 20 seconds' })
 
   const nodeIdentity = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
   const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
   const readinessPercent = data.readiness.data?.progress.percent ?? 0
-  const hasRefreshError = [data.home, data.readiness, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.installs].some(
+  const hasRefreshError = [data.home, data.readiness, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events].some(
     (query) => query.isError,
   )
 
@@ -160,7 +166,8 @@ function App() {
   }, [setActiveScreen])
 
   function refreshAll() {
-    void Promise.all([
+    setRefreshFeedback({ state: 'running', message: 'Refreshing Hypervisor state...' })
+    void Promise.allSettled([
       data.home.refetch(),
       data.readiness.refetch(),
       data.fleet.refetch(),
@@ -169,7 +176,17 @@ function App() {
       data.wallet.refetch(),
       data.providers.refetch(),
       data.installs.refetch(),
-    ])
+      data.sessions.refetch(),
+      data.market.refetch(),
+      data.remoteEndpoints.refetch(),
+      data.events.refetch(),
+    ]).then((results) => {
+      const failed = results.filter((result) => result.status === 'rejected').length
+      const time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date())
+      setRefreshFeedback(failed > 0
+        ? { state: 'error', message: `${failed} dashboard section${failed === 1 ? '' : 's'} failed to refresh at ${time}` }
+        : { state: 'success', message: `Hypervisor state refreshed at ${time}` })
+    })
   }
 
   function navigate(screen: DashboardScreen) {
@@ -185,8 +202,9 @@ function App() {
       <TopBar
         nodeName={nodeName}
         advanced={advanced}
-        isRefreshing={data.home.isFetching || data.readiness.isFetching}
+        isRefreshing={data.home.isFetching || data.readiness.isFetching || data.events.isFetching}
         refreshError={hasRefreshError}
+        refreshFeedback={refreshFeedback}
         onRefresh={refreshAll}
         onToggleAdvanced={() => setAdvanced(!advanced)}
         onOpenNavigation={() => setMobileOpen(true)}
@@ -228,7 +246,7 @@ function App() {
         </main>
       </div>
 
-      <ResourceFooter fleet={data.fleet.data} isLoading={data.fleet.isLoading} />
+      <ResourceFooter fleet={data.fleet.data} isLoading={data.fleet.isLoading} onNavigate={navigate} />
 
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetTrigger className="hidden" />
@@ -251,6 +269,7 @@ type TopBarProps = {
   advanced: boolean
   isRefreshing: boolean
   refreshError: boolean
+  refreshFeedback: RefreshFeedback
   onRefresh: () => void
   onToggleAdvanced: () => void
   onOpenNavigation: () => void
@@ -262,6 +281,7 @@ function TopBar({
   advanced,
   isRefreshing,
   refreshError,
+  refreshFeedback,
   onRefresh,
   onToggleAdvanced,
   onOpenNavigation,
@@ -292,7 +312,9 @@ function TopBar({
         <div className="flex min-w-0 items-stretch gap-1 overflow-x-auto [scrollbar-width:none]">
           <button
             type="button"
+            aria-label={`Open ${nodeName} overview`}
             className="relative shrink-0 border-x border-t border-border/70 bg-[#0a1725] px-3 py-2 text-left text-sm font-semibold text-cyan-200 after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-cyan-300 sm:px-4"
+            onClick={() => onNavigate('overview')}
           >
             <span className="block max-w-44 truncate">{nodeName}</span>
             <span className="hidden text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground sm:block">Local Hypervisor</span>
@@ -303,6 +325,9 @@ function TopBar({
           </button>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <span aria-live="polite" className={cn('hidden max-w-64 truncate font-mono text-[10px] xl:block', refreshFeedback.state === 'error' ? 'text-amber-200' : refreshFeedback.state === 'running' ? 'text-cyan-200' : 'text-slate-500')}>
+            {refreshFeedback.message}
+          </span>
           <Tooltip>
             <TooltipTrigger render={<Button variant="ghost" size="icon" aria-label="Refresh dashboard" onClick={onRefresh} />}>
               <RefreshCw className={cn('size-4', isRefreshing && 'animate-spin', refreshError && 'text-amber-300')} />
@@ -313,9 +338,6 @@ function TopBar({
             <Layers3 />
             {advanced ? 'Basic mode' : 'Advanced mode'}
           </Button>
-          <span className="grid size-8 place-items-center rounded-full border border-border bg-[#0b1725] font-mono text-[11px] font-semibold text-slate-200">
-            OP
-          </span>
         </div>
       </div>
     </header>
@@ -399,49 +421,117 @@ function OverviewScreen({ data, onNavigate, onRefresh }: { data: DashboardData; 
   const nodeIdentity = home?.bootstrap.node_identity ?? fleet?.node
   const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
   const publishedCount = data.endpoints.data?.summary.published ?? endpoints.filter((endpoint) => endpoint.publication_status === 'published').length
-  const activeSessions = fleet?.queue.active ?? 0
-  const queuedSessions = fleet?.queue.queued ?? 0
+  const activeSessions = data.sessions.data?.summary.active ?? fleet?.queue.active ?? 0
+  const queuedSessions = data.sessions.data?.summary.queued ?? fleet?.queue.queued ?? 0
   const validationSummary = summarizeValidation(endpoints)
 
   return (
     <div className="space-y-4 lg:space-y-5">
-      <section className="flex flex-col justify-between gap-3 border-b border-border/75 pb-4 sm:flex-row sm:items-end">
+      <section className="flex flex-col justify-between gap-4 border-b border-border/75 pb-4 sm:flex-row sm:items-end">
         <div>
-          <p className="eyebrow">Hypervisor workspace</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-[-0.045em] text-white sm:text-3xl">Overview</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{nodeName} <span className="text-slate-600">/</span> local operations</p>
+          <h1 className="text-2xl font-semibold tracking-[-0.045em] text-white sm:text-3xl">Overview</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{nodeName} at a glance: current execution, capacity, network evidence, and the next safe operator action.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <SmallInfo label="Node" value={nodeName} />
-          <SmallInfo label="Sync" value={readiness?.network_ready ? 'Healthy' : 'Review'} tone={readiness?.network_ready ? 'good' : 'warn'} />
+          <SmallInfo label="Refresh" value={data.home.isFetching || data.events.isFetching ? 'Updating' : 'Live'} tone={data.home.isFetching || data.events.isFetching ? 'warn' : 'good'} />
           <Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={onRefresh}>
-            <RefreshCw className={cn('size-3.5', data.home.isFetching && 'animate-spin')} />
-            Refresh
+            <RefreshCw className={cn('size-3.5', (data.home.isFetching || data.events.isFetching) && 'animate-spin')} />
+            Refresh all
           </Button>
         </div>
       </section>
 
+      <NodeStatusStrip readiness={readiness} fleet={fleet} market={data.market.data} endpoints={data.endpoints.data} isLoading={data.readiness.isLoading || data.fleet.isLoading} />
+
+      <AttentionRequired readiness={readiness} readinessError={data.readiness.error} onNavigate={onNavigate} onRefresh={onRefresh} />
+
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-5">
-        <MetricCard label="Active Bundles" value={formatCount(bundles.filter((bundle) => bundle.enabled).length)} detail={`${bundles.length} registered`} icon={Boxes} tone="cyan" loading={data.bundles.isLoading} />
-        <MetricCard label="Published Endpoints" value={formatCount(publishedCount)} detail={`${endpoints.length} configured`} icon={RadioTower} tone="blue" loading={data.endpoints.isLoading} />
-        <MetricCard label="Running Sessions" value={formatCount(activeSessions)} detail={`${queuedSessions} queued`} icon={Activity} tone="violet" loading={data.fleet.isLoading} />
-        <MetricCard label="Wallet" value={wallet?.configured ? 'Bound' : 'Setup'} detail={wallet?.configured ? shortId(wallet.wallet_id) : 'Action required'} icon={WalletCards} tone={wallet?.configured ? 'green' : 'amber'} loading={data.home.isLoading} />
-        <MetricCard label="Readiness" value={readiness ? formatPercent(readiness.progress.percent) : '—'} detail={readiness?.overall_state ?? 'Checking status'} icon={ShieldCheck} tone={readiness?.overall_state === 'ready' ? 'green' : 'amber'} loading={data.readiness.isLoading} />
+        <MetricCard label="Active Bundles" value={formatCount(bundles.filter((bundle) => bundle.enabled).length)} detail={`${bundles.length} registered · open inventory`} icon={Boxes} tone="cyan" loading={data.bundles.isLoading} onClick={() => onNavigate('bundles')} />
+        <MetricCard label="Published Endpoints" value={formatCount(publishedCount)} detail={`${endpoints.length} configured · open offers`} icon={RadioTower} tone="blue" loading={data.endpoints.isLoading} onClick={() => onNavigate('endpoints')} />
+        <MetricCard label="Running Sessions" value={formatCount(activeSessions)} detail={`${queuedSessions} queued · open queue`} icon={Activity} tone="violet" loading={data.sessions.isLoading || data.fleet.isLoading} onClick={() => onNavigate('agents')} />
+        <MetricCard label="Wallet" value={wallet?.configured ? 'Bound' : 'Setup'} detail={wallet?.configured ? shortId(wallet.wallet_id) : 'Action required · open Wallet'} icon={WalletCards} tone={wallet?.configured ? 'green' : 'amber'} loading={data.home.isLoading} onClick={() => onNavigate('wallet')} />
+        <MetricCard label="Readiness" value={readiness ? formatPercent(readiness.progress.percent) : '—'} detail={readiness?.overall_state ?? 'Status unavailable'} icon={ShieldCheck} tone={readiness?.overall_state === 'ready' ? 'green' : 'amber'} loading={data.readiness.isLoading} onClick={() => onNavigate('network')} />
       </section>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_296px]">
         <div className="min-w-0 space-y-4">
-          <ReadinessWizard readiness={readiness} isLoading={data.readiness.isLoading} error={data.readiness.error} onNavigate={onNavigate} onRefresh={onRefresh} />
           <BundleTableSection bundles={bundles} isLoading={data.bundles.isLoading} error={data.bundles.error} onNavigate={onNavigate} compact />
+          <SessionQueueOverview sessions={data.sessions.data} isLoading={data.sessions.isLoading} error={data.sessions.error} onNavigate={onNavigate} />
+          <RecentOperations events={data.events.data ?? []} isLoading={data.events.isLoading} error={data.events.error} onNavigate={onNavigate} onRefresh={onRefresh} />
         </div>
         <aside className="space-y-4">
-          <ResourceOverview fleet={fleet} isLoading={data.fleet.isLoading} error={data.fleet.error} />
-          <ValidationOverview endpoints={endpoints} summary={validationSummary} isLoading={data.endpoints.isLoading} error={data.endpoints.error} />
+          <ResourceOverview fleet={fleet} isLoading={data.fleet.isLoading} error={data.fleet.error} onNavigate={onNavigate} />
+          <NetworkValidationOverview readiness={readiness} market={data.market.data} remoteEndpoints={data.remoteEndpoints.data} validation={validationSummary} onNavigate={onNavigate} />
           <SystemState fleet={fleet} home={home} isLoading={data.fleet.isLoading || data.home.isLoading} />
         </aside>
       </div>
+
+      <ReadinessWizard readiness={readiness} isLoading={data.readiness.isLoading} error={data.readiness.error} onNavigate={onNavigate} onRefresh={onRefresh} />
     </div>
   )
+}
+
+function NodeStatusStrip({ readiness, fleet, market, endpoints, isLoading }: { readiness: DashboardData['readiness']['data']; fleet: DashboardData['fleet']['data']; market: DashboardData['market']['data']; endpoints: DashboardData['endpoints']['data']; isLoading: boolean }) {
+  const discovery = market ? `${formatCount(market.nodes.length)} node${market.nodes.length === 1 ? '' : 's'}` : 'Unknown'
+  const assurance = endpoints ? `${formatCount(endpoints.summary.published)} published` : 'Unknown'
+  return (
+    <section className="grid gap-px overflow-hidden rounded-xl border border-border/80 bg-border/60 sm:grid-cols-2 xl:grid-cols-4">
+      <StatusSignal label="Hypervisor inventory" value={isLoading && !fleet ? 'Checking' : fleet ? 'Ready' : 'Unknown'} detail={fleet ? 'capacity read model available' : 'fleet read model unavailable'} tone={fleet ? 'good' : 'muted'} />
+      <StatusSignal label="Consensus readiness" value={readiness ? readiness.network_ready ? 'Ready' : 'Blocked' : 'Unknown'} detail={readiness ? 'reported by readiness checks' : 'readiness evidence unavailable'} tone={readiness?.network_ready ? 'good' : readiness ? 'bad' : 'muted'} />
+      <StatusSignal label="Execution readiness" value={readiness ? readiness.execution_ready ? 'Ready' : 'Review' : 'Unknown'} detail={readiness ? 'provider and runtime gate' : 'readiness evidence unavailable'} tone={readiness?.execution_ready ? 'good' : readiness ? 'warn' : 'muted'} />
+      <StatusSignal label="Discovery / assurance" value={`${discovery} · ${assurance}`} detail="current local read models" tone={market && endpoints ? 'good' : 'muted'} />
+    </section>
+  )
+}
+
+function StatusSignal({ label, value, detail, tone }: { label: string; value: string; detail: string; tone: 'good' | 'warn' | 'bad' | 'muted' }) {
+  const dot = tone === 'good' ? 'bg-emerald-300' : tone === 'warn' ? 'bg-amber-300' : tone === 'bad' ? 'bg-rose-300' : 'bg-slate-500'
+  const text = tone === 'good' ? 'text-emerald-300' : tone === 'warn' ? 'text-amber-200' : tone === 'bad' ? 'text-rose-200' : 'text-slate-300'
+  return <div className="bg-[#081522] px-4 py-3.5"><div className="flex items-center gap-2"><span className={cn('size-2 rounded-full', dot)} /><p className="text-xs font-semibold text-slate-200">{label}</p></div><p className={cn('mt-2 font-mono text-sm font-semibold', text)}>{value}</p><p className="mt-1 text-[11px] leading-4 text-muted-foreground">{detail}</p></div>
+}
+
+function AttentionRequired({ readiness, readinessError, onNavigate, onRefresh }: { readiness: DashboardData['readiness']['data']; readinessError: Error | null; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
+  if (readinessError && !readiness) {
+    return <PanelError title="Next action is unavailable" detail="Readiness checks did not return. Refresh to recover the operator path; no mutation was attempted." error={readinessError} onRetry={onRefresh} />
+  }
+  const ready = readiness?.overall_state.toLowerCase() === 'ready' && readiness.execution_ready && readiness.network_ready
+  const action = readiness?.next_action
+  return (
+    <Card className={cn('border-border/80 py-0 shadow-none', ready ? 'bg-emerald-300/[0.035]' : 'border-amber-300/25 bg-amber-300/[0.045]')}>
+      <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <div className="flex min-w-0 gap-3">
+          <span className={cn('mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg', ready ? 'bg-emerald-300/10 text-emerald-300' : 'bg-amber-300/10 text-amber-200')}><ShieldCheck className="size-4" /></span>
+          <div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">{ready ? 'No blocking action reported' : 'Attention required'}</p><p className="mt-1 font-semibold text-white">{ready ? 'The node passed the current readiness gate.' : action?.label || 'Review readiness checks'}</p><p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">{ready ? 'Use the workspaces below to inspect active objects, capacity, and recent evidence.' : action?.detail || 'The readiness read model did not provide a next safe action.'}</p></div>
+        </div>
+        {!ready && action ? <ReadinessAction action={action} onNavigate={onNavigate} onRefresh={onRefresh} /> : <Button variant="outline" size="sm" className="shrink-0 border-emerald-300/25 bg-transparent text-emerald-100 hover:bg-emerald-300/10" onClick={() => onNavigate('network')}>Open readiness<ChevronRight /></Button>}
+      </CardContent>
+    </Card>
+  )
+}
+
+function SessionQueueOverview({ sessions, isLoading, error, onNavigate }: { sessions: DashboardData['sessions']['data']; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate'] }) {
+  if (isLoading && !sessions) return <PanelSkeleton rows={3} />
+  if (error && !sessions) return <PanelError title="Session queue is unavailable" error={error} />
+  const items = sessions?.items ?? []
+  return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/75 px-5 py-4"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Execution pressure</p><CardTitle className="mt-1 text-lg font-semibold tracking-[-0.03em]">Sessions and queue</CardTitle><p className="mt-1 text-sm text-muted-foreground">{sessions?.summary.active ?? 0} active · {sessions?.summary.queued ?? 0} queued · {sessions?.summary.closed ?? 0} closed</p></div><Button variant="ghost" size="sm" className="text-cyan-200 hover:bg-cyan-300/10 hover:text-cyan-100" onClick={() => onNavigate('agents')}>Open Agents<ChevronRight /></Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{items.length === 0 ? <EmptyState title="No Sessions in the local ledger" detail="Published Endpoints will create Session records when Consumers submit work. This is an empty state, not a failed refresh." actionLabel="Review Endpoints" onAction={() => onNavigate('endpoints')} /> : items.slice(0, 4).map((item, index) => { const session = getRecord(item.session); const id = getText(session, 'session_id') || `session-${index + 1}`; const status = getText(session, 'status') || 'unknown'; return <button type="button" key={id} className="flex w-full items-center gap-3 px-5 py-4 text-left transition-colors hover:bg-white/[0.025] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={() => onNavigate('agents')}><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-violet-300/10 text-violet-200"><Activity className="size-4" /></span><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium text-slate-100">{getText(item, 'display_name') || getText(session, 'endpoint_id') || 'Endpoint Session'}</span><StatusBadge value={status} /></span><span className="mt-1 block truncate font-mono text-[11px] text-slate-500">{id} · {getText(session, 'request_count') || '0'} request(s)</span></span><ChevronRight className="size-4 shrink-0 text-slate-500" /></button> })}</CardContent></Card>
+}
+
+function RecentOperations({ events, isLoading, error, onNavigate, onRefresh }: { events: NonNullable<DashboardData['events']['data']>; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
+  if (isLoading && events.length === 0) return <PanelSkeleton rows={3} />
+  if (error && events.length === 0) return <PanelError title="Recent operations are unavailable" error={error} onRetry={onRefresh} />
+  return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/75 px-5 py-4"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Evidence journal</p><CardTitle className="mt-1 text-lg font-semibold tracking-[-0.03em]">Recent operations</CardTitle></div><Button variant="ghost" size="sm" className="text-cyan-200 hover:bg-cyan-300/10 hover:text-cyan-100" onClick={() => onNavigate('network')}>Open diagnostics<ChevronRight /></Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{events.length === 0 ? <EmptyState title="No recent operations recorded" detail="The Hypervisor event journal is empty. The dashboard will not manufacture activity entries." actionLabel="Refresh journal" onAction={onRefresh} /> : events.slice().reverse().slice(0, 5).map((event, index) => { const targetScreen: DashboardScreen = event.bundle_id ? 'bundles' : event.task_id ? 'agents' : 'network'; const target = event.bundle_id || event.task_id; return <button type="button" key={`${event.timestamp}:${event.event_type}:${target ?? index}`} className="flex w-full items-start gap-3 px-5 py-3.5 text-left transition-colors hover:bg-white/[0.025] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={() => onNavigate(targetScreen)}><span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md bg-cyan-300/8 text-cyan-200"><Activity className="size-3.5" /></span><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center justify-between gap-2"><span className="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-cyan-100/70">{event.event_type}</span><span className="text-[10px] text-slate-500">{formatTimestamp(event.timestamp)}</span></span><span className="mt-1 block truncate text-xs text-slate-200">{event.message || 'Operation recorded'}</span>{target ? <span className="mt-1 block truncate font-mono text-[10px] text-slate-500">{target}</span> : null}</span><ChevronRight className="mt-1 size-3.5 shrink-0 text-slate-600" /></button> })}</CardContent></Card>
+}
+
+function NetworkValidationOverview({ readiness, market, remoteEndpoints, validation, onNavigate }: { readiness: DashboardData['readiness']['data']; market: DashboardData['market']['data']; remoteEndpoints: DashboardData['remoteEndpoints']['data']; validation: ReturnType<typeof summarizeValidation>; onNavigate: NavigationProps['onNavigate'] }) {
+  return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="px-4 py-4"><CardTitle className="text-base font-semibold">Network and assurance</CardTitle><p className="mt-1 text-xs leading-5 text-muted-foreground">Evidence is split between readiness, discovery, and Endpoint validation.</p></CardHeader><CardContent className="space-y-3 px-4 pb-4"><button type="button" className="flex w-full items-center gap-3 rounded-lg border border-border/70 bg-black/10 p-3 text-left transition-colors hover:border-cyan-300/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" onClick={() => onNavigate('network')}><span className="grid size-7 place-items-center rounded-md bg-sky-300/10 text-sky-200"><Network className="size-3.5" /></span><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-slate-100">Consensus / discovery</span><span className="mt-1 block text-[11px] text-muted-foreground">{readiness ? readiness.network_ready ? 'Readiness reports network-ready' : 'Readiness reports a network blocker' : 'No readiness evidence'} · {market ? `${market.nodes.length} visible nodes` : 'discovery unavailable'} · {remoteEndpoints ? `${remoteEndpoints.summary.attached} attached remote` : 'remote inventory unavailable'}</span></span><ChevronRight className="size-3.5 text-slate-500" /></button><button type="button" className="flex w-full items-center gap-3 rounded-lg border border-border/70 bg-black/10 p-3 text-left transition-colors hover:border-cyan-300/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" onClick={() => onNavigate('validation')}><span className="grid size-7 place-items-center rounded-md bg-emerald-300/10 text-emerald-200"><ShieldCheck className="size-3.5" /></span><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-slate-100">Endpoint validation</span><span className="mt-1 block text-[11px] text-muted-foreground">{validation.verified} verified · {validation.pending} pending · {validation.unvalidated} without validation evidence</span></span><ChevronRight className="size-3.5 text-slate-500" /></button></CardContent></Card>
+}
+
+function formatTimestamp(value: string): string {
+  if (!value) return 'time unavailable'
+  const timestamp = new Date(value)
+  if (Number.isNaN(timestamp.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(timestamp)
 }
 
 function SmallInfo({ label, value, tone = 'muted' }: { label: string; value: string; tone?: 'good' | 'warn' | 'muted' }) {
@@ -454,7 +544,7 @@ function SmallInfo({ label, value, tone = 'muted' }: { label: string; value: str
   )
 }
 
-function MetricCard({ label, value, detail, icon: Icon, tone, loading }: { label: string; value: string; detail: string; icon: LucideIcon; tone: 'cyan' | 'blue' | 'violet' | 'green' | 'amber'; loading: boolean }) {
+function MetricCard({ label, value, detail, icon: Icon, tone, loading, onClick }: { label: string; value: string; detail: string; icon: LucideIcon; tone: 'cyan' | 'blue' | 'violet' | 'green' | 'amber'; loading: boolean; onClick: () => void }) {
   const color = {
     cyan: 'text-cyan-300 bg-cyan-300/10',
     blue: 'text-sky-300 bg-sky-300/10',
@@ -463,15 +553,15 @@ function MetricCard({ label, value, detail, icon: Icon, tone, loading }: { label
     amber: 'text-amber-200 bg-amber-300/10',
   }[tone]
   return (
-    <Card className="min-h-32 border-border/80 bg-card py-0 shadow-none" size="sm">
-      <CardContent className="flex h-full flex-col p-4">
+    <Card className="min-h-32 border-border/80 bg-card py-0 shadow-none transition-colors hover:border-cyan-300/35" size="sm">
+      <button type="button" className="flex h-full w-full flex-col p-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={onClick}>
         <div className="flex items-start justify-between gap-2">
           <p className="eyebrow">{label}</p>
           <span className={cn('grid size-8 place-items-center rounded-lg', color)}><Icon className="size-4" /></span>
         </div>
         {loading ? <Skeleton className="mt-4 h-8 w-16 bg-white/8" /> : <p className="mt-3 text-2xl font-semibold tracking-[-0.05em] text-white">{value}</p>}
-        <p className="mt-auto pt-1 text-xs text-muted-foreground">{detail}</p>
-      </CardContent>
+        <p className="mt-auto flex w-full items-center justify-between gap-2 pt-1 text-xs text-muted-foreground"><span>{detail}</span><ChevronRight className="size-3.5 text-cyan-200/70" /></p>
+      </button>
     </Card>
   )
 }
@@ -589,7 +679,7 @@ function BundleTable({ bundles, onNavigate, onAction }: { bundles: Bundle[]; onN
     {
       accessorKey: 'bundle_id',
       header: 'Bundle',
-      cell: ({ row }) => <div><p className="font-medium text-slate-100">{shortId(row.original.bundle_id, 20)}</p><p className="mt-0.5 font-mono text-[10px] text-slate-500">{shortId(row.original.bundle_id)}</p></div>,
+      cell: ({ row }) => <button type="button" className="rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" aria-label={`Open Bundle ${row.original.bundle_id}`} onClick={() => onNavigate('bundles')}><p className="font-medium text-slate-100 transition-colors hover:text-cyan-200">{shortId(row.original.bundle_id, 20)}</p><p className="mt-0.5 font-mono text-[10px] text-slate-500">{shortId(row.original.bundle_id)}</p></button>,
     },
     { accessorKey: 'provider_type', header: 'Provider', cell: ({ row }) => <span className="font-mono text-xs text-slate-300">{row.original.provider_type}</span> },
     { accessorKey: 'model_id', header: 'Model', cell: ({ row }) => <span className="text-xs text-slate-200">{row.original.model_id}</span> },
@@ -1388,153 +1478,176 @@ function InventoryCard({ title, detail, items, primaryKey }: { title: string; de
 
 function OperationNotice({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   const failed = /failed|rejected|required|invalid|unavailable|error/i.test(message)
-  return <div className={cn('flex items-start justify-between gap-3 rounded-lg border p-3 text-sm', failed ? 'border-rose-300/25 bg-rose-300/[0.05] text-rose-100' : 'border-emerald-300/25 bg-emerald-300/[0.05] text-emerald-100')}><p className="leading-5">{message}</p><Button variant="ghost" size="icon-xs" className="shrink-0" aria-label="Dismiss operation result" onClick={onDismiss}>×</Button></div>
+  return <div role={failed ? 'alert' : 'status'} aria-live="polite" className={cn('flex items-start justify-between gap-3 rounded-lg border p-3 text-sm', failed ? 'border-rose-300/25 bg-rose-300/[0.05] text-rose-100' : 'border-emerald-300/25 bg-emerald-300/[0.05] text-emerald-100')}><div className="flex items-start gap-2"><span className="mt-0.5" aria-hidden="true">{failed ? <XCircle className="size-4" /> : <CheckCircle2 className="size-4" />}</span><p className="leading-5">{message}</p></div><Button variant="ghost" size="icon-xs" className="shrink-0" aria-label="Dismiss operation result" onClick={onDismiss}><XCircle /></Button></div>
 }
 
 function OperationsWorkspace({ screen, data, onNavigate, onRefresh }: { screen: OperationsScreen; data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
-  const home = data.home.data
-  const fleet = data.fleet.data
-  const readiness = data.readiness.data
-  const bundles = data.bundles.data?.items ?? []
-  const endpoints = data.endpoints.data?.items ?? []
-  const validation = summarizeValidation(endpoints)
-  const publishedEndpoints = endpoints.filter((endpoint) => endpoint.publication_status === 'published').length
-  const modelCount = new Set(bundles.map((bundle) => bundle.model_id).filter((modelId) => modelId && modelId !== 'unknown')).size
-  const nodeIdentity = home?.bootstrap.node_identity ?? fleet?.node
-  const wallet = home?.bootstrap.owner_wallet
-  const queue = fleet?.queue
+  if (screen === 'agents') return <AgentsWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
+  if (screen === 'market') return <MarketWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
+  if (screen === 'validation') return <ValidationWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
+  return <NetworkWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
+}
 
-  const workspace = {
-    agents: {
-      eyebrow: 'Execution supervision',
-      title: 'Agents',
-      detail: 'Observe current execution pressure before adding work. Agent-specific controls will appear here as they are exposed by the control plane.',
-      facts: [
-        { label: 'Active work', value: formatCount(queue?.active ?? 0), detail: 'requests executing now' },
-        { label: 'Queued work', value: formatCount(queue?.queued ?? 0), detail: 'requests awaiting admission' },
-      ],
-      related: 'endpoints' as const,
-      relatedLabel: 'Review Endpoints',
-    },
-    market: {
-      eyebrow: 'Service discovery',
-      title: 'Market',
-      detail: 'Inspect the local offer inventory before publishing or consuming services. Remote discovery remains governed by the Network workspace.',
-      facts: [
-        { label: 'Published offers', value: formatCount(publishedEndpoints), detail: 'local Endpoints visible to the network' },
-        { label: 'Configured offers', value: formatCount(endpoints.length), detail: 'all local Endpoint records' },
-      ],
-      related: 'endpoints' as const,
-      relatedLabel: 'Review Endpoints',
-    },
-    catalog: {
-      eyebrow: 'Operator inventory',
-      title: 'Catalog',
-      detail: 'Catalog capability is represented by the registered Provider inventory. Installation and approval controls stay inside this React workspace as they are migrated from the control API.',
-      facts: [
-        { label: 'Providers', value: formatCount(home?.bootstrap.provider_count ?? 0), detail: 'registered Provider records' },
-        { label: 'Bundles', value: formatCount(bundles.length), detail: 'immutable deployments using catalog capacity' },
-      ],
-      related: 'providers' as const,
-      relatedLabel: 'Inspect Providers',
-    },
-    wallet: {
-      eyebrow: 'Operator ownership',
-      title: 'Wallet',
-      detail: 'The owner Wallet binds this Hypervisor to network-facing management actions. Private key material is never returned to the browser.',
-      facts: [
-        { label: 'Binding', value: wallet?.configured ? 'Configured' : 'Not configured', detail: wallet?.label || 'No owner wallet record' },
-        { label: 'Wallet ID', value: wallet?.wallet_id ? shortId(wallet.wallet_id) : 'Unavailable', detail: 'current operator beneficiary identity' },
-      ],
-      related: 'network' as const,
-      relatedLabel: 'Review Network',
-    },
-    settings: {
-      eyebrow: 'Host configuration',
-      title: 'Settings',
-      detail: 'Host identity and capacity reporting are read from the active Hypervisor record. The Resource Probe supplies the values shown in the persistent footer.',
-      facts: [
-        { label: 'Node', value: getText(nodeIdentity, 'node_id') || 'Local Hypervisor', detail: getText(nodeIdentity, 'base_url') || 'local control address' },
-        { label: 'Resource probe', value: fleet?.resources.probe ? 'Reporting' : 'Unavailable', detail: getText(fleet?.resources.probe, 'source') || 'no probe evidence was supplied' },
-      ],
-      related: 'network' as const,
-      relatedLabel: 'Review Network',
-    },
-    providers: {
-      eyebrow: 'Runtime supply',
-      title: 'Provider Plugins',
-      detail: 'Provider records are the backing systems for Bundles. A Provider is not a consumer-facing Endpoint and is never published by itself.',
-      facts: [
-        { label: 'Providers', value: formatCount(home?.bootstrap.provider_count ?? 0), detail: 'registered Provider records' },
-        { label: 'Bound Bundles', value: formatCount(bundles.length), detail: 'deployments consuming Provider capacity' },
-      ],
-      related: 'bundles' as const,
-      relatedLabel: 'Review Bundles',
-    },
-    models: {
-      eyebrow: 'Model inventory',
-      title: 'Models',
-      detail: 'Model inventory is derived from immutable Bundle definitions, so an operator can trace every deployed model back to its runtime and Endpoint relationship.',
-      facts: [
-        { label: 'Models in Bundles', value: formatCount(modelCount), detail: 'unique model identifiers in the local deployment set' },
-        { label: 'Bundles', value: formatCount(bundles.length), detail: 'immutable model deployment records' },
-      ],
-      related: 'bundles' as const,
-      relatedLabel: 'Review Bundles',
-    },
-    validation: {
-      eyebrow: 'Endpoint assurance',
-      title: 'Validation',
-      detail: 'Validation status is recorded against Endpoints. It supplements runtime health and does not change a Bundle in place.',
-      facts: [
-        { label: 'Published', value: formatCount(validation.published), detail: 'Endpoint records with published status' },
-        { label: 'Awaiting review', value: formatCount(validation.pending + validation.unvalidated), detail: 'pending or unvalidated Endpoint records' },
-      ],
-      related: 'endpoints' as const,
-      relatedLabel: 'Review Endpoints',
-    },
-    network: {
-      eyebrow: 'Network control plane',
-      title: 'Network',
-      detail: 'Network readiness is evaluated from the configured consensus and replication evidence. Remote Hypervisors are discovered here, not through a decorative tab.',
-      facts: [
-        { label: 'Readiness', value: readiness?.network_ready ? 'Ready' : 'Review required', detail: readiness?.overall_state || 'network status has not arrived' },
-        { label: 'Node address', value: getText(nodeIdentity, 'base_url') || 'Unavailable', detail: 'advertised local control address' },
-      ],
-      related: 'endpoints' as const,
-      relatedLabel: 'Review Endpoints',
-    },
-  }[screen]
+function AgentsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
+  const sessions = data.sessions.data
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
 
-  return (
-    <div className="space-y-4">
-      <ScreenHeading eyebrow={workspace.eyebrow} title={workspace.title} detail={workspace.detail} />
-      <Card className="border-border/80 bg-card py-0 shadow-none">
-        <CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/75 px-5 py-4">
-          <div>
-            <CardTitle className="text-lg font-semibold tracking-[-0.03em]">Current local state</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">Live Hypervisor read-model data, refreshed automatically every 20 seconds.</p>
-          </div>
-          <Button variant="outline" size="sm" className="shrink-0 border-border bg-[#091725]" onClick={onRefresh}>
-            <RefreshCw className={cn('size-3.5', data.home.isFetching && 'animate-spin')} />
-            Refresh
-          </Button>
-        </CardHeader>
-        <CardContent className="p-0">
-          <dl className="divide-y divide-border/70">
-            {workspace.facts.map((fact) => <div key={fact.label} className="grid gap-1 px-5 py-4 sm:grid-cols-[minmax(12rem,0.75fr)_minmax(0,1.25fr)] sm:items-baseline sm:gap-5">
-              <dt className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{fact.label}</dt>
-              <dd><span className="font-medium text-slate-100">{fact.value}</span><p className="mt-1 text-xs text-muted-foreground">{fact.detail}</p></dd>
-            </div>)}
-          </dl>
-          <div className="flex flex-wrap gap-2 border-t border-border/70 px-5 py-4">
-            <Button size="sm" className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" onClick={() => onNavigate(workspace.related)}>{workspace.relatedLabel}<ChevronRight /></Button>
-            <Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => onNavigate('overview')}>Return to Overview</Button>
-          </div>
-        </CardContent>
-      </Card>
+  async function closeSession(sessionId: string) {
+    if (!window.confirm(`Close Session ${sessionId}? The canonical settlement policy will be applied.`)) return
+    setBusy(sessionId)
+    setMessage(`Closing Session ${sessionId}...`)
+    try {
+      await dashboardApi.closeSession(sessionId)
+      setMessage(`Session ${sessionId} closed. Settlement and refundable balance were recalculated by the Hypervisor.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : `Session ${sessionId} could not be closed.`)
+    } finally { setBusy(null) }
+  }
+
+  async function sweepIdle() {
+    setBusy('sweep')
+    setMessage('Checking active Sessions against their idle deadlines...')
+    try {
+      const result = await dashboardApi.sweepIdleSessions()
+      setMessage(`Idle sweep completed. ${result?.closed_count ?? 0} Session${result?.closed_count === 1 ? '' : 's'} closed.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Idle Session sweep failed.')
+    } finally { setBusy(null) }
+  }
+
+  return <div className="space-y-4">
+    <ScreenHeading eyebrow="Execution and delegated control" title="Agents & Sessions" detail="Supervise Consumer Sessions here and manage delegated MCP credentials in Settings. Closing a Session always uses the server-side settlement policy; the browser never calculates a payout." />
+    {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+    <div className="flex flex-wrap gap-2">
+      <Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" onClick={() => onNavigate('settings')}><KeyRound />Manage agent permissions</Button>
+      <Button variant="outline" className="border-border bg-[#091725]" disabled={busy === 'sweep'} onClick={() => void sweepIdle()}><RotateCcw />{busy === 'sweep' ? 'Sweeping...' : 'Sweep idle Sessions'}</Button>
+      <Button variant="ghost" onClick={onRefresh}><RefreshCw className={cn(data.sessions.isFetching && 'animate-spin')} />Refresh Sessions</Button>
     </div>
-  )
+    {data.sessions.isLoading && !sessions ? <PanelSkeleton rows={5} /> : null}
+    {data.sessions.error && !sessions ? <PanelError title="Session control is unavailable" error={data.sessions.error} onRetry={onRefresh} /> : null}
+    {sessions ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-end justify-between gap-3"><div><CardTitle className="text-lg font-semibold">Session ledger</CardTitle><p className="mt-1 text-sm text-muted-foreground">{sessions.summary.active} active · {sessions.summary.queued} queued · {sessions.summary.closed} closed</p></div><StatusBadge value={sessions.summary.active > 0 ? 'running' : 'ready'} /></div></CardHeader><CardContent className="divide-y divide-border/70 p-0">{sessions.items.length === 0 ? <EmptyState title="No Sessions recorded" detail="Published Endpoints will create Session records when Consumers submit work." actionLabel="Review Endpoints" onAction={() => onNavigate('endpoints')} /> : sessions.items.map((item) => { const session = getRecord(item.session); const deposit = getRecord(item.deposit); const preview = getRecord(item.settlement_preview); const id = getText(session, 'session_id'); const status = getText(session, 'status') || 'unknown'; return <div key={id} className="grid gap-3 px-5 py-4 xl:grid-cols-[minmax(0,1.5fr)_repeat(3,minmax(7rem,0.5fr))_auto] xl:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{getText(item, 'display_name') || getText(session, 'endpoint_id') || 'Endpoint Session'}</p><StatusBadge value={status} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{id} · {getText(session, 'request_count') || '0'} request(s)</p></div><SessionValue label="Locked" value={`${getText(deposit, 'locked_q') || '0'} Q`} /><SessionValue label="Consumed" value={`${getText(deposit, 'consumed_q') || '0'} Q`} /><SessionValue label="Refund preview" value={`${getText(preview, 'projected_refundable_q') || '0'} Q`} /><Button variant="outline" size="sm" className="border-rose-300/25 bg-transparent text-rose-100 hover:bg-rose-300/10" disabled={status === 'closed' || busy === id} onClick={() => void closeSession(id)}>{busy === id ? 'Closing...' : status === 'closed' ? 'Closed' : 'Close Session'}</Button></div> })}</CardContent></Card> : null}
+  </div>
+}
+
+function SessionValue({ label, value }: { label: string; value: string }) {
+  return <div><p className="eyebrow">{label}</p><p className="mt-1 font-mono text-xs text-slate-200">{value}</p></div>
+}
+
+function MarketWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
+  const market = data.market.data
+  const remotes = data.remoteEndpoints.data
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const offers = market?.canonical_candidates.length ? market.canonical_candidates : market?.candidates ?? []
+
+  async function attach(item: DashboardRecord) {
+    const nodeId = getText(item, 'node_id')
+    const endpointId = getText(item, 'endpoint_id')
+    const key = `${nodeId}:${endpointId}`
+    setBusy(key)
+    setMessage(`Attaching ${endpointId} from ${nodeId}...`)
+    try {
+      await dashboardApi.attachRemoteEndpoint({ node_id: nodeId, endpoint_id: endpointId, routing_mode: 'preferred' })
+      setMessage(`Remote Endpoint ${endpointId} attached. Continue in Endpoints to stage a local proxy draft.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Remote Endpoint attach failed.')
+    } finally { setBusy(null) }
+  }
+
+  return <div className="space-y-4">
+    <ScreenHeading eyebrow="Network service discovery" title="Market" detail="Browse canonical offers without exposing Provider topology. Local offers open their Endpoint; remote offers can be attached to this Hypervisor as preferred capacity." />
+    {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+    <div className="flex flex-wrap gap-2"><Button variant="outline" className="border-border bg-[#091725]" onClick={onRefresh}><RefreshCw className={cn(data.market.isFetching && 'animate-spin')} />Refresh catalogue</Button><Button variant="outline" className="border-border bg-[#091725]" onClick={() => onNavigate('endpoints')}><RadioTower />Manage local Endpoints</Button><Button variant="ghost" onClick={() => onNavigate('network')}><Network />Network status</Button></div>
+    {(data.market.isLoading || data.remoteEndpoints.isLoading) && !market ? <PanelSkeleton rows={6} /> : null}
+    {data.market.error && !market ? <PanelError title="Market catalogue is unavailable" error={data.market.error} onRetry={onRefresh} /> : null}
+    {market ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-end justify-between gap-3"><div><CardTitle className="text-lg font-semibold">Canonical offers</CardTitle><p className="mt-1 text-sm text-muted-foreground">{offers.length} offer(s) across {market.nodes.length} visible node(s)</p></div><StatusBadge value={offers.length > 0 ? 'ready' : 'unavailable'} /></div></CardHeader><CardContent className="divide-y divide-border/70 p-0">{offers.length === 0 ? <EmptyState title="No market offers discovered" detail="Publish a local Endpoint or restore Registry replication to populate the canonical catalogue." actionLabel="Create Endpoint" onAction={() => onNavigate('endpoints')} /> : offers.map((offer, index) => { const nodeId = getText(offer, 'node_id'); const endpointId = getText(offer, 'endpoint_id'); const origin = getText(offer, 'origin') || 'external'; const remote = remotes?.discovered.find((item) => getText(item, 'node_id') === nodeId && getText(item, 'endpoint_id') === endpointId); const attachSource = remote ?? offer; const attached = Boolean(getRecord(attachSource)?.already_attached); const key = `${nodeId}:${endpointId}`; return <div key={`${key}:${index}`} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(9rem,0.7fr)_minmax(8rem,0.6fr)_auto] lg:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{getText(offer, 'display_name') || endpointId || getText(offer, 'bundle_id')}</p><StatusBadge value={origin === 'own' ? 'published' : getText(offer, 'status') || 'ready'} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{nodeId} · {getText(offer, 'model_class') || getText(offer, 'model_id') || 'model class not disclosed'}</p></div><SessionValue label="Origin" value={origin} /><SessionValue label="Price" value={marketPrice(offer)} /><div>{origin === 'own' ? <Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={() => onNavigate('endpoints')}>Open Endpoint<ChevronRight /></Button> : <Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" size="sm" disabled={!endpointId || attached || busy === key} onClick={() => void attach(attachSource)}>{attached ? 'Attached' : busy === key ? 'Attaching...' : 'Attach'}</Button>}</div></div> })}</CardContent></Card> : null}
+  </div>
+}
+
+function marketPrice(offer: DashboardRecord): string {
+  const pricing = getRecord(offer.pricing)
+  const fixed = getText(pricing, 'fixed') || getText(pricing, 'fixed_price_q') || getText(offer, 'fixed_price_q')
+  if (fixed) return `${fixed} Q`
+  const input = getText(pricing, 'input')
+  return input ? `${input} Q input` : 'Contract-bound'
+}
+
+function ValidationWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
+  const endpoints = data.endpoints.data?.items ?? []
+  const summary = summarizeValidation(endpoints)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function requestValidation(endpoint: Endpoint) {
+    setBusy(endpoint.endpoint_id)
+    setMessage(`Submitting validation request for ${endpoint.endpoint_id}...`)
+    try {
+      const result = await dashboardApi.requestEndpointValidation(endpoint.endpoint_id)
+      const status = getText(result, 'status') || getText(result, 'validation_status') || 'accepted'
+      setMessage(`Validation request for ${endpoint.endpoint_id} was ${status}. Refresh will show the resulting evidence.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : `Validation request for ${endpoint.endpoint_id} failed.`)
+    } finally { setBusy(null) }
+  }
+
+  return <div className="space-y-4">
+    <ScreenHeading eyebrow="Endpoint assurance" title="Validation" detail="Request and inspect Validation without changing the immutable Bundle. Runtime health and Validation evidence remain separate signals." />
+    {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><CompactStat label="Published" value={summary.published} /><CompactStat label="Verified" value={summary.verified} /><CompactStat label="Pending" value={summary.pending} /><CompactStat label="Unvalidated" value={summary.unvalidated} /></div>
+    {data.endpoints.isLoading && endpoints.length === 0 ? <PanelSkeleton rows={5} /> : null}
+    {data.endpoints.error && endpoints.length === 0 ? <PanelError title="Validation inventory is unavailable" error={data.endpoints.error} onRetry={onRefresh} /> : null}
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><CardTitle className="text-lg font-semibold">Endpoint validation queue</CardTitle><p className="mt-1 text-sm text-muted-foreground">Only actual Endpoint records appear here.</p></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={onRefresh}><RefreshCw className={cn(data.endpoints.isFetching && 'animate-spin')} />Refresh evidence</Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{endpoints.length === 0 ? <EmptyState title="No Endpoints to validate" detail="Create a draft from a ready Runtime Binding, then publish it before requesting network Validation." actionLabel="Create Endpoint" onAction={() => onNavigate('endpoints')} /> : endpoints.map((endpoint) => { const validation = getRecord(endpoint.validation_summary) ?? getRecord(endpoint.validation); const state = getText(validation, 'status') || getText(validation, 'state') || 'unvalidated'; return <div key={endpoint.endpoint_id} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(8rem,0.5fr)_minmax(8rem,0.5fr)_auto] lg:items-center"><div className="min-w-0"><p className="font-medium text-slate-100">{endpoint.display_name || endpoint.endpoint_id}</p><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{endpoint.endpoint_id} · {endpoint.model_class || 'model class pending'}</p></div><div><p className="eyebrow">Publication</p><div className="mt-1"><StatusBadge value={endpoint.publication_status} /></div></div><div><p className="eyebrow">Validation</p><div className="mt-1"><StatusBadge value={state} /></div></div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === endpoint.endpoint_id} onClick={() => void requestValidation(endpoint)}><ShieldCheck />{busy === endpoint.endpoint_id ? 'Submitting...' : 'Request validation'}</Button><Button variant="ghost" size="sm" onClick={() => onNavigate('endpoints')}>Details<ChevronRight /></Button></div></div> })}</CardContent></Card>
+  </div>
+}
+
+function CompactStat({ label, value }: { label: string; value: number }) {
+  return <div className="rounded-lg border border-border/80 bg-card px-4 py-3"><p className="eyebrow">{label}</p><p className="mt-2 text-xl font-semibold text-white">{formatCount(value)}</p></div>
+}
+
+function NetworkWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
+  const readiness = data.readiness.data
+  const remotes = data.remoteEndpoints.data
+  const market = data.market.data
+  const node = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function detach(item: DashboardRecord) {
+    const id = getText(item, 'remote_endpoint_id')
+    if (!id || !window.confirm(`Detach remote Endpoint ${id}? Active proxy routes may block this action.`)) return
+    setBusy(id)
+    setMessage(`Detaching remote Endpoint ${id}...`)
+    try {
+      await dashboardApi.detachRemoteEndpoint(id)
+      setMessage(`Remote Endpoint ${id} detached from this Hypervisor.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : `Remote Endpoint ${id} could not be detached.`)
+    } finally { setBusy(null) }
+  }
+
+  function refreshNetwork() {
+    setMessage('Rechecking consensus, registry and remote Endpoint state...')
+    onRefresh()
+  }
+
+  return <div className="space-y-4">
+    <ScreenHeading eyebrow="Consensus and discovery" title="Network" detail="Inspect the evidence that makes this Hypervisor network-ready. A green label is shown only when the corresponding backend check reports ready." />
+    {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+    <div className="flex flex-wrap gap-2"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" onClick={refreshNetwork}><RefreshCw className={cn(data.readiness.isFetching && 'animate-spin')} />Recheck network</Button><Button variant="outline" className="border-border bg-[#091725]" onClick={() => onNavigate('market')}><BriefcaseBusiness />Browse Market</Button><Button variant="outline" className="border-border bg-[#091725]" onClick={() => onNavigate('settings')}><Settings />Host settings</Button></div>
+    {data.readiness.error && !readiness ? <PanelError title="Network readiness is unavailable" error={data.readiness.error} onRetry={refreshNetwork} /> : null}
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(20rem,0.8fr)]"><Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex items-center justify-between gap-3"><div><CardTitle className="text-lg font-semibold">Readiness evidence</CardTitle><p className="mt-1 text-sm text-muted-foreground">{getText(node, 'node_id') || 'Local Hypervisor'} · {getText(node, 'base_url') || 'control address unavailable'}</p></div><StatusBadge value={readiness?.network_ready ? 'ready' : 'blocked'} /></div></CardHeader><CardContent className="divide-y divide-border/70 p-0">{readiness?.steps.map((step) => <div key={step.key} className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-start sm:justify-between"><div><p className="font-medium text-slate-100">{step.title}</p><p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">{step.detail || step.summary}</p></div><StatusBadge value={step.status} /></div>) ?? <p className="px-5 py-6 text-sm text-muted-foreground">Network evidence has not arrived yet.</p>}</CardContent></Card><Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><CardTitle className="text-lg font-semibold">Visible network</CardTitle></CardHeader><CardContent className="divide-y divide-border/70 p-0"><NetworkFact label="Registry nodes" value={formatCount(market?.nodes.length ?? 0)} detail="nodes returned by current discovery" /><NetworkFact label="Remote offers" value={formatCount(remotes?.summary.discovered ?? 0)} detail="published Endpoint records" /><NetworkFact label="Attached capacity" value={formatCount(remotes?.summary.attached ?? 0)} detail="remote Endpoints available to proxy routes" /></CardContent></Card></div>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><CardTitle className="text-lg font-semibold">Attached remote Endpoints</CardTitle><p className="mt-1 text-sm text-muted-foreground">Detach is rejected when a local proxy route still depends on the record.</p></CardHeader><CardContent className="divide-y divide-border/70 p-0">{(remotes?.attached ?? []).length === 0 ? <EmptyState title="No remote capacity attached" detail="Open Market to discover and attach an Endpoint from another Hypervisor." actionLabel="Browse Market" onAction={() => onNavigate('market')} /> : remotes?.attached.map((item) => { const id = getText(item, 'remote_endpoint_id'); return <div key={id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-medium text-slate-100">{getText(item, 'alias') || getText(item, 'source_endpoint_id')}</p><p className="mt-1 font-mono text-[11px] text-slate-500">{getText(item, 'source_node_id')} · {id}</p></div><div className="flex items-center gap-2"><StatusBadge value={getText(item, 'status') || 'ready'} /><Button variant="outline" size="sm" className="border-rose-300/25 bg-transparent text-rose-100 hover:bg-rose-300/10" disabled={busy === id} onClick={() => void detach(item)}><Trash2 />{busy === id ? 'Detaching...' : 'Detach'}</Button></div></div> })}</CardContent></Card>
+  </div>
+}
+
+function NetworkFact({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return <div className="px-5 py-4"><p className="eyebrow">{label}</p><p className="mt-2 text-lg font-semibold text-slate-100">{value}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></div>
 }
 
 function DataTable<TData>({ table }: { table: ReturnType<typeof useReactTable<TData>> }) {
@@ -1556,7 +1669,7 @@ function DataTable<TData>({ table }: { table: ReturnType<typeof useReactTable<TD
   )
 }
 
-function ResourceOverview({ fleet, isLoading, error }: { fleet: DashboardData['fleet']['data']; isLoading: boolean; error: Error | null }) {
+function ResourceOverview({ fleet, isLoading, error, onNavigate }: { fleet: DashboardData['fleet']['data']; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate'] }) {
   if (isLoading && !fleet) return <PanelSkeleton rows={4} />
   if (error && !fleet) return <PanelError title="Resource probe is unavailable" error={error} />
   const resources = fleet?.resources
@@ -1567,7 +1680,7 @@ function ResourceOverview({ fleet, isLoading, error }: { fleet: DashboardData['f
   const gpuReported = Boolean(probe?.gpu_reported)
   return (
     <Card className="border-border/80 bg-card py-0 shadow-none">
-      <CardHeader className="px-4 py-4"><div><p className="eyebrow">Host telemetry</p><CardTitle className="mt-1 text-base font-semibold">Resource usage</CardTitle></div></CardHeader>
+      <CardHeader className="flex-row items-start justify-between gap-3 px-4 py-4"><div><p className="eyebrow">Host telemetry</p><CardTitle className="mt-1 text-base font-semibold">Resource usage</CardTitle></div><Button variant="ghost" size="xs" className="text-cyan-200 hover:bg-cyan-300/10" onClick={() => onNavigate('settings')}>Probe details<ChevronRight /></Button></CardHeader>
       <CardContent className="space-y-4 px-4 pb-4">
         <ResourceMeter label="CPU" value={cpu.percent} detail={`${formatCount(cpu.used)} / ${formatCount(cpu.total)} cores`} color="cyan" />
         <ResourceMeter label="RAM" value={ram.percent} detail={`${formatMemory(ram.used)} / ${formatMemory(ram.total)}`} color="violet" />
@@ -1591,16 +1704,6 @@ function ResourceMeter({ label, value, detail, color, muted = false }: { label: 
   </div>
 }
 
-function ValidationOverview({ endpoints, summary, isLoading, error }: { endpoints: Endpoint[]; summary: ReturnType<typeof summarizeValidation>; isLoading: boolean; error: Error | null }) {
-  if (isLoading && endpoints.length === 0) return <PanelSkeleton rows={3} />
-  if (error && endpoints.length === 0) return <PanelError title="Validation data is unavailable" error={error} />
-  return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="px-4 py-4"><div><p className="eyebrow">Endpoint assurance</p><CardTitle className="mt-1 text-base font-semibold">Validation overview</CardTitle></div></CardHeader><CardContent className="px-4 pb-4"><div className="flex items-end gap-5"><div className="grid size-[88px] place-items-center rounded-full border-[7px] border-cyan-300/20 bg-cyan-300/5"><div className="text-center"><p className="font-mono text-2xl font-semibold text-white">{summary.total}</p><p className="font-mono text-[9px] uppercase tracking-[0.12em] text-cyan-100/65">offers</p></div></div><div className="space-y-2 text-xs"><StatusLine label="Published" value={summary.published} className="bg-emerald-300" /><StatusLine label="Pending review" value={summary.pending} className="bg-amber-300" /><StatusLine label="Unvalidated" value={summary.unvalidated} className="bg-slate-400" /></div></div><p className="mt-4 text-xs leading-5 text-muted-foreground">Validation reflects endpoint evidence. It does not replace Runtime health or the Bundle publication chain.</p></CardContent></Card>
-}
-
-function StatusLine({ label, value, className }: { label: string; value: number; className: string }) {
-  return <div className="flex items-center gap-2"><span className={cn('size-2 rounded-full', className)} /><span className="text-slate-300">{label}</span><span className="ml-auto font-mono text-slate-100">{value}</span></div>
-}
-
 function SystemState({ fleet, home, isLoading }: { fleet: DashboardData['fleet']['data']; home: DashboardData['home']['data']; isLoading: boolean }) {
   if (isLoading && !fleet && !home) return <PanelSkeleton rows={3} />
   const queue = fleet?.queue
@@ -1612,19 +1715,19 @@ function HealthRow({ icon: Icon, label, value, detail }: { icon: LucideIcon; lab
   return <div className="flex items-center gap-3"><span className="grid size-7 place-items-center rounded-md bg-cyan-300/8 text-cyan-200"><Icon className="size-3.5" /></span><div className="min-w-0 flex-1"><p className="text-xs font-medium text-white">{label}</p><p className="truncate text-[11px] text-muted-foreground">{detail}</p></div><span className="font-mono text-xs font-semibold text-emerald-300">{value}</span></div>
 }
 
-function ResourceFooter({ fleet, isLoading }: { fleet: DashboardData['fleet']['data']; isLoading: boolean }) {
+function ResourceFooter({ fleet, isLoading, onNavigate }: { fleet: DashboardData['fleet']['data']; isLoading: boolean; onNavigate: NavigationProps['onNavigate'] }) {
   const resources = fleet?.resources
   const cpu = resourceUsage(resources?.total.cpu, resources?.free.cpu)
   const ram = resourceUsage(resources?.total.ram_mb, resources?.free.ram_mb)
   const vram = resourceUsage(resources?.total.vram_mb, resources?.free.vram_mb)
   const queue = fleet?.queue
   const items = [
-    { label: 'CPU', value: isLoading ? '…' : formatPercent(cpu.percent), icon: Cpu, tone: 'text-cyan-300' },
-    { label: 'RAM', value: isLoading ? '…' : formatPercent(ram.percent), icon: Database, tone: 'text-violet-300' },
-    { label: 'VRAM', value: isLoading ? '…' : resources?.probe?.gpu_reported ? formatPercent(vram.percent) : '—', icon: Zap, tone: 'text-amber-300' },
-    { label: 'Sessions', value: isLoading ? '…' : formatCount(queue?.active ?? 0), icon: Activity, tone: 'text-sky-300' },
+    { label: 'CPU', value: isLoading ? '…' : formatPercent(cpu.percent), icon: Cpu, tone: 'text-cyan-300', screen: 'settings' as DashboardScreen },
+    { label: 'RAM', value: isLoading ? '…' : formatPercent(ram.percent), icon: Database, tone: 'text-violet-300', screen: 'settings' as DashboardScreen },
+    { label: 'VRAM', value: isLoading ? '…' : resources?.probe?.gpu_reported ? formatPercent(vram.percent) : '—', icon: Zap, tone: 'text-amber-300', screen: 'settings' as DashboardScreen },
+    { label: 'Sessions', value: isLoading ? '…' : formatCount(queue?.active ?? 0), icon: Activity, tone: 'text-sky-300', screen: 'agents' as DashboardScreen },
   ]
-  return <footer className="fixed inset-x-0 bottom-0 z-20 border-t border-border/75 bg-[#060e18]/95 backdrop-blur-xl"><div className="mx-auto flex w-full max-w-[1760px] overflow-x-auto px-3 lg:px-5">{items.map(({ label, value, icon: Icon, tone }) => <div key={label} className="flex min-w-40 items-center gap-2 border-r border-border/70 px-4 py-2.5 first:pl-0"><Icon className={cn('size-4', tone)} /><div><p className="font-mono text-[9px] uppercase tracking-[0.12em] text-cyan-100/60">{label}</p><p className="mt-0.5 font-mono text-xs font-semibold text-white">{value}</p></div></div>)}</div></footer>
+  return <footer className="fixed inset-x-0 bottom-0 z-20 border-t border-border/75 bg-[#060e18]/95 backdrop-blur-xl"><div className="mx-auto flex w-full max-w-[1760px] overflow-x-auto px-3 lg:px-5">{items.map(({ label, value, icon: Icon, tone, screen }) => <button type="button" key={label} className="flex min-w-40 items-center gap-2 border-r border-border/70 px-4 py-2.5 text-left transition-colors hover:bg-white/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70 first:pl-0" onClick={() => onNavigate(screen)}><Icon className={cn('size-4', tone)} /><div><p className="font-mono text-[9px] uppercase tracking-[0.12em] text-cyan-100/60">{label}</p><p className="mt-0.5 font-mono text-xs font-semibold text-white">{value}</p></div><ChevronRight className="ml-auto size-3.5 text-slate-600" /></button>)}</div></footer>
 }
 
 function ScreenHeading({ eyebrow, title, detail }: { eyebrow: string; title: string; detail: string }) {
@@ -1656,11 +1759,12 @@ function summarizeValidation(endpoints: Endpoint[]) {
   return endpoints.reduce((summary, endpoint) => {
     summary.total += 1
     if (endpoint.publication_status === 'published') summary.published += 1
-    const validationStatus = getText(endpoint.validation, 'validation_status')
+    const validationStatus = getText(endpoint.validation_summary, 'status') || getText(endpoint.validation_summary, 'validation_status') || getText(endpoint.validation, 'validation_status')
+    if (validationStatus === 'verified' || validationStatus === 'passed' || validationStatus === 'valid') summary.verified += 1
     if (validationStatus === 'pending' || validationStatus === 'running') summary.pending += 1
     if (!validationStatus || validationStatus === 'unvalidated') summary.unvalidated += 1
     return summary
-  }, { total: 0, published: 0, pending: 0, unvalidated: 0 })
+  }, { total: 0, published: 0, verified: 0, pending: 0, unvalidated: 0 })
 }
 
 export default App

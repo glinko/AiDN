@@ -14,6 +14,10 @@ Depends on:
 - `RFC-0062 Snapshot and State Sync Protocol`
 - `MVP-0001 Economic Execution Profile`
 
+Extended by:
+
+- [UI-0002 Hypervisor Dashboard Screen and Action Map](./UI-0002-hypervisor-dashboard-screen-and-action-map.md)
+
 ## 1. Purpose
 
 This document defines the information architecture and operator interaction model of the AiDN Hypervisor Dashboard. It is a UI specification, not an RFC or economic policy: RFCs define protocol behavior, while UI documents define how an operator discovers, configures, understands, and controls the corresponding domain objects.

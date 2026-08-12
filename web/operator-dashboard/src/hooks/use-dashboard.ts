@@ -54,6 +54,30 @@ export function useDashboardData() {
     staleTime: staleTimeMs,
     refetchInterval: refetchIntervalMs,
   })
+  const sessions = useQuery({
+    queryKey: ['operator-dashboard', 'sessions'],
+    queryFn: ({ signal }) => dashboardApi.sessions(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
+  const market = useQuery({
+    queryKey: ['operator-dashboard', 'market'],
+    queryFn: ({ signal }) => dashboardApi.market(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
+  const remoteEndpoints = useQuery({
+    queryKey: ['operator-dashboard', 'remote-endpoints'],
+    queryFn: ({ signal }) => dashboardApi.remoteEndpoints(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
+  const events = useQuery({
+    queryKey: ['operator-dashboard', 'events'],
+    queryFn: ({ signal }) => dashboardApi.events(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
 
-  return { home, readiness, fleet, bundles, endpoints, wallet, providers, installs }
+  return { home, readiness, fleet, bundles, endpoints, wallet, providers, installs, sessions, market, remoteEndpoints, events }
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { dashboardSchemas, type BundlePayload, type DashboardHome, type EndpointPayload, type Fleet, type Readiness, type WalletDashboard } from '@/lib/types'
+import { dashboardSchemas, type BundlePayload, type DashboardHome, type EndpointPayload, type Fleet, type MarketDashboard, type Readiness, type RemoteEndpointsDashboard, type SessionDashboard, type WalletDashboard } from '@/lib/types'
 
 const apiRoot = (import.meta.env.VITE_AIDN_API_ROOT ?? '').replace(/\/$/, '')
 const requestTimeoutMs = 15_000
@@ -187,6 +187,10 @@ export const dashboardApi = {
   wallet: (signal?: AbortSignal): Promise<WalletDashboard> => readDashboard('/operators/dashboard/wallet', dashboardSchemas.wallet, signal),
   providers: (signal?: AbortSignal): Promise<ProviderWorkspace> => readDashboard('/operators/dashboard/providers', providerWorkspaceSchema, signal),
   installs: (signal?: AbortSignal): Promise<ModelInstallWorkspace> => readDashboard('/operators/dashboard/installs', modelInstallWorkspaceSchema, signal),
+  sessions: (signal?: AbortSignal): Promise<SessionDashboard> => readDashboard('/operators/dashboard/sessions', dashboardSchemas.sessions, signal),
+  market: (signal?: AbortSignal): Promise<MarketDashboard> => readDashboard('/operators/dashboard/market', dashboardSchemas.market, signal),
+  remoteEndpoints: (signal?: AbortSignal): Promise<RemoteEndpointsDashboard> => readDashboard('/operators/dashboard/remote-endpoints', dashboardSchemas.remoteEndpoints, signal),
+  events: (signal?: AbortSignal) => readDashboard('/operators/events?limit=24', dashboardSchemas.events, signal),
   accessStatus: (): Promise<DashboardAccessStatus> => writeDashboard('/operators/dashboard/access/status', { method: 'GET' }) as Promise<DashboardAccessStatus>,
   pairDashboard: (code: string, duration: string) => writeDashboard('/operators/dashboard/access/pair', { method: 'POST', body: JSON.stringify({ code, duration }) }),
   createAgentCredential: (label: string, scopes?: string[], autoApprovedScopes?: string[]) => writeDashboard<AccessCredential>('/operators/dashboard/access/credentials', { method: 'POST', body: JSON.stringify({ label, ...(scopes ? { scopes } : {}), ...(autoApprovedScopes ? { auto_approved_scopes: autoApprovedScopes } : {}) }) }),
@@ -217,4 +221,8 @@ export const dashboardApi = {
   updateEndpoint: (endpointId: string, payload: DashboardRecord) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/endpoints/${encodeURIComponent(endpointId)}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   publishEndpoint: (endpointId: string) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/endpoints/${encodeURIComponent(endpointId)}/publish`, { method: 'POST' }),
   requestEndpointValidation: (endpointId: string) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/endpoints/${encodeURIComponent(endpointId)}/validation`, { method: 'POST' }),
+  closeSession: (sessionId: string) => writeDashboard<DashboardRecord>('/operators/dashboard/sessions/actions/close', { method: 'POST', body: JSON.stringify({ session_id: sessionId }) }),
+  sweepIdleSessions: () => writeDashboard<{ closed_count: number; items: DashboardRecord[] }>('/operators/dashboard/sessions/actions/sweep-idle', { method: 'POST', body: JSON.stringify({}) }),
+  attachRemoteEndpoint: (payload: { node_id: string; endpoint_id: string; alias?: string; routing_mode?: string }) => writeDashboard<DashboardRecord>('/operators/remote-endpoints/attach', { method: 'POST', body: JSON.stringify(payload) }),
+  detachRemoteEndpoint: (remoteEndpointId: string) => writeDashboard<DashboardRecord>(`/operators/remote-endpoints/${encodeURIComponent(remoteEndpointId)}`, { method: 'DELETE' }),
 }

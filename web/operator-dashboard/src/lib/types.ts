@@ -163,6 +163,52 @@ const walletDashboardSchema = z.object({
   faucet_preview: unknownRecord.default({}),
 }).passthrough()
 
+const sessionDashboardSchema = z.object({
+  owner_wallet: unknownRecord.optional(),
+  node_identity: unknownRecord.optional(),
+  summary: z.object({
+    total: numberValue,
+    active: numberValue,
+    queued: numberValue,
+    closed: numberValue,
+  }).passthrough(),
+  items: z.array(unknownRecord).catch([]),
+}).passthrough()
+
+const marketDashboardSchema = z.object({
+  query: unknownRecord.optional(),
+  nodes: z.array(unknownRecord).catch([]),
+  candidates: z.array(unknownRecord).catch([]),
+  canonical_candidates: z.array(unknownRecord).catch([]),
+  canonical_summary: unknownRecord.default({}),
+  recommended_action: unknownRecord.optional(),
+}).passthrough()
+
+const remoteEndpointsDashboardSchema = z.object({
+  owner_wallet: unknownRecord.optional(),
+  node_identity: unknownRecord.optional(),
+  summary: z.object({
+    attached: numberValue,
+    discovered: numberValue,
+    remote_nodes: numberValue,
+    model_classes: numberValue,
+  }).passthrough(),
+  policy: unknownRecord.optional(),
+  attached: z.array(unknownRecord).catch([]),
+  discovered: z.array(unknownRecord).catch([]),
+  recommended_action: unknownRecord.optional(),
+}).passthrough()
+
+const journalEventSchema = z.object({
+  timestamp: stringValue,
+  event_type: stringValue,
+  message: stringValue,
+  task_id: z.string().nullable().optional(),
+  bundle_id: z.string().nullable().optional(),
+  runtime_id: z.string().nullable().optional(),
+  details: unknownRecord.default({}),
+}).passthrough()
+
 export type DashboardHome = z.infer<typeof homeSchema>
 export type Readiness = z.infer<typeof readinessSchema>
 export type ReadinessStep = z.infer<typeof readinessStepSchema>
@@ -172,6 +218,10 @@ export type EndpointPayload = z.infer<typeof endpointPayloadSchema>
 export type Bundle = z.infer<typeof bundleSchema>
 export type Endpoint = z.infer<typeof endpointSchema>
 export type WalletDashboard = z.infer<typeof walletDashboardSchema>
+export type SessionDashboard = z.infer<typeof sessionDashboardSchema>
+export type MarketDashboard = z.infer<typeof marketDashboardSchema>
+export type RemoteEndpointsDashboard = z.infer<typeof remoteEndpointsDashboardSchema>
+export type JournalEvent = z.infer<typeof journalEventSchema>
 
 export const dashboardSchemas = {
   home: homeSchema,
@@ -180,4 +230,8 @@ export const dashboardSchemas = {
   bundles: bundlePayloadSchema,
   endpoints: endpointPayloadSchema,
   wallet: walletDashboardSchema,
+  sessions: sessionDashboardSchema,
+  market: marketDashboardSchema,
+  remoteEndpoints: remoteEndpointsDashboardSchema,
+  events: z.array(journalEventSchema),
 }
