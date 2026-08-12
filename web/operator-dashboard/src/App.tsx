@@ -17,15 +17,19 @@ import {
   Menu,
   Network,
   PanelsTopLeft,
+  Plus,
   RadioTower,
   RefreshCw,
   RotateCcw,
+  Search,
   ServerCog,
   Settings,
   ShieldCheck,
   Sparkles,
   WalletCards,
   Trash2,
+  Clock3,
+  Eye,
   XCircle,
   Zap,
   type LucideIcon,
@@ -41,7 +45,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -67,6 +71,7 @@ import { useDashboardData } from '@/hooks/use-dashboard'
 import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type ProviderArtifactInventory, type ProviderWorkspace } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
 import type { Bundle, Endpoint, ReadinessStep, WalletDashboard } from '@/lib/types'
+import { createSavedHypervisor, loadSavedHypervisors, saveSavedHypervisors, type SavedHypervisorConnection } from '@/lib/hypervisor-connections'
 
 type NavigationItem = {
   id: DashboardScreen
@@ -194,6 +199,8 @@ function App() {
   const { activeScreen, advanced, setActiveScreen, setAdvanced } = useOperatorDashboardStore()
   const data = useDashboardData()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [savedHypervisors, setSavedHypervisors] = useState<SavedHypervisorConnection[]>(loadSavedHypervisors)
+  const [addHypervisorOpen, setAddHypervisorOpen] = useState(false)
   const [refreshFeedback, setRefreshFeedback] = useState<RefreshFeedback>({ state: 'idle', message: 'Live data refreshes every 20 seconds' })
 
   const nodeIdentity = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
@@ -260,6 +267,13 @@ function App() {
         onToggleAdvanced={() => setAdvanced(!advanced)}
         onOpenNavigation={() => setMobileOpen(true)}
         onNavigate={navigate}
+        savedHypervisors={savedHypervisors}
+        onAddHypervisor={() => setAddHypervisorOpen(true)}
+        onRemoveHypervisor={(connection) => {
+          const next = savedHypervisors.filter((item) => item.id !== connection.id)
+          saveSavedHypervisors(next)
+          setSavedHypervisors(next)
+        }}
       />
 
       <div className="mx-auto flex w-full max-w-[1760px] gap-0 px-3 pb-20 pt-3 lg:px-5">
@@ -299,6 +313,18 @@ function App() {
 
       <ResourceFooter fleet={data.fleet.data} isLoading={data.fleet.isLoading} onNavigate={navigate} />
 
+      <AddHypervisorSheet
+        open={addHypervisorOpen}
+        onOpenChange={setAddHypervisorOpen}
+        savedHypervisors={savedHypervisors}
+        onAdded={(connection) => {
+          const next = [connection, ...savedHypervisors.filter((item) => item.id !== connection.id)]
+          saveSavedHypervisors(next)
+          setSavedHypervisors(next)
+          window.open(connection.url, '_blank', 'noopener,noreferrer')
+        }}
+      />
+
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetTrigger className="hidden" />
         <SheetContent side="left" className="w-[280px] overflow-y-auto border-r-border bg-[#07111d] p-3">
@@ -325,6 +351,9 @@ type TopBarProps = {
   onToggleAdvanced: () => void
   onOpenNavigation: () => void
   onNavigate: (screen: DashboardScreen) => void
+  savedHypervisors: SavedHypervisorConnection[]
+  onAddHypervisor: () => void
+  onRemoveHypervisor: (connection: SavedHypervisorConnection) => void
 }
 
 function TopBar({
@@ -337,6 +366,9 @@ function TopBar({
   onToggleAdvanced,
   onOpenNavigation,
   onNavigate,
+  savedHypervisors,
+  onAddHypervisor,
+  onRemoveHypervisor,
 }: TopBarProps) {
   return (
     <header className="sticky top-0 z-30 border-b border-border/80 bg-[#040a12]/95 backdrop-blur-xl">
@@ -370,6 +402,36 @@ function TopBar({
             <span className="block max-w-44 truncate">{nodeName}</span>
             <span className="hidden text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground sm:block">Local Hypervisor</span>
           </button>
+          {savedHypervisors.map((connection) => (
+            <div key={connection.id} className="group flex shrink-0 items-stretch border border-border/70 bg-[#071321]">
+              <a
+                href={connection.url}
+                target="_blank"
+                rel="noreferrer"
+                className="flex min-w-0 items-center px-3 py-2 text-left text-sm font-medium text-slate-200 transition-colors hover:bg-cyan-300/[0.06] hover:text-cyan-100 sm:px-4"
+                title={`Open ${connection.name} at ${connection.url}`}
+              >
+                <span className="block max-w-36 truncate">{connection.name}</span>
+              </a>
+              <button
+                type="button"
+                aria-label={`Remove ${connection.name} from this browser`}
+                className="border-l border-border/70 px-2 text-xs text-slate-500 transition-colors hover:bg-rose-300/10 hover:text-rose-200"
+                onClick={() => onRemoveHypervisor(connection)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            aria-label="Add Hypervisor"
+            className="flex shrink-0 items-center gap-1.5 border border-dashed border-cyan-300/30 px-3 text-xs font-medium text-cyan-100 transition-colors hover:border-cyan-200/70 hover:bg-cyan-300/[0.06] sm:px-4"
+            onClick={onAddHypervisor}
+          >
+            <Plus className="size-3.5" />
+            <span className="hidden sm:inline">Add Hypervisor</span>
+          </button>
           <button type="button" className="hidden shrink-0 items-center gap-2 border border-dashed border-border/70 px-3 text-xs text-muted-foreground transition-colors hover:border-cyan-300/40 hover:text-cyan-100 md:flex" onClick={() => onNavigate('network')}>
             <Network className="size-3.5" />
             Remote discovery
@@ -392,6 +454,68 @@ function TopBar({
         </div>
       </div>
     </header>
+  )
+}
+
+function AddHypervisorSheet({
+  open,
+  onOpenChange,
+  savedHypervisors,
+  onAdded,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  savedHypervisors: SavedHypervisorConnection[]
+  onAdded: (connection: SavedHypervisorConnection) => void
+}) {
+  const [name, setName] = useState('')
+  const [url, setUrl] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  function add() {
+    try {
+      const connection = createSavedHypervisor(name, url)
+      onAdded(connection)
+      setError(null)
+      setName('')
+      setUrl('')
+      onOpenChange(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Enter a valid Hypervisor dashboard URL.')
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetTrigger className="hidden" />
+      <SheetContent side="right" className="w-full overflow-y-auto border-l-border bg-[#07111d] p-0 sm:max-w-lg">
+        <SheetHeader className="border-b border-border/70 px-5 py-5 pr-14">
+          <p className="eyebrow text-cyan-200">Connected Hypervisors</p>
+          <SheetTitle className="mt-1 text-xl font-semibold text-white">Add your Hypervisor</SheetTitle>
+          <SheetDescription className="mt-2 leading-6 text-muted-foreground">Save another node in this browser and open its dashboard in a new tab. Each node keeps its own operator session and secrets.</SheetDescription>
+        </SheetHeader>
+        <div className="space-y-5 p-5">
+          <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.05] p-4 text-sm leading-6 text-cyan-50/80">
+            Pair the new node from its own <strong className="font-semibold text-cyan-100">Settings</strong> page. Do not paste the local operator token here and do not put credentials into the URL.
+          </div>
+          <label className="grid gap-2">
+            <span className="eyebrow">Node name</span>
+            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Hypervisor GPU-02" className="h-10 rounded-lg border border-input bg-[#040b13] px-3 text-sm text-white outline-none transition focus:border-cyan-300" />
+          </label>
+          <label className="grid gap-2">
+            <span className="eyebrow">Dashboard URL</span>
+            <input value={url} onChange={(event) => setUrl(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') add() }} inputMode="url" autoComplete="url" placeholder="http://192.168.88.128:8000" className="h-10 rounded-lg border border-input bg-[#040b13] px-3 font-mono text-xs text-white outline-none transition focus:border-cyan-300" />
+            <span className="text-xs leading-5 text-muted-foreground">HTTP is suitable only for a controlled LAN. Use HTTPS outside the private network.</span>
+          </label>
+          {error ? <p role="alert" className="rounded-lg border border-rose-300/25 bg-rose-300/[0.06] px-3 py-2 text-sm leading-5 text-rose-100">{error}</p> : null}
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="outline" className="border-border bg-[#091725]" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!url.trim()} onClick={add}><Plus />Save and open</Button>
+          </div>
+          {savedHypervisors.length > 0 ? <div className="border-t border-border/70 pt-5"><p className="eyebrow">Saved in this browser</p><div className="mt-3 space-y-2">{savedHypervisors.map((connection) => <div key={connection.id} className="rounded-lg border border-border/70 bg-[#040b13] px-3 py-2"><p className="truncate text-sm font-medium text-slate-200">{connection.name}</p><p className="truncate font-mono text-[11px] text-slate-500">{connection.url}</p></div>)}</div></div> : null}
+        </div>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -1540,17 +1664,46 @@ function OperationsWorkspace({ screen, data, onNavigate, onRefresh }: { screen: 
 }
 
 function AgentsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
+  return <AgentsSessionsWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
+}
+
+function AgentsSessionsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
   const sessions = data.sessions.data
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [idleOnly, setIdleOnly] = useState(false)
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [agentAccessSummary, setAgentAccessSummary] = useState('Checking delegated access...')
+  const [activeAgentCredentials, setActiveAgentCredentials] = useState<AccessCredential[]>([])
+
+  useEffect(() => {
+    let active = true
+    void dashboardApi.accessStatus().then((status) => {
+      if (!active) return
+      const activeCredentials = status.credentials.filter((credential) => credential.state === 'active').length
+      setActiveAgentCredentials(status.credentials.filter((credential) => credential.state === 'active'))
+      setAgentAccessSummary(status.session.active
+        ? `${activeCredentials} active MCP credential${activeCredentials === 1 ? '' : 's'} · operator session paired`
+        : 'Pair the dashboard to inspect delegated MCP access')
+    }).catch(() => {
+      if (active) setAgentAccessSummary('Delegated access status is unavailable')
+    })
+    return () => { active = false }
+  }, [])
 
   async function closeSession(sessionId: string) {
     if (!window.confirm(`Close Session ${sessionId}? The canonical settlement policy will be applied.`)) return
     setBusy(sessionId)
-    setMessage(`Closing Session ${sessionId}...`)
+    setMessage(`Submitting close for ${sessionId}. The Hypervisor will calculate settlement and refund server-side.`)
     try {
-      await dashboardApi.closeSession(sessionId)
-      setMessage(`Session ${sessionId} closed. Settlement and refundable balance were recalculated by the Hypervisor.`)
+      const result = await dashboardApi.closeSession(sessionId)
+      const settlementId = valueText(getRecord(result), 'settlement_id') || valueText(getRecord(getRecord(result)?.settlement), 'settlement_id')
+      setSelectedSessionId(null)
+      setMessage(settlementId
+        ? `Session ${sessionId} closed. Settlement ${shortId(settlementId, 20)} is now recorded; refresh the ledger to inspect the result.`
+        : `Session ${sessionId} closed. Settlement and refundable balance were recalculated by the Hypervisor.`)
       onRefresh()
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : `Session ${sessionId} could not be closed.`)
@@ -1562,29 +1715,166 @@ function AgentsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData;
     setMessage('Checking active Sessions against their idle deadlines...')
     try {
       const result = await dashboardApi.sweepIdleSessions()
-      setMessage(`Idle sweep completed. ${result?.closed_count ?? 0} Session${result?.closed_count === 1 ? '' : 's'} closed.`)
+      setMessage(`Idle sweep completed. ${result?.closed_count ?? 0} Session${result?.closed_count === 1 ? '' : 's'} closed by the server.`)
       onRefresh()
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Idle Session sweep failed.')
     } finally { setBusy(null) }
   }
 
+  const items = sessions?.items ?? []
+  const filteredItems = items.filter((item) => {
+    const session = getRecord(item.session)
+    const preview = getRecord(item.settlement_preview)
+    const status = normalizeStatus(valueText(session, 'status') || 'unknown')
+    const needle = search.trim().toLowerCase()
+    const haystack = [
+      valueText(item, 'display_name'),
+      valueText(session, 'session_id'),
+      valueText(session, 'endpoint_id'),
+      valueText(session, 'node_id'),
+      valueText(session, 'client_wallet'),
+    ].join(' ').toLowerCase()
+    const secondsUntilIdle = numberValue(preview, 'seconds_until_idle_timeout')
+    const idleDeadlineValue = getRecord(preview)?.seconds_until_idle_timeout
+    const hasIdleDeadline = (typeof idleDeadlineValue === 'number' && Number.isFinite(idleDeadlineValue)) || (typeof idleDeadlineValue === 'string' && idleDeadlineValue.trim().length > 0)
+    return (!needle || haystack.includes(needle))
+      && (statusFilter === 'all' || status === statusFilter)
+      && (!idleOnly || (!isTerminalSessionStatus(status) && hasIdleDeadline && secondsUntilIdle <= 120))
+  })
+  const selectedItem = items.find((item) => valueText(getRecord(item.session), 'session_id') === selectedSessionId)
+  const hasFilters = Boolean(search.trim() || statusFilter !== 'all' || idleOnly)
+
   return <div className="space-y-4">
-    <ScreenHeading eyebrow="Execution and delegated control" title="Agents & Sessions" detail="Supervise Consumer Sessions here and manage delegated MCP credentials in Settings. Closing a Session always uses the server-side settlement policy; the browser never calculates a payout." />
+    <ScreenHeading eyebrow="Execution and delegated control" title="Agents & Sessions" detail="Supervise Consumer Sessions here and manage delegated MCP credentials in Settings. Inspect shows the server's accounting evidence; closing a Session never makes the browser calculate a payout." />
     {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <CompactStat label="Active" value={sessions?.summary.active ?? 0} />
+      <CompactStat label="Queued" value={sessions?.summary.queued ?? 0} />
+      <CompactStat label="Terminal" value={sessions?.summary.terminal ?? sessions?.summary.closed ?? 0} />
+      <CompactStat label="Visible" value={filteredItems.length} />
+    </div>
+    <Card className="border-cyan-300/20 bg-cyan-300/[0.035] py-0 shadow-none">
+      <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3"><KeyRound className="mt-0.5 size-4 shrink-0 text-cyan-200" /><div className="min-w-0"><p className="font-medium text-slate-100">Delegated MCP control</p><p className="mt-1 truncate text-xs text-muted-foreground">{agentAccessSummary}. Session lifecycle stays here; credential scope and approval policy stay in Settings.</p>{activeAgentCredentials.length > 0 ? <div className="mt-2 flex flex-wrap gap-1.5">{activeAgentCredentials.slice(0, 3).map((credential) => <span key={credential.credential_id} className="rounded border border-cyan-300/15 bg-[#091725] px-2 py-1 font-mono text-[10px] text-slate-300">{credential.label || shortId(credential.credential_id, 16)}</span>)}{activeAgentCredentials.length > 3 ? <span className="px-2 py-1 text-[10px] text-slate-500">+{activeAgentCredentials.length - 3} more</span> : null}</div> : null}</div></div>
+        <Button variant="outline" size="sm" className="shrink-0 border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={() => onNavigate('settings')}><KeyRound />Manage permissions</Button>
+      </CardContent>
+    </Card>
     <div className="flex flex-wrap gap-2">
-      <Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" onClick={() => onNavigate('settings')}><KeyRound />Manage agent permissions</Button>
       <Button variant="outline" className="border-border bg-[#091725]" disabled={busy === 'sweep'} onClick={() => void sweepIdle()}><RotateCcw />{busy === 'sweep' ? 'Sweeping...' : 'Sweep idle Sessions'}</Button>
       <Button variant="ghost" onClick={onRefresh}><RefreshCw className={cn(data.sessions.isFetching && 'animate-spin')} />Refresh Sessions</Button>
     </div>
     {data.sessions.isLoading && !sessions ? <PanelSkeleton rows={5} /> : null}
     {data.sessions.error && !sessions ? <PanelError title="Session control is unavailable" error={data.sessions.error} onRetry={onRefresh} /> : null}
-    {sessions ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-end justify-between gap-3"><div><CardTitle className="text-lg font-semibold">Session ledger</CardTitle><p className="mt-1 text-sm text-muted-foreground">{sessions.summary.active} active · {sessions.summary.queued} queued · {sessions.summary.terminal ?? sessions.summary.closed} terminal</p></div><StatusBadge value={sessions.summary.active > 0 ? 'running' : 'ready'} /></div></CardHeader><CardContent className="divide-y divide-border/70 p-0">{sessions.items.length === 0 ? <EmptyState title="No Sessions recorded" detail="Published Endpoints will create Session records when Consumers submit work." actionLabel="Review Endpoints" onAction={() => onNavigate('endpoints')} /> : sessions.items.map((item) => { const session = getRecord(item.session); const deposit = getRecord(item.deposit); const preview = getRecord(item.settlement_preview); const id = getText(session, 'session_id'); const status = getText(session, 'status') || 'unknown'; const terminal = isTerminalSessionStatus(status); return <div key={id} className="grid gap-3 px-5 py-4 xl:grid-cols-[minmax(0,1.5fr)_repeat(3,minmax(7rem,0.5fr))_auto] xl:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{getText(item, 'display_name') || getText(session, 'endpoint_id') || 'Endpoint Session'}</p><StatusBadge value={status} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{id} · {getText(session, 'request_count') || '0'} request(s)</p></div><SessionValue label="Locked" value={`${getText(deposit, 'locked_q') || '0'} Q`} /><SessionValue label="Consumed" value={`${getText(deposit, 'consumed_q') || '0'} Q`} /><SessionValue label="Refund preview" value={`${getText(preview, 'projected_refundable_q') || '0'} Q`} /><Button variant="outline" size="sm" className={cn('bg-transparent', terminal ? 'border-slate-300/20 text-slate-400' : 'border-rose-300/25 text-rose-100 hover:bg-rose-300/10')} disabled={terminal || busy === id} onClick={() => void closeSession(id)}>{busy === id ? 'Closing...' : terminal ? terminalSessionLabel(status) : 'Close Session'}</Button></div> })}</CardContent></Card> : null}
+    {sessions ? <Card className="border-border/80 bg-card py-0 shadow-none">
+      <CardHeader className="border-b border-border/70 px-5 py-4">
+        <div className="flex flex-wrap items-end justify-between gap-3"><div><CardTitle className="text-lg font-semibold">Session ledger</CardTitle><p className="mt-1 text-sm text-muted-foreground">{sessions.summary.active} active · {sessions.summary.queued} queued · {sessions.summary.terminal ?? sessions.summary.closed} terminal</p></div><StatusBadge value={sessions.summary.active > 0 ? 'running' : 'ready'} /></div>
+        <div className="mt-4 grid gap-2 lg:grid-cols-[minmax(0,1fr)_11rem_auto]">
+          <label className="relative block"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Session, Endpoint, wallet..." className="h-9 w-full rounded-md border border-border bg-[#091725] pl-9 pr-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-300/60" /></label>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter Sessions by status" className="h-9 rounded-md border border-border bg-[#091725] px-3 text-sm text-slate-200 outline-none focus:border-cyan-300/60"><option value="all">All statuses</option><option value="active">Active</option><option value="queued">Queued</option><option value="closed">Closed</option><option value="force_settled">Force settled</option><option value="failed">Failed</option></select>
+          <label className="flex h-9 items-center gap-2 rounded-md border border-border bg-[#091725] px-3 text-xs text-slate-300"><input type="checkbox" checked={idleOnly} onChange={(event) => setIdleOnly(event.target.checked)} className="accent-cyan-300" />Idle risk</label>
+        </div>
+      </CardHeader>
+      <CardContent className="divide-y divide-border/70 p-0">
+        {filteredItems.length === 0 ? <EmptyState title={hasFilters ? 'No Sessions match these filters' : 'No Sessions recorded'} detail={hasFilters ? 'Clear the filters to restore the full ledger.' : 'Published Endpoints will create Session records when Consumers submit work.'} actionLabel={hasFilters ? 'Clear filters' : 'Review Endpoints'} onAction={() => hasFilters ? (setSearch(''), setStatusFilter('all'), setIdleOnly(false)) : onNavigate('endpoints')} /> : filteredItems.map((item) => <SessionLedgerRow key={valueText(getRecord(item.session), 'session_id')} item={item} busy={busy} onInspect={() => setSelectedSessionId(valueText(getRecord(item.session), 'session_id'))} onClose={() => void closeSession(valueText(getRecord(item.session), 'session_id'))} />)}
+      </CardContent>
+    </Card> : null}
+    <SessionDetailSheet item={selectedItem} open={Boolean(selectedItem)} busy={busy} onOpenChange={(open) => { if (!open) setSelectedSessionId(null) }} onCloseSession={(sessionId) => void closeSession(sessionId)} />
   </div>
+}
+
+function SessionLedgerRow({ item, busy, onInspect, onClose }: { item: DashboardRecord; busy: string | null; onInspect: () => void; onClose: () => void }) {
+  const session = getRecord(item.session)
+  const deposit = getRecord(item.deposit)
+  const preview = getRecord(item.settlement_preview)
+  const id = valueText(session, 'session_id')
+  const status = valueText(session, 'status') || 'unknown'
+  const terminal = isTerminalSessionStatus(status)
+  const idleLabel = sessionIdleLabel(session, preview, status)
+  return <div className="grid gap-3 px-5 py-4 xl:grid-cols-[minmax(0,1.45fr)_repeat(4,minmax(6rem,0.5fr))_auto] xl:items-center">
+    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><button type="button" className="truncate text-left font-medium text-slate-100 underline-offset-4 hover:text-cyan-200 hover:underline" onClick={onInspect}>{valueText(item, 'display_name') || valueText(session, 'endpoint_id') || 'Endpoint Session'}</button><StatusBadge value={status} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{shortId(id, 24)} · {valueText(session, 'request_count') || '0'} request(s)</p><p className={cn('mt-2 flex items-center gap-1 text-xs', idleLabel.attention ? 'text-amber-200' : 'text-muted-foreground')}><Clock3 className="size-3.5" />{idleLabel.label}</p></div>
+    <SessionValue label="Locked" value={`${valueText(deposit, 'locked_q', '0')} Q`} />
+    <SessionValue label="Consumed" value={`${valueText(deposit, 'consumed_q', '0')} Q`} />
+    <SessionValue label="Payment preview" value={`${valueText(preview, 'projected_charged_q', '0')} Q`} />
+    <SessionValue label="Refund preview" value={`${valueText(preview, 'projected_refundable_q', '0')} Q`} />
+    <div className="flex flex-wrap gap-2 xl:justify-end"><Button variant="outline" size="sm" className="border-cyan-300/25 bg-transparent text-cyan-100" onClick={onInspect}><Eye />Inspect</Button><Button variant="outline" size="sm" className={cn('bg-transparent', terminal ? 'border-slate-300/20 text-slate-400' : 'border-rose-300/25 text-rose-100 hover:bg-rose-300/10')} disabled={terminal || busy === id} onClick={onClose}>{busy === id ? 'Closing...' : terminal ? terminalSessionLabel(status) : 'Close Session'}</Button></div>
+  </div>
+}
+
+function SessionDetailSheet({ item, open, busy, onOpenChange, onCloseSession }: { item?: DashboardRecord; open: boolean; busy: string | null; onOpenChange: (open: boolean) => void; onCloseSession: (sessionId: string) => void }) {
+  const session = getRecord(item?.session)
+  const deposit = getRecord(item?.deposit)
+  const settlement = getRecord(item?.settlement)
+  const preview = getRecord(item?.settlement_preview)
+  const checkpoint = getRecord(session?.accounting_checkpoint)
+  const tasks = recordList(item?.related_tasks)
+  const activity = recordList(item?.activity)
+  if (!item || !session) return null
+  const sessionId = valueText(session, 'session_id')
+  const status = valueText(session, 'status') || 'unknown'
+  const terminal = isTerminalSessionStatus(status)
+  const usageChain = recordList(session.usage_report_chain)
+  const acknowledgementChain = recordList(session.usage_acknowledgement_chain)
+  return <Sheet open={open} onOpenChange={onOpenChange}><SheetContent side="right" className="w-full overflow-y-auto border-slate-700 bg-[#07111d] p-0 sm:max-w-xl"><SheetHeader className="border-b border-border/70 px-5 py-5"><div className="flex items-center gap-2"><StatusBadge value={status} /><span className="eyebrow">Session inspector</span></div><SheetTitle className="pr-8 text-xl text-white">{valueText(item, 'display_name') || valueText(session, 'endpoint_id') || 'Endpoint Session'}</SheetTitle><SheetDescription className="font-mono text-[11px] text-slate-500">{sessionId}</SheetDescription></SheetHeader><div className="space-y-4 p-5">
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Identity & lifecycle</CardTitle></CardHeader><CardContent className="grid grid-cols-2 gap-x-4 gap-y-4 p-4"><SessionValue label="Endpoint" value={valueText(session, 'endpoint_id', 'Not reported')} /><SessionValue label="Node" value={valueText(session, 'node_id', 'Not reported')} /><SessionValue label="Consumer auth" value={shortId(valueText(session, 'client_wallet'), 18)} /><SessionValue label="Requests" value={valueText(session, 'request_count', '0')} /><SessionValue label="Created" value={formatDateTime(valueText(session, 'created_at'))} /><SessionValue label="Last activity" value={formatDateTime(valueText(session, 'last_activity_at'))} /><SessionValue label="Idle deadline" value={formatDateTime(valueText(session, 'idle_deadline_at'))} /><SessionValue label="Funding state" value={valueText(session, 'canonical_funding_status', 'Not reported')} /><SessionValue label="Accounting" value={valueText(session, 'accounting_status', 'Not reported')} /></CardContent></Card>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Execution & accounting evidence</CardTitle></CardHeader><CardContent className="grid grid-cols-2 gap-x-4 gap-y-4 p-4"><SessionValue label="Locked deposit" value={`${valueText(deposit, 'locked_q', '0')} Q`} /><SessionValue label="Consumed" value={`${valueText(deposit, 'consumed_q', '0')} Q`} /><SessionValue label="Endpoint payment" value={`${valueText(preview, 'projected_charged_q', '0')} Q`} /><SessionValue label="Network fee" value={`${valueText(preview, 'network_fee_q', '0')} Q`} /><SessionValue label="Refund preview" value={`${valueText(preview, 'projected_refundable_q', '0')} Q`} /><SessionValue label="Remaining" value={`${valueText(item, 'remaining_q', '0')} Q`} /><SessionValue label="Settlement" value={valueText(settlement, 'status', valueText(item, 'settlement_status', 'Not finalized'))} /><SessionValue label="Funding operation" value={shortId(valueText(session, 'canonical_funding_operation_id'), 18)} /><div className="col-span-2 rounded-md border border-cyan-300/15 bg-cyan-300/[0.035] p-3 text-xs leading-5 text-muted-foreground">{sessionIdleLabel(session, preview, status).label}. These values are projections or canonical records returned by the Hypervisor; the browser does not settle funds.</div></CardContent></Card>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><div className="flex items-center justify-between gap-3"><CardTitle className="text-sm">Requests & results</CardTitle><span className="eyebrow">{tasks.length} record(s)</span></div></CardHeader><CardContent className="divide-y divide-border/70 p-0">{tasks.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No request or task evidence has been recorded for this Session.</p> : tasks.slice(0, 12).map((task, index) => <div key={valueText(task, 'task_id') || `${sessionId}:task:${index}`} className="space-y-2 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-mono text-[11px] text-slate-400">{shortId(valueText(task, 'task_id'), 22)}</span><StatusBadge value={valueText(task, 'status', 'unknown')} /></div><p className="text-sm text-slate-200">{valueText(task, 'task_type') || valueText(task, 'bundle_id') || 'Request execution'}</p><p className="text-xs leading-5 text-muted-foreground">Endpoint: {valueText(task, 'endpoint_id', valueText(session, 'endpoint_id', 'Not reported'))} · Created {formatDateTime(valueText(task, 'created_at'))}</p>{valueText(task, 'input_preview') ? <p className="rounded border border-border/70 bg-[#091725] p-2 font-mono text-[11px] text-slate-400">{valueText(task, 'input_preview')}</p> : null}</div>)}</CardContent></Card>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Usage & checkpoint</CardTitle></CardHeader><CardContent className="grid grid-cols-2 gap-x-4 gap-y-4 p-4"><SessionValue label="Accepted report seq." value={valueText(session, 'last_accepted_report_sequence', 'Not reported')} /><SessionValue label="Accepted usage" value={`${valueText(session, 'last_accepted_usage_charged_q', '0')} Q`} /><SessionValue label="Report chain" value={`${usageChain.length} link(s)`} /><SessionValue label="Acknowledgements" value={`${acknowledgementChain.length} link(s)`} /><SessionValue label="Report head" value={shortId(valueText(session, 'last_accepted_report_hash') || valueText(session, 'report_hash'), 18)} /><SessionValue label="Checkpoint" value={valueText(checkpoint, 'status', checkpoint ? 'Recorded' : 'Not recorded')} /></CardContent></Card>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><div className="flex items-center justify-between gap-3"><CardTitle className="text-sm">Activity timeline</CardTitle><span className="eyebrow">latest first</span></div></CardHeader><CardContent className="divide-y divide-border/70 p-0">{activity.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No activity events have been retained.</p> : activity.slice(0, 12).map((event, index) => <div key={`${valueText(event, 'timestamp')}:${index}`} className="flex gap-3 p-4"><CircleDot className="mt-1 size-3 shrink-0 text-cyan-200" /><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="text-sm text-slate-200">{valueText(event, 'message') || valueText(event, 'event_type') || 'Session event'}</p><span className="font-mono text-[10px] text-slate-500">{formatDateTime(valueText(event, 'timestamp'))}</span></div>{valueText(event, 'task_id') ? <p className="mt-1 font-mono text-[10px] text-slate-500">task {shortId(valueText(event, 'task_id'), 18)}</p> : null}</div></div>)}</CardContent></Card>
+  </div><div className="sticky bottom-0 mt-auto flex gap-2 border-t border-border/70 bg-[#07111d] p-4"><Button variant="outline" className="flex-1 border-border bg-[#091725]" onClick={() => onOpenChange(false)}>Close inspector</Button><Button className="flex-1 bg-rose-300 text-[#1b0b10] hover:bg-rose-200" disabled={terminal || busy === sessionId} onClick={() => onCloseSession(sessionId)}>{busy === sessionId ? 'Closing...' : terminal ? terminalSessionLabel(status) : 'Close Session'}</Button></div></SheetContent></Sheet>
 }
 
 function SessionValue({ label, value }: { label: string; value: string }) {
   return <div><p className="eyebrow">{label}</p><p className="mt-1 font-mono text-xs text-slate-200">{value}</p></div>
+}
+
+function valueText(value: unknown, key: string, fallback = ''): string {
+  const candidate = getRecord(value)?.[key]
+  if (typeof candidate === 'string' && candidate.length > 0) return candidate
+  if (typeof candidate === 'number' && Number.isFinite(candidate)) return String(candidate)
+  if (typeof candidate === 'boolean') return String(candidate)
+  return fallback
+}
+
+function numberValue(value: unknown, key: string): number {
+  const candidate = getRecord(value)?.[key]
+  if (typeof candidate === 'number' && Number.isFinite(candidate)) return candidate
+  if (typeof candidate === 'string' && candidate.trim()) {
+    const parsed = Number(candidate)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return 0
+}
+
+function recordList(value: unknown): DashboardRecord[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is DashboardRecord => Boolean(getRecord(item)))
+    : []
+}
+
+function formatDateTime(value: string): string {
+  if (!value) return 'Not reported'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return shortId(value, 22)
+  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function sessionIdleLabel(session: DashboardRecord | undefined, preview: DashboardRecord | undefined, status: string): { label: string; attention: boolean } {
+  if (isTerminalSessionStatus(status)) return { label: 'Terminal · no idle action', attention: false }
+  const seconds = numberValue(preview, 'seconds_until_idle_timeout')
+  if (seconds <= 0 && valueText(session, 'idle_deadline_at')) return { label: 'Idle deadline reached · sweep eligible', attention: true }
+  if (seconds > 0 && seconds <= 120) return { label: `Idle deadline in ${Math.ceil(seconds)}s`, attention: true }
+  if (seconds > 0) return { label: `Idle deadline in ${formatDuration(seconds)}`, attention: false }
+  return { label: valueText(session, 'idle_deadline_at') ? `Idle deadline ${formatDateTime(valueText(session, 'idle_deadline_at'))}` : 'Idle deadline not reported', attention: false }
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.ceil(seconds)}s`
+  const minutes = Math.ceil(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
 }
 
 function MarketWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {

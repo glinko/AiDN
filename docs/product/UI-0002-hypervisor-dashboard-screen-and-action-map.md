@@ -135,7 +135,7 @@ Actions:
 | AiDN logo | Open Overview | Navigates to the active Hypervisor Overview. | `IMPLEMENTED` |
 | Active Hypervisor tab | Open its Overview | Makes the selected Hypervisor the active workspace. | `IMPLEMENTED` for local node |
 | Remote discovery | Open Network | Shows discovered and attached remote capacity. | `IMPLEMENTED` |
-| Add Hypervisor | Start authenticated pairing | Adds another operator-owned Hypervisor without sharing node secrets. | `API_PENDING` |
+| Add Hypervisor | Open the browser-local connection drawer | Validates and saves another operator-owned dashboard URL, then opens that node in a new tab. Pairing remains on the target node; credentials are never entered into the local dashboard. Full multi-node read-model switching remains `API_PENDING`. | `IMPLEMENTED` (browser launcher) |
 | Refresh | Refresh all dashboard read models | Shows progress, completion time, and partial failures. | `IMPLEMENTED` |
 | Basic/Advanced mode | Change navigation density | Preserves the current object and does not alter backend state. | `IMPLEMENTED` |
 | Operator badge | Open Settings | Opens browser pairing, agent access, and operator-session controls. | `IMPLEMENTED` |
@@ -262,9 +262,9 @@ Usage checkpoint, Settlement preview, task queue.
 | Close Session | Apply canonical close and settlement policy; show payment/refund result. | `IMPLEMENTED` |
 | Sweep idle Sessions | Close only Sessions whose server-side deadline has elapsed. | `IMPLEMENTED` |
 | Refresh Sessions | Reload Session ledger and show result. | `IMPLEMENTED` |
-| Inspect Session | Show requests, usage chain, checkpoint, deposit, activity, and settlement evidence. | `UI_PENDING` |
+| Inspect Session | Show requests, usage chain, checkpoint, deposit, activity, and settlement evidence in the Session inspector. | `IMPLEMENTED` |
 | Cancel queued Request | Cancel according to accepted Request/Session policy. | `API_PENDING` |
-| Inspect task/result | Show execution status and authorized evidence without leaking another Session. | `UI_PENDING` |
+| Inspect task/result | Show execution status and authorized evidence without leaking another Session. | `IMPLEMENTED` for Session-scoped task summaries |
 | Pause new admission | Change scheduler admission policy with an explicit scope and expiry. | `API_PENDING` |
 | Inspect MCP audit trail | Open filtered audit events for the selected agent. | `UI_PENDING` |
 
