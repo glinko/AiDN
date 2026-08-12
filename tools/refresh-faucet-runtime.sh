@@ -12,7 +12,17 @@ if [[ ! -x "$faucet_python" ]]; then
   printf 'Faucet virtualenv is missing: %s\n' "$faucet_python" >&2
   exit 1
 fi
-if ! command -v uv >/dev/null 2>&1; then
+uv_bin="${AIDN_UV_BIN:-}"
+if [[ -z "$uv_bin" ]]; then
+  uv_bin="$(command -v uv || true)"
+fi
+if [[ -z "$uv_bin" && -x "$HOME/.local/bin/uv" ]]; then
+  uv_bin="$HOME/.local/bin/uv"
+fi
+if [[ -z "$uv_bin" && -x "/home/user/.local/bin/uv" ]]; then
+  uv_bin="/home/user/.local/bin/uv"
+fi
+if [[ -z "$uv_bin" || ! -x "$uv_bin" ]]; then
   printf '%s\n' 'uv is required to refresh the Faucet runtime' >&2
   exit 1
 fi
@@ -27,7 +37,7 @@ case "$site_packages" in
 esac
 
 rm -rf "$site_packages/aidn_faucet" "$site_packages/aidn_hypervisor"
-uv pip install \
+"$uv_bin" pip install \
   --python "$faucet_python" \
   --reinstall \
   --no-cache \
