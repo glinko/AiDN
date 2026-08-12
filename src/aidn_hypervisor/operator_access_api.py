@@ -31,6 +31,7 @@ from aidn_hypervisor.mcp.permissions import (
 from aidn_hypervisor.operator_access import DashboardAccessService
 from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environment
 from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
+from aidn_hypervisor.wallet_reconciliation import reconcile_pending_wallet_transfers
 
 _COOKIE_NAME = "aidn_dashboard_access"
 _COOKIE_PATH = "/operators/dashboard/access"
@@ -594,25 +595,39 @@ def build_operator_access_router(
             }
 
         hypervisor_service.stage_pending_consensus_envelope(pending)
-        submission = consensus.submit_operation(pending, retry_existing=True)
+        reconciliation = reconcile_pending_wallet_transfers(
+            hypervisor_service,
+            operation_ids={pending.operation_id},
+        )
+        submission = consensus.get_submission(pending.operation_id)
         finality = hypervisor_service.ledger_operation_finality(pending.operation_id)
-        if finality.get("consensus_finalized"):
-            hypervisor_service.discard_pending_consensus_envelopes(pending.operation_id)
-            hypervisor_service.discard_pending_consensus_operations(pending.operation_id)
+        reconciliation_status = reconciliation[-1].get("status") if reconciliation else None
+        if finality.get("consensus_finalized") or reconciliation_status in {
+            "local_projection_finalized",
+            "consensus_finalized",
+        }:
             return {
                 **preview,
                 "status": "FINALIZED",
                 "operation_id": pending.operation_id,
-                "submission": submission.status.value,
+                "submission": (
+                    submission.status.value
+                    if submission is not None
+                    else reconciliation_status or "finalized"
+                ),
                 "finality": finality,
             }
-        if submission.status.value == "failed":
+        if submission is not None and submission.status.value == "failed":
             raise ValueError(submission.error or "Consensus rejected Wallet transfer")
         return {
             **preview,
             "status": "CONSENSUS_PENDING",
             "operation_id": pending.operation_id,
-            "submission": submission.status.value,
+            "submission": (
+                reconciliation[-1].get("submission_status")
+                if reconciliation and reconciliation[-1].get("submission_status")
+                else submission.status.value if submission is not None else "pending"
+            ),
             "finality": finality,
         }
 

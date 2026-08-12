@@ -112,6 +112,7 @@ from aidn_hypervisor.wallet_read_models import (
     build_wallet_usage_events_payload,
     build_wallet_usage_export_payload,
 )
+from aidn_hypervisor.wallet_reconciliation import reconcile_pending_wallet_transfers
 
 _ACTIVE_TASK_STATUSES: set[TaskStatus] = {"queued", "admitted", "starting", "running"}
 
@@ -2944,6 +2945,11 @@ def build_api_router(
         economics_recent_limit: int = 8,
         economics_history_limit: int = 12,
     ) -> dict:
+        # Wallet transfers are durable envelopes, but their in-memory
+        # submission records disappear on restart. Reconcile before rendering
+        # so the operator never has to discover a stuck NOT_SUBMITTED item by
+        # manually restarting the node again.
+        reconcile_pending_wallet_transfers(service)
         return build_operator_wallet_payload(
             service,
             usage_limit=usage_limit,

@@ -85,6 +85,7 @@ from aidn_hypervisor.validation.custody_signing import (
 from aidn_hypervisor.validation.custody_store import ValidationReportCustodyStore
 from aidn_hypervisor.validation.service import ValidationService
 from aidn_hypervisor.validation.store import ValidationStore
+from aidn_hypervisor.wallet_reconciliation import reconcile_pending_wallet_transfers
 
 
 def build_app(
@@ -181,6 +182,10 @@ def build_app(
         resolved_service.canonical_wallet_sequence_provider = (
             _build_default_canonical_wallet_sequence_provider()
         )
+    # Restore and retry durable Wallet transfers before serving the dashboard.
+    # Each envelope is handled fail-closed, so a temporarily unavailable
+    # external CometBFT quorum cannot prevent the Hypervisor from starting.
+    reconcile_pending_wallet_transfers(resolved_service)
     reconciled_publications = resolved_endpoint_publication_service.reconcile_canonical_publications(
         resolved_service.ledger_operation_service.list_operations()
     )
