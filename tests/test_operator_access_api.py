@@ -4,7 +4,9 @@ import base64
 import os
 from types import SimpleNamespace
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -17,6 +19,7 @@ from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.secrets import FileSecretManager
 from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
 from aidn_hypervisor.wallet_read_models import build_operator_wallet_payload
 
 _BROWSER_HEADERS = {"X-AiDN-Browser-Key": "browser-key-for-api-tests-000000000000000000000000000000000000000"}
@@ -517,6 +520,30 @@ def test_wallet_identity_registration_lifecycle_is_visible_in_read_model() -> No
     assert rejected["wallet_state"]["identity_operation"]["error"] == (
         "consensus rejected the identity registration"
     )
+
+    identity_key = Ed25519PrivateKey.generate()
+    public_key = "ed25519:" + identity_key.public_key().public_bytes(
+        Encoding.Raw,
+        PublicFormat.Raw,
+    ).hex()
+    registration_nonce = "nonce-1"
+    signature = "ed25519:" + identity_key.sign(
+        wallet_identity_registration_payload(
+            wallet_id=wallet_id,
+            public_key=public_key,
+            registration_nonce=registration_nonce,
+        )
+    ).hex()
+    service.register_wallet_identity(
+        wallet_id=wallet_id,
+        public_key=public_key,
+        registration_nonce=registration_nonce,
+        signature=signature,
+    )
+    registered = build_operator_wallet_payload(service)
+    assert registered["wallet_state"]["identity_registration_state"] == "registered"
+    assert registered["wallet_state"]["identity_operation"] is None
+    assert registered["wallet_state"]["identity_operations"]
 
 
 def test_paired_dashboard_model_and_bundle_lifecycle_operations_are_bounded(tmp_path) -> None:

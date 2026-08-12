@@ -127,7 +127,11 @@ def build_operator_wallet_payload(
         service,
         str(wallet_id) if wallet_id else None,
     )
-    latest_identity_operation = identity_operations[-1] if identity_operations else None
+    # A canonical identity supersedes any envelope left behind by a restart.
+    # Do not present that stale envelope as an active pending action in the UI.
+    latest_identity_operation = (
+        None if wallet_identity is not None else identity_operations[-1] if identity_operations else None
+    )
     if wallet_identity is not None:
         identity_registration_state = "registered"
     elif latest_identity_operation is not None:
