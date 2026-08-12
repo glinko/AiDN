@@ -166,6 +166,50 @@ def test_failover_sends_identical_bytes_to_second_rpc() -> None:
     assert first.calls == [second.calls[0]]
 
 
+def test_failover_handles_structured_rpc_error_without_type_error() -> None:
+    response = {
+        "error": {
+            "code": -32603,
+            "message": "Internal error",
+            "data": "tx already exists in cache",
+        },
+        "id": -1,
+        "jsonrpc": "2.0",
+    }
+    transport = FailoverCometBftSubmissionTransport(
+        (SubmissionTransport(response), SubmissionTransport(response))
+    )
+
+    result = transport.broadcast_tx_sync(b"tx", timeout_seconds=1)
+
+    assert result == response
+
+
+def test_cached_structured_rpc_error_is_idempotently_admitted() -> None:
+    envelope = _envelope()
+    tx_hash = cometbft_transaction_hash(serialize_faucet_envelope(envelope))
+    response = {
+        "error": {
+            "code": -32603,
+            "message": "Internal error",
+            "data": "tx already exists in cache",
+        },
+        "id": -1,
+        "jsonrpc": "2.0",
+    }
+    submitter = _submitter(
+        transport=FailoverCometBftSubmissionTransport(
+            (SubmissionTransport(response), SubmissionTransport(response))
+        ),
+        finality=FinalitySource(None),
+    )
+
+    result = submitter.submit_transfer(envelope)
+
+    assert result.status == "ADMITTED"
+    assert result.transaction_hash == tx_hash
+
+
 def test_submission_fans_out_after_first_success() -> None:
     envelope = _envelope()
     tx_hash = cometbft_transaction_hash(serialize_faucet_envelope(envelope))

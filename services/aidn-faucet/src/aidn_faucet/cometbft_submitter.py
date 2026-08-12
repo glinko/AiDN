@@ -99,7 +99,7 @@ class FailoverCometBftSubmissionTransport:
 
     @staticmethod
     def _is_admitted_response(response: object) -> bool:
-        if not isinstance(response, dict) or response.get("error") not in {None, ""}:
+        if not isinstance(response, dict) or response.get("error") not in (None, ""):
             return False
         result = response.get("result", response)
         if not isinstance(result, dict):
@@ -733,7 +733,7 @@ class CometBftFaucetTransferSubmitter:
 
     @staticmethod
     def _rpc_result(response: dict[str, Any]) -> dict[str, Any]:
-        if not isinstance(response, dict) or response.get("error") not in {None, ""}:
+        if not isinstance(response, dict) or response.get("error") not in (None, ""):
             raise ValueError("CometBFT submission returned an RPC error")
         result = response.get("result", response)
         if not isinstance(result, dict):

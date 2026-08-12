@@ -79,6 +79,21 @@ cd /opt/aidn/AiDN
 uv sync --project services/aidn-faucet --frozen
 ```
 
+For an upgrade of an existing checkout, run the reviewed runtime refresh
+helper before restarting systemd:
+
+```bash
+cd /opt/aidn/AiDN
+sudo ./tools/refresh-faucet-runtime.sh
+sudo systemctl restart aidn-faucet
+```
+
+The helper removes only stale package directories inside the Faucet virtual
+environment, reinstalls the checkout without a package cache, and verifies
+that the running import resolves to `services/aidn-faucet/src`. A plain
+`uv sync` may leave a previously copied `site-packages/aidn_faucet` directory
+ahead of the editable source path, which would silently run an older Faucet.
+
 Create the secret directory. The command below generates the Treasury key,
 both bearer tokens, the public manifest, an environment file and a public
 summary. It does not fund the Treasury.

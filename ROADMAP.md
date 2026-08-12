@@ -1073,6 +1073,10 @@ This work is intentionally outside the functional MVP. It must not alter current
   external-finality mode that verifies the exact `WALLET_TRANSFER` through the
   configured CometBFT RPC quorum and trusted checkpoint; the live deployment
   result remains an operational gate and is not inferred from local tests.
+- [x] Stabilize Faucet CometBFT submission against structured JSON-RPC errors:
+  idempotent `tx already exists in cache` responses remain admitted, ordinary
+  CheckTx errors remain rejected, and the upgrade helper prevents stale
+  `site-packages` copies from shadowing the reviewed checkout.
 - [ ] Verify Treasury activation and one payout against a live canonical
   multi-validator network; local manifests and local balances are not evidence.
 - [ ] Prove Faucet payout finality across at least two validators, including
