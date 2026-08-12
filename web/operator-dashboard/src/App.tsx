@@ -107,6 +107,10 @@ const statusClassNames: Record<string, string> = {
   published: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
   in_sync: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
   enabled: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
+  closed: 'border-slate-300/25 bg-slate-300/10 text-slate-200',
+  settled: 'border-emerald-300/25 bg-emerald-300/10 text-emerald-200',
+  completed: 'border-emerald-300/25 bg-emerald-300/10 text-emerald-200',
+  force_settled: 'border-amber-300/30 bg-amber-300/10 text-amber-200',
   running: 'border-cyan-300/25 bg-cyan-300/10 text-cyan-200',
   created: 'border-sky-300/25 bg-sky-300/10 text-sky-200',
   pending: 'border-amber-300/25 bg-amber-300/10 text-amber-200',
@@ -115,6 +119,53 @@ const statusClassNames: Record<string, string> = {
   blocked: 'border-rose-300/25 bg-rose-300/10 text-rose-200',
   failed: 'border-rose-300/25 bg-rose-300/10 text-rose-200',
   error: 'border-rose-300/25 bg-rose-300/10 text-rose-200',
+}
+
+const terminalSessionStatuses = new Set([
+  'closed',
+  'settled',
+  'completed',
+  'cancelled',
+  'canceled',
+  'rejected',
+  'failed',
+  'expired',
+  'force_settled',
+  'unrecoverable',
+])
+
+function normalizeStatus(value: string): string {
+  return value.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_')
+}
+
+function isTerminalSessionStatus(value: string): boolean {
+  return terminalSessionStatuses.has(normalizeStatus(value))
+}
+
+function terminalSessionLabel(value: string): string {
+  switch (normalizeStatus(value)) {
+    case 'closed':
+      return 'Closed'
+    case 'force_settled':
+      return 'Force settled'
+    case 'settled':
+      return 'Settled'
+    case 'completed':
+      return 'Completed'
+    case 'cancelled':
+    case 'canceled':
+      return 'Cancelled'
+    case 'rejected':
+      return 'Rejected'
+    case 'failed':
+      return 'Failed'
+    case 'expired':
+      return 'Expired'
+    case 'unrecoverable':
+      return 'Unrecoverable'
+    default:
+      return 'Terminal'
+  }
 }
 
 type OperationsScreen = Exclude<DashboardScreen, 'overview' | 'bundles' | 'endpoints' | 'settings'>
@@ -1528,7 +1579,7 @@ function AgentsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData;
     </div>
     {data.sessions.isLoading && !sessions ? <PanelSkeleton rows={5} /> : null}
     {data.sessions.error && !sessions ? <PanelError title="Session control is unavailable" error={data.sessions.error} onRetry={onRefresh} /> : null}
-    {sessions ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-end justify-between gap-3"><div><CardTitle className="text-lg font-semibold">Session ledger</CardTitle><p className="mt-1 text-sm text-muted-foreground">{sessions.summary.active} active · {sessions.summary.queued} queued · {sessions.summary.closed} closed</p></div><StatusBadge value={sessions.summary.active > 0 ? 'running' : 'ready'} /></div></CardHeader><CardContent className="divide-y divide-border/70 p-0">{sessions.items.length === 0 ? <EmptyState title="No Sessions recorded" detail="Published Endpoints will create Session records when Consumers submit work." actionLabel="Review Endpoints" onAction={() => onNavigate('endpoints')} /> : sessions.items.map((item) => { const session = getRecord(item.session); const deposit = getRecord(item.deposit); const preview = getRecord(item.settlement_preview); const id = getText(session, 'session_id'); const status = getText(session, 'status') || 'unknown'; return <div key={id} className="grid gap-3 px-5 py-4 xl:grid-cols-[minmax(0,1.5fr)_repeat(3,minmax(7rem,0.5fr))_auto] xl:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{getText(item, 'display_name') || getText(session, 'endpoint_id') || 'Endpoint Session'}</p><StatusBadge value={status} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{id} · {getText(session, 'request_count') || '0'} request(s)</p></div><SessionValue label="Locked" value={`${getText(deposit, 'locked_q') || '0'} Q`} /><SessionValue label="Consumed" value={`${getText(deposit, 'consumed_q') || '0'} Q`} /><SessionValue label="Refund preview" value={`${getText(preview, 'projected_refundable_q') || '0'} Q`} /><Button variant="outline" size="sm" className="border-rose-300/25 bg-transparent text-rose-100 hover:bg-rose-300/10" disabled={status === 'closed' || busy === id} onClick={() => void closeSession(id)}>{busy === id ? 'Closing...' : status === 'closed' ? 'Closed' : 'Close Session'}</Button></div> })}</CardContent></Card> : null}
+    {sessions ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-end justify-between gap-3"><div><CardTitle className="text-lg font-semibold">Session ledger</CardTitle><p className="mt-1 text-sm text-muted-foreground">{sessions.summary.active} active · {sessions.summary.queued} queued · {sessions.summary.terminal ?? sessions.summary.closed} terminal</p></div><StatusBadge value={sessions.summary.active > 0 ? 'running' : 'ready'} /></div></CardHeader><CardContent className="divide-y divide-border/70 p-0">{sessions.items.length === 0 ? <EmptyState title="No Sessions recorded" detail="Published Endpoints will create Session records when Consumers submit work." actionLabel="Review Endpoints" onAction={() => onNavigate('endpoints')} /> : sessions.items.map((item) => { const session = getRecord(item.session); const deposit = getRecord(item.deposit); const preview = getRecord(item.settlement_preview); const id = getText(session, 'session_id'); const status = getText(session, 'status') || 'unknown'; const terminal = isTerminalSessionStatus(status); return <div key={id} className="grid gap-3 px-5 py-4 xl:grid-cols-[minmax(0,1.5fr)_repeat(3,minmax(7rem,0.5fr))_auto] xl:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{getText(item, 'display_name') || getText(session, 'endpoint_id') || 'Endpoint Session'}</p><StatusBadge value={status} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{id} · {getText(session, 'request_count') || '0'} request(s)</p></div><SessionValue label="Locked" value={`${getText(deposit, 'locked_q') || '0'} Q`} /><SessionValue label="Consumed" value={`${getText(deposit, 'consumed_q') || '0'} Q`} /><SessionValue label="Refund preview" value={`${getText(preview, 'projected_refundable_q') || '0'} Q`} /><Button variant="outline" size="sm" className={cn('bg-transparent', terminal ? 'border-slate-300/20 text-slate-400' : 'border-rose-300/25 text-rose-100 hover:bg-rose-300/10')} disabled={terminal || busy === id} onClick={() => void closeSession(id)}>{busy === id ? 'Closing...' : terminal ? terminalSessionLabel(status) : 'Close Session'}</Button></div> })}</CardContent></Card> : null}
   </div>
 }
 
@@ -1735,7 +1786,7 @@ function ScreenHeading({ eyebrow, title, detail }: { eyebrow: string; title: str
 }
 
 function StatusBadge({ value }: { value: string }) {
-  const normalized = value.toLowerCase().replaceAll(' ', '_')
+  const normalized = normalizeStatus(value)
   return <Badge variant="outline" className={cn('h-5 border px-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.09em]', statusClassNames[normalized] ?? 'border-slate-300/20 bg-slate-300/8 text-slate-300')}>{value.replaceAll('_', ' ')}</Badge>
 }
 

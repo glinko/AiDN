@@ -3365,6 +3365,34 @@
       return normalized.toFixed(2);
     }
 
+    const TERMINAL_SESSION_STATUSES = new Set([
+      "closed",
+      "settled",
+      "completed",
+      "cancelled",
+      "canceled",
+      "rejected",
+      "failed",
+      "expired",
+      "force_settled",
+      "unrecoverable",
+    ]);
+
+    function normalizeSessionStatus(value) {
+      return String(value || "").trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+    }
+
+    function isTerminalSessionStatus(value) {
+      return TERMINAL_SESSION_STATUSES.has(normalizeSessionStatus(value));
+    }
+
+    function sessionStatusLabel(value) {
+      const normalized = normalizeSessionStatus(value);
+      return normalized === "force_settled"
+        ? "Force settled"
+        : normalized ? normalized.replaceAll("_", " ") : "Terminal";
+    }
+
     function formatUtcTime() {
       return new Date().toLocaleTimeString("en-US", {
         hour12: false,
@@ -5518,6 +5546,7 @@
             active: 0,
             queued: 0,
             closed: 0,
+            terminal: 0,
           },
           items: [],
         }
@@ -5634,8 +5663,8 @@
       if (!selected?.session) {
         return { enabled: false, reason: "Select a Session first." };
       }
-      if (selected.session.status === "closed") {
-        return { enabled: false, reason: "Session is already closed." };
+      if (isTerminalSessionStatus(selected.session.status)) {
+        return { enabled: false, reason: `Session is already ${sessionStatusLabel(selected.session.status)}.` };
       }
       if (selected.session.economic_profile !== "MVP-0001") {
         return { enabled: false, reason: "Forced refund controls currently require an MVP-0001 Session." };
@@ -7822,7 +7851,7 @@
       const selectedDepositQ = Number(reservationDraft.depositQ || 0);
       const preview = selected?.settlement_preview || null;
       const canClose = Boolean(
-        selected && selected.session && selected.session.status !== "closed"
+        selected && selected.session && !isTerminalSessionStatus(selected.session.status)
       );
 
       return `
@@ -7835,7 +7864,7 @@
           <div class="chip-row">
             <span class="chip good">Active ${formatCount(summary.active)}</span>
             <span class="chip">Queued ${formatCount(summary.queued)}</span>
-            <span class="chip">Closed ${formatCount(summary.closed)}</span>
+            <span class="chip">Terminal ${formatCount(summary.terminal ?? summary.closed)}</span>
           </div>
         </div>
         <div class="workspace-body">
@@ -7961,7 +7990,7 @@
                 ${state.sessionActionPending === "sweep-idle" ? "Sweeping..." : "Sweep Idle Sessions"}
               </button>
               <button class="secondary-button" type="button" data-session-action="close" ${canClose && state.sessionActionPending !== "close" ? "" : "disabled"}>
-                ${state.sessionActionPending === "close" ? "Closing..." : "Close Session"}
+                ${state.sessionActionPending === "close" ? "Closing..." : canClose ? "Close Session" : selected?.session?.status ? sessionStatusLabel(selected.session.status) : "Close Session"}
               </button>
             </div>
           </section>
@@ -12624,7 +12653,7 @@
 
     async function closeSelectedSession() {
       const selected = selectedSessionRow();
-      if (!selected?.session?.session_id || selected.session.status === "closed") {
+      if (!selected?.session?.session_id || isTerminalSessionStatus(selected.session.status)) {
         return;
       }
       state.sessionActionPending = "close";
@@ -12636,7 +12665,7 @@
         });
         state.sessionMessage = {
           kind: "good",
-          text: `Session ${result.data.session.session_id} closed and settlement released.`,
+          text: `Session ${result.data.session.session_id} ${sessionStatusLabel(result.data.session.status)} and settlement released.`,
         };
         await refreshSessionsPayload();
         mergeSessionResultIntoPayload(result.data);

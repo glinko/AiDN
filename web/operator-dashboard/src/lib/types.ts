@@ -171,6 +171,7 @@ const sessionDashboardSchema = z.object({
     active: numberValue,
     queued: numberValue,
     closed: numberValue,
+    terminal: numberValue.optional(),
   }).passthrough(),
   items: z.array(unknownRecord).catch([]),
 }).passthrough()

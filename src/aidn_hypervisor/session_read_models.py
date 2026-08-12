@@ -4,6 +4,7 @@ from datetime import datetime
 
 from aidn_hypervisor.accounting.models import SessionAccountingCheckpoint
 from aidn_hypervisor.domain.models import TaskRequest
+from aidn_hypervisor.session_failure.models import is_terminal_status
 from aidn_hypervisor.service import HypervisorService
 
 
@@ -260,7 +261,13 @@ def build_operator_sessions_payload(
         return {
             "owner_wallet": service.owner_wallet_state(),
             "node_identity": service.node_identity(),
-            "summary": {"total": 0, "active": 0, "queued": 0, "closed": 0},
+            "summary": {
+                "total": 0,
+                "active": 0,
+                "queued": 0,
+                "closed": 0,
+                "terminal": 0,
+            },
             "items": [],
         }
 
@@ -316,6 +323,11 @@ def build_operator_sessions_payload(
             ),
             "closed": sum(
                 1 for item in items if item["session"]["status"] == "closed"
+            ),
+            "terminal": sum(
+                1
+                for item in items
+                if is_terminal_status(item["session"]["status"])
             ),
         },
         "items": items,
