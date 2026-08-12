@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.endpoint_publications.signing import sign_consensus_bytes
 from aidn_hypervisor.endpoints.endpoint_application_service import EndpointApplicationService
 from aidn_hypervisor.endpoints.models import UpdateEndpointCommand
+from aidn_hypervisor.ledger.service import STANDARD_NETWORK_FEE_Q_ATOMS
 from aidn_hypervisor.mcp.credentials import McpCredential, McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.mcp.permissions import (
@@ -76,6 +78,12 @@ class WalletBootstrapCreateRequest(BaseModel):
 
 class WalletBootstrapImportRequest(WalletBootstrapCreateRequest):
     private_key: str = Field(min_length=1, max_length=512)
+
+
+class WalletTransferRequest(BaseModel):
+    recipient_wallet: str = Field(min_length=1, max_length=256)
+    amount_q_atoms: int = Field(gt=0)
+    memo: str | None = Field(default=None, max_length=256)
 
 
 class ModelInstallOperationRequest(BaseModel):
@@ -439,6 +447,175 @@ def build_operator_access_router(
             "finality": finality,
         }
 
+    def _wallet_transfer(payload: WalletTransferRequest, *, preview_only: bool) -> dict:
+        if hypervisor_service is None:
+            raise ValueError("Wallet service is not configured")
+        wallet = hypervisor_service.owner_wallet_state()
+        if not wallet.get("configured"):
+            raise ValueError("Owner wallet must be configured before sending a transfer")
+
+        sender_wallet = str(wallet["wallet_id"])
+        recipient_wallet = payload.recipient_wallet.strip()
+        if not recipient_wallet:
+            raise ValueError("recipient Wallet is required")
+        if recipient_wallet == sender_wallet:
+            raise ValueError("recipient Wallet must differ from the Owner Wallet")
+        if isinstance(payload.amount_q_atoms, bool) or payload.amount_q_atoms <= 0:
+            raise ValueError("transfer amount must be a positive integer q_atoms value")
+        amount_q_atoms = int(payload.amount_q_atoms)
+        memo = payload.memo.strip() if payload.memo is not None else ""
+        memo_hash = (
+            "sha256:" + hashlib.sha256(memo.encode("utf-8")).hexdigest()
+            if memo
+            else None
+        )
+
+        balance_read = hypervisor_service.wallet_balance_read_model(sender_wallet)
+        available_balance_q_atoms = int(balance_read.get("q_atoms", 0))
+        network_fee_q_atoms = int(STANDARD_NETWORK_FEE_Q_ATOMS)
+        total_debit_q_atoms = amount_q_atoms + network_fee_q_atoms
+        consensus = getattr(hypervisor_service, "consensus_service", None)
+        consensus_enabled = bool(consensus is not None and getattr(consensus, "is_enabled", False))
+        local_sequence = hypervisor_service.ledger_operation_service.wallet_next_sequence(sender_wallet)
+
+        if consensus_enabled:
+            sequence_provider = getattr(
+                hypervisor_service, "canonical_wallet_sequence_provider", None
+            )
+            if callable(sequence_provider):
+                canonical_sequence = sequence_provider(sender_wallet)
+            else:
+                query_sequence = getattr(consensus, "query_wallet_next_sequence", None)
+                canonical_sequence = query_sequence(sender_wallet) if callable(query_sequence) else None
+            if canonical_sequence is None:
+                raise ValueError("canonical wallet sequence is unavailable")
+            local_sequence = int(canonical_sequence)
+            if not preview_only and hypervisor_service.ledger_operation_service.reconcile_wallet_sequence(
+                sender_wallet, local_sequence
+            ):
+                hypervisor_service._persist_state()
+
+        preview = {
+            "status": "PREVIEW",
+            "operation_type": "WALLET_TRANSFER",
+            "sender_wallet": sender_wallet,
+            "recipient_wallet": recipient_wallet,
+            "amount_q_atoms": amount_q_atoms,
+            "network_fee_q_atoms": network_fee_q_atoms,
+            "total_debit_q_atoms": total_debit_q_atoms,
+            "available_balance_q_atoms": available_balance_q_atoms,
+            "balance_source": balance_read.get("source"),
+            "balance_error": balance_read.get("error"),
+            "sufficient_balance": available_balance_q_atoms >= total_debit_q_atoms,
+            "sender_sequence": local_sequence,
+            "consensus_required": consensus_enabled,
+            "memo_hash": memo_hash,
+        }
+        if preview_only:
+            return preview
+        if available_balance_q_atoms < total_debit_q_atoms:
+            raise ValueError("insufficient q_atoms for transfer and network fee")
+
+        def build_envelope(sequence: int, retry_nonce: str | None = None) -> LedgerOperationEnvelope:
+            created_at = datetime.now(UTC).isoformat()
+            evidence = [sender_wallet, recipient_wallet, f"wallet-transfer:{amount_q_atoms}"]
+            if memo_hash is not None:
+                evidence.append(memo_hash)
+            if retry_nonce is not None:
+                evidence.append(f"retry:{retry_nonce}")
+            operation_payload: dict[str, Any] = {
+                "recipient_wallet": recipient_wallet,
+                "amount": amount_q_atoms,
+            }
+            if memo_hash is not None:
+                operation_payload["memo_hash"] = memo_hash
+            unsigned = LedgerOperationEnvelope(
+                operation_type="WALLET_TRANSFER",
+                operation_version="1.0.0",
+                protocol_version="0.1",
+                origin_type="wallet",
+                initiator_id=sender_wallet,
+                sender_wallet=sender_wallet,
+                sender_sequence=sequence,
+                fee_payer=sender_wallet,
+                fee_class="standard",
+                created_at=created_at,
+                payload=operation_payload,
+                evidence_references=evidence,
+                signatures=[],
+            )
+            signature = sign_consensus_bytes(
+                private_key=hypervisor_service.owner_wallet_private_key(),
+                payload=unsigned.signing_bytes(),
+            )
+            return unsigned.model_copy(update={"signatures": [signature]})
+
+        pending_candidates = [
+            envelope
+            for envelope in hypervisor_service.list_pending_consensus_envelopes()
+            if envelope.operation_type == "WALLET_TRANSFER"
+            and envelope.sender_wallet == sender_wallet
+            and envelope.sender_sequence == local_sequence
+        ]
+        pending = None
+        failed_semantic = False
+        for candidate in reversed(pending_candidates):
+            candidate_memo_hash = candidate.payload.get("memo_hash")
+            same_intent = (
+                candidate.payload.get("recipient_wallet") == recipient_wallet
+                and candidate.payload.get("amount") == amount_q_atoms
+                and candidate_memo_hash == memo_hash
+            )
+            submission = consensus.get_submission(candidate.operation_id) if consensus_enabled else None
+            failed = submission is not None and submission.status.value == "failed"
+            if same_intent:
+                if failed:
+                    failed_semantic = True
+                    continue
+                pending = candidate
+                break
+            if not failed:
+                raise ValueError(
+                    "another Wallet operation is already pending for this sender sequence"
+                )
+
+        if pending is None:
+            pending = build_envelope(local_sequence, uuid4().hex if failed_semantic else None)
+
+        if not consensus_enabled:
+            record = hypervisor_service.ledger_operation_service.apply_consensus_wallet_transfer(pending)
+            hypervisor_service._persist_state()
+            return {
+                **preview,
+                "status": "FINALIZED",
+                "operation_id": pending.operation_id,
+                "record": record,
+                "finality": {"status": "local_only", "consensus_finalized": False},
+            }
+
+        hypervisor_service.stage_pending_consensus_envelope(pending)
+        submission = consensus.submit_operation(pending, retry_existing=True)
+        finality = hypervisor_service.ledger_operation_finality(pending.operation_id)
+        if finality.get("consensus_finalized"):
+            hypervisor_service.discard_pending_consensus_envelopes(pending.operation_id)
+            hypervisor_service.discard_pending_consensus_operations(pending.operation_id)
+            return {
+                **preview,
+                "status": "FINALIZED",
+                "operation_id": pending.operation_id,
+                "submission": submission.status.value,
+                "finality": finality,
+            }
+        if submission.status.value == "failed":
+            raise ValueError(submission.error or "Consensus rejected Wallet transfer")
+        return {
+            **preview,
+            "status": "CONSENSUS_PENDING",
+            "operation_id": pending.operation_id,
+            "submission": submission.status.value,
+            "finality": finality,
+        }
+
     @router.get("/status")
     async def status(request: Request) -> dict:
         active = session_expiry(request) is not None
@@ -636,6 +813,31 @@ def build_operator_access_router(
             return denied
         try:
             result = _register_owner_wallet_identity()
+        except (ValueError, OSError) as error:
+            return operation_error(error)
+        return JSONResponse(
+            status_code=202 if result.get("status") == "CONSENSUS_PENDING" else 200,
+            content=result,
+        )
+
+    @router.post("/operations/wallet/transfer/preview")
+    async def preview_wallet_transfer(payload: WalletTransferRequest, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        try:
+            result = _wallet_transfer(payload, preview_only=True)
+        except (ValueError, OSError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/wallet/transfer")
+    async def submit_wallet_transfer(payload: WalletTransferRequest, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        try:
+            result = _wallet_transfer(payload, preview_only=False)
         except (ValueError, OSError) as error:
             return operation_error(error)
         return JSONResponse(

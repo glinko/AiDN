@@ -2,12 +2,49 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from aidn_hypervisor.ledger.service import STANDARD_NETWORK_FEE_Q_ATOMS
+
 if TYPE_CHECKING:
     from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
     from aidn_hypervisor.service import HypervisorService
 
 
 Q_ATOMS_PER_Q = 1_000_000
+
+
+def _pending_wallet_transfer_payload(service: HypervisorService, wallet_id: str | None) -> list[dict]:
+    if not wallet_id:
+        return []
+    consensus = getattr(service, "consensus_service", None)
+    items: list[dict] = []
+    for envelope in service.list_pending_consensus_envelopes():
+        if envelope.operation_type != "WALLET_TRANSFER" or envelope.sender_wallet != wallet_id:
+            continue
+        submission = (
+            consensus.get_submission(envelope.operation_id)
+            if consensus is not None and callable(getattr(consensus, "get_submission", None))
+            else None
+        )
+        finality = service.ledger_operation_finality(envelope.operation_id)
+        payload = dict(envelope.payload)
+        items.append(
+            {
+                "operation_id": envelope.operation_id,
+                "operation_type": envelope.operation_type,
+                "sender_wallet": envelope.sender_wallet,
+                "sender_sequence": envelope.sender_sequence,
+                "recipient_wallet": payload.get("recipient_wallet"),
+                "amount_q_atoms": payload.get("amount"),
+                "network_fee_q_atoms": STANDARD_NETWORK_FEE_Q_ATOMS,
+                "created_at": envelope.created_at,
+                "memo_hash": payload.get("memo_hash"),
+                "submission_status": submission.status.value if submission is not None else None,
+                "status": finality.get("status"),
+                "finality": finality,
+                "error": submission.error if submission is not None else None,
+            }
+        )
+    return items
 
 
 def build_operator_wallet_payload(
@@ -36,6 +73,21 @@ def build_operator_wallet_payload(
     economics_history = service.export_wallet_economics_events(
         limit=economics_history_limit
     )
+    pending_operations = _pending_wallet_transfer_payload(service, str(wallet_id) if wallet_id else None)
+    active_pending_operations = [
+        item
+        for item in pending_operations
+        if item.get("status") not in {"failed", "consensus_finalized", "local_only"}
+        and item.get("submission_status") != "failed"
+    ]
+    ledger_events = service.list_wallet_ledger_events(limit=allocation_limit)
+    ledger_operations = []
+    if wallet_id is not None:
+        for operation in service.list_ledger_operations(limit=allocation_limit):
+            payload = operation.get("payload") if isinstance(operation, dict) else None
+            recipient_wallet = payload.get("recipient_wallet") if isinstance(payload, dict) else None
+            if operation.get("sender_wallet") == wallet_id or recipient_wallet == wallet_id:
+                ledger_operations.append(operation)
     return {
         "owner_wallet": owner_wallet,
         "wallet_state": {
@@ -58,6 +110,10 @@ def build_operator_wallet_payload(
                 if owner_wallet.get("configured")
                 else "not_configured"
             ),
+            "pending_operation_count": len(active_pending_operations),
+            "pending_transfer_q_atoms": sum(
+                int(item.get("amount_q_atoms") or 0) for item in active_pending_operations
+            ),
         },
         "node_identity": service.node_identity(),
         "usage_events": service.list_wallet_usage_events(limit=usage_limit),
@@ -67,6 +123,9 @@ def build_operator_wallet_payload(
         "dispute_events": service.list_wallet_allocation_dispute_events(
             limit=dispute_limit
         ),
+        "ledger_events": ledger_events,
+        "ledger_operations": ledger_operations,
+        "pending_operations": pending_operations,
         "economics_summary": service.get_wallet_economics_summary(
             recent_limit=economics_recent_limit
         ),

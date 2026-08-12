@@ -437,9 +437,12 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
     if tuple(parts) in {
         ("operators", "dashboard", "access", "operations", "wallet", "create"),
         ("operators", "dashboard", "access", "operations", "wallet", "import"),
+        ("operators", "dashboard", "access", "operations", "wallet", "transfer"),
+        ("operators", "dashboard", "access", "operations", "wallet", "transfer", "preview"),
     }:
         # Wallet bootstrap enters the same canonical bind path as the terminal
-        # flow. It is browser-paired and may not bypass consensus finality.
+        # flow. Transfers use the same consensus boundary and may not bypass
+        # canonical finality.
         return True
     if (
         len(parts) == 7

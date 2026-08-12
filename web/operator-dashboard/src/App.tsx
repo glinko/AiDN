@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Activity,
+  ArrowRightLeft,
   Box,
   Boxes,
   BriefcaseBusiness,
@@ -1672,6 +1673,21 @@ function formatQAtoms(qAtoms: number) {
   }).format(qAtoms / 1_000_000)} Q`
 }
 
+function parseQAtoms(value: string): number | null {
+  const normalized = value.trim()
+  const match = /^(\d+)(?:\.(\d{0,6}))?$/.exec(normalized)
+  if (!match) return null
+  try {
+    const whole = BigInt(match[1])
+    const fraction = BigInt((match[2] || '').padEnd(6, '0') || '0')
+    const atoms = whole * 1_000_000n + fraction
+    const numeric = Number(atoms)
+    return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : null
+  } catch {
+    return null
+  }
+}
+
 function WalletActivityList({ title, items, emptyDetail }: { title: string; items: DashboardRecord[]; emptyDetail: string }) {
   return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader><CardContent className="p-0">{items.length === 0 ? <p className="px-5 py-6 text-sm leading-6 text-muted-foreground">{emptyDetail}</p> : <div className="divide-y divide-border/70">{items.slice(-6).reverse().map((item, index) => {
     const quote = getRecord(item)?.quote
@@ -1679,6 +1695,90 @@ function WalletActivityList({ title, items, emptyDetail }: { title: string; item
     const amount = getText(item, 'amount_q') || getText(charges, 'total_q')
     return <div key={getText(item, 'event_id') || `${title}-${index}`} className="min-w-0 px-5 py-3"><div className="flex min-w-0 items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-medium text-slate-100">{getText(item, 'event_type') || 'Recorded activity'}</p><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{getText(item, 'occurred_at') || getText(item, 'created_at') || 'Time not reported'}</p></div>{amount ? <p className="shrink-0 font-mono text-xs text-cyan-100">{amount} Q</p> : null}</div></div>
   })}</div>}</CardContent></Card>
+}
+
+function WalletLedgerOperations({ items, emptyDetail }: { items: DashboardRecord[]; emptyDetail: string }) {
+  return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex items-center justify-between gap-3"><div><p className="eyebrow">Canonical record</p><CardTitle className="mt-1 text-base font-semibold">Ledger operations</CardTitle></div><StatusBadge value={items.length ? `${items.length} recorded` : 'empty'} /></div><p className="mt-1 text-xs leading-5 text-muted-foreground">Outgoing Wallet operations are read from the Hypervisor Ledger projection. A browser refresh never manufactures activity.</p></CardHeader><CardContent className="p-0">{items.length === 0 ? <p className="px-5 py-6 text-sm leading-6 text-muted-foreground">{emptyDetail}</p> : <div className="divide-y divide-border/70">{items.slice(-8).reverse().map((item, index) => {
+    const payload = getRecord(item)?.payload
+    const amountAtoms = Number(getRecord(payload)?.amount ?? getRecord(item)?.amount_q_atoms ?? 0)
+    const recipient = getText(payload, 'recipient_wallet') || getText(item, 'recipient_wallet')
+    const operationId = getText(item, 'operation_id') || getText(item, 'event_id')
+    const status = getText(getRecord(item)?.result, 'status') || getText(item, 'status') || 'recorded'
+    return <div key={operationId || `ledger-${index}`} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{getText(item, 'operation_type') || 'Ledger operation'}</p><StatusBadge value={status} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{shortId(operationId, 24)}{recipient ? ` · to ${shortId(recipient, 20)}` : ''}</p><p className="mt-1 text-xs text-muted-foreground">{getText(item, 'created_at') || getText(item, 'occurred_at') || 'Time not reported'}</p></div>{amountAtoms > 0 ? <p className="shrink-0 font-mono text-xs text-cyan-100">{formatQAtoms(amountAtoms)}</p> : null}</div>
+  })}</div>}</CardContent></Card>
+}
+
+function WalletPendingOperations({ items }: { items: DashboardRecord[] }) {
+  const activeItems = items.filter((item) => getText(item, 'submission_status') !== 'failed' && getText(item, 'status') !== 'failed')
+  const failedItems = items.length - activeItems.length
+  return <Card className={cn('border py-0 shadow-none', activeItems.length ? 'border-amber-300/25 bg-amber-300/[0.04]' : failedItems ? 'border-rose-300/25 bg-rose-300/[0.04]' : 'border-border/80 bg-card')}><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex items-center justify-between gap-3"><div><p className="eyebrow">Awaiting finality</p><CardTitle className="mt-1 text-base font-semibold">Pending transfers</CardTitle></div><StatusBadge value={activeItems.length ? `${activeItems.length} pending` : failedItems ? `${failedItems} rejected` : 'clear'} /></div><p className="mt-1 text-xs leading-5 text-muted-foreground">Rejected envelopes remain visible for diagnostics, but they do not reserve balance or count as active pending transfers.</p></CardHeader><CardContent className="p-0">{items.length === 0 ? <p className="px-5 py-6 text-sm leading-6 text-muted-foreground">No Wallet transfers are waiting for consensus.</p> : <div className="divide-y divide-border/70">{items.slice(-8).reverse().map((item, index) => { const operationId = getText(item, 'operation_id'); const amountAtoms = Number(getRecord(item)?.amount_q_atoms ?? 0); const error = getText(item, 'error'); return <div key={operationId || `pending-${index}`} className="px-5 py-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-mono text-xs text-amber-50">{shortId(operationId, 24)}</p><StatusBadge value={getText(item, 'submission_status') || getText(item, 'status') || 'pending'} /></div><p className="mt-1 text-xs text-muted-foreground">To {shortId(getText(item, 'recipient_wallet'), 24)} · sequence {String(getRecord(item)?.sender_sequence ?? '—')} · {formatQAtoms(amountAtoms)}</p>{error ? <p className="mt-2 text-xs text-rose-200">{error}</p> : null}</div> })}</div>}</CardContent></Card>
+}
+
+function WalletTransferWorkspace({ walletId, onRefresh }: { walletId: string; onRefresh: () => void }) {
+  const [recipientWallet, setRecipientWallet] = useState('')
+  const [amountQ, setAmountQ] = useState('')
+  const [memo, setMemo] = useState('')
+  const [preview, setPreview] = useState<DashboardRecord | null>(null)
+  const [result, setResult] = useState<DashboardRecord | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<'preview' | 'submit' | null>(null)
+  const amountQAtoms = parseQAtoms(amountQ)
+  const requestPayload = amountQAtoms === null ? null : { recipient_wallet: recipientWallet.trim(), amount_q_atoms: amountQAtoms, ...(memo.trim() ? { memo: memo.trim() } : {}) }
+
+  function resetPreview() {
+    setPreview(null)
+    setResult(null)
+    setError(null)
+  }
+
+  async function createPreview() {
+    if (!requestPayload?.recipient_wallet || amountQAtoms === null) {
+      setError('Enter a recipient Wallet and a positive Q amount with no more than six decimal places.')
+      return
+    }
+    setBusy('preview')
+    setError(null)
+    setResult(null)
+    try {
+      const response = await dashboardApi.previewWalletTransfer(requestPayload)
+      setPreview(getRecord(response) ?? null)
+      if (!getRecord(response)) setError('The Hypervisor returned no transfer preview.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Transfer preview failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function submitTransfer() {
+    if (!requestPayload || !preview) return
+    if (getRecord(preview)?.sufficient_balance === false) {
+      setError('The Owner Wallet does not have enough Q for the transfer and network fee.')
+      return
+    }
+    setBusy('submit')
+    setError(null)
+    try {
+      const response = await dashboardApi.submitWalletTransfer(requestPayload)
+      const nextResult = getRecord(response) ?? null
+      setResult(nextResult)
+      onRefresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Wallet transfer failed.')
+      onRefresh()
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const previewAmount = Number(getRecord(preview)?.amount_q_atoms ?? 0)
+  const previewFee = Number(getRecord(preview)?.network_fee_q_atoms ?? 0)
+  const previewTotal = Number(getRecord(preview)?.total_debit_q_atoms ?? 0)
+  const previewInsufficient = getRecord(preview)?.sufficient_balance === false
+  const resultStatus = getText(result, 'status')
+  const resultFinality = getRecord(getRecord(result)?.finality)
+
+  return <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-cyan-300/15 px-5 py-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow text-cyan-100">Operator payment</p><CardTitle className="mt-1 text-lg font-semibold">Transfer Q</CardTitle><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Send Q from the configured Owner Wallet to another Wallet. The server signs the canonical operation; this form never receives a private key.</p></div><ArrowRightLeft className="mt-1 size-5 text-cyan-200" /></div></CardHeader><CardContent className="space-y-4 p-5"><div className="grid gap-3 lg:grid-cols-[1.2fr_0.7fr_1fr_auto]"><label className="grid gap-2"><span className="eyebrow">Recipient Wallet</span><input value={recipientWallet} onChange={(event) => { setRecipientWallet(event.target.value); resetPreview() }} placeholder="wallet-..." autoComplete="off" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /><span className="text-xs text-muted-foreground">Sender: {shortId(walletId, 24)}</span></label><label className="grid gap-2"><span className="eyebrow">Amount in Q</span><input value={amountQ} onChange={(event) => { setAmountQ(event.target.value); resetPreview() }} inputMode="decimal" placeholder="0.000000" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-sm text-white outline-none focus:border-cyan-300" /><span className="text-xs text-muted-foreground">Stored as integer q_atoms.</span></label><label className="grid gap-2"><span className="eyebrow">Memo (optional)</span><input value={memo} onChange={(event) => { setMemo(event.target.value); resetPreview() }} maxLength={256} placeholder="Operator note" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /><span className="text-xs text-muted-foreground">Only a memo hash enters the Ledger.</span></label><div className="flex items-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy !== null || !requestPayload?.recipient_wallet || amountQAtoms === null} onClick={() => void createPreview()}><Gauge />{busy === 'preview' ? 'Checking...' : 'Preview transfer'}</Button></div></div>{error ? <OperationNotice message={error} onDismiss={() => setError(null)} /> : null}{preview ? <div className={cn('rounded-lg border p-4', previewInsufficient ? 'border-rose-300/30 bg-rose-300/[0.05]' : 'border-cyan-300/25 bg-[#07111d]')}><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow">Review before signing</p><p className="mt-1 text-sm font-semibold text-slate-100">{formatQAtoms(previewAmount)} to {shortId(getText(preview, 'recipient_wallet'), 28)}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Sequence {String(getRecord(preview)?.sender_sequence ?? '—')} · {getRecord(preview)?.consensus_required ? 'consensus finality required' : 'local ledger mode'}</p></div><StatusBadge value={previewInsufficient ? 'insufficient balance' : 'ready'} /></div><div className="mt-4 grid gap-3 sm:grid-cols-3"><div><p className="eyebrow">Network fee</p><p className="mt-1 font-mono text-sm text-slate-100">{formatQAtoms(previewFee)}</p></div><div><p className="eyebrow">Total debit</p><p className="mt-1 font-mono text-sm text-slate-100">{formatQAtoms(previewTotal)}</p></div><div><p className="eyebrow">Available</p><p className="mt-1 font-mono text-sm text-slate-100">{formatQAtoms(Number(getRecord(preview)?.available_balance_q_atoms ?? 0))}</p></div></div><div className="mt-4 flex flex-wrap gap-2"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy !== null || previewInsufficient} onClick={() => void submitTransfer()}><ArrowRightLeft />{busy === 'submit' ? 'Submitting...' : 'Submit transfer'}</Button><Button variant="outline" className="border-border bg-[#091725]" disabled={busy !== null} onClick={resetPreview}>Edit transfer</Button></div></div> : null}{result ? <div className="rounded-lg border border-emerald-300/25 bg-emerald-300/[0.04] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow text-emerald-100">Operation result</p><p className="mt-1 text-sm font-semibold text-emerald-50">{resultStatus === 'CONSENSUS_PENDING' ? 'Transfer is awaiting consensus finality.' : 'Transfer was finalized.'}</p><p className="mt-1 break-all font-mono text-xs text-emerald-100/75">{getText(result, 'operation_id') || 'Operation ID unavailable'}</p></div><StatusBadge value={resultStatus || 'recorded'} /></div><p className="mt-3 text-xs leading-5 text-emerald-100/75">{resultFinality?.status ? `Finality: ${String(resultFinality.status)}.` : 'Refresh the Wallet read model to inspect the canonical outcome.'} {resultStatus === 'CONSENSUS_PENDING' ? 'Do not submit another transfer for this sequence while it is pending.' : ''}</p></div> : null}</CardContent></Card>
 }
 
 function WalletWorkspace({ wallet, isLoading, error, onRefresh }: { wallet: WalletDashboard | undefined; isLoading: boolean; error: Error | null; onRefresh: () => void }) {
@@ -1749,10 +1849,13 @@ function WalletWorkspace({ wallet, isLoading, error, onRefresh }: { wallet: Wall
         <Card className="border-border/80 bg-card py-0 shadow-none"><CardContent className="p-5"><p className="text-sm text-muted-foreground">Canonical balance</p><p className="mt-2 break-all font-mono text-2xl font-semibold tracking-tight text-cyan-100">{formatQAtoms(balance)}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{walletState?.balance_source === 'remote_consensus_quorum' ? 'Verified by the configured consensus RPC quorum.' : walletState?.balance_source === 'consensus_projection' ? 'Current validator consensus projection.' : walletState?.balance_source === 'local_projection_unverified' ? 'Remote consensus balance is unavailable; this is an unverified local projection.' : 'Local ledger projection.'}</p>{walletState?.balance_error ? <p className="mt-2 text-xs leading-5 text-amber-200">{String(walletState.balance_error)}</p> : null}</CardContent></Card>
         <Card className="border-border/80 bg-card py-0 shadow-none"><CardContent className="p-5"><p className="text-sm text-muted-foreground">Binding</p><p className="mt-2 text-xl font-semibold capitalize text-slate-100">{walletState?.binding_state || 'unknown'}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{walletState?.binding_state === 'pending' ? 'Waiting for the canonical bind operation to finalize.' : 'Owner Wallet is available to node operations.'}</p></CardContent></Card>
         <Card className={cn('border py-0 shadow-none', identityRegistered ? 'border-emerald-300/25 bg-emerald-300/[0.04]' : 'border-amber-300/25 bg-amber-300/[0.04]')}><CardContent className="p-5"><p className="text-sm text-muted-foreground">Network identity</p><p className={cn('mt-2 text-xl font-semibold', identityRegistered ? 'text-emerald-100' : 'text-amber-100')}>{identityRegistered ? 'Registered' : 'Not registered'}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{identityRegistered ? 'Identity evidence is visible in the current registry projection.' : 'No wallet identity record is visible in this chain projection.'}</p></CardContent></Card>
-        <Card className="border-border/80 bg-card py-0 shadow-none"><CardContent className="p-5"><p className="text-sm text-muted-foreground">Recorded usage</p><p className="mt-2 font-mono text-2xl font-semibold tracking-tight text-slate-100">{wallet.usage_events.length}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{wallet.allocation_events.length} allocation events and {wallet.dispute_events.length} disputes retained locally.</p></CardContent></Card>
-      </div>
-      {!identityRegistered ? <Card className="border-amber-300/25 bg-amber-300/[0.04] py-0 shadow-none"><CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between"><div className="flex gap-3"><CircleDot className="mt-0.5 size-4 shrink-0 text-amber-200" /><div><p className="text-sm font-semibold text-amber-100">Wallet is bound, but the network reset removed its registry identity</p><p className="mt-1 max-w-3xl text-sm leading-6 text-amber-100/75">Register this same Wallet in the current chain. This submits a signed, no-fee consensus operation. It does not expose the private key, replace ownership or create a second Wallet.</p>{walletState?.identity_error ? <p className="mt-2 text-xs leading-5 text-amber-200">Identity quorum is currently unavailable: {String(walletState.identity_error)}</p> : null}</div></div><Button className="shrink-0 bg-amber-200 text-[#191204] hover:bg-amber-100" disabled={busy || Boolean(walletState?.identity_error)} onClick={() => void registerNetworkIdentity()}><CircleDot />{busy ? 'Submitting...' : 'Register in network'}</Button></CardContent></Card> : null}
-      <div className="grid gap-4 xl:grid-cols-2"><WalletActivityList title="Usage activity" items={wallet.usage_events} emptyDetail="No metered usage has been recorded for this Wallet." /><WalletActivityList title="Allocation activity" items={wallet.allocation_events} emptyDetail="No allocation or settlement events have been recorded for this Wallet." /></div>
+         <Card className="border-border/80 bg-card py-0 shadow-none"><CardContent className="p-5"><p className="text-sm text-muted-foreground">Recorded usage</p><p className="mt-2 font-mono text-2xl font-semibold tracking-tight text-slate-100">{wallet.usage_events.length}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{wallet.allocation_events.length} allocation events and {wallet.dispute_events.length} disputes retained locally.</p></CardContent></Card>
+       </div>
+       <WalletTransferWorkspace walletId={String(ownerWallet?.wallet_id || walletState?.wallet_id || '')} onRefresh={onRefresh} />
+       <WalletPendingOperations items={wallet.pending_operations} />
+       {!identityRegistered ? <Card className="border-amber-300/25 bg-amber-300/[0.04] py-0 shadow-none"><CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between"><div className="flex gap-3"><CircleDot className="mt-0.5 size-4 shrink-0 text-amber-200" /><div><p className="text-sm font-semibold text-amber-100">Wallet is bound, but the network reset removed its registry identity</p><p className="mt-1 max-w-3xl text-sm leading-6 text-amber-100/75">Register this same Wallet in the current chain. This submits a signed, no-fee consensus operation. It does not expose the private key, replace ownership or create a second Wallet.</p>{walletState?.identity_error ? <p className="mt-2 text-xs leading-5 text-amber-200">Identity quorum is currently unavailable: {String(walletState.identity_error)}</p> : null}</div></div><Button className="shrink-0 bg-amber-200 text-[#191204] hover:bg-amber-100" disabled={busy || Boolean(walletState?.identity_error)} onClick={() => void registerNetworkIdentity()}><CircleDot />{busy ? 'Submitting...' : 'Register in network'}</Button></CardContent></Card> : null}
+       <div className="grid gap-4 xl:grid-cols-2"><WalletActivityList title="Usage activity" items={wallet.usage_events} emptyDetail="No metered usage has been recorded for this Wallet." /><WalletActivityList title="Allocation activity" items={wallet.allocation_events} emptyDetail="No allocation or settlement events have been recorded for this Wallet." /></div>
+       <WalletLedgerOperations items={wallet.ledger_operations} emptyDetail="No finalized Wallet ledger operations have been recorded for this Wallet." />
       <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><CardTitle className="text-base font-semibold">Economic record</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">These are local accounting events. The external faucet is a separate Treasury service and is not represented as a claimable balance here.</p></CardHeader><CardContent className="grid gap-4 p-5 sm:grid-cols-3"><div><p className="text-sm text-muted-foreground">Recyclable removals</p><p className="mt-1 font-mono text-lg text-slate-100">{String(economics?.count ?? 0)}</p></div><div><p className="text-sm text-muted-foreground">Removed value</p><p className="mt-1 font-mono text-lg text-slate-100">{String(economics?.total_q ?? 0)} Q</p></div><div><p className="text-sm text-muted-foreground">Faucet integration</p><p className="mt-1 text-sm font-medium text-slate-100">External service</p></div></CardContent></Card>
     </> : null}
     {revealedKey ? <Card className="border-amber-300/30 bg-amber-300/[0.05] py-0 shadow-none"><CardHeader className="border-b border-amber-300/20 px-5 py-4"><p className="eyebrow text-amber-100">Store immediately</p><CardTitle className="mt-1 text-lg font-semibold text-amber-50">New private key is visible once</CardTitle></CardHeader><CardContent className="p-5"><code className="block break-all rounded-lg bg-black/25 p-3 font-mono text-xs leading-5 text-amber-50">{revealedKey}</code><div className="mt-3 flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-amber-300/30 bg-[#091725] text-amber-100" onClick={() => void navigator.clipboard.writeText(revealedKey)}><Copy />Copy key</Button><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => setRevealedKey(null)}>I stored it</Button></div></CardContent></Card> : null}

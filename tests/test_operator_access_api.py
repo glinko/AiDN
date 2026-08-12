@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
+from types import SimpleNamespace
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from fastapi import FastAPI
@@ -11,7 +12,11 @@ from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.operator_access import DashboardAccessService
 from aidn_hypervisor.operator_access_api import build_operator_access_router
+from aidn_hypervisor.queue import InMemoryTaskQueue
+from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.secrets import FileSecretManager
+from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.wallet_read_models import build_operator_wallet_payload
 
 _BROWSER_HEADERS = {"X-AiDN-Browser-Key": "browser-key-for-api-tests-000000000000000000000000000000000000000"}
 
@@ -311,6 +316,157 @@ def test_paired_dashboard_operations_require_pairing_and_call_bounded_service(tm
     assert client.post("/operators/dashboard/access/operations/bundles/bundle-a/unknown").status_code == 422
 
 
+def test_wallet_transfer_preview_is_read_only_and_submit_updates_local_ledger(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        node_id="wallet-transfer-node",
+    )
+    service.configure_owner_wallet(mode="create", label="Primary")
+    sender_wallet = service.owner_wallet_state()["wallet_id"]
+    service.credit_wallet_q_atoms(wallet_id=sender_wallet, amount_q_atoms=2_000_000)
+    app = FastAPI()
+    app.include_router(
+        build_operator_access_router(
+            access_service=access,
+            credential_store=credentials,
+            allow_insecure_lan=True,
+            hypervisor_service=service,
+        )
+    )
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+
+    assert client.post(
+        "/operators/dashboard/access/operations/wallet/transfer/preview",
+        json={"recipient_wallet": "wallet-recipient", "amount_q_atoms": 1_250_000},
+    ).status_code == 401
+
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+
+    preview = client.post(
+        "/operators/dashboard/access/operations/wallet/transfer/preview",
+        json={"recipient_wallet": "wallet-recipient", "amount_q_atoms": 1_250_000, "memo": "smoke"},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["status"] == "PREVIEW"
+    assert preview.json()["network_fee_q_atoms"] == 10_000
+    assert preview.json()["total_debit_q_atoms"] == 1_260_000
+    assert preview.json()["sufficient_balance"] is True
+    assert service.wallet_q_atom_balance(sender_wallet) == 2_000_000
+    assert service.wallet_q_atom_balance("wallet-recipient") == 0
+    assert service.ledger_operation_service.wallet_next_sequence(sender_wallet) == 1
+
+    submitted = client.post(
+        "/operators/dashboard/access/operations/wallet/transfer",
+        json={"recipient_wallet": "wallet-recipient", "amount_q_atoms": 1_250_000, "memo": "smoke"},
+    )
+    assert submitted.status_code == 200
+    assert submitted.json()["status"] == "FINALIZED"
+    assert submitted.json()["operation_id"]
+    assert service.wallet_q_atom_balance(sender_wallet) == 740_000
+    assert service.wallet_q_atom_balance("wallet-recipient") == 1_250_000
+
+
+def test_wallet_transfer_rejects_self_transfer_and_insufficient_balance(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    service = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    service.configure_owner_wallet(mode="create", label="Primary")
+    sender_wallet = service.owner_wallet_state()["wallet_id"]
+    app = FastAPI()
+    app.include_router(
+        build_operator_access_router(
+            access_service=access,
+            credential_store=credentials,
+            allow_insecure_lan=True,
+            hypervisor_service=service,
+        )
+    )
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+
+    self_transfer = client.post(
+        "/operators/dashboard/access/operations/wallet/transfer/preview",
+        json={"recipient_wallet": sender_wallet, "amount_q_atoms": 1},
+    )
+    assert self_transfer.status_code == 409
+    assert "differ" in self_transfer.json()["error"]["message"]
+
+    insufficient = client.post(
+        "/operators/dashboard/access/operations/wallet/transfer",
+        json={"recipient_wallet": "wallet-recipient", "amount_q_atoms": 1},
+    )
+    assert insufficient.status_code == 409
+    assert "insufficient" in insufficient.json()["error"]["message"]
+
+
+def test_wallet_transfer_pending_state_is_visible_without_local_debit(tmp_path) -> None:
+    class PendingConsensus:
+        is_enabled = True
+        is_validator = False
+
+        def __init__(self) -> None:
+            self.submissions = {}
+
+        def query_wallet_next_sequence(self, wallet_id: str) -> int:
+            return 1
+
+        def get_submission(self, operation_id: str):
+            return self.submissions.get(operation_id)
+
+        def submit_operation(self, envelope, *, retry_existing: bool):
+            submission = SimpleNamespace(
+                status=SimpleNamespace(value="pending"),
+                error=None,
+                block_height=None,
+            )
+            self.submissions[envelope.operation_id] = submission
+            return submission
+
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    service = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    service.configure_owner_wallet(mode="create", label="Primary")
+    sender_wallet = service.owner_wallet_state()["wallet_id"]
+    service.credit_wallet_q_atoms(wallet_id=sender_wallet, amount_q_atoms=2_000_000)
+    service.consensus_service = PendingConsensus()
+    app = FastAPI()
+    app.include_router(
+        build_operator_access_router(
+            access_service=access,
+            credential_store=credentials,
+            allow_insecure_lan=True,
+            hypervisor_service=service,
+        )
+    )
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+
+    submitted = client.post(
+        "/operators/dashboard/access/operations/wallet/transfer",
+        json={"recipient_wallet": "wallet-recipient", "amount_q_atoms": 250_000},
+    )
+    assert submitted.status_code == 202
+    assert submitted.json()["status"] == "CONSENSUS_PENDING"
+    assert service.wallet_q_atom_balance(sender_wallet) == 2_000_000
+
+    read_model = build_operator_wallet_payload(service)
+    assert read_model["wallet_state"]["pending_operation_count"] == 1
+    assert read_model["pending_operations"][0]["recipient_wallet"] == "wallet-recipient"
+    assert read_model["ledger_operations"] == []
+
+
 def test_paired_dashboard_model_and_bundle_lifecycle_operations_are_bounded(tmp_path) -> None:
     manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
     credentials = McpCredentialStore(secret_manager=manager)
@@ -383,6 +539,12 @@ def test_validator_boundary_permits_only_paired_dashboard_operations() -> None:
     )
     assert _is_validator_consensus_write_path(
         "/operators/dashboard/access/operations/wallet/create", "POST"
+    )
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/operations/wallet/transfer/preview", "POST"
+    )
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/operations/wallet/transfer", "POST"
     )
     assert _is_validator_consensus_write_path(
         "/operators/dashboard/access/operations/models/install", "POST"
