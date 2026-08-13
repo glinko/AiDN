@@ -272,6 +272,19 @@ class ConsensusService:
         except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error, OSError):
             return None
 
+    def query_epoch_transition_inputs(self) -> dict[str, object] | None:
+        """Read the canonical Epoch Engine input readiness report."""
+        if not self.is_enabled:
+            return None
+        try:
+            raw_value = self._query_abci_value("epoch/transition-inputs")
+            if raw_value is None:
+                return None
+            value = json.loads(raw_value.decode("utf-8"))
+            return value if isinstance(value, dict) else None
+        except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error, OSError):
+            return None
+
     def _query_abci_value(self, path: str) -> bytes | None:
         parsed = urlsplit(self.config.cometbft_endpoint)
         rpc_endpoint = self.config.cometbft_endpoint

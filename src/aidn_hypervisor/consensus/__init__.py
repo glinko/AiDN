@@ -57,6 +57,12 @@ from aidn_hypervisor.consensus.deployment import (
     CometBftFinalityDeploymentConfig,
     load_cometbft_finality_deployment_config,
 )
+from aidn_hypervisor.consensus.epoch_transition_inputs import (
+    EPOCH_TRANSITION_INPUT_REPORT_VERSION,
+    EPOCH_TRANSITION_INPUTS_NOT_READY,
+    EpochTransitionInputReport,
+    build_epoch_transition_input_report,
+)
 from aidn_hypervisor.consensus.finality import (
     ConsensusFinalityEvidence,
     ConsensusFinalitySource,
@@ -177,6 +183,10 @@ __all__ = [
     "ProtocolAuthorityError",
     "ProtocolAuthorityPolicy",
     "normalize_ed25519_public_key",
+    "EPOCH_TRANSITION_INPUT_REPORT_VERSION",
+    "EPOCH_TRANSITION_INPUTS_NOT_READY",
+    "EpochTransitionInputReport",
+    "build_epoch_transition_input_report",
     "build_session_escrow_lock_envelope",
     "build_session_escrow_lock_envelope_from_funding",
     "build_session_failure_evidence_envelope",

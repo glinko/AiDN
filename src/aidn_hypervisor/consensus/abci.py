@@ -20,6 +20,9 @@ from aidn_hypervisor.consensus.coverage import (
     strict_operation_coverage_error,
     strict_operation_version_error,
 )
+from aidn_hypervisor.consensus.epoch_transition_inputs import (
+    build_epoch_transition_input_report,
+)
 from aidn_hypervisor.consensus.execution import compute_execution_state_root
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.protocol_authority import ProtocolAuthorityPolicy
@@ -839,6 +842,14 @@ class AIDNABCIApplication:
                 sort_keys=True,
                 separators=(",", ":"),
             ).encode("utf-8")
+        elif path == "epoch/transition-inputs":
+            report = self.epoch_transition_input_report()
+            kwargs["key"] = b"epoch:transition-inputs"
+            kwargs["value"] = json.dumps(
+                report,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
         elif path == "development/reward-preflight" or path.startswith("development/reward-preflight/"):
             pool_id = path.removeprefix("development/reward-preflight/") or "GENERAL_DEVELOPMENT"
             try:
@@ -868,6 +879,30 @@ class AIDNABCIApplication:
             kwargs["value"] = b""
 
         return ABCIQueryResponse(**kwargs)
+
+    def epoch_transition_input_report(self) -> dict:
+        """Expose only roots observed from the current canonical state.
+
+        Epoch boundaries, task results, eligibility and reward roots are not
+        inferred here.  The resulting BLOCKED report is intentional until a
+        live Epoch Engine publishes those artifacts.
+        """
+        closing_height = self._last_block_height or None
+        closing_block_hash = (
+            "sha256:" + self._last_block_hash.hex() if closing_height is not None else None
+        )
+        closing_state_root = (
+            "sha256:" + compute_execution_state_root(self.ledger)
+            if closing_height is not None
+            else None
+        )
+        source_app_hash = "sha256:" + self._app_hash.hex() if self._app_hash else None
+        return build_epoch_transition_input_report(
+            closing_height=closing_height,
+            closing_block_hash=closing_block_hash,
+            closing_state_root=closing_state_root,
+            source_app_hash=source_app_hash,
+        ).model_dump(mode="json")
 
     # ---- Snapshot ----
 
