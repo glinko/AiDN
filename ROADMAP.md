@@ -20,6 +20,9 @@ Completed in this slice:
   the same Ledger payload rules, binds every signer to the public policy and
   threshold, and never broadcasts or mutates local state. See
   [the builder runbook](./docs/development/authorized-epoch-transition-builder.md).
+- [x] Add a coordinated public-policy rollout helper with dry-run, state-mount
+  validation, atomic file installation, per-host health verification, and
+  rollback. See [the rollout runbook](./docs/development/protocol-authority-policy-rollout.md).
 
 Next required economic-network work:
 
