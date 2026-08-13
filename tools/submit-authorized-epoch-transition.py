@@ -31,6 +31,12 @@ from aidn_hypervisor.consensus.cometbft_finality import (  # noqa: E402
 from aidn_hypervisor.consensus.deployment import (  # noqa: E402
     load_cometbft_finality_deployment_config,
 )
+from aidn_hypervisor.consensus.epoch_transition import (  # noqa: E402
+    validate_quorum_bound_epoch_transition,
+)
+from aidn_hypervisor.consensus.epoch_transition_quorum import (  # noqa: E402
+    EpochTransitionQuorumReport,
+)
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope  # noqa: E402
 from aidn_hypervisor.consensus.protocol_authority import ProtocolAuthorityPolicy  # noqa: E402
 from aidn_hypervisor.ledger.service import LedgerOperationService  # noqa: E402
@@ -41,6 +47,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--envelope", required=True, type=Path)
     parser.add_argument("--policy", required=True, type=Path)
     parser.add_argument("--finality-config", required=True, type=Path)
+    parser.add_argument(
+        "--quorum-report",
+        type=Path,
+        help="required for a quorum-bound transition prepared from external validators",
+    )
     parser.add_argument("--timeout-seconds", type=int, default=300)
     parser.add_argument("--poll-seconds", type=float, default=3)
     parser.add_argument("--dry-run", action="store_true")
@@ -126,6 +137,7 @@ def _validate_input(
     envelope: LedgerOperationEnvelope,
     policy: ProtocolAuthorityPolicy,
     chain_id: str,
+    quorum_report: EpochTransitionQuorumReport | None,
 ) -> None:
     if envelope.operation_type != "EPOCH_TRANSITION":
         raise ValueError("EPOCH_TRANSITION envelope is required")
@@ -133,7 +145,21 @@ def _validate_input(
         raise ValueError("EPOCH_TRANSITION must have protocol origin")
     if not envelope.signatures:
         raise ValueError("EPOCH_TRANSITION must already contain authority signatures")
-    LedgerOperationService().validate_consensus_epoch_transition(envelope)
+    quorum_bound = {
+        "epoch_transition_quorum_version",
+        "epoch_transition_quorum_hash",
+    } & set(envelope.payload)
+    if quorum_bound:
+        if quorum_report is None:
+            raise ValueError("quorum-bound EPOCH_TRANSITION requires --quorum-report")
+        validate_quorum_bound_epoch_transition(
+            envelope.model_copy(update={"signatures": []}),
+            policy=policy,
+            quorum_report=quorum_report,
+            expected_chain_id=chain_id,
+        )
+    else:
+        LedgerOperationService().validate_consensus_epoch_transition(envelope)
     policy.verify_epoch_transition(envelope)
     if not chain_id.strip():
         raise ValueError("finality config chain_id is required")
@@ -177,8 +203,13 @@ def main() -> int:
     policy = ProtocolAuthorityPolicy.from_mapping(
         json.loads(args.policy.read_text(encoding="utf-8"))
     )
+    quorum_report = None
+    if args.quorum_report is not None:
+        quorum_report = EpochTransitionQuorumReport.model_validate(
+            json.loads(args.quorum_report.read_text(encoding="utf-8"))
+        )
     deployment = load_cometbft_finality_deployment_config(args.finality_config)
-    _validate_input(envelope, policy, deployment.chain_id)
+    _validate_input(envelope, policy, deployment.chain_id, quorum_report)
     transaction = envelope.consensus_bytes()
     transaction_hash = cometbft_transaction_hash(transaction)
     summary: dict[str, Any] = {

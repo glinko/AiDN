@@ -28,8 +28,9 @@ Controlled-localnet acceptance:
   `129` and `130`, with identical commitment references and multi-RPC
   finality. The detailed evidence is in
   [the controlled-localnet schedule acceptance record](./docs/development/controlled-localnet-epoch-schedule-acceptance-2026-08-13.md).
-- [ ] Produce a threshold-authorized Epoch Result Manifest only from finalized
-  Epoch Engine evidence; no localnet process may invent roots or budgets.
+- [x] Produce and finalize the first controlled-localnet no-work Epoch Result
+  Manifest only from finalized schedule/rebase anchors and a validator quorum.
+  The acceptance record is [here](./docs/development/controlled-localnet-epoch-0-manifest-transition-acceptance-2026-08-13.md).
 
 ## 2026-08-13 Controlled Localnet Schedule Recovery
 
@@ -49,14 +50,9 @@ Completed in this slice:
   `epoch/schedule-rebase` query. The operator procedure is documented in
   [the rebase runbook](./docs/development/controlled-localnet-epoch-schedule-rebase.md).
 
-Next required controlled-localnet work:
-
-- [ ] Deploy this compatible ABCI build to validators `128`, `129`, and `130`
-  without changing CometBFT state or authority keys.
-- [ ] Create, threshold-authorize, submit, and finalize one rebase with a
-  future Epoch 0 start; archive multi-RPC evidence.
-- [ ] Wait for its real boundary, then produce the first manifest only from
-  finalized Epoch Engine evidence and continue through the normal quorum gate.
+Controlled-localnet recovery is accepted. The next controlled-localnet gate is
+economic, not schedule recovery: authorize a future non-zero Development Pool
+allocation before attempting a production reward batch.
 
 ## 2026-08-13 Multi-validator Epoch Transition Quorum Gate
 
@@ -78,21 +74,24 @@ Completed in this slice:
   remain fail-closed for transition readiness instead of being silently
   reinterpreted.
 
-Next required live-network work:
+Live-network acceptance:
 
 - [x] Deploy the `epoch/transition-inputs` query and public manifest projection
   to validators `128`, `129` and `130` without resetting state. The rollout
   reached `3/3` report agreement; the evidence is recorded in
   [the query rollout acceptance record](./docs/development/epoch-transition-input-query-rollout-acceptance-2026-08-13.md).
-- [ ] Run the quorum collector against the deployed validators and archive
-  `READY` evidence only after all three nodes expose the same finalized
-  schedule and manifest references.
-- [ ] Use the quorum-bound builder to create the exact authority-signed
-  `EPOCH_TRANSITION` from a real `READY` report, then submit it in a later
-  block through the canonical consensus path; no local UI or agent may invent
-  the roots or pool budget.
-- [ ] Re-run the quorum gate after transition finality, then execute the first
-  independently reproducible ECO-0007 production reward batch.
+- [x] Run the quorum collector and archive a `READY` report with identical
+  finalized schedule and manifest references across validators `128`, `129`
+  and `130`.
+- [x] Build the exact authority-signed `EPOCH_TRANSITION` from that quorum
+  report and finalize it through canonical consensus. The transition includes
+  explicit schedule and manifest evidence references.
+- [x] Re-run the ECO-0007 preflight after transition finality. It agrees across
+  all three validators and returns `NO_BUDGET` with `0 q_atoms`, so no payout
+  plan is created.
+- [ ] Execute the first independently reproducible ECO-0007 production reward
+  batch after a non-zero pool allocation and finalized RFC-0068 attestations
+  exist.
 
 ## 2026-08-13 Quorum-bound Epoch Transition Artifact
 
@@ -111,17 +110,10 @@ Completed in this slice:
 - [x] Preserve the legacy payload builder for compatibility and fixtures while
   documenting it as non-production for manifest-backed transitions.
 
-Next required live-network work:
-
-- [x] Deploy the epoch transition-input query and manifest projection to the
-  validator set. The current quorum is intentionally `BLOCKED` because the
-  epoch boundary and finalized manifest are not available yet.
-- [x] Implement the canonical schedule commitment and quorum binding. The
-  live schedule still has to be finalized on the validator network.
-- [ ] Obtain a real `READY` report at a finalized epoch boundary.
-- [ ] Produce and independently verify the authority-signed transition from
-  that report, submit it through canonical consensus and archive multi-RPC
-  finality evidence.
+Live acceptance is complete for the controlled-localnet calibration epoch. The
+quorum-bound builder and submitter have been exercised against the finalized
+manifest and schedule references; see the Epoch 0 acceptance record linked
+above. Production reward activation remains a separate gate.
 
 ## 2026-08-13 Canonical Epoch Result Manifest
 
@@ -147,15 +139,11 @@ Completed in this slice:
   for independently reviewed manifest artifacts. These tools never calculate
   evidence roots, create pool budgets or export authority private keys.
 
-Next required economic-network work:
-
-- [ ] Produce the first live manifest from finalized Epoch Engine evidence on
-  validators `128`, `129` and `130`.
-- [ ] Verify identical manifest roots and operation finality through the
-  quorum preflight, then create the authority-signed `EPOCH_TRANSITION` in a
-  later block.
-- [ ] Re-run the ECO-0007 production batch gate against that finalized epoch
-  pool; this slice does not activate reward payment by itself.
+Controlled-localnet acceptance is complete for the zero-budget calibration
+epoch. The finalized manifest and transition create no Wallet or emission
+side effect. The ECO-0007 production batch gate correctly remains closed with
+`DEVELOPMENT_REWARD_POOL_BUDGET_ZERO` until a governed non-zero pool is
+available.
 
 ## 2026-08-12 Protocol Authority Boundary
 
@@ -183,16 +171,19 @@ Completed in this slice:
   same sanitized authority state plus `3/3` ECO-0007 preflight agreement. See
   [the live acceptance record](./docs/development/protocol-authority-readiness-rollout-acceptance-2026-08-12.md).
 
-Next required economic-network work:
+Current economic-network gate:
 
-- [ ] Publish and distribute one identical protocol authority policy hash to
-  validators `128`, `129` and `130` through a coordinated network/config
-  change.
-- [ ] Generate and finalize a signed canonical `EPOCH_TRANSITION` containing
-  the `GENERAL_DEVELOPMENT` pool budget; no local process may invent this
-  transition or bypass the authority quorum.
-- [ ] Re-run quorum preflight, then build and execute the first real ECO-0007
-  development reward batch with independent reproduction and finality evidence.
+- [x] Publish and verify one identical protocol-authority policy hash on
+  validators `128`, `129` and `130`.
+- [x] Generate and finalize the controlled-localnet calibration transition
+  through the authority quorum. Its `GENERAL_DEVELOPMENT` budget is
+  intentionally `0 q_atoms`.
+- [x] Re-run the quorum preflight after transition finality. It returns the
+  same `NO_BUDGET` result on all three validators and refuses payout planning.
+- [ ] Authorize a future non-zero Development Pool allocation and finalize
+  RFC-0068 contribution attestations with verified Wallet bindings.
+- [ ] Build, independently reproduce and finalize the first real ECO-0007
+  development reward batch, including restart/reconciliation evidence.
 
 It should stay current and answer four questions:
 

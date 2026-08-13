@@ -42,6 +42,13 @@ _MANIFEST_BINDING_FIELDS = frozenset(
         "epoch_result_manifest_record_digest",
     }
 )
+_SCHEDULE_BINDING_FIELDS = frozenset(
+    {
+        "epoch_schedule_commit_operation_id",
+        "epoch_schedule_commit_sequence_id",
+        "epoch_schedule_commit_record_digest",
+    }
+)
 
 
 def load_protocol_authority_private_key(path: Path) -> Ed25519PrivateKey:
@@ -199,6 +206,17 @@ def build_unsigned_epoch_transition_from_quorum(
             "epoch_result_manifest_record_digest": quorum.manifest_record_digest,
         }
     )
+    evidence_references = {
+        quorum.manifest_operation_id,
+        quorum.quorum_hash,
+    }
+    if quorum.schedule_operation_id and quorum.schedule_record_digest:
+        evidence_references.update(
+            {
+                quorum.schedule_operation_id,
+                quorum.schedule_record_digest,
+            }
+        )
     envelope = LedgerOperationEnvelope(
         operation_type="EPOCH_TRANSITION",
         operation_version=operation_version,
@@ -210,9 +228,7 @@ def build_unsigned_epoch_transition_from_quorum(
         expires_at=expires_at,
         target_epoch=str(quorum.report.closing_epoch),
         payload=payload,
-        evidence_references=sorted(
-            {quorum.manifest_operation_id, quorum.quorum_hash}
-        ),
+        evidence_references=sorted(evidence_references),
     )
     validate_quorum_bound_epoch_transition(
         envelope,
@@ -276,19 +292,32 @@ def validate_quorum_bound_epoch_transition(
     if envelope.payload != expected_payload:
         raise ValueError("epoch transition payload does not match quorum report")
 
-    expected_references = sorted(
-        {quorum.manifest_operation_id, quorum.quorum_hash}
-    )
+    expected_references = {
+        quorum.manifest_operation_id,
+        quorum.quorum_hash,
+    }
+    if quorum.schedule_operation_id and quorum.schedule_record_digest:
+        expected_references.update(
+            {
+                quorum.schedule_operation_id,
+                quorum.schedule_record_digest,
+            }
+        )
+    expected_references = sorted(expected_references)
     if envelope.evidence_references != expected_references:
         raise ValueError("epoch transition evidence references do not match quorum report")
 
     # Reuse the canonical Ledger checks that do not require looking up the
     # external manifest. The ABCI application repeats those checks with the
     # local finalized operation registry and validates the manifest binding.
+    # Schedule and manifest finality are verified against the external quorum
+    # report above.  Remove those state references from the detached syntax
+    # check; a fresh LedgerOperationService has no local finalized snapshot
+    # and would otherwise reject a valid external schedule as unavailable.
     detached_payload = {
         key: value
         for key, value in envelope.payload.items()
-        if key not in (_MANIFEST_BINDING_FIELDS | _QUORUM_BOUND_FIELDS)
+        if key not in (_MANIFEST_BINDING_FIELDS | _QUORUM_BOUND_FIELDS | _SCHEDULE_BINDING_FIELDS)
     }
     detached_values = envelope.model_dump(mode="json")
     detached_values.update(

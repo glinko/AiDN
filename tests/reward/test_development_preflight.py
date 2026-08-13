@@ -31,7 +31,7 @@ def _transition_payload(*, pool_id: str = "GENERAL_DEVELOPMENT", budget: int = 5
     }
 
 
-def _transition_bytes() -> bytes:
+def _transition_bytes(*, budget: int = 50_000) -> bytes:
     envelope = LedgerOperationEnvelope(
         operation_type="EPOCH_TRANSITION",
         operation_version="1.0.0",
@@ -42,7 +42,7 @@ def _transition_bytes() -> bytes:
         created_at="2030-01-01T00:00:00Z",
         expires_at="2030-01-02T00:00:00Z",
         target_epoch="12",
-        payload=_transition_payload(),
+        payload=_transition_payload(budget=budget),
     )
     return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
 
@@ -74,6 +74,22 @@ def test_abci_exposes_finalized_reward_preflight_only() -> None:
     assert value["pool_budget_q_atoms"] == 50_000
     assert value["source_epoch_transition_operation_id"]
     assert value["preflight_hash"].startswith("sha256:")
+
+
+def test_zero_pool_budget_is_an_explicit_no_budget_gate() -> None:
+    ledger = LedgerOperationService()
+    app = AIDNABCIApplication(
+        ledger_service=ledger,
+        admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
+    )
+    zero_budget_tx = _transition_bytes(budget=0)
+
+    assert app.finalize_block(block_height=1, block_hash=b"A" * 32, txs=[zero_budget_tx]).code == "ok"
+    value = build_development_reward_preflight(ledger)
+
+    assert value.status == "NO_BUDGET"
+    assert value.pool_budget_q_atoms == 0
+    assert value.reason_code == "DEVELOPMENT_REWARD_POOL_BUDGET_ZERO"
 
 
 def test_quorum_accepts_exact_same_preflight() -> None:

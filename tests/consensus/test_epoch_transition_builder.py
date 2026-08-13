@@ -67,6 +67,8 @@ def _ready_quorum() -> dict[str, object]:
     rpc_urls = ("http://validator-1:26657", "http://validator-2:26657")
     manifest_operation_id = "manifest-operation-1"
     manifest_hash = "sha256:manifest"
+    schedule_operation_id = "schedule-operation-1"
+    schedule_record_digest = "sha256:schedule-record"
     report = build_epoch_transition_input_report(
         closing_epoch=20,
         opening_epoch=21,
@@ -82,6 +84,9 @@ def _ready_quorum() -> dict[str, object]:
         pool_budget_references={"GENERAL_DEVELOPMENT": "epoch:20:GENERAL_DEVELOPMENT"},
         epoch_schedule_version="aidn.epoch-schedule.v1",
         epoch_schedule_hash="sha256:schedule",
+        epoch_schedule_commit_operation_id=schedule_operation_id,
+        epoch_schedule_commit_sequence_id=23,
+        epoch_schedule_commit_record_digest=schedule_record_digest,
         canonical_block_time="2030-01-01T00:01:00Z",
         scheduled_end_time="2030-01-01T00:01:00Z",
         epoch_boundary_reached=True,
@@ -110,6 +115,36 @@ def _ready_quorum() -> dict[str, object]:
                         "operation_type": "EPOCH_RESULT_MANIFEST_COMMIT",
                         "sequence_id": 7,
                         "record_digest": "sha256:record",
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).decode("ascii")
+        elif query_path == f"operation/finalized/{schedule_operation_id}":
+            value = base64.b64encode(
+                json.dumps(
+                    {
+                        "operation_id": schedule_operation_id,
+                        "operation_type": "EPOCH_SCHEDULE_COMMIT",
+                        "sequence_id": 23,
+                        "record_digest": schedule_record_digest,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).decode("ascii")
+        elif query_path == "epoch/schedule":
+            value = base64.b64encode(
+                json.dumps(
+                    {
+                        "operation_id": schedule_operation_id,
+                        "operation_type": "EPOCH_SCHEDULE_COMMIT",
+                        "sequence_id": 23,
+                        "record_digest": schedule_record_digest,
+                        "epoch_schedule": {
+                            "schema_version": "aidn.epoch-schedule.v1",
+                            "schedule_hash": "sha256:schedule",
+                        },
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -336,7 +371,12 @@ def test_quorum_builder_derives_and_signs_exact_report_payload() -> None:
     assert unsigned.payload["epoch_transition_quorum_hash"] == quorum["quorum_hash"]
     assert unsigned.payload["epoch_result_manifest_sequence_id"] == 7
     assert unsigned.evidence_references == sorted(
-        {"manifest-operation-1", quorum["quorum_hash"]}
+        {
+            "manifest-operation-1",
+            "schedule-operation-1",
+            "sha256:schedule-record",
+            quorum["quorum_hash"],
+        }
     )
 
     signed = build_signed_epoch_transition_from_quorum(
