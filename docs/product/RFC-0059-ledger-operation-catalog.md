@@ -533,6 +533,7 @@ The MVP catalog contains the following categories:
 | `VALIDATION_BOND_FORFEIT` | Evidence-triggered | Protocol Sponsored |
 | `SERVICE_VERIFICATION_COMMIT` | Wallet + Assignment Evidence | Protocol Sponsored |
 | `REPUTATION_PROFILE_UPDATE` | Protocol | Protocol Sponsored |
+| `EPOCH_SCHEDULE_COMMIT` | Protocol | Protocol Sponsored |
 | `EPOCH_TRANSITION` | Protocol | Protocol Sponsored |
 | `REWARD_MINT` | Protocol | Protocol Sponsored |
 | `CONSENSUS_VALIDATOR_SET_UPDATE` | Protocol | Protocol Sponsored |
@@ -1836,6 +1837,55 @@ State Changes
 - does not calculate a score, mutate Reputation state, or create a payment.
 
 Reputation SHALL NOT be manually assigned.
+
+## 52.1 Canonical Epoch Schedule Commit
+
+`EPOCH_SCHEDULE_COMMIT`
+
+Commits the one canonical RFC-0048 Epoch Engine schedule before the first
+`EPOCH_TRANSITION`. The schedule is protocol state, not a local validator
+configuration: validators may expose it locally for calculation, but a
+transition is not ready until the exact schedule commitment is finalized by
+consensus.
+
+Required Payload
+
+```yaml
+epoch_schedule:
+  schema_version:
+  genesis_start_time:
+  epoch_duration_seconds:
+  parameter_version:
+  task_set_version:
+  protocol_version:
+  schedule_hash:
+protocol_authority_policy_hash:
+```
+
+Preconditions
+
+- origin is `protocol` and the fee class is `protocol_sponsored`;
+- the schedule hash is the deterministic hash of the unsigned schedule;
+- the envelope contains the active protocol-authority policy hash and the
+  configured authority threshold;
+- no earlier `EPOCH_SCHEDULE_COMMIT` exists;
+- no `EPOCH_TRANSITION` has already been finalized.
+
+State Changes
+
+- records the immutable schedule commitment and its finalized operation
+  reference;
+- makes the schedule available through the public `epoch/schedule` query;
+- allows subsequent transition input reports to bind their epoch boundary,
+  manifest and schedule hash to this commitment;
+- does not move Q, create a pool, change validator power or open an Epoch.
+
+The operation is one-time and replay-protected. A validator SHALL reject a
+second schedule, a schedule with a different hash, or a transition that omits
+the finalized schedule operation ID, sequence ID and record digest once the
+canonical schedule exists. Snapshot/state-sync recovery SHALL derive the
+active schedule from the canonical Ledger record rather than trusting a
+different local configuration.
 
 ## 53. Epoch Transition
 

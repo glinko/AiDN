@@ -21,7 +21,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 
 PROTOCOL_AUTHORITY_POLICY_VERSION = "aidn.protocol-authority.v1"
-EPOCH_TRANSITION_AUTHORITY_HASH_FIELD = "protocol_authority_policy_hash"
+PROTOCOL_AUTHORITY_POLICY_HASH_FIELD = "protocol_authority_policy_hash"
+EPOCH_TRANSITION_AUTHORITY_HASH_FIELD = PROTOCOL_AUTHORITY_POLICY_HASH_FIELD
+EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD = PROTOCOL_AUTHORITY_POLICY_HASH_FIELD
 MAX_PROTOCOL_AUTHORITY_SIGNATURES = 8
 
 
@@ -153,16 +155,40 @@ class ProtocolAuthorityPolicy:
 
     def verify_epoch_transition(self, envelope: LedgerOperationEnvelope) -> None:
         """Verify the exact quorum proof required by ``EPOCH_TRANSITION``."""
-        if envelope.operation_type != "EPOCH_TRANSITION":
-            raise ProtocolAuthorityError("protocol authority requires EPOCH_TRANSITION")
+        self._verify_protocol_operation(
+            envelope,
+            operation_type="EPOCH_TRANSITION",
+            operation_label="epoch transition",
+            policy_hash_field=EPOCH_TRANSITION_AUTHORITY_HASH_FIELD,
+        )
+
+    def verify_epoch_schedule_commit(self, envelope: LedgerOperationEnvelope) -> None:
+        """Verify the authority quorum for the canonical initial schedule."""
+        self._verify_protocol_operation(
+            envelope,
+            operation_type="EPOCH_SCHEDULE_COMMIT",
+            operation_label="epoch schedule commit",
+            policy_hash_field=EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD,
+        )
+
+    def _verify_protocol_operation(
+        self,
+        envelope: LedgerOperationEnvelope,
+        *,
+        operation_type: str,
+        operation_label: str,
+        policy_hash_field: str,
+    ) -> None:
+        if envelope.operation_type != operation_type:
+            raise ProtocolAuthorityError(f"protocol authority requires {operation_type}")
         if envelope.origin_type != "protocol" or envelope.sender_wallet is not None:
-            raise ProtocolAuthorityError("epoch transition requires protocol origin")
+            raise ProtocolAuthorityError(f"{operation_label} requires protocol origin")
         if not self.authorities:
-            raise ProtocolAuthorityError("EPOCH_TRANSITION_AUTHORITY_POLICY_REQUIRED")
-        if envelope.payload.get(EPOCH_TRANSITION_AUTHORITY_HASH_FIELD) != self.policy_hash:
-            raise ProtocolAuthorityError("EPOCH_TRANSITION_AUTHORITY_POLICY_HASH_MISMATCH")
+            raise ProtocolAuthorityError(f"{operation_type}_AUTHORITY_POLICY_REQUIRED")
+        if envelope.payload.get(policy_hash_field) != self.policy_hash:
+            raise ProtocolAuthorityError(f"{operation_type}_AUTHORITY_POLICY_HASH_MISMATCH")
         if len(envelope.signatures) < self.threshold:
-            raise ProtocolAuthorityError("EPOCH_TRANSITION_AUTHORITY_SIGNATURE_REQUIRED")
+            raise ProtocolAuthorityError(f"{operation_type}_AUTHORITY_SIGNATURE_REQUIRED")
 
         signing_bytes = envelope.signing_bytes()
         matched: set[str] = set()
@@ -185,13 +211,15 @@ class ProtocolAuthorityPolicy:
                 break
 
         if len(matched) < self.threshold:
-            raise ProtocolAuthorityError("EPOCH_TRANSITION_AUTHORITY_QUORUM_NOT_MET")
+            raise ProtocolAuthorityError(f"{operation_type}_AUTHORITY_QUORUM_NOT_MET")
 
 
 __all__ = [
     "EPOCH_TRANSITION_AUTHORITY_HASH_FIELD",
+    "EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD",
     "MAX_PROTOCOL_AUTHORITY_SIGNATURES",
     "PROTOCOL_AUTHORITY_POLICY_VERSION",
+    "PROTOCOL_AUTHORITY_POLICY_HASH_FIELD",
     "ProtocolAuthorityError",
     "ProtocolAuthorityPolicy",
     "normalize_ed25519_public_key",

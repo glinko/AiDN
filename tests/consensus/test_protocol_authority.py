@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.admission import AdmissionValidator
+from aidn_hypervisor.consensus.epoch_schedule import build_epoch_schedule
 from aidn_hypervisor.consensus.execution import ExecutionEngine
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.protocol_authority import ProtocolAuthorityPolicy
@@ -76,12 +77,63 @@ def _envelope(
     )
 
 
+def _schedule():
+    return build_epoch_schedule(
+        genesis_start_time="2030-01-01T00:00:00Z",
+        epoch_duration_seconds=60,
+        parameter_version="params-v1",
+        task_set_version="tasks-v1",
+        protocol_version="0.1",
+    )
+
+
+def _schedule_envelope(
+    policy: ProtocolAuthorityPolicy,
+    schedule,
+    *,
+    signatures: list[str] | None = None,
+    created_at: str | None = None,
+) -> LedgerOperationEnvelope:
+    return LedgerOperationEnvelope(
+        operation_type="EPOCH_SCHEDULE_COMMIT",
+        operation_version="1.0.0",
+        protocol_version="0.1",
+        origin_type="protocol",
+        initiator_id="epoch-engine",
+        fee_class="protocol_sponsored",
+        created_at=created_at or _timestamp(),
+        target_epoch="0",
+        payload={
+            "epoch_schedule": schedule.model_dump(mode="json"),
+            "protocol_authority_policy_hash": policy.policy_hash,
+        },
+        signatures=signatures or [],
+    )
+
+
 def _signed(
     policy: ProtocolAuthorityPolicy,
     *key_indexes: int,
     payload: dict[str, object] | None = None,
 ) -> LedgerOperationEnvelope:
     unsigned = _envelope(policy, payload=payload)
+    signatures = [
+        sign_consensus_bytes(
+            private_key=PRIVATE_KEYS[index],
+            payload=unsigned.signing_bytes(),
+        )
+        for index in key_indexes
+    ]
+    return unsigned.model_copy(update={"signatures": signatures})
+
+
+def _signed_schedule(
+    policy: ProtocolAuthorityPolicy,
+    schedule,
+    *key_indexes: int,
+    created_at: str | None = None,
+) -> LedgerOperationEnvelope:
+    unsigned = _schedule_envelope(policy, schedule, created_at=created_at)
     signatures = [
         sign_consensus_bytes(
             private_key=PRIVATE_KEYS[index],
@@ -150,6 +202,182 @@ def test_epoch_transition_requires_distinct_authority_quorum() -> None:
     )
     assert duplicate_results[0].code == "rejected"
     assert duplicate_results[0].log == "EPOCH_TRANSITION_AUTHORITY_QUORUM_NOT_MET"
+
+
+def test_epoch_schedule_commit_requires_authority_quorum_and_is_projected() -> None:
+    policy = _policy()
+    schedule = _schedule()
+    app, ledger = _app(policy)
+    unsigned = _schedule_envelope(policy, schedule)
+
+    check = app.check_transaction(unsigned.consensus_bytes())
+    assert check.code == "rejected"
+    assert check.log == "EPOCH_SCHEDULE_COMMIT_AUTHORITY_SIGNATURE_REQUIRED"
+
+    signed = _signed_schedule(policy, schedule, 0, 1)
+    result, results = app.finalize_block_with_results(
+        block_height=1,
+        block_hash=b"S" * 32,
+        txs=[signed.consensus_bytes()],
+        time="2030-01-01T00:00:01Z",
+    )
+
+    assert result.code == "ok"
+    assert results[0].code == "ok"
+    projection = ledger.epoch_schedule_projection()
+    assert projection is not None
+    assert projection["operation_id"] == signed.operation_id
+    assert projection["epoch_schedule"]["schedule_hash"] == schedule.schedule_hash
+    query = json.loads(app.query(path="epoch/schedule").value)
+    assert query == projection
+
+
+def test_epoch_schedule_commit_is_immutable_and_restores_from_canonical_ledger() -> None:
+    policy = _policy()
+    schedule = _schedule()
+    app, ledger = _app(policy)
+    signed = _signed_schedule(policy, schedule, 0, 1)
+    app.finalize_block(
+        block_height=1,
+        block_hash=b"T" * 32,
+        txs=[signed.consensus_bytes()],
+        time="2030-01-01T00:00:01Z",
+    )
+
+    replacement = _signed_schedule(
+        policy,
+        schedule,
+        0,
+        1,
+        created_at="2030-01-01T00:00:02Z",
+    )
+    _, duplicate_results = app.finalize_block_with_results(
+        block_height=2,
+        block_hash=b"U" * 32,
+        txs=[replacement.consensus_bytes()],
+        time="2030-01-01T00:00:02Z",
+    )
+    assert duplicate_results[0].code == "rejected"
+    assert duplicate_results[0].log == "epoch schedule is already committed"
+    assert len(ledger.snapshot_operations()) == 1
+
+    snapshot = app.prepare_snapshot()
+    snapshot.pop("epoch_schedule")
+    restored = AIDNABCIApplication(ledger_service=LedgerOperationService())
+    restore_result = restored.apply_snapshot(snapshot)
+    assert restore_result.code == "ok"
+    restored_projection = restored.ledger.epoch_schedule_projection()
+    assert restored_projection == ledger.epoch_schedule_projection()
+
+
+def test_deterministic_execution_engine_accepts_signed_epoch_schedule_commit() -> None:
+    policy = _policy()
+    schedule = _schedule()
+    ledger = LedgerOperationService()
+    engine = ExecutionEngine(
+        ledger_service=ledger,
+        admission_validator=AdmissionValidator(current_time=_timestamp()),
+        strict_operation_coverage=True,
+        protocol_authority_policy=policy,
+    )
+    signed = _signed_schedule(policy, schedule, 0, 1)
+
+    result = engine.execute_block(
+        block_height=1,
+        block_hash=b"V" * 32,
+        txs=[signed.consensus_bytes()],
+    )
+
+    assert result.operations_executed == 1
+    assert result.operations_rejected == 0
+    projection = ledger.epoch_schedule_projection()
+    assert projection is not None
+    assert projection["epoch_schedule"]["schedule_hash"] == schedule.schedule_hash
+
+
+def test_epoch_schedule_commit_cannot_share_block_with_epoch_transition() -> None:
+    policy = _policy()
+    schedule = _schedule()
+    signed_schedule = _signed_schedule(policy, schedule, 0, 1)
+    signed_transition = _signed(policy, 0, 1)
+    expected_error = "epoch transition cannot depend on same-block epoch schedule commit"
+
+    for ordered_txs in (
+        (signed_transition, signed_schedule),
+        (signed_schedule, signed_transition),
+    ):
+        app, ledger = _app(policy)
+        raw_txs = [tx.consensus_bytes() for tx in ordered_txs]
+        proposal = app.process_proposal(raw_txs)
+        assert proposal.code == "rejected"
+        assert proposal.log == expected_error
+        prepared = app.prepare_proposal(raw_txs, maximum_bytes=1_000_000)
+        assert [app._parse_envelope(tx).operation_type for tx in prepared] == [
+            "EPOCH_SCHEDULE_COMMIT"
+        ]
+        result, results = app.finalize_block_with_results(
+            block_height=1,
+            block_hash=b"W" * 32,
+            txs=raw_txs,
+        )
+
+        assert result.code == "ok"
+        transition_index = next(
+            index
+            for index, tx in enumerate(ordered_txs)
+            if tx.operation_type == "EPOCH_TRANSITION"
+        )
+        schedule_index = next(
+            index
+            for index, tx in enumerate(ordered_txs)
+            if tx.operation_type == "EPOCH_SCHEDULE_COMMIT"
+        )
+        assert results[transition_index].code == "rejected"
+        assert results[transition_index].log == expected_error
+        assert results[schedule_index].code == "ok"
+        assert len(ledger.snapshot_operations()) == 1
+
+    for ordered_txs in (
+        (signed_transition, signed_schedule),
+        (signed_schedule, signed_transition),
+    ):
+        ledger = LedgerOperationService()
+        engine = ExecutionEngine(
+            ledger_service=ledger,
+            admission_validator=AdmissionValidator(current_time=_timestamp()),
+            strict_operation_coverage=True,
+            protocol_authority_policy=policy,
+        )
+        result = engine.execute_block(
+            block_height=1,
+            block_hash=b"X" * 32,
+            txs=[tx.consensus_bytes() for tx in ordered_txs],
+        )
+
+        assert result.operations_executed == 1
+        assert result.operations_rejected == 1
+        transition_event = next(
+            event
+            for event in result.execution_events
+            if event.operation_type == "EPOCH_TRANSITION"
+        )
+        assert transition_event.error == expected_error
+        assert ledger.epoch_schedule_projection() is not None
+
+
+def test_epoch_transition_schedule_reference_requires_finalized_commitment() -> None:
+    policy = _policy()
+    app, ledger = _app(policy)
+    payload = {
+        **_payload(policy),
+        "epoch_schedule_commit_operation_id": "not-finalized",
+    }
+    transition = _signed(policy, 0, 1, payload=payload)
+
+    check = app.check_transaction(transition.consensus_bytes())
+    assert check.code == "rejected"
+    assert check.log == "epoch transition epoch schedule is not finalized"
+    assert ledger.snapshot_operations() == []
 
 
 def test_epoch_transition_rejects_tampered_payload_and_accepts_valid_quorum() -> None:

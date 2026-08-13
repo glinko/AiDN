@@ -154,7 +154,9 @@ class AIDNABCIApplication:
         self._state_checkpoint_callback = state_checkpoint_callback
         self._strict_operation_coverage = strict_operation_coverage
         self._protocol_authority_policy = protocol_authority_policy
+        self._configured_epoch_schedule = epoch_schedule
         self._epoch_schedule = epoch_schedule
+        self._load_canonical_epoch_schedule_if_available()
         self._last_block_time: str | None = None
         self._restored_from_store = False
         self._pending_commit_snapshot: dict[str, Any] | None = None
@@ -217,6 +219,19 @@ class AIDNABCIApplication:
                 )
         if not self._restored_from_store:
             self._app_hash = self._compute_state_hash()
+
+    def _load_canonical_epoch_schedule_if_available(self) -> None:
+        """Bind an already-finalized schedule before reporting or hashing state."""
+        projection = self.ledger.epoch_schedule_projection()
+        if projection is None:
+            return
+        restored = EpochSchedule.model_validate(projection["epoch_schedule"])
+        if (
+            self._epoch_schedule is not None
+            and self._epoch_schedule.schedule_hash != restored.schedule_hash
+        ):
+            raise ValueError("canonical epoch schedule does not match configured schedule")
+        self._epoch_schedule = restored
 
     def restore_durable_state_if_matching_ledger(self) -> bool:
         """Restore ABCI metadata only when its Ledger root already matches.
@@ -372,13 +387,16 @@ class AIDNABCIApplication:
         if snapshot_schedule is not None:
             restored_schedule = EpochSchedule.model_validate(snapshot_schedule)
             if (
-                self._epoch_schedule is not None
+                self._configured_epoch_schedule is not None
                 and restored_schedule.schedule_hash != self._epoch_schedule.schedule_hash
             ):
                 raise ABCIStateStoreError("durable ABCI epoch schedule does not match configuration")
             self._epoch_schedule = restored_schedule
-        elif self._epoch_schedule is not None:
+        elif self._configured_epoch_schedule is not None:
             raise ABCIStateStoreError("durable ABCI snapshot is missing epoch schedule")
+        else:
+            self._epoch_schedule = None
+        self._load_canonical_epoch_schedule_if_available()
         self._commitments = commitments
         # The Hypervisor Ledger is the authoritative local snapshot here. Local
         # evidence may be newer than the last committed ABCI snapshot, so do not
@@ -545,9 +563,19 @@ class AIDNABCIApplication:
         selected: list[bytes] = []
         selected_ids: set[str] = set()
         total_bytes = 0
+        preexisting_epoch_schedule_commit = (
+            self.ledger.epoch_schedule_commitment() is not None
+        )
+        block_contains_epoch_schedule_commit = self._block_contains_epoch_schedule_commit(txs)
         for tx_data in txs:
             try:
                 envelope = self._parse_envelope(tx_data)
+                if (
+                    envelope.operation_type == "EPOCH_TRANSITION"
+                    and block_contains_epoch_schedule_commit
+                    and not preexisting_epoch_schedule_commit
+                ):
+                    continue
                 if (
                     envelope.operation_id in selected_ids
                     or self._canonical_finalized_operation_error(envelope) is not None
@@ -575,6 +603,10 @@ class AIDNABCIApplication:
         """Validate a proposed block without changing application state."""
         operation_ids: set[str] = set()
         finalized_operation_ids = self._finalized_operation_ids()
+        preexisting_epoch_schedule_commit = (
+            self.ledger.epoch_schedule_commitment() is not None
+        )
+        block_contains_epoch_schedule_commit = self._block_contains_epoch_schedule_commit(txs)
         for tx_data in txs:
             try:
                 envelope = self._parse_envelope(tx_data)
@@ -583,6 +615,15 @@ class AIDNABCIApplication:
             if envelope.operation_id in operation_ids:
                 return ABCIResult(code="duplicate", log="duplicate operation in proposal")
             operation_ids.add(envelope.operation_id)
+            if (
+                envelope.operation_type == "EPOCH_TRANSITION"
+                and block_contains_epoch_schedule_commit
+                and not preexisting_epoch_schedule_commit
+            ):
+                return ABCIResult(
+                    code="rejected",
+                    log="epoch transition cannot depend on same-block epoch schedule commit",
+                )
             finalized_error = self._canonical_finalized_operation_error(
                 envelope,
                 finalized_operation_ids=finalized_operation_ids,
@@ -656,12 +697,25 @@ class AIDNABCIApplication:
         tx_results: list[ABCIResult] = []
         events = []
         finalized_operation_ids = self._finalized_operation_ids()
+        preexisting_epoch_schedule_commit = (
+            self.ledger.epoch_schedule_commitment() is not None
+        )
+        block_contains_epoch_schedule_commit = False
+        for tx_data in txs:
+            try:
+                if self._parse_envelope(tx_data).operation_type == "EPOCH_SCHEDULE_COMMIT":
+                    block_contains_epoch_schedule_commit = True
+                    break
+            except Exception:
+                continue
         validator_updates: list[dict] = []
 
         for tx_data in txs:
             result = self._execute_one(
                 tx_data,
                 finalized_operation_ids=finalized_operation_ids,
+                preexisting_epoch_schedule_commit=preexisting_epoch_schedule_commit,
+                block_contains_epoch_schedule_commit=block_contains_epoch_schedule_commit,
             )
             tx_results.append(result)
             if result.code == "ok":
@@ -875,6 +929,14 @@ class AIDNABCIApplication:
                 sort_keys=True,
                 separators=(",", ":"),
             ).encode("utf-8")
+        elif path == "epoch/schedule":
+            projection = self.ledger.epoch_schedule_projection()
+            kwargs["key"] = b"epoch:schedule"
+            kwargs["value"] = (
+                json.dumps(projection, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                if projection is not None
+                else b""
+            )
         elif path.startswith("epoch/result-manifest/"):
             raw_epoch = path.removeprefix("epoch/result-manifest/")
             try:
@@ -959,6 +1021,9 @@ class AIDNABCIApplication:
         pool_budget_references: dict[str, str] = {}
         epoch_result_manifest_hash = None
         epoch_result_manifest_operation_id = None
+        epoch_schedule_commit_operation_id = None
+        epoch_schedule_commit_sequence_id = None
+        epoch_schedule_commit_record_digest = None
         manifest = None
         missing_schedule_inputs: list[str] = []
         if self._epoch_schedule is None:
@@ -1032,6 +1097,13 @@ class AIDNABCIApplication:
                                     pool_budget_references = dict(manifest.pool_budget_references)
                                     epoch_result_manifest_hash = manifest.manifest_hash
                                     epoch_result_manifest_operation_id = manifest_operation.get("operation_id")
+        schedule_projection = self.ledger.epoch_schedule_projection()
+        if schedule_projection is not None:
+            epoch_schedule_commit_operation_id = schedule_projection["operation_id"]
+            epoch_schedule_commit_sequence_id = schedule_projection["sequence_id"]
+            epoch_schedule_commit_record_digest = schedule_projection["record_digest"]
+        elif self._epoch_schedule is not None:
+            missing_schedule_inputs.append("epoch_schedule_commit_operation")
         return build_epoch_transition_input_report(
             closing_epoch=closing_epoch,
             opening_epoch=opening_epoch,
@@ -1051,6 +1123,9 @@ class AIDNABCIApplication:
             epoch_schedule_hash=(
                 self._epoch_schedule.schedule_hash if self._epoch_schedule is not None else None
             ),
+            epoch_schedule_commit_operation_id=epoch_schedule_commit_operation_id,
+            epoch_schedule_commit_sequence_id=epoch_schedule_commit_sequence_id,
+            epoch_schedule_commit_record_digest=epoch_schedule_commit_record_digest,
             canonical_block_time=(manifest.closing_time if manifest is not None else self._last_block_time),
             scheduled_end_time=scheduled_end_time,
             epoch_boundary_reached=epoch_boundary_reached,
@@ -1194,13 +1269,16 @@ class AIDNABCIApplication:
         if snapshot_schedule is not None:
             restored_schedule = EpochSchedule.model_validate(snapshot_schedule)
             if (
-                self._epoch_schedule is not None
+                self._configured_epoch_schedule is not None
                 and restored_schedule.schedule_hash != self._epoch_schedule.schedule_hash
             ):
                 raise ValueError("snapshot epoch schedule does not match configured schedule")
             self._epoch_schedule = restored_schedule
-        elif self._epoch_schedule is not None:
+        elif self._configured_epoch_schedule is not None:
             raise ValueError("snapshot is missing the configured epoch schedule")
+        else:
+            self._epoch_schedule = None
+        self._load_canonical_epoch_schedule_if_available()
         self._app_hash = self._snapshot_app_hash(snapshot)
         if len(self._last_block_hash) != 32 or len(self._app_hash) != 32:
             raise ValueError("snapshot hash length is invalid")
@@ -1301,6 +1379,16 @@ class AIDNABCIApplication:
 
     # ---- Internal helpers ----
 
+    def _block_contains_epoch_schedule_commit(self, txs: list[bytes]) -> bool:
+        """Detect a schedule commit before validating block transaction order."""
+        for tx_data in txs:
+            try:
+                if self._parse_envelope(tx_data).operation_type == "EPOCH_SCHEDULE_COMMIT":
+                    return True
+            except Exception:
+                continue
+        return False
+
     def _parse_envelope(self, tx_data: bytes) -> LedgerOperationEnvelope:
         """Parse raw bytes into LedgerOperationEnvelope."""
         obj = json.loads(tx_data)
@@ -1311,6 +1399,8 @@ class AIDNABCIApplication:
         tx_data: bytes,
         *,
         finalized_operation_ids: set[str],
+        preexisting_epoch_schedule_commit: bool = False,
+        block_contains_epoch_schedule_commit: bool = False,
     ) -> ABCIResult:
         """Execute a single transaction against the ledger."""
         try:
@@ -1335,6 +1425,23 @@ class AIDNABCIApplication:
                 tags=[
                     ABCITag(key="operation_id", value=envelope.operation_id),
                     ABCITag(key="reason", value=authority_error),
+                ],
+            )
+
+        if (
+            envelope.operation_type == "EPOCH_TRANSITION"
+            and block_contains_epoch_schedule_commit
+            and not preexisting_epoch_schedule_commit
+        ):
+            return ABCIResult(
+                code="rejected",
+                log="epoch transition cannot depend on same-block epoch schedule commit",
+                tags=[
+                    ABCITag(key="operation_id", value=envelope.operation_id),
+                    ABCITag(
+                        key="reason",
+                        value="epoch transition cannot depend on same-block epoch schedule commit",
+                    ),
                 ],
             )
 
@@ -1374,6 +1481,9 @@ class AIDNABCIApplication:
                     envelope,
                     finalized_operation_ids=finalized_operation_ids,
                 )
+            elif envelope.operation_type == "EPOCH_SCHEDULE_COMMIT":
+                validation = self.ledger.apply_consensus_epoch_schedule_commit(envelope)
+                self._epoch_schedule = validation["epoch_schedule"]
             elif envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
                 self.ledger.apply_consensus_epoch_result_manifest(envelope)
             elif envelope.operation_type == "SERVICE_VERIFICATION_COMMIT":
@@ -1669,6 +1779,8 @@ class AIDNABCIApplication:
                     envelope,
                     finalized_operation_ids=finalized_operation_ids,
                 )
+            elif envelope.operation_type == "EPOCH_SCHEDULE_COMMIT":
+                self.ledger.validate_consensus_epoch_schedule_commit(envelope)
             elif envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
                 self.ledger.validate_consensus_epoch_result_manifest(envelope)
             elif envelope.operation_type == "SERVICE_VERIFICATION_COMMIT":
@@ -1853,12 +1965,15 @@ class AIDNABCIApplication:
         self,
         envelope: LedgerOperationEnvelope,
     ) -> str | None:
-        if envelope.operation_type != "EPOCH_TRANSITION":
+        if envelope.operation_type not in {"EPOCH_TRANSITION", "EPOCH_SCHEDULE_COMMIT"}:
             return None
         if self._protocol_authority_policy is None:
             return None
         try:
-            self._protocol_authority_policy.verify_epoch_transition(envelope)
+            if envelope.operation_type == "EPOCH_TRANSITION":
+                self._protocol_authority_policy.verify_epoch_transition(envelope)
+            else:
+                self._protocol_authority_policy.verify_epoch_schedule_commit(envelope)
         except ValueError as error:
             return str(error)
         return None

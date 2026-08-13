@@ -70,6 +70,14 @@ from aidn_hypervisor.consensus.epoch_schedule import (
     EpochSchedule,
     build_epoch_schedule,
 )
+from aidn_hypervisor.consensus.epoch_schedule_commit import (
+    EPOCH_SCHEDULE_COMMIT_OPERATION,
+    build_signed_epoch_schedule_commit,
+    build_unsigned_epoch_schedule_commit,
+    combine_epoch_schedule_commit_signatures,
+    sign_epoch_schedule_commit,
+    sign_epoch_schedule_commit_signature,
+)
 from aidn_hypervisor.consensus.epoch_transition import (
     build_signed_epoch_transition_from_quorum,
     build_unsigned_epoch_transition_from_quorum,
@@ -136,6 +144,7 @@ from aidn_hypervisor.consensus.projection import (
     build_session_settlement_ready_envelope,
 )
 from aidn_hypervisor.consensus.protocol_authority import (
+    EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD,
     EPOCH_TRANSITION_AUTHORITY_HASH_FIELD,
     MAX_PROTOCOL_AUTHORITY_SIGNATURES,
     PROTOCOL_AUTHORITY_POLICY_VERSION,
@@ -202,6 +211,7 @@ __all__ = [
     "LedgerOriginType",
     "OperationType",
     "EPOCH_TRANSITION_AUTHORITY_HASH_FIELD",
+    "EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD",
     "MAX_PROTOCOL_AUTHORITY_SIGNATURES",
     "PROTOCOL_AUTHORITY_POLICY_VERSION",
     "ProtocolAuthorityError",
@@ -222,6 +232,12 @@ __all__ = [
     "EpochBoundary",
     "EpochSchedule",
     "build_epoch_schedule",
+    "EPOCH_SCHEDULE_COMMIT_OPERATION",
+    "build_signed_epoch_schedule_commit",
+    "build_unsigned_epoch_schedule_commit",
+    "combine_epoch_schedule_commit_signatures",
+    "sign_epoch_schedule_commit",
+    "sign_epoch_schedule_commit_signature",
     "EPOCH_RESULT_MANIFEST_OPERATION",
     "EPOCH_RESULT_MANIFEST_LEGACY_VERSION",
     "EPOCH_RESULT_MANIFEST_VERSION",

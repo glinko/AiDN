@@ -32,6 +32,67 @@ policy hash, signer IDs and output path.
 
 ## Quorum-bound production path
 
+### Canonical schedule prerequisite
+
+Before the first transition, the network must finalize exactly one
+`EPOCH_SCHEDULE_COMMIT`. The schedule is shared protocol state, not an
+operator-local setting. Every validator must use the same schedule hash and
+the same protocol-authority policy; a local schedule with no finalized
+commitment deliberately keeps the transition preflight `BLOCKED`.
+
+Prepare the schedule from approved Epoch Engine inputs. The helper validates
+and hashes the schedule but does not broadcast it:
+
+```text
+uv run python tools/prepare-authorized-epoch-schedule.py \
+  --policy /secure/aidn/protocol-authority.json \
+  --schedule /secure/aidn/epoch-schedule.json \
+  --created-at 2030-01-01T00:00:00Z \
+  --output /secure/aidn/epoch-schedule.unsigned.json
+```
+
+Authorities sign the same unsigned file independently. Private keys remain
+outside the repository and are never included in the final artifact:
+
+```text
+uv run python tools/sign-authorized-epoch-schedule.py \
+  --unsigned-envelope /secure/aidn/epoch-schedule.unsigned.json \
+  --policy /secure/aidn/protocol-authority.json \
+  --authority-id governance-1 \
+  --private-key /secure/keys/governance-1.seed \
+  --output /secure/aidn/epoch-schedule.governance-1.sig.json
+```
+
+Combine at least the policy threshold of signatures:
+
+```text
+uv run python tools/combine-authorized-epoch-schedule.py \
+  --unsigned-envelope /secure/aidn/epoch-schedule.unsigned.json \
+  --policy /secure/aidn/protocol-authority.json \
+  --signature /secure/aidn/epoch-schedule.governance-1.sig.json \
+  --signature /secure/aidn/epoch-schedule.governance-2.sig.json \
+  --output /secure/aidn/epoch-schedule.signed.json
+```
+
+The repository includes a guarded submitter for this exact operation. It
+validates the envelope and policy locally, verifies the same policy projection
+on every configured validator, broadcasts identical bytes, and waits for
+operation-bound multi-RPC finality:
+
+```text
+uv run python tools/submit-authorized-epoch-schedule.py \
+  --envelope /secure/aidn/epoch-schedule.signed.json \
+  --policy /secure/aidn/protocol-authority.json \
+  --finality-config /secure/aidn/cometbft-finality.json \
+  --dry-run
+```
+
+Review the `READY` JSON and remove `--dry-run` only after the schedule and
+authority artifacts have been independently approved. No local UI, agent or
+validator may mark the schedule active by editing a config file. Confirm finality through
+`epoch/schedule` and `operation/finalized/<operation_id>` on the validator
+quorum before running the transition-input query.
+
 The production path starts with the multi-validator preflight. Save its JSON
 output without editing it:
 
@@ -140,10 +201,16 @@ multi-RPC finality. A single-node `CheckTx` response is not finality.
 
 ## Current localnet gate
 
-The localnet does not yet expose a `READY` epoch-engine report: the live
-validators currently return an unknown `epoch/transition-inputs` query. The
-quorum-bound builder and independent signing path are implemented and tested,
-but no live `EPOCH_TRANSITION` should be created or submitted yet. The next
-acceptance record must include the identical policy hash on all three
-validators, a finalized manifest, a `READY` quorum preflight, authority
-signatures and later-block finality before a reward batch is built.
+The query path is deployed on validators `128`, `129` and `130` from commit
+`749930f`. All three validators return the same hash-bound report and the
+quorum collector reaches `3/3` agreement, but the report remains `BLOCKED`:
+the live network has no finalized canonical schedule, has not reached a
+configured epoch boundary and has no finalized manifest. The rollout evidence
+is recorded in
+`docs/development/epoch-transition-input-query-rollout-acceptance-2026-08-13.md`.
+
+The schedule commitment helpers and independent signing path are implemented
+and tested, but no live `EPOCH_TRANSITION` should be created or submitted yet.
+The next acceptance record must include a finalized canonical schedule, a
+finalized manifest, a `READY` quorum preflight, authority signatures and
+later-block finality before a reward batch is built.

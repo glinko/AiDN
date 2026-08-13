@@ -14,6 +14,7 @@ from aidn_hypervisor.consensus.epoch_result_manifest import (
     EPOCH_RESULT_MANIFEST_OPERATION,
     EpochResultManifest,
 )
+from aidn_hypervisor.consensus.epoch_schedule import EpochSchedule
 from aidn_hypervisor.consensus.replay import FinalizedOperationRegistry
 from aidn_hypervisor.faucet_treasury import (
     FAUCET_TREASURY_FUNDING_DOMAIN,
@@ -62,6 +63,7 @@ SESSION_SETTLEMENT_CORRECT_OPERATION = "SESSION_SETTLEMENT_CORRECT"
 CONSENSUS_PENALTY_APPLY_OPERATION = "PENALTY_APPLY"
 TREASURY_FUND_OPERATION = "TREASURY_FUND"
 TREASURY_MANIFEST_BIND_OPERATION = "TREASURY_MANIFEST_BIND"
+EPOCH_SCHEDULE_COMMIT_OPERATION = "EPOCH_SCHEDULE_COMMIT"
 OPERATOR_WALLET_BIND_OPERATION = "OPERATOR_WALLET_BIND"
 WALLET_IDENTITY_REGISTER_OPERATION = "WALLET_IDENTITY_REGISTER"
 ENDPOINT_PUBLISH_OPERATION = "ENDPOINT_PUBLISH"
@@ -1653,6 +1655,81 @@ class LedgerOperationService:
             if isinstance(manifest, dict) and manifest.get("epoch_number") == epoch_number:
                 matches.append(operation)
         return dict(matches[-1]) if matches else None
+
+    def epoch_schedule_commitment(self) -> dict | None:
+        """Return the one canonical initial Epoch schedule commitment."""
+        matches = [
+            operation
+            for operation in self._operations
+            if operation.get("operation_type") == EPOCH_SCHEDULE_COMMIT_OPERATION
+        ]
+        return dict(matches[-1]) if matches else None
+
+    def epoch_schedule_projection(self) -> dict | None:
+        """Return the public schedule and its finalized Ledger reference."""
+        operation = self.epoch_schedule_commitment()
+        if operation is None:
+            return None
+        raw_schedule = (operation.get("payload") or {}).get("epoch_schedule")
+        try:
+            schedule = EpochSchedule.model_validate(raw_schedule)
+        except Exception:
+            return None
+        operation_id = operation.get("operation_id")
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            return None
+        reference = self.finalized_operation_reference(operation_id)
+        if reference is None:
+            return None
+        return {
+            "operation_id": operation_id,
+            "operation_type": EPOCH_SCHEDULE_COMMIT_OPERATION,
+            "sequence_id": reference["sequence_id"],
+            "record_digest": reference["record_digest"],
+            "epoch_schedule": schedule.model_dump(mode="json"),
+        }
+
+    def validate_consensus_epoch_schedule_commit(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Validate the immutable, protocol-authorized initial schedule."""
+        if envelope.operation_type != EPOCH_SCHEDULE_COMMIT_OPERATION:
+            raise ValueError(
+                "consensus epoch schedule commit requires EPOCH_SCHEDULE_COMMIT"
+            )
+        if envelope.origin_type != "protocol" or envelope.sender_wallet is not None:
+            raise ValueError("epoch schedule commit requires protocol origin")
+        if envelope.fee_class != "protocol_sponsored":
+            raise ValueError("epoch schedule commit requires protocol-sponsored fee class")
+        if envelope.target_epoch is not None and envelope.target_epoch != "0":
+            raise ValueError("epoch schedule commit target epoch must be zero")
+
+        raw_schedule = (envelope.payload or {}).get("epoch_schedule")
+        try:
+            schedule = EpochSchedule.model_validate(raw_schedule)
+        except Exception as error:
+            raise ValueError("epoch schedule commit payload is invalid") from error
+        if self.epoch_schedule_commitment() is not None:
+            raise ValueError("epoch schedule is already committed")
+        if any(
+            operation.get("operation_type") == "EPOCH_TRANSITION"
+            for operation in self._operations
+        ):
+            raise ValueError("epoch schedule cannot be committed after epoch transition")
+        return {"epoch_schedule": schedule, "payload": dict(envelope.payload)}
+
+    def apply_consensus_epoch_schedule_commit(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Persist one immutable initial Epoch schedule commitment."""
+        validation = self.validate_consensus_epoch_schedule_commit(envelope)
+        self.record_admitted_envelope(
+            envelope,
+            emitted_events=["EpochScheduleCommitted"],
+        )
+        return validation
 
     def epoch_result_manifest_projection(self, epoch_number: int) -> dict | None:
         """Return the public identity projection for one finalized manifest."""
@@ -5235,6 +5312,52 @@ class LedgerOperationService:
                     or payload["epoch_result_manifest_record_digest"] != reference["record_digest"]
                 ):
                     raise ValueError("epoch transition manifest finality reference does not match")
+
+        schedule_commitment = self.epoch_schedule_commitment()
+        schedule_operation_id = payload.get("epoch_schedule_commit_operation_id")
+        if schedule_operation_id is not None or schedule_commitment is not None:
+            if schedule_commitment is None:
+                raise ValueError("epoch transition epoch schedule is not finalized")
+            if not isinstance(schedule_operation_id, str) or not schedule_operation_id.strip():
+                raise ValueError("epoch transition requires canonical epoch schedule reference")
+            finalized_ids = (
+                set(finalized_operation_ids)
+                if finalized_operation_ids is not None
+                else set(self.finalized_operation_ids())
+            )
+            if schedule_operation_id not in finalized_ids:
+                raise ValueError("epoch transition epoch schedule is not finalized")
+            if schedule_operation_id != schedule_commitment.get("operation_id"):
+                raise ValueError("epoch transition epoch schedule reference is invalid")
+            schedule = EpochSchedule.model_validate(
+                (schedule_commitment.get("payload") or {}).get("epoch_schedule")
+            )
+            if (
+                payload.get("epoch_schedule_version") != schedule.schema_version
+                or payload.get("epoch_schedule_hash") != schedule.schedule_hash
+            ):
+                raise ValueError("epoch transition epoch schedule binding mismatch")
+            schedule_reference_fields = {
+                "epoch_schedule_commit_sequence_id",
+                "epoch_schedule_commit_record_digest",
+            }
+            supplied_schedule_reference_fields = schedule_reference_fields & set(payload)
+            if supplied_schedule_reference_fields != schedule_reference_fields:
+                raise ValueError("epoch transition epoch schedule finality reference is incomplete")
+            schedule_reference = self.finalized_operation_reference(schedule_operation_id)
+            if schedule_reference is None:
+                raise ValueError("epoch transition epoch schedule finality reference is unavailable")
+            if (
+                payload["epoch_schedule_commit_sequence_id"] != schedule_reference["sequence_id"]
+                or payload["epoch_schedule_commit_record_digest"]
+                != schedule_reference["record_digest"]
+            ):
+                raise ValueError("epoch transition epoch schedule finality reference does not match")
+            if not {
+                schedule_operation_id,
+                payload["epoch_schedule_commit_record_digest"],
+            } <= set(envelope.evidence_references):
+                raise ValueError("epoch transition epoch schedule evidence references are incomplete")
 
         pool_budgets = payload.get("pool_budgets")
         if not isinstance(pool_budgets, dict):

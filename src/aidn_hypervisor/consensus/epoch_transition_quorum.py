@@ -20,6 +20,7 @@ from aidn_hypervisor.consensus.epoch_transition_inputs import (
 
 EPOCH_TRANSITION_QUORUM_VERSION = "aidn.epoch-transition-quorum.v1"
 EPOCH_RESULT_MANIFEST_OPERATION = "EPOCH_RESULT_MANIFEST_COMMIT"
+EPOCH_SCHEDULE_COMMIT_OPERATION = "EPOCH_SCHEDULE_COMMIT"
 
 Fetcher = Callable[[str, str, dict[str, str]], dict[str, Any]]
 
@@ -53,6 +54,10 @@ class EpochTransitionQuorumReport(BaseModel, frozen=True):
     manifest_operation_id: str | None = None
     manifest_sequence_id: int | None = Field(default=None, ge=1)
     manifest_record_digest: str | None = None
+    schedule_finality_count: int = Field(default=0, ge=0)
+    schedule_operation_id: str | None = None
+    schedule_sequence_id: int | None = Field(default=None, ge=1)
+    schedule_record_digest: str | None = None
     observations_hash: str
     observations: list[dict[str, Any]] = Field(default_factory=list)
     reason_code: str | None = None
@@ -66,12 +71,27 @@ class EpochTransitionQuorumReport(BaseModel, frozen=True):
             raise ValueError("EPOCH_TRANSITION_QUORUM_OBSERVATIONS_HASH_INVALID")
         if self.report is not None:
             if self.report.status == "READY" and self.status != "READY":
-                if self.reason_code != "EPOCH_RESULT_MANIFEST_FINALITY_QUORUM_UNAVAILABLE":
+                if self.reason_code not in {
+                    "EPOCH_RESULT_MANIFEST_FINALITY_QUORUM_UNAVAILABLE",
+                    "EPOCH_SCHEDULE_FINALITY_QUORUM_UNAVAILABLE",
+                }:
                     raise ValueError("EPOCH_TRANSITION_QUORUM_READY_REPORT_BLOCKED")
             if self.report.epoch_result_manifest_hash != self.manifest_hash:
                 raise ValueError("EPOCH_TRANSITION_QUORUM_MANIFEST_HASH_MISMATCH")
             if self.report.epoch_result_manifest_operation_id != self.manifest_operation_id:
                 raise ValueError("EPOCH_TRANSITION_QUORUM_MANIFEST_OPERATION_MISMATCH")
+            if self.report.epoch_schedule_commit_operation_id != self.schedule_operation_id:
+                raise ValueError("EPOCH_TRANSITION_QUORUM_SCHEDULE_OPERATION_MISMATCH")
+            if (
+                self.schedule_sequence_id is not None
+                and self.report.epoch_schedule_commit_sequence_id != self.schedule_sequence_id
+            ):
+                raise ValueError("EPOCH_TRANSITION_QUORUM_SCHEDULE_SEQUENCE_MISMATCH")
+            if (
+                self.schedule_record_digest is not None
+                and self.report.epoch_schedule_commit_record_digest != self.schedule_record_digest
+            ):
+                raise ValueError("EPOCH_TRANSITION_QUORUM_SCHEDULE_DIGEST_MISMATCH")
         if self.status == "READY":
             if self.chain_id is None or self.report is None or self.report.status != "READY":
                 raise ValueError("EPOCH_TRANSITION_QUORUM_READY_REPORT_MISSING")
@@ -85,6 +105,11 @@ class EpochTransitionQuorumReport(BaseModel, frozen=True):
                 raise ValueError("EPOCH_TRANSITION_QUORUM_MANIFEST_MISSING")
             if self.manifest_sequence_id is None or not self.manifest_record_digest:
                 raise ValueError("EPOCH_TRANSITION_QUORUM_FINALITY_REFERENCE_MISSING")
+            if self.report.epoch_schedule_commit_operation_id:
+                if self.schedule_finality_count < self.required_quorum:
+                    raise ValueError("EPOCH_TRANSITION_QUORUM_INSUFFICIENT_SCHEDULE_FINALITY")
+                if self.schedule_sequence_id is None or not self.schedule_record_digest:
+                    raise ValueError("EPOCH_TRANSITION_QUORUM_SCHEDULE_FINALITY_REFERENCE_MISSING")
             if self.reason_code is not None:
                 raise ValueError("EPOCH_TRANSITION_QUORUM_READY_HAS_REASON")
         elif not self.reason_code:
@@ -245,6 +270,59 @@ def _manifest_projection(
     return projection, query_height
 
 
+def _schedule_reference(
+    fetcher: Fetcher,
+    endpoint: str,
+    operation_id: str,
+    *,
+    minimum_height: int,
+) -> tuple[dict[str, Any], int]:
+    reference, query_height = _query_value(
+        fetcher,
+        endpoint,
+        f"operation/finalized/{operation_id}",
+    )
+    if query_height < minimum_height:
+        raise ValueError("finalized schedule query is behind transition report")
+    if reference.get("operation_id") != operation_id:
+        raise ValueError("finalized schedule operation ID does not match report")
+    if reference.get("operation_type") != EPOCH_SCHEDULE_COMMIT_OPERATION:
+        raise ValueError("finalized schedule operation type is invalid")
+    if isinstance(reference.get("sequence_id"), bool) or not isinstance(
+        reference.get("sequence_id"), int
+    ) or reference["sequence_id"] < 1:
+        raise ValueError("finalized schedule sequence is invalid")
+    if not isinstance(reference.get("record_digest"), str) or not reference["record_digest"].strip():
+        raise ValueError("finalized schedule record digest is invalid")
+    return {
+        "operation_id": reference["operation_id"],
+        "operation_type": reference["operation_type"],
+        "sequence_id": reference["sequence_id"],
+        "record_digest": reference["record_digest"],
+    }, query_height
+
+
+def _schedule_projection(
+    fetcher: Fetcher,
+    endpoint: str,
+    *,
+    minimum_height: int,
+) -> tuple[dict[str, Any], int]:
+    projection, query_height = _query_value(
+        fetcher,
+        endpoint,
+        "epoch/schedule",
+    )
+    if query_height < minimum_height:
+        raise ValueError("schedule projection query is behind transition report")
+    if projection.get("operation_type") != EPOCH_SCHEDULE_COMMIT_OPERATION:
+        raise ValueError("schedule projection operation type is invalid")
+    schedule = projection.get("epoch_schedule")
+    if not isinstance(schedule, dict):
+        raise ValueError("schedule projection is missing epoch schedule")
+    return projection, query_height
+
+
 def collect_epoch_transition_quorum(
     *,
     rpc_urls: list[str],
@@ -287,6 +365,46 @@ def collect_epoch_transition_quorum(
                     "report": report.model_dump(mode="json"),
                 }
             )
+            schedule_operation_id = report.epoch_schedule_commit_operation_id
+            if schedule_operation_id:
+                schedule_reference, schedule_reference_query_height = _schedule_reference(
+                    fetcher,
+                    rpc_url,
+                    schedule_operation_id,
+                    minimum_height=report_query_height,
+                )
+                schedule_projection, schedule_projection_query_height = _schedule_projection(
+                    fetcher,
+                    rpc_url,
+                    minimum_height=report_query_height,
+                )
+                if schedule_projection.get("operation_id") != schedule_operation_id:
+                    raise ValueError("schedule projection operation ID does not match report")
+                for field in (
+                    "operation_id",
+                    "operation_type",
+                    "sequence_id",
+                    "record_digest",
+                ):
+                    if schedule_projection.get(field) != schedule_reference.get(field):
+                        raise ValueError(
+                            "schedule projection conflicts with finalized operation reference"
+                        )
+                schedule_value = schedule_projection["epoch_schedule"]
+                expected_schedule = {
+                    "schema_version": report.epoch_schedule_version,
+                    "schedule_hash": report.epoch_schedule_hash,
+                }
+                for field, expected in expected_schedule.items():
+                    if schedule_value.get(field) != expected:
+                        raise ValueError(f"schedule projection field {field} does not match report")
+                observation["schedule_reference_query_height"] = schedule_reference_query_height
+                observation["schedule_projection_query_height"] = schedule_projection_query_height
+                observation["schedule_reference"] = schedule_reference
+                observation["schedule_projection"] = schedule_projection
+                observation["schedule_finalized"] = True
+            else:
+                observation["schedule_finalized"] = report.status != "BLOCKED"
             if report.status == "READY":
                 operation_id = report.epoch_result_manifest_operation_id
                 if not operation_id or not report.epoch_result_manifest_hash:
@@ -370,12 +488,14 @@ def collect_epoch_transition_quorum(
         for item in eligible
         if item.get("report", {}).get("status") == "READY"
         and item.get("manifest_finalized") is True
+        and item.get("schedule_finalized") is True
     ]
     identity_counts = Counter(
         json.dumps(
             {
                 "report": item["report"],
                 "manifest_reference": item["manifest_reference"],
+                "schedule_reference": item.get("schedule_reference"),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -389,7 +509,9 @@ def collect_epoch_transition_quorum(
         winning_payload = json.loads(winning_identity)
         winning_report = winning_payload["report"]
         winning_reference = winning_payload["manifest_reference"]
+        winning_schedule_reference = winning_payload.get("schedule_reference")
         manifest_finality_count = winning_count
+        schedule_finality_count = winning_count if winning_schedule_reference is not None else 0
     else:
         report_counts = Counter(report_key(item) for item in eligible)
         winning_report_key, winning_count = (
@@ -397,7 +519,18 @@ def collect_epoch_transition_quorum(
         )
         winning_report = json.loads(winning_report_key) if winning_report_key else None
         winning_reference = None
+        matching_items = [
+            item for item in eligible if report_key(item) == winning_report_key
+        ]
+        winning_schedule_reference = (
+            matching_items[0].get("schedule_reference") if matching_items else None
+        )
         manifest_finality_count = 0
+        schedule_finality_count = sum(
+            item.get("schedule_finalized") is True
+            and item.get("schedule_reference") == winning_schedule_reference
+            for item in matching_items
+        )
 
     typed_report = (
         EpochTransitionInputReport.model_validate(winning_report)
@@ -411,13 +544,22 @@ def collect_epoch_transition_quorum(
         and winning_count >= required_quorum
         and chain_count >= required_quorum
         and manifest_finality_count >= required_quorum
+        and (
+            not typed_report.epoch_schedule_commit_operation_id
+            or schedule_finality_count >= required_quorum
+        )
     )
     if ready:
         reason_code = None
     elif typed_report is not None and typed_report.status == "BLOCKED":
         reason_code = typed_report.reason_code or "EPOCH_TRANSITION_INPUTS_NOT_READY"
     elif typed_report is not None and typed_report.status == "READY":
-        reason_code = "EPOCH_RESULT_MANIFEST_FINALITY_QUORUM_UNAVAILABLE"
+        reason_code = (
+            "EPOCH_SCHEDULE_FINALITY_QUORUM_UNAVAILABLE"
+            if typed_report.epoch_schedule_commit_operation_id
+            and schedule_finality_count < required_quorum
+            else "EPOCH_RESULT_MANIFEST_FINALITY_QUORUM_UNAVAILABLE"
+        )
     else:
         reason_code = "EPOCH_TRANSITION_QUORUM_UNAVAILABLE"
 
@@ -442,6 +584,22 @@ def collect_epoch_transition_quorum(
         "manifest_record_digest": (
             winning_reference.get("record_digest") if winning_reference is not None else None
         ),
+        "schedule_finality_count": schedule_finality_count,
+        "schedule_operation_id": (
+            winning_schedule_reference.get("operation_id")
+            if winning_schedule_reference is not None
+            else (typed_report.epoch_schedule_commit_operation_id if typed_report else None)
+        ),
+        "schedule_sequence_id": (
+            winning_schedule_reference.get("sequence_id")
+            if winning_schedule_reference is not None
+            else (typed_report.epoch_schedule_commit_sequence_id if typed_report else None)
+        ),
+        "schedule_record_digest": (
+            winning_schedule_reference.get("record_digest")
+            if winning_schedule_reference is not None
+            else (typed_report.epoch_schedule_commit_record_digest if typed_report else None)
+        ),
         "observations_hash": _canonical_hash(observations),
         "observations": observations,
         "reason_code": reason_code,
@@ -453,6 +611,7 @@ def collect_epoch_transition_quorum(
 
 
 __all__ = [
+    "EPOCH_SCHEDULE_COMMIT_OPERATION",
     "EPOCH_RESULT_MANIFEST_OPERATION",
     "EPOCH_TRANSITION_QUORUM_VERSION",
     "EpochTransitionQuorumReport",

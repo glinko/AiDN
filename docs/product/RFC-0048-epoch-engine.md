@@ -323,6 +323,35 @@ epoch_transition:
 
 ---
 
+## 18.1 Canonical Schedule Commitment
+
+The State Machine SHALL support the one-time protocol operation:
+
+`EPOCH_SCHEDULE_COMMIT`
+
+It commits the hash-bound schedule used to calculate every canonical Epoch
+boundary. A schedule supplied only through a validator environment or local
+configuration is an implementation input, not consensus-final protocol state.
+
+The operation SHALL:
+
+- be finalized before the first `EPOCH_TRANSITION`;
+- contain the complete `EpochSchedule` and its deterministic `schedule_hash`;
+- carry the active protocol-authority policy hash and required authority
+  threshold;
+- be immutable and replay-protected;
+- have no direct economic effect.
+
+After finalization, transition input reports and `EPOCH_TRANSITION` payloads
+SHALL include the exact schedule operation ID, finalized sequence ID and
+record digest. The schedule query and state-sync recovery SHALL use the
+canonical Ledger commitment, not an unverified local replacement. A schedule
+commitment and a dependent transition in the same block SHALL not satisfy the
+dependency: the transition must observe the schedule in a prior finalized
+block.
+
+---
+
 ## 19. Protocol-Generated Operation
 
 No ordinary Wallet may construct an arbitrary valid Epoch transition.

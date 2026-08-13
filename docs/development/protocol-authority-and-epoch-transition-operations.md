@@ -17,6 +17,11 @@ operation:
 4. The `GENERAL_DEVELOPMENT` pool budget in integer `q_atoms`, derived from the
    active ECO-0007 emission parameters. It must not be guessed from a UI
    balance or copied from an example.
+5. The canonical RFC-0048 Epoch Engine schedule: genesis start time, epoch
+   duration, parameter version, task-set version, protocol version and the
+   resulting schedule hash. It must be committed once through the
+   `EPOCH_SCHEDULE_COMMIT` consensus operation before any transition payload
+   is prepared.
 
 The creator wallet, operator wallet, Treasury wallet and protocol-authority
 keys are different identities. Do not reuse a wallet private key as an
@@ -84,7 +89,21 @@ the SSH password supplied through `AIDN_SSH_PASSWORD`. Then query
 hash. A policy mismatch blocks the network; it must not be repaired by
 silently choosing the majority file.
 
-## 3. Produce the real epoch payload
+## 3. Commit the canonical Epoch schedule
+
+Prepare, independently sign and combine the schedule using the procedure in
+[the transition builder runbook](./authorized-epoch-transition-builder.md).
+Submit the signed `EPOCH_SCHEDULE_COMMIT` with the existing canonical
+consensus transport, then verify `epoch/schedule` and its finalized operation
+reference on the validator quorum. Do not mark the schedule active by copying
+an environment variable to validators.
+
+The schedule operation must finalize in an earlier block than the first
+dependent transition. If the validator quorum does not expose one identical
+schedule operation ID, sequence and record digest, stop and resolve the
+consensus discrepancy.
+
+## 4. Produce the real epoch payload
 
 The Epoch Engine must freeze the closing epoch and output a JSON object with:
 
@@ -110,7 +129,7 @@ of these values must be the finalized Epoch Engine state. If the engine cannot
 produce these roots from the current chain, that is an implementation blocker,
 not an operator input problem.
 
-## 4. Independent signing
+## 5. Independent signing
 
 Prepare an unsigned envelope:
 
@@ -151,7 +170,7 @@ python tools/combine-authorized-epoch-transition.py \
 The combiner verifies the policy hash, operation ID, signature ownership and
 threshold. It cannot alter the payload without invalidating the signatures.
 
-## 5. Dry-run and submit
+## 6. Dry-run and submit
 
 Before broadcast:
 

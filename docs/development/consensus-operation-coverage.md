@@ -1,6 +1,6 @@
 # Consensus Operation Coverage
 
-Last updated: `2026-08-10`
+Last updated: `2026-08-13`
 
 This document is the implementation matrix for the consensus operation
 boundary. The normative operation schemas and state transitions remain in
@@ -50,6 +50,7 @@ ABCI and `ExecutionEngine`:
 - `DEVELOPMENT_REWARD_EXPIRE_UNCLAIMED`
 - `DEVELOPMENT_REWARD_FINALIZE_COMMITMENT`
 - `DEVELOPMENT_REWARD_RESERVE`
+- `EPOCH_SCHEDULE_COMMIT`
 - `EPOCH_TRANSITION`
 - `PENALTY_APPLY`
 - `PARTICIPANT_REINSTATE`
@@ -93,6 +94,14 @@ authorization and an authenticated envelope. It credits the Treasury once;
 the Treasury ID, Wallet ID and funding ID cannot be reused. Genesis-funded
 Treasuries do not accept this transition. Faucet payout policy remains
 external and uses ordinary `WALLET_TRANSFER`.
+
+`EPOCH_SCHEDULE_COMMIT` is the one-time protocol-authority transition for the
+canonical RFC-0048 Epoch Engine schedule. It is specialized in both ABCI and
+deterministic execution, is hash-bound to the schedule and authority policy,
+and has no economic effect. Once finalized, `epoch/schedule` exposes the exact
+schedule and Ledger reference; subsequent transition reports and
+`EPOCH_TRANSITION` payloads must bind that reference. A local environment
+schedule without a finalized commitment remains a blocked readiness state.
 
 `SESSION_OPEN` is a non-economic lifecycle projection. It is accepted only
 after a finalized `SESSION_ESCROW_LOCK`, binds the Session Contract, Endpoint

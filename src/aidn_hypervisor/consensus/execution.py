@@ -124,6 +124,7 @@ class ExecutionEngine:
         "CONSENSUS_VALIDATOR_SET_UPDATE": 200,
         "EPOCH_TASK": 150,
         "EPOCH_TRANSITION": 200,
+        "EPOCH_SCHEDULE_COMMIT": 150,
         "EPOCH_RESULT_MANIFEST_COMMIT": 175,
         "TREASURY_MANIFEST_BIND": 250,
         "TREASURY_FUND": 250,
@@ -201,6 +202,17 @@ class ExecutionEngine:
                 if operation.get("operation_id")
             }
         )
+        preexisting_epoch_schedule_commit = (
+            self.ledger.epoch_schedule_commitment() is not None
+        )
+        block_contains_epoch_schedule_commit = False
+        for tx_data in txs:
+            try:
+                if self._parse_envelope(tx_data).operation_type == "EPOCH_SCHEDULE_COMMIT":
+                    block_contains_epoch_schedule_commit = True
+                    break
+            except Exception:
+                continue
         validator_updates: list[dict] = []
 
         for tx_data in txs:
@@ -221,6 +233,8 @@ class ExecutionEngine:
                 tx_data,
                 seen_operation_ids,
                 finalized_operation_ids=finalized_operation_ids,
+                preexisting_epoch_schedule_commit=preexisting_epoch_schedule_commit,
+                block_contains_epoch_schedule_commit=block_contains_epoch_schedule_commit,
             )
 
             if result.success:
@@ -333,6 +347,10 @@ class ExecutionEngine:
                             self.ledger.apply_consensus_epoch_transition(
                                 result.envelope,
                                 finalized_operation_ids=finalized_operation_ids,
+                            )
+                        elif result.envelope.operation_type == "EPOCH_SCHEDULE_COMMIT":
+                            self.ledger.apply_consensus_epoch_schedule_commit(
+                                result.envelope,
                             )
                         elif result.envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
                             self.ledger.apply_consensus_epoch_result_manifest(
@@ -568,6 +586,8 @@ class ExecutionEngine:
         seen_operation_ids: set[str],
         *,
         finalized_operation_ids: set[str],
+        preexisting_epoch_schedule_commit: bool = False,
+        block_contains_epoch_schedule_commit: bool = False,
     ) -> ExecutionEvent:
         """Execute a single transaction."""
         # 1. Parse
@@ -634,6 +654,19 @@ class ExecutionEngine:
                 success=False,
                 envelope=envelope,
                 error=authority_error,
+            )
+
+        if (
+            envelope.operation_type == "EPOCH_TRANSITION"
+            and block_contains_epoch_schedule_commit
+            and not preexisting_epoch_schedule_commit
+        ):
+            return ExecutionEvent(
+                operation_id=envelope.operation_id,
+                operation_type=envelope.operation_type,
+                success=False,
+                envelope=envelope,
+                error="epoch transition cannot depend on same-block epoch schedule commit",
             )
 
         # 3. Per-operation gas check
@@ -1086,6 +1119,18 @@ class ExecutionEngine:
                     )
                 )
                 emitted.append("EpochTransition")
+            elif envelope.operation_type == "EPOCH_SCHEDULE_COMMIT":
+                validation = self.ledger.validate_consensus_epoch_schedule_commit(envelope)
+                schedule = validation["epoch_schedule"]
+                state_changes.append(
+                    StateChange(
+                        entity_type="epoch_schedule",
+                        entity_id=schedule.schedule_hash,
+                        change_type="commit",
+                        after=schedule.model_dump(mode="json"),
+                    )
+                )
+                emitted.append("EpochScheduleCommitted")
             elif envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
                 validation = self.ledger.validate_consensus_epoch_result_manifest(envelope)
                 manifest = validation["manifest"]
@@ -1578,12 +1623,15 @@ class ExecutionEngine:
         self,
         envelope: LedgerOperationEnvelope,
     ) -> str | None:
-        if envelope.operation_type != "EPOCH_TRANSITION":
+        if envelope.operation_type not in {"EPOCH_TRANSITION", "EPOCH_SCHEDULE_COMMIT"}:
             return None
         if self._protocol_authority_policy is None:
             return None
         try:
-            self._protocol_authority_policy.verify_epoch_transition(envelope)
+            if envelope.operation_type == "EPOCH_TRANSITION":
+                self._protocol_authority_policy.verify_epoch_transition(envelope)
+            else:
+                self._protocol_authority_policy.verify_epoch_schedule_commit(envelope)
         except ValueError as error:
             return str(error)
         return None

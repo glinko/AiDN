@@ -67,6 +67,37 @@ def test_ready_report_can_build_transition_payload() -> None:
     assert payload["protocol_authority_policy_hash"] == "sha256:policy"
 
 
+def test_transition_payload_binds_finalized_schedule_reference() -> None:
+    report = build_epoch_transition_input_report(
+        closing_epoch=20,
+        opening_epoch=21,
+        closing_height=200,
+        closing_block_hash="sha256:block",
+        closing_state_root="sha256:state",
+        epoch_task_result_root="sha256:tasks",
+        eligibility_snapshot_root="sha256:eligibility",
+        reward_calculation_root="sha256:rewards",
+        next_protocol_parameters_hash="sha256:params",
+        pool_budgets={"GENERAL_DEVELOPMENT": 250_000},
+        pool_budget_references={"GENERAL_DEVELOPMENT": "epoch:20:GENERAL_DEVELOPMENT"},
+        source_app_hash="sha256:app",
+        epoch_schedule_version="aidn.epoch-schedule.v1",
+        epoch_schedule_hash="sha256:schedule",
+        epoch_schedule_commit_operation_id="schedule-operation-1",
+        epoch_schedule_commit_sequence_id=3,
+        epoch_schedule_commit_record_digest="sha256:schedule-record",
+        canonical_block_time="2030-01-01T00:01:00Z",
+        scheduled_end_time="2030-01-01T00:01:00Z",
+        epoch_boundary_reached=True,
+    )
+
+    payload = report.transition_payload(protocol_authority_policy_hash="sha256:policy")
+
+    assert payload["epoch_schedule_commit_operation_id"] == "schedule-operation-1"
+    assert payload["epoch_schedule_commit_sequence_id"] == 3
+    assert payload["epoch_schedule_commit_record_digest"] == "sha256:schedule-record"
+
+
 def test_blocked_report_cannot_be_used_as_transition_payload() -> None:
     report = build_epoch_transition_input_report(source_app_hash="sha256:app")
     with pytest.raises(ValueError, match="EPOCH_TRANSITION_INPUTS_NOT_READY"):

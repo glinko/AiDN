@@ -48,6 +48,9 @@ class EpochTransitionInputReport(BaseModel):
     source_app_hash: str | None = None
     epoch_schedule_version: str | None = None
     epoch_schedule_hash: str | None = None
+    epoch_schedule_commit_operation_id: str | None = None
+    epoch_schedule_commit_sequence_id: int | None = Field(default=None, ge=1)
+    epoch_schedule_commit_record_digest: str | None = None
     canonical_block_time: str | None = None
     scheduled_end_time: str | None = None
     epoch_boundary_reached: bool = False
@@ -71,6 +74,8 @@ class EpochTransitionInputReport(BaseModel):
             "source_app_hash",
             "epoch_schedule_version",
             "epoch_schedule_hash",
+            "epoch_schedule_commit_operation_id",
+            "epoch_schedule_commit_record_digest",
             "canonical_block_time",
             "scheduled_end_time",
             "epoch_result_manifest_hash",
@@ -82,6 +87,18 @@ class EpochTransitionInputReport(BaseModel):
         if self.opening_epoch is not None and self.closing_epoch is not None:
             if self.opening_epoch != self.closing_epoch + 1:
                 raise ValueError("opening epoch must immediately follow closing epoch")
+        schedule_reference_fields = {
+            "epoch_schedule_commit_sequence_id",
+            "epoch_schedule_commit_record_digest",
+        }
+        supplied_schedule_reference_fields = schedule_reference_fields & {
+            name for name in schedule_reference_fields if getattr(self, name) is not None
+        }
+        if self.epoch_schedule_commit_operation_id:
+            if supplied_schedule_reference_fields != schedule_reference_fields:
+                raise ValueError("epoch schedule finality reference is incomplete")
+        elif supplied_schedule_reference_fields:
+            raise ValueError("epoch schedule finality reference requires an operation ID")
         if set(self.pool_budgets) - set(self.pool_budget_references):
             raise ValueError("every pool budget must have a canonical reference")
         if any(isinstance(value, bool) or value < 0 for value in self.pool_budgets.values()):
@@ -149,6 +166,19 @@ class EpochTransitionInputReport(BaseModel):
             "next_epoch_start_time": self.scheduled_end_time,
             "protocol_authority_policy_hash": protocol_authority_policy_hash,
         }
+        if self.epoch_schedule_commit_operation_id:
+            if (
+                self.epoch_schedule_commit_sequence_id is None
+                or not self.epoch_schedule_commit_record_digest
+            ):
+                raise ValueError("epoch schedule finality reference is incomplete")
+            payload.update(
+                {
+                    "epoch_schedule_commit_operation_id": self.epoch_schedule_commit_operation_id,
+                    "epoch_schedule_commit_sequence_id": self.epoch_schedule_commit_sequence_id,
+                    "epoch_schedule_commit_record_digest": self.epoch_schedule_commit_record_digest,
+                }
+            )
         if self.epoch_result_manifest_hash and self.epoch_result_manifest_operation_id:
             payload.update(
                 {
@@ -175,6 +205,9 @@ def build_epoch_transition_input_report(
     pool_budget_references: Mapping[str, str] | None = None,
     epoch_schedule_version: str | None = None,
     epoch_schedule_hash: str | None = None,
+    epoch_schedule_commit_operation_id: str | None = None,
+    epoch_schedule_commit_sequence_id: int | None = None,
+    epoch_schedule_commit_record_digest: str | None = None,
     canonical_block_time: str | None = None,
     scheduled_end_time: str | None = None,
     epoch_boundary_reached: bool = False,
@@ -201,6 +234,9 @@ def build_epoch_transition_input_report(
         "pool_budget_references": references,
         "epoch_schedule_version": epoch_schedule_version,
         "epoch_schedule_hash": epoch_schedule_hash,
+        "epoch_schedule_commit_operation_id": epoch_schedule_commit_operation_id,
+        "epoch_schedule_commit_sequence_id": epoch_schedule_commit_sequence_id,
+        "epoch_schedule_commit_record_digest": epoch_schedule_commit_record_digest,
         "canonical_block_time": canonical_block_time,
         "scheduled_end_time": scheduled_end_time,
         "epoch_boundary_reached": epoch_boundary_reached,

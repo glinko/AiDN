@@ -19,9 +19,14 @@ RPC_URLS = [
 ]
 MANIFEST_OPERATION_ID = "manifest-operation-1"
 MANIFEST_HASH = "sha256:manifest"
+SCHEDULE_OPERATION_ID = "schedule-operation-1"
 
 
-def _report(*, reward_root: str = "sha256:rewards") -> dict[str, Any]:
+def _report(
+    *,
+    reward_root: str = "sha256:rewards",
+    schedule_reference: bool = False,
+) -> dict[str, Any]:
     return build_epoch_transition_input_report(
         closing_epoch=0,
         opening_epoch=1,
@@ -42,6 +47,9 @@ def _report(*, reward_root: str = "sha256:rewards") -> dict[str, Any]:
         epoch_boundary_reached=True,
         epoch_result_manifest_hash=MANIFEST_HASH,
         epoch_result_manifest_operation_id=MANIFEST_OPERATION_ID,
+        epoch_schedule_commit_operation_id=(SCHEDULE_OPERATION_ID if schedule_reference else None),
+        epoch_schedule_commit_sequence_id=(3 if schedule_reference else None),
+        epoch_schedule_commit_record_digest=("sha256:schedule-record" if schedule_reference else None),
     ).model_dump(mode="json")
 
 
@@ -57,10 +65,16 @@ def _fetcher(
     missing_finality: set[str] | None = None,
     conflicting_reference: set[str] | None = None,
     conflicting_projection: set[str] | None = None,
+    missing_schedule_finality: set[str] | None = None,
+    conflicting_schedule_reference: set[str] | None = None,
+    conflicting_schedule_projection: set[str] | None = None,
 ):
     missing_finality = missing_finality or set()
     conflicting_reference = conflicting_reference or set()
     conflicting_projection = conflicting_projection or set()
+    missing_schedule_finality = missing_schedule_finality or set()
+    conflicting_schedule_reference = conflicting_schedule_reference or set()
+    conflicting_schedule_projection = conflicting_schedule_projection or set()
 
     def fetcher(url: str, path: str, params: dict[str, str]) -> dict[str, Any]:
         if path == "/status":
@@ -108,6 +122,34 @@ def _fetcher(
                     }
                 }
             }
+        if query_path == f"operation/finalized/{SCHEDULE_OPERATION_ID}":
+            if url in missing_schedule_finality:
+                return {
+                    "result": {
+                        "response": {"code": 0, "height": "120", "value": ""}
+                    }
+                }
+            operation_id = (
+                "different-schedule-operation"
+                if url in conflicting_schedule_reference
+                else SCHEDULE_OPERATION_ID
+            )
+            return {
+                "result": {
+                    "response": {
+                        "code": 0,
+                        "height": "120",
+                        "value": _encoded(
+                            {
+                                "operation_id": operation_id,
+                                "operation_type": "EPOCH_SCHEDULE_COMMIT",
+                                "sequence_id": 3,
+                                "record_digest": "sha256:schedule-record",
+                            }
+                        ),
+                    }
+                }
+            }
         if query_path == "epoch/result-manifest/0":
             if url in missing_finality:
                 return {
@@ -140,6 +182,31 @@ def _fetcher(
                                 "epoch_schedule_version": "aidn.epoch-schedule.v1",
                                 "epoch_schedule_hash": "sha256:schedule",
                                 "scheduled_end_time": "2030-01-01T00:01:00Z",
+                            }
+                        ),
+                    }
+                }
+            }
+        if query_path == "epoch/schedule":
+            return {
+                "result": {
+                    "response": {
+                        "code": 0,
+                        "height": "120",
+                        "value": _encoded(
+                            {
+                                "operation_id": (
+                                    "different-schedule-operation"
+                                    if url in conflicting_schedule_projection
+                                    else SCHEDULE_OPERATION_ID
+                                ),
+                                "operation_type": "EPOCH_SCHEDULE_COMMIT",
+                                "sequence_id": 3,
+                                "record_digest": "sha256:schedule-record",
+                                "epoch_schedule": {
+                                    "schema_version": "aidn.epoch-schedule.v1",
+                                    "schedule_hash": "sha256:schedule",
+                                },
                             }
                         ),
                     }
@@ -209,3 +276,52 @@ def test_quorum_rejects_conflicting_manifest_projection_fields() -> None:
     assert result["agreement_count"] == 2
     assert result["manifest_finality_count"] == 2
     assert result["reason_code"] == "EPOCH_RESULT_MANIFEST_FINALITY_QUORUM_UNAVAILABLE"
+
+
+def test_quorum_requires_finalized_schedule_reference_when_report_binds_one() -> None:
+    reports = {url: _report(schedule_reference=True) for url in RPC_URLS}
+    result = collect_epoch_transition_quorum(
+        rpc_urls=RPC_URLS,
+        quorum=2,
+        fetcher=_fetcher(reports, missing_schedule_finality={RPC_URLS[2]}),
+    )
+
+    assert result["status"] == "READY"
+    assert result["schedule_finality_count"] == 2
+    assert result["schedule_operation_id"] == SCHEDULE_OPERATION_ID
+    assert result["schedule_sequence_id"] == 3
+    assert result["schedule_record_digest"] == "sha256:schedule-record"
+    assert EpochTransitionQuorumReport.model_validate(result).verify_integrity()
+
+
+def test_quorum_blocks_when_schedule_finality_is_below_threshold() -> None:
+    reports = {url: _report(schedule_reference=True) for url in RPC_URLS}
+    result = collect_epoch_transition_quorum(
+        rpc_urls=RPC_URLS,
+        quorum=2,
+        fetcher=_fetcher(
+            reports,
+            missing_schedule_finality={RPC_URLS[1], RPC_URLS[2]},
+        ),
+    )
+
+    assert result["status"] == "BLOCKED"
+    assert result["reason_code"] == "EPOCH_SCHEDULE_FINALITY_QUORUM_UNAVAILABLE"
+    assert result["schedule_operation_id"] == SCHEDULE_OPERATION_ID
+    assert EpochTransitionQuorumReport.model_validate(result).verify_integrity()
+
+
+def test_quorum_rejects_conflicting_schedule_evidence() -> None:
+    reports = {url: _report(schedule_reference=True) for url in RPC_URLS}
+    result = collect_epoch_transition_quorum(
+        rpc_urls=RPC_URLS,
+        quorum=3,
+        fetcher=_fetcher(
+            reports,
+            conflicting_schedule_reference={RPC_URLS[2]},
+        ),
+    )
+
+    assert result["status"] == "BLOCKED"
+    assert result["reason_code"] == "EPOCH_SCHEDULE_FINALITY_QUORUM_UNAVAILABLE"
+    assert result["schedule_finality_count"] == 2

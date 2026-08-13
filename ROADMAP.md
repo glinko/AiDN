@@ -4,6 +4,34 @@ Last updated: `2026-08-13`
 
 This is the main public roadmap for the repository.
 
+## 2026-08-13 Canonical Epoch Schedule Commitment
+
+Completed in this slice:
+
+- [x] Add the one-time `EPOCH_SCHEDULE_COMMIT` consensus operation with a
+  deterministic `EpochSchedule` hash, protocol-authority threshold and no
+  economic side effect.
+- [x] Apply and validate the operation in both ABCI and deterministic local
+  execution, with duplicate/late-commit rejection and snapshot recovery from
+  the canonical Ledger record.
+- [x] Expose the finalized schedule through `epoch/schedule` and bind
+  transition input reports, manifest references and quorum evidence to the
+  exact operation ID, sequence and record digest.
+- [x] Add offline prepare/sign/combine tooling that never broadcasts and keep
+  authority private keys outside the repository.
+- [x] Add targeted tests for threshold authorization, immutability, recovery,
+  deterministic execution and schedule-finality quorum behavior.
+
+Next required live-network work:
+
+- [ ] Approve one schedule JSON and distribute the identical public policy and
+  schedule inputs to validators `128`, `129` and `130`.
+- [ ] Prepare, independently sign and combine one schedule commitment, submit
+  it through canonical consensus, and archive `epoch/schedule` plus finalized
+  operation evidence from the validator quorum.
+- [ ] Only after schedule finality, wait for the configured epoch boundary and
+  produce the finalized Epoch Result Manifest required by the next gate.
+
 ## 2026-08-13 Multi-validator Epoch Transition Quorum Gate
 
 Completed in this slice:
@@ -26,9 +54,13 @@ Completed in this slice:
 
 Next required live-network work:
 
-- [ ] Run the quorum collector against validators `128`, `129` and `130` and
-  archive the sanitized evidence only after all three nodes expose the same
-  finalized manifest reference.
+- [x] Deploy the `epoch/transition-inputs` query and public manifest projection
+  to validators `128`, `129` and `130` without resetting state. The rollout
+  reached `3/3` report agreement; the evidence is recorded in
+  [the query rollout acceptance record](./docs/development/epoch-transition-input-query-rollout-acceptance-2026-08-13.md).
+- [ ] Run the quorum collector against the deployed validators and archive
+  `READY` evidence only after all three nodes expose the same finalized
+  schedule and manifest references.
 - [ ] Use the quorum-bound builder to create the exact authority-signed
   `EPOCH_TRANSITION` from a real `READY` report, then submit it in a later
   block through the canonical consensus path; no local UI or agent may invent
@@ -55,8 +87,12 @@ Completed in this slice:
 
 Next required live-network work:
 
-- [ ] Deploy the epoch transition-input query and manifest projection to the
-  validator set, then obtain a real `READY` report.
+- [x] Deploy the epoch transition-input query and manifest projection to the
+  validator set. The current quorum is intentionally `BLOCKED` because the
+  epoch boundary and finalized manifest are not available yet.
+- [x] Implement the canonical schedule commitment and quorum binding. The
+  live schedule still has to be finalized on the validator network.
+- [ ] Obtain a real `READY` report at a finalized epoch boundary.
 - [ ] Produce and independently verify the authority-signed transition from
   that report, submit it through canonical consensus and archive multi-RPC
   finality evidence.
@@ -1358,6 +1394,10 @@ Every meaningful architecture or milestone change should update this file in the
 - [x] Support public-only policy assembly and one-key-per-signer generation.
 - [x] Add canonical read-only Epoch Transition Input preflight with hash-bound reports, ABCI query, and multi-validator quorum CLI.
 - [x] Bind the preflight to an explicit, hash-bound canonical-time epoch schedule and durable ABCI block-time metadata.
+- [x] Add the finalized `EPOCH_SCHEDULE_COMMIT` boundary and require its
+  operation reference once canonical schedule state exists.
+- [ ] Submit and finalize the first canonical schedule on the live validator
+  network.
 - [ ] Approve and distribute one identical public authority policy hash.
 - [ ] Add/enable Epoch Engine live payload generation from finalized roots.
 - [ ] Finalize the first real `EPOCH_TRANSITION` with a `GENERAL_DEVELOPMENT` budget.

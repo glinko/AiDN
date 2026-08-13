@@ -65,6 +65,19 @@ def _envelope(manifest: dict) -> bytes:
     return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
 
 
+def _schedule_envelope(schedule) -> bytes:
+    envelope = LedgerOperationEnvelope(
+        operation_type="EPOCH_SCHEDULE_COMMIT",
+        origin_type="protocol",
+        initiator_id="epoch-engine",
+        fee_class="protocol_sponsored",
+        target_epoch="0",
+        created_at="2030-01-01T00:00:00Z",
+        payload={"epoch_schedule": schedule.model_dump(mode="json")},
+    )
+    return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
+
+
 def test_legacy_manifest_hash_and_replay_shape_remain_compatible() -> None:
     manifest = build_epoch_result_manifest(
         manifest_version=EPOCH_RESULT_MANIFEST_LEGACY_VERSION,
@@ -183,6 +196,12 @@ def test_manifest_populates_ready_epoch_transition_preflight() -> None:
         epoch_schedule=schedule,
     )
     result = app.finalize_block(
+        block_height=1,
+        block_hash=b"s" * 32,
+        txs=[_schedule_envelope(schedule)],
+        time="2030-01-01T00:00:00Z",
+    )
+    result = app.finalize_block(
         block_height=60,
         block_hash=b"c" * 32,
         txs=[_envelope(manifest.model_dump(mode="json"))],
@@ -230,6 +249,12 @@ def test_manifest_keeps_historical_closing_state_after_later_blocks() -> None:
     app = AIDNABCIApplication(
         ledger_service=LedgerOperationService(),
         epoch_schedule=schedule,
+    )
+    app.finalize_block(
+        block_height=1,
+        block_hash=b"s" * 32,
+        txs=[_schedule_envelope(schedule)],
+        time="2030-01-01T00:00:00Z",
     )
     app.finalize_block(
         block_height=60,
