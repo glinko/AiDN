@@ -1075,6 +1075,11 @@ This work is intentionally outside the functional MVP. It must not alter current
     preflight and rejects source-operation, budget-reference or allocation
     amount substitution. Live validator rollout is still required before this
     query can unlock a real payout batch.
+29. Added the operator execution CLI for ECO-0007 production batches. It
+    rechecks the canonical quorum preflight before every retry, binds the
+    batch to the approved multi-RPC finality configuration, persists exact
+    in-flight envelope diagnostics, and exits successfully only after every
+    ordered operation is finalized. It never creates keys or credits local Q.
 
 ### Current post-MVP implementation gate
 
@@ -1117,6 +1122,9 @@ This work is intentionally outside the functional MVP. It must not alter current
   persistence, ordered predecessor checks, and verified-finality gating.
 - [x] Add the canonical epoch/pool read-only preflight and quorum CLI; keep
   production reward execution blocked until all target validators expose it.
+- [x] Add a resumable operator execution CLI with fresh preflight checks and
+  multi-RPC finality binding; keep live execution fail-closed on stale batch or
+  unavailable validators.
 - [ ] Activate a production ECO-0007 reward profile and execute a finalized contribution payout batch against a real epoch pool.
 - [x] Public multi-validator profiles are signed, hash-bound, quorum-checked, and projected into the existing CometBFT finality configuration.
 - [x] Generate and verify the current Implementation Profile and execute the

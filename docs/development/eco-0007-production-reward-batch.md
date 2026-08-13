@@ -31,6 +31,7 @@ The implementation provides:
   `DEVELOPMENT_REWARD_*` envelopes;
 - `tools/build-development-reward-profile.py`;
 - `tools/build-development-reward-batch.py`;
+- `tools/execute-development-reward-batch.py`;
 - `DevelopmentRewardBatchExecutor`, which submits the exact signed envelopes
   one at a time and stops until verified finality is available;
 - `POST /api/v1/contributions/rewards/production-batch` for a planner that
@@ -86,6 +87,26 @@ keys and never create a Governance approval.
 6. Reconcile every finalized operation against the quorum and verify the
    resulting Wallet payment records. A transport acknowledgement or a single
    node's mempool response is not payment finality.
+
+For the operator-controlled execution attempt, use the exact batch and
+profile together with the already approved CometBFT finality deployment:
+
+```text
+uv run python tools/execute-development-reward-batch.py \
+  --batch production-batch.json \
+  --production-profile production-profile.json \
+  --finality-config /etc/aidn/cometbft-finality.json \
+  --execution-output production-execution.json \
+  --timeout-seconds 300 \
+  --poll-seconds 3
+```
+
+The command re-queries the validator quorum before every retry. It requires
+the current canonical preflight to retain the exact batch preflight hash,
+epoch-transition operation, budget reference and budget amount. It exits `0`
+only when every ordered envelope is finalized; `2` means blocked, failed or
+still waiting for verified finality. The output file and pending-envelope
+file are resumable diagnostics, not a source of Ledger authority.
 
 ## Required live evidence before activation
 
