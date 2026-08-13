@@ -24,6 +24,7 @@ PROTOCOL_AUTHORITY_POLICY_VERSION = "aidn.protocol-authority.v1"
 PROTOCOL_AUTHORITY_POLICY_HASH_FIELD = "protocol_authority_policy_hash"
 EPOCH_TRANSITION_AUTHORITY_HASH_FIELD = PROTOCOL_AUTHORITY_POLICY_HASH_FIELD
 EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD = PROTOCOL_AUTHORITY_POLICY_HASH_FIELD
+EPOCH_SCHEDULE_REBASE_AUTHORITY_HASH_FIELD = PROTOCOL_AUTHORITY_POLICY_HASH_FIELD
 EPOCH_RESULT_MANIFEST_AUTHORITY_HASH_FIELD = PROTOCOL_AUTHORITY_POLICY_HASH_FIELD
 MAX_PROTOCOL_AUTHORITY_SIGNATURES = 8
 
@@ -173,6 +174,15 @@ class ProtocolAuthorityPolicy:
             policy_hash_field=EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD,
         )
 
+    def verify_epoch_schedule_rebase(self, envelope: LedgerOperationEnvelope) -> None:
+        """Verify the exceptional quorum proof for controlled-localnet recovery."""
+        self._verify_protocol_operation(
+            envelope,
+            operation_type="EPOCH_SCHEDULE_REBASE",
+            operation_label="epoch schedule rebase",
+            policy_hash_field=EPOCH_SCHEDULE_REBASE_AUTHORITY_HASH_FIELD,
+        )
+
     def verify_epoch_result_manifest_commit(self, envelope: LedgerOperationEnvelope) -> None:
         """Verify the authority quorum for an immutable Epoch Result Manifest.
 
@@ -234,6 +244,7 @@ class ProtocolAuthorityPolicy:
 __all__ = [
     "EPOCH_TRANSITION_AUTHORITY_HASH_FIELD",
     "EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD",
+    "EPOCH_SCHEDULE_REBASE_AUTHORITY_HASH_FIELD",
     "EPOCH_RESULT_MANIFEST_AUTHORITY_HASH_FIELD",
     "MAX_PROTOCOL_AUTHORITY_SIGNATURES",
     "PROTOCOL_AUTHORITY_POLICY_VERSION",

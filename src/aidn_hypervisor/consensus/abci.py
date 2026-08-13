@@ -512,20 +512,19 @@ class AIDNABCIApplication:
                 ],
             )
 
-        if not recheck:
-            special_error = self._special_operation_error(
-                envelope,
-                finalized_operation_ids=self._finalized_operation_ids(),
+        special_error = self._special_operation_error(
+            envelope,
+            finalized_operation_ids=self._finalized_operation_ids(),
+        )
+        if special_error is not None:
+            return ABCIResult(
+                code="rejected",
+                log=special_error,
+                tags=[
+                    ABCITag(key="operation_id", value=envelope.operation_id),
+                    ABCITag(key="reason", value=special_error),
+                ],
             )
-            if special_error is not None:
-                return ABCIResult(
-                    code="rejected",
-                    log=special_error,
-                    tags=[
-                        ABCITag(key="operation_id", value=envelope.operation_id),
-                        ABCITag(key="reason", value=special_error),
-                    ],
-                )
 
         authority_error = self._protocol_authority_error(envelope)
         if authority_error is not None:
@@ -937,6 +936,14 @@ class AIDNABCIApplication:
                 if projection is not None
                 else b""
             )
+        elif path == "epoch/schedule-rebase":
+            projection = self.ledger.epoch_schedule_rebase_projection()
+            kwargs["key"] = b"epoch:schedule-rebase"
+            kwargs["value"] = (
+                json.dumps(projection, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                if projection is not None
+                else b""
+            )
         elif path.startswith("epoch/result-manifest/"):
             raw_epoch = path.removeprefix("epoch/result-manifest/")
             try:
@@ -1144,6 +1151,15 @@ class AIDNABCIApplication:
             if operation.get("operation_type") == "EPOCH_TRANSITION"
         ]
         if not transitions:
+            rebase = self.ledger.epoch_schedule_rebase_projection()
+            if rebase is not None:
+                raw_rebase = rebase.get("epoch_schedule_rebase")
+                if not isinstance(raw_rebase, dict):
+                    return 0, self._epoch_schedule.genesis_start_time, "epoch_schedule_rebase_payload"
+                effective_start = raw_rebase.get("effective_epoch_zero_start_time")
+                if not isinstance(effective_start, str) or not effective_start.strip():
+                    return 0, self._epoch_schedule.genesis_start_time, "epoch_schedule_rebase_start_time"
+                return 0, effective_start, None
             return 0, self._epoch_schedule.genesis_start_time, None
         payload = transitions[-1].get("payload")
         if not isinstance(payload, dict):
@@ -1484,6 +1500,8 @@ class AIDNABCIApplication:
             elif envelope.operation_type == "EPOCH_SCHEDULE_COMMIT":
                 validation = self.ledger.apply_consensus_epoch_schedule_commit(envelope)
                 self._epoch_schedule = validation["epoch_schedule"]
+            elif envelope.operation_type == "EPOCH_SCHEDULE_REBASE":
+                self.ledger.apply_consensus_epoch_schedule_rebase(envelope)
             elif envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
                 self.ledger.apply_consensus_epoch_result_manifest(envelope)
             elif envelope.operation_type == "SERVICE_VERIFICATION_COMMIT":
@@ -1781,6 +1799,8 @@ class AIDNABCIApplication:
                 )
             elif envelope.operation_type == "EPOCH_SCHEDULE_COMMIT":
                 self.ledger.validate_consensus_epoch_schedule_commit(envelope)
+            elif envelope.operation_type == "EPOCH_SCHEDULE_REBASE":
+                self.ledger.validate_consensus_epoch_schedule_rebase(envelope)
             elif envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
                 self.ledger.validate_consensus_epoch_result_manifest(envelope)
             elif envelope.operation_type == "SERVICE_VERIFICATION_COMMIT":
@@ -1959,6 +1979,10 @@ class AIDNABCIApplication:
                 return None
         except ValueError as error:
             return str(error)
+        if envelope.operation_type == "EPOCH_SCHEDULE_COMMIT":
+            return self._late_schedule_commit_error(envelope)
+        if envelope.operation_type in {"EPOCH_RESULT_MANIFEST_COMMIT", "EPOCH_TRANSITION"}:
+            return self._late_initial_schedule_activation_error()
         return None
 
     def _protocol_authority_error(
@@ -1968,6 +1992,7 @@ class AIDNABCIApplication:
         if envelope.operation_type not in {
             "EPOCH_TRANSITION",
             "EPOCH_SCHEDULE_COMMIT",
+            "EPOCH_SCHEDULE_REBASE",
             "EPOCH_RESULT_MANIFEST_COMMIT",
         }:
             return None
@@ -1978,10 +2003,54 @@ class AIDNABCIApplication:
                 self._protocol_authority_policy.verify_epoch_transition(envelope)
             elif envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
                 self._protocol_authority_policy.verify_epoch_result_manifest_commit(envelope)
+            elif envelope.operation_type == "EPOCH_SCHEDULE_REBASE":
+                self._protocol_authority_policy.verify_epoch_schedule_rebase(envelope)
             else:
                 self._protocol_authority_policy.verify_epoch_schedule_commit(envelope)
         except ValueError as error:
             return str(error)
+        return None
+
+    def _late_schedule_commit_error(self, envelope: LedgerOperationEnvelope) -> str | None:
+        """Do not introduce an already-expired Epoch 0 schedule."""
+        if self.ledger.epoch_schedule_commitment() is not None:
+            return None
+        if self._last_block_time is None:
+            return None
+        try:
+            schedule = EpochSchedule.model_validate(envelope.payload.get("epoch_schedule"))
+            from aidn_hypervisor.consensus.epoch_schedule import _parse_timestamp
+
+            if _parse_timestamp(schedule.genesis_start_time, field_name="genesis_start_time") <= _parse_timestamp(
+                self._last_block_time,
+                field_name="last_block_time",
+            ):
+                return "epoch schedule commit start must be after the latest canonical block time"
+        except ValueError:
+            return None
+        return None
+
+    def _late_initial_schedule_activation_error(self) -> str | None:
+        """Prevent manifest/transition evidence against a late, unactivated Epoch 0."""
+        if self._epoch_schedule is None or self._last_block_time is None:
+            return None
+        if self.ledger.epoch_schedule_rebase_commitment() is not None:
+            return None
+        if any(
+            operation.get("operation_type") == "EPOCH_TRANSITION"
+            for operation in self.ledger.snapshot_operations()
+        ):
+            return None
+        try:
+            boundary = self._epoch_schedule.boundary_for(
+                active_epoch=0,
+                active_start_time=self._epoch_schedule.genesis_start_time,
+                block_time=self._last_block_time,
+            )
+        except ValueError:
+            return "epoch schedule canonical time is invalid"
+        if boundary.boundary_reached:
+            return "epoch schedule activation is required before epoch activity"
         return None
 
     def _operation_coverage_error(self, operation_type: str) -> str | None:

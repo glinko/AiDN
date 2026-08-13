@@ -125,6 +125,7 @@ class ExecutionEngine:
         "EPOCH_TASK": 150,
         "EPOCH_TRANSITION": 200,
         "EPOCH_SCHEDULE_COMMIT": 150,
+        "EPOCH_SCHEDULE_REBASE": 150,
         "EPOCH_RESULT_MANIFEST_COMMIT": 175,
         "TREASURY_MANIFEST_BIND": 250,
         "TREASURY_FUND": 250,
@@ -350,6 +351,10 @@ class ExecutionEngine:
                             )
                         elif result.envelope.operation_type == "EPOCH_SCHEDULE_COMMIT":
                             self.ledger.apply_consensus_epoch_schedule_commit(
+                                result.envelope,
+                            )
+                        elif result.envelope.operation_type == "EPOCH_SCHEDULE_REBASE":
+                            self.ledger.apply_consensus_epoch_schedule_rebase(
                                 result.envelope,
                             )
                         elif result.envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
@@ -1131,6 +1136,18 @@ class ExecutionEngine:
                     )
                 )
                 emitted.append("EpochScheduleCommitted")
+            elif envelope.operation_type == "EPOCH_SCHEDULE_REBASE":
+                validation = self.ledger.validate_consensus_epoch_schedule_rebase(envelope)
+                rebase = validation["rebase"]
+                state_changes.append(
+                    StateChange(
+                        entity_type="epoch_schedule_rebase",
+                        entity_id=rebase.rebase_hash,
+                        change_type="commit",
+                        after=rebase.model_dump(mode="json"),
+                    )
+                )
+                emitted.append("EpochScheduleRebased")
             elif envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
                 validation = self.ledger.validate_consensus_epoch_result_manifest(envelope)
                 manifest = validation["manifest"]
@@ -1626,6 +1643,7 @@ class ExecutionEngine:
         if envelope.operation_type not in {
             "EPOCH_TRANSITION",
             "EPOCH_SCHEDULE_COMMIT",
+            "EPOCH_SCHEDULE_REBASE",
             "EPOCH_RESULT_MANIFEST_COMMIT",
         }:
             return None
@@ -1636,6 +1654,8 @@ class ExecutionEngine:
                 self._protocol_authority_policy.verify_epoch_transition(envelope)
             elif envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
                 self._protocol_authority_policy.verify_epoch_result_manifest_commit(envelope)
+            elif envelope.operation_type == "EPOCH_SCHEDULE_REBASE":
+                self._protocol_authority_policy.verify_epoch_schedule_rebase(envelope)
             else:
                 self._protocol_authority_policy.verify_epoch_schedule_commit(envelope)
         except ValueError as error:

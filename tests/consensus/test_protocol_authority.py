@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.epoch_result_manifest import build_epoch_result_manifest
@@ -12,6 +14,12 @@ from aidn_hypervisor.consensus.epoch_result_manifest_commit import (
     sign_epoch_result_manifest_commit_signature,
 )
 from aidn_hypervisor.consensus.epoch_schedule import build_epoch_schedule
+from aidn_hypervisor.consensus.epoch_schedule_rebase import build_epoch_schedule_rebase
+from aidn_hypervisor.consensus.epoch_schedule_rebase_commit import (
+    build_unsigned_epoch_schedule_rebase,
+    combine_epoch_schedule_rebase_signatures,
+    sign_epoch_schedule_rebase_signature,
+)
 from aidn_hypervisor.consensus.execution import ExecutionEngine
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.protocol_authority import ProtocolAuthorityPolicy
@@ -167,6 +175,29 @@ def _manifest_envelope(
     return envelope.model_copy(update={"signatures": signatures or []})
 
 
+def _rebase(policy: ProtocolAuthorityPolicy, schedule) -> object:
+    return build_epoch_schedule_rebase(
+        schedule_hash=schedule.schedule_hash,
+        effective_epoch_zero_start_time="2030-01-01T00:10:00Z",
+    )
+
+
+def _rebase_envelope(
+    policy: ProtocolAuthorityPolicy,
+    schedule,
+    *,
+    signatures: list[str] | None = None,
+    created_at: str | None = None,
+) -> LedgerOperationEnvelope:
+    envelope = build_unsigned_epoch_schedule_rebase(
+        policy=policy,
+        rebase=_rebase(policy, schedule),
+        created_at=created_at or _timestamp(),
+        expires_at=_timestamp(hours=24),
+    )
+    return envelope.model_copy(update={"signatures": signatures or []})
+
+
 def _signed(
     policy: ProtocolAuthorityPolicy,
     *key_indexes: int,
@@ -275,7 +306,7 @@ def test_epoch_schedule_commit_requires_authority_quorum_and_is_projected() -> N
         block_height=1,
         block_hash=b"S" * 32,
         txs=[signed.consensus_bytes()],
-        time="2030-01-01T00:00:01Z",
+        time="2029-12-31T23:59:00Z",
     )
 
     assert result.code == "ok"
@@ -286,6 +317,173 @@ def test_epoch_schedule_commit_requires_authority_quorum_and_is_projected() -> N
     assert projection["epoch_schedule"]["schedule_hash"] == schedule.schedule_hash
     query = json.loads(app.query(path="epoch/schedule").value)
     assert query == projection
+
+
+def test_late_initial_schedule_requires_one_authorized_rebase_before_epoch_activity() -> None:
+    policy = _policy()
+    schedule = _schedule()
+    app, ledger = _app(policy)
+    schedule_tx = _signed_schedule(policy, schedule, 0, 1)
+    result, results = app.finalize_block_with_results(
+        block_height=1,
+        block_hash=b"S" * 32,
+        txs=[schedule_tx.consensus_bytes()],
+        time="2029-12-31T23:59:00Z",
+    )
+    assert result.code == "ok"
+    assert results[0].code == "ok"
+
+    unsigned = _rebase_envelope(policy, schedule)
+    check = app.check_transaction(unsigned.consensus_bytes())
+    assert check.code == "rejected"
+    assert check.log == "EPOCH_SCHEDULE_REBASE_AUTHORITY_SIGNATURE_REQUIRED"
+
+    first = sign_consensus_bytes(private_key=PRIVATE_KEYS[0], payload=unsigned.signing_bytes())
+    second = sign_consensus_bytes(private_key=PRIVATE_KEYS[1], payload=unsigned.signing_bytes())
+    signed = _rebase_envelope(policy, schedule, signatures=[first, second])
+    result, results = app.finalize_block_with_results(
+        block_height=2,
+        block_hash=b"R" * 32,
+        txs=[signed.consensus_bytes()],
+        time="2030-01-01T00:11:00Z",
+    )
+    assert result.code == "ok"
+    assert results[0].code == "ok"
+    assert ledger.effective_epoch_zero_start_time() == "2030-01-01T00:10:00Z"
+    assert app._active_epoch_context() == (0, "2030-01-01T00:10:00Z", None)
+
+    duplicate_unsigned = _rebase_envelope(
+        policy,
+        schedule,
+        created_at="2030-01-01T00:01:00Z",
+    )
+    duplicate_first = sign_consensus_bytes(private_key=PRIVATE_KEYS[0], payload=duplicate_unsigned.signing_bytes())
+    duplicate_second = sign_consensus_bytes(private_key=PRIVATE_KEYS[1], payload=duplicate_unsigned.signing_bytes())
+    duplicate = duplicate_unsigned.model_copy(update={"signatures": [duplicate_first, duplicate_second]})
+    _, duplicate_results = app.finalize_block_with_results(
+        block_height=3,
+        block_hash=b"D" * 32,
+        txs=[duplicate.consensus_bytes()],
+        time="2030-01-01T00:12:00Z",
+    )
+    assert duplicate_results[0].code == "rejected"
+    assert duplicate_results[0].log == "epoch schedule rebase is already committed"
+
+
+def test_late_schedule_cannot_start_epoch_activity_without_authorized_rebase() -> None:
+    policy = _policy()
+    schedule = _schedule()
+    app, _ = _app(policy)
+    schedule_tx = _signed_schedule(policy, schedule, 0, 1)
+    app.finalize_block(
+        block_height=1,
+        block_hash=b"L" * 32,
+        txs=[schedule_tx.consensus_bytes()],
+        time="2030-01-01T00:02:00Z",
+    )
+    manifest = _manifest_envelope(policy)
+    first = sign_consensus_bytes(private_key=PRIVATE_KEYS[0], payload=manifest.signing_bytes())
+    second = sign_consensus_bytes(private_key=PRIVATE_KEYS[1], payload=manifest.signing_bytes())
+    signed = manifest.model_copy(update={"signatures": [first, second]})
+    check = app.check_transaction(signed.consensus_bytes())
+    assert check.code == "rejected"
+    assert check.log == "epoch schedule activation is required before epoch activity"
+
+
+def test_rebased_epoch_zero_manifest_requires_exact_rebase_evidence() -> None:
+    policy = _policy()
+    schedule = _schedule()
+    app, _ = _app(policy)
+    schedule_tx = _signed_schedule(policy, schedule, 0, 1)
+    app.finalize_block(
+        block_height=1,
+        block_hash=b"B" * 32,
+        txs=[schedule_tx.consensus_bytes()],
+        time="2029-12-31T23:59:00Z",
+    )
+    unsigned_rebase = _rebase_envelope(policy, schedule)
+    rebase = unsigned_rebase.model_copy(
+        update={
+            "signatures": [
+                sign_consensus_bytes(private_key=PRIVATE_KEYS[0], payload=unsigned_rebase.signing_bytes()),
+                sign_consensus_bytes(private_key=PRIVATE_KEYS[1], payload=unsigned_rebase.signing_bytes()),
+            ]
+        }
+    )
+    app.finalize_block(
+        block_height=2,
+        block_hash=b"C" * 32,
+        txs=[rebase.consensus_bytes()],
+        time="2030-01-01T00:11:00Z",
+    )
+    manifest = build_epoch_result_manifest(
+        epoch_number=0,
+        start_height=2,
+        closing_height=3,
+        start_time="2030-01-01T00:10:00Z",
+        closing_time="2030-01-01T00:11:00Z",
+        closing_block_hash="sha256:closing-block",
+        closing_state_root="sha256:closing-state",
+        source_app_hash="sha256:closing-app",
+        protocol_version="0.1",
+        parameter_version="params-v1",
+        task_set_version="tasks-v1",
+        epoch_schedule_version=schedule.schema_version,
+        epoch_schedule_hash=schedule.schedule_hash,
+        scheduled_end_time="2030-01-01T00:11:00Z",
+        frozen_evidence_root="sha256:frozen-evidence",
+        participant_snapshot_root="sha256:participants",
+        service_snapshot_root="sha256:services",
+        task_result_root="sha256:tasks",
+        eligibility_root="sha256:eligibility",
+        reputation_root="sha256:reputation",
+        penalty_root="sha256:penalty",
+        recycle_root="sha256:recycle",
+        reward_authorization_root="sha256:reward-authorization",
+        reward_result_root="sha256:reward-result",
+        faucet_root="sha256:faucet",
+        validator_set_update_root="sha256:validator-set",
+        reward_calculation_root="sha256:reward-calculation",
+        next_protocol_parameters_hash="sha256:params-v2",
+        pool_budgets={"GENERAL_DEVELOPMENT": 0},
+        pool_budget_references={"GENERAL_DEVELOPMENT": "epoch:0:GENERAL_DEVELOPMENT"},
+        next_epoch_reference="epoch:1",
+    )
+    unsigned_manifest = build_unsigned_epoch_result_manifest_commit(
+        policy=policy,
+        manifest=manifest,
+        created_at=_timestamp(),
+    )
+    signed_manifest = unsigned_manifest.model_copy(
+        update={
+            "signatures": [
+                sign_consensus_bytes(private_key=PRIVATE_KEYS[0], payload=unsigned_manifest.signing_bytes()),
+                sign_consensus_bytes(private_key=PRIVATE_KEYS[1], payload=unsigned_manifest.signing_bytes()),
+            ]
+        }
+    )
+    check = app.check_transaction(signed_manifest.consensus_bytes())
+    assert check.code == "rejected"
+    assert check.log == "epoch result manifest rebase evidence references are incomplete"
+
+
+def test_offline_rebase_combiner_requires_distinct_authorities() -> None:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    policy = _policy()
+    unsigned = _rebase_envelope(policy, _schedule())
+    signature = sign_epoch_schedule_rebase_signature(
+        unsigned,
+        policy=policy,
+        authority_id="authority-1",
+        private_key=Ed25519PrivateKey.from_private_bytes(bytes.fromhex("11" * 32)),
+    )
+    with pytest.raises(ValueError, match="EPOCH_SCHEDULE_REBASE_AUTHORITY_SIGNATURE_REQUIRED"):
+        combine_epoch_schedule_rebase_signatures(
+            unsigned,
+            policy=policy,
+            signatures={"authority-1": signature},
+        )
 
 
 def test_epoch_result_manifest_requires_authority_quorum_before_it_is_immutable() -> None:

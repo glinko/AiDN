@@ -72,6 +72,18 @@ validator. A mismatch fails closed; the nodes must not choose a majority
 schedule. The last CometBFT block timestamp is the only accepted time source;
 host wall clocks are not used to close an epoch.
 
+### Controlled-localnet late schedule recovery
+
+The first controlled localnet schedule was committed after its declared start.
+This is fail-closed in current builds: an expired initial schedule cannot accept
+Epoch activity until a threshold-authorized `EPOCH_SCHEDULE_REBASE` establishes
+the one canonical effective start for Epoch 0. The recovery preserves the
+original schedule hash, is allowed only before any manifest or transition, and
+cannot create balances or budgets. See
+[the controlled-localnet rebase runbook](./controlled-localnet-epoch-schedule-rebase.md).
+Production networks must establish the schedule before its first start rather
+than relying on this recovery profile.
+
 The Epoch Engine now publishes these inputs through an immutable,
 consensus-bound `EPOCH_RESULT_MANIFEST_COMMIT`. The manifest is an
 evidence-only object: it does not mint Q, spend a pool or activate parameters.

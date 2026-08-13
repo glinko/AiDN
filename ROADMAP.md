@@ -31,6 +31,33 @@ Controlled-localnet acceptance:
 - [ ] Produce a threshold-authorized Epoch Result Manifest only from finalized
   Epoch Engine evidence; no localnet process may invent roots or budgets.
 
+## 2026-08-13 Controlled Localnet Schedule Recovery
+
+Completed in this slice:
+
+- [x] Detect and reject a new `EPOCH_SCHEDULE_COMMIT` whose Epoch 0 begins at
+  or before the latest canonical block time.
+- [x] Fail closed for manifest and transition activity when an already-expired
+  initial schedule has no canonical activation record.
+- [x] Add the one-time `EPOCH_SCHEDULE_REBASE` recovery operation: it preserves
+  the schedule hash, accepts only `controlled-localnet`, requires the configured
+  protocol-authority threshold, and is unavailable after manifest or transition
+  activity.
+- [x] Bind the first Epoch Result Manifest to the rebase effective start/end and
+  finalized rebase evidence references.
+- [x] Provide offline prepare/sign/combine tools and a public
+  `epoch/schedule-rebase` query. The operator procedure is documented in
+  [the rebase runbook](./docs/development/controlled-localnet-epoch-schedule-rebase.md).
+
+Next required controlled-localnet work:
+
+- [ ] Deploy this compatible ABCI build to validators `128`, `129`, and `130`
+  without changing CometBFT state or authority keys.
+- [ ] Create, threshold-authorize, submit, and finalize one rebase with a
+  future Epoch 0 start; archive multi-RPC evidence.
+- [ ] Wait for its real boundary, then produce the first manifest only from
+  finalized Epoch Engine evidence and continue through the normal quorum gate.
+
 ## 2026-08-13 Multi-validator Epoch Transition Quorum Gate
 
 Completed in this slice:

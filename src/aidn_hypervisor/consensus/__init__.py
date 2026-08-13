@@ -77,6 +77,19 @@ from aidn_hypervisor.consensus.epoch_schedule import (
     EpochSchedule,
     build_epoch_schedule,
 )
+from aidn_hypervisor.consensus.epoch_schedule_rebase import (
+    CONTROLLED_LOCALNET_LATE_INITIAL_SCHEDULE,
+    EPOCH_SCHEDULE_REBASE_OPERATION,
+    EPOCH_SCHEDULE_REBASE_VERSION,
+    EpochScheduleRebase,
+    build_epoch_schedule_rebase,
+)
+from aidn_hypervisor.consensus.epoch_schedule_rebase_commit import (
+    build_unsigned_epoch_schedule_rebase,
+    combine_epoch_schedule_rebase_signatures,
+    sign_epoch_schedule_rebase,
+    sign_epoch_schedule_rebase_signature,
+)
 from aidn_hypervisor.consensus.epoch_schedule_commit import (
     EPOCH_SCHEDULE_COMMIT_OPERATION,
     build_signed_epoch_schedule_commit,
@@ -153,6 +166,7 @@ from aidn_hypervisor.consensus.projection import (
 from aidn_hypervisor.consensus.protocol_authority import (
     EPOCH_RESULT_MANIFEST_AUTHORITY_HASH_FIELD,
     EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD,
+    EPOCH_SCHEDULE_REBASE_AUTHORITY_HASH_FIELD,
     EPOCH_TRANSITION_AUTHORITY_HASH_FIELD,
     MAX_PROTOCOL_AUTHORITY_SIGNATURES,
     PROTOCOL_AUTHORITY_POLICY_VERSION,
@@ -220,6 +234,7 @@ __all__ = [
     "OperationType",
     "EPOCH_TRANSITION_AUTHORITY_HASH_FIELD",
     "EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD",
+    "EPOCH_SCHEDULE_REBASE_AUTHORITY_HASH_FIELD",
     "EPOCH_RESULT_MANIFEST_AUTHORITY_HASH_FIELD",
     "MAX_PROTOCOL_AUTHORITY_SIGNATURES",
     "PROTOCOL_AUTHORITY_POLICY_VERSION",
@@ -241,6 +256,15 @@ __all__ = [
     "EpochBoundary",
     "EpochSchedule",
     "build_epoch_schedule",
+    "CONTROLLED_LOCALNET_LATE_INITIAL_SCHEDULE",
+    "EPOCH_SCHEDULE_REBASE_OPERATION",
+    "EPOCH_SCHEDULE_REBASE_VERSION",
+    "EpochScheduleRebase",
+    "build_epoch_schedule_rebase",
+    "build_unsigned_epoch_schedule_rebase",
+    "combine_epoch_schedule_rebase_signatures",
+    "sign_epoch_schedule_rebase",
+    "sign_epoch_schedule_rebase_signature",
     "EPOCH_SCHEDULE_COMMIT_OPERATION",
     "build_signed_epoch_schedule_commit",
     "build_unsigned_epoch_schedule_commit",

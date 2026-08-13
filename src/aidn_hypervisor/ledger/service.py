@@ -15,6 +15,10 @@ from aidn_hypervisor.consensus.epoch_result_manifest import (
     EpochResultManifest,
 )
 from aidn_hypervisor.consensus.epoch_schedule import EpochSchedule
+from aidn_hypervisor.consensus.epoch_schedule_rebase import (
+    EPOCH_SCHEDULE_REBASE_OPERATION,
+    EpochScheduleRebase,
+)
 from aidn_hypervisor.consensus.replay import FinalizedOperationRegistry
 from aidn_hypervisor.faucet_treasury import (
     FAUCET_TREASURY_FUNDING_DOMAIN,
@@ -1689,6 +1693,83 @@ class LedgerOperationService:
             "epoch_schedule": schedule.model_dump(mode="json"),
         }
 
+    def epoch_schedule_rebase_commitment(self) -> dict | None:
+        matches = [
+            operation for operation in self._operations
+            if operation.get("operation_type") == EPOCH_SCHEDULE_REBASE_OPERATION
+        ]
+        return dict(matches[-1]) if matches else None
+
+    def epoch_schedule_rebase_projection(self) -> dict | None:
+        operation = self.epoch_schedule_rebase_commitment()
+        if operation is None:
+            return None
+        try:
+            rebase = EpochScheduleRebase.model_validate(
+                (operation.get("payload") or {}).get("epoch_schedule_rebase")
+            )
+        except Exception:
+            return None
+        reference = self.finalized_operation_reference(str(operation.get("operation_id", "")))
+        if reference is None:
+            return None
+        return {
+            "operation_id": operation["operation_id"],
+            "operation_type": EPOCH_SCHEDULE_REBASE_OPERATION,
+            "sequence_id": reference["sequence_id"],
+            "record_digest": reference["record_digest"],
+            "epoch_schedule_rebase": rebase.model_dump(mode="json"),
+        }
+
+    def effective_epoch_zero_start_time(self) -> str | None:
+        """Return the schedule start superseded by the one permitted recovery."""
+        schedule = self.epoch_schedule_projection()
+        if schedule is None:
+            return None
+        rebase = self.epoch_schedule_rebase_projection()
+        if rebase is None:
+            return schedule["epoch_schedule"]["genesis_start_time"]
+        return rebase["epoch_schedule_rebase"]["effective_epoch_zero_start_time"]
+
+    def validate_consensus_epoch_schedule_rebase(self, envelope: "LedgerOperationEnvelope") -> dict:
+        if envelope.operation_type != EPOCH_SCHEDULE_REBASE_OPERATION:
+            raise ValueError("consensus epoch schedule rebase requires EPOCH_SCHEDULE_REBASE")
+        if envelope.origin_type != "protocol" or envelope.sender_wallet is not None:
+            raise ValueError("epoch schedule rebase requires protocol origin")
+        if envelope.fee_class != "protocol_sponsored" or envelope.target_epoch != "0":
+            raise ValueError("epoch schedule rebase requires protocol-sponsored epoch zero")
+        schedule = self.epoch_schedule_projection()
+        if schedule is None:
+            raise ValueError("epoch schedule rebase requires a finalized schedule")
+        if self.epoch_schedule_rebase_commitment() is not None:
+            raise ValueError("epoch schedule rebase is already committed")
+        if self.epoch_result_manifest_commitment(0) is not None or any(
+            operation.get("operation_type") == "EPOCH_TRANSITION" for operation in self._operations
+        ):
+            raise ValueError("epoch schedule rebase is unavailable after epoch activity")
+        try:
+            rebase = EpochScheduleRebase.model_validate(
+                (envelope.payload or {}).get("epoch_schedule_rebase")
+            )
+        except Exception as error:
+            raise ValueError("epoch schedule rebase payload is invalid") from error
+        if rebase.schedule_hash != schedule["epoch_schedule"]["schedule_hash"]:
+            raise ValueError("epoch schedule rebase schedule hash does not match")
+        from aidn_hypervisor.consensus.epoch_schedule import _parse_timestamp
+
+        original_start = schedule["epoch_schedule"]["genesis_start_time"]
+        if _parse_timestamp(
+            rebase.effective_epoch_zero_start_time,
+            field_name="effective_epoch_zero_start_time",
+        ) <= _parse_timestamp(original_start, field_name="genesis_start_time"):
+            raise ValueError("epoch schedule rebase must start after the original schedule")
+        return {"rebase": rebase}
+
+    def apply_consensus_epoch_schedule_rebase(self, envelope: "LedgerOperationEnvelope") -> dict:
+        validation = self.validate_consensus_epoch_schedule_rebase(envelope)
+        self.record_admitted_envelope(envelope, emitted_events=["EpochScheduleRebased"])
+        return validation
+
     def validate_consensus_epoch_schedule_commit(
         self,
         envelope: "LedgerOperationEnvelope",
@@ -1788,6 +1869,30 @@ class LedgerOperationService:
             raise ValueError("epoch result manifest target epoch does not match payload")
         if self.epoch_result_manifest_commitment(manifest.epoch_number) is not None:
             raise ValueError("epoch result manifest for epoch is already committed")
+        rebase = self.epoch_schedule_rebase_projection()
+        if rebase is not None and manifest.epoch_number == 0:
+            schedule = self.epoch_schedule_projection()
+            if schedule is None:
+                raise ValueError("epoch result manifest rebase requires a finalized schedule")
+            effective_start = rebase["epoch_schedule_rebase"]["effective_epoch_zero_start_time"]
+            schedule_value = EpochSchedule.model_validate(schedule["epoch_schedule"])
+            expected_end = schedule_value.boundary_for(
+                active_epoch=0,
+                active_start_time=effective_start,
+                block_time=effective_start,
+            ).scheduled_end_time
+            if (
+                manifest.epoch_schedule_hash != schedule_value.schedule_hash
+                or manifest.start_time != effective_start
+                or manifest.scheduled_end_time != expected_end
+            ):
+                raise ValueError("epoch result manifest does not bind the schedule rebase")
+            if not {
+                rebase["operation_id"],
+                rebase["record_digest"],
+                rebase["epoch_schedule_rebase"]["rebase_hash"],
+            } <= set(envelope.evidence_references):
+                raise ValueError("epoch result manifest rebase evidence references are incomplete")
         return {"manifest": manifest, "payload": payload}
 
     def apply_consensus_epoch_result_manifest(
