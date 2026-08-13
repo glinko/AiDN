@@ -161,6 +161,7 @@ class ConsensusService:
             "mode": self.config.mode.value,
             "node_id": self.config.node_id,
             "chain_id": self.config.chain_id,
+            "protocol_authority": self._protocol_authority_status(),
             "management": {
                 "managed": bool(self.config.managed_service_name),
                 "service": self.config.managed_service_name,
@@ -213,6 +214,18 @@ class ConsensusService:
             }
         return payload
 
+    def _protocol_authority_status(self) -> dict[str, object]:
+        """Expose non-secret authority readiness for operator diagnostics."""
+        policy = self.config.protocol_authority_policy
+        configured = bool(policy is not None and policy.authorities)
+        return {
+            "configured": configured,
+            "policy_hash": policy.policy_hash if configured else None,
+            "threshold": policy.threshold if configured else None,
+            "authority_count": len(policy.authorities) if configured else 0,
+            "epoch_transition_mode": "THRESHOLD_AUTHORIZED" if configured else "FAIL_CLOSED",
+        }
+
     def query_wallet_next_sequence(self, wallet_id: str) -> int | None:
         """Read the canonical next wallet sequence from the active ABCI RPC.
 
@@ -243,6 +256,19 @@ class ConsensusService:
                 return None
             publication = json.loads(raw_value.decode("utf-8"))
             return publication if isinstance(publication, dict) else None
+        except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error, OSError):
+            return None
+
+    def query_protocol_authority_policy(self) -> dict[str, object] | None:
+        """Read the sanitized protocol-authority policy evidence from ABCI."""
+        if not self.is_enabled:
+            return None
+        try:
+            raw_value = self._query_abci_value("protocol/authority-policy")
+            if raw_value is None:
+                return None
+            value = json.loads(raw_value.decode("utf-8"))
+            return value if isinstance(value, dict) else None
         except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error, OSError):
             return None
 

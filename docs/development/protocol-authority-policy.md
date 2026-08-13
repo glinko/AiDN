@@ -84,6 +84,34 @@ The same policy is checked at:
 2. ABCI block execution;
 3. the deterministic `ExecutionEngine` used by fixtures and replay tooling.
 
+## Sanitized diagnostics
+
+Operators and MCP agents may inspect the consensus status without receiving
+the authority key set:
+
+- `ConsensusService.status().protocol_authority` exposes `configured`,
+  `policy_hash`, `threshold`, `authority_count`, and
+  `epoch_transition_mode`;
+- validator ABCI exposes the same bounded evidence through the read-only query
+  path `protocol/authority-policy`.
+
+The unconfigured result is explicit:
+
+```json
+{
+  "configured": false,
+  "policy_hash": null,
+  "threshold": null,
+  "authority_count": 0,
+  "epoch_transition_mode": "FAIL_CLOSED"
+}
+```
+
+The diagnostic result is not proof that a transition has been finalized. It
+only proves which public policy boundary the local validator loaded. Finality
+still requires the normal multi-validator RPC evidence and the ECO-0007
+preflight.
+
 ## Operational sequence
 
 1. Governance/epoch engine creates the deterministic transition payload and

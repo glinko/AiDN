@@ -23,6 +23,9 @@ Completed in this slice:
 - [x] Add a coordinated public-policy rollout helper with dry-run, state-mount
   validation, atomic file installation, per-host health verification, and
   rollback. See [the rollout runbook](./docs/development/protocol-authority-policy-rollout.md).
+- [x] Add sanitized policy readiness evidence to consensus status and the
+  validator ABCI query path so operators and MCP agents can distinguish
+  configured authority quorum from fail-closed state without receiving keys.
 
 Next required economic-network work:
 

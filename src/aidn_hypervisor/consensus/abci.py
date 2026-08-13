@@ -820,6 +820,25 @@ class AIDNABCIApplication:
                 if funding_record is not None
                 else b""
             )
+        elif path == "protocol/authority-policy":
+            policy = self._protocol_authority_policy
+            configured = bool(policy is not None and policy.authorities)
+            value = {
+                "version": policy.version if configured else None,
+                "configured": configured,
+                "policy_hash": policy.policy_hash if configured else None,
+                "threshold": policy.threshold if configured else None,
+                "authority_count": len(policy.authorities) if configured else 0,
+                "epoch_transition_mode": (
+                    "THRESHOLD_AUTHORIZED" if configured else "FAIL_CLOSED"
+                ),
+            }
+            kwargs["key"] = b"protocol:authority-policy"
+            kwargs["value"] = json.dumps(
+                value,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
         elif path == "development/reward-preflight" or path.startswith("development/reward-preflight/"):
             pool_id = path.removeprefix("development/reward-preflight/") or "GENERAL_DEVELOPMENT"
             try:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
@@ -7,6 +8,7 @@ from aidn_hypervisor.consensus.admission import AdmissionValidator
 from aidn_hypervisor.consensus.execution import ExecutionEngine
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.protocol_authority import ProtocolAuthorityPolicy
+from aidn_hypervisor.consensus.service import ConsensusMode, ConsensusService, ConsensusServiceConfig
 from aidn_hypervisor.endpoint_publications.signing import (
     public_key_for_private_key,
     sign_consensus_bytes,
@@ -230,3 +232,39 @@ def test_deterministic_execution_engine_uses_the_same_authority_boundary() -> No
         txs=[signed.consensus_bytes()],
     )
     assert accepted.operations_executed == 1
+
+
+def test_abci_query_exposes_only_sanitized_authority_policy_state() -> None:
+    policy = _policy()
+    app, _ = _app(policy)
+
+    response = app.query(path="protocol/authority-policy")
+    value = json.loads(response.value)
+
+    assert value == {
+        "authority_count": 3,
+        "configured": True,
+        "epoch_transition_mode": "THRESHOLD_AUTHORIZED",
+        "policy_hash": policy.policy_hash,
+        "threshold": 2,
+        "version": "aidn.protocol-authority.v1",
+    }
+    assert "authorities" not in value
+    assert "public_key" not in response.value.decode("utf-8")
+
+
+def test_consensus_status_reports_fail_closed_authority_state() -> None:
+    service = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.VALIDATOR,
+            protocol_authority_policy=ProtocolAuthorityPolicy.empty(),
+        )
+    )
+
+    assert service.status()["protocol_authority"] == {
+        "configured": False,
+        "policy_hash": None,
+        "threshold": None,
+        "authority_count": 0,
+        "epoch_transition_mode": "FAIL_CLOSED",
+    }
