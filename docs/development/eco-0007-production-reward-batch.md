@@ -105,3 +105,38 @@ becoming an unauthorized Q issuer.
 The executor is an orchestration primitive, not a bypass around operator or
 Governance authorization. A production control-plane route still needs to bind
 it to the node's authenticated operator policy before enabling live execution.
+
+## Canonical epoch/pool preflight
+
+Before building or executing a live batch, query the same read-only surface
+from the configured validator quorum:
+
+```text
+development/reward-preflight/GENERAL_DEVELOPMENT
+```
+
+The response is a compact `eco-0007-reward-preflight.v1` object. It contains
+only:
+
+- the latest finalized `EPOCH_TRANSITION` operation reference;
+- closing/opening epoch;
+- exact pool budget in `q_atoms`;
+- exact `pool_budget_reference`;
+- a reason code when the pool is absent or zero.
+
+The helper below requires an exact matching response from the configured
+quorum (two of three is the default) and never selects a divergent validator:
+
+```text
+uv run python tools/query-development-reward-preflight.py \
+  --rpc-url http://validator-1:26657 \
+  --rpc-url http://validator-2:26657 \
+  --rpc-url http://validator-3:26657 \
+  --pool-id GENERAL_DEVELOPMENT
+```
+
+Exit code `0` means `READY`. Exit code `2` means `BLOCKED`; inspect
+`reason_code` and `observations`. An older validator that returns an empty
+query, a validator that is still catching up, a missing pool reference, or a
+quorum disagreement must block the batch. The preflight is read-only and does
+not establish contribution eligibility or Wallet ownership.

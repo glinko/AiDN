@@ -806,6 +806,18 @@ class AIDNABCIApplication:
                 if funding_record is not None
                 else b""
             )
+        elif path == "development/reward-preflight" or path.startswith("development/reward-preflight/"):
+            pool_id = path.removeprefix("development/reward-preflight/") or "GENERAL_DEVELOPMENT"
+            try:
+                preflight = self.ledger.development_reward_preflight(pool_id=pool_id)
+            except ValueError:
+                preflight = None
+            kwargs["key"] = f"development:reward-preflight:{pool_id}".encode()
+            kwargs["value"] = (
+                json.dumps(preflight, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                if preflight is not None
+                else b""
+            )
         elif path.startswith("endpoint/publication/"):
             endpoint_id = path.removeprefix("endpoint/publication/")
             publication = self.ledger.canonical_endpoint_publication(endpoint_id)

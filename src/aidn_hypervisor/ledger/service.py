@@ -8144,6 +8144,15 @@ class LedgerOperationService:
         reference = self._finalized_operation_registry.get(operation_id)
         return reference.as_dict() if reference is not None else None
 
+    def development_reward_preflight(self, *, pool_id: str = "GENERAL_DEVELOPMENT") -> dict:
+        """Return the bounded public ECO-0007 production preflight projection."""
+
+        from aidn_hypervisor.reward.development_preflight import (
+            build_development_reward_preflight,
+        )
+
+        return build_development_reward_preflight(self, pool_id=pool_id).model_dump(mode="json")
+
     def snapshot_finalized_operation_registry(self) -> list[dict]:
         """Return the deterministic derived finalized-operation index."""
         return self._finalized_operation_registry.snapshot()

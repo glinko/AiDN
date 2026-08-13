@@ -1066,6 +1066,13 @@ This work is intentionally outside the functional MVP. It must not alter current
     submission, waits for verified consensus finality after every predecessor,
     and resumes after restart without replacing operation identities. It does
     not create keys, mint Q locally, or bypass Governance/operator policy.
+28. Added the canonical ECO-0007 epoch/pool preflight query and quorum CLI.
+    Validators now expose only the finalized epoch transition reference, exact
+    pool budget and pool-budget reference needed by a production batch. The
+    read-only quorum collector blocks on stale/old validators, missing budgets,
+    catching-up nodes and divergent projections instead of selecting one local
+    snapshot. Live validator rollout is still required before this query can
+    unlock a real payout batch.
 
 ### Current post-MVP implementation gate
 
@@ -1106,6 +1113,8 @@ This work is intentionally outside the functional MVP. It must not alter current
   finality evidence is available.
 - [x] Add the idempotent production batch executor with exact-envelope
   persistence, ordered predecessor checks, and verified-finality gating.
+- [x] Add the canonical epoch/pool read-only preflight and quorum CLI; keep
+  production reward execution blocked until all target validators expose it.
 - [ ] Activate a production ECO-0007 reward profile and execute a finalized contribution payout batch against a real epoch pool.
 - [x] Public multi-validator profiles are signed, hash-bound, quorum-checked, and projected into the existing CometBFT finality configuration.
 - [x] Generate and verify the current Implementation Profile and execute the
