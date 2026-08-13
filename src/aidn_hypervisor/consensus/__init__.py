@@ -64,6 +64,13 @@ from aidn_hypervisor.consensus.epoch_result_manifest import (
     EpochResultManifest,
     build_epoch_result_manifest,
 )
+from aidn_hypervisor.consensus.epoch_result_manifest_commit import (
+    build_signed_epoch_result_manifest_commit,
+    build_unsigned_epoch_result_manifest_commit,
+    combine_epoch_result_manifest_commit_signatures,
+    sign_epoch_result_manifest_commit,
+    sign_epoch_result_manifest_commit_signature,
+)
 from aidn_hypervisor.consensus.epoch_schedule import (
     EPOCH_SCHEDULE_VERSION,
     EpochBoundary,
@@ -144,6 +151,7 @@ from aidn_hypervisor.consensus.projection import (
     build_session_settlement_ready_envelope,
 )
 from aidn_hypervisor.consensus.protocol_authority import (
+    EPOCH_RESULT_MANIFEST_AUTHORITY_HASH_FIELD,
     EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD,
     EPOCH_TRANSITION_AUTHORITY_HASH_FIELD,
     MAX_PROTOCOL_AUTHORITY_SIGNATURES,
@@ -212,6 +220,7 @@ __all__ = [
     "OperationType",
     "EPOCH_TRANSITION_AUTHORITY_HASH_FIELD",
     "EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD",
+    "EPOCH_RESULT_MANIFEST_AUTHORITY_HASH_FIELD",
     "MAX_PROTOCOL_AUTHORITY_SIGNATURES",
     "PROTOCOL_AUTHORITY_POLICY_VERSION",
     "ProtocolAuthorityError",
@@ -243,6 +252,11 @@ __all__ = [
     "EPOCH_RESULT_MANIFEST_VERSION",
     "EpochResultManifest",
     "build_epoch_result_manifest",
+    "build_signed_epoch_result_manifest_commit",
+    "build_unsigned_epoch_result_manifest_commit",
+    "combine_epoch_result_manifest_commit_signatures",
+    "sign_epoch_result_manifest_commit",
+    "sign_epoch_result_manifest_commit_signature",
     "build_session_escrow_lock_envelope",
     "build_session_escrow_lock_envelope_from_funding",
     "build_session_failure_evidence_envelope",

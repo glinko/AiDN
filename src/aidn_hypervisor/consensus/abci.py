@@ -1965,13 +1965,19 @@ class AIDNABCIApplication:
         self,
         envelope: LedgerOperationEnvelope,
     ) -> str | None:
-        if envelope.operation_type not in {"EPOCH_TRANSITION", "EPOCH_SCHEDULE_COMMIT"}:
+        if envelope.operation_type not in {
+            "EPOCH_TRANSITION",
+            "EPOCH_SCHEDULE_COMMIT",
+            "EPOCH_RESULT_MANIFEST_COMMIT",
+        }:
             return None
         if self._protocol_authority_policy is None:
             return None
         try:
             if envelope.operation_type == "EPOCH_TRANSITION":
                 self._protocol_authority_policy.verify_epoch_transition(envelope)
+            elif envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
+                self._protocol_authority_policy.verify_epoch_result_manifest_commit(envelope)
             else:
                 self._protocol_authority_policy.verify_epoch_schedule_commit(envelope)
         except ValueError as error:

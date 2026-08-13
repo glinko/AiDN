@@ -24,6 +24,7 @@ PROTOCOL_AUTHORITY_POLICY_VERSION = "aidn.protocol-authority.v1"
 PROTOCOL_AUTHORITY_POLICY_HASH_FIELD = "protocol_authority_policy_hash"
 EPOCH_TRANSITION_AUTHORITY_HASH_FIELD = PROTOCOL_AUTHORITY_POLICY_HASH_FIELD
 EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD = PROTOCOL_AUTHORITY_POLICY_HASH_FIELD
+EPOCH_RESULT_MANIFEST_AUTHORITY_HASH_FIELD = PROTOCOL_AUTHORITY_POLICY_HASH_FIELD
 MAX_PROTOCOL_AUTHORITY_SIGNATURES = 8
 
 
@@ -58,11 +59,14 @@ def _decode_ed25519(value: str, *, label: str, expected_size: int) -> bytes:
 
 def normalize_ed25519_public_key(value: str) -> str:
     """Normalize hex or base64 public-key input to canonical hex encoding."""
-    return "ed25519:" + _decode_ed25519(
-        value,
-        label="protocol authority public key",
-        expected_size=32,
-    ).hex()
+    return (
+        "ed25519:"
+        + _decode_ed25519(
+            value,
+            label="protocol authority public key",
+            expected_size=32,
+        ).hex()
+    )
 
 
 @dataclass(frozen=True)
@@ -79,9 +83,7 @@ class ProtocolAuthorityPolicy:
         if isinstance(self.threshold, bool) or self.threshold < 1:
             raise ProtocolAuthorityError("protocol authority threshold must be positive")
         if self.threshold > MAX_PROTOCOL_AUTHORITY_SIGNATURES:
-            raise ProtocolAuthorityError(
-                "protocol authority threshold exceeds envelope signature capacity"
-            )
+            raise ProtocolAuthorityError("protocol authority threshold exceeds envelope signature capacity")
         if not self.authorities:
             if self.threshold != 1:
                 raise ProtocolAuthorityError("empty protocol authority policy must use threshold one")
@@ -171,6 +173,21 @@ class ProtocolAuthorityPolicy:
             policy_hash_field=EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD,
         )
 
+    def verify_epoch_result_manifest_commit(self, envelope: LedgerOperationEnvelope) -> None:
+        """Verify the authority quorum for an immutable Epoch Result Manifest.
+
+        A manifest fixes the only roots that a later transition may consume.
+        It therefore needs the same protection as the transition itself: a
+        syntactically valid but unauthorized manifest must not be able to
+        permanently occupy an epoch and block its canonical transition.
+        """
+        self._verify_protocol_operation(
+            envelope,
+            operation_type="EPOCH_RESULT_MANIFEST_COMMIT",
+            operation_label="epoch result manifest commit",
+            policy_hash_field=EPOCH_RESULT_MANIFEST_AUTHORITY_HASH_FIELD,
+        )
+
     def _verify_protocol_operation(
         self,
         envelope: LedgerOperationEnvelope,
@@ -202,9 +219,9 @@ class ProtocolAuthorityPolicy:
                 if authority_id in matched:
                     continue
                 try:
-                    Ed25519PublicKey.from_public_bytes(
-                        bytes.fromhex(public_key.removeprefix("ed25519:"))
-                    ).verify(signature_bytes, signing_bytes)
+                    Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key.removeprefix("ed25519:"))).verify(
+                        signature_bytes, signing_bytes
+                    )
                 except (InvalidSignature, ValueError):
                     continue
                 matched.add(authority_id)
@@ -217,6 +234,7 @@ class ProtocolAuthorityPolicy:
 __all__ = [
     "EPOCH_TRANSITION_AUTHORITY_HASH_FIELD",
     "EPOCH_SCHEDULE_COMMIT_AUTHORITY_HASH_FIELD",
+    "EPOCH_RESULT_MANIFEST_AUTHORITY_HASH_FIELD",
     "MAX_PROTOCOL_AUTHORITY_SIGNATURES",
     "PROTOCOL_AUTHORITY_POLICY_VERSION",
     "PROTOCOL_AUTHORITY_POLICY_HASH_FIELD",

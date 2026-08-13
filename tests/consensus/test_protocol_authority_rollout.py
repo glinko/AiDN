@@ -42,7 +42,11 @@ def test_policy_install_keeps_redirection_inside_privileged_shell() -> None:
 
 def test_epoch_submitters_serialize_dataclass_finality_evidence() -> None:
     root = Path(__file__).parents[2] / "tools"
-    for name in ("submit-authorized-epoch-schedule.py", "submit-authorized-epoch-transition.py"):
+    for name in (
+        "submit-authorized-epoch-schedule.py",
+        "submit-authorized-epoch-result-manifest.py",
+        "submit-authorized-epoch-transition.py",
+    ):
         source = (root / name).read_text(encoding="utf-8")
         assert "evidence.model_dump()" in source
         assert 'evidence.model_dump(mode="json")' not in source

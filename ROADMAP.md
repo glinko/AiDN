@@ -22,15 +22,14 @@ Completed in this slice:
 - [x] Add targeted tests for threshold authorization, immutability, recovery,
   deterministic execution and schedule-finality quorum behavior.
 
-Next required live-network work:
+Controlled-localnet acceptance:
 
-- [ ] Approve one schedule JSON and distribute the identical public policy and
-  schedule inputs to validators `128`, `129` and `130`.
-- [ ] Prepare, independently sign and combine one schedule commitment, submit
-  it through canonical consensus, and archive `epoch/schedule` plus finalized
-  operation evidence from the validator quorum.
-- [ ] Only after schedule finality, wait for the configured epoch boundary and
-  produce the finalized Epoch Result Manifest required by the next gate.
+- [x] Finalize the `2-of-3` authority-signed schedule on validators `128`,
+  `129` and `130`, with identical commitment references and multi-RPC
+  finality. The detailed evidence is in
+  [the controlled-localnet schedule acceptance record](./docs/development/controlled-localnet-epoch-schedule-acceptance-2026-08-13.md).
+- [ ] Produce a threshold-authorized Epoch Result Manifest only from finalized
+  Epoch Engine evidence; no localnet process may invent roots or budgets.
 
 ## 2026-08-13 Multi-validator Epoch Transition Quorum Gate
 
@@ -114,6 +113,12 @@ Completed in this slice:
   and deterministic execution.
 - [x] Add duplicate, hash-integrity, schedule-binding and no-economic-effect
   coverage in `tests/consensus/test_epoch_result_manifest.py`.
+- [x] Require the configured protocol-authority threshold for
+  `EPOCH_RESULT_MANIFEST_COMMIT`, preventing an unauthorized but syntactically
+  valid manifest from permanently blocking a closing Epoch.
+- [x] Add offline prepare/sign/combine tooling and a finality-aware submitter
+  for independently reviewed manifest artifacts. These tools never calculate
+  evidence roots, create pool budgets or export authority private keys.
 
 Next required economic-network work:
 

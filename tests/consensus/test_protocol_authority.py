@@ -5,6 +5,12 @@ from datetime import UTC, datetime, timedelta
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.admission import AdmissionValidator
+from aidn_hypervisor.consensus.epoch_result_manifest import build_epoch_result_manifest
+from aidn_hypervisor.consensus.epoch_result_manifest_commit import (
+    build_unsigned_epoch_result_manifest_commit,
+    combine_epoch_result_manifest_commit_signatures,
+    sign_epoch_result_manifest_commit_signature,
+)
 from aidn_hypervisor.consensus.epoch_schedule import build_epoch_schedule
 from aidn_hypervisor.consensus.execution import ExecutionEngine
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
@@ -109,6 +115,56 @@ def _schedule_envelope(
         },
         signatures=signatures or [],
     )
+
+
+def _manifest(policy: ProtocolAuthorityPolicy):
+    return build_epoch_result_manifest(
+        epoch_number=7,
+        start_height=1,
+        closing_height=60,
+        start_time="2030-01-01T00:00:00Z",
+        closing_time="2030-01-01T00:01:00Z",
+        closing_block_hash="sha256:closing-block",
+        closing_state_root="sha256:closing-state",
+        source_app_hash="sha256:closing-app",
+        protocol_version="0.1",
+        parameter_version="params-v1",
+        task_set_version="tasks-v1",
+        epoch_schedule_version="aidn.epoch-schedule.v1",
+        epoch_schedule_hash="sha256:schedule-v1",
+        scheduled_end_time="2030-01-01T00:01:00Z",
+        frozen_evidence_root="sha256:frozen-evidence",
+        participant_snapshot_root="sha256:participants",
+        service_snapshot_root="sha256:services",
+        task_result_root="sha256:tasks",
+        eligibility_root="sha256:eligibility",
+        reputation_root="sha256:reputation",
+        penalty_root="sha256:penalty",
+        recycle_root="sha256:recycle",
+        reward_authorization_root="sha256:reward-authorization",
+        reward_result_root="sha256:reward-result",
+        faucet_root="sha256:faucet",
+        validator_set_update_root="sha256:validator-set",
+        reward_calculation_root="sha256:reward-calculation",
+        next_protocol_parameters_hash="sha256:params-v2",
+        pool_budgets={"GENERAL_DEVELOPMENT": 0},
+        pool_budget_references={"GENERAL_DEVELOPMENT": "epoch:7:GENERAL_DEVELOPMENT"},
+        next_epoch_reference="epoch:8",
+    )
+
+
+def _manifest_envelope(
+    policy: ProtocolAuthorityPolicy,
+    *,
+    signatures: list[str] | None = None,
+) -> LedgerOperationEnvelope:
+    envelope = build_unsigned_epoch_result_manifest_commit(
+        policy=policy,
+        manifest=_manifest(policy),
+        created_at=_timestamp(),
+        expires_at=_timestamp(hours=24),
+    )
+    return envelope.model_copy(update={"signatures": signatures or []})
 
 
 def _signed(
@@ -232,6 +288,56 @@ def test_epoch_schedule_commit_requires_authority_quorum_and_is_projected() -> N
     assert query == projection
 
 
+def test_epoch_result_manifest_requires_authority_quorum_before_it_is_immutable() -> None:
+    policy = _policy()
+    app, ledger = _app(policy)
+    unsigned = _manifest_envelope(policy)
+
+    check = app.check_transaction(unsigned.consensus_bytes())
+    assert check.code == "rejected"
+    assert check.log == "EPOCH_RESULT_MANIFEST_COMMIT_AUTHORITY_SIGNATURE_REQUIRED"
+
+    # The fixture signer follows the exact same detached signing bytes as the CLI.
+    first_signature = sign_consensus_bytes(private_key=PRIVATE_KEYS[0], payload=unsigned.signing_bytes())
+    second_signature = sign_consensus_bytes(private_key=PRIVATE_KEYS[1], payload=unsigned.signing_bytes())
+    signed = _manifest_envelope(policy, signatures=[first_signature, second_signature])
+    result, tx_results = app.finalize_block_with_results(
+        block_height=60,
+        block_hash=b"M" * 32,
+        txs=[signed.consensus_bytes()],
+        time="2030-01-01T00:01:00Z",
+    )
+
+    assert result.code == "ok"
+    assert tx_results[0].code == "ok"
+    assert ledger.epoch_result_manifest_commitment(7) is not None
+
+
+def test_epoch_result_manifest_offline_combiner_requires_distinct_authorities() -> None:
+    policy = _policy()
+    unsigned = _manifest_envelope(policy)
+    # Constructing key objects here keeps the assertion on the public offline
+    # API rather than duplicating the signature combiner implementation.
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    signature = sign_epoch_result_manifest_commit_signature(
+        unsigned,
+        policy=policy,
+        authority_id="authority-1",
+        private_key=Ed25519PrivateKey.from_private_bytes(bytes.fromhex("11" * 32)),
+    )
+    try:
+        combine_epoch_result_manifest_commit_signatures(
+            unsigned,
+            policy=policy,
+            signatures={"authority-1": signature},
+        )
+    except ValueError as error:
+        assert str(error) == "EPOCH_RESULT_MANIFEST_COMMIT_AUTHORITY_SIGNATURE_REQUIRED"
+    else:
+        raise AssertionError("single authority manifest commitment was accepted")
+
+
 def test_epoch_schedule_commit_is_immutable_and_restores_from_canonical_ledger() -> None:
     policy = _policy()
     schedule = _schedule()
@@ -312,9 +418,7 @@ def test_epoch_schedule_commit_cannot_share_block_with_epoch_transition() -> Non
         assert proposal.code == "rejected"
         assert proposal.log == expected_error
         prepared = app.prepare_proposal(raw_txs, maximum_bytes=1_000_000)
-        assert [app._parse_envelope(tx).operation_type for tx in prepared] == [
-            "EPOCH_SCHEDULE_COMMIT"
-        ]
+        assert [app._parse_envelope(tx).operation_type for tx in prepared] == ["EPOCH_SCHEDULE_COMMIT"]
         result, results = app.finalize_block_with_results(
             block_height=1,
             block_hash=b"W" * 32,
@@ -323,14 +427,10 @@ def test_epoch_schedule_commit_cannot_share_block_with_epoch_transition() -> Non
 
         assert result.code == "ok"
         transition_index = next(
-            index
-            for index, tx in enumerate(ordered_txs)
-            if tx.operation_type == "EPOCH_TRANSITION"
+            index for index, tx in enumerate(ordered_txs) if tx.operation_type == "EPOCH_TRANSITION"
         )
         schedule_index = next(
-            index
-            for index, tx in enumerate(ordered_txs)
-            if tx.operation_type == "EPOCH_SCHEDULE_COMMIT"
+            index for index, tx in enumerate(ordered_txs) if tx.operation_type == "EPOCH_SCHEDULE_COMMIT"
         )
         assert results[transition_index].code == "rejected"
         assert results[transition_index].log == expected_error
@@ -357,9 +457,7 @@ def test_epoch_schedule_commit_cannot_share_block_with_epoch_transition() -> Non
         assert result.operations_executed == 1
         assert result.operations_rejected == 1
         transition_event = next(
-            event
-            for event in result.execution_events
-            if event.operation_type == "EPOCH_TRANSITION"
+            event for event in result.execution_events if event.operation_type == "EPOCH_TRANSITION"
         )
         assert transition_event.error == expected_error
         assert ledger.epoch_schedule_projection() is not None
@@ -402,9 +500,7 @@ def test_epoch_transition_rejects_tampered_payload_and_accepts_valid_quorum() ->
         txs=[signed.consensus_bytes()],
     )
     assert valid_results[0].code == "ok"
-    assert [item["operation_type"] for item in ledger.snapshot_operations()] == [
-        "EPOCH_TRANSITION"
-    ]
+    assert [item["operation_type"] for item in ledger.snapshot_operations()] == ["EPOCH_TRANSITION"]
 
 
 def test_policy_mapping_binds_declared_policy_hash() -> None:

@@ -74,9 +74,12 @@ host wall clocks are not used to close an epoch.
 
 The Epoch Engine now publishes these inputs through an immutable,
 consensus-bound `EPOCH_RESULT_MANIFEST_COMMIT`. The manifest is an
-evidence-only object: it does not mint Q, spend a pool, activate parameters or
-replace protocol-authority signatures. It aggregates the exact RFC-0048 roots
-and ECO-0007 pool budget references consumed by a later transition.
+evidence-only object: it does not mint Q, spend a pool or activate parameters.
+It aggregates the exact RFC-0048 roots and ECO-0007 pool budget references
+consumed by a later transition. Because its first accepted instance irrevocably
+occupies an Epoch, it must carry the configured protocol-authority threshold,
+the same as schedule and transition operations. A valid-looking unsigned
+manifest cannot be used to block an Epoch.
 
 New manifests use `aidn.epoch-result-manifest.v2`, which adds historical
 closing block, state-root and source-AppHash commitments. Nodes can replay the
@@ -122,6 +125,41 @@ This is still an offline evidence boundary: the receiving ABCI application
 must independently find the manifest in its own finalized operation registry,
 verify its hash and all historical bindings, and reject a same-block
 manifest-plus-transition attempt.
+
+## Manifest authorization artifact
+
+The Epoch Engine must first produce one complete `EpochResultManifest` from
+finalized evidence. This repository provides an offline prepare/sign/combine
+path for that exact payload. It does not derive roots, allocate a budget or
+broadcast a transaction:
+
+```text
+uv run python tools/prepare-authorized-epoch-result-manifest.py \
+  --policy /secure/aidn/protocol-authority.json \
+  --manifest /secure/aidn/epoch-0.manifest.json \
+  --created-at 2030-01-01T00:01:00Z \
+  --evidence-reference sha256:<frozen-evidence-package> \
+  --output /secure/aidn/epoch-0.manifest.unsigned.json
+
+uv run python tools/sign-authorized-epoch-result-manifest.py \
+  --unsigned-envelope /secure/aidn/epoch-0.manifest.unsigned.json \
+  --policy /secure/aidn/protocol-authority.json \
+  --authority-id governance-1 \
+  --private-key /secure/keys/governance-1.seed \
+  --output /secure/aidn/epoch-0.governance-1.sig.json
+
+uv run python tools/combine-authorized-epoch-result-manifest.py \
+  --unsigned-envelope /secure/aidn/epoch-0.manifest.unsigned.json \
+  --policy /secure/aidn/protocol-authority.json \
+  --signature /secure/aidn/epoch-0.governance-1.sig.json \
+  --signature /secure/aidn/epoch-0.governance-2.sig.json \
+  --output /secure/aidn/epoch-0.manifest.signed.json
+```
+
+Only a separately reviewed signed envelope can be passed to
+`submit-authorized-epoch-result-manifest.py`. The submitter verifies the
+public policy projection on all configured validators and waits for
+operation-bound multi-RPC finality. It never reads private keys.
 
 ## Next implementation slice
 
