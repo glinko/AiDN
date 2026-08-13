@@ -1396,6 +1396,9 @@ Every meaningful architecture or milestone change should update this file in the
 - [x] Bind the preflight to an explicit, hash-bound canonical-time epoch schedule and durable ABCI block-time metadata.
 - [x] Add the finalized `EPOCH_SCHEDULE_COMMIT` boundary and require its
   operation reference once canonical schedule state exists.
+- [x] Roll out the schedule-commitment gate to validators 128-130 and verify
+  3/3 convergence with the expected fail-closed `BLOCKED` report. See
+  [the live rollout acceptance](./docs/development/epoch-schedule-commit-gate-rollout-acceptance-2026-08-13.md).
 - [ ] Submit and finalize the first canonical schedule on the live validator
   network.
 - [ ] Approve and distribute one identical public authority policy hash.

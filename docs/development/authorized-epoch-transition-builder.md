@@ -201,16 +201,20 @@ multi-RPC finality. A single-node `CheckTx` response is not finality.
 
 ## Current localnet gate
 
-The query path is deployed on validators `128`, `129` and `130` from commit
-`749930f`. All three validators return the same hash-bound report and the
-quorum collector reaches `3/3` agreement, but the report remains `BLOCKED`:
+The canonical schedule-commit gate is deployed on validators `128`, `129` and
+`130` from commit `6d41654`. All three validators return the same hash-bound
+report and the quorum collector reaches `3/3` agreement, but the report
+remains `BLOCKED`:
 the live network has no finalized canonical schedule, has not reached a
 configured epoch boundary and has no finalized manifest. The rollout evidence
 is recorded in
 `docs/development/epoch-transition-input-query-rollout-acceptance-2026-08-13.md`.
 
-The schedule commitment helpers and independent signing path are implemented
-and tested, but no live `EPOCH_TRANSITION` should be created or submitted yet.
+The schedule commitment helpers and independent signing path are implemented,
+tested and deployed, but no live `EPOCH_SCHEDULE_COMMIT` or
+`EPOCH_TRANSITION` should be created or submitted until the public authority
+policy and schedule inputs are approved. The rollout evidence is recorded in
+[`epoch-schedule-commit-gate-rollout-acceptance-2026-08-13.md`](./epoch-schedule-commit-gate-rollout-acceptance-2026-08-13.md).
 The next acceptance record must include a finalized canonical schedule, a
 finalized manifest, a `READY` quorum preflight, authority signatures and
 later-block finality before a reward batch is built.
