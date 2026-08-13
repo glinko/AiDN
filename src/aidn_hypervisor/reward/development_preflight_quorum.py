@@ -7,15 +7,85 @@ import binascii
 import json
 from collections import Counter
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
+from pydantic import BaseModel, Field, model_validator
+
+from aidn_hypervisor.reward.development_distribution import canonical_hash
 from aidn_hypervisor.reward.development_preflight import (
     DevelopmentRewardPreflight,
 )
 
 Fetcher = Callable[[str, str, dict[str, str]], dict[str, Any]]
+DEVELOPMENT_REWARD_PREFLIGHT_QUORUM_VERSION = "eco-0007-reward-preflight-quorum.v1"
+
+
+class DevelopmentRewardPreflightQuorum(BaseModel, frozen=True):
+    """Hash-bound quorum observation accepted as a production batch input."""
+
+    schema_version: str = DEVELOPMENT_REWARD_PREFLIGHT_QUORUM_VERSION
+    status: Literal["READY"] = "READY"
+    pool_id: str = Field(min_length=1)
+    chain_id: str = Field(min_length=1)
+    required_quorum: int = Field(ge=1)
+    agreement_count: int = Field(ge=1)
+    chain_agreement_count: int = Field(ge=1)
+    preflight: DevelopmentRewardPreflight
+    observations_hash: str = Field(min_length=1)
+    quorum_hash: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_quorum(self) -> DevelopmentRewardPreflightQuorum:
+        if self.schema_version != DEVELOPMENT_REWARD_PREFLIGHT_QUORUM_VERSION:
+            raise ValueError("DEVELOPMENT_PREFLIGHT_QUORUM_VERSION_INVALID")
+        if self.preflight.status != "READY":
+            raise ValueError("DEVELOPMENT_PREFLIGHT_QUORUM_PREFLIGHT_NOT_READY")
+        if self.preflight.pool_id != self.pool_id:
+            raise ValueError("DEVELOPMENT_PREFLIGHT_QUORUM_POOL_MISMATCH")
+        if self.agreement_count < self.required_quorum or self.chain_agreement_count < self.required_quorum:
+            raise ValueError("DEVELOPMENT_PREFLIGHT_QUORUM_INSUFFICIENT")
+        if self.quorum_hash != development_reward_preflight_quorum_hash(self):
+            raise ValueError("DEVELOPMENT_PREFLIGHT_QUORUM_HASH_INVALID")
+        return self
+
+    def unsigned_payload(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude={"quorum_hash"})
+
+    def verify_integrity(self) -> bool:
+        return self.quorum_hash == development_reward_preflight_quorum_hash(self)
+
+
+def development_reward_preflight_quorum_hash(
+    quorum: DevelopmentRewardPreflightQuorum,
+) -> str:
+    return canonical_hash(quorum.unsigned_payload())
+
+
+def build_development_reward_preflight_quorum(
+    report: dict[str, Any],
+) -> DevelopmentRewardPreflightQuorum:
+    """Validate a collector report and bind its observations to a hash."""
+
+    if report.get("status") != "READY":
+        raise ValueError("DEVELOPMENT_PREFLIGHT_QUORUM_REPORT_NOT_READY")
+    preflight = DevelopmentRewardPreflight.model_validate(report.get("preflight"))
+    payload = {
+        "schema_version": DEVELOPMENT_REWARD_PREFLIGHT_QUORUM_VERSION,
+        "status": "READY",
+        "pool_id": report.get("pool_id"),
+        "chain_id": report.get("chain_id"),
+        "required_quorum": report.get("required_quorum"),
+        "agreement_count": report.get("agreement_count"),
+        "chain_agreement_count": report.get("chain_agreement_count"),
+        "preflight": preflight.model_dump(mode="json"),
+        "observations_hash": canonical_hash(report.get("observations", [])),
+    }
+    return DevelopmentRewardPreflightQuorum(
+        **payload,
+        quorum_hash=canonical_hash(payload),
+    )
 
 
 def _fetch_json(endpoint: str, path: str, params: dict[str, str]) -> dict[str, Any]:
@@ -112,7 +182,7 @@ def collect_development_reward_preflight(
         and isinstance(winning_summary, dict)
         and winning_summary.get("status") == "READY"
     )
-    return {
+    report = {
         "schema_version": 1,
         "status": "READY" if ready else "BLOCKED",
         "pool_id": pool_id,
@@ -130,6 +200,22 @@ def collect_development_reward_preflight(
             else winning_summary.get("reason_code") or "DEVELOPMENT_REWARD_PREFLIGHT_QUORUM_UNAVAILABLE"
         ),
     }
+    if ready:
+        report["observations_hash"] = canonical_hash(observations)
+        report["quorum_hash"] = canonical_hash(
+            {
+                "schema_version": DEVELOPMENT_REWARD_PREFLIGHT_QUORUM_VERSION,
+                "status": "READY",
+                "pool_id": pool_id,
+                "chain_id": chain_id,
+                "required_quorum": required_quorum,
+                "agreement_count": winning_count,
+                "chain_agreement_count": chain_count,
+                "preflight": winning_summary,
+                "observations_hash": report["observations_hash"],
+            }
+        )
+    return report
 
 
 def _rpc_result(payload: dict[str, Any], path: str) -> dict[str, Any]:

@@ -12,6 +12,7 @@ from aidn_hypervisor.reward.development_preflight import (
     build_development_reward_preflight,
 )
 from aidn_hypervisor.reward.development_preflight_quorum import (
+    build_development_reward_preflight_quorum,
     collect_development_reward_preflight,
 )
 
@@ -102,6 +103,9 @@ def test_quorum_accepts_exact_same_preflight() -> None:
     assert report["status"] == "READY"
     assert report["agreement_count"] == 3
     assert report["preflight"]["pool_budget_q_atoms"] == 50_000
+    quorum = build_development_reward_preflight_quorum(report)
+    assert quorum.verify_integrity()
+    assert quorum.preflight.pool_budget_reference == "epoch:12:GENERAL_DEVELOPMENT"
 
 
 def test_quorum_blocks_on_conflicting_pool_reference() -> None:

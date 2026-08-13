@@ -23,6 +23,8 @@ from aidn_hypervisor.reward.development_operations import (
     DevelopmentRewardOperationRequest,
     build_development_reward_operation,
 )
+from aidn_hypervisor.reward.development_preflight import DevelopmentRewardPreflight
+from aidn_hypervisor.reward.development_preflight_quorum import DevelopmentRewardPreflightQuorum
 from aidn_hypervisor.reward.development_production import (
     build_development_reward_production_batch,
     build_development_reward_production_profile,
@@ -177,8 +179,47 @@ def _plan():
     )
 
 
+def _preflight_quorum(plan: DevelopmentRewardOperationPlan) -> DevelopmentRewardPreflightQuorum:
+    allocation = plan.envelopes[1].payload["pool_allocation"]
+    preflight_payload = {
+        "schema_version": "eco-0007-reward-preflight.v1",
+        "status": "READY",
+        "pool_id": "GENERAL_DEVELOPMENT",
+        "epoch": plan.epoch,
+        "opening_epoch": plan.epoch + 1,
+        "source_epoch_transition_operation_id": "epoch-transition-20",
+        "source_epoch_transition_sequence_id": 1,
+        "source_epoch_transition_record_digest": "sha256:epoch-transition-record",
+        "pool_budget_q_atoms": allocation["allocated_q_atoms"],
+        "pool_budget_reference": "epoch:20:GENERAL_DEVELOPMENT",
+        "reason_code": None,
+    }
+    preflight = DevelopmentRewardPreflight(
+        **preflight_payload,
+        preflight_hash=canonical_hash(preflight_payload),
+    )
+    quorum_payload = {
+        "schema_version": "eco-0007-reward-preflight-quorum.v1",
+        "status": "READY",
+        "pool_id": "GENERAL_DEVELOPMENT",
+        "chain_id": "chain-test-1",
+        "required_quorum": 2,
+        "agreement_count": 2,
+        "chain_agreement_count": 2,
+        "preflight": preflight.model_dump(mode="json"),
+        "observations_hash": canonical_hash(
+            [{"rpc_url": "http://validator-1:26657", "status": "PASS"}]
+        ),
+    }
+    return DevelopmentRewardPreflightQuorum(
+        **quorum_payload,
+        quorum_hash=canonical_hash(quorum_payload),
+    )
+
+
 def test_production_profile_binds_network_and_activation():
     calculation, approval, plan = _plan()
+    preflight_quorum = _preflight_quorum(plan)
     profile = build_development_reward_production_profile(
         network_id="aidn-localnet-1",
         chain_id="chain-test-1",
@@ -198,6 +239,7 @@ def test_production_profile_binds_network_and_activation():
         profile=profile,
         activation_approval=approval,
         plan=plan,
+        preflight_quorum=preflight_quorum,
         source_epoch_transition_operation_id="epoch-transition-20",
         pool_budget_reference="epoch:20:GENERAL_DEVELOPMENT",
     )
@@ -210,6 +252,7 @@ def test_production_profile_binds_network_and_activation():
 
 def test_production_batch_rejects_amount_cap():
     calculation, approval, plan = _plan()
+    preflight_quorum = _preflight_quorum(plan)
     profile = build_development_reward_production_profile(
         network_id="aidn-localnet-1",
         chain_id="chain-test-1",
@@ -226,6 +269,7 @@ def test_production_batch_rejects_amount_cap():
             profile=profile,
             activation_approval=approval,
             plan=plan,
+            preflight_quorum=preflight_quorum,
             source_epoch_transition_operation_id="epoch-transition-20",
             pool_budget_reference="epoch:20:GENERAL_DEVELOPMENT",
         )
@@ -233,6 +277,7 @@ def test_production_batch_rejects_amount_cap():
 
 def _production_batch():
     calculation, approval, plan = _plan()
+    preflight_quorum = _preflight_quorum(plan)
     profile = build_development_reward_production_profile(
         network_id="aidn-localnet-1",
         chain_id="chain-test-1",
@@ -247,6 +292,7 @@ def _production_batch():
         profile=profile,
         activation_approval=approval,
         plan=plan,
+        preflight_quorum=preflight_quorum,
         source_epoch_transition_operation_id="epoch-transition-20",
         pool_budget_reference="epoch:20:GENERAL_DEVELOPMENT",
     )

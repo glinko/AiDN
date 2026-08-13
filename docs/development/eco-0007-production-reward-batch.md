@@ -66,10 +66,11 @@ keys and never create a Governance approval.
 
    ```text
    uv run python tools/build-development-reward-batch.py \
-     --store contribution-store.json \
+     --evidence-store contribution-store.json \
      --pool-input pool-input.json \
      --production-profile production-profile.json \
      --activation-approval activation-approval.json \
+     --preflight-quorum preflight-report.json \
      --current-epoch <epoch> \
      --source-epoch-transition-operation-id <finalized-operation-id> \
      --pool-budget-reference <budget-reference> \
@@ -140,3 +141,10 @@ Exit code `0` means `READY`. Exit code `2` means `BLOCKED`; inspect
 query, a validator that is still catching up, a missing pool reference, or a
 quorum disagreement must block the batch. The preflight is read-only and does
 not establish contribution eligibility or Wallet ownership.
+
+Save the command output as `preflight-report.json` and pass that file to the
+batch builder. The builder converts the report into a
+`eco-0007-reward-preflight-quorum.v1` object, recomputes its observation and
+quorum hashes, and embeds the result in the batch. A caller may also pass an
+already-built typed quorum object; both forms are accepted, but the resulting
+batch always stores the typed hash-bound form.

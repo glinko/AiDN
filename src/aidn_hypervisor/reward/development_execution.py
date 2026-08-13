@@ -180,6 +180,19 @@ class DevelopmentRewardBatchExecutor:
             raise ValueError("DEVELOPMENT_PRODUCTION_EXECUTION_NETWORK_MISMATCH")
         if self._consensus.config.chain_id != batch.chain_id:
             raise ValueError("DEVELOPMENT_PRODUCTION_EXECUTION_CHAIN_MISMATCH")
+        if not batch.preflight_quorum.verify_integrity():
+            raise ValueError("DEVELOPMENT_PRODUCTION_EXECUTION_PREFLIGHT_HASH_INVALID")
+        if batch.preflight_quorum.chain_id != batch.chain_id:
+            raise ValueError("DEVELOPMENT_PRODUCTION_EXECUTION_PREFLIGHT_CHAIN_MISMATCH")
+        if batch.preflight_quorum.pool_id != batch.pool_id:
+            raise ValueError("DEVELOPMENT_PRODUCTION_EXECUTION_PREFLIGHT_POOL_MISMATCH")
+        preflight = batch.preflight_quorum.preflight
+        if preflight.epoch != batch.epoch:
+            raise ValueError("DEVELOPMENT_PRODUCTION_EXECUTION_PREFLIGHT_EPOCH_MISMATCH")
+        if preflight.source_epoch_transition_operation_id != batch.source_epoch_transition_operation_id:
+            raise ValueError("DEVELOPMENT_PRODUCTION_EXECUTION_PREFLIGHT_SOURCE_MISMATCH")
+        if preflight.pool_budget_reference != batch.pool_budget_reference:
+            raise ValueError("DEVELOPMENT_PRODUCTION_EXECUTION_PREFLIGHT_REFERENCE_MISMATCH")
         if len(batch.plan.envelopes) > profile.max_operations:
             raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_OPERATION_CAP_EXCEEDED")
         allowed = set(profile.authorized_operation_types)

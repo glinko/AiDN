@@ -31,6 +31,7 @@ from aidn_hypervisor.reward.development_distribution import (
     DevelopmentPoolInput,
     DevelopmentRewardPolicy,
 )
+from aidn_hypervisor.reward.development_preflight_quorum import DevelopmentRewardPreflightQuorum
 from aidn_hypervisor.reward.development_production import (
     DevelopmentRewardProductionProfile,
     build_development_reward_production_batch,
@@ -126,6 +127,7 @@ class RewardPlanRequest(RewardPreviewRequest):
 
 class ProductionRewardBatchRequest(RewardPlanRequest):
     production_profile: DevelopmentRewardProductionProfile
+    preflight_quorum: DevelopmentRewardPreflightQuorum
 
 
 def _error_response(error: Exception) -> JSONResponse:
@@ -218,6 +220,7 @@ def build_contribution_router(
                 profile=payload.production_profile,
                 activation_approval=payload.activation_approval,
                 plan=plan,
+                preflight_quorum=payload.preflight_quorum,
                 source_epoch_transition_operation_id=payload.source_epoch_transition_operation_id,
                 pool_budget_reference=payload.pool_budget_reference,
             )

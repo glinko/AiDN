@@ -17,6 +17,10 @@ from aidn_hypervisor.contributions.store import ContributionEvidenceStore
 from aidn_hypervisor.reward.development_activation import DevelopmentRewardActivationApproval
 from aidn_hypervisor.reward.development_contribution_service import DevelopmentContributionRewardService
 from aidn_hypervisor.reward.development_distribution import DevelopmentPoolInput
+from aidn_hypervisor.reward.development_preflight_quorum import (
+    DevelopmentRewardPreflightQuorum,
+    build_development_reward_preflight_quorum,
+)
 from aidn_hypervisor.reward.development_production import (
     DevelopmentRewardProductionProfile,
     build_development_reward_production_batch,
@@ -29,6 +33,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--pool-input", required=True, type=Path)
     parser.add_argument("--production-profile", required=True, type=Path)
     parser.add_argument("--activation-approval", required=True, type=Path)
+    parser.add_argument("--preflight-quorum", required=True, type=Path)
     parser.add_argument("--current-epoch", required=True, type=int)
     parser.add_argument("--source-epoch-transition-operation-id", required=True)
     parser.add_argument("--pool-budget-reference", required=True)
@@ -46,6 +51,13 @@ def main() -> None:
     approval = DevelopmentRewardActivationApproval.model_validate_json(
         args.activation_approval.read_text(encoding="utf-8")
     )
+    preflight_payload = json.loads(args.preflight_quorum.read_text(encoding="utf-8"))
+    if not isinstance(preflight_payload, dict):
+        raise ValueError("preflight quorum input must be a JSON object")
+    if "quorum_hash" in preflight_payload:
+        preflight_quorum = DevelopmentRewardPreflightQuorum.model_validate(preflight_payload)
+    else:
+        preflight_quorum = build_development_reward_preflight_quorum(preflight_payload)
     pool = DevelopmentPoolInput.model_validate_json(args.pool_input.read_text(encoding="utf-8"))
     service = ContributionAccountingService(ContributionEvidenceStore(args.evidence_store))
     planner = DevelopmentContributionRewardService(service)
@@ -66,6 +78,7 @@ def main() -> None:
         profile=profile,
         activation_approval=approval,
         plan=plan,
+        preflight_quorum=preflight_quorum,
         source_epoch_transition_operation_id=args.source_epoch_transition_operation_id,
         pool_budget_reference=args.pool_budget_reference,
     )

@@ -1071,8 +1071,10 @@ This work is intentionally outside the functional MVP. It must not alter current
     pool budget and pool-budget reference needed by a production batch. The
     read-only quorum collector blocks on stale/old validators, missing budgets,
     catching-up nodes and divergent projections instead of selecting one local
-    snapshot. Live validator rollout is still required before this query can
-    unlock a real payout batch.
+    snapshot. The production batch now embeds a typed, hash-bound quorum
+    preflight and rejects source-operation, budget-reference or allocation
+    amount substitution. Live validator rollout is still required before this
+    query can unlock a real payout batch.
 
 ### Current post-MVP implementation gate
 

@@ -140,6 +140,19 @@ from aidn_hypervisor.reward.development_pool import (
     build_development_pool_allocation,
     development_pool_allocation_id,
 )
+from aidn_hypervisor.reward.development_preflight import (
+    DEVELOPMENT_REWARD_PREFLIGHT_VERSION,
+    DevelopmentRewardPreflight,
+    build_development_reward_preflight,
+    development_reward_preflight_hash,
+)
+from aidn_hypervisor.reward.development_preflight_quorum import (
+    DEVELOPMENT_REWARD_PREFLIGHT_QUORUM_VERSION,
+    DevelopmentRewardPreflightQuorum,
+    build_development_reward_preflight_quorum,
+    collect_development_reward_preflight,
+    development_reward_preflight_quorum_hash,
+)
 from aidn_hypervisor.reward.development_production import (
     DEVELOPMENT_REWARD_PRODUCTION_BATCH_VERSION,
     DEVELOPMENT_REWARD_PRODUCTION_PROFILE_VERSION,
@@ -306,6 +319,15 @@ __all__ = [
     "development_reward_production_batch_hash",
     "development_reward_production_profile_hash",
     "development_reward_production_profile_id",
+    "DEVELOPMENT_REWARD_PREFLIGHT_VERSION",
+    "DevelopmentRewardPreflight",
+    "build_development_reward_preflight",
+    "development_reward_preflight_hash",
+    "DEVELOPMENT_REWARD_PREFLIGHT_QUORUM_VERSION",
+    "DevelopmentRewardPreflightQuorum",
+    "build_development_reward_preflight_quorum",
+    "collect_development_reward_preflight",
+    "development_reward_preflight_quorum_hash",
     "DEVELOPMENT_REWARD_PAYMENT_VERSION",
     "DevelopmentRewardPaymentRecord",
     "build_development_reward_payment_record",

@@ -28,6 +28,9 @@ from aidn_hypervisor.reward.development_distribution import (
     DevelopmentRewardPolicy,
     canonical_hash,
 )
+from aidn_hypervisor.reward.development_preflight_quorum import (
+    DevelopmentRewardPreflightQuorum,
+)
 
 DEVELOPMENT_REWARD_PRODUCTION_PROFILE_VERSION = "eco-0007-production-profile.v1"
 DEVELOPMENT_REWARD_PRODUCTION_BATCH_VERSION = "eco-0007-production-batch.v1"
@@ -118,6 +121,7 @@ class DevelopmentRewardProductionBatch(BaseModel, frozen=True):
     profile_hash: str = Field(min_length=1)
     activation_id: str = Field(min_length=1)
     activation_approval_hash: str = Field(min_length=1)
+    preflight_quorum: DevelopmentRewardPreflightQuorum
     plan: DevelopmentRewardOperationPlan
     accepted_reward_q_atoms: int = Field(ge=0)
     immediate_payment_q_atoms: int = Field(ge=0)
@@ -144,6 +148,26 @@ class DevelopmentRewardProductionBatch(BaseModel, frozen=True):
             raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_ACTIVATION_MISMATCH")
         if commitment.activation_approval_hash != self.activation_approval_hash:
             raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_APPROVAL_MISMATCH")
+        if not self.preflight_quorum.verify_integrity():
+            raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_PREFLIGHT_HASH_INVALID")
+        if self.preflight_quorum.chain_id != self.chain_id:
+            raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_PREFLIGHT_CHAIN_MISMATCH")
+        if self.preflight_quorum.pool_id != self.pool_id:
+            raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_PREFLIGHT_POOL_MISMATCH")
+        if self.preflight_quorum.preflight.epoch != self.epoch:
+            raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_PREFLIGHT_EPOCH_MISMATCH")
+        if (
+            self.preflight_quorum.preflight.source_epoch_transition_operation_id
+            != self.source_epoch_transition_operation_id
+        ):
+            raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_PREFLIGHT_SOURCE_MISMATCH")
+        if self.preflight_quorum.preflight.pool_budget_reference != self.pool_budget_reference:
+            raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_PREFLIGHT_REFERENCE_MISMATCH")
+        if len(self.plan.envelopes) < 2:
+            raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_ALLOCATION_REQUIRED")
+        allocation_payload = self.plan.envelopes[1].payload.get("pool_allocation") or {}
+        if int(allocation_payload.get("allocated_q_atoms") or 0) != self.preflight_quorum.preflight.pool_budget_q_atoms:
+            raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_PREFLIGHT_BUDGET_MISMATCH")
         if self.plan.envelopes[0].operation_type != "DEVELOPMENT_REWARD_CALCULATE":
             raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_CALCULATION_FIRST_REQUIRED")
         operation_ids = [item.operation_id for item in self.plan.envelopes]
@@ -269,6 +293,7 @@ def build_development_reward_production_batch(
     profile: DevelopmentRewardProductionProfile,
     activation_approval: DevelopmentRewardActivationApproval,
     plan: DevelopmentRewardOperationPlan,
+    preflight_quorum: DevelopmentRewardPreflightQuorum,
     source_epoch_transition_operation_id: str,
     pool_budget_reference: str,
 ) -> DevelopmentRewardProductionBatch:
@@ -281,6 +306,17 @@ def build_development_reward_production_batch(
         raise ValueError("DEVELOPMENT_PRODUCTION_ACTIVATION_ID_MISMATCH")
     if activation_approval.approval_hash != profile.activation_approval_hash:
         raise ValueError("DEVELOPMENT_PRODUCTION_ACTIVATION_HASH_MISMATCH")
+    if not preflight_quorum.verify_integrity():
+        raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_PREFLIGHT_HASH_INVALID")
+    preflight = preflight_quorum.preflight
+    if preflight_quorum.chain_id != profile.chain_id or preflight_quorum.pool_id != profile.pool_id:
+        raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_PREFLIGHT_BINDING_INVALID")
+    if preflight.epoch != plan.epoch or preflight.opening_epoch != plan.epoch + 1:
+        raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_PREFLIGHT_EPOCH_MISMATCH")
+    if preflight.source_epoch_transition_operation_id != source_epoch_transition_operation_id:
+        raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_PREFLIGHT_SOURCE_MISMATCH")
+    if preflight.pool_budget_reference != pool_budget_reference:
+        raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_PREFLIGHT_REFERENCE_MISMATCH")
     if plan.epoch < profile.effective_epoch:
         raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_BEFORE_EFFECTIVE_EPOCH")
     if plan.commitment.policy_hash != profile.policy_hash:
@@ -308,6 +344,8 @@ def build_development_reward_production_batch(
         raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_ALLOCATION_EPOCH_MISMATCH")
     if plan.envelopes[1].payload.get("pool_budget_reference") != pool_budget_reference:
         raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_BUDGET_REFERENCE_MISMATCH")
+    if int(allocation_payload.get("allocated_q_atoms") or 0) != preflight.pool_budget_q_atoms:
+        raise ValueError("DEVELOPMENT_PRODUCTION_BATCH_BUDGET_AMOUNT_MISMATCH")
 
     calculation_envelope = plan.envelopes[0]
     calculation_payload = calculation_envelope.payload.get("calculation") or {}
@@ -354,6 +392,7 @@ def build_development_reward_production_batch(
         "profile_hash": profile.profile_hash,
         "activation_id": profile.activation_id,
         "activation_approval_hash": profile.activation_approval_hash,
+        "preflight_quorum": preflight_quorum.model_dump(mode="json"),
         "plan": plan.model_dump(mode="json"),
         "accepted_reward_q_atoms": accepted_reward,
         "immediate_payment_q_atoms": immediate,
@@ -372,6 +411,7 @@ def build_development_reward_production_batch(
             "plan_hash": plan.plan_hash,
             "source_epoch_transition_operation_id": source_epoch_transition_operation_id,
             "pool_budget_reference": pool_budget_reference,
+            "preflight_quorum_hash": preflight_quorum.quorum_hash,
         }
     )
     payload["batch_id"] = batch_id
