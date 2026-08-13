@@ -46,6 +46,11 @@ class EpochTransitionInputReport(BaseModel):
     pool_budgets: dict[str, int] = Field(default_factory=dict)
     pool_budget_references: dict[str, str] = Field(default_factory=dict)
     source_app_hash: str | None = None
+    epoch_schedule_version: str | None = None
+    epoch_schedule_hash: str | None = None
+    canonical_block_time: str | None = None
+    scheduled_end_time: str | None = None
+    epoch_boundary_reached: bool = False
     missing_inputs: list[str] = Field(default_factory=list)
     reason_code: str | None = None
     report_hash: str
@@ -62,6 +67,10 @@ class EpochTransitionInputReport(BaseModel):
             "reward_calculation_root",
             "next_protocol_parameters_hash",
             "source_app_hash",
+            "epoch_schedule_version",
+            "epoch_schedule_hash",
+            "canonical_block_time",
+            "scheduled_end_time",
         ):
             value = getattr(self, name)
             if value is not None and not value.strip():
@@ -85,9 +94,18 @@ class EpochTransitionInputReport(BaseModel):
                 "reward_calculation_root",
                 "next_protocol_parameters_hash",
                 "source_app_hash",
+                "epoch_schedule_version",
+                "epoch_schedule_hash",
+                "canonical_block_time",
+                "scheduled_end_time",
             )
             missing = [name for name in required if getattr(self, name) in (None, "")]
-            if missing or self.missing_inputs or not self.pool_budgets:
+            if (
+                missing
+                or self.missing_inputs
+                or not self.pool_budgets
+                or not self.epoch_boundary_reached
+            ):
                 raise ValueError("READY epoch transition input report is incomplete")
             if self.reason_code is not None:
                 raise ValueError("READY epoch transition input report cannot have a reason")
@@ -119,6 +137,11 @@ class EpochTransitionInputReport(BaseModel):
             "next_protocol_parameters_hash": self.next_protocol_parameters_hash,
             "pool_budgets": dict(self.pool_budgets),
             "pool_budget_references": dict(self.pool_budget_references),
+            "epoch_schedule_version": self.epoch_schedule_version,
+            "epoch_schedule_hash": self.epoch_schedule_hash,
+            "canonical_block_time": self.canonical_block_time,
+            "scheduled_end_time": self.scheduled_end_time,
+            "next_epoch_start_time": self.scheduled_end_time,
             "protocol_authority_policy_hash": protocol_authority_policy_hash,
         }
         return payload
@@ -138,6 +161,12 @@ def build_epoch_transition_input_report(
     pool_budgets: Mapping[str, int] | None = None,
     pool_budget_references: Mapping[str, str] | None = None,
     source_app_hash: str | None = None,
+    epoch_schedule_version: str | None = None,
+    epoch_schedule_hash: str | None = None,
+    canonical_block_time: str | None = None,
+    scheduled_end_time: str | None = None,
+    epoch_boundary_reached: bool = False,
+    additional_missing_inputs: tuple[str, ...] = (),
 ) -> EpochTransitionInputReport:
     """Build a deterministic READY/BLOCKED report from observed inputs."""
     budgets = dict(pool_budgets or {})
@@ -156,6 +185,11 @@ def build_epoch_transition_input_report(
         "pool_budgets": budgets,
         "pool_budget_references": references,
         "source_app_hash": source_app_hash,
+        "epoch_schedule_version": epoch_schedule_version,
+        "epoch_schedule_hash": epoch_schedule_hash,
+        "canonical_block_time": canonical_block_time,
+        "scheduled_end_time": scheduled_end_time,
+        "epoch_boundary_reached": epoch_boundary_reached,
     }
     required = (
         "closing_epoch",
@@ -168,14 +202,22 @@ def build_epoch_transition_input_report(
         "reward_calculation_root",
         "next_protocol_parameters_hash",
         "source_app_hash",
+        "epoch_schedule_version",
+        "epoch_schedule_hash",
+        "canonical_block_time",
+        "scheduled_end_time",
     )
     missing = [name for name in required if values[name] in (None, "")]
     missing.extend(
         f"pool_budget_reference:{pool_id}"
         for pool_id in sorted(set(budgets) - set(references))
     )
+    missing.extend(str(item) for item in additional_missing_inputs if str(item).strip())
     if not budgets:
         missing.append("pool_budgets")
+    if not epoch_boundary_reached:
+        missing.append("epoch_boundary")
+    missing = list(dict.fromkeys(missing))
     status: Literal["READY", "BLOCKED"] = "READY" if not missing else "BLOCKED"
     report_values = {
         **values,

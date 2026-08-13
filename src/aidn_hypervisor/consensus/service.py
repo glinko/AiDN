@@ -20,6 +20,7 @@ from aidn_hypervisor.consensus.cometbft import (
     HttpCometBftSubmissionTransport,
     cometbft_transaction_hash,
 )
+from aidn_hypervisor.consensus.epoch_schedule import EpochSchedule
 from aidn_hypervisor.consensus.finality import (
     ConsensusFinalityEvidence,
     ConsensusFinalitySource,
@@ -65,6 +66,7 @@ class ConsensusServiceConfig:
     abci_snapshot_lease_seconds: int = ABCIStateStore.DEFAULT_SNAPSHOT_LEASE_SECONDS
     strict_operation_coverage: bool = False
     protocol_authority_policy: ProtocolAuthorityPolicy | None = None
+    epoch_schedule: EpochSchedule | None = None
 
 
 @dataclass
@@ -608,6 +610,7 @@ class ConsensusService:
                 if self.config.protocol_authority_policy is not None
                 else ProtocolAuthorityPolicy.empty()
             ),
+            epoch_schedule=self.config.epoch_schedule,
         )
         return self.abci
 

@@ -20,6 +20,7 @@ from aidn_hypervisor.consensus.coverage import (
     strict_operation_coverage_error,
     strict_operation_version_error,
 )
+from aidn_hypervisor.consensus.epoch_schedule import EpochSchedule
 from aidn_hypervisor.consensus.epoch_transition_inputs import (
     build_epoch_transition_input_report,
 )
@@ -124,6 +125,7 @@ class AIDNABCIApplication:
         state_checkpoint_callback: Callable[[], None] | None = None,
         strict_operation_coverage: bool = False,
         protocol_authority_policy: ProtocolAuthorityPolicy | None = None,
+        epoch_schedule: EpochSchedule | None = None,
     ):
         self.ledger = ledger_service
         self.mempool = ABCIMempool()
@@ -139,6 +141,8 @@ class AIDNABCIApplication:
         self._state_checkpoint_callback = state_checkpoint_callback
         self._strict_operation_coverage = strict_operation_coverage
         self._protocol_authority_policy = protocol_authority_policy
+        self._epoch_schedule = epoch_schedule
+        self._last_block_time: str | None = None
         self._restored_from_store = False
         self._pending_commit_snapshot: dict[str, Any] | None = None
         self._pending_commit_admission_state: dict[str, Any] | None = None
@@ -347,6 +351,21 @@ class AIDNABCIApplication:
         self._last_block_hash = last_block_hash
         self._app_hash = app_hash
         self._genesis_time = snapshot.get("genesis_time", self._genesis_time)
+        last_block_time = snapshot.get("last_block_time")
+        if last_block_time is not None and not isinstance(last_block_time, str):
+            raise ABCIStateStoreError("durable ABCI block time is invalid")
+        self._last_block_time = last_block_time
+        snapshot_schedule = snapshot.get("epoch_schedule")
+        if snapshot_schedule is not None:
+            restored_schedule = EpochSchedule.model_validate(snapshot_schedule)
+            if (
+                self._epoch_schedule is not None
+                and restored_schedule.schedule_hash != self._epoch_schedule.schedule_hash
+            ):
+                raise ABCIStateStoreError("durable ABCI epoch schedule does not match configuration")
+            self._epoch_schedule = restored_schedule
+        elif self._epoch_schedule is not None:
+            raise ABCIStateStoreError("durable ABCI snapshot is missing epoch schedule")
         self._commitments = commitments
         # The Hypervisor Ledger is the authoritative local snapshot here. Local
         # evidence may be newer than the last committed ABCI snapshot, so do not
@@ -667,6 +686,7 @@ class AIDNABCIApplication:
         # Update state
         self._last_block_height = block_height
         self._last_block_hash = block_hash
+        self._last_block_time = time
         self._app_hash = self._compute_state_hash()
         self._commitments[block_height] = ABCICanonicalCommitment(
             height=block_height,
@@ -897,12 +917,79 @@ class AIDNABCIApplication:
             else None
         )
         source_app_hash = "sha256:" + self._app_hash.hex() if self._app_hash else None
+        closing_epoch = None
+        opening_epoch = None
+        scheduled_end_time = None
+        epoch_boundary_reached = False
+        missing_schedule_inputs: list[str] = []
+        if self._epoch_schedule is None:
+            missing_schedule_inputs.append("epoch_schedule")
+        elif self._last_block_time is None:
+            missing_schedule_inputs.append("canonical_block_time")
+        else:
+            active_epoch, active_start_time, transition_error = self._active_epoch_context()
+            if transition_error is not None:
+                missing_schedule_inputs.append(transition_error)
+            else:
+                try:
+                    boundary = self._epoch_schedule.boundary_for(
+                        active_epoch=active_epoch,
+                        active_start_time=active_start_time,
+                        block_time=self._last_block_time,
+                    )
+                except ValueError:
+                    missing_schedule_inputs.append("canonical_block_time")
+                else:
+                    scheduled_end_time = boundary.scheduled_end_time
+                    epoch_boundary_reached = boundary.boundary_reached
+                    closing_epoch = boundary.closing_epoch
+                    opening_epoch = boundary.opening_epoch
+                    if not boundary.boundary_reached:
+                        missing_schedule_inputs.append("epoch_boundary")
         return build_epoch_transition_input_report(
+            closing_epoch=closing_epoch,
+            opening_epoch=opening_epoch,
             closing_height=closing_height,
             closing_block_hash=closing_block_hash,
             closing_state_root=closing_state_root,
             source_app_hash=source_app_hash,
+            epoch_schedule_version=(
+                self._epoch_schedule.schema_version if self._epoch_schedule is not None else None
+            ),
+            epoch_schedule_hash=(
+                self._epoch_schedule.schedule_hash if self._epoch_schedule is not None else None
+            ),
+            canonical_block_time=self._last_block_time,
+            scheduled_end_time=scheduled_end_time,
+            epoch_boundary_reached=epoch_boundary_reached,
+            additional_missing_inputs=tuple(missing_schedule_inputs),
         ).model_dump(mode="json")
+
+    def _active_epoch_context(self) -> tuple[int, str, str | None]:
+        """Resolve the open epoch from the latest finalized transition."""
+        if self._epoch_schedule is None:
+            return 0, self._genesis_time, "epoch_schedule"
+        transitions = [
+            operation
+            for operation in self.ledger.snapshot_operations()
+            if operation.get("operation_type") == "EPOCH_TRANSITION"
+        ]
+        if not transitions:
+            return 0, self._epoch_schedule.genesis_start_time, None
+        payload = transitions[-1].get("payload")
+        if not isinstance(payload, dict):
+            return 0, self._epoch_schedule.genesis_start_time, "active_epoch_transition_payload"
+        opening_epoch = payload.get("opening_epoch")
+        next_start = payload.get("next_epoch_start_time")
+        if (
+            isinstance(opening_epoch, bool)
+            or not isinstance(opening_epoch, int)
+            or opening_epoch < 0
+        ):
+            return 0, self._epoch_schedule.genesis_start_time, "active_epoch_transition_epoch"
+        if not isinstance(next_start, str) or not next_start.strip():
+            return opening_epoch, self._epoch_schedule.genesis_start_time, "active_epoch_start_time"
+        return opening_epoch, next_start, None
 
     # ---- Snapshot ----
 
@@ -914,6 +1001,7 @@ class AIDNABCIApplication:
             "genesis_time": self._genesis_time,
             "last_block_height": self._last_block_height,
             "last_block_hash": self._last_block_hash.hex(),
+            "last_block_time": self._last_block_time,
             "app_hash": self._compute_state_hash().hex(),
             "state_root": compute_execution_state_root(self.ledger),
             "commitments": [asdict(commitment) for commitment in self._commitments.values()],
@@ -924,6 +1012,8 @@ class AIDNABCIApplication:
         }
         if self._genesis_treasury_manifest is not None:
             snapshot["genesis_treasury_manifest"] = dict(self._genesis_treasury_manifest)
+        if self._epoch_schedule is not None:
+            snapshot["epoch_schedule"] = self._epoch_schedule.model_dump(mode="json")
         return snapshot
 
     def apply_snapshot(self, snapshot: dict) -> ABCIResult:
@@ -1002,6 +1092,21 @@ class AIDNABCIApplication:
         if self._last_block_height < 0:
             raise ValueError("snapshot height is invalid")
         self._last_block_hash = bytes.fromhex(snapshot["last_block_hash"])
+        last_block_time = snapshot.get("last_block_time")
+        if last_block_time is not None and not isinstance(last_block_time, str):
+            raise ValueError("snapshot block time is invalid")
+        self._last_block_time = last_block_time
+        snapshot_schedule = snapshot.get("epoch_schedule")
+        if snapshot_schedule is not None:
+            restored_schedule = EpochSchedule.model_validate(snapshot_schedule)
+            if (
+                self._epoch_schedule is not None
+                and restored_schedule.schedule_hash != self._epoch_schedule.schedule_hash
+            ):
+                raise ValueError("snapshot epoch schedule does not match configured schedule")
+            self._epoch_schedule = restored_schedule
+        elif self._epoch_schedule is not None:
+            raise ValueError("snapshot is missing the configured epoch schedule")
         self._app_hash = self._snapshot_app_hash(snapshot)
         if len(self._last_block_hash) != 32 or len(self._app_hash) != 32:
             raise ValueError("snapshot hash length is invalid")
@@ -1679,6 +1784,8 @@ class AIDNABCIApplication:
             state["consensus_state"] = consensus_state
         if self._genesis_treasury_manifest is not None:
             state["genesis_treasury_manifest"] = self._genesis_treasury_manifest
+        if self._epoch_schedule is not None:
+            state["epoch_schedule"] = self._epoch_schedule.model_dump(mode="json")
         canonical = json.dumps(state, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).digest()
 

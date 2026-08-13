@@ -1272,6 +1272,7 @@ Every meaningful architecture or milestone change should update this file in the
 - [x] Add independent signer artifacts: prepare, sign, combine, and verified submit tools.
 - [x] Support public-only policy assembly and one-key-per-signer generation.
 - [x] Add canonical read-only Epoch Transition Input preflight with hash-bound reports, ABCI query, and multi-validator quorum CLI.
+- [x] Bind the preflight to an explicit, hash-bound canonical-time epoch schedule and durable ABCI block-time metadata.
 - [ ] Approve and distribute one identical public authority policy hash.
 - [ ] Add/enable Epoch Engine live payload generation from finalized roots.
 - [ ] Finalize the first real `EPOCH_TRANSITION` with a `GENERAL_DEVELOPMENT` budget.

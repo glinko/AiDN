@@ -21,6 +21,7 @@ from aidn_hypervisor.consensus.cometbft_finality import (
 from aidn_hypervisor.consensus.deployment import (
     load_cometbft_finality_deployment_config,
 )
+from aidn_hypervisor.consensus.epoch_schedule import EpochSchedule, build_epoch_schedule
 from aidn_hypervisor.consensus.protocol_authority import ProtocolAuthorityPolicy
 from aidn_hypervisor.consensus.service import (
     ConsensusMode,
@@ -876,6 +877,7 @@ def _build_default_consensus_service(
             default=mode == ConsensusMode.VALIDATOR,
         ),
         protocol_authority_policy=protocol_authority_policy,
+        epoch_schedule=_load_epoch_schedule(),
     )
     consensus = ConsensusService(config)
     if mode != ConsensusMode.VALIDATOR:
@@ -981,6 +983,27 @@ def _build_default_consensus_service(
     if state_migrated:
         hypervisor_service._persist_state()
     return consensus
+
+
+def _load_epoch_schedule() -> EpochSchedule | None:
+    """Load an explicit canonical-time schedule; absent means fail-closed."""
+    raw_duration = os.getenv("AIDN_EPOCH_DURATION_SECONDS")
+    if raw_duration is None or not raw_duration.strip():
+        return None
+    try:
+        duration = int(raw_duration)
+    except ValueError as error:
+        raise ValueError("AIDN_EPOCH_DURATION_SECONDS must be an integer") from error
+    start_time = os.getenv("AIDN_EPOCH_START_TIME")
+    if not start_time:
+        raise ValueError("AIDN_EPOCH_START_TIME is required with AIDN_EPOCH_DURATION_SECONDS")
+    return build_epoch_schedule(
+        genesis_start_time=start_time,
+        epoch_duration_seconds=duration,
+        parameter_version=os.getenv("AIDN_EPOCH_PARAMETER_VERSION", "genesis"),
+        task_set_version=os.getenv("AIDN_EPOCH_TASK_SET_VERSION", "genesis"),
+        protocol_version=os.getenv("AIDN_EPOCH_PROTOCOL_VERSION", "0.1"),
+    )
 
 
 def _load_protocol_authority_policy() -> ProtocolAuthorityPolicy:

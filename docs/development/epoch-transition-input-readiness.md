@@ -45,10 +45,24 @@ it is a release gate, not a transient RPC failure.
 
 ## Current implementation boundary
 
-The ABCI source can currently expose the closing chain state. It deliberately
-does not infer the following from unrelated data:
+The ABCI source can currently expose the closing chain state. When an
+explicit `AIDN_EPOCH_*` schedule is configured, it also reports whether the
+canonical last block time has reached the active epoch boundary:
 
-- closing/opening epoch boundary;
+- `AIDN_EPOCH_START_TIME` anchors the genesis epoch;
+- `AIDN_EPOCH_DURATION_SECONDS` defines the versioned duration;
+- `AIDN_EPOCH_PARAMETER_VERSION`, `AIDN_EPOCH_TASK_SET_VERSION` and
+  `AIDN_EPOCH_PROTOCOL_VERSION` bind the schedule metadata.
+
+The schedule is included in durable ABCI snapshots and is hash-bound. It does
+not by itself authorize a transition or create an emission budget. For a
+validator deployment, the same schedule hash must be installed on every
+validator. A mismatch fails closed; the nodes must not choose a majority
+schedule. The last CometBFT block timestamp is the only accepted time source;
+host wall clocks are not used to close an epoch.
+
+The following remain unavailable until their canonical sources exist:
+
 - epoch task result root;
 - participant eligibility snapshot root;
 - deterministic reward calculation root;
@@ -72,3 +86,16 @@ consensus-bound sources for:
 
 Only then should `prepare-authorized-epoch-transition.py` consume the report
 instead of a manually authored payload.
+
+## Acceptance checks
+
+The boundary slice is complete when:
+
+- every validator returns the same `epoch_schedule_hash`;
+- the report contains the same canonical block time and current state roots;
+- the report changes from `epoch_boundary` blocked to a concrete
+  `closing_epoch/opening_epoch` pair only at or after scheduled end;
+- a durable restart restores the schedule and last block time;
+- a schedule mismatch fails closed;
+- task, eligibility, reward and parameter roots are still independently
+  supplied by their own canonical producers.
