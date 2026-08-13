@@ -1073,8 +1073,10 @@ This work is intentionally outside the functional MVP. It must not alter current
     catching-up nodes and divergent projections instead of selecting one local
     snapshot. The production batch now embeds a typed, hash-bound quorum
     preflight and rejects source-operation, budget-reference or allocation
-    amount substitution. Live validator rollout is still required before this
-    query can unlock a real payout batch.
+    amount substitution. The controlled three-validator rollout is recorded in
+    `docs/development/eco-0007-validator-rollout-acceptance-2026-08-12.md`;
+    the payout gate remains closed until the live query reports a finalized
+    epoch transition and pool budget.
 29. Added the operator execution CLI for ECO-0007 production batches. It
     rechecks the canonical quorum preflight before every retry, binds the
     batch to the approved multi-RPC finality configuration, persists exact
@@ -1125,6 +1127,10 @@ This work is intentionally outside the functional MVP. It must not alter current
 - [x] Add a resumable operator execution CLI with fresh preflight checks and
   multi-RPC finality binding; keep live execution fail-closed on stale batch or
   unavailable validators.
+- [x] Roll out the ECO-0007-aware ABCI image sequentially to the controlled
+  validators and verify health, preserved state mounts, rollback containers,
+  CometBFT quorum and the live read-only preflight; see
+  [validator rollout acceptance](./docs/development/eco-0007-validator-rollout-acceptance-2026-08-12.md).
 - [ ] Activate a production ECO-0007 reward profile and execute a finalized contribution payout batch against a real epoch pool.
 - [x] Public multi-validator profiles are signed, hash-bound, quorum-checked, and projected into the existing CometBFT finality configuration.
 - [x] Generate and verify the current Implementation Profile and execute the
