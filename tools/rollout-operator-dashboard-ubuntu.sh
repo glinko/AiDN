@@ -220,6 +220,14 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 curl --fail --silent --max-time 3 http://127.0.0.1:8000/health >/tmp/aidn-dashboard-health.json
+# CometBFT needs a bounded reconnection window after its ABCI peer restarts.
+# A single immediate probe causes a healthy replacement to be rolled back.
+for _ in $(seq 1 30); do
+  if curl --fail --silent --max-time 3 "$consensus_status_url" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
 curl --fail --silent --max-time 3 "$consensus_status_url" >/dev/null
 curl --fail --silent --max-time 3 http://127.0.0.1:8000/operators/dashboard/react >/tmp/aidn-dashboard-react.html
 grep -q 'id="root"' /tmp/aidn-dashboard-react.html
