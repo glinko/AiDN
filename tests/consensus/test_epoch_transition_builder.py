@@ -8,7 +8,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aidn_hypervisor.consensus.epoch_transition import (
     build_signed_epoch_transition,
+    build_unsigned_epoch_transition,
+    combine_epoch_transition_signatures,
     load_protocol_authority_private_key,
+    sign_epoch_transition_signature,
 )
 from aidn_hypervisor.consensus.protocol_authority import ProtocolAuthorityPolicy
 from aidn_hypervisor.endpoint_publications.signing import public_key_for_private_key
@@ -121,3 +124,105 @@ def test_output_shape_is_json_serializable() -> None:
     assert json.loads(json.dumps(envelope.model_dump(mode="json")))['operation_type'] == (
         "EPOCH_TRANSITION"
     )
+
+
+def test_independent_signatures_can_be_combined_without_private_keys() -> None:
+    policy = _policy()
+    unsigned = build_unsigned_epoch_transition(
+        policy=policy,
+        payload=_payload(),
+        created_at="2030-01-01T00:00:00Z",
+    )
+    signatures = {
+        authority_id: sign_epoch_transition_signature(
+            unsigned,
+            policy=policy,
+            authority_id=authority_id,
+            private_key=_keys(index)[authority_id],
+        )
+        for index, authority_id in enumerate(("authority-1", "authority-2"))
+    }
+    combined = combine_epoch_transition_signatures(
+        unsigned,
+        policy=policy,
+        signatures=signatures,
+    )
+    assert combined.operation_id == unsigned.operation_id
+    assert len(combined.signatures) == 2
+    policy.verify_epoch_transition(combined)
+
+
+def test_combiner_rejects_duplicate_authority_artifacts() -> None:
+    policy = _policy()
+    unsigned = build_unsigned_epoch_transition(
+        policy=policy,
+        payload=_payload(),
+        created_at="2030-01-01T00:00:00Z",
+    )
+    signature = sign_epoch_transition_signature(
+        unsigned,
+        policy=policy,
+        authority_id="authority-1",
+        private_key=_keys(0)["authority-1"],
+    )
+    with pytest.raises(ValueError, match="SIGNATURE_REQUIRED"):
+        combine_epoch_transition_signatures(
+            unsigned,
+            policy=policy,
+            signatures={"authority-1": signature},
+        )
+
+
+def test_signer_and_combiner_reject_already_signed_input() -> None:
+    policy = _policy()
+    signed = build_signed_epoch_transition(
+        policy=policy,
+        payload=_payload(),
+        signers=_keys(0, 1),
+        created_at="2030-01-01T00:00:00Z",
+    )
+    with pytest.raises(ValueError, match="must be unsigned"):
+        sign_epoch_transition_signature(
+            signed,
+            policy=policy,
+            authority_id="authority-3",
+            private_key=_keys(2)["authority-3"],
+        )
+    with pytest.raises(ValueError, match="must be unsigned"):
+        combine_epoch_transition_signatures(
+            signed,
+            policy=policy,
+            signatures={"authority-1": signed.signatures[0]},
+        )
+
+
+def test_signer_rejects_payload_bound_to_another_policy() -> None:
+    policy = _policy()
+    other_policy = ProtocolAuthorityPolicy(
+        threshold=1,
+        authorities=(
+            ("authority-1", public_key_for_private_key(PRIVATE_KEYS[0])),
+            ("authority-2", public_key_for_private_key(PRIVATE_KEYS[1])),
+            ("authority-3", public_key_for_private_key(PRIVATE_KEYS[2])),
+        ),
+    )
+    unsigned = build_unsigned_epoch_transition(
+        policy=policy,
+        payload=_payload(),
+        created_at="2030-01-01T00:00:00Z",
+    )
+    tampered = unsigned.model_copy(
+        update={
+            "payload": {
+                **unsigned.payload,
+                "protocol_authority_policy_hash": other_policy.policy_hash,
+            }
+        }
+    )
+    with pytest.raises(ValueError, match="policy hash does not match"):
+        sign_epoch_transition_signature(
+            tampered,
+            policy=policy,
+            authority_id="authority-1",
+            private_key=_keys(0)["authority-1"],
+        )

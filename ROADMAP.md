@@ -1264,3 +1264,16 @@ This work is intentionally outside the functional MVP. It must not alter current
 ## Maintenance Rule
 
 Every meaningful architecture or milestone change should update this file in the same branch.
+
+## Current Network Economics Gate (2026-08-12)
+
+- [x] Deploy the fail-closed protocol-authority boundary to validators 128-130.
+- [x] Add offline policy-bound epoch-transition validation and signing.
+- [x] Add independent signer artifacts: prepare, sign, combine, and verified submit tools.
+- [x] Support public-only policy assembly and one-key-per-signer generation.
+- [ ] Approve and distribute one identical public authority policy hash.
+- [ ] Add/enable Epoch Engine live payload generation from finalized roots.
+- [ ] Finalize the first real `EPOCH_TRANSITION` with a `GENERAL_DEVELOPMENT` budget.
+- [ ] Run ECO-0007 preflight, build the first reward batch, and verify multi-RPC payment finality.
+
+Operational details are in `docs/development/protocol-authority-and-epoch-transition-operations.md`.

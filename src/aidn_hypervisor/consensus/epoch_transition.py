@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.protocol_authority import (
+    EPOCH_TRANSITION_AUTHORITY_HASH_FIELD,
     ProtocolAuthorityPolicy,
     normalize_ed25519_public_key,
 )
@@ -72,22 +73,103 @@ def sign_epoch_transition(
     if not signers:
         raise ValueError("at least one protocol authority signer is required")
 
-    authority_keys = dict(policy.authorities)
-    unknown = sorted(set(signers) - set(authority_keys))
-    if unknown:
-        raise ValueError(f"protocol authority signer is not in policy: {unknown[0]}")
     if len(signers) < policy.threshold:
         raise ValueError("protocol authority signer quorum is not met")
+    signatures = {
+        authority_id: sign_epoch_transition_signature(
+            envelope,
+            policy=policy,
+            authority_id=authority_id,
+            private_key=key,
+        )
+        for authority_id, key in signers.items()
+    }
+    return combine_epoch_transition_signatures(
+        envelope,
+        policy=policy,
+        signatures=signatures,
+    )
 
-    for authority_id, key in signers.items():
-        if _public_key_for_private_key(key) != authority_keys[authority_id]:
-            raise ValueError(f"protocol authority private key does not match: {authority_id}")
 
-    signatures = [
-        "ed25519:" + signers[authority_id].sign(envelope.signing_bytes()).hex()
-        for authority_id in sorted(signers)
-    ]
-    signed = envelope.model_copy(update={"signatures": signatures})
+def build_unsigned_epoch_transition(
+    *,
+    policy: ProtocolAuthorityPolicy,
+    payload: Mapping[str, object],
+    created_at: str,
+    expires_at: str | None = None,
+    initiator_id: str = "epoch-engine",
+    operation_version: str = "1.0.0",
+    protocol_version: str = "0.1",
+) -> LedgerOperationEnvelope:
+    """Build the exact unsigned envelope that independent signers receive."""
+    transition_payload = dict(payload)
+    declared_hash = transition_payload.get("protocol_authority_policy_hash")
+    if declared_hash is not None and declared_hash != policy.policy_hash:
+        raise ValueError("epoch transition policy hash does not match policy")
+    transition_payload["protocol_authority_policy_hash"] = policy.policy_hash
+
+    closing_epoch = transition_payload.get("closing_epoch")
+    if isinstance(closing_epoch, bool) or not isinstance(closing_epoch, int) or closing_epoch < 0:
+        raise ValueError("epoch transition closing epoch is invalid")
+    unsigned = LedgerOperationEnvelope(
+        operation_type="EPOCH_TRANSITION",
+        operation_version=operation_version,
+        protocol_version=protocol_version,
+        origin_type="protocol",
+        initiator_id=initiator_id,
+        fee_class="protocol_sponsored",
+        created_at=created_at,
+        expires_at=expires_at,
+        target_epoch=str(closing_epoch),
+        payload=transition_payload,
+    )
+    LedgerOperationService().validate_consensus_epoch_transition(unsigned)
+    return unsigned
+
+
+def sign_epoch_transition_signature(
+    envelope: LedgerOperationEnvelope,
+    *,
+    policy: ProtocolAuthorityPolicy,
+    authority_id: str,
+    private_key: Ed25519PrivateKey,
+) -> str:
+    """Sign one unsigned transition for exactly one declared authority."""
+    if envelope.operation_type != "EPOCH_TRANSITION":
+        raise ValueError("protocol authority signing requires EPOCH_TRANSITION")
+    if envelope.signatures:
+        raise ValueError("protocol authority signer input must be unsigned")
+    LedgerOperationService().validate_consensus_epoch_transition(envelope)
+    authority_keys = dict(policy.authorities)
+    expected_key = authority_keys.get(authority_id)
+    if expected_key is None:
+        raise ValueError(f"protocol authority signer is not in policy: {authority_id}")
+    if envelope.payload.get(EPOCH_TRANSITION_AUTHORITY_HASH_FIELD) != policy.policy_hash:
+        raise ValueError("epoch transition policy hash does not match policy")
+    if _public_key_for_private_key(private_key) != expected_key:
+        raise ValueError(f"protocol authority private key does not match: {authority_id}")
+    return "ed25519:" + private_key.sign(envelope.signing_bytes()).hex()
+
+
+def combine_epoch_transition_signatures(
+    envelope: LedgerOperationEnvelope,
+    *,
+    policy: ProtocolAuthorityPolicy,
+    signatures: Mapping[str, str],
+) -> LedgerOperationEnvelope:
+    """Attach independently produced signatures and verify the full quorum."""
+    if envelope.operation_type != "EPOCH_TRANSITION":
+        raise ValueError("protocol authority signing requires EPOCH_TRANSITION")
+    if envelope.signatures:
+        raise ValueError("protocol authority combiner input must be unsigned")
+    if not signatures:
+        raise ValueError("at least one protocol authority signature is required")
+    LedgerOperationService().validate_consensus_epoch_transition(envelope)
+    unknown = sorted(set(signatures) - {authority_id for authority_id, _ in policy.authorities})
+    if unknown:
+        raise ValueError(f"protocol authority signer is not in policy: {unknown[0]}")
+    ordered = [signatures[authority_id] for authority_id in sorted(signatures)]
+    signed = envelope.model_copy(update={"signatures": ordered})
     policy.verify_epoch_transition(signed)
     return signed
 
@@ -104,32 +186,15 @@ def build_signed_epoch_transition(
     protocol_version: str = "0.1",
 ) -> LedgerOperationEnvelope:
     """Build, Ledger-validate and authority-sign one epoch transition."""
-    transition_payload = dict(payload)
-    declared_hash = transition_payload.get("protocol_authority_policy_hash")
-    if declared_hash is not None and declared_hash != policy.policy_hash:
-        raise ValueError("epoch transition policy hash does not match policy")
-    transition_payload["protocol_authority_policy_hash"] = policy.policy_hash
-
-    closing_epoch = transition_payload.get("closing_epoch")
-    if isinstance(closing_epoch, bool) or not isinstance(closing_epoch, int) or closing_epoch < 0:
-        raise ValueError("epoch transition closing epoch is invalid")
-    target_epoch = str(closing_epoch)
-    unsigned = LedgerOperationEnvelope(
-        operation_type="EPOCH_TRANSITION",
-        operation_version=operation_version,
-        protocol_version=protocol_version,
-        origin_type="protocol",
-        initiator_id=initiator_id,
-        fee_class="protocol_sponsored",
+    unsigned = build_unsigned_epoch_transition(
+        policy=policy,
+        payload=payload,
         created_at=created_at,
         expires_at=expires_at,
-        target_epoch=target_epoch,
-        payload=transition_payload,
+        initiator_id=initiator_id,
+        operation_version=operation_version,
+        protocol_version=protocol_version,
     )
-
-    # Reuse the canonical Ledger validator before private-key signing. This
-    # keeps the offline artifact subject to the same payload rules as ABCI.
-    LedgerOperationService().validate_consensus_epoch_transition(unsigned)
     return sign_epoch_transition(unsigned, policy=policy, signers=signers)
 
 
@@ -140,8 +205,11 @@ def restrict_private_key_file(path: Path) -> None:
 
 
 __all__ = [
+    "build_unsigned_epoch_transition",
     "build_signed_epoch_transition",
+    "combine_epoch_transition_signatures",
     "load_protocol_authority_private_key",
     "restrict_private_key_file",
+    "sign_epoch_transition_signature",
     "sign_epoch_transition",
 ]
