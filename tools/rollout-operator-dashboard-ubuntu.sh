@@ -12,6 +12,8 @@ Options:
   --commit REF         Reviewed Git commit or ref to deploy (required)
   --container NAME     Existing dashboard container (default: aidn-g5-abci)
   --image REPOSITORY   Image repository (default: aidn-hypervisor-lan-testnet-strict)
+  --consensus-status-url URL
+                     Explicit CometBFT /status URL for a node using external RPC
   --allow-dashboard-access-insecure-lan
                      Explicitly permit HTTP dashboard pairing on a controlled LAN
   --enable-dashboard-access
@@ -28,6 +30,7 @@ repo=''
 requested_commit=''
 container='aidn-g5-abci'
 image_repository='aidn-hypervisor-lan-testnet-strict'
+consensus_status_url_override=''
 allow_dashboard_access_insecure_lan=false
 enable_dashboard_access=false
 
@@ -47,6 +50,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --image)
       image_repository="${2:-}"
+      shift 2
+      ;;
+    --consensus-status-url)
+      consensus_status_url_override="${2:-}"
       shift 2
       ;;
     --allow-dashboard-access-insecure-lan)
@@ -74,6 +81,10 @@ done
 [[ "$repo" == /* && -d "$repo/.git" ]] || { echo "invalid AiDN checkout: $repo" >&2; exit 2; }
 [[ "$container" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "invalid container name: $container" >&2; exit 2; }
 [[ "$image_repository" =~ ^[A-Za-z0-9_.:/-]+$ ]] || { echo "invalid image repository: $image_repository" >&2; exit 2; }
+[[ -z "$consensus_status_url_override" || "$consensus_status_url_override" =~ ^https?://[^[:space:]]+/status$ ]] || {
+  echo 'consensus status URL must be an http(s) /status endpoint' >&2
+  exit 2
+}
 
 operator_user=$(stat --format='%U' "$repo")
 id "$operator_user" >/dev/null 2>&1 || { echo "checkout owner does not exist: $operator_user" >&2; exit 2; }
@@ -179,7 +190,9 @@ if [[ "$enable_dashboard_access" == true ]]; then
 fi
 
 consensus_endpoint=$(sed -n 's/^AIDN_COMETBFT_ENDPOINT=//p' "$env_file" | head -n 1)
-if [[ -z "$consensus_endpoint" ]]; then
+if [[ -n "$consensus_status_url_override" ]]; then
+  consensus_status_url="$consensus_status_url_override"
+elif [[ -z "$consensus_endpoint" ]]; then
   consensus_status_url='http://127.0.0.1:26657/status'
 elif [[ "$consensus_endpoint" == tcp://* ]]; then
   consensus_status_url="http://${consensus_endpoint#tcp://}/status"
