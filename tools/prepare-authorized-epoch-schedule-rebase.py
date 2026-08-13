@@ -11,7 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from aidn_hypervisor.consensus.epoch_schedule_rebase import EpochScheduleRebase  # noqa: E402
+from aidn_hypervisor.consensus.epoch_schedule_rebase import (  # noqa: E402
+    build_epoch_schedule_rebase,
+)
 from aidn_hypervisor.consensus.epoch_schedule_rebase_commit import (  # noqa: E402
     build_unsigned_epoch_schedule_rebase,
 )
@@ -34,7 +36,9 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     policy = ProtocolAuthorityPolicy.from_mapping(_object(args.policy))
-    rebase = EpochScheduleRebase.model_validate(_object(args.rebase))
+    # Rebase files are operator-authored input. The canonical builder computes
+    # the protocol hash so operators do not have to reproduce hash encoding.
+    rebase = build_epoch_schedule_rebase(**_object(args.rebase))
     envelope = build_unsigned_epoch_schedule_rebase(
         policy=policy, rebase=rebase, created_at=args.created_at, expires_at=args.expires_at
     )

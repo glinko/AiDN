@@ -50,6 +50,9 @@ outside the repository and do not copy authority private keys to the submitter.
 }
 ```
 
+Do not provide `rebase_hash`: the preparation command derives it from the
+canonical payload and writes it into the signed envelope.
+
 4. Prepare one unsigned artifact:
 
 ```text
