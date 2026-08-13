@@ -216,7 +216,7 @@ def main() -> int:
         if evidence is not None:
             if evidence.operation_type != "EPOCH_TRANSITION" or evidence.chain_id != deployment.chain_id:
                 raise ValueError("EPOCH_TRANSITION finality evidence does not match input")
-            summary["finality"] = evidence.model_dump(mode="json")
+            summary["finality"] = evidence.model_dump()
             print(json.dumps({"status": "FINALIZED", **summary}, sort_keys=True))
             return 0
         time.sleep(args.poll_seconds)

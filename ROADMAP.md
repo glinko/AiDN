@@ -1399,8 +1399,11 @@ Every meaningful architecture or milestone change should update this file in the
 - [x] Roll out the schedule-commitment gate to validators 128-130 and verify
   3/3 convergence with the expected fail-closed `BLOCKED` report. See
   [the live rollout acceptance](./docs/development/epoch-schedule-commit-gate-rollout-acceptance-2026-08-13.md).
+- [x] For the controlled localnet only, deploy a disposable `2-of-3` public
+  authority policy and commit the first canonical RFC-0048 schedule through
+  consensus. See [controlled-localnet epoch schedule acceptance](./docs/development/controlled-localnet-epoch-schedule-acceptance-2026-08-13.md).
 - [ ] Submit and finalize the first canonical schedule on the live validator
-  network.
+  network under a production/public authority policy.
 - [ ] Approve and distribute one identical public authority policy hash.
 - [ ] Add/enable Epoch Engine live payload generation from finalized roots.
 - [ ] Finalize the first real `EPOCH_TRANSITION` with a `GENERAL_DEVELOPMENT` budget.

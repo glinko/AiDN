@@ -75,7 +75,10 @@ def _install_policy(
     directory = str(PurePosixPath(host_path).parent)
     encoded = base64.b64encode(policy_bytes).decode("ascii")
     temporary = f"{host_path}.tmp-{os.getpid()}"
-    command = (
+    # RemoteHost.run wraps the command with sudo, but shell redirections after
+    # the first command would otherwise still run as the SSH user. Keep the
+    # complete install transaction inside one privileged shell.
+    script = (
         f"install -d -m 0750 {shlex.quote(directory)} && "
         f"printf %s {shlex.quote(encoded)} | base64 -d > {shlex.quote(temporary)} && "
         f"chown root:root {shlex.quote(temporary)} && "
@@ -83,6 +86,7 @@ def _install_policy(
         f"test \"$(sha256sum {shlex.quote(temporary)} | cut -d ' ' -f1)\" = {shlex.quote(content_sha256)} && "
         f"mv -f {shlex.quote(temporary)} {shlex.quote(host_path)}"
     )
+    command = f"sh -c {shlex.quote(script)}"
     try:
         remote.run(command, timeout=30)
     except Exception:
@@ -97,7 +101,6 @@ def _install_policy(
 def _policy_digest(remote: RemoteHost, host_path: str) -> str:
     return remote.run(
         f"sha256sum {shlex.quote(host_path)} | cut -d ' ' -f1",
-        sudo=False,
         timeout=15,
     )
 
@@ -157,8 +160,13 @@ def _rollout_host(
             policy_bytes=policy_bytes,
             content_sha256=policy_sha256,
         )
-        if _policy_digest(remote, host_policy_path) != policy_sha256:
-            raise RemoteCommandError(f"{host}: policy digest mismatch after install")
+        observed_policy_sha256 = _policy_digest(remote, host_policy_path).strip().lower()
+        expected_policy_sha256 = policy_sha256.strip().lower()
+        if observed_policy_sha256 != expected_policy_sha256:
+            raise RemoteCommandError(
+                f"{host}: policy digest mismatch after install: "
+                f"expected={expected_policy_sha256} observed={observed_policy_sha256}"
+            )
 
         create = _container_with_policy(
             current,
