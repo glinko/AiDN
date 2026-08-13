@@ -16,6 +16,10 @@ Completed in this slice:
 - [x] Roll out commit `8145166` to validators `128`, `129`, and `130` without
   resetting ledger or CometBFT state. The rollout acceptance record is
   [here](./docs/development/protocol-authority-rollout-acceptance-2026-08-12.md).
+- [x] Add the offline-only authorized epoch-transition builder. It validates
+  the same Ledger payload rules, binds every signer to the public policy and
+  threshold, and never broadcasts or mutates local state. See
+  [the builder runbook](./docs/development/authorized-epoch-transition-builder.md).
 
 Next required economic-network work:
 
