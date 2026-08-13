@@ -26,6 +26,9 @@ Completed in this slice:
 - [x] Add sanitized policy readiness evidence to consensus status and the
   validator ABCI query path so operators and MCP agents can distinguish
   configured authority quorum from fail-closed state without receiving keys.
+- [x] Roll out `ae5d515` to validators `128`, `129`, and `130` and verify the
+  same sanitized authority state plus `3/3` ECO-0007 preflight agreement. See
+  [the live acceptance record](./docs/development/protocol-authority-readiness-rollout-acceptance-2026-08-12.md).
 
 Next required economic-network work:
 
