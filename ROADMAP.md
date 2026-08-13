@@ -4,6 +4,37 @@ Last updated: `2026-08-13`
 
 This is the main public roadmap for the repository.
 
+## 2026-08-13 Multi-validator Epoch Transition Quorum Gate
+
+Completed in this slice:
+
+- [x] Add the read-only `aidn.epoch-transition-quorum.v1` collector. It
+  compares chain identity, status height, catching-up state and the complete
+  typed `epoch/transition-inputs` report across multiple validator RPCs.
+- [x] Require the same finalized `EPOCH_RESULT_MANIFEST_COMMIT` reference and
+  public `epoch/result-manifest/<epoch>` projection before a `READY` quorum can
+  be returned. Historical closing height, block hash, state root, source
+  AppHash and schedule bindings are compared explicitly.
+- [x] Keep quorum output hash-bound and read-only. It cannot construct,
+  authorize, broadcast or apply an `EPOCH_TRANSITION`.
+- [x] Add targeted coverage for missing finality, conflicting reports,
+  conflicting finalized references and historical manifest projections.
+- [x] Version the historical-chain-bound manifest payload as `v2` while
+  retaining replay validation for the earlier `v1` payload; legacy manifests
+  remain fail-closed for transition readiness instead of being silently
+  reinterpreted.
+
+Next required live-network work:
+
+- [ ] Run the quorum collector against validators `128`, `129` and `130` and
+  archive the sanitized evidence only after all three nodes expose the same
+  finalized manifest reference.
+- [ ] Build the exact authority-signed `EPOCH_TRANSITION` payload from the
+  `READY` report and submit it in a later block through the canonical consensus
+  path; no local UI or agent may invent the roots or pool budget.
+- [ ] Re-run the quorum gate after transition finality, then execute the first
+  independently reproducible ECO-0007 production reward batch.
+
 ## 2026-08-13 Canonical Epoch Result Manifest
 
 Completed in this slice:

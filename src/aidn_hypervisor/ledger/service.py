@@ -1654,6 +1654,37 @@ class LedgerOperationService:
                 matches.append(operation)
         return dict(matches[-1]) if matches else None
 
+    def epoch_result_manifest_projection(self, epoch_number: int) -> dict | None:
+        """Return the public identity projection for one finalized manifest."""
+        operation = self.epoch_result_manifest_commitment(epoch_number)
+        if operation is None:
+            return None
+        manifest = EpochResultManifest.model_validate(
+            (operation.get("payload") or {}).get("manifest")
+        )
+        operation_id = operation.get("operation_id")
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            return None
+        reference = self.finalized_operation_reference(operation_id)
+        if reference is None:
+            return None
+        return {
+            "operation_id": operation_id,
+            "operation_type": EPOCH_RESULT_MANIFEST_OPERATION,
+            "sequence_id": reference["sequence_id"],
+            "record_digest": reference["record_digest"],
+            "manifest_hash": manifest.manifest_hash,
+            "epoch_number": manifest.epoch_number,
+            "closing_height": manifest.closing_height,
+            "closing_time": manifest.closing_time,
+            "closing_block_hash": manifest.closing_block_hash,
+            "closing_state_root": manifest.closing_state_root,
+            "source_app_hash": manifest.source_app_hash,
+            "epoch_schedule_version": manifest.epoch_schedule_version,
+            "epoch_schedule_hash": manifest.epoch_schedule_hash,
+            "scheduled_end_time": manifest.scheduled_end_time,
+        }
+
     def validate_consensus_epoch_result_manifest(
         self,
         envelope: "LedgerOperationEnvelope",
@@ -5129,6 +5160,10 @@ class LedgerOperationService:
                 raise ValueError("epoch transition result manifest hash does not match")
             bindings = {
                 "epoch_number": closing_epoch,
+                "closing_height": payload.get("closing_height"),
+                "closing_block_hash": payload.get("closing_block_hash"),
+                "closing_state_root": payload.get("closing_state_root"),
+                "source_app_hash": payload.get("source_app_hash"),
                 "epoch_task_result_root": manifest.task_result_root,
                 "eligibility_snapshot_root": manifest.eligibility_root,
                 "reward_calculation_root": manifest.reward_calculation_root,
@@ -5140,6 +5175,10 @@ class LedgerOperationService:
             }
             manifest_bindings = {
                 "epoch_number": manifest.epoch_number,
+                "closing_height": manifest.closing_height,
+                "closing_block_hash": manifest.closing_block_hash,
+                "closing_state_root": manifest.closing_state_root,
+                "source_app_hash": manifest.source_app_hash,
                 "epoch_task_result_root": manifest.task_result_root,
                 "eligibility_snapshot_root": manifest.eligibility_root,
                 "reward_calculation_root": manifest.reward_calculation_root,

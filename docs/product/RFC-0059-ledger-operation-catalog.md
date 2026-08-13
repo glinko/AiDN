@@ -1884,6 +1884,11 @@ Commits the immutable RFC-0048 Epoch Result Manifest that aggregates the
 finalized evidence roots and budget references required by a later
 `EPOCH_TRANSITION`.
 
+The current historical-chain-bound payload is
+`aidn.epoch-result-manifest.v2`. Nodes MAY replay the earlier `v1` payload for
+backward-compatible state restoration, but a legacy manifest without closing
+block/state/AppHash commitments MUST NOT make an epoch transition `READY`.
+
 Required Payload
 
 ```yaml
@@ -1895,6 +1900,9 @@ manifest:
   closing_height:
   start_time:
   closing_time:
+  closing_block_hash:
+  closing_state_root:
+  source_app_hash:
   protocol_version:
   parameter_version:
   task_set_version:
@@ -1946,6 +1954,22 @@ finalized before the block containing the transition begins. A manifest and a
 dependent transition in the same block are rejected in both ABCI and
 deterministic execution. The transition MUST reproduce the manifest's task,
 eligibility, reward, parameter, schedule and pool-budget bindings exactly.
+
+Read-only ABCI Projection
+
+Validators SHALL expose a public identity projection at:
+
+```text
+epoch/result-manifest/<epoch_number>
+```
+
+The projection MAY be queried by quorum and release-gate tooling. It SHALL
+contain only the finalized operation identity (`operation_id`,
+`operation_type`, `sequence_id`, `record_digest`), `manifest_hash`, epoch
+number, historical closing height/time/block hash/state root, source AppHash,
+and epoch-schedule bindings. It SHALL not expose the manifest payload,
+signatures or private evidence. An absent, stale or conflicting projection
+MUST fail closed for any transition-readiness decision.
 
 ## 54. Reward Mint
 

@@ -44,6 +44,18 @@ from aidn_hypervisor.faucet_treasury import (
 LOCAL_ONLY_OPERATION_TYPES = frozenset({"SESSION_RUNTIME_EVIDENCE_COMMIT"})
 
 
+def _timestamp_not_after(candidate: str, boundary: str) -> bool:
+    """Compare manifest and block timestamps as timezone-aware instants."""
+    try:
+        candidate_time = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        boundary_time = datetime.fromisoformat(boundary.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if candidate_time.tzinfo is None or boundary_time.tzinfo is None:
+        return False
+    return candidate_time.astimezone(UTC) <= boundary_time.astimezone(UTC)
+
+
 @dataclass(frozen=True)
 class ABCICanonicalCommitment:
     """The local ABCI state commitment for one finalized CometBFT height."""
@@ -863,6 +875,23 @@ class AIDNABCIApplication:
                 sort_keys=True,
                 separators=(",", ":"),
             ).encode("utf-8")
+        elif path.startswith("epoch/result-manifest/"):
+            raw_epoch = path.removeprefix("epoch/result-manifest/")
+            try:
+                epoch_number = int(raw_epoch)
+            except ValueError:
+                epoch_number = -1
+            projection = (
+                self.ledger.epoch_result_manifest_projection(epoch_number)
+                if epoch_number >= 0
+                else None
+            )
+            kwargs["key"] = f"epoch:result-manifest:{raw_epoch}".encode()
+            kwargs["value"] = (
+                json.dumps(projection, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                if projection is not None
+                else b""
+            )
         elif path == "epoch/transition-inputs":
             report = self.epoch_transition_input_report()
             kwargs["key"] = b"epoch:transition-inputs"
@@ -930,6 +959,7 @@ class AIDNABCIApplication:
         pool_budget_references: dict[str, str] = {}
         epoch_result_manifest_hash = None
         epoch_result_manifest_operation_id = None
+        manifest = None
         missing_schedule_inputs: list[str] = []
         if self._epoch_schedule is None:
             missing_schedule_inputs.append("epoch_schedule")
@@ -978,12 +1008,22 @@ class AIDNABCIApplication:
                                     and manifest.task_set_version == self._epoch_schedule.task_set_version
                                     and manifest.epoch_schedule_version == self._epoch_schedule.schema_version
                                     and manifest.epoch_schedule_hash == self._epoch_schedule.schedule_hash
-                                    and manifest.closing_height == closing_height
-                                    and manifest.closing_time == self._last_block_time
+                                    and isinstance(manifest.closing_block_hash, str)
+                                    and isinstance(manifest.closing_state_root, str)
+                                    and isinstance(manifest.source_app_hash, str)
+                                    and manifest.closing_height <= closing_height
+                                    and _timestamp_not_after(
+                                        manifest.closing_time,
+                                        self._last_block_time,
+                                    )
                                 )
                                 if not manifest_bindings:
                                     missing_schedule_inputs.append("epoch_result_manifest_binding")
                                 else:
+                                    closing_height = manifest.closing_height
+                                    closing_block_hash = manifest.closing_block_hash
+                                    closing_state_root = manifest.closing_state_root
+                                    source_app_hash = manifest.source_app_hash
                                     epoch_task_result_root = manifest.task_result_root
                                     eligibility_snapshot_root = manifest.eligibility_root
                                     reward_calculation_root = manifest.reward_calculation_root
@@ -998,20 +1038,20 @@ class AIDNABCIApplication:
             closing_height=closing_height,
             closing_block_hash=closing_block_hash,
             closing_state_root=closing_state_root,
+            source_app_hash=source_app_hash,
             epoch_task_result_root=epoch_task_result_root,
             eligibility_snapshot_root=eligibility_snapshot_root,
             reward_calculation_root=reward_calculation_root,
             next_protocol_parameters_hash=next_protocol_parameters_hash,
             pool_budgets=pool_budgets,
             pool_budget_references=pool_budget_references,
-            source_app_hash=source_app_hash,
             epoch_schedule_version=(
                 self._epoch_schedule.schema_version if self._epoch_schedule is not None else None
             ),
             epoch_schedule_hash=(
                 self._epoch_schedule.schedule_hash if self._epoch_schedule is not None else None
             ),
-            canonical_block_time=self._last_block_time,
+            canonical_block_time=(manifest.closing_time if manifest is not None else self._last_block_time),
             scheduled_end_time=scheduled_end_time,
             epoch_boundary_reached=epoch_boundary_reached,
             epoch_result_manifest_hash=epoch_result_manifest_hash,

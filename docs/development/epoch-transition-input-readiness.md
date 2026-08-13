@@ -39,9 +39,20 @@ uv run python tools/query-epoch-transition-inputs.py \\
   --rpc-url http://192.168.88.130:26657
 ```
 
-Exit code `0` means that an identical `READY` report reached quorum. Exit
-code `2` is expected while the Epoch Engine has not published all artifacts;
-it is a release gate, not a transient RPC failure.
+The command is a fail-closed quorum gate, not a single-RPC health check. For a
+`READY` report it also queries, on every validator:
+
+- `operation/finalized/<epoch_result_manifest_operation_id>`;
+- `epoch/result-manifest/<closing_epoch>`.
+
+These queries prove that the manifest operation is finalized and that its
+public projection matches the transition report's historical closing height,
+block hash, state root, source AppHash, schedule and manifest hash. The gate
+counts only one identical report/reference pair on one chain and excludes
+catching-up validators. Exit code `0` means that this complete evidence reached
+the requested quorum. Exit code `2` is expected while the Epoch Engine has not
+published or finalized all artifacts; it is a release gate, not a transient
+RPC failure.
 
 ## Current implementation boundary
 
@@ -66,6 +77,17 @@ consensus-bound `EPOCH_RESULT_MANIFEST_COMMIT`. The manifest is an
 evidence-only object: it does not mint Q, spend a pool, activate parameters or
 replace protocol-authority signatures. It aggregates the exact RFC-0048 roots
 and ECO-0007 pool budget references consumed by a later transition.
+
+New manifests use `aidn.epoch-result-manifest.v2`, which adds historical
+closing block, state-root and source-AppHash commitments. Nodes can replay the
+older `v1` schema for state compatibility, but the quorum gate keeps a v1
+manifest blocked because it cannot prove the historical closing chain state.
+
+The ABCI query `epoch/result-manifest/<epoch>` is deliberately a public
+identity projection. It contains operation identity, finality reference,
+manifest hash and historical closing-chain fields, but not the manifest
+payload or signatures. Full evidence remains behind the normal consensus and
+operator evidence paths.
 
 The following remain unavailable until a finalized manifest for the closing
 Epoch exists:
@@ -110,6 +132,11 @@ The boundary slice is complete when:
 - a schedule mismatch fails closed;
 - a finalized manifest exposes the same roots, schedule bindings and pool
   budget references on every validator;
+- `operation/finalized/<operation_id>` and
+  `epoch/result-manifest/<closing_epoch>` agree on operation identity and
+  historical closing-chain fields;
+- the quorum gate blocks when the finalized manifest reference is missing,
+  stale, conflicting or below the configured threshold;
 - a transition referencing that manifest is accepted only in a later block;
 - task, eligibility, reward and parameter roots are independently reproducible
   from the manifest's committed evidence.

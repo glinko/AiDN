@@ -58,6 +58,7 @@ from aidn_hypervisor.consensus.deployment import (
     load_cometbft_finality_deployment_config,
 )
 from aidn_hypervisor.consensus.epoch_result_manifest import (
+    EPOCH_RESULT_MANIFEST_LEGACY_VERSION,
     EPOCH_RESULT_MANIFEST_OPERATION,
     EPOCH_RESULT_MANIFEST_VERSION,
     EpochResultManifest,
@@ -74,6 +75,12 @@ from aidn_hypervisor.consensus.epoch_transition_inputs import (
     EPOCH_TRANSITION_INPUTS_NOT_READY,
     EpochTransitionInputReport,
     build_epoch_transition_input_report,
+)
+from aidn_hypervisor.consensus.epoch_transition_quorum import (
+    EPOCH_TRANSITION_QUORUM_VERSION,
+    EpochTransitionQuorumReport,
+    collect_epoch_transition_quorum,
+    epoch_transition_quorum_hash,
 )
 from aidn_hypervisor.consensus.finality import (
     ConsensusFinalityEvidence,
@@ -199,11 +206,16 @@ __all__ = [
     "EPOCH_TRANSITION_INPUTS_NOT_READY",
     "EpochTransitionInputReport",
     "build_epoch_transition_input_report",
+    "EPOCH_TRANSITION_QUORUM_VERSION",
+    "EpochTransitionQuorumReport",
+    "collect_epoch_transition_quorum",
+    "epoch_transition_quorum_hash",
     "EPOCH_SCHEDULE_VERSION",
     "EpochBoundary",
     "EpochSchedule",
     "build_epoch_schedule",
     "EPOCH_RESULT_MANIFEST_OPERATION",
+    "EPOCH_RESULT_MANIFEST_LEGACY_VERSION",
     "EPOCH_RESULT_MANIFEST_VERSION",
     "EpochResultManifest",
     "build_epoch_result_manifest",

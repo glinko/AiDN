@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 from aidn_hypervisor.consensus.abci import AIDNABCIApplication
 from aidn_hypervisor.consensus.admission import AdmissionValidator
-from aidn_hypervisor.consensus.epoch_result_manifest import build_epoch_result_manifest
+from aidn_hypervisor.consensus.epoch_result_manifest import (
+    EPOCH_RESULT_MANIFEST_LEGACY_VERSION,
+    build_epoch_result_manifest,
+)
 from aidn_hypervisor.consensus.epoch_schedule import build_epoch_schedule
 from aidn_hypervisor.consensus.execution import ExecutionEngine
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
@@ -19,6 +23,9 @@ def _manifest(*, epoch_number: int = 0, closing_height: int = 60):
         closing_height=closing_height,
         start_time="2030-01-01T00:00:00Z",
         closing_time="2030-01-01T00:01:00Z",
+        closing_block_hash="sha256:closing-block",
+        closing_state_root="sha256:closing-state",
+        source_app_hash="sha256:closing-app",
         protocol_version="0.1",
         parameter_version="params-v1",
         task_set_version="tasks-v1",
@@ -56,6 +63,59 @@ def _envelope(manifest: dict) -> bytes:
         payload={"manifest": manifest},
     )
     return json.dumps(envelope.model_dump(mode="json")).encode("utf-8")
+
+
+def test_legacy_manifest_hash_and_replay_shape_remain_compatible() -> None:
+    manifest = build_epoch_result_manifest(
+        manifest_version=EPOCH_RESULT_MANIFEST_LEGACY_VERSION,
+        manifest_state="FINALIZED",
+        epoch_number=0,
+        start_height=1,
+        closing_height=60,
+        start_time="2030-01-01T00:00:00Z",
+        closing_time="2030-01-01T00:01:00Z",
+        protocol_version="0.1",
+        parameter_version="params-v1",
+        task_set_version="tasks-v1",
+        epoch_schedule_version="aidn.epoch-schedule.v1",
+        epoch_schedule_hash="sha256:schedule-v1",
+        scheduled_end_time="2030-01-01T00:01:00Z",
+        frozen_evidence_root="sha256:frozen-evidence",
+        participant_snapshot_root="sha256:participants",
+        service_snapshot_root="sha256:services",
+        task_result_root="sha256:tasks",
+        eligibility_root="sha256:eligibility",
+        reputation_root="sha256:reputation",
+        penalty_root="sha256:penalties",
+        recycle_root="sha256:recycle",
+        reward_authorization_root="sha256:reward-authorization",
+        reward_result_root="sha256:reward-result",
+        faucet_root="sha256:faucet",
+        validator_set_update_root="sha256:validator-set",
+        reward_calculation_root="sha256:reward-calculation",
+        next_protocol_parameters_hash="sha256:params-v2",
+        pool_budgets={"GENERAL_DEVELOPMENT": 250_000},
+        pool_budget_references={"GENERAL_DEVELOPMENT": "epoch:0:GENERAL_DEVELOPMENT"},
+        next_epoch_reference="epoch:1",
+    )
+
+    assert manifest.manifest_version == EPOCH_RESULT_MANIFEST_LEGACY_VERSION
+    assert manifest.closing_block_hash is None
+    assert manifest.closing_state_root is None
+    assert manifest.source_app_hash is None
+    assert "closing_block_hash" not in manifest.unsigned_payload()
+    assert "closing_state_root" not in manifest.unsigned_payload()
+    assert "source_app_hash" not in manifest.unsigned_payload()
+    encoded = json.dumps(
+        manifest.unsigned_payload(),
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    expected_hash = "sha256:" + hashlib.sha256(
+        (EPOCH_RESULT_MANIFEST_LEGACY_VERSION + ":" + encoded).encode("utf-8")
+    ).hexdigest()
+    assert manifest.manifest_hash == expected_hash
 
 
 def test_manifest_is_committed_without_wallet_or_economic_effect() -> None:
@@ -137,8 +197,58 @@ def test_manifest_populates_ready_epoch_transition_preflight() -> None:
     assert report["reward_calculation_root"] == manifest.reward_calculation_root
     assert report["epoch_result_manifest_hash"] == manifest.manifest_hash
     assert report["epoch_result_manifest_operation_id"]
+    assert report["closing_height"] == manifest.closing_height
+    assert report["closing_block_hash"] == manifest.closing_block_hash
+    assert report["source_app_hash"] == manifest.source_app_hash
     payload = json.loads(app.query(path="epoch/transition-inputs").value.decode("utf-8"))
     assert payload["status"] == "READY"
+    projection = json.loads(
+        app.query(path="epoch/result-manifest/0").value.decode("utf-8")
+    )
+    assert projection["operation_id"] == report["epoch_result_manifest_operation_id"]
+    assert projection["manifest_hash"] == manifest.manifest_hash
+    assert projection["closing_height"] == manifest.closing_height
+    assert projection["closing_state_root"] == manifest.closing_state_root
+    assert projection["source_app_hash"] == manifest.source_app_hash
+    assert projection["epoch_schedule_hash"] == schedule.schedule_hash
+
+
+def test_manifest_keeps_historical_closing_state_after_later_blocks() -> None:
+    schedule = build_epoch_schedule(
+        genesis_start_time="2030-01-01T00:00:00Z",
+        epoch_duration_seconds=60,
+        parameter_version="params-v1",
+        task_set_version="tasks-v1",
+        protocol_version="0.1",
+    )
+    manifest = build_epoch_result_manifest(
+        **{
+            **_manifest().model_dump(mode="json"),
+            "epoch_schedule_hash": schedule.schedule_hash,
+        }
+    )
+    app = AIDNABCIApplication(
+        ledger_service=LedgerOperationService(),
+        epoch_schedule=schedule,
+    )
+    app.finalize_block(
+        block_height=60,
+        block_hash=b"c" * 32,
+        txs=[_envelope(manifest.model_dump(mode="json"))],
+        time="2030-01-01T00:01:00Z",
+    )
+    app.finalize_block(
+        block_height=61,
+        block_hash=b"d" * 32,
+        txs=[],
+        time="2030-01-01T00:01:02Z",
+    )
+
+    report = app.epoch_transition_input_report()
+    assert report["status"] == "READY"
+    assert report["closing_height"] == manifest.closing_height
+    assert report["closing_block_hash"] == manifest.closing_block_hash
+    assert report["canonical_block_time"] == manifest.closing_time
 
 
 def test_transition_cannot_consume_manifest_from_the_same_block() -> None:
