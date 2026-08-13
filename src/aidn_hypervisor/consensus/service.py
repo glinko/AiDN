@@ -25,6 +25,7 @@ from aidn_hypervisor.consensus.finality import (
     ConsensusFinalitySource,
 )
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+from aidn_hypervisor.consensus.protocol_authority import ProtocolAuthorityPolicy
 from aidn_hypervisor.consensus.state_store import ABCIStateStore, ABCIStateStoreError
 
 
@@ -63,6 +64,7 @@ class ConsensusServiceConfig:
     abci_retained_snapshots: int = ABCIStateStore.DEFAULT_RETAINED_SNAPSHOTS
     abci_snapshot_lease_seconds: int = ABCIStateStore.DEFAULT_SNAPSHOT_LEASE_SECONDS
     strict_operation_coverage: bool = False
+    protocol_authority_policy: ProtocolAuthorityPolicy | None = None
 
 
 @dataclass
@@ -562,6 +564,11 @@ class ConsensusService:
             restore_state_from_store=restore_state_from_store,
             state_checkpoint_callback=state_checkpoint_callback,
             strict_operation_coverage=self.config.strict_operation_coverage,
+            protocol_authority_policy=(
+                self.config.protocol_authority_policy
+                if self.config.protocol_authority_policy is not None
+                else ProtocolAuthorityPolicy.empty()
+            ),
         )
         return self.abci
 

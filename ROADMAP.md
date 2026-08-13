@@ -4,6 +4,27 @@ Last updated: `2026-08-12`
 
 This is the main public roadmap for the repository.
 
+## 2026-08-12 Protocol Authority Boundary
+
+Completed in this slice:
+
+- [x] Add hash-bound Ed25519 threshold authorization for protocol-owned
+  `EPOCH_TRANSITION` operations. Strict validator mode rejects missing policy,
+  mismatched policy hashes, invalid signatures and duplicated signer evidence
+  at both `CheckTx` and block execution; deterministic replay execution uses
+  the same boundary. See [protocol authority policy](./docs/development/protocol-authority-policy.md).
+
+Next required economic-network work:
+
+- [ ] Publish and distribute one identical protocol authority policy hash to
+  validators `128`, `129` and `130` through a coordinated network/config
+  change.
+- [ ] Generate and finalize a signed canonical `EPOCH_TRANSITION` containing
+  the `GENERAL_DEVELOPMENT` pool budget; no local process may invent this
+  transition or bypass the authority quorum.
+- [ ] Re-run quorum preflight, then build and execute the first real ECO-0007
+  development reward batch with independent reproduction and finality evidence.
+
 It should stay current and answer four questions:
 
 1. What are we building?

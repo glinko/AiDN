@@ -15,6 +15,7 @@ from aidn_hypervisor.consensus.coverage import (
     strict_operation_version_error,
 )
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+from aidn_hypervisor.consensus.protocol_authority import ProtocolAuthorityPolicy
 
 # ── Data models ─────────────────────────────────────────────────────
 
@@ -145,6 +146,7 @@ class ExecutionEngine:
         gas_limit_per_block: int = 10_000_000,
         gas_limit_per_operation: int = 1_000_000,
         strict_operation_coverage: bool = False,
+        protocol_authority_policy: ProtocolAuthorityPolicy | None = None,
     ) -> None:
         self.ledger = ledger_service
         self.admission = admission_validator
@@ -153,6 +155,7 @@ class ExecutionEngine:
         self._gas_limit_block = gas_limit_per_block
         self._gas_limit_operation = gas_limit_per_operation
         self._strict_operation_coverage = strict_operation_coverage
+        self._protocol_authority_policy = protocol_authority_policy
 
         # Per-block state tracking
         self._state_changes: list[StateChange] = []
@@ -616,6 +619,15 @@ class ExecutionEngine:
                 success=False,
                 envelope=envelope,
                 error=version_error,
+            )
+        authority_error = self._protocol_authority_error(envelope)
+        if authority_error is not None:
+            return ExecutionEvent(
+                operation_id=envelope.operation_id,
+                operation_type=envelope.operation_type,
+                success=False,
+                envelope=envelope,
+                error=authority_error,
             )
 
         # 3. Per-operation gas check
@@ -1536,6 +1548,20 @@ class ExecutionEngine:
         return self._gas_costs.get(operation_type, 100)
 
     # ── Internal: state root ──────────────────────────────────────
+
+    def _protocol_authority_error(
+        self,
+        envelope: LedgerOperationEnvelope,
+    ) -> str | None:
+        if envelope.operation_type != "EPOCH_TRANSITION":
+            return None
+        if self._protocol_authority_policy is None:
+            return None
+        try:
+            self._protocol_authority_policy.verify_epoch_transition(envelope)
+        except ValueError as error:
+            return str(error)
+        return None
 
     def _compute_state_root(self) -> str:
         """Compute deterministic hash of current ledger state."""

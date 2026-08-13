@@ -21,6 +21,7 @@ from aidn_hypervisor.consensus.cometbft_finality import (
 from aidn_hypervisor.consensus.deployment import (
     load_cometbft_finality_deployment_config,
 )
+from aidn_hypervisor.consensus.protocol_authority import ProtocolAuthorityPolicy
 from aidn_hypervisor.consensus.service import (
     ConsensusMode,
     ConsensusService,
@@ -842,6 +843,12 @@ def _build_default_consensus_service(
     if mode == ConsensusMode.DISABLED:
         return None
 
+    protocol_authority_policy = (
+        _load_protocol_authority_policy()
+        if mode == ConsensusMode.VALIDATOR
+        else None
+    )
+
     config = ConsensusServiceConfig(
         node_id=os.getenv("AIDN_CONSENSUS_NODE_ID", hypervisor_service.node_id),
         mode=mode,
@@ -868,6 +875,7 @@ def _build_default_consensus_service(
             "AIDN_CONSENSUS_STRICT_OPERATION_COVERAGE",
             default=mode == ConsensusMode.VALIDATOR,
         ),
+        protocol_authority_policy=protocol_authority_policy,
     )
     consensus = ConsensusService(config)
     if mode != ConsensusMode.VALIDATOR:
@@ -973,6 +981,29 @@ def _build_default_consensus_service(
     if state_migrated:
         hypervisor_service._persist_state()
     return consensus
+
+
+def _load_protocol_authority_policy() -> ProtocolAuthorityPolicy:
+    """Load public epoch-transition authority config; absent means fail closed."""
+    path = os.getenv("AIDN_PROTOCOL_AUTHORITY_POLICY_PATH")
+    raw = os.getenv("AIDN_PROTOCOL_AUTHORITY_POLICY_JSON")
+    if path and raw:
+        raise ValueError(
+            "configure only one of AIDN_PROTOCOL_AUTHORITY_POLICY_PATH or "
+            "AIDN_PROTOCOL_AUTHORITY_POLICY_JSON"
+        )
+    if path:
+        try:
+            raw = Path(path).read_text(encoding="utf-8")
+        except OSError as error:
+            raise ValueError("could not read AIDN_PROTOCOL_AUTHORITY_POLICY_PATH") from error
+    if not raw:
+        return ProtocolAuthorityPolicy.empty()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ValueError("AIDN_PROTOCOL_AUTHORITY_POLICY_JSON must be valid JSON") from error
+    return ProtocolAuthorityPolicy.from_mapping(payload)
 
 
 def _build_default_canonical_wallet_balance_provider():

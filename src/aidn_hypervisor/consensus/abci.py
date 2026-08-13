@@ -22,6 +22,7 @@ from aidn_hypervisor.consensus.coverage import (
 )
 from aidn_hypervisor.consensus.execution import compute_execution_state_root
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+from aidn_hypervisor.consensus.protocol_authority import ProtocolAuthorityPolicy
 from aidn_hypervisor.consensus.state_store import (
     ABCIStateSnapshot,
     ABCIStateStore,
@@ -119,6 +120,7 @@ class AIDNABCIApplication:
         restore_state_from_store: bool = True,
         state_checkpoint_callback: Callable[[], None] | None = None,
         strict_operation_coverage: bool = False,
+        protocol_authority_policy: ProtocolAuthorityPolicy | None = None,
     ):
         self.ledger = ledger_service
         self.mempool = ABCIMempool()
@@ -133,6 +135,7 @@ class AIDNABCIApplication:
         self._state_store = state_store
         self._state_checkpoint_callback = state_checkpoint_callback
         self._strict_operation_coverage = strict_operation_coverage
+        self._protocol_authority_policy = protocol_authority_policy
         self._restored_from_store = False
         self._pending_commit_snapshot: dict[str, Any] | None = None
         self._pending_commit_admission_state: dict[str, Any] | None = None
@@ -470,6 +473,17 @@ class AIDNABCIApplication:
                         ABCITag(key="reason", value=special_error),
                     ],
                 )
+
+        authority_error = self._protocol_authority_error(envelope)
+        if authority_error is not None:
+            return ABCIResult(
+                code="rejected",
+                log=authority_error,
+                tags=[
+                    ABCITag(key="operation_id", value=envelope.operation_id),
+                    ABCITag(key="reason", value=authority_error),
+                ],
+            )
 
         if recheck:
             return ABCIResult(
@@ -1060,6 +1074,17 @@ class AIDNABCIApplication:
                 tags=[ABCITag(key="operation_id", value=envelope.operation_id)],
             )
 
+        authority_error = self._protocol_authority_error(envelope)
+        if authority_error is not None:
+            return ABCIResult(
+                code="rejected",
+                log=authority_error,
+                tags=[
+                    ABCITag(key="operation_id", value=envelope.operation_id),
+                    ABCITag(key="reason", value=authority_error),
+                ],
+            )
+
         coverage_error = self._operation_coverage_error(envelope.operation_type)
         if coverage_error is not None:
             return ABCIResult(
@@ -1359,6 +1384,9 @@ class AIDNABCIApplication:
         )
         if version_error is not None:
             return version_error
+        authority_error = self._protocol_authority_error(envelope)
+        if authority_error is not None:
+            return authority_error
         try:
             if envelope.operation_type == "WALLET_TRANSFER" and self._strict_operation_coverage:
                 self.ledger.validate_consensus_wallet_transfer(envelope)
@@ -1554,6 +1582,20 @@ class AIDNABCIApplication:
                 )
             else:
                 return None
+        except ValueError as error:
+            return str(error)
+        return None
+
+    def _protocol_authority_error(
+        self,
+        envelope: LedgerOperationEnvelope,
+    ) -> str | None:
+        if envelope.operation_type != "EPOCH_TRANSITION":
+            return None
+        if self._protocol_authority_policy is None:
+            return None
+        try:
+            self._protocol_authority_policy.verify_epoch_transition(envelope)
         except ValueError as error:
             return str(error)
         return None

@@ -8,6 +8,12 @@ from aidn_hypervisor.consensus.admission import (
     AdmissionResult,
     AdmissionValidator,
 )
+from aidn_hypervisor.consensus.checkpoint_rotation import (
+    CometBftCheckpointCandidate,
+    collect_checkpoint_candidate,
+    rotate_checkpoint,
+    rotate_checkpoint_file,
+)
 from aidn_hypervisor.consensus.cometbft import (
     CometBftProofVerifier,
     CometBftRpcFinalitySource,
@@ -36,12 +42,6 @@ from aidn_hypervisor.consensus.cometbft_finality import (
 from aidn_hypervisor.consensus.cometbft_header import cometbft_header_hash
 from aidn_hypervisor.consensus.cometbft_merkle import (
     verify_cometbft_transaction_inclusion,
-)
-from aidn_hypervisor.consensus.checkpoint_rotation import (
-    CometBftCheckpointCandidate,
-    collect_checkpoint_candidate,
-    rotate_checkpoint,
-    rotate_checkpoint_file,
 )
 from aidn_hypervisor.consensus.coverage import (
     ACTIVE_OPERATION_TYPES,
@@ -105,6 +105,14 @@ from aidn_hypervisor.consensus.projection import (
     build_session_settlement_propose_envelope,
     build_session_settlement_ready_envelope,
 )
+from aidn_hypervisor.consensus.protocol_authority import (
+    EPOCH_TRANSITION_AUTHORITY_HASH_FIELD,
+    MAX_PROTOCOL_AUTHORITY_SIGNATURES,
+    PROTOCOL_AUTHORITY_POLICY_VERSION,
+    ProtocolAuthorityError,
+    ProtocolAuthorityPolicy,
+    normalize_ed25519_public_key,
+)
 from aidn_hypervisor.consensus.public_network import (
     PublicMultiValidatorAcceptanceReport,
     PublicMultiValidatorNetworkProfile,
@@ -163,6 +171,12 @@ __all__ = [
     "LedgerOperationEnvelope",
     "LedgerOriginType",
     "OperationType",
+    "EPOCH_TRANSITION_AUTHORITY_HASH_FIELD",
+    "MAX_PROTOCOL_AUTHORITY_SIGNATURES",
+    "PROTOCOL_AUTHORITY_POLICY_VERSION",
+    "ProtocolAuthorityError",
+    "ProtocolAuthorityPolicy",
+    "normalize_ed25519_public_key",
     "build_session_escrow_lock_envelope",
     "build_session_escrow_lock_envelope_from_funding",
     "build_session_failure_evidence_envelope",
